@@ -27,6 +27,7 @@ export function ChatsSurface({
   selectAvailable,
   onRenamedTitle,
   onChatSwitched,
+  onCurrentChatRemoved,
   restoreFocusTo,
 }: {
   api: ManagementPipelineApi;
@@ -39,15 +40,15 @@ export function ChatsSurface({
   onRenamedTitle: () => void;
   /** Fires after the Host committed an in-process switch to another Chat. */
   onChatSwitched?: () => void;
+  /**
+   * Fires after a retention transition removed the mounted Chat from the active
+   * list: the shell owns the selection, so it replaces the dead mount itself.
+   */
+  onCurrentChatRemoved?: (handle: string) => void;
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   return (
-    <SurfaceView
-      title={labels.chatsPanel}
-      testId="chats-surface"
-      icon={MessagesSquare}
-      restoreFocusTo={restoreFocusTo}
-    >
+    <SurfaceView title={labels.chatsPanel} testId="chats-surface" icon={MessagesSquare} restoreFocusTo={restoreFocusTo}>
       <ChatsSurfacePanel
         api={api}
         csrfToken={csrfToken}
@@ -57,6 +58,7 @@ export function ChatsSurface({
         {...(selectAvailable === undefined ? {} : { selectAvailable })}
         onRenamedTitle={onRenamedTitle}
         {...(onChatSwitched === undefined ? {} : { onChatSwitched })}
+        {...(onCurrentChatRemoved === undefined ? {} : { onCurrentChatRemoved })}
       />
     </SurfaceView>
   );

@@ -149,6 +149,7 @@ export function ChatsSurfacePanel({
   selectAvailable,
   onRenamedTitle,
   onChatSwitched,
+  onCurrentChatRemoved,
   onNotice,
 }: Readonly<{
   api: ManagementPipelineApi;
@@ -174,6 +175,14 @@ export function ChatsSurfacePanel({
   onRenamedTitle?: (handle: string, result: ChatTitleV1) => void;
   /** Fires after the Host committed an in-process switch to another Chat. */
   onChatSwitched?: () => void;
+  /**
+   * Fires after a retention transition removed the mounted Chat from the active
+   * list. The shell owns the selection, so the panel reports the removal instead
+   * of only refreshing its own list: the mounted conversation no longer exists in
+   * the active list and the shell must move its selection and its live cursor off
+   * the dead thread.
+   */
+  onCurrentChatRemoved?: (handle: string) => void;
   onNotice?: (notice: ManagementSurfaceNotice) => void;
 }>): ReactElement {
   const [list, setList] = useState<ChatListView>("loading");
@@ -348,6 +357,10 @@ export function ChatsSurfacePanel({
         // The transition removed the chat from the active list (metadata-only
         // mutation), so reconcile against the durable list.
         await reread();
+        // When the removed chat WAS the mounted one, the shell's selection no
+        // longer names a chat the list holds: the mount owns the selection and the
+        // live cursor, so it is told before its stream is left on a dead thread.
+        if (handle === currentChatHandle) onCurrentChatRemoved?.(handle);
         report({ kind: "success", text: labels.success });
       } catch (error) {
         await reread();

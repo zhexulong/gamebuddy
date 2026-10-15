@@ -22,13 +22,10 @@ import {
   createComposedReferenceGameBrowserApi,
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
+  type ComposedReferenceGameBrowserRootV1,
 } from "../composed-reference-game-browser-api";
 import { composedProblemView as problemView } from "../composed-problem-view";
-import {
-  newIdempotencyKey,
-  type ReadyView,
-  type ViewState,
-} from "./composed-reference-game-view";
+import { newIdempotencyKey, type ReadyView, type ViewState } from "./composed-reference-game-view";
 import { AppBar } from "./AppBar";
 import { ChatSurface } from "./ChatSurface";
 import { GameSurface } from "./GameSurface";
@@ -37,15 +34,10 @@ import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
 import { SurfaceModelSettings } from "./SurfaceModelSettings";
 import { CharactersSurface } from "./CharactersSurface";
-import {
-  createManagementPipelineApi,
-  type WorldInfoSurfaceSource,
-} from "./management-surface-panels";
+import { createManagementPipelineApi, type WorldInfoSurfaceSource } from "./management-surface-panels";
 import { ChatsSurface } from "./ChatsSurface";
 import { MemorySurface } from "./MemorySurface";
 import { SettingsSurface } from "./SettingsSurface";
-
-
 
 /**
  * The Host admits one provider invocation under a fixed 120 s ceiling
@@ -106,7 +98,10 @@ export function ComposedReferenceGameApp() {
   // gate; swipe and regenerate had none, so a double click issued two admitted
   // commands (regenerate mints a fresh idempotency key per click). The ref is the
   // synchronous single-flight guard, the state is the projection the surface shows.
-  const [chatMutation, setChatMutation] = useState<Readonly<{ kind: "swipe" | "regenerate" | "opening"; handle: string }> | null>(null);
+  const [chatMutation, setChatMutation] = useState<Readonly<{
+    kind: "swipe" | "regenerate" | "opening";
+    handle: string;
+  }> | null>(null);
   const chatMutationRef = useRef(false);
   // The durable draft's authoring state is the composer's own field (see the
   // seeding effect below); what stays here is the closed outcome line its
@@ -244,17 +239,19 @@ export function ComposedReferenceGameApp() {
 
   // Selecting a surface is one history entry (design/104 §2). The entries are the
   // shell's surface switcher, so all of them share this one behaviour.
-  const openPanelOf = (panel: string, entryRef: React.RefObject<HTMLButtonElement | null>): (() => void) => (): void => {
-    void entryRef;
-    if (openPanel !== panel) {
-      const url = new URL(window.location.href);
-      const params = new URLSearchParams(url.hash.slice(1));
-      params.set(PANEL_PARAM, panel);
-      url.hash = params.toString();
-      window.history.pushState({ gbPanel: panel }, "", url.toString());
-    }
-    setOpenPanel(panel);
-  };
+  const openPanelOf =
+    (panel: string, entryRef: React.RefObject<HTMLButtonElement | null>): (() => void) =>
+    (): void => {
+      void entryRef;
+      if (openPanel !== panel) {
+        const url = new URL(window.location.href);
+        const params = new URLSearchParams(url.hash.slice(1));
+        params.set(PANEL_PARAM, panel);
+        url.hash = params.toString();
+        window.history.pushState({ gbPanel: panel }, "", url.toString());
+      }
+      setOpenPanel(panel);
+    };
 
   useEffect(() => {
     cancelledRef.current = false;
@@ -264,16 +261,18 @@ export function ComposedReferenceGameApp() {
         const params = new URLSearchParams(window.location.hash.slice(1));
         const bootToken = params.get("boot");
         const restoredPanel = params.get(PANEL_PARAM);
-        const root = bootToken === null
-          ? await composedApiRef.current.readState()
-          : await composedApiRef.current.bootstrap(bootToken);
+        const root =
+          bootToken === null
+            ? await composedApiRef.current.readState()
+            : await composedApiRef.current.bootstrap(bootToken);
         if (bootToken !== null) {
           const url = new URL(window.location.href);
           // The one-time boot token is stripped from the fragment; a panel the
           // URL already names survives the rewrite.
-          url.hash = restoredPanel === null
-            ? "profile=composed-reference-game"
-            : `profile=composed-reference-game&${PANEL_PARAM}=${encodeURIComponent(restoredPanel)}`;
+          url.hash =
+            restoredPanel === null
+              ? "profile=composed-reference-game"
+              : `profile=composed-reference-game&${PANEL_PARAM}=${encodeURIComponent(restoredPanel)}`;
           window.history.replaceState(null, "", url.toString());
         }
         const draft = await tavernApiRef.current.readDraft();
@@ -298,8 +297,8 @@ export function ComposedReferenceGameApp() {
     };
   }, [commit]);
 
-  const eventStreamEpoch = view.kind === "ready" ? `${view.session.snapshot.eventStream?.epoch ?? ""}#${mountedChatRevision}` : undefined;
-
+  const eventStreamEpoch =
+    view.kind === "ready" ? `${view.session.snapshot.eventStream?.epoch ?? ""}#${mountedChatRevision}` : undefined;
 
   useEffect(() => {
     if (view.kind !== "ready" || view.session.snapshot.eventStream === null) return;
@@ -341,10 +340,8 @@ export function ComposedReferenceGameApp() {
           session = createReferencePipelineSession(root.chat);
           rebuilt = true;
         }
-        if (
-          draft.revision !== root.chat.chat.draft.revision ||
-          (draft.text !== null) !== root.chat.chat.draft.present
-        ) throw new ReferencePipelineSessionError("state_reconciliation_required");
+        if (draft.revision !== root.chat.chat.draft.revision || (draft.text !== null) !== root.chat.chat.draft.present)
+          throw new ReferencePipelineSessionError("state_reconciliation_required");
         if (doReset || epochChanged || rebuilt) {
           if (root.chat.eventStream === null) throw new ReferencePipelineSessionError("stream_resync_required");
           cursor = root.chat.eventStream.cursor;
@@ -380,12 +377,15 @@ export function ComposedReferenceGameApp() {
           const checkpointed = current.session.applyEvent(event);
           cursor = lastEventId;
           if (event.eventType === "companion.delta") {
-            setPreview((existing) => Object.freeze({
-              turnHandle: event.payload.turnHandle,
-              text: existing?.turnHandle === event.payload.turnHandle
-                ? `${existing.text}${event.payload.delta}`
-                : event.payload.delta,
-            }));
+            setPreview((existing) =>
+              Object.freeze({
+                turnHandle: event.payload.turnHandle,
+                text:
+                  existing?.turnHandle === event.payload.turnHandle
+                    ? `${existing.text}${event.payload.delta}`
+                    : event.payload.delta,
+              }),
+            );
             return;
           }
           if (event.eventType === "message.committed" || event.eventType === "turn.state_changed") setPreview(null);
@@ -395,7 +395,8 @@ export function ComposedReferenceGameApp() {
           if (
             draft.revision !== root.chat.chat.draft.revision ||
             (draft.text !== null) !== root.chat.chat.draft.present
-          ) throw new ReferencePipelineSessionError("state_reconciliation_required");
+          )
+            throw new ReferencePipelineSessionError("state_reconciliation_required");
           const session = checkpointed.applySnapshot(root.chat);
           setPreview(null);
           // The authoritative turn is settled, so a pending record for it is spent
@@ -507,8 +508,7 @@ export function ComposedReferenceGameApp() {
       const pending = current.session.pending;
       try {
         const root = await composedApiRef.current.readState();
-        if (root.chat.chat === null)
-          throw new ReferencePipelineSessionError("state_reconciliation_required");
+        if (root.chat.chat === null) throw new ReferencePipelineSessionError("state_reconciliation_required");
         const draft = await resolvePollDraft(current.draft, root.chat.chat);
         let session = current.session.applySnapshot(root.chat);
         if (session.pending !== null) {
@@ -550,7 +550,9 @@ export function ComposedReferenceGameApp() {
           pollActiveRef.current = false;
           return;
         }
-        const backoff = POLL_BACKOFF_MS[Math.min(attempts, POLL_BACKOFF_MS.length) - 1] ?? POLL_BACKOFF_MS[POLL_BACKOFF_MS.length - 1];
+        const backoff =
+          POLL_BACKOFF_MS[Math.min(attempts, POLL_BACKOFF_MS.length) - 1] ??
+          POLL_BACKOFF_MS[POLL_BACKOFF_MS.length - 1];
         schedule(backoff);
       }
     };
@@ -648,7 +650,11 @@ export function ComposedReferenceGameApp() {
     if (current.kind !== "ready") return;
     const root = await composedApiRef.current.readState();
     const draft = await tavernApiRef.current.readDraft();
-    if (root.chat.chat === null || draft.revision !== root.chat.chat.draft.revision || (draft.text !== null) !== root.chat.chat.draft.present) {
+    if (
+      root.chat.chat === null ||
+      draft.revision !== root.chat.chat.draft.revision ||
+      (draft.text !== null) !== root.chat.chat.draft.present
+    ) {
       throw new ReferencePipelineSessionError("state_reconciliation_required");
     }
     setPreview(null);
@@ -692,7 +698,7 @@ export function ComposedReferenceGameApp() {
   /** Takes a validated durable draft read-back as the composer field's new truth. */
   const seedDraft = (draft: BrowserDraftV1): void => {
     const current = viewRef.current;
-    const chat = current.kind === "ready" ? current.session.snapshot.selection?.chatHandle ?? null : null;
+    const chat = current.kind === "ready" ? (current.session.snapshot.selection?.chatHandle ?? null) : null;
     const text = draft.text ?? "";
     seededDraftRef.current = Object.freeze({ chat, revision: draft.revision, text });
     writeInput(text);
@@ -859,6 +865,37 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
+   * Adopts one authoritative composed read as this shell's mounted conversation.
+   * The mounted identity itself is new - a committed switch released the previous
+   * Chat and mounted another - so there is nothing to reconcile the session with:
+   * it is rebuilt from the fresh snapshot, and the mounted-chat revision is bumped
+   * so the event-stream effect re-subscribes on the new conversation's checkpoint
+   * instead of continuing the previous one's cursor.
+   */
+  const adoptMountedChat = (root: ComposedReferenceGameBrowserRootV1, draft: BrowserDraftV1): void => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    if (cancelledRef.current || root.chat.chat === null) return;
+    if (draft.revision !== root.chat.chat.draft.revision || (draft.text !== null) !== root.chat.chat.draft.present)
+      throw new ReferencePipelineSessionError("state_reconciliation_required");
+    setPreview(null);
+    const base = createReferencePipelineSession(root.chat);
+    const session = root.chat.eventStream === null ? base : base.resetEventCheckpoint();
+    setMountedChatRevision((revision) => revision + 1);
+    commit({ ...current, root, session, draft });
+  };
+
+  /**
+   * Ends the live event subscription when no mounted conversation remains to
+   * stream: a cursor must never keep reading a thread the active list dropped.
+   */
+  const closeLiveStream = (): void => {
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    streamLiveRef.current = false;
+  };
+
+  /**
    * Follows a committed Chat switch. The Host has already released the previous
    * mounted Chat and mounted the selected one, so the mounted identity itself is
    * new: this shell rebuilds its session from the fresh snapshot (there is nothing
@@ -871,19 +908,53 @@ export function ComposedReferenceGameApp() {
       try {
         const root = await composedApiRef.current.readState();
         const draft = await tavernApiRef.current.readDraft();
-        if (cancelledRef.current || root.chat.chat === null) return;
-        if (
-          draft.revision !== root.chat.chat.draft.revision ||
-          (draft.text !== null) !== root.chat.chat.draft.present
-        )
-          throw new ReferencePipelineSessionError("state_reconciliation_required");
-        setPreview(null);
-        const base = createReferencePipelineSession(root.chat);
-        const session = root.chat.eventStream === null ? base : base.resetEventCheckpoint();
-        setMountedChatRevision((revision) => revision + 1);
-        commit({ ...current, root, session, draft });
+        adoptMountedChat(root, draft);
       } catch (error) {
         commit(problemView(error, messages(current.locale)));
+      }
+    })();
+  };
+
+  /**
+   * The mounted conversation's own retention transition removed it from the active
+   * list. The shell owns the selection, so it moves the mount off the dead thread
+   * rather than leaving the live cursor on a Chat the list no longer holds: it
+   * switches to the next available Chat through the same `chat.select` route the
+   * Chats surface offers and adopts the authoritative read, which restarts the
+   * cursor on the survivor. A removal that leaves no other active Chat - or a
+   * switch the mounted turn refuses - has nothing to move to, so the live stream is
+   * closed instead of being left reading the dead thread.
+   */
+  const handleCurrentChatRemoved = (removedHandle: string): void => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    const csrfToken = current.session.snapshot.csrfToken;
+    const locale = current.locale;
+    void (async () => {
+      try {
+        const list = await managementPipelineApiRef.current.listChats();
+        const next = list.chats.find((chat) => chat.handle !== removedHandle) ?? null;
+        if (next === null) {
+          closeLiveStream();
+          return;
+        }
+        await managementPipelineApiRef.current.selectChat(
+          { apiVersion: 1, selectionGeneration: selection.generation, chatHandle: next.handle },
+          csrfToken,
+        );
+        const root = await composedApiRef.current.readState();
+        const draft = await tavernApiRef.current.readDraft();
+        if (root.chat.selection?.chatHandle === removedHandle) {
+          // The runtime could not leave the archived Chat, so nothing may keep
+          // reading its stream.
+          closeLiveStream();
+          return;
+        }
+        adoptMountedChat(root, draft);
+      } catch (error) {
+        commit(problemView(error, messages(locale)));
       }
     })();
   };
@@ -900,8 +971,7 @@ export function ComposedReferenceGameApp() {
     const current = viewRef.current;
     return {
       worldInfo: await managementPipelineApiRef.current.readWorldInfo(),
-      selectionGeneration:
-        current.kind === "ready" ? current.session.snapshot.selection?.generation ?? 0 : 0,
+      selectionGeneration: current.kind === "ready" ? (current.session.snapshot.selection?.generation ?? 0) : 0,
     };
   }, []);
 
@@ -922,9 +992,10 @@ export function ComposedReferenceGameApp() {
   const handleStop = async (): Promise<void> => {
     const current = viewRef.current;
     const turn = current.kind === "ready" ? current.session.snapshot.chat?.turn : null;
-    const operation = current.kind === "ready"
-      ? current.session.snapshot.operations.find((op) => op.operationId === "chat.cancel")
-      : undefined;
+    const operation =
+      current.kind === "ready"
+        ? current.session.snapshot.operations.find((op) => op.operationId === "chat.cancel")
+        : undefined;
     if (current.kind !== "ready" || turn == null || operation?.availability !== "available" || !turn.canCancel) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
@@ -944,7 +1015,10 @@ export function ComposedReferenceGameApp() {
     }
   };
 
-  const submitAvailable = view.kind === "ready" && view.session.pending === null && view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available");
+  const submitAvailable =
+    view.kind === "ready" &&
+    view.session.pending === null &&
+    view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available");
   // The optimistic entry is visible only while the pending record carries its exact key and the
   // authoritative transcript has not yet carried the same player line. A settled/failed turn
   // clears the pending record, so the pair collapses to one message and no ghost survives a
@@ -958,23 +1032,26 @@ export function ComposedReferenceGameApp() {
     )
       ? optimistic
       : null;
-  const stopAvailable = view.kind === "ready" && view.session.snapshot.chat?.turn?.canCancel === true && view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available");
-  const terminalTurnNotice = view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "cancelled"
-    ? labels().chatStopped
-    : view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "failed" ? labels().chatFailed : null;
+  const stopAvailable =
+    view.kind === "ready" &&
+    view.session.snapshot.chat?.turn?.canCancel === true &&
+    view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available");
+  const terminalTurnNotice =
+    view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "cancelled"
+      ? labels().chatStopped
+      : view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "failed"
+        ? labels().chatFailed
+        : null;
   // The app-bar indicator is the Chat surface's own connection/turn fact: a turn
   // is in flight from the moment a submission is admitted until the authoritative
   // turn reaches a terminal state. The Game connection has its own drawer
   // (design/26 §4.1, design/104 §2); it is not announced from here.
-  const turnInFlight = view.kind === "ready" && (
-    view.session.pending !== null ||
-    (view.session.snapshot.chat?.turn != null &&
-      !TERMINAL_TURN_STATES.has(view.session.snapshot.chat.turn.state))
-  );
-
-  const managementPanelsAvailable =
+  const turnInFlight =
     view.kind === "ready" &&
-    view.session.snapshot.chat !== null;
+    (view.session.pending !== null ||
+      (view.session.snapshot.chat?.turn != null && !TERMINAL_TURN_STATES.has(view.session.snapshot.chat.turn.state)));
+
+  const managementPanelsAvailable = view.kind === "ready" && view.session.snapshot.chat !== null;
 
   const openGamePanel = openPanelOf(GAME_PANEL, gameEntryRef);
   const openChat = openPanelOf(CHAT_PANEL, chatEntryRef);
@@ -986,46 +1063,80 @@ export function ComposedReferenceGameApp() {
   return (
     <div className="tavern-app-shell" data-profile="composed-reference-game">
       <SkipLink label={labels().skipToChat} />
-      {view.kind === "loading" && <main id="main-content" className="app-main-content"><div className="state-placeholder"><p className="loading-text">{labels().openingChat}</p></div></main>}
+      {view.kind === "loading" && (
+        <main id="main-content" className="app-main-content">
+          <div className="state-placeholder">
+            <p className="loading-text">{labels().openingChat}</p>
+          </div>
+        </main>
+      )}
       {view.kind === "problem" && <ProblemView title={view.title} detail={view.detail} />}
       {view.kind === "ready" && view.session.snapshot.chat !== null && (
         <>
-           <AppBar
-             brandMark={labels().appMark}
-             brandLabel={labels().appName}
-             companionName={view.session.snapshot.chat.companion.name}
-             statusLabel={turnInFlight ? labels().generating : labels().online}
-             statusTone={turnInFlight ? "progress" : "idle"}
-             entries={[
-               // The surfaces are peers: each entry selects the region's content and
-               // the conversation is simply the default one (design/104 §2).
-               {
-                 id: CHAT_PANEL,
-                 label: labels().chatPanel,
-                 icon: MessagesSquare,
-                 active: shownSurface === CHAT_PANEL,
-                 onClick: openChat,
-                 ref: chatEntryRef,
-               },
-               {
-                 id: GAME_PANEL,
-                 label: labels().gamePanel,
-                 icon: Gamepad2,
-                 active: shownSurface === GAME_PANEL,
-                 onClick: openGamePanel,
-                 ref: gameEntryRef,
-               },
-               ...(managementPanelsAvailable
-                 ? [
-                     { id: CHATS_PANEL, label: labels().chatsPanel, icon: MessagesSquare, active: shownSurface === CHATS_PANEL, onClick: openChats, ref: chatsEntryRef },
-                     { id: CHARACTERS_PANEL, label: labels().charactersPanel, icon: Users, active: shownSurface === CHARACTERS_PANEL, onClick: openCharacters, ref: charactersEntryRef },
-                     { id: SETTINGS_PANEL, label: labels().settingsPanel, icon: Settings, active: shownSurface === SETTINGS_PANEL, onClick: openSettings, ref: settingsEntryRef },
-                     { id: MEMORY_PANEL, label: labels().memoryPanel, icon: Brain, active: shownSurface === MEMORY_PANEL, onClick: openMemory, ref: memoryEntryRef },
-                   ]
-                   : []),
-             ]}
-             fold={{ from: 2, label: labels().appBarMore }}
-           />
+          <AppBar
+            brandMark={labels().appMark}
+            brandLabel={labels().appName}
+            companionName={view.session.snapshot.chat.companion.name}
+            statusLabel={turnInFlight ? labels().generating : labels().online}
+            statusTone={turnInFlight ? "progress" : "idle"}
+            entries={[
+              // The surfaces are peers: each entry selects the region's content and
+              // the conversation is simply the default one (design/104 §2).
+              {
+                id: CHAT_PANEL,
+                label: labels().chatPanel,
+                icon: MessagesSquare,
+                active: shownSurface === CHAT_PANEL,
+                onClick: openChat,
+                ref: chatEntryRef,
+              },
+              {
+                id: GAME_PANEL,
+                label: labels().gamePanel,
+                icon: Gamepad2,
+                active: shownSurface === GAME_PANEL,
+                onClick: openGamePanel,
+                ref: gameEntryRef,
+              },
+              ...(managementPanelsAvailable
+                ? [
+                    {
+                      id: CHATS_PANEL,
+                      label: labels().chatsPanel,
+                      icon: MessagesSquare,
+                      active: shownSurface === CHATS_PANEL,
+                      onClick: openChats,
+                      ref: chatsEntryRef,
+                    },
+                    {
+                      id: CHARACTERS_PANEL,
+                      label: labels().charactersPanel,
+                      icon: Users,
+                      active: shownSurface === CHARACTERS_PANEL,
+                      onClick: openCharacters,
+                      ref: charactersEntryRef,
+                    },
+                    {
+                      id: SETTINGS_PANEL,
+                      label: labels().settingsPanel,
+                      icon: Settings,
+                      active: shownSurface === SETTINGS_PANEL,
+                      onClick: openSettings,
+                      ref: settingsEntryRef,
+                    },
+                    {
+                      id: MEMORY_PANEL,
+                      label: labels().memoryPanel,
+                      icon: Brain,
+                      active: shownSurface === MEMORY_PANEL,
+                      onClick: openMemory,
+                      ref: memoryEntryRef,
+                    },
+                  ]
+                : []),
+            ]}
+            fold={{ from: 2, label: labels().appBarMore }}
+          />
           <main id="main-content" className="app-main-content">
             {/* Every surface is a peer: it takes this region in full, none of them
                 covers another, and the conversation is simply the default one
@@ -1094,6 +1205,7 @@ export function ComposedReferenceGameApp() {
                 currentChatHandle={view.session.snapshot.selection?.chatHandle ?? ""}
                 onRenamedTitle={handleRenamedTitle}
                 onChatSwitched={handleChatSwitched}
+                onCurrentChatRemoved={handleCurrentChatRemoved}
                 restoreFocusTo={chatsEntryRef}
               />
             )}
