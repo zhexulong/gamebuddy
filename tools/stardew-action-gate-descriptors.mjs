@@ -300,6 +300,13 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   gate("collect_building_chest_output", 1, "run-stardew-native-local-player-collect-building-chest-output-smoke.mjs", "building_chest_output_collected", "native_building_chest_v1"),
   // Promoted to live-verified: its native-local gate passed and its receipt is a real world change.
   gate("send_multiplayer_chat", 1, "run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs", "chat_message_sent", "native_farmhand_chat_v1"),
+  gate(
+    "talk_to_npc",
+    1,
+    "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
+    "talk_to_npc_talked",
+    "native_talk_to_npc_v1",
+  ),
 ]);
 
 /**
@@ -386,7 +393,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // conversation branch is gated on `who.IsLocalPlayer` and the same method's pause differs under
   // `Game1.IsMultiplayer`. `STARDEW_SHARED_WORLD_ACTION_SCENARIOS` below names the HostAutomation
   // Given that run is armed from; this map stays the native-local runner resolution.
-  talk_to_npc: "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
 
   // Reads what the Mod REPORTS about the conversation (the enquiry-and-hold chain stays with talk_to_npc).
   dialogue_stream: "run-stardew-native-local-player-dialogue-stream-smoke.mjs",

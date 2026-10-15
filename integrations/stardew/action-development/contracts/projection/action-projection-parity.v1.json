@@ -1331,7 +1331,7 @@
       {
         "actionId": "talk_to_npc",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -2829,6 +2829,7 @@
       "water_pet_bowl",
       "water_slime_hutch_trough",
       "interact_npc_with_item",
+      "talk_to_npc",
       "express_emote",
       "face_direction",
       "chest_store",
@@ -2884,9 +2885,7 @@
       "find_destination",
       "observe_scene"
     ],
-    "experimentalActionIds": [
-      "talk_to_npc"
-    ]
+    "experimentalActionIds": []
   },
   "protocol": {
     "schemas": [
@@ -2947,6 +2946,7 @@
       "water_pet_bowl",
       "water_slime_hutch_trough",
       "interact_npc_with_item",
+      "talk_to_npc",
       "express_emote",
       "face_direction",
       "chest_store",

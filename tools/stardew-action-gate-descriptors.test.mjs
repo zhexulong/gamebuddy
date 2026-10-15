@@ -183,6 +183,7 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     enter_mine: "run-stardew-native-local-player-enter-mine-smoke.mjs",
     dismiss_modal: "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs",
     answer_dialogue: "run-stardew-native-local-player-wia-answer-question-smoke.mjs",
+    talk_to_npc: "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
   });
   // Obsolete parallel-route runner IDs that must never be re-selected.
   const forbiddenRouteIds = Object.freeze([
@@ -322,6 +323,7 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "load_building_chest",
       "collect_building_chest_output",
       "send_multiplayer_chat",
+      "talk_to_npc",
     ],
   );
   assert.deepEqual(

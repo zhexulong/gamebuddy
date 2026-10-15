@@ -2,6 +2,7 @@ import {
   assertRequiredCapabilities,
   classifyTopology,
   connectNativeLocalClient,
+  delay,
   executeFresh,
   observeTopologySnapshot,
   readNativeClientConfig,
@@ -24,24 +25,11 @@ const UNKNOWN_TARGET_ID = "npc_relationship_0000000000000000";
  * the Saloon one Chebyshev step from Gus: the native talk branch builds its dialogue
  * keys from `Game1.currentLocation.name.Value`, and no shipped villager dialogue table
  * has a key reachable from the Farm, the Cabin or the FarmHouse, so the Saloon is the
- * only place this run can prove the branch.
- *
- * The actor's location is the CLIENT's own Given: in that process the Farmhand IS the
- * local player, so the client's own actions are what move it, and a host can neither
- * move nor observe a remote farmer's location. Writing the bound actor's saved location
- * from the Host fixture was tried and does not survive the join (the Farmhand is
- * returned to its Cabin bed), so nothing here is inherited from the Host. This name is
- * therefore the destination the CLIENT'S OWN walk must reach, and the query the walk
- * asks the product's own destination search with.
+ * The WALK fallback's fixed goal. The warp-item route does NOT use this: it reads the destination
+ * the Mod publishes for the totem the fixture armed (see SHARED_WORLD_WARP_ITEM_ACTION), so no
+ * location name is written down for the route a live run actually takes.
  */
 const SHARED_WORLD_DECLARED_LOCATION = "Saloon";
-
-/**
- * The villager the Host fixture places: the Saloon's own keeper. The walk has to know
- * WHO to stand beside (the fixture owns the placement; the runner owns the approach),
- * and the talk itself still names the person through the Mod's own published target id.
- */
-const SHARED_WORLD_FIXTURE_VILLAGER = "Gus";
 
 /**
  * The published capabilities the shared-world walk needs.
@@ -79,8 +67,44 @@ const SHARED_WORLD_STEP_TIMEOUT_MS = 20_000;
 const SHARED_WORLD_MOVE_BUDGET = 8;
 const SHARED_WORLD_NAVIGATION_ATTEMPTS = 6;
 
-/** How many published transitions one hop decision will ask the product about. */
-const SHARED_WORLD_HOP_PROBE_BUDGET = 4;
+/**
+ * The warp item that crosses maps in ONE action, and the destination it names.
+ *
+ * WHY THIS ROUTE EXISTS: measured live, the product cannot take this actor off the Farm
+ * by walking. The Farm's exits to `BusStop` and `Forest` are published on the map's
+ * impassable outer ring (`no_native_path` for every tile at x=79..80 and y=64..65, where the
+ * actor must stand to be within Chebyshev-1 of the warp), and the navigation graph cannot
+ * route either (`destination_unreachable`, because the intermediate locations are not loaded
+ * in the client's process). A warp totem touches neither: it moves the actor in one action,
+ * validated only by the totem's own mapped destination
+ * (`farmhandexecutioncontroller.itemtileactions.cs:175-213`).
+ */
+const SHARED_WORLD_WARP_ITEM_ACTION = "use_warp_item";
+
+/**
+ * How many of a location's published transitions one hop decision will consider.
+ *
+ * IT USED TO BE 4, AND THAT TRUNCATION WAS A DEFECT. Measured live: the Farm publishes EIGHT
+ * transitions - `BusStop@80,15 | BusStop@80,18 | BusStop@80,16 | BusStop@80,17 | Forest@40,65 |
+ * Forest@41,65 | Forest@42,65 | FarmCave@34,5` - and the four that survived the slice were all in
+ * the unreachable east strip, so `Forest` and `FarmCave` were never even proposed while the run
+ * spent thirteen rejected moves on the same four tiles. The whole published list is therefore
+ * considered, bounded well above any ordinary map's connectivity.
+ */
+const SHARED_WORLD_HOP_CANDIDATE_LIMIT = 16;
+
+/**
+ * The pause between two refused candidates of the same location.
+ *
+ * MEASURED, AND DELIBERATELY HONEST ABOUT WHAT IT IS FOR: the client log shows thirteen rejected
+ * `move_to_tile` requests inside about 1.3 seconds, and the two entries that follow them are
+ * `ai_player_control_pipe_reader_ended` and then `Disconnected: ClosedGame` - which is the gate's
+ * own teardown of the two SMAPI children after the runner reported its non-zero result, NOT the
+ * flood closing the client. So this pause is load mitigation, not a fix for a proven cause: each
+ * rejected move is real work on the game thread (the same log shows a dozen bridge stages per
+ * request), and pacing them keeps the flood from competing with the world it is walking through.
+ */
+const SHARED_WORLD_REJECTED_CANDIDATE_PAUSE_MS = 250;
 
 /**
  * How many approach moves one transition may cost, not counting tiles the map cannot contain.
@@ -119,6 +143,9 @@ const SHARED_WORLD_TRANSITION_RANGE_REASONS = ["warp_out_of_range", "door_out_of
  */
 const SHARED_WORLD_HOP_REQUIRED_REASONS = ["destination_access_indeterminate", "destination_unreachable"];
 
+/** How often the actionability wait re-reads the actor while a hold lasts. */
+const SHARED_WORLD_ACTIONABLE_POLL_MS = 100;
+
 /**
  * talk_to_npc live contract.
  *
@@ -144,7 +171,7 @@ const SHARED_WORLD_HOP_REQUIRED_REASONS = ["destination_access_indeterminate", "
  * discovery projection the Mod publishes (the same list npc_relationship and
  * interact_npc_with_item read), and the Mod re-resolves the person on the game thread.
  */
-export async function runTalkToNpcSmoke(client, receipts, config, { terminalTimeoutMs = 5_000 } = {}) {
+export async function runTalkToNpcSmoke(client, receipts, config, { terminalTimeoutMs = 5_000, stepTimeoutMs = SHARED_WORLD_STEP_TIMEOUT_MS } = {}) {
   const trace = [];
   const topology = classifyTopology(config);
   try {
@@ -156,16 +183,45 @@ export async function runTalkToNpcSmoke(client, receipts, config, { terminalTime
       snapshot,
       topology === "shared_world_farmhand" ? [...REQUIRED_CAPABILITIES, ...SHARED_WORLD_WALK_CAPABILITIES] : REQUIRED_CAPABILITIES,
     );
-    // The actor's location is the CLIENT's own Given. In the shared world the Farmhand
-    // joins in its own Cabin interior, and no shipped villager dialogue table has a key
-    // reachable from there, so the run must first WALK the actor to where the content is
-    // - with the product's own published locomotion, and with a name at every failure.
+    // The actor's location is the CLIENT's own Given. In the shared world the Farmhand joins in its
+    // own Cabin interior, and no shipped villager dialogue table has a key reachable from there - so
+    // the run must first get the actor to where the content is. TWO ROUTES, in this order:
+    //   * the warp item the Mod publishes (measured: the only route that leaves this Farm at all,
+    //     because its exits sit on the map's impassable outer ring and the graph cannot route);
+    //   * the walk, when the world advertises no usable totem - the honest second form, and the one
+    //     the native-local lane's own worlds exercise.
     if (topology === "shared_world_farmhand") {
-      snapshot = await walkSharedWorldActorToTalk(client, receipts, trace, {
-        navigationTimeoutMs: SHARED_WORLD_NAVIGATION_TIMEOUT_MS,
-        stepTimeoutMs: SHARED_WORLD_STEP_TIMEOUT_MS,
-        navigationAttempts: SHARED_WORLD_NAVIGATION_ATTEMPTS,
+      const context = {
+        phase: "start",
+        attempt: 0,
+        location: snapshot.location ?? null,
+        tile: snapshot.tile ?? null,
+        lastHop: "none",
+      };
+      const warpRoute = chooseWarpItemRoute(snapshot);
+      trace.push({
+        step: "route",
+        route: warpRoute === null ? "walk" : "warp_item",
+        from: snapshot.location ?? null,
+        warp_targets: describeWarpItemTargets(snapshot),
       });
+      if (warpRoute !== null) {
+        if (!snapshot.capabilities.includes(SHARED_WORLD_WARP_ITEM_ACTION))
+          throw new Error(
+            `talk_to_npc_shared_world_warp_item_capability_missing:${SHARED_WORLD_WARP_ITEM_ACTION}:destination=${warpRoute.destination}`,
+          );
+        try {
+          snapshot = await arriveByWarpItem(client, receipts, trace, { stepTimeoutMs, terminalTimeoutMs }, context);
+        } catch (error) {
+          throw nameWalkFailure(context, error);
+        }
+      } else {
+        snapshot = await walkSharedWorldActorToTalk(client, receipts, trace, {
+          navigationTimeoutMs: SHARED_WORLD_NAVIGATION_TIMEOUT_MS,
+          stepTimeoutMs,
+          navigationAttempts: SHARED_WORLD_NAVIGATION_ATTEMPTS,
+        });
+      }
     }
     const actorLocation = snapshot.location ?? null;
     const target = chooseAdjacentVillager(snapshot);
@@ -359,6 +415,109 @@ async function walkSharedWorldActorToTalk(client, receipts, trace, { navigationT
 }
 
 /**
+ * The warp-item route: read the totem the Mod PUBLISHES, activate it, and confirm the arrival
+ * it produced.
+ *
+ * The destination is never written here. The fixture arms one totem whose destination is a
+ * location with a location-keyed villager line, and the snapshot's own `warpItemTargets`
+ * carries that destination, its slot and its item id - the same projection the action executes
+ * against, so the runner and the product cannot disagree about where the actor is going.
+ *
+ * Returns the fresh observation of the arrival; every stop is named, including the totem's own
+ * refusal codes (`warp_item_not_usable_here` and friends, which say which context fact was
+ * false) and the arrival check itself.
+ */
+async function arriveByWarpItem(client, receipts, trace, { stepTimeoutMs, terminalTimeoutMs }, context) {
+  const before = await observeActionableActor(client, stepTimeoutMs);
+  if (before.snapshot === null)
+    throw new Error(
+      `talk_to_npc_shared_world_walk_actor_not_actionable:${before.held.location}` +
+        `:tile=${formatTile(before.held.tile)}:phase=warp_item:polls=${before.polls}:window_ms=${stepTimeoutMs}`,
+    );
+  const advertised = chooseWarpItemRoute(before.snapshot);
+  if (advertised === null)
+    throw new Error(
+      `talk_to_npc_shared_world_warp_item_not_advertised:${before.snapshot.location ?? "unknown"}` +
+        `:targets=${describeWarpItemTargets(before.snapshot)}`,
+    );
+
+  context.phase = "warp_item";
+  const requestId = `native_local_talk_to_npc_warp_item_${Date.now()}`;
+  const accepted = await executeFresh(client, {
+    requestId,
+    idempotencyKey: `${requestId}_idem`,
+    action: SHARED_WORLD_WARP_ITEM_ACTION,
+    args: { slot: advertised.slot, expectedQualifiedItemId: advertised.qualifiedItemId },
+    snapshot: before.snapshot,
+    timeoutMs: stepTimeoutMs,
+  });
+  const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
+  trace.push({
+    step: "use_warp_item",
+    slot: advertised.slot,
+    item: advertised.qualifiedItemId,
+    destination: advertised.destination,
+    from: before.snapshot.location ?? null,
+    receipt: summarizeReceipt(terminal),
+    evidence: receiptEvidenceDetail(terminal),
+  });
+  if (terminal.state !== "succeeded" || terminal.reasonCode !== "warp_item_arrived")
+    throw new Error(
+      `talk_to_npc_shared_world_warp_item_failed:${terminal.state}/${terminal.reasonCode}` +
+        `:slot=${advertised.slot}:item=${advertised.qualifiedItemId}:destination=${advertised.destination}` +
+        `:from=${before.snapshot.location ?? "unknown"}`,
+    );
+
+  // The world change, re-read after the terminal: the actor is IN the destination the totem
+  // names. A same-frame read is not the arrival, so the observation is fresh and actionable.
+  context.phase = "warp_item_arrival";
+  const arrived = await observeActionableActor(client, stepTimeoutMs);
+  if (arrived.snapshot === null)
+    throw new Error(
+      `talk_to_npc_shared_world_walk_actor_not_actionable:${arrived.held.location}` +
+        `:tile=${formatTile(arrived.held.tile)}:phase=warp_item_arrival:polls=${arrived.polls}:window_ms=${stepTimeoutMs}`,
+    );
+  if (arrived.snapshot.location !== advertised.destination)
+    throw new Error(
+      `talk_to_npc_shared_world_warp_item_location_mismatch:${arrived.snapshot.location ?? "unknown"}` +
+        `:expected=${advertised.destination}:tile=${formatTile(arrived.snapshot.tile)}`,
+    );
+  // The arrival is the destination the totem named, and the actor still has to be BESIDE the
+  // villager: the totem lands on the location's own entry tile, which is wherever the game chose.
+  context.phase = "stand_adjacent";
+  return await standAdjacentToVillager(client, receipts, trace, arrived.snapshot, { stepTimeoutMs });
+}
+
+/**
+ * The totem the Mod advertises for a destination the actor is NOT already standing in.
+ *
+ * The `destination !== location` filter is the action's own admission rule
+ * (`farmhandexecutioncontroller.itemtileactions.cs:336-342` refuses a totem whose destination
+ * is the current location), so choosing one that fails it would make the run fail for a
+ * reason the request cannot fix.
+ */
+function chooseWarpItemRoute(snapshot) {
+  const targets = Array.isArray(snapshot.warpItemTargets) ? snapshot.warpItemTargets : [];
+  const usable = targets.filter(
+    (entry) =>
+      Number.isInteger(entry?.slot) &&
+      entry.slot >= 0 &&
+      typeof entry?.qualifiedItemId === "string" &&
+      entry.qualifiedItemId.length > 0 &&
+      typeof entry?.destination === "string" &&
+      entry.destination.length > 0 &&
+      entry.destination !== snapshot.location,
+  );
+  return usable.length === 0 ? null : usable[0];
+}
+
+function describeWarpItemTargets(snapshot) {
+  const targets = Array.isArray(snapshot.warpItemTargets) ? snapshot.warpItemTargets : [];
+  if (targets.length === 0) return "none";
+  return targets.map((entry) => `${entry?.qualifiedItemId ?? "?"}@slot${entry?.slot ?? "?"}->${entry?.destination ?? "?"}`).join("|");
+}
+
+/**
  * Turn ANY throw from the walk into a failure that names the walk's own progress.
  *
  * WHY THIS EXISTS: a live run's result carried only the transport's error
@@ -371,9 +530,13 @@ async function walkSharedWorldActorToTalk(client, receipts, trace, { navigationT
  */
 function nameWalkFailure(context, error) {
   const message = String(error instanceof Error ? error.message : error);
-  if (message.startsWith("talk_to_npc_shared_world_walk_")) return error instanceof Error ? error : new Error(message);
+  // The route's own named failures pass through untouched; anything else is wrapped with the phase,
+  // the attempt and the last transition, so the cause survives. The wrapper's own name says which
+  // route was in flight, because a warp-item fault and a walk fault are different findings.
+  if (message.startsWith("talk_to_npc_shared_world_")) return error instanceof Error ? error : new Error(message);
+  const route = String(context.phase).startsWith("warp_item") ? "warp_item" : "walk";
   return new Error(
-    `talk_to_npc_shared_world_walk_error:${context.phase}:attempt=${context.attempt}` +
+    `talk_to_npc_shared_world_${route}_error:${context.phase}:attempt=${context.attempt}` +
       `:location=${context.location ?? "unknown"}:tile=${formatTile(context.tile)}` +
       `:last_hop=${context.lastHop}:cause=${message.slice(0, 160)}`,
   );
@@ -405,9 +568,18 @@ function formatTile(tile) {
 async function walkSharedWorldActorToDestination(client, receipts, trace, { navigationTimeoutMs, stepTimeoutMs, navigationAttempts }, context) {
   let current = await observeTopologySnapshot(client, "shared_world_farmhand", { actionable: true, timeoutMs: stepTimeoutMs });
   if (current.location === SHARED_WORLD_DECLARED_LOCATION) return current;
-  // Where the walk has already stood. A hop back to a map it left is how a bounded walk
-  // oscillates instead of progressing, so a visited location is never a hop target again.
+  // Where the walk has already stood. A hop back into a map it left is how a bounded walk oscillates
+  // instead of progressing, so a visited location is not a FORWARD hop target - but it may be
+  // retreated to, once (see `chooseProductHop`): the point of `visited` is to stop oscillation, not
+  // to forbid an honest retreat out of a dead end.
   const visited = new Set([current.location]);
+  // Transitions this walk has already driven and been refused. A refusal is the product's verdict
+  // about that transition where the actor stood, so re-driving it on the way back through costs a
+  // flood of rejected requests for nothing - measured: thirteen refusals in ~1.3 s when the walk
+  // re-walked the same east strip.
+  const refusedTransitions = new Set();
+  let cameFrom = null;
+  let retreated = false;
 
   for (let attempt = 1; attempt <= navigationAttempts; attempt++) {
     context.attempt = attempt;
@@ -448,6 +620,22 @@ async function walkSharedWorldActorToDestination(client, receipts, trace, { navi
     }
 
     context.phase = "navigate";
+    // Fly the navigation from a FRESH ACTIONABLE observation, not from the snapshot the last hop
+    // arrived on. Measured live: the actor warped into the Farm Cave with `can_move=False` (the fade)
+    // and the product answered the next navigation `rejected / destination_locked`, which is exactly
+    // `!PlayerActionable` (`navigationoutcomedecider.cs:79-81`).
+    //
+    // A hold that survives the whole window is NOT answered with a hop: every action needs a free
+    // actor (`move_to_tile`, `enter_exit` and `travel` all admit on it), so a hop could not leave the
+    // map either. What the walk owes the reader is the place and the duration, which is what this
+    // failure names - and it replaces what used to look like a transport or bridge fault.
+    const free = await observeActionableActor(client, stepTimeoutMs);
+    if (free.snapshot === null)
+      throw new Error(
+        `talk_to_npc_shared_world_walk_actor_not_actionable:${free.held.location}` +
+          `:tile=${formatTile(free.held.tile)}:attempt=${attempt}:polls=${free.polls}:window_ms=${stepTimeoutMs}`,
+      );
+    current = free.snapshot;
     const requestId = `native_local_talk_to_npc_navigate_${attempt}_${Date.now()}`;
     const accepted = await executeFresh(client, {
       requestId,
@@ -488,12 +676,16 @@ async function walkSharedWorldActorToDestination(client, receipts, trace, { navi
     // Not reachable in one call. Take exactly one map's worth of progress, chosen from the
     // product's own data, and ask again from there.
     context.phase = "hop_choose";
-    const decision = await chooseProductHop(client, current, visited, trace);
+    const decision = await chooseProductHop(client, current, visited, trace, {
+      cameFrom,
+      retreatAllowed: !retreated,
+      refusedTransitions,
+    });
     if (decision.ordered.length === 0)
       throw new Error(
         `talk_to_npc_shared_world_walk_no_hop:${current.location ?? "unknown"}` +
           `:tile=${current.tile?.x},${current.tile?.y}:navigation=${terminal.state}/${terminal.reasonCode}` +
-          `:candidates=${decision.candidates}`,
+          `:retreated=${retreated}:candidates=${decision.candidates}`,
       );
     // This location may publish several ways on - the Farm's east gate is a four-tile strip, and
     // the native pathfinder refused the first one. A refusal is the product's verdict about THAT
@@ -509,6 +701,9 @@ async function walkSharedWorldActorToDestination(client, receipts, trace, { navi
         break;
       }
       tried.push({ target: candidate.entry.targetLocation, source: { x: candidate.entry.sourceX, y: candidate.entry.sourceY }, refusals: hop.refusals });
+      refusedTransitions.add(`${candidate.entry.targetLocation}@${candidate.entry.sourceX},${candidate.entry.sourceY}`);
+      // Pace the refusals: see SHARED_WORLD_REJECTED_CANDIDATE_PAUSE_MS.
+      await delay(SHARED_WORLD_REJECTED_CANDIDATE_PAUSE_MS);
     }
     if (arrived === null) {
       // Every way out of this location was refused. The reason code names the location and lists
@@ -523,6 +718,8 @@ async function walkSharedWorldActorToDestination(client, receipts, trace, { navi
       );
     }
     visited.add(current.location);
+    cameFrom = current.location;
+    if (decision.retreat) retreated = true;
     current = arrived;
   }
 
@@ -560,13 +757,31 @@ async function walkSharedWorldActorToDestination(client, receipts, trace, { navi
  * budget walks around a detour and why a walk that cannot progress stops with every candidate
  * and its search state named.
  */
-async function chooseProductHop(client, snapshot, visited, trace) {
-  const transitions = locationTransitions(snapshot).slice(0, SHARED_WORLD_HOP_PROBE_BUDGET);
+async function chooseProductHop(client, snapshot, visited, trace, { cameFrom = null, retreatAllowed = false, refusedTransitions = new Set() } = {}) {
+  const transitions = locationTransitions(snapshot)
+    .slice(0, SHARED_WORLD_HOP_CANDIDATE_LIMIT)
+    .filter((entry) => !refusedTransitions.has(`${entry.targetLocation}@${entry.sourceX},${entry.sourceY}`));
   const probes = [];
   for (const entry of transitions) probes.push({ entry, answer: await probeHopCandidate(client, entry) });
+  const goal = probes.filter(({ entry }) => entry.targetLocation === SHARED_WORLD_DECLARED_LOCATION && !visited.has(entry.targetLocation));
+  const forward = probes.filter(({ entry }) => !visited.has(entry.targetLocation) && entry.targetLocation !== SHARED_WORLD_DECLARED_LOCATION);
+  // Prefer a target the product's own search can NAME. Reported per candidate in the trace, and it
+  // is a preference and not a gate: measured live, the search answered `not_found` for a neighbour
+  // whose transition drove perfectly, so an unnamed neighbour must still be taken when it is all
+  // there is. Within each group the map's own published order is kept.
+  const named = forward.filter(({ answer }) => answer.selector !== null);
+  const unnamed = forward.filter(({ answer }) => answer.selector === null);
+  // THE HONEST RETREAT: with nowhere forward left, the way back is a legitimate hop - a dead end
+  // (the Farm Cave was one) must be leavable - but only once, so a bounded walk cannot oscillate.
+  const retreat =
+    goal.length === 0 && forward.length === 0 && retreatAllowed && cameFrom !== null
+      ? probes.filter(({ entry }) => entry.targetLocation === cameFrom).slice(0, 1)
+      : [];
   trace.push({
     step: "hop_candidates",
     from: snapshot.location ?? null,
+    cameFrom,
+    retreatOffered: retreat.length > 0,
     candidates: probes.map(({ entry, answer }) => ({
       targetLocation: entry.targetLocation,
       source: { x: entry.sourceX, y: entry.sourceY },
@@ -579,13 +794,11 @@ async function chooseProductHop(client, snapshot, visited, trace) {
       // What the product's own search said about this target: information, not a gate.
       searchNamed: answer.selector !== null,
       visited: visited.has(entry.targetLocation),
+      recent: entry.targetLocation === cameFrom,
     })),
   });
-  const chosen = [
-    ...probes.filter(({ entry }) => entry.targetLocation === SHARED_WORLD_DECLARED_LOCATION),
-    ...probes.filter(({ entry }) => entry.targetLocation !== SHARED_WORLD_DECLARED_LOCATION),
-  ].filter(({ entry }) => !visited.has(entry.targetLocation));
-  return { ordered: chosen, candidates: describeHopCandidates(probes) };
+  const ordered = [...goal, ...named, ...unnamed, ...retreat];
+  return { ordered, retreat: retreat.length > 0, candidates: describeHopCandidates(probes) };
 }
 
 /** What the product's own search says about one published transition. */
@@ -701,7 +914,39 @@ function approachCandidates(source, actorTile) {
     });
 }
 
-/** The product's own transition range: Chebyshev-1 of the warp's source tile. */
+/**
+ * Observe UNTIL the actor is genuinely free to act, or report the hold with where it was.
+ *
+ * MEASURED, AND THE REASON THIS POLLS: the previous version sampled once - `observeTopologySnapshot`
+ * rethrows `native_snapshot_not_actionable` immediately - so a live run that warped into the Farm
+ * Cave reported `actor_not_actionable:FarmCave:tile=8,11:cause=native_snapshot_not_actionable` from a
+ * SINGLE observation taken at the warp instant, and the topology was torn down about a second later.
+ * The product's own field is `player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp`
+ * (`game1navigationworldsource.cs:51`), and `CanMove` is false for the length of a warp FADE, which
+ * is frames, not seconds. What made the old failure instant was the sampling, not the hold; a hold
+ * that really never clears now ends at this deadline and says so.
+ */
+async function observeActionableActor(client, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let held = null;
+  let polls = 0;
+  while (Date.now() < deadline) {
+    held = await observeTopologySnapshot(client, "shared_world_farmhand", { timeoutMs: Math.max(1, deadline - Date.now()) });
+    polls++;
+    if (held.actionable === true && held.activeExecution == null) return { snapshot: held, held: null, polls };
+    await delay(SHARED_WORLD_ACTIONABLE_POLL_MS);
+  }
+  return { snapshot: null, held: { location: held?.location ?? "unknown", tile: held?.tile ?? null }, polls };
+}
+
+/** The product's own refusal/terminal detail, verbatim and unsummarised. */
+function receiptEvidenceDetail(receipt) {
+  return typeof receipt?.evidence?.detail === "string" ? receipt.evidence.detail : null;
+}
+
+/**
+ * The product's own transition range: Chebyshev-1 of the warp's source tile.
+ */
 function inTransitionRange(tile, source) {
   return adjacentTile(tile, source);
 }
@@ -789,11 +1034,17 @@ async function moveActorOntoTile(client, receipts, trace, tile, timeoutMs) {
     timeoutMs,
   });
   const terminal = await waitForTerminal(receipts, accepted, timeoutMs);
-  trace.push({ step: "move_to_tile", tile, receipt: summarizeReceipt(terminal) });
+  // Carry the product's OWN diagnosis of a refusal, not just its code. Measured: every refused
+  // `move_to_tile` in a live run was `no_native_path`, and the Mod's refusal already names WHY
+  // (`StardewBodyController.cs:130-160`): `target_standable`, `target_walkable`, `blocked_by`,
+  // `target_enclosed`, `route_exists_cardinal`, `component_tiles`. Summarising the receipt threw
+  // all of it away, which is why the terrain question stayed open across three rounds while the
+  // answer rode on every refusal.
+  trace.push({ step: "move_to_tile", tile, receipt: summarizeReceipt(terminal), evidence: receiptEvidenceDetail(terminal) });
   if (terminal.state !== "succeeded" || terminal.reasonCode !== "target_reached")
     return {
       arrived: null,
-      refusal: { action: "move_to_tile", state: terminal.state, reasonCode: terminal.reasonCode, sourceX: tile.x, sourceY: tile.y },
+      refusal: { action: "move_to_tile", state: terminal.state, reasonCode: terminal.reasonCode, sourceX: tile.x, sourceY: tile.y, evidence: receiptEvidenceDetail(terminal) },
     };
   return { arrived: await observeTopologySnapshot(client, "shared_world_farmhand", { actionable: true, timeoutMs }), refusal: null };
 }
@@ -801,19 +1052,21 @@ async function moveActorOntoTile(client, receipts, trace, tile, timeoutMs) {
 /**
  * Walk the actor onto a tile Chebyshev-1 from the villager the Host fixture placed.
  *
- * The villager's tile is read from the snapshot the Mod publishes - the family target
- * list first, then the whole-world whereabouts projection - so the runner takes the
- * placement from the world rather than reproducing the fixture's own arithmetic.
+ * The villager's tile is read from the snapshot the Mod publishes - the family target list
+ * first, then the whole-world whereabouts projection - so the runner takes the placement from
+ * the world rather than reproducing the fixture's own arithmetic, and it takes the PERSON from
+ * there too: whichever villager the world publishes in this location IS the fixture's, because
+ * the fixture refuses to arm a run with a second target in reach.
  */
 async function standAdjacentToVillager(client, receipts, trace, snapshot, { stepTimeoutMs }) {
   const located = locateVillagerTile(snapshot);
   if (located === null)
     throw new Error(
-      `talk_to_npc_shared_world_walk_villager_not_locatable:${SHARED_WORLD_FIXTURE_VILLAGER}` +
-        `:location=${snapshot.location ?? "unknown"}:tile=${snapshot.tile?.x},${snapshot.tile?.y}`,
+      `talk_to_npc_shared_world_walk_villager_not_locatable:${snapshot.location ?? "unknown"}` +
+        `:tile=${formatTile(snapshot.tile)}:published=${describePublishedVillagers(snapshot)}`,
     );
   if (adjacentTile(snapshot.tile, located.tile)) {
-    trace.push({ step: "stand_adjacent", villager: SHARED_WORLD_FIXTURE_VILLAGER, tile: located.tile, source: located.source, actorTile: snapshot.tile });
+    trace.push({ step: "stand_adjacent", villager: located.npcName, tile: located.tile, source: located.source, actorTile: snapshot.tile });
     return snapshot;
   }
   const candidates = candidateStandingTiles(located.tile).filter(
@@ -825,31 +1078,47 @@ async function standAdjacentToVillager(client, receipts, trace, snapshot, { step
     const after = moved.arrived;
     const fresh = locateVillagerTile(after) ?? located;
     if (adjacentTile(after.tile, fresh.tile)) {
-      trace.push({ step: "stand_adjacent", villager: SHARED_WORLD_FIXTURE_VILLAGER, tile: fresh.tile, source: fresh.source, actorTile: after.tile });
+      trace.push({ step: "stand_adjacent", villager: fresh.npcName, tile: fresh.tile, source: fresh.source, actorTile: after.tile });
       return after;
     }
   }
   throw new Error(
-    `talk_to_npc_shared_world_walk_no_standing_tile:villager=${SHARED_WORLD_FIXTURE_VILLAGER}` +
-      `:tile=${located.tile.x},${located.tile.y}:actor_tile=${snapshot.tile?.x},${snapshot.tile?.y}`,
+    `talk_to_npc_shared_world_walk_no_standing_tile:villager=${located.npcName}` +
+      `:tile=${located.tile.x},${located.tile.y}:actor_tile=${formatTile(snapshot.tile)}`,
   );
 }
 
-/** The villager's own published tile, and which projection it came from. */
+/**
+ * The villager's own published tile, the projection it came from, and the person it names.
+ *
+ * No name is written down here: the fixture arms exactly one villager and asserts no second
+ * published target is in reach, so the first villager the world publishes in the current
+ * location is the one under test.
+ */
 function locateVillagerTile(snapshot) {
   const target = (snapshot.npcRelationshipTargets ?? []).find(
-    (entry) => entry?.npcName === SHARED_WORLD_FIXTURE_VILLAGER && Number.isInteger(entry.x) && Number.isInteger(entry.y),
+    (entry) => typeof entry?.npcName === "string" && Number.isInteger(entry.x) && Number.isInteger(entry.y),
   );
-  if (target !== undefined) return { tile: { x: target.x, y: target.y }, source: "npcRelationshipTargets" };
+  if (target !== undefined) return { tile: { x: target.x, y: target.y }, source: "npcRelationshipTargets", npcName: target.npcName };
   const whereabouts = (snapshot.villagerWhereabouts ?? []).find(
     (entry) =>
-      entry?.npcName === SHARED_WORLD_FIXTURE_VILLAGER &&
+      typeof entry?.npcName === "string" &&
       entry.location === snapshot.location &&
       Number.isInteger(entry.x) &&
       Number.isInteger(entry.y),
   );
-  if (whereabouts !== undefined) return { tile: { x: whereabouts.x, y: whereabouts.y }, source: "villagerWhereabouts" };
+  if (whereabouts !== undefined)
+    return { tile: { x: whereabouts.x, y: whereabouts.y }, source: "villagerWhereabouts", npcName: whereabouts.npcName };
   return null;
+}
+
+/** Every villager the snapshot publishes here, for a named failure. */
+function describePublishedVillagers(snapshot) {  const near = (snapshot.npcRelationshipTargets ?? []).map((entry) => `${entry?.npcName ?? "?"}@${entry?.x},${entry?.y}`);
+  const world = (snapshot.villagerWhereabouts ?? [])
+    .filter((entry) => entry?.location === snapshot.location)
+    .map((entry) => `${entry?.npcName ?? "?"}@${entry?.x},${entry?.y}`);
+  const all = [...near, ...world];
+  return all.length === 0 ? "none" : all.join("|");
 }
 
 /** The eight Chebyshev-1 tiles of a target, orthogonal neighbours before diagonals. */

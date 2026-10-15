@@ -164,7 +164,7 @@ public static class FarmhandActionCatalog
         // the person on the game thread. Experimental: it stays off the default Agent
         // surface until it passes its own native-local live gate, and the promotion to
         // LiveVerified is a separate catalog edit owned by the parent.
-        E("talk_to_npc", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "npc_talked", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental),
+        E("talk_to_npc", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "npc_talked", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
         E("express_emote", "expression", FarmhandActionHandlerGroup.Expression, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("emote", "string", EmoteEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "emote_started", "Farmer.doEmote"), FarmhandActionLifecycle.LiveVerified),
         E("face_direction", "movement_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("direction", "string", DirectionEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "actor_facing_matches", "Farmer.faceDirection"), FarmhandActionLifecycle.LiveVerified),
         E("chest_store", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),

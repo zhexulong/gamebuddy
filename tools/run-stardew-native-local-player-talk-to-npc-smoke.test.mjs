@@ -277,7 +277,23 @@ const SHARED_WORLD_CAPABILITIES = Object.freeze([
   "navigate_to_destination",
   ACTION,
   "travel",
+  "use_warp_item",
 ]);
+
+/**
+ * The totem the fixture arms in the live topology: one whose destination is a location with a
+ * location-keyed villager line. The runner never picks it - it reads the slot, the item and the
+ * destination from this published projection.
+ */
+const WARP_ITEM_TARGET = Object.freeze({
+  slot: 5,
+  qualifiedItemId: "(O)690",
+  displayName: "Warp Totem: Beach",
+  stack: 1,
+  destination: "Saloon",
+  destinationX: 0,
+  destinationY: 14,
+});
 const FARMHOUSE = "FarmHouseb7bb6250-7300-4ad8-b769-aabac1c518b9";
 const SALOON_DESTINATION = Object.freeze({ kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA" });
 
@@ -311,6 +327,11 @@ function makeSharedWorldClient({
   destinationAnswers = {},
   moveRefusals = [],
   rangeUnlessOnSource = false,
+  fadeAfterWarp = false,
+  fadeForever = false,
+  warpItemTarget = null,
+  warpItemReasonCode = "warp_item_arrived",
+  warpItemLandsIn = null,
   notAdmittedOnce = false,
 } = {}) {
   const receipts = [];
@@ -318,6 +339,7 @@ function makeSharedWorldClient({
   const transitionsTaken = [];
   const dispatches = [];
   let navigations = 0;
+  let fadePolls = 0;
   let pendingNotAdmitted = notAdmittedOnce;
 
   const snapshotAt = (location, tile, revision) => {
@@ -333,6 +355,7 @@ function makeSharedWorldClient({
       actionable: true,
       activeExecution: null,
       capabilities: [...SHARED_WORLD_CAPABILITIES],
+      warpItemTargets: warpItemTarget === null ? [] : [{ ...warpItemTarget }],
       warps: map.warps ?? [],
       doorTargets: map.doorTargets ?? [],
       npcRelationshipTargets:
@@ -358,6 +381,13 @@ function makeSharedWorldClient({
       if (pendingNotAdmitted) {
         pendingNotAdmitted = false;
         throw new Error("observe_snapshot_not_admitted");
+      }
+      // The warp fade: measured live, the actor arrived in the Farm Cave with `can_move=False` and the
+      // product refused the very next navigation for `destination_locked`. The snapshot is free again
+      // after a couple of polls.
+      if (fadePolls > 0) {
+        fadePolls--;
+        if (fadePolls === 0) client.state.snapshot.actionable = true;
       }
       return client.state.snapshot;
     },
@@ -391,6 +421,53 @@ function makeSharedWorldClient({
     execute: async (request) => {
       const live = client.state.snapshot;
       const base = { requestId: request.requestId, revision: live.revision + 1 };
+      if (request.action === "use_warp_item") {
+        const target = warpItemTarget ?? {};
+        if (request.args.slot !== target.slot || request.args.expectedQualifiedItemId !== target.qualifiedItemId) {
+          const wrong = {
+            ...base,
+            executionId: `walk-warp-item-slot-${receipts.length}`,
+            state: "rejected",
+            reasonCode: "item_slot_changed",
+            evidence: { detail: `slot=${request.args.slot};expected=${target.qualifiedItemId}` },
+          };
+          receipts.push(wrong);
+          return wrong;
+        }
+        if (warpItemReasonCode !== "warp_item_arrived") {
+          // The product's own refusal, with the context fact that was false in its evidence
+          // (`farmhandexecutioncontroller.itemtileactions.cs:346-389`).
+          const refused = {
+            ...base,
+            executionId: `walk-warp-item-refused-${receipts.length}`,
+            state: "rejected",
+            reasonCode: warpItemReasonCode,
+            evidence: {
+              detail:
+                `slot=${target.slot};item=${target.qualifiedItemId};origin=${live.location};` +
+                `destination=${target.destination};usable_context=false;native_use_started=false;` +
+                "stack_before=1;stack_after=1;routine_armed=false",
+            },
+          };
+          receipts.push(refused);
+          return refused;
+        }
+        const arrived = {
+          ...base,
+          executionId: `walk-warp-item-${receipts.length}`,
+          state: "succeeded",
+          reasonCode: "warp_item_arrived",
+          evidence: {
+            detail:
+              `slot=${target.slot};item=${target.qualifiedItemId};origin=${live.location};` +
+              `destination=${target.destination};usable_context=true;native_use_started=true;` +
+              "stack_before=1;stack_after=0;routine_armed=true",
+          },
+        };
+        receipts.push(arrived);
+        settle({ location: warpItemLandsIn ?? target.destination, revision: arrived.revision });
+        return arrived;
+      }
       if (request.action === "move_to_tile") {
         // A tile the native pathfinder refuses: the product's own verdict about THAT tile
         // (`failed / no_native_path`, measured live on the Farm's east gate), not a code this
@@ -401,7 +478,14 @@ function makeSharedWorldClient({
             executionId: `walk-move-refused-${request.args.x}-${request.args.y}-${receipts.length}`,
             state: "failed",
             reasonCode: "no_native_path",
-            evidence: { detail: `target=${request.args.x},${request.args.y};reason=no_native_path` },
+            evidence: {
+              // The product's own diagnosis of a null path, verbatim in shape:
+              // `StardewBodyController.cs:130-160`.
+              detail:
+                `from=${live.tile.x},${live.tile.y};to=${request.args.x},${request.args.y};location=${live.location};` +
+                "target_standable=false;target_walkable=true;blocked_by=none;target_enclosed=true;derived=true;" +
+                "probe=cardinal_flood;probe_says_reachable=false;route_exists_cardinal=false;component_tiles=1203",
+            },
           };
           receipts.push(refused);
           return refused;
@@ -465,10 +549,28 @@ function makeSharedWorldClient({
         };
         receipts.push(receipt);
         settle({ location: entry.targetLocation, tile: { x: entry.targetX, y: entry.targetY }, revision: receipt.revision });
+        if (fadeAfterWarp || fadeForever) {
+          client.state.snapshot.actionable = false;
+          fadePolls = fadeForever ? Number.POSITIVE_INFINITY : 4;
+        }
         return receipt;
       }
       if (request.action === "navigate_to_destination") {
         navigations += 1;
+        // The product's own pre-routing verdict (`navigationoutcomedecider.cs:79-81`): an actor who is
+        // not free to act is refused `destination_locked`, before any routing is attempted.
+        if (!live.actionable) {
+          const locked = {
+            requestId: request.requestId,
+            revision: live.revision + 1,
+            executionId: `walk-navigate-locked-${navigations}`,
+            state: "rejected",
+            reasonCode: "destination_locked",
+            evidence: { detail: "destination=Saloon;actionable=false" },
+          };
+          receipts.push(locked);
+          return locked;
+        }
         const selector = request.args.destination ?? {};
         if (navigations <= navigateBlockedCount) {
           // What the Mod really answers from INSIDE a farmhand Cabin interior: blocked on
@@ -538,11 +640,11 @@ function makeSharedWorldClient({
   return { client, receipts, queries, transitionsTaken, dispatches };
 }
 
-function runShared(options = {}) {
+function runShared(options = {}, smoke = {}) {
   const session = makeSharedWorldClient(options);
   return {
     ...session,
-    result: () => runTalkToNpcSmoke(session.client, session.receipts, SHARED_WORLD_CONFIG, { terminalTimeoutMs: 1_000 }),
+    result: () => runTalkToNpcSmoke(session.client, session.receipts, SHARED_WORLD_CONFIG, { terminalTimeoutMs: 1_000, ...smoke }),
   };
 }
 
@@ -572,7 +674,7 @@ test("talk_to_npc: a shared-world actor in its Cabin walks to the Saloon with th
   // invented: the query is the declared location and the selector is what came back.
   assert.deepEqual(session.queries, [{ operation: "find_destination", args: { query: "Saloon" } }]);
   const steps = result.trace.map((entry) => entry.step);
-  assert.deepEqual(steps.slice(0, 2), ["find_destination", "navigate_to_destination"], "one search, one multi-hop navigation");
+  assert.deepEqual(steps.slice(0, 3), ["route", "find_destination", "navigate_to_destination"], "route, one search, one multi-hop navigation");
   assert.ok(steps.includes("stand_adjacent"), "the actor is walked beside the villager before talking");
   // The villager is still named through the Mod's own published target id, and the person
   // is the fixture's, so the walk did not change who gets talked to.
@@ -626,6 +728,7 @@ test("talk_to_npc: a neighbour the destination search cannot name is still a hop
       candidateStates: [],
       searchNamed: false,
       visited: false,
+      recent: false,
     },
   ]);
   // The search was still asked - the answer is evidence, not a gate.
@@ -828,6 +931,318 @@ test("talk_to_npc: an error thrown inside a hop becomes a named walk failure, no
   assert.ok(result.trace.some((entry) => entry.step === "navigate_to_destination"));
 });
 
+test("talk_to_npc: the walk considers every published transition group, not just the first four", async () => {
+  // The measured live shape: the Farm publishes EIGHT transitions, the four that survived the old
+  // four-candidate slice were all in the unreachable east strip, and Forest@40,65 / FarmCave@34,5
+  // were never even proposed while the run spent thirteen rejected moves on the same four tiles.
+  const maps = sharedWorldMaps({
+    cabinWarps: [transition(3, 12, "Farm", 52, 16)],
+    townTransitions: { warps: [transition(31, 12, "Farm", 52, 16)], doorTargets: [transition(14, 20, "Saloon", 12, 17)] },
+  });
+  maps.Farm = {
+    tile: { x: 52, y: 16 },
+    warps: [
+      transition(80, 15, "BusStop", 20, 12),
+      transition(80, 18, "BusStop", 20, 12),
+      transition(80, 16, "BusStop", 20, 12),
+      transition(80, 17, "BusStop", 20, 12),
+      transition(40, 65, "Forest", 40, 65),
+      transition(41, 65, "Forest", 40, 65),
+      transition(42, 65, "Forest", 40, 65),
+      transition(34, 5, "FarmCave", 34, 5),
+    ],
+  };
+  maps.Forest = { tile: { x: 40, y: 65 }, warps: [transition(45, 65, "Town", 30, 21)] };
+  const session = runShared({
+    maps,
+    navigateBlockedCount: 2,
+    navigateBlockedReasonCode: "destination_unreachable",
+    // The whole east strip is unreachable for this actor, which is what the live log measured.
+    moveRefusals: ["80,15", "79,15", "79,16", "80,16", "80,18", "79,17", "79,18", "80,17"],
+  });
+  const result = await session.result();
+  assert.equal(result.state, "passed", "the southern road must be found after the east strip fails");
+  assert.equal(result.actorLocation, "Saloon");
+  const catalogue = result.trace.find((entry) => entry.step === "hop_candidates" && entry.from === "Farm");
+  assert.equal(catalogue.candidates.length, 8, "all eight published transitions are considered");
+  assert.deepEqual(
+    catalogue.candidates.map((entry) => `${entry.targetLocation}@${entry.source.x},${entry.source.y}`),
+    [
+      "BusStop@80,15",
+      "BusStop@80,18",
+      "BusStop@80,16",
+      "BusStop@80,17",
+      "Forest@40,65",
+      "Forest@41,65",
+      "Forest@42,65",
+      "FarmCave@34,5",
+    ],
+  );
+  assert.deepEqual(
+    session.transitionsTaken.map((entry) => `${entry.targetLocation}@${entry.sourceX},${entry.sourceY}`),
+    ["Farm@3,12", "Forest@40,65"],
+    "the east strip is written off and the southern road is taken",
+  );
+  // THE MEASUREMENT THE LIVE RUN COULD NOT MAKE: a Farm-internal move succeeding. The east strip
+  // being refused is terrain or connectivity, not an actor that cannot path on the Farm at all.
+  assert.ok(
+    result.trace.some(
+      (entry) => entry.step === "move_to_tile" && entry.tile.x === 40 && entry.tile.y === 65 && entry.receipt.state === "succeeded",
+    ),
+    "a Farm-internal move reaches (40,65), so the blocker was the east strip",
+  );
+});
+
+test("talk_to_npc: refused candidates are paced rather than flooded at the game thread", async () => {
+  // The client log shows thirteen rejected moves inside about 1.3 seconds. The entries immediately
+  // after them are the pipe ending and the game disposing, which is the gate's own teardown after
+  // the runner reported its result - so the flood is NOT what closed the client. The pause is load
+  // mitigation: each rejected move is real work on the game thread.
+  const session = runShared({
+    maps: sharedWorldMaps({ cabinWarps: [transition(6, 5, "Farm")] }),
+    navigateBlockedCount: 1,
+    navigateBlockedReasonCode: "destination_unreachable",
+  });
+  const original = session.client.execute;
+  session.client.execute = async (request) => {
+    if (request.action === "enter_exit" || request.action === "travel") {
+      const receipt = {
+        requestId: request.requestId,
+        revision: session.client.state.snapshot.revision + 1,
+        executionId: `walk-refused-${session.receipts.length}`,
+        state: "rejected",
+        reasonCode: "door_not_available",
+        evidence: { detail: `source=${request.args.x},${request.args.y}` },
+      };
+      session.receipts.push(receipt);
+      return receipt;
+    }
+    return await original(request);
+  };
+  const startedAt = Date.now();
+  const result = await session.result();
+  const elapsed = Date.now() - startedAt;
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /^talk_to_npc_shared_world_walk_transition_refused:/u);
+  assert.ok(elapsed >= 200, `a refused candidate must be followed by a pause, not an immediate retry (${elapsed}ms)`);
+});
+
+test("talk_to_npc: a navigation is dispatched from a free actor, not from the warp the walk arrived on", async () => {
+  // THE MEASURED LIVE FAILURE: the actor warped into the Farm Cave with `can_move=False` (the fade),
+  // the walk dispatched the next navigation from that arrival snapshot, and the product answered
+  // `rejected / destination_locked` - which is `!PlayerActionable`
+  // (`navigationoutcomedecider.cs:79-81`, view field at `game1navigationworldsource.cs:51`), not a
+  // closed destination and not the clock. The walk now waits for a free actor before dispatching.
+  const session = runShared({
+    navigateBlockedCount: 1,
+    navigateBlockedReasonCode: "destination_access_indeterminate",
+    fadeAfterWarp: true,
+  });
+  const result = await session.result();
+  assert.equal(result.state, "passed", "the warp fade must be waited out, not dispatched into");
+  assert.equal(result.actorLocation, "Saloon");
+  assert.equal(
+    result.trace.some((entry) => entry.receipt?.reasonCode === "destination_locked"),
+    false,
+    "no navigation may be refused for a hold the walk could have waited out",
+  );
+});
+
+test("talk_to_npc: a target the search can name is preferred over one it cannot", async () => {
+  // The cave is published before the forest road and the search can name neither by its internal
+  // name, so name the forest in the fixture: the walk must take the nameable target first. This is a
+  // preference, not a gate - the unnamed target is still taken when it is all there is.
+  const maps = sharedWorldMaps({
+    cabinWarps: [transition(3, 12, "Farm", 52, 16)],
+    townTransitions: { warps: [transition(31, 12, "Farm", 52, 16)], doorTargets: [transition(14, 20, "Saloon", 12, 17)] },
+  });
+  maps.Farm = {
+    tile: { x: 52, y: 16 },
+    warps: [transition(34, 5, "FarmCave", 34, 5), transition(40, 65, "Forest", 40, 65)],
+  };
+  maps.Forest = { tile: { x: 40, y: 65 }, warps: [transition(45, 65, "Town", 30, 21)] };
+  const session = runShared({
+    maps,
+    navigateBlockedCount: 2,
+    navigateBlockedReasonCode: "destination_unreachable",
+    destinationAnswers: { FarmCave: { status: "not_found", reason: "destination_not_found" } },
+  });
+  const result = await session.result();
+  assert.equal(result.state, "passed");
+  assert.equal(result.actorLocation, "Saloon");
+  assert.deepEqual(
+    session.transitionsTaken.map((entry) => entry.targetLocation),
+    ["Farm", "Forest"],
+    "the nameable target is taken first, though the cave is published first",
+  );
+  const catalogue = result.trace.find((entry) => entry.step === "hop_candidates" && entry.from === "Farm");
+  assert.deepEqual(
+    catalogue.candidates.map((entry) => `${entry.targetLocation}:searchNamed=${entry.searchNamed}`),
+    ["FarmCave:searchNamed=false", "Forest:searchNamed=true"],
+    "and the per-name answers are recorded, which is the measurement the live run could not make",
+  );
+});
+
+test("talk_to_npc: a hold that survives the whole window is named, with where and how long", async () => {
+  // The measured live shape: the actor warped into the Farm Cave and was not actionable there. The
+  // previous version sampled ONCE and reported the hold instantly; this version polls for the whole
+  // window (a warp fade is frames, and a cleared fade now simply proceeds - see the destination_locked
+  // case). A hold that outlasts the window cannot be answered with a hop either, because every action
+  // - including enter_exit and travel - admits on a free actor; so it is named with the place, the
+  // number of polls and the window, instead of looking like a bridge fault.
+  const maps = {
+    [FARMHOUSE]: { tile: { x: 5, y: 5 }, warps: [transition(3, 12, "Farm", 52, 16)] },
+    Farm: { tile: { x: 52, y: 16 }, warps: [transition(34, 5, "FarmCave", 8, 11)] },
+    FarmCave: { tile: { x: 8, y: 11 }, warps: [transition(8, 12, "Farm", 52, 16)] },
+  };
+  const session = runShared(
+    { maps, navigateBlockedCount: Number.POSITIVE_INFINITY, navigateBlockedReasonCode: "destination_access_indeterminate", fadeAfterWarp: true, fadeForever: true },
+    { stepTimeoutMs: 300 },
+  );
+  const result = await session.result();
+  assert.equal(result.state, "blocked");
+  assert.match(result.reasonCode, /^talk_to_npc_shared_world_walk_actor_not_actionable:Farm:tile=52,16:attempt=2:polls=[1-9][0-9]*:window_ms=300$/u);
+});
+
+test("talk_to_npc: a refused move carries the product's own diagnosis of WHY", async () => {
+  // The measurement this suite was missing. Every refused move in every run was `no_native_path`,
+  // and the Mod's refusal already says whether the tile is standable, what blocks it, whether the
+  // planner's component contains it and how big that component is
+  // (`StardewBodyController.cs:130-160`). Summarising the receipt dropped all of it, which is why
+  // "is it terrain, occupancy, or an enclosed component?" stayed open for three rounds while the
+  // answer rode on every refusal.
+  const maps = sharedWorldMaps({ cabinWarps: [transition(6, 5, "Farm")] });
+  maps[FARMHOUSE] = { tile: { x: 1, y: 1 }, warps: [transition(6, 5, "Farm")] };
+  const session = runShared({
+    maps,
+    navigateBlockedCount: 1,
+    navigateBlockedReasonCode: "destination_unreachable",
+    // The cabin's pruned approach ring for the (6,5) warp, from an actor far from it.
+    moveRefusals: ["6,5", "5,4", "5,5", "6,4"],
+  });
+  const result = await session.result();
+  assert.equal(result.state, "blocked");
+  const refused = result.trace.find((entry) => entry.step === "move_to_tile" && entry.receipt.state === "failed");
+  assert.match(refused.evidence, /target_standable=false/u);
+  assert.match(refused.evidence, /blocked_by=none/u);
+  assert.match(refused.evidence, /component_tiles=1203/u);
+  const recorded = result.trace.find((entry) => entry.step === "hop_refused");
+  assert.match(recorded.tried[0].refusals[0].evidence, /route_exists_cardinal=false/u);
+});
+
+test("talk_to_npc: the warp item is the route that takes the actor to the declared location", async () => {
+  // THE LIVE ROUTE. The Farm cannot be left by walking (its exits sit on the map's impassable
+  // outer ring and the graph cannot route), so the actor is moved by a warp totem in ONE action.
+  // Nothing is written down here: the slot, the item and the destination all come from the
+  // snapshot's own published projection.
+  const session = runShared({ warpItemTarget: WARP_ITEM_TARGET });
+  const result = await session.result();
+  assert.equal(result.state, "passed");
+  assert.equal(result.actorLocation, "Saloon");
+  const route = result.trace.find((entry) => entry.step === "route");
+  assert.equal(route.route, "warp_item", "the totem is preferred over the walk");
+  const warp = result.trace.find((entry) => entry.step === "use_warp_item");
+  assert.equal(warp.slot, WARP_ITEM_TARGET.slot);
+  assert.equal(warp.item, WARP_ITEM_TARGET.qualifiedItemId);
+  assert.equal(warp.destination, WARP_ITEM_TARGET.destination);
+  assert.equal(warp.receipt.state, "succeeded");
+  assert.equal(warp.receipt.reasonCode, "warp_item_arrived");
+  // The arrival is the world's own fact, read fresh: the villager step then runs in the
+  // destination the totem named.
+  assert.equal(result.trace.some((entry) => entry.step === "find_destination"), false, "no walk was needed");
+  assert.ok(result.trace.some((entry) => entry.step === "observed"), "the talk's own evidence was recorded");
+});
+
+test("talk_to_npc: a warp item that does not arrive fails by name, not by a later talk", async () => {
+  // The totem's own terminal codes are what a refusal is reported with - `warp_item_not_usable_here`
+  // names the context fact that was false, and the run must not reach the talk at all.
+  const session = runShared({ warpItemTarget: WARP_ITEM_TARGET, warpItemReasonCode: "warp_item_not_usable_here" });
+  const result = await session.result();
+  assert.equal(result.state, "blocked");
+  assert.match(
+    result.reasonCode,
+    /^talk_to_npc_shared_world_warp_item_failed:rejected\/warp_item_not_usable_here:slot=5:item=\(O\)690:destination=Saloon:from=/u,
+  );
+  // The product's own context fact rides on the trace's receipt, not on the bounded reason code.
+  const warp = result.trace.find((entry) => entry.step === "use_warp_item");
+  assert.match(warp.evidence, /usable_context=false/u);
+  assert.match(warp.evidence, /native_use_started=false/u);
+});
+
+test("talk_to_npc: a warp item that arrives somewhere else fails the declared-location check", async () => {
+  // The receipt can claim the arrival; the FRESH LOCATION is the truth. A totem that lands the
+  // actor somewhere else is the honest geographic failure - and it must never be reported as a
+  // native talk refusal from the wrong map.
+  const session = runShared({ warpItemTarget: WARP_ITEM_TARGET, warpItemLandsIn: "Farm" });
+  const result = await session.result();
+  assert.equal(result.state, "blocked");
+  assert.equal(
+    result.reasonCode,
+    "talk_to_npc_shared_world_warp_item_location_mismatch:Farm:expected=Saloon:tile=64,15",
+  );
+});
+
+test("talk_to_npc: no advertised warp item falls back to the walk, and a missing capability is named", async () => {
+  // A world with no totem still gets the walk (the fallback is exercised, not dead), and a world
+  // that advertises one without publishing the capability is refused by name rather than
+  // dispatching an action the bridge cannot serve.
+  const walked = await runShared().result();
+  assert.equal(walked.state, "passed");
+  assert.equal(walked.trace.find((entry) => entry.step === "route").route, "walk");
+
+  const session = runShared({ warpItemTarget: WARP_ITEM_TARGET });
+  const original = session.client.observe;
+  session.client.observe = async () => {
+    const snapshot = await original();
+    snapshot.capabilities = snapshot.capabilities.filter((id) => id !== "use_warp_item");
+    return snapshot;
+  };
+  const result = await session.result();
+  assert.equal(result.state, "blocked");
+  assert.equal(
+    result.reasonCode,
+    "talk_to_npc_shared_world_warp_item_capability_missing:use_warp_item:destination=Saloon",
+  );
+});
+
+test("talk_to_npc: a villager placed beside the warp landing needs no pathing at all", async () => {
+  // THE LIVE SHAPE. Measured: the actor arrives on the Beach pier at its totem's landing tile and
+  // the native pathfinder refuses the long walk across it (`no_native_path`), so the fixture places
+  // the villager Chebyshev-1 FROM THE LANDING - the pair the native talk branch needs - and the
+  // approach step is then a no-op. The dialogue key is the plain location key either way, so the
+  // placement does not change which line resolves.
+  const session = runShared({ warpItemTarget: WARP_ITEM_TARGET, villagerTile: { x: 12, y: 18 } });
+  const result = await session.result();
+  assert.equal(result.state, "passed");
+  const adjacency = result.trace.find((entry) => entry.step === "stand_adjacent");
+  assert.deepEqual(adjacency.actorTile, { x: 12, y: 17 }, "the actor is still on the landing tile");
+  assert.deepEqual(adjacency.tile, { x: 12, y: 18 }, "and the villager is the tile beside it");
+  assert.equal(
+    result.trace.some((entry) => entry.step === "move_to_tile"),
+    false,
+    "an adjacent villager costs no movement, so nothing can be refused by the pathfinder",
+  );
+});
+
+test("talk_to_npc: a villager whose approach ring the pathfinder refuses fails by name", async () => {
+  // The measured failure that drove the placement change: the actor lands on the pier and every
+  // tile of the villager's own approach ring is refused (`no_native_path`). That is a geographic
+  // finding, named with the villager's tile and the actor's - never a native talk refusal from the
+  // wrong end of a map.
+  const ring = ["0,6", "1,6", "2,6", "0,7", "2,7", "0,8", "1,8", "2,8"];
+  const session = runShared({
+    warpItemTarget: WARP_ITEM_TARGET,
+    villagerTile: { x: 1, y: 7 },
+    moveRefusals: ring,
+  });
+  const result = await session.result();
+  assert.equal(result.state, "blocked");
+  assert.equal(
+    result.reasonCode,
+    "talk_to_npc_shared_world_walk_no_standing_tile:villager=Gus:tile=1,7:actor_tile=12,17",
+  );
+});
+
 test("talk_to_npc: a location with no transition at all fails by name", async () => {
   // The Cabin publishes no exit: the walk has nothing to hop to, so it reports exactly that
   // instead of surfacing later as a native refusal from the wrong map.
@@ -841,14 +1256,15 @@ test("talk_to_npc: a location with no transition at all fails by name", async ()
   assert.equal(
     result.reasonCode,
     `talk_to_npc_shared_world_walk_no_hop:${FARMHOUSE}:tile=5,5` +
-      `:navigation=blocked/destination_unreachable:candidates=none`,
+      `:navigation=blocked/destination_unreachable:retreated=false:candidates=none`,
     "the location reached, the tile it reached it on and the candidates it saw",
   );
 });
 
-test("talk_to_npc: a hop back to a map the walk already stood in is never taken, so it cannot loop", async () => {
-  // Two maps that only lead to each other. `visited` is what makes the walk stop at the dead end
-  // instead of bouncing between them until the hop cap, and the stop names the candidate it saw.
+test("talk_to_npc: a dead end is left once, and a second retreat is refused so the walk cannot loop", async () => {
+  // Two maps that only lead to each other. The way back out of a dead end is a legitimate hop - the
+  // Farm Cave was one live - but only ONCE: after retreating, the walk stops by name rather than
+  // bouncing between the two maps until the hop cap.
   const cycle = {
     LoopA: { tile: { x: 5, y: 5 }, warps: [transition(6, 5, "LoopB", 7, 7)] },
     LoopB: { tile: { x: 7, y: 7 }, warps: [transition(8, 7, "LoopA", 5, 5)] },
@@ -863,10 +1279,14 @@ test("talk_to_npc: a hop back to a map the walk already stood in is never taken,
   assert.equal(result.state, "blocked");
   assert.equal(
     result.reasonCode,
-    `talk_to_npc_shared_world_walk_no_hop:LoopB:tile=7,7` +
-      `:navigation=blocked/destination_access_indeterminate:candidates=LoopA@8,7=resolved/unknown`,
+    `talk_to_npc_shared_world_walk_no_hop:LoopA:tile=5,5` +
+      `:navigation=blocked/destination_access_indeterminate:retreated=true:candidates=LoopB@6,5=resolved/unknown`,
   );
-  assert.equal(session.transitionsTaken.length, 1, "one hop, then the only way back is refused by the walk itself");
+  assert.deepEqual(
+    session.transitionsTaken.map((entry) => entry.targetLocation),
+    ["LoopB", "LoopA"],
+    "forward into the dead end, then one honest retreat - and no more",
+  );
 });
 
 test("talk_to_npc: a refused hop on the way to a far destination names the refusal, not the walk", async () => {
@@ -997,6 +1417,7 @@ test("talk_to_npc: a far destination the product determines unreachable earns ON
       candidateStates: [],
       searchNamed: true,
       visited: false,
+      recent: false,
     },
   ]);
 });
@@ -1028,6 +1449,6 @@ test("talk_to_npc: a shared-world villager the snapshot cannot locate fails by n
   assert.equal(result.state, "blocked");
   assert.equal(
     result.reasonCode,
-    "talk_to_npc_shared_world_walk_villager_not_locatable:Gus:location=Saloon:tile=12,17",
+    "talk_to_npc_shared_world_walk_villager_not_locatable:Saloon:tile=12,17:published=none",
   );
 });

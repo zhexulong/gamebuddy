@@ -2991,3 +2991,54 @@ companion stayed in character, and the card-conformance obligation is listed so 
 
 The entry writes `audit.status = "pending"` into `loop-entry-report.json` for exactly this reason: the run is
 unfinished until the review lands and its findings are written into the design doc's evidence table.
+
+---
+
+## 42. A shared-world walk to content: what the runner had to learn (2026-10-14, late)
+
+The shared-world `talk_to_npc` gate reaches its action and then has to move the attached Farmhand to a place where
+dialogue content exists. Nine things were paid for one live failure at a time.
+
+**Content bounds the whole problem.** Decoding all 52 shipped villager dialogue tables with MonoGame's own reader shows
+ZERO location keys for `Cabin`, `FarmHouse`, `Farm`, `Cellar`, `Greenhouse` and a dozen other non-town locations, while
+the Saloon has 25. The talk branch is selected only off a location-keyed line (`NPC.cs:2748`), so a talk where the actor
+spawns can only produce `not_handled`/`no_dialogue` - and authoring a dialogue line to make it reachable is refused,
+because that makes the branch reachable under a world production cannot produce.
+
+**Navigation is one hop at a time, by design.** `.pi/subagents/artifacts/outputs/ac41ccbd/artifacts/navigation-catalog-review.md:138`
+says cross-map movement is executed one hop with a fresh observe, and forbids hardcoding the map ladder. So asking for a
+far destination from the Farm returns `destination_unreachable` - correctly.
+
+**A transition's usability is NOT "can the destination search name its target".** Measured: the search answers
+`destination_not_found` for `Farm` while the Farm transition drives perfectly (`move_to_tile` then `enter_exit`, both
+`succeeded`). The search covers the world's named locations; it does not cover every map's name.
+
+**Edge warps are approached, not stood on.** The Farm is 80 x 65 (measured), so its east transitions sit at `x = 80` -
+off-map edge tiles the game triggers by walking to the edge. `move_to_tile` there can never succeed (`no_native_path`).
+Drive the warp with the WARP'S OWN coordinates and satisfy the product's range rule: `movementactions.cs:320` gates both
+`enter_exit` and `travel` on `Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, player)` - Chebyshev-1.
+
+**One refused transition must not end the walk.** The east gate is four tiles wide and the first is the one the native
+pathfinder refused; a refused candidate yields to the next, and the record lists every refusal.
+
+**A truncated candidate list silently deletes your route.** A budget of 4 applied to the Farm's published order kept
+exactly the four unreachable `BusStop` tiles, so `Forest` and `FarmCave` were never candidates. Budget the ATTEMPTS,
+never the list.
+
+**After every hop, WAIT FOR ACTIONABILITY.** `destination_locked` does NOT mean a closed destination - it means the
+actor was not free to act: `navigation/navigationoutcomedecider.cs:79-81` returns it when `!view.PlayerActionable`, and
+`navigation/game1navigationworldsource.cs:51` defines that as `player!.CanMove && Game1.activeClickableMenu is null &&
+!Game1.eventUp`. A closed destination is a different fact and a different code (`destination_unreachable`, from the list
+of legs filtered by `IsLocationAccessible`). The live shape was one tick: the cave warp with `can_move=False`, a
+`travel` receipt `Succeeded`, then `navigate` `Rejected/destination_locked` - the walk had dispatched from an arrival
+snapshot taken without `{actionable:true}`.
+
+**A runner must never die without a named report.** In one run the pipe closed mid-walk and the result was
+`bridge_disconnected:pipe_closed` with a trace stopping mid-step - which reads as a bridge fault while it was a runner
+path that threw. One guard around the whole walk, with a mutable context (phase / attempt / location / tile / last hop),
+turns any throw into a named failure. In the client log, `ai_player_control_pipe_reader_ended` is the Mod noticing that
+YOUR pipe's write end ended - i.e. the runner process went away.
+
+**And the driver's own failure must be readable.** The gate entry used to report a driver failure as a bare
+`driverStderrPresent: true`; it now carries a bounded `driverStderrTail`, which is what named the operator error
+`--timeout-seconds 900` against the driver's `ValidateRange(30, 300)` - the driver had died at parameter binding.
