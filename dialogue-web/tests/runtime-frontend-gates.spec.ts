@@ -124,7 +124,11 @@ function composedRoot(options: FixtureOptions = {}) {
           handle: handleFor(index),
           role: message.role,
           text: message.text,
-          locale: "en",
+          // The Host's only language fact: no facade infers a per-message
+          // language (ChatThreadStore keeps none), so every projected message is
+          // `und`. A concrete locale here would paint `lang` on the bubble and
+          // move the text out of the document's own `:lang()` rules.
+          locale: "und",
           order: index,
           revision: 1,
           ...(options.swipe === true && index === lastCompanionIndex
@@ -1289,6 +1293,17 @@ test("gate 12: the monogram is one whole character for an astral name", async ({
  * CJK type has no true italic; the browser synthesises a slant that reads as
  * smeared. The failure this catches: `em.message-action` keeps the browser's
  * faux italic and the beat looks broken in the product's own language.
+ *
+ * `style.css` retires the slant in `.message-bubble em.message-action:lang(zh)`,
+ * and `:lang()` reads the *nearest* `lang` in the beat's ancestor chain: the
+ * document's own, unless the message painted one. The transcript carries the one
+ * language fact a facade projects - `und`, because ChatThreadStore keeps no
+ * per-message language - and `MessageBubble` paints nothing for `und`, so the
+ * chain ends at `html[lang="zh-CN"]` and the rule reaches the beat. The fixture
+ * therefore may not claim a language the Host never projected: an `en` message
+ * here paints `lang="en"` on the bubble, moves the Chinese beat out of
+ * `:lang(zh)`, and this gate reads the UA's faux italic instead of the product's
+ * own rule.
  */
 test("gate 13: a CJK action beat is de-emphasised without a faux italic", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
