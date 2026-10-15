@@ -367,6 +367,12 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
     await cp(resolve(compiledRoot, "strict-json-reader.js"), join(moduleDirectory, "strict-json-reader.js"));
     await mkdir(join(moduleDirectory, "composition"), { recursive: true });
     await cp(resolve(compiledRoot, "composition", "desktop-host-composition.js"), join(moduleDirectory, "composition", "desktop-host-composition.js"));
+    // The bootstrap entry imports the named exit-reclamation contract (the composition's
+    // close reports its steps through it) and the exit record it writes for an operator.
+    // Both are production modules the copied entry resolves by relative URL, so the
+    // fixture ships them exactly like the other seams above.
+    await cp(resolve(compiledRoot, "composition", "desktop-host-reclamation.js"), join(moduleDirectory, "composition", "desktop-host-reclamation.js"));
+    await cp(resolve(compiledRoot, "bootstrap", "wire", "desktop-host-exit-record.internal.js"), join(moduleDirectory, "bootstrap", "wire", "desktop-host-exit-record.internal.js"));
     // The wire worker drives the real contained runtime platform encoder so the
     // fixture asserts the actual arm frame (approvedExecutable) and the launch
     // frame consistency instead of an opaque placeholder. That module needs the
@@ -732,15 +738,20 @@ function mockComposition(_rootLayoutCapability, session, assemblyInput) {
   if (scenario === "composition-failure") {
     throw new Error("composition_construction_failed");
   }
+  // The composition's close reports the named per-step reclamation outcome rather
+  // than a bare rejection. This fixture never reclaims a real child, so every
+  // order it can reach is the clean one; the bootstrap still consumes the exact
+  // report shape the production composition returns.
+  const cleanExitReason = Object.freeze({ schema: "gamebuddy-desktop-host-exit/v1", outcome: "clean", reason: "clean_exit", steps: [] });
   if (scenario === "ack-write-failure" || scenario === "termination-failure") {
-    return { async close() { await session.close(); } };
+    return { async close() { await session.close(); return cleanExitReason; } };
   }
   process.stderr.write("wire_assembly_surface:" + (assemblyInput?.surface === undefined ? "default" : assemblyInput.surface) + "\\n");
   assemblyInput?.publishLaunchUrl?.("http://127.0.0.1:4444/#profile=reference&boot=fixture");
   process.stderr.write("wire_publish_ready:called\\n");
   const operationTask = (async () => { await drive(session); })();
   operationTask.catch(() => undefined);
-  return { async close() { await operationTask; await session.close(); } };
+  return { async close() { await operationTask; await session.close(); return cleanExitReason; } };
 }
 
 await mock.module(fixture.compositionUrl, { namedExports: { createDesktopProductComposition: mockComposition } });

@@ -6,6 +6,13 @@ import {
   createDesktopGuardianGameRuntimePlatform,
   createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
 } from "./stardew/stardew-guardian-platform.js";
+import {
+  buildDesktopHostExitReason,
+  runDesktopHostReclamation,
+  type DesktopHostExitReason,
+  type DesktopHostReclamationOperation,
+  type DesktopHostReclamationStep,
+} from "./desktop-host-reclamation.js";
 import { createPublishedWindowsStardewFolderPicker } from "../windows-stardew-folder-picker/index.js";
 import type { DesktopGuardianSession } from "../containment/auth/desktop-guardian-session.internal.js";
 import {
@@ -26,46 +33,6 @@ import {
 } from "./desktop-presentation-admission-owner.js";
 import type { ChatVoiceSpeechPublisher } from "../voice.js";
 
-/**
- * Narrow lifecycle contract shared by composition-owned children. The child
- * object itself never crosses the composition facade; only its close outcome
- * is observed by the owner.
- */
-export type HostChildLifecycle = Readonly<{
-  close(): Promise<void>;
-}>;
-
-export type HostChildLifecycleAggregation = HostChildLifecycle;
-
-/**
- * Aggregates composition children in registration order and closes them in
- * reverse order. The returned promise is stable, so concurrent or repeated
- * close requests invoke every child at most once. All children are attempted
- * after a failure; the first reverse-order failure is propagated unchanged.
- */
-export function createHostChildLifecycleAggregation(
-  children: readonly HostChildLifecycle[],
-): HostChildLifecycleAggregation {
-  const uniqueChildren = [...new Set(children)];
-  let closePromise: Promise<void> | undefined;
-
-  return Object.freeze({
-    close: () => closePromise ??= closeChildren(uniqueChildren),
-  });
-}
-
-async function closeChildren(children: readonly HostChildLifecycle[]): Promise<void> {
-  let firstFailure: { readonly error: unknown } | undefined;
-  for (let index = children.length - 1; index >= 0; index -= 1) {
-    try {
-      await children[index]!.close();
-    } catch (error) {
-      firstFailure ??= { error };
-    }
-  }
-  if (firstFailure !== undefined) throw firstFailure.error;
-}
-
 declare const desktopRootLayoutCapabilityBrand: unique symbol;
 /** Opaque capability minted only after bootstrap root/layout validation. */
 export type DesktopRootLayoutCapability = object & {
@@ -74,8 +41,20 @@ export type DesktopRootLayoutCapability = object & {
 
 /**
  * Generic desktop composition surface; game-specific Guardian seams stay closure-private.
+ * `close()` reports the named per-step reclamation outcome instead of a bare
+ * rejection, so a launch that could not fully reclaim is visible to its caller
+ * and to the diagnostic it leaves behind.
  */
 export type DesktopPrivateHostComposition = Readonly<{
+  close(): Promise<DesktopHostExitReason>;
+}>;
+
+/**
+ * One composition child under its reclamation step name. The order the children
+ * are registered in is the reverse order they close in.
+ */
+export type DesktopHostCompositionChild = Readonly<{
+  step: DesktopHostReclamationStep;
   close(): Promise<void>;
 }>;
 
@@ -214,13 +193,17 @@ export async function createDesktopProductComposition(
       // The composed surface is ready at the Host-owned seam: the launch URL is
       // published exactly once and never projects through the composition facade.
       input.publishLaunchUrl?.(presentationAdmission.launchUrl);
-      // Children close in reverse registration order: the presentation
-      // admission first, then the Chat runtime, then the shared semantic
-      // authority; no Game owner participates in this surface.
+      // Children close in reverse registration order as the named reclamation steps:
+      // stop admission and release the presentation port first, then drain the Chat
+      // runtime, then release the shared semantic authority. No Game owner
+      // participates in this surface.
+      const sharedAuthorityChild = shared;
+      const chatRuntimeChild = chatRuntime;
+      const presentationChild = presentationAdmission;
       return createDesktopPrivateHostComposition(rootLayoutCapability, session, [
-        shared,
-        chatRuntime,
-        presentationAdmission,
+        { step: "release_shared_authority", close: () => sharedAuthorityChild.close() },
+        { step: "drain_chat_runtime", close: () => chatRuntimeChild.close() },
+        { step: "stop_admission", close: () => presentationChild.close() },
       ]);
     }
     const provider = PRODUCT_INTEGRATION_CATALOG.getProvider("stardew");
@@ -263,15 +246,21 @@ export async function createDesktopProductComposition(
     // launch URL is published exactly once and never projects through the
     // composition facade.
     input.publishLaunchUrl?.(presentationAdmission.launchUrl);
-    // Children close in reverse registration order: the presentation admission
-    // first, then the Chat runtime, then the Stardew lifecycle owner, then the
-    // shared semantic authority, matching the reference entry's server ->
-    // facade -> coordinator -> shared order.
+    // Children close in reverse registration order as the named reclamation steps:
+    // stop admission and release the presentation port first; then drain the Chat
+    // runtime; then drain the Game lifecycle owner - settle in-flight Game work,
+    // contain the AI role through the Job Object it was started in, and release
+    // the bridge/control pipes; then release the shared semantic authority. This
+    // matches the reference entry's server -> facade -> coordinator -> shared order.
+    const sharedAuthorityChild = shared;
+    const lifecycleChild = lifecycleCoordinator;
+    const chatRuntimeChild = chatRuntime;
+    const presentationChild = presentationAdmission;
     return createDesktopPrivateHostComposition(rootLayoutCapability, session, [
-      shared,
-      lifecycleCoordinator,
-      chatRuntime,
-      presentationAdmission,
+      { step: "release_shared_authority", close: () => sharedAuthorityChild.close() },
+      { step: "drain_game_lifecycle", close: () => lifecycleChild.close() },
+      { step: "drain_chat_runtime", close: () => chatRuntimeChild.close() },
+      { step: "stop_admission", close: () => presentationChild.close() },
     ]);
   } catch (error) {
     try {
@@ -308,38 +297,38 @@ export async function createDesktopProductComposition(
  * Retains the verified root/layout capability and authenticated desktop session
  * until the host lifecycle closes. Neither value is exposed to product or
  * browser consumers.
+ *
+ * `close()` runs the declared reclamation steps in the order the children are
+ * registered (reverse of registration) and then closes the authenticated
+ * Guardian session last, because the steps above it may still need that session
+ * to drive their own containment. It resolves with the named per-step outcome
+ * rather than rejecting, so a partial reclamation is a reported fact the caller
+ * can act on instead of an error that hides which step failed.
  */
 export function createDesktopPrivateHostComposition(
   rootLayoutCapability: DesktopRootLayoutCapability,
   session: DesktopGuardianSession,
-  children: readonly HostChildLifecycle[] = [],
+  children: readonly DesktopHostCompositionChild[] = [],
 ): DesktopPrivateHostComposition {
   let retainedRootLayoutCapability: DesktopRootLayoutCapability | undefined = rootLayoutCapability;
   let sessionCloseStarted = false;
   let sessionClosePromise: Promise<void> | undefined;
-  let compositionClosePromise: Promise<void> | undefined;
-  const childLifecycle = createHostChildLifecycleAggregation(children);
+  let compositionClosePromise: Promise<DesktopHostExitReason> | undefined;
   return Object.freeze({
     close: () => compositionClosePromise ??= closeComposition(),
   });
 
-  async function closeComposition(): Promise<void> {
-    let failure: unknown;
-    try {
-      await childLifecycle.close();
-    } catch (error) {
-      failure = error;
-    }
-    try {
-      await closeSessionOnce();
-    } catch (error) {
-      failure ??= error;
-    }
+  async function closeComposition(): Promise<DesktopHostExitReason> {
+    const operations: DesktopHostReclamationOperation[] = [
+      ...[...children].reverse().map((child) => ({ step: child.step, close: () => child.close() })),
+      { step: "release_guardian_session", close: () => closeSessionOnce() },
+    ];
+    const outcomes = await runDesktopHostReclamation(operations);
     // Keep the capability captured until every child and the authenticated
     // session have fully closed; it is not projected.
     void retainedRootLayoutCapability;
     retainedRootLayoutCapability = undefined;
-    if (failure !== undefined) throw failure;
+    return buildDesktopHostExitReason(outcomes);
   }
 
   function closeSessionOnce(): Promise<void> {

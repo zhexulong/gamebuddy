@@ -7,10 +7,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   createDesktopPrivateHostComposition,
-  createHostChildLifecycleAggregation,
+  type DesktopHostCompositionChild,
   type DesktopPrivateHostComposition,
   type DesktopRootLayoutCapability,
-  type HostChildLifecycle,
 } from "./desktop-host-composition.js";
 
 const rootLayoutCapability = Object.freeze({}) as DesktopRootLayoutCapability;
@@ -64,42 +63,6 @@ test("desktop product composition builds the Stardew game owner only through the
   assert.equal(closeCalls, 1);
 });
 
-test("host child lifecycle aggregation closes children in reverse order exactly once", async () => {
-  const calls: string[] = [];
-  const children: HostChildLifecycle[] = [
-    { close: async () => { calls.push("first"); } },
-    { close: async () => { calls.push("second"); } },
-    { close: async () => { calls.push("third"); } },
-  ];
-  const aggregation = createHostChildLifecycleAggregation(children);
-  const firstClose = aggregation.close();
-  const secondClose = aggregation.close();
-
-  assert.equal(firstClose, secondClose);
-  await Promise.all([firstClose, secondClose, aggregation.close()]);
-  assert.deepEqual(calls, ["third", "second", "first"]);
-});
-
-test("host child lifecycle aggregation deduplicates a child and propagates the first reverse-order failure after attempting every child", async () => {
-  const calls: string[] = [];
-  const firstFailure = new Error("third_close_failed");
-  const secondFailure = new Error("second_close_failed");
-  const repeatedChild: HostChildLifecycle = {
-    close: async () => { calls.push("repeated"); },
-  };
-  const aggregation = createHostChildLifecycleAggregation([
-    repeatedChild,
-    { close: async () => { calls.push("second"); throw secondFailure; } },
-    { close: async () => { calls.push("third"); throw firstFailure; } },
-    repeatedChild,
-  ]);
-
-  const closePromise = aggregation.close();
-  await assert.rejects(closePromise, (error: unknown) => error === firstFailure);
-  assert.deepEqual(calls, ["third", "second", "repeated"]);
-  assert.equal(aggregation.close(), closePromise);
-});
-
 test("desktop composition retains the typed root capability and closes the authenticated session once", async () => {
   let closeCalls = 0;
   const session = Object.freeze({
@@ -147,7 +110,7 @@ test("desktop product composition wires the semantic authority, Chat runtime, an
   // listener before the Chat runtime, the Game owner, and the shared authority
   // it serves, mirroring the reference entry's server -> facade -> coordinator ->
   // shared close order.
-  assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[\s*shared,\s*lifecycleCoordinator,\s*chatRuntime,\s*presentationAdmission,\s*\]\)/);
+  assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[\s*\{ step: "release_shared_authority"[\s\S]*?\{ step: "stop_admission"[\s\S]*?\]\)/);
   assert.match(source, /await presentationAdmission\?\.close\(\)/);
   assert.match(source, /await lifecycleCoordinator\?\.close\(\)/);
   assert.match(source, /await shared\?\.close\(\)/);
@@ -176,11 +139,11 @@ test("composition facade close runs the presentation, Chat, Game, and shared chi
   let sharedCloseCalls = 0;
   let presentationCloseCalls = 0;
   let sessionCloseCalls = 0;
-  const children: HostChildLifecycle[] = [
-    { close: async () => { sharedCloseCalls += 1; calls.push("shared"); } },
-    { close: async () => { coordinatorCloseCalls += 1; calls.push("coordinator"); } },
-    { close: async () => { chatCloseCalls += 1; calls.push("chat"); } },
-    { close: async () => { presentationCloseCalls += 1; calls.push("presentation"); } },
+  const children: DesktopHostCompositionChild[] = [
+    { step: "release_shared_authority", close: async () => { sharedCloseCalls += 1; calls.push("shared"); } },
+    { step: "drain_game_lifecycle", close: async () => { coordinatorCloseCalls += 1; calls.push("coordinator"); } },
+    { step: "drain_chat_runtime", close: async () => { chatCloseCalls += 1; calls.push("chat"); } },
+    { step: "stop_admission", close: async () => { presentationCloseCalls += 1; calls.push("presentation"); } },
   ];
   const session = Object.freeze({
     arm: async () => { throw new Error("unused"); },
@@ -383,7 +346,7 @@ test("desktop product composition source selects the Chat-only/management varian
   assert.match(source, /startChatOnlyPresentationAdmission|startTavernManagementPresentationAdmission/);
   // The Chat-only variants register only the shared authority, Chat runtime,
   // and presentation admission as children; no game child participates.
-  assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[\s*shared,\s*chatRuntime,\s*presentationAdmission,\s*\]\)/);
+  assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[\s*\{ step: "release_shared_authority"[\s\S]*?\{ step: "stop_admission"[\s\S]*?\]\)/);
   assert.doesNotMatch(source, /PRODUCT_INTEGRATION_CATALOG\.getProvider\("stardew"\)[\s\S]*?surface === "chat-only"/);
   assert.doesNotMatch(source, /createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*folderPicker,\s*runtimeCollaborator,\s*\}\)[\s\S]*?surface === "chat-only"/);
 });

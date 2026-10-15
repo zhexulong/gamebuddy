@@ -11,6 +11,14 @@ import type {
   GuardianRecoveryRole,
 } from "../../containment/auth/desktop-guardian-session.internal.js";
 import { createDesktopProductComposition, type DesktopHostAssemblyInput, type DesktopPrivateHostComposition, type DesktopRootLayoutCapability } from "../../composition/desktop-host-composition.js";
+import {
+  boundedReclamationCode,
+  buildDesktopHostExitReason,
+  runDesktopHostReclamation,
+  type DesktopHostExitReason,
+  type DesktopHostReclamationOperation,
+} from "../../composition/desktop-host-reclamation.js";
+import { DESKTOP_HOST_EXIT_RECORD_DIRECTORY, recordDesktopHostExit } from "./desktop-host-exit-record.internal.js";
 import { ContainmentRoleAlreadyContainedError } from "../../containment/runtime/contract/game-runtime.js";
 import { loadHostDeploymentManifest } from "../../deployment-manifest.js";
 import { createDesktopPresentationHandoffPublisher } from "../../desktop-presentation-handoff.internal.js";
@@ -134,20 +142,65 @@ export async function runDesktopHostBootstrap(artifactRoot: string): Promise<voi
   );
   const rootAuthority = mintDesktopRootLayoutCapability(rootLayout);
   const guardianAuthority = mintDesktopGuardianSessionCapability(frame);
-  const composition = await createDesktopProductCompositionForBootstrap(rootAuthority, guardianAuthority, assemblyInput);
+  const { composition, session } = await createDesktopProductCompositionForBootstrap(rootAuthority, guardianAuthority, assemblyInput);
+  // Everything from here on is a step of the exit reclamation, and every one of
+  // them is named. The record is the operator-readable half: the process's own
+  // terminal code can only say "this launch did not reclaim everything", so the
+  // per-step outcome is written beside the deployment manifest instead.
+  const exitRecordDirectory = win32.join(rootLayout.operationalRoot, DESKTOP_HOST_EXIT_RECORD_DIRECTORY);
+  let exitFailure: unknown;
+  let termination: ReturnType<typeof waitForTermination> | undefined;
   try {
-    const termination = waitForTermination();
-    try {
-      await writeAcknowledgement(frame);
-      process.stdin.destroy();
-      await termination.promise;
-    } finally {
-      termination.dispose();
-    }
-  } finally {
-    await composition.close();
-    await voice?.close();
+    termination = waitForTermination();
+    // The authenticated parent session is this process's only live proof that the
+    // Desktop which started it still exists. Losing it - the parent crashed, or
+    // was itself killed - is a controller EOF, and the one bounded thing this
+    // process can still do about it is leave: a Host that outlived its owner would
+    // hold the data root, the Guardian pipe and the bridge with nobody left to ask
+    // it to stop. It does NOT end the player's world; the reclamation below drains
+    // AI authority only.
+    const armedTermination = termination;
+    session.onLost(() => armedTermination.request());
+    await writeAcknowledgement(frame);
+    process.stdin.destroy();
+    await termination.promise;
+  } catch (error) {
+    exitFailure = error;
   }
+  const reason = await reclaimDesktopHostExit(composition, voice, termination);
+  if (reason.outcome === "clean" && exitFailure === undefined) return;
+  await recordDesktopHostExit(exitRecordDirectory, {
+    kind: exitFailure === undefined ? "incomplete_exit" : "crash",
+    reason: exitFailure === undefined ? reason.reason : boundedReclamationCode(exitFailure),
+    pid: process.pid,
+    recordedAtUnixMs: Date.now(),
+    steps: reason.steps,
+  });
+  if (exitFailure !== undefined) throw exitFailure;
+  throw new Error(reason.reason);
+}
+
+/**
+ * Runs the complete exit reclamation and returns its one report.
+ *
+ * The composition owns the steps its children and the authenticated Guardian
+ * session are; this entry owns the two resources it created itself - the optional
+ * Voice client and the termination watchers. The composition runs first because
+ * `release_termination_watchers` is what finally lets the process exit, and it
+ * may only run once nothing is left that could still want to react to a signal.
+ */
+async function reclaimDesktopHostExit(
+  composition: DesktopPrivateHostComposition,
+  voice: Awaited<ReturnType<typeof connectOptionalVoiceSurface>>,
+  termination: ReturnType<typeof waitForTermination> | undefined,
+): Promise<DesktopHostExitReason> {
+  const compositionReason = await composition.close();
+  const operations: DesktopHostReclamationOperation[] = [
+    { step: "release_voice_client", ...(voice === undefined ? {} : { close: () => voice.close() }) },
+    { step: "release_termination_watchers", ...(termination === undefined ? {} : { close: async () => { termination.dispose(); } }) },
+  ];
+  const tail = await runDesktopHostReclamation(operations);
+  return buildDesktopHostExitReason([...compositionReason.steps, ...tail]);
 }
 
 async function readBootstrapFrame(): Promise<Buffer> {
@@ -314,7 +367,7 @@ async function createDesktopProductCompositionForBootstrap(
   rootAuthority: DesktopRootLayoutCapability,
   guardianAuthority: DesktopGuardianSessionCapability,
   assemblyInput: DesktopHostAssemblyInput,
-): Promise<DesktopPrivateHostComposition> {
+): Promise<Readonly<{ composition: DesktopPrivateHostComposition; session: GuardianSessionClient }>> {
   const consumedRootAuthority = consumeDesktopRootLayoutCapability(rootAuthority);
   await writeStatus("guardian-session");
   const session = await createAuthenticatedDesktopGuardianSession(consumeDesktopGuardianSessionCapability(guardianAuthority));
@@ -329,7 +382,10 @@ async function createDesktopProductCompositionForBootstrap(
     // budget is therefore measured from here, which is the fact this stage exists to
     // state.
     await writeStatus("provisioning");
-    return await createDesktopProductComposition(consumedRootAuthority, session, assemblyInput);
+    const composition = await createDesktopProductComposition(consumedRootAuthority, session, assemblyInput);
+    // The session is returned alongside the composition because the entry keeps
+    // the one watcher the composition cannot own: its loss stops this process.
+    return Object.freeze({ composition, session });
   } catch (error) {
     try {
       await session.close();
@@ -441,7 +497,7 @@ function publishCompositionReady(launchUrl: string): void {
   }
 }
 
-async function createAuthenticatedDesktopGuardianSession(binding: DesktopGuardianSessionBinding): Promise<DesktopGuardianSession> {
+async function createAuthenticatedDesktopGuardianSession(binding: DesktopGuardianSessionBinding): Promise<GuardianSessionClient> {
   const socket = await connectGuardianPipe(`\\\\.\\pipe\\GameBuddy.HostGuardian.${binding.bootstrapId}`);
   const session = new GuardianSessionClient(socket, binding);
   try {
@@ -461,6 +517,7 @@ type PendingResponse = { resolve(value: Record<string, unknown>): void; reject(r
 
 class GuardianSessionClient implements DesktopGuardianSession {
   #closed = false;
+  #lost: (() => void) | undefined;
   #buffer = Buffer.alloc(0);
   #waiter: PendingResponse | undefined;
   #serial: Promise<void> = Promise.resolve();
@@ -470,6 +527,20 @@ class GuardianSessionClient implements DesktopGuardianSession {
     socket.once("end", () => this.fail());
     socket.once("close", () => this.fail());
     socket.once("error", () => this.fail());
+  }
+
+  /**
+   * Registers the one watcher the session's loss drives. EOF, a socket error or
+   * an explicit close all end the session the same way, and all of them mean the
+   * owner on the other end is gone: nothing may be written to it again. A session
+   * already closed reports the loss immediately rather than dropping it.
+   */
+  onLost(callback: () => void): void {
+    if (this.#closed) {
+      callback();
+      return;
+    }
+    this.#lost = callback;
   }
 
   async arm(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number; privateFrame: Uint8Array }>): Promise<GuardianAck> { return await this.command("arm_attempt", input); }
@@ -581,7 +652,12 @@ class GuardianSessionClient implements DesktopGuardianSession {
     const waiter = this.#waiter;
     this.#waiter = undefined;
     if (waiter?.timer !== undefined) clearTimeout(waiter.timer);
+    const lost = this.#lost;
+    this.#lost = undefined;
     waiter?.reject(unavailable());
+    // After the waiter settles, so an operation this loss interrupted reports its
+    // own refusal before the process begins to leave.
+    lost?.();
   }
 }
 
@@ -865,8 +941,16 @@ async function writeAcknowledgement(frame: DesktopHostBootstrapFrame): Promise<v
 
 function waitForTermination(): Readonly<{
   promise: Promise<void>;
+  /**
+   * Requests the same clean shutdown a signal does, without a signal. The
+   * authenticated parent session's loss is the one caller: it is evidence the
+   * owner is gone, not a capability, so it grants nothing a parent could not
+   * already do by terminating this process.
+   */
+  request: () => void;
   dispose: () => void;
 }> {
+  let request: () => void = () => {};
   let dispose: () => void = () => {};
   const promise = new Promise<void>((resolveTermination) => {
     const livenessHandle = setInterval(() => {}, 2_147_483_647);
@@ -898,6 +982,7 @@ function waitForTermination(): Readonly<{
     // Cleanup only - it does not itself terminate, so a caller that abandons the
     // wait (a failed acknowledgement, say) does not race the close path.
     dispose = cleanup;
+    request = onTerminate;
     process.once("SIGTERM", onTerminate);
     process.once("SIGINT", onTerminate);
     process.once("SIGBREAK", onTerminate);
@@ -905,6 +990,7 @@ function waitForTermination(): Readonly<{
   });
   return {
     promise,
+    request,
     dispose,
   };
 }
