@@ -6,7 +6,7 @@ import type {
   StCardImportHistoryV1,
   StCardImportStageResultV1,
 } from "../management-pipeline-api";
-import { characterLabels, type CharacterLabels } from "./character-domain-labels";
+import { characterFieldLabel, characterLabels, type CharacterLabels } from "./character-domain-labels";
 import { extractCharacterCardJsonFromPng, isPngBytes } from "./png-character-card";
 
 /** The stage route accepts card JSON text up to 2 MiB (StageStCardImportCommandV1). */
@@ -68,52 +68,47 @@ function reportOf(staged: StCardImportStageResultV1): StagedReport {
 /**
  * The staged-report rows the review and the result share, so the two can never
  * disagree about what the Host kept or could not use.
+ *
+ * A row is one sentence, which is why the block these render into is a list of
+ * sentences rather than a description list: a `dt`/`dd` pair is a term and its
+ * definition, and "Could not use: Regular expressions." is neither.
  */
 function reportRows(report: StagedReport, labels: CharacterLabels): ReactElement[] {
   return [
-    <div key="notUsed">
-      <dd>
-        {report.notUsed.length === 0
-          ? labels.importAllUsed
-          : labels.importNotUsed.replace("{{fields}}", report.notUsed.join(", "))}
-      </dd>
-    </div>,
+    <li key="notUsed">
+      {report.notUsed.length === 0
+        ? labels.importAllUsed
+        : labels.importNotUsed.replace("{{fields}}", fieldNames(report.notUsed, labels))}
+    </li>,
     ...(report.lorebookCount > 0
-      ? [
-          <div key="lorebook">
-            <dd>{labels.importLorebookCount.replace("{{count}}", String(report.lorebookCount))}</dd>
-          </div>,
-        ]
+      ? [<li key="lorebook">{labels.importLorebookCount.replace("{{count}}", String(report.lorebookCount))}</li>]
       : []),
     ...(report.preserved > 0
-      ? [
-          <div key="preserved">
-            <dd>{labels.importPreserved.replace("{{count}}", String(report.preserved))}</dd>
-          </div>,
-        ]
+      ? [<li key="preserved">{labels.importPreserved.replace("{{count}}", String(report.preserved))}</li>]
       : []),
     ...(report.longFieldChars !== null
-      ? [
-          <div key="longField">
-            <dd>{labels.importLongField.replace("{{chars}}", String(report.longFieldChars))}</dd>
-          </div>,
-        ]
+      ? [<li key="longField">{labels.importLongField.replace("{{chars}}", String(report.longFieldChars))}</li>]
       : []),
     ...(report.voiceCarried
       ? [
-          <div key="voiceCarried" data-card-import-voice="carried">
-            <dd>{labels.importVoiceCarried}</dd>
-          </div>,
+          <li key="voiceCarried" data-card-import-voice="carried">
+            {labels.importVoiceCarried}
+          </li>,
         ]
       : []),
     ...(report.voiceDropped
       ? [
-          <div key="voiceDropped" data-card-import-voice="dropped">
-            <dd>{labels.importVoiceDropped}</dd>
-          </div>,
+          <li key="voiceDropped" data-card-import-voice="dropped">
+            {labels.importVoiceDropped}
+          </li>,
         ]
       : []),
   ];
+}
+
+/** The player's words for a set of the Host's own field identifiers, one sentence. */
+function fieldNames(fields: readonly string[], labels: CharacterLabels): string {
+  return fields.map((field) => characterFieldLabel(field, labels)).join(labels.fieldSeparator);
 }
 
 /**
@@ -317,19 +312,18 @@ export function CharacterCardImport({
         <section aria-label={labels.importReviewTitle} data-card-import-review>
           <h4>{labels.importReviewTitle}</h4>
           <p className="management-settings-hint">{labels.importReviewHint}</p>
-          <dl className="card-import-report" data-card-import-review-details>
-            <div>
-              <dd>{labels.importReviewName.replace("{{name}}", staged.name)}</dd>
-            </div>
-            <div>
-              <dd>
-                {labels.importReviewWillKeep
-                  .replace("{{count}}", String(stagedReport.keptFields.length))
-                  .replace("{{fields}}", stagedReport.keptFields.join(", "))}
-              </dd>
-            </div>
+          {/* One sentence per row, in the player's words. The list role is
+              explicit because the block is styled without markers
+              (`list-style: none` drops list semantics in Safari). */}
+          <ul role="list" className="card-import-report" data-card-import-review-details>
+            <li>{labels.importReviewName.replace("{{name}}", staged.name)}</li>
+            <li>
+              {labels.importReviewWillKeep
+                .replace("{{count}}", String(stagedReport.keptFields.length))
+                .replace("{{fields}}", fieldNames(stagedReport.keptFields, labels))}
+            </li>
             {reportRows(stagedReport, labels)}
-          </dl>
+          </ul>
           <div className="composer-actions">
             <button
               type="button"
@@ -360,18 +354,12 @@ export function CharacterCardImport({
           data-card-import-result={outcome.kind}
         >
           {outcome.kind === "created" ? (
-            <dl className="card-import-report" data-card-import-details>
-              <div>
-                <dd>{labels.importCreated.replace("{{name}}", outcome.name)}</dd>
-              </div>
-              <div>
-                <dd>{labels.importCreatedDetail}</dd>
-              </div>
-              <div>
-                <dd>{labels.importKept.replace("{{count}}", String(outcome.report.keptFields.length))}</dd>
-              </div>
+            <ul role="list" className="card-import-report" data-card-import-details>
+              <li>{labels.importCreated.replace("{{name}}", outcome.name)}</li>
+              <li>{labels.importCreatedDetail}</li>
+              <li>{labels.importKept.replace("{{count}}", String(outcome.report.keptFields.length))}</li>
               {reportRows(outcome.report, labels)}
-            </dl>
+            </ul>
           ) : (
             <p>{outcome.message}</p>
           )}

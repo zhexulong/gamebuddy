@@ -2732,9 +2732,9 @@ test("choosing a character card file stages a review, and reports what the Host 
   const review = surface.locator("[data-card-import-review]");
   await expect(review).toBeVisible();
   await expect(review).toContainText("The card names it Nova.");
-  await expect(review).toContainText("Will keep 2 card fields: name, persona_core.");
+  await expect(review).toContainText("Will keep 2 card fields: Name, Persona.");
   await expect(review).toContainText("Carries 2 lorebook entries.");
-  await expect(review).toContainText("Could not use: alternate_greetings.");
+  await expect(review).toContainText("Could not use: Alternate opening.");
   await expect(surface.locator("[data-card-import-result=created]")).toHaveCount(0);
   expect(confirms.length, "the companion was confirmed before the player approved the review").toBe(0);
   expect(reviews.length, "a review was recorded before the player approved it").toBe(0);
@@ -2753,7 +2753,7 @@ test("choosing a character card file stages a review, and reports what the Host 
   const created = surface.locator("[data-card-import-result=created]");
   await expect(created).toContainText("Imported Nova.");
   await expect(created).toContainText("Kept 2 card fields.");
-  await expect(created).toContainText("Could not use: alternate_greetings.");
+  await expect(created).toContainText("Could not use: Alternate opening.");
   await expect(review).toHaveCount(0);
 
   // The secondary paste path produces the same durable result as the picker,

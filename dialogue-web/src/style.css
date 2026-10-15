@@ -4326,9 +4326,12 @@
      ragged-LEFT: measured at 400x800, the keep sentence's two lines ended on one
      right edge (371, 371) and started on two (93, 66).
 
-     The report now has its own class and is what it is: stacked sentences, read
-     from the left, with the same generous wrapping the card-exported field names
-     need (a kept field can be a long single word). It belongs to the highest
+     The report now has its own class and is what it is: a list of stacked
+     sentences, read from the left, with the same generous wrapping the
+     card-exported field names need (a kept field can be a long single word). It
+     is a `ul`/`li` list, because that is what the rows are - the block used to be
+     a `<dl>` whose children were `<div><dd>` with no `<dt>` anywhere, which is
+     not a description list at all and maps as none. It belongs to the highest
      layer, with the other rules authored after `theme.polish` was named.
      ========================================================================== */
 
@@ -4346,9 +4349,11 @@
     display: grid;
     gap: 6px;
     margin: 0;
+    padding: 0;
+    list-style: none;
   }
 
-  .card-import-report dd {
+  .card-import-report li {
     margin: 0;
     font-weight: 500;
     text-align: left;

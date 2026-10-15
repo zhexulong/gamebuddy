@@ -54,6 +54,30 @@ export type CharacterLabels = Readonly<{
   importReviewWillKeep: string;
   importReviewConfirm: string;
   importReviewCancel: string;
+  /**
+   * The player-facing name of one card field. The review prints these words and
+   * never the identifier it was handed: the Host's own field names
+   * (`persona_core`, `example_1`, `system_prompt`) and the card keys the decoder
+   * refuses (`regex_scripts`, `html`) are the artifact's vocabulary, not the
+   * player's.
+   */
+  fieldName: string;
+  fieldScenario: string;
+  fieldVoiceDirective: string;
+  fieldPersona: string;
+  fieldPersonaInteractionStyle: string;
+  fieldPersonaExpressionStyle: string;
+  fieldExampleDialogue: string;
+  fieldOpening: string;
+  fieldAlternateOpening: string;
+  fieldScript: string;
+  fieldRegularExpressions: string;
+  fieldMacros: string;
+  fieldQuickReplies: string;
+  fieldHtml: string;
+  fieldPromptOrder: string;
+  /** Between two field names in one sentence: a comma, or the CJK `、`. */
+  fieldSeparator: string;
   historyTitle: string;
   historyHint: string;
   historyEmpty: string;
@@ -174,6 +198,22 @@ const en: CharacterLabels = Object.freeze({
   importReviewWillKeep: "Will keep {{count}} card fields: {{fields}}.",
   importReviewConfirm: "Import this card",
   importReviewCancel: "Cancel",
+  fieldName: "Name",
+  fieldScenario: "Scenario",
+  fieldVoiceDirective: "Performance directive",
+  fieldPersona: "Persona",
+  fieldPersonaInteractionStyle: "Interaction style",
+  fieldPersonaExpressionStyle: "Expression style",
+  fieldExampleDialogue: "Example dialogue",
+  fieldOpening: "Opening",
+  fieldAlternateOpening: "Alternate opening",
+  fieldScript: "Script",
+  fieldRegularExpressions: "Regular expressions",
+  fieldMacros: "Macros",
+  fieldQuickReplies: "Quick replies",
+  fieldHtml: "HTML",
+  fieldPromptOrder: "Prompt order",
+  fieldSeparator: ", ",
   historyTitle: "Imported cards",
   historyHint: "Every imported card and what it kept or dropped.",
   historyEmpty: "No cards imported yet.",
@@ -288,6 +328,22 @@ const zh: CharacterLabels = Object.freeze({
   importReviewWillKeep: "将保留 {{count}} 个卡片字段：{{fields}}。",
   importReviewConfirm: "导入此角色卡",
   importReviewCancel: "取消",
+  fieldName: "名称",
+  fieldScenario: "场景",
+  fieldVoiceDirective: "演出指导",
+  fieldPersona: "用户设定",
+  fieldPersonaInteractionStyle: "互动风格",
+  fieldPersonaExpressionStyle: "表达风格",
+  fieldExampleDialogue: "对话示例",
+  fieldOpening: "开场白",
+  fieldAlternateOpening: "备用开场白",
+  fieldScript: "脚本",
+  fieldRegularExpressions: "正则表达式",
+  fieldMacros: "宏",
+  fieldQuickReplies: "快捷回复",
+  fieldHtml: "HTML",
+  fieldPromptOrder: "提示词顺序",
+  fieldSeparator: "、",
   historyTitle: "已导入的角色卡",
   historyHint: "每次导入的角色卡，以及保留或丢弃的内容。",
   historyEmpty: "暂无已导入的角色卡。",
@@ -364,4 +420,60 @@ const zh: CharacterLabels = Object.freeze({
 
 export function characterLabels(locale: Locale): CharacterLabels {
   return locale === "zh-CN" ? zh : en;
+}
+
+/**
+ * The player-facing name of one field the Host reported.
+ *
+ * The caller hands over the Host's own identifier and gets back a word the
+ * player reads. The vocabulary is the Host's candidate fields
+ * (`st-card-import-service.ts`) plus the card keys its decoder refuses
+ * (`st-card-import.ts`, the executable-control family); an identifier from
+ * outside it is spelled out from its own key rather than printed raw, so no
+ * identifier reaches the DOM even when a card carries a field this list has
+ * never seen.
+ */
+export function characterFieldLabel(field: string, labels: CharacterLabels): string {
+  const key = field.toLowerCase();
+  switch (key) {
+    case "name":
+      return labels.fieldName;
+    case "scenario":
+      return labels.fieldScenario;
+    case "system_prompt":
+      return labels.fieldVoiceDirective;
+    case "persona_core":
+      return labels.fieldPersona;
+    case "persona_interaction_style":
+      return labels.fieldPersonaInteractionStyle;
+    case "persona_expression_style":
+      return labels.fieldPersonaExpressionStyle;
+    case "first_greeting":
+      return labels.fieldOpening;
+    case "alternate_greetings":
+      return labels.fieldAlternateOpening;
+    default:
+      break;
+  }
+  if (/^example_\d+$/u.test(key)) return labels.fieldExampleDialogue;
+  if (/^alternate_greeting_\d+$/u.test(key)) return labels.fieldAlternateOpening;
+  if (/^(?:script|stscript)$/u.test(key)) return labels.fieldScript;
+  if (/^regex(?:es)?(?:_scripts?)?$/u.test(key) || key === "scripts") return labels.fieldRegularExpressions;
+  if (/^macros?$/u.test(key)) return labels.fieldMacros;
+  if (/^quick_?repl(?:ies)?$/u.test(key)) return labels.fieldQuickReplies;
+  if (key === "html") return labels.fieldHtml;
+  if (/^prompt_?order$/u.test(key)) return labels.fieldPromptOrder;
+  return humanizeFieldKey(field);
+}
+
+/**
+ * An identifier the vocabulary does not know, spelled out from its own key. The
+ * underscores are what makes a key read as an identifier; the sentence is the
+ * fallback, and it is deliberately not the raw key.
+ */
+function humanizeFieldKey(field: string): string {
+  const words = field.split(/[\s_]+/u).filter((word) => word.length > 0);
+  const [first, ...rest] = words;
+  if (first === undefined) return field;
+  return [first.charAt(0).toUpperCase() + first.slice(1), ...rest].join(" ");
 }

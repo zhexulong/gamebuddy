@@ -151,12 +151,13 @@ async function stubShell(page: Page, options: RootOptions = {}): Promise<void> {
 // --- item 1: the card-import review and result are prose, not a label/value pair ---
 
 /**
- * The fields the Host reports as kept. Six of them, with the card's own field
- * names, so the "will keep" sentence the review prints wraps at every width the
- * surface is measured at: a one-line sentence cannot show where its lines are
- * anchored, and the defect the audit's screenshot caught was exactly the wrap.
+ * The fields the Host reports as kept. Six of them, with the Host's own field
+ * names - the identifiers the review has to translate into the player's words -
+ * so the "will keep" sentence it prints wraps at every width the surface is
+ * measured at: a one-line sentence cannot show where its lines are anchored, and
+ * the defect the audit's screenshot caught was exactly the wrap.
  */
-const KEPT_FIELDS = ["name", "description", "personality", "scenario", "first_mes", "mes_example"] as const;
+const KEPT_FIELDS = ["name", "persona_core", "scenario", "system_prompt", "example_1", "first_greeting"] as const;
 
 function stageResult() {
   return {
@@ -240,7 +241,7 @@ test("item 1: the import review's own sentences are left-aligned prose", async (
   // The "will keep" row is the review's longest sentence and the one a screenshot
   // showed ragged-left: measured before the fix, its two lines ended on one right
   // edge (371, 371) and started on two (93, 66).
-  const measured = await lineAnchors(page, "[data-card-import-review-details] > div:nth-child(2) > dd");
+  const measured = await lineAnchors(page, "[data-card-import-review-details] > li:nth-child(2)");
   console.log(`[item-1 review] ${JSON.stringify(measured)}`);
 
   expect(measured, "the review prints its keep sentence").not.toBeNull();
@@ -258,7 +259,7 @@ test("item 1: the import review's own sentences are left-aligned prose", async (
   await review.locator("[data-card-import-review-confirm]").click();
   const result = surface.locator("[data-card-import-result=created]");
   await expect(result).toBeVisible();
-  const resultAnchors = await lineAnchors(page, "[data-card-import-details] > div:nth-child(1) > dd");
+  const resultAnchors = await lineAnchors(page, "[data-card-import-details] > li:nth-child(1)");
   console.log(`[item-1 result] ${JSON.stringify(resultAnchors)}`);
   expect(resultAnchors!.textAlign, "the result sentence reads from the left like the review").toBe("left");
 });
