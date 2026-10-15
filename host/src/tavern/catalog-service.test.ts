@@ -15,12 +15,17 @@ import { validateWorldBook, worldBookMetadata } from "../worldbook.js";
 import { createManagedWorldInfoBindingResolver } from "./world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "./world-info-management/world-info-management.js";
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
+import { macroTable } from "./macro-engine.js";
 import { resolveTavernPaths, tavernRevisionPath } from "./tavern-paths.js";
-import { validateTavernArtifact } from "./types.js";
+import { type Scenario, validateTavernArtifact } from "./types.js";
 
 test.before(async () => {
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 });
+
+// The run's macro table for these fixtures: a zh companion named 琥珀, so a
+// scenario's own {{char}}/{{user}} resolve to 琥珀/玩家.
+const TEST_MACROS = macroTable({ char: "琥珀", locale: "zh-CN" });
 
 test.after(() => {
   bindWindowsStaleLockReclaimer(undefined);
@@ -36,13 +41,29 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
     const created = await repository.create({
       publicTitle: "Pelican Town",
       summary: "A small valley town.",
-      entries: [{ scope: "setting", publicTitle: "Town square", summary: "The center of town.", constant: true, keys: ["square", "town"] }],
+      entries: [
+        {
+          scope: "setting",
+          publicTitle: "Town square",
+          summary: "The center of town.",
+          constant: true,
+          keys: ["square", "town"],
+        },
+      ],
     });
     await repository.update("Pelican Town", {
       expectedRevision: 1,
       publicTitle: "Pelican Town",
       summary: "A small valley town, revised.",
-       entries: [{ scope: "setting", publicTitle: "Town square", summary: "The center of town, revised.", constant: true, keys: ["square"] }],
+      entries: [
+        {
+          scope: "setting",
+          publicTitle: "Town square",
+          summary: "The center of town, revised.",
+          constant: true,
+          keys: ["square"],
+        },
+      ],
     });
     const binding = createManagedWorldInfoBindingResolver(repository);
     const exact = await binding.resolve({
@@ -58,7 +79,11 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
     });
     const threads = createChatThreadStore(root, "continuity-key");
     closeStore = () => threads.close?.();
-    const creation = createProfileAwareChatThreadCreationCapability(threads, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } });
+    const creation = createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
     const thread = await creation.createExplicit({
       chatThreadId: "thread",
       chatSurfaceSessionId: "surface",
@@ -67,41 +92,84 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
       worldBookBinding: exact.binding,
       opening: "blank",
     });
-    const catalog = await materializeTavernAuthoredStableCatalog(paths, new TavernArtifactStore(root), thread.thread, {
-      continuityId: "continuity",
-      sessionId: "pi-session",
-      surface: "tavern",
-      threadId: "thread",
-      profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
-    }, exact);
-    assert.deepEqual(catalog.stableSources.map((source) => source.kind), ["lorebook_constant"]);
+    const catalog = await materializeTavernAuthoredStableCatalog(
+      paths,
+      new TavernArtifactStore(root),
+      thread.thread,
+      {
+        continuityId: "continuity",
+        sessionId: "pi-session",
+        surface: "tavern",
+        threadId: "thread",
+        profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+      },
+      TEST_MACROS,
+      exact,
+    );
+    assert.deepEqual(
+      catalog.stableSources.map((source) => source.kind),
+      ["lorebook_constant"],
+    );
     assert.equal(catalog.stableSources[0]?.revision, "1");
     assert.match(catalog.stableSources[0]?.sourceId ?? "", /^managed_world_info_[a-f0-9]{32}$/);
     assert.match(catalog.stableSources[0]?.provenance ?? "", /managed-world-info\/Pelican Town\/revision\/1/);
-     assert.match(catalog.stableSources[0]?.content ?? "", /Town square/);
-     assert.match(catalog.stableSources[0]?.content ?? "", /The center of town/);
-     assert.doesNotMatch(catalog.stableSources[0]?.content ?? "", /volatile/);
-     assert.notEqual(catalog.stableSources[0]?.content, exact.content);
-     assert.deepEqual(catalog.volatileSources, []);
+    assert.match(catalog.stableSources[0]?.content ?? "", /Town square/);
+    assert.match(catalog.stableSources[0]?.content ?? "", /The center of town/);
+    assert.doesNotMatch(catalog.stableSources[0]?.content ?? "", /volatile/);
+    assert.notEqual(catalog.stableSources[0]?.content, exact.content);
+    assert.deepEqual(catalog.volatileSources, []);
     await assert.rejects(
-      () => materializeTavernAuthoredContextCatalog(paths, new TavernArtifactStore(root), thread.thread, {
-        continuityId: "continuity", sessionId: "pi-session", surface: "tavern", threadId: "thread",
-        profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
-      }, { ...exact, content: `${exact.content}tampered` }),
+      () =>
+        materializeTavernAuthoredContextCatalog(
+          paths,
+          new TavernArtifactStore(root),
+          thread.thread,
+          {
+            continuityId: "continuity",
+            sessionId: "pi-session",
+            surface: "tavern",
+            threadId: "thread",
+            profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+          },
+          TEST_MACROS,
+          { ...exact, content: `${exact.content}tampered` },
+        ),
       /tavern_stable_context_worldbook_binding_mismatch/,
     );
     await assert.rejects(
-      () => materializeTavernAuthoredContextCatalog(paths, new TavernArtifactStore(root), thread.thread, {
-        continuityId: "continuity", sessionId: "pi-session", surface: "tavern", threadId: "thread",
-        profile: { profileId: "profile-drift", revision: 1, canonicalHash: "a".repeat(64) },
-      }, exact),
+      () =>
+        materializeTavernAuthoredContextCatalog(
+          paths,
+          new TavernArtifactStore(root),
+          thread.thread,
+          {
+            continuityId: "continuity",
+            sessionId: "pi-session",
+            surface: "tavern",
+            threadId: "thread",
+            profile: { profileId: "profile-drift", revision: 1, canonicalHash: "a".repeat(64) },
+          },
+          TEST_MACROS,
+          exact,
+        ),
       /tavern_stable_context_binding_mismatch/,
     );
     await assert.rejects(
-      () => materializeTavernAuthoredStableCatalog(paths, new TavernArtifactStore(root), thread.thread, {
-        continuityId: "continuity", sessionId: "pi-session", surface: "tavern", threadId: "thread",
-        profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
-      }, { ...exact, binding: { ...exact.binding, canonicalHash: "b".repeat(64) } }),
+      () =>
+        materializeTavernAuthoredStableCatalog(
+          paths,
+          new TavernArtifactStore(root),
+          thread.thread,
+          {
+            continuityId: "continuity",
+            sessionId: "pi-session",
+            surface: "tavern",
+            threadId: "thread",
+            profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+          },
+          TEST_MACROS,
+          { ...exact, binding: { ...exact.binding, canonicalHash: "b".repeat(64) } },
+        ),
       /tavern_stable_context_worldbook_binding_mismatch/,
     );
   } finally {
@@ -121,7 +189,13 @@ test("stable World Info excludes constants from volatile sources and matches vol
       publicTitle: "Large Lore",
       summary: "Compact overview.",
       entries: [
-        { scope: "setting", publicTitle: "Always Town", summary: "Stable town fact.", constant: true, keys: ["stable town"] },
+        {
+          scope: "setting",
+          publicTitle: "Always Town",
+          summary: "Stable town fact.",
+          constant: true,
+          keys: ["stable town"],
+        },
         ...Array.from({ length: 150 }, (_, index) => ({
           scope: "setting" as const,
           publicTitle: `Entry ${index + 1}`,
@@ -135,9 +209,33 @@ test("stable World Info excludes constants from volatile sources and matches vol
     const exact = await resolver.resolve(await resolver.bindExact(created.publicTitle, 1));
     const threads = createChatThreadStore(root, "continuity-key");
     closeStore = () => threads.close?.();
-    const creation = createProfileAwareChatThreadCreationCapability(threads, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } });
-    const thread = await creation.createExplicit({ chatThreadId: "thread", chatSurfaceSessionId: "surface", companionId: "companion", continuityId: "continuity", worldBookBinding: exact.binding, opening: "blank" });
-    const catalog = await materializeTavernAuthoredStableCatalog(paths, new TavernArtifactStore(root), thread.thread, { continuityId: "continuity", sessionId: "pi-session", surface: "tavern", threadId: "thread", profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) } }, exact);
+    const creation = createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
+    const thread = await creation.createExplicit({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      companionId: "companion",
+      continuityId: "continuity",
+      worldBookBinding: exact.binding,
+      opening: "blank",
+    });
+    const catalog = await materializeTavernAuthoredStableCatalog(
+      paths,
+      new TavernArtifactStore(root),
+      thread.thread,
+      {
+        continuityId: "continuity",
+        sessionId: "pi-session",
+        surface: "tavern",
+        threadId: "thread",
+        profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+      },
+      TEST_MACROS,
+      exact,
+    );
     assert.ok(catalog.stableSources[0]!.budgetTokens <= 2_048);
     assert.match(catalog.stableSources[0]!.content, /Always Town/);
     assert.doesNotMatch(catalog.stableSources[0]!.content, /Volatile fact/);
@@ -171,9 +269,33 @@ test("stable World Info falls back to Overview when constant content exceeds the
     const exact = await resolver.resolve(await resolver.bindExact(created.publicTitle, 1));
     const threads = createChatThreadStore(root, "continuity-key");
     closeStore = () => threads.close?.();
-    const creation = createProfileAwareChatThreadCreationCapability(threads, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } });
-    const thread = await creation.createExplicit({ chatThreadId: "thread", chatSurfaceSessionId: "surface", companionId: "companion", continuityId: "continuity", worldBookBinding: exact.binding, opening: "blank" });
-    const catalog = await materializeTavernAuthoredStableCatalog(paths, new TavernArtifactStore(root), thread.thread, { continuityId: "continuity", sessionId: "pi-session", surface: "tavern", threadId: "thread", profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) } }, exact);
+    const creation = createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
+    const thread = await creation.createExplicit({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      companionId: "companion",
+      continuityId: "continuity",
+      worldBookBinding: exact.binding,
+      opening: "blank",
+    });
+    const catalog = await materializeTavernAuthoredStableCatalog(
+      paths,
+      new TavernArtifactStore(root),
+      thread.thread,
+      {
+        continuityId: "continuity",
+        sessionId: "pi-session",
+        surface: "tavern",
+        threadId: "thread",
+        profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+      },
+      TEST_MACROS,
+      exact,
+    );
     assert.ok(catalog.stableSources[0]!.budgetTokens <= 2_048);
     assert.match(catalog.stableSources[0]!.content, /Large Lore/);
     assert.doesNotMatch(catalog.stableSources[0]!.content, /Large constant 1/);
@@ -188,21 +310,70 @@ test("compiles exact v2 Chat catalog with reference-free scope and deterministic
   const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
   const paths = resolveTavernPaths({ root } as never, identity);
   const artifacts = new TavernArtifactStore(root);
-  const persona = await artifacts.write(tavernRevisionPath(join(paths.playerRoot, "personas", "persona"), 1), { schemaVersion: 1 as const, revision: 1, personaId: "persona", name: "Player" }, validateTavernArtifact);
-  const scenario = await artifacts.write(tavernRevisionPath(join(paths.companionRoot, "scenarios", "scenario"), 1), { schemaVersion: 1 as const, revision: 1, scenarioId: "scenario", name: "Scenario", description: "Quiet.", text: "Quiet.", provenance: "authored" as const, owner: "chat_override" as const }, validateTavernArtifact);
+  const persona = await artifacts.write(
+    tavernRevisionPath(join(paths.playerRoot, "personas", "persona"), 1),
+    { schemaVersion: 1 as const, revision: 1, personaId: "persona", name: "Player" },
+    validateTavernArtifact,
+  );
+  const scenario = await artifacts.write(
+    tavernRevisionPath(join(paths.companionRoot, "scenarios", "scenario"), 1),
+    {
+      schemaVersion: 1 as const,
+      revision: 1,
+      scenarioId: "scenario",
+      name: "Scenario",
+      description: "Quiet.",
+      text: "Quiet.",
+      provenance: "authored" as const,
+      owner: "chat_override" as const,
+    },
+    validateTavernArtifact,
+  );
   const threads = createChatThreadStore(root, "continuity-key");
-  const creation = createProfileAwareChatThreadCreationCapability(threads, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } });
-  const thread = await creation.createExplicit({ chatThreadId: "thread", chatSurfaceSessionId: "surface", companionId: "companion", continuityId: "continuity", personaId: "persona", scenarioId: "scenario", stableArtifactBindings: [
-    { kind: "persona", sourceId: "persona", revision: 1, canonicalHash: persona.canonicalHash },
-    { kind: "scenario", sourceId: "scenario", revision: 1, canonicalHash: scenario.canonicalHash },
-  ], opening: "blank" });
-  const scope = { continuityId: "continuity", sessionId: "pi-session", surface: "tavern" as const, threadId: "thread", profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) } };
-  const catalog = await materializeTavernAuthoredContextCatalog(paths, artifacts, thread.thread, scope);
+  const creation = createProfileAwareChatThreadCreationCapability(threads, {
+    async readExact() {
+      return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+    },
+  });
+  const thread = await creation.createExplicit({
+    chatThreadId: "thread",
+    chatSurfaceSessionId: "surface",
+    companionId: "companion",
+    continuityId: "continuity",
+    personaId: "persona",
+    scenarioId: "scenario",
+    stableArtifactBindings: [
+      { kind: "persona", sourceId: "persona", revision: 1, canonicalHash: persona.canonicalHash },
+      { kind: "scenario", sourceId: "scenario", revision: 1, canonicalHash: scenario.canonicalHash },
+    ],
+    opening: "blank",
+  });
+  const scope = {
+    continuityId: "continuity",
+    sessionId: "pi-session",
+    surface: "tavern" as const,
+    threadId: "thread",
+    profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+  };
+  const catalog = await materializeTavernAuthoredContextCatalog(paths, artifacts, thread.thread, scope, TEST_MACROS);
   assert.equal(catalog.version, "gamebuddy-authored-context-catalog/v2");
-  assert.deepEqual(catalog.stableSources.map((source) => source.kind), ["persona", "scenario"]);
+  assert.deepEqual(
+    catalog.stableSources.map((source) => source.kind),
+    ["persona", "scenario"],
+  );
   assert.equal(catalog.scope.threadId, "thread");
   assert.match(catalog.canonicalHash, /^[a-f0-9]{64}$/);
-  await assert.rejects(() => materializeTavernAuthoredContextCatalog(paths, artifacts, thread.thread, { ...scope, threadId: "foreign" }), /binding_mismatch/);
+  await assert.rejects(
+    () =>
+      materializeTavernAuthoredContextCatalog(
+        paths,
+        artifacts,
+        thread.thread,
+        { ...scope, threadId: "foreign" },
+        TEST_MACROS,
+      ),
+    /binding_mismatch/,
+  );
   threads.close?.();
 });
 test("buildGameSurfaceAuthoredCatalog mounts only the reviewed always-on WorldBook as a lorebook_constant m[0] source", async () => {
@@ -242,7 +413,10 @@ test("buildGameSurfaceAuthoredCatalog mounts only the reviewed always-on WorldBo
     },
     binding,
   );
-  assert.deepEqual(catalog.stableSources.map((source) => source.kind), ["lorebook_constant"]);
+  assert.deepEqual(
+    catalog.stableSources.map((source) => source.kind),
+    ["lorebook_constant"],
+  );
   const source = catalog.stableSources[0];
   assert.equal(source?.sourceId, "default-companion");
   assert.equal(source?.revision, "3");
@@ -360,7 +534,8 @@ test("buildGameSurfaceAuthoredCatalog renders worldbook macros, drops an unrende
       ),
     /game_authored_context_unrendered_macro/,
   );
-});test("native WorldBookBinding materializes constant entries into lorebook_constant and keyword entries as volatile", async () => {
+});
+test("native WorldBookBinding materializes constant entries into lorebook_constant and keyword entries as volatile", async () => {
   const root = await canonicalTestRoot("gamebuddy-native-catalog-");
   const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
   const paths = resolveTavernPaths({ root } as never, identity);
@@ -412,18 +587,25 @@ test("buildGameSurfaceAuthoredCatalog renders worldbook macros, drops an unrende
       worldBookBinding: binding,
       opening: "blank",
     });
-    const catalog = await materializeTavernAuthoredStableCatalog(paths, new TavernArtifactStore(root), thread.thread, {
-      continuityId: "continuity",
-      sessionId: "pi-session",
-      surface: "tavern",
-      threadId: "thread",
-      profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
-    }, {
-      binding,
-      alwaysOnPremise: book.alwaysOnPremise,
-      constantEntries: book.entries.filter((entry) => entry.constant === true),
-      keywordEntries: book.entries.filter((entry) => entry.constant !== true),
-    });
+    const catalog = await materializeTavernAuthoredStableCatalog(
+      paths,
+      new TavernArtifactStore(root),
+      thread.thread,
+      {
+        continuityId: "continuity",
+        sessionId: "pi-session",
+        surface: "tavern",
+        threadId: "thread",
+        profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+      },
+      TEST_MACROS,
+      {
+        binding,
+        alwaysOnPremise: book.alwaysOnPremise,
+        constantEntries: book.entries.filter((entry) => entry.constant === true),
+        keywordEntries: book.entries.filter((entry) => entry.constant !== true),
+      },
+    );
     const stable = catalog.stableSources.find((source) => source.kind === "lorebook_constant");
     assert.ok(stable);
     assert.equal(stable.sourceId, book.worldBookId);
@@ -440,5 +622,135 @@ test("buildGameSurfaceAuthoredCatalog renders worldbook macros, drops an unrende
     assert.deepEqual(catalog.volatileSources[0]?.selectionKeys, ["喜欢晴天"]);
   } finally {
     threads.close?.();
+  }
+});
+
+test("the scenario's authored macros are rendered into the Chat catalog while the durable record keeps them", async () => {
+  const root = await canonicalTestRoot("gamebuddy-catalog-scenario-macros-");
+  const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
+  const paths = resolveTavernPaths({ root } as never, identity);
+  const artifacts = new TavernArtifactStore(root);
+  const authored = "{{user}}与青梅竹马{{char}}一起在农场收菜。";
+  const scenario = await artifacts.write(
+    tavernRevisionPath(join(paths.companionRoot, "scenarios", "scenario"), 1),
+    {
+      schemaVersion: 1 as const,
+      revision: 1,
+      scenarioId: "scenario",
+      name: "{{char}}的清晨",
+      description: authored,
+      text: authored,
+      provenance: "authored" as const,
+      owner: "chat_override" as const,
+    },
+    validateTavernArtifact,
+  );
+  const threads = createChatThreadStore(root, "continuity-key");
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
+    const thread = await creation.createExplicit({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      companionId: "companion",
+      continuityId: "continuity",
+      scenarioId: "scenario",
+      stableArtifactBindings: [
+        { kind: "scenario", sourceId: "scenario", revision: 1, canonicalHash: scenario.canonicalHash },
+      ],
+      opening: "blank",
+    });
+    const catalog = await materializeTavernAuthoredStableCatalog(
+      paths,
+      artifacts,
+      thread.thread,
+      {
+        continuityId: "continuity",
+        sessionId: "pi-session",
+        surface: "tavern",
+        threadId: "thread",
+        profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+      },
+      TEST_MACROS,
+    );
+    const content = catalog.stableSources.find((source) => source.kind === "scenario")?.content ?? "";
+    assert.equal(content.includes("琥珀"), true, "the companion's own name resolves {{char}}");
+    assert.equal(content.includes("玩家"), true, "the run's player reference resolves {{user}}");
+    assert.doesNotMatch(content, /\{\{/u, "no raw macro reaches the companion's context");
+    // The durable record keeps the card's own macros verbatim: the absence above is
+    // the rendering, not a scenario that happened to contain none.
+    const durable = await artifacts.read(
+      tavernRevisionPath(join(paths.companionRoot, "scenarios", "scenario"), 1),
+      validateTavernArtifact,
+    );
+    assert.ok((durable.artifact as Scenario).text.includes("{{user}}"));
+    assert.ok((durable.artifact as Scenario).text.includes("{{char}}"));
+  } finally {
+    threads.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the Chat catalog refuses a scenario macro the run cannot render", async () => {
+  const root = await canonicalTestRoot("gamebuddy-catalog-scenario-poisoned-");
+  const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
+  const paths = resolveTavernPaths({ root } as never, identity);
+  const artifacts = new TavernArtifactStore(root);
+  const authored = "A {{unknown_macro}} reference.";
+  const scenario = await artifacts.write(
+    tavernRevisionPath(join(paths.companionRoot, "scenarios", "poisoned"), 1),
+    {
+      schemaVersion: 1 as const,
+      revision: 1,
+      scenarioId: "poisoned",
+      name: "Poisoned",
+      description: authored,
+      text: authored,
+      provenance: "authored" as const,
+      owner: "chat_override" as const,
+    },
+    validateTavernArtifact,
+  );
+  const threads = createChatThreadStore(root, "continuity-key");
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
+    const thread = await creation.createExplicit({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      companionId: "companion",
+      continuityId: "continuity",
+      scenarioId: "poisoned",
+      stableArtifactBindings: [
+        { kind: "scenario", sourceId: "poisoned", revision: 1, canonicalHash: scenario.canonicalHash },
+      ],
+      opening: "blank",
+    });
+    await assert.rejects(
+      () =>
+        materializeTavernAuthoredStableCatalog(
+          paths,
+          artifacts,
+          thread.thread,
+          {
+            continuityId: "continuity",
+            sessionId: "pi-session",
+            surface: "tavern",
+            threadId: "thread",
+            profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+          },
+          TEST_MACROS,
+        ),
+      /tavern_stable_context_unrendered_scenario_macro/,
+    );
+  } finally {
+    threads.close?.();
+    await rm(root, { recursive: true, force: true });
   }
 });

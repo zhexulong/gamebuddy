@@ -109,7 +109,9 @@ async function buildExactChatRuntimeConstruction(
   const selectedThread = state.thread;
   let profileMetadata;
   try {
-    profileMetadata = identityProfileMetadata(await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE));
+    profileMetadata = identityProfileMetadata(
+      await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE),
+    );
   } catch {
     throw new Error("chat_runtime_exact_content_unavailable");
   }
@@ -124,10 +126,7 @@ async function buildExactChatRuntimeConstruction(
   // carrying a locale of its own. It is read once here because the authored
   // context it renders (the world book's macros) is constructed with this mount.
   const presentationLocale = await resolveCompanionLocale(paths.root);
-  const materializeContextForPiSession = async (
-    piSessionId: string,
-    mode: "mounted" | "desired",
-  ) => {
+  const materializeContextForPiSession = async (piSessionId: string, mode: "mounted" | "desired") => {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(piSessionId)) throw new Error("chat_runtime_pi_session_rejected");
     try {
       const freshState = await threads.resumeThread(permit.chatThreadId, permit.chatSurfaceSessionId);
@@ -157,9 +156,10 @@ async function buildExactChatRuntimeConstruction(
         sameWorldInfoBinding(effectiveBinding, freshState.thread.appliedWorldBookBinding)
           ? freshState.thread
           : Object.freeze({
-            ...freshState.thread,
-            ...(effectiveBinding === undefined ? {} : { worldBookBinding: effectiveBinding }),
-          });
+              ...freshState.thread,
+              ...(effectiveBinding === undefined ? {} : { worldBookBinding: effectiveBinding }),
+            });
+      const macros = macroTable({ char: freshProfile.identity.name, locale: presentationLocale });
       return await materializeTavernAuthoredStableCatalog(
         tavernPaths,
         artifactStore,
@@ -175,14 +175,12 @@ async function buildExactChatRuntimeConstruction(
             canonicalHash: freshProfileMetadata.canonicalHash,
           }),
         }),
+        macros,
         effectiveBinding === undefined
           ? undefined
           : "source" in effectiveBinding
             ? await managedWorldInfoResolver.resolve(effectiveBinding)
-            : await resolveBoundWorldBookSource(effectiveBinding, paths.runtimeCwd, {
-                companionName: freshProfile.identity.name,
-                locale: presentationLocale,
-              }),
+            : await resolveBoundWorldBookSource(effectiveBinding, paths.runtimeCwd, macros),
       );
     } catch {
       throw new Error("chat_runtime_exact_content_unavailable");
@@ -252,9 +250,18 @@ function sameWorldInfoBinding(
 ): boolean {
   if (left === undefined || right === undefined) return left === right;
   if ("source" in left && "source" in right)
-    return left.publicTitle === right.publicTitle && left.revision === right.revision && left.canonicalHash === right.canonicalHash;
+    return (
+      left.publicTitle === right.publicTitle &&
+      left.revision === right.revision &&
+      left.canonicalHash === right.canonicalHash
+    );
   if (!("source" in left) && !("source" in right))
-    return left.worldBookId === right.worldBookId && left.revision === right.revision && left.canonicalHash === right.canonicalHash && left.provenance === right.provenance;
+    return (
+      left.worldBookId === right.worldBookId &&
+      left.revision === right.revision &&
+      left.canonicalHash === right.canonicalHash &&
+      left.provenance === right.provenance
+    );
   return false;
 }
 
@@ -306,7 +313,7 @@ function assertExactPermit(execution: ChatRuntimeBindingExecution, permit: Produ
 async function resolveBoundWorldBookSource(
   binding: import("../tavern/chat-thread-store.js").TavernStableWorldBookBinding,
   runtimeCwd: string,
-  identity: Readonly<{ companionName: string; locale: string }>,
+  macros: MacroTable,
 ): Promise<import("../tavern/catalog-service.js").TavernWorldInfoSource> {
   let book;
   try {
@@ -322,13 +329,12 @@ async function resolveBoundWorldBookSource(
   )
     throw new Error("chat_runtime_exact_content_unavailable");
   // The world book carries card macros; render them as authored content here so
-  // no `{{...}}` placeholder reaches the Chat catalog. `{{char}}` is the
-  // companion's own name - read from the identity profile construction has
-  // already verified against this thread's binding, the same authority the Game
-  // surface renders its own book with - and `{{user}}` follows the player's
-  // language. An entry the table still cannot fully render is omitted from the
-  // companion's context, but never silently: see renderWorldBookEntry.
-  const macros = macroTable({ char: identity.companionName, locale: identity.locale });
+  // no `{{...}}` placeholder reaches the Chat catalog. The `macros` table is the
+  // caller's single run-scoped authority (`{{char}}` is the companion's own name
+  // from the identity profile construction already verified against this thread's
+  // binding, `{{user}}` the run's player reference). An entry the table still
+  // cannot fully render is omitted from the companion's context, but never
+  // silently: see renderWorldBookEntry.
   const constantEntries: readonly WorldBookEntry[] = book.entries
     .filter((entry) => entry.constant === true)
     .flatMap((entry) => {

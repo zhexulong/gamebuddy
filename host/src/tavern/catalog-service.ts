@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { canonicalJson, type TavernArtifactStore } from "./artifact-store.js";
-import { hasUnrenderedMacro, renderWorldBookText } from "./macro-engine.js";
+import { hasUnrenderedMacro, renderMacros, renderWorldBookText, type MacroTable } from "./macro-engine.js";
 import type {
   ChatThread,
   TavernStableManagedWorldInfoBinding,
@@ -9,12 +9,7 @@ import type {
   TavernStableWorldInfoBinding,
 } from "./chat-thread-store.js";
 import { type TavernPaths, tavernRevisionPath } from "./tavern-paths.js";
-import {
-  type DialogueExamples,
-  type Scenario,
-  type UserPersona,
-  validateTavernArtifact,
-} from "./types.js";
+import { type DialogueExamples, type Scenario, type UserPersona, validateTavernArtifact } from "./types.js";
 import type { WorldBookBinding } from "../worldbook.js";
 
 export type TavernStableContextBinding = Readonly<{
@@ -72,16 +67,19 @@ const TAVERN_STABLE_CONTEXT_MAX_TOKENS = 2_048;
  * Derives the only Host-publishable Tavern stable snapshot from exact selected
  * artifact revisions. Missing selected revisions, thread/binding mismatches,
  * and budget overflow reject before any model turn; absent selections produce
- * an explicit empty tombstone rather than invented sources.
+ * an explicit empty tombstone rather than invented sources. Authored text is
+ * rendered through the run's macro table, so no `{{user}}`/`{{char}}` placeholder
+ * is published as the companion's own context.
  */
 export async function materializeTavernAuthoredStableCatalog(
   paths: TavernPaths,
   store: TavernArtifactStore,
   thread: ChatThread,
   binding: TavernStableContextBinding,
+  macros: MacroTable,
   worldInfoSource?: TavernWorldInfoSource,
 ): Promise<TavernAuthoredContextCatalog> {
-  return materializeTavernAuthoredContextCatalog(paths, store, thread, binding, worldInfoSource);
+  return materializeTavernAuthoredContextCatalog(paths, store, thread, binding, macros, worldInfoSource);
 }
 
 export async function materializeTavernAuthoredContextCatalog(
@@ -89,6 +87,7 @@ export async function materializeTavernAuthoredContextCatalog(
   store: TavernArtifactStore,
   thread: ChatThread,
   binding: TavernStableContextBinding,
+  macros: MacroTable,
   worldInfoSource?: TavernWorldInfoSource,
 ): Promise<TavernAuthoredContextCatalog> {
   if (
@@ -107,7 +106,7 @@ export async function materializeTavernAuthoredContextCatalog(
   // The content this source will PUBLISH is `deriveStableWorldInfoContent`, not the
   // raw premise: a reviewed card import lands its backdrop as the book's constant
   // entries and writes an empty `alwaysOnPremise` (`new-companion-service.ts`), so
-  // gating on the premise alone refused every turn of a card-provisioned companion - 
+  // gating on the premise alone refused every turn of a card-provisioned companion -
   // the book was bound, the entries were on disk, and the materialization failed
   // closed before it ever reached them. A book with neither a premise nor any
   // always-on entry still has no publishable content and is still refused here.
@@ -155,8 +154,13 @@ export async function materializeTavernAuthoredContextCatalog(
               : { description: (artifact as UserPersona).description }),
           })
         : selected.kind === "scenario"
-          ? (artifact as Scenario).text
+          ? renderMacros((artifact as Scenario).text, macros)
           : canonicalJson({ blocks: (artifact as DialogueExamples).blocks });
+    // A scenario is one bound stable source, so unlike a world book entry it cannot
+    // be dropped. An authored macro the run's table cannot resolve still must not be
+    // published as the companion's context, exactly as the Game surface refuses one.
+    if (selected.kind === "scenario" && hasUnrenderedMacro(content))
+      throw new Error("tavern_stable_context_unrendered_scenario_macro");
     sources.push(
       source(
         selected.kind,
@@ -192,14 +196,25 @@ export async function materializeTavernAuthoredContextCatalog(
   }
   const budgetTokens = sources.reduce((total, item) => total + item.budgetTokens, 0);
   if (budgetTokens > TAVERN_STABLE_CONTEXT_MAX_TOKENS) throw new Error("tavern_stable_context_oversize");
-  const volatileSources = worldInfoSource === undefined ? Object.freeze([]) : deriveVolatileWorldInfoSources(worldInfoSource, sources.find((item) => item.kind === "lorebook_constant")?.sourceId ?? "world-info");
+  const volatileSources =
+    worldInfoSource === undefined
+      ? Object.freeze([])
+      : deriveVolatileWorldInfoSources(
+          worldInfoSource,
+          sources.find((item) => item.kind === "lorebook_constant")?.sourceId ?? "world-info",
+        );
   const body = {
     version: "gamebuddy-authored-context-catalog/v2" as const,
     scope: binding,
     stableSources: sources,
     volatileSources,
   };
-  return Object.freeze({ ...body, canonicalHash: hash(canonicalJson(body)), stableSources: Object.freeze(sources), volatileSources: Object.freeze(volatileSources) });
+  return Object.freeze({
+    ...body,
+    canonicalHash: hash(canonicalJson(body)),
+    stableSources: Object.freeze(sources),
+    volatileSources: Object.freeze(volatileSources),
+  });
 }
 function source(
   kind: "persona" | "scenario" | "dialogue_examples" | "lorebook_constant",
@@ -261,7 +276,11 @@ function deriveStableWorldInfoContent(sourceValue: TavernWorldInfoSource): strin
     // the import folded in. Both are Tier 2 always-on: stable across the whole
     // session, 100% prefix-cache eligible. Budget-bound so an extreme book
     // degrades to the premise overview instead of blowing the stable ceiling.
-    if ("constantEntries" in sourceValue && sourceValue.constantEntries !== undefined && sourceValue.constantEntries.length > 0) {
+    if (
+      "constantEntries" in sourceValue &&
+      sourceValue.constantEntries !== undefined &&
+      sourceValue.constantEntries.length > 0
+    ) {
       const constants = canonicalJson({
         worldBookId: sourceValue.binding.worldBookId,
         alwaysOnPremise: sourceValue.alwaysOnPremise,
@@ -300,7 +319,10 @@ function boundedWorldInfoOverview(content: string): string {
 function isRecord(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-function deriveVolatileWorldInfoSources(sourceValue: TavernWorldInfoSource, parentSourceId: string): TavernAuthoredContextCatalog["volatileSources"] {
+function deriveVolatileWorldInfoSources(
+  sourceValue: TavernWorldInfoSource,
+  parentSourceId: string,
+): TavernAuthoredContextCatalog["volatileSources"] {
   // NATIVE WorldBook first: a companion's own book IS parseable JSON, so a JSON-parse-first order would
   // send it down the managed-World-Info branch and never reach the keyword entries at all. That ordering
   // was the reason keyword-gated facts could not reach the context no matter how correct the rest of the
@@ -347,50 +369,62 @@ function deriveVolatileWorldInfoSources(sourceValue: TavernWorldInfoSource, pare
   // A NATIVE book is JSON too (it has `entries`), but its entries are `{entryId,title,content,…}`, not
   // `{publicTitle,summary,…}`. Without this shape test the managed branch below would THROW on a native book
   // and the throw would be swallowed into "no volatile sources" — the silent half of this defect.
-  if (parsed.entries.some((entry: unknown) => !isRecord(entry) || typeof entry.publicTitle !== "string" || typeof entry.summary !== "string"))
+  if (
+    parsed.entries.some(
+      (entry: unknown) =>
+        !isRecord(entry) || typeof entry.publicTitle !== "string" || typeof entry.summary !== "string",
+    )
+  )
     return Object.freeze([]);
   const revision = sourceValue.binding.revision;
   const canonical = sourceValue.binding.canonicalHash;
-  return Object.freeze(parsed.entries.flatMap((entry, index) => {
-    if (!isRecord(entry)) throw new Error("tavern_volatile_context_invalid_source");
-    if (entry.constant === true) return [];
-    if (typeof entry.publicTitle !== "string" || typeof entry.summary !== "string") throw new Error("tavern_volatile_context_invalid_source");
-    const content = entry.summary;
-    if (!validSourceContent(content)) throw new Error("tavern_volatile_context_invalid_source");
-    const sourceId = `${parentSourceId}_entry_${index + 1}`;
-    const provenance = `tavern-world-info-entry/${sourceId}/revision/${revision}/canonical/${canonical}`;
-    const selectionKeys = Array.isArray(entry.keys) && entry.keys.length > 0 ? entry.keys : [entry.publicTitle];
-    if (selectionKeys.some((key) => typeof key !== "string" || key.trim().length === 0)) throw new Error("tavern_volatile_context_invalid_source");
-    const secondaryKeys = Array.isArray(entry.secondaryKeys) && entry.secondaryKeys.length > 0 ? entry.secondaryKeys : undefined;
-    if (secondaryKeys && secondaryKeys.some((key: unknown) => typeof key !== "string" || key.trim().length === 0)) {
-      throw new Error("tavern_volatile_context_invalid_source");
-    }
-    if (
-      entry.selectiveLogic !== undefined &&
-      !(typeof entry.selectiveLogic === "number" && ([0, 1, 2, 3] as readonly number[]).includes(entry.selectiveLogic))
-    ) {
-      throw new Error("tavern_volatile_context_invalid_source");
-    }
-    const selectiveLogic =
-      typeof entry.selectiveLogic === "number" && ([0, 1, 2, 3] as readonly number[]).includes(entry.selectiveLogic)
-        ? (entry.selectiveLogic as 0 | 1 | 2 | 3)
-        : undefined;
-    return [
-      Object.freeze({
-        sourceId,
-        kind: "lorebook_entry" as const,
-        revision: String(revision),
-        canonicalHash: hash(content),
-        content,
-        budgetTokens: Math.ceil(content.length / 4),
-        totalOrderKey: String(index + 1).padStart(4, "0"),
-        provenance,
-        selectionKeys: Object.freeze([...selectionKeys]),
-        ...(secondaryKeys !== undefined ? { secondaryKeys: Object.freeze([...secondaryKeys]) } : {}),
-        ...(selectiveLogic !== undefined ? { selectiveLogic } : {}),
-      }),
-    ];
-  }));
+  return Object.freeze(
+    parsed.entries.flatMap((entry, index) => {
+      if (!isRecord(entry)) throw new Error("tavern_volatile_context_invalid_source");
+      if (entry.constant === true) return [];
+      if (typeof entry.publicTitle !== "string" || typeof entry.summary !== "string")
+        throw new Error("tavern_volatile_context_invalid_source");
+      const content = entry.summary;
+      if (!validSourceContent(content)) throw new Error("tavern_volatile_context_invalid_source");
+      const sourceId = `${parentSourceId}_entry_${index + 1}`;
+      const provenance = `tavern-world-info-entry/${sourceId}/revision/${revision}/canonical/${canonical}`;
+      const selectionKeys = Array.isArray(entry.keys) && entry.keys.length > 0 ? entry.keys : [entry.publicTitle];
+      if (selectionKeys.some((key) => typeof key !== "string" || key.trim().length === 0))
+        throw new Error("tavern_volatile_context_invalid_source");
+      const secondaryKeys =
+        Array.isArray(entry.secondaryKeys) && entry.secondaryKeys.length > 0 ? entry.secondaryKeys : undefined;
+      if (secondaryKeys && secondaryKeys.some((key: unknown) => typeof key !== "string" || key.trim().length === 0)) {
+        throw new Error("tavern_volatile_context_invalid_source");
+      }
+      if (
+        entry.selectiveLogic !== undefined &&
+        !(
+          typeof entry.selectiveLogic === "number" && ([0, 1, 2, 3] as readonly number[]).includes(entry.selectiveLogic)
+        )
+      ) {
+        throw new Error("tavern_volatile_context_invalid_source");
+      }
+      const selectiveLogic =
+        typeof entry.selectiveLogic === "number" && ([0, 1, 2, 3] as readonly number[]).includes(entry.selectiveLogic)
+          ? (entry.selectiveLogic as 0 | 1 | 2 | 3)
+          : undefined;
+      return [
+        Object.freeze({
+          sourceId,
+          kind: "lorebook_entry" as const,
+          revision: String(revision),
+          canonicalHash: hash(content),
+          content,
+          budgetTokens: Math.ceil(content.length / 4),
+          totalOrderKey: String(index + 1).padStart(4, "0"),
+          provenance,
+          selectionKeys: Object.freeze([...selectionKeys]),
+          ...(secondaryKeys !== undefined ? { secondaryKeys: Object.freeze([...secondaryKeys]) } : {}),
+          ...(selectiveLogic !== undefined ? { selectiveLogic } : {}),
+        }),
+      ];
+    }),
+  );
 }
 function validSourceContent(value: string): boolean {
   return typeof value === "string" && value.length > 0 && !/[\u0000\u007f]/u.test(value);

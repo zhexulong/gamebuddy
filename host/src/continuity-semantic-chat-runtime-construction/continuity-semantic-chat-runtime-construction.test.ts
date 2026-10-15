@@ -29,6 +29,9 @@ import {
 } from "../settings/player-preference-store.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction.internal.js";
 import { validateWorldBook, writeWorldBook } from "../worldbook.js";
+import { TavernArtifactStore } from "../tavern/artifact-store.js";
+import { resolveTavernPaths, tavernRevisionPath } from "../tavern/tavern-paths.js";
+import { validateTavernArtifact } from "../tavern/types.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 
@@ -68,6 +71,8 @@ type FixtureOptions = Readonly<{
    * the very file the runtime will read (no `source` field, which is what distinguishes it from a managed
    * World Info binding). This is the path `createManifestDerivedInitialChatExactContentPort` takes. */
   ownWorldBookPath?: string;
+  /** A scenario artifact bound on the thread, as a card-provisioned companion binds one. */
+  scenario?: Readonly<{ text: string }>;
 }>;
 
 async function fixture(options: FixtureOptions = {}) {
@@ -128,13 +133,47 @@ async function fixture(options: FixtureOptions = {}) {
   const profileMetadata = identityProfileMetadata(profile);
   const profilePaths = resolveRuntimePaths(principal, runtimeRoot, "chat_session_01");
   await writeIdentityProfile(profilePaths.identityProfilePath, profile);
-  const creation = createProfileAwareChatThreadCreationCapability(threads, { async readExact() { return profileMetadata; } });
+  let scenarioBinding:
+    | Readonly<{ kind: "scenario"; sourceId: string; revision: number; canonicalHash: string }>
+    | undefined;
+  if (options.scenario !== undefined) {
+    const tavernPaths = resolveTavernPaths(profilePaths, principal);
+    const sourceId = "scenario";
+    const scenario = await new TavernArtifactStore(runtimeRoot).write(
+      tavernRevisionPath(join(tavernPaths.companionRoot, "scenarios", sourceId), 1),
+      {
+        schemaVersion: 1 as const,
+        revision: 1,
+        scenarioId: sourceId,
+        name: "Scenario",
+        description: options.scenario.text,
+        text: options.scenario.text,
+        provenance: "authored" as const,
+        owner: "chat_override" as const,
+      },
+      validateTavernArtifact,
+    );
+    scenarioBinding = Object.freeze({
+      kind: "scenario" as const,
+      sourceId,
+      revision: 1,
+      canonicalHash: scenario.canonicalHash,
+    });
+  }
+  const creation = createProfileAwareChatThreadCreationCapability(threads, {
+    async readExact() {
+      return profileMetadata;
+    },
+  });
   await creation.createExplicit({
     chatThreadId: "thread_01",
     chatSurfaceSessionId: "chat_session_01",
     companionId: principal.companionId,
     continuityId: principal.continuityId,
     ...(worldBookBinding === undefined ? {} : { worldBookBinding }),
+    ...(scenarioBinding === undefined
+      ? {}
+      : { scenarioId: scenarioBinding.sourceId, stableArtifactBindings: [scenarioBinding] }),
     opening: "blank",
   });
   return Object.freeze({ root, runtimeRoot, binding, threads });
@@ -191,7 +230,10 @@ test("Chat construction publishes an exact managed World Info revision into the 
       ),
     );
     const catalog = await prepared.materializeStableContextForPiSession("pi_session_world_info");
-    assert.deepEqual(catalog.stableSources.map((source) => source.kind), ["lorebook_constant"]);
+    assert.deepEqual(
+      catalog.stableSources.map((source) => source.kind),
+      ["lorebook_constant"],
+    );
     assert.equal(catalog.stableSources[0]?.revision, "1");
     assert.match(catalog.stableSources[0]?.sourceId ?? "", /^managed_world_info_[a-f0-9]{32}$/);
     assert.equal(catalog.stableSources[0]?.content.includes("Original town facts."), true);
@@ -257,7 +299,11 @@ test("Chat construction rejects profile metadata drift before publication", asyn
   let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
   try {
     const paths = resolveRuntimePaths(principal, value.runtimeRoot, "chat_session_01");
-    const drifted = Object.freeze({ ...DEFAULT_IDENTITY_PROFILE, profileId: "profile_drift", identity: Object.freeze({ ...DEFAULT_IDENTITY_PROFILE.identity }) });
+    const drifted = Object.freeze({
+      ...DEFAULT_IDENTITY_PROFILE,
+      profileId: "profile_drift",
+      identity: Object.freeze({ ...DEFAULT_IDENTITY_PROFILE.identity }),
+    });
     await writeIdentityProfile(paths.identityProfilePath, drifted);
     await assert.rejects(
       value.binding.executeWithBinding((token) =>
@@ -315,10 +361,7 @@ test("Chat construction takes the companion language from the player's stored pr
     );
     assert.equal(prepared.presentation.profile.locale, "en-US");
     // And that value is exactly what the prompt's language line will say.
-    const prompt = buildChatCompanionSystemPrompt(
-      DEFAULT_IDENTITY_PROFILE,
-      prepared.presentation.profile.locale,
-    );
+    const prompt = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, prepared.presentation.profile.locale);
     assert.match(prompt, /Consistently converse in English/u);
     assert.doesNotMatch(prompt, /Chinese/u);
     // A second construction on the same root sees the update: the preference is
@@ -343,10 +386,7 @@ test("Chat construction refuses an unreadable language preference instead of gue
     const path = playerPreferencePath(value.runtimeRoot);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, "{ not a preference", "utf8");
-    await assert.rejects(
-      () => resolveCompanionLocale(value.runtimeRoot),
-      /invalid_player_preference_store/u,
-    );
+    await assert.rejects(() => resolveCompanionLocale(value.runtimeRoot), /invalid_player_preference_store/u);
   } finally {
     await value.binding.close();
     await releaseConstructionAndFixture(prepared, value);
@@ -507,6 +547,33 @@ test("a {{char}} entry reaches the materialization, and an entry nothing can ren
     assert.match(diagnostics, /Unknown/u, "the report names the entry");
   } finally {
     process.stderr.write = stderrWrite;
+    await value.binding.close();
+    await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
+// The scenario half of the same defect: the browser Scenario panel was fixed to
+// render the card's own macros (`withScenarioSurfaceMacros`), but the Chat catalog
+// still handed the scenario's raw `text` to the model. The companion's name and
+// the run's language are already resolved on this path - the same authority the
+// world book renders through - so the catalog must render the scenario with them.
+test("Chat construction renders the bound scenario's own macros into the catalog", async () => {
+  const authored = "{{user}}与青梅竹马{{char}}一起在农场收菜。";
+  const value = await fixture({ scenario: { text: authored } });
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    prepared = await value.binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    const catalog = await prepared.materializeStableContextForPiSession("pi_session_scenario_macros");
+    const content = catalog.stableSources.find((source) => source.kind === "scenario")?.content ?? "";
+    const companionName = DEFAULT_IDENTITY_PROFILE.identity.name;
+    assert.equal(content.includes(companionName), true, "{{char}} resolves to the companion's profile name");
+    assert.equal(content.includes("玩家"), true, "{{user}} resolves to the run's player reference");
+    assert.doesNotMatch(content, /\{\{/u, "no raw macro reaches the companion's context");
+  } finally {
     await value.binding.close();
     await releaseConstructionAndFixture(prepared, value);
   }
