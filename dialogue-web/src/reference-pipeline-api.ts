@@ -67,6 +67,23 @@ export type BrowserMessageV1 = Readonly<{
   openingVariant?: BrowserOpeningVariantV1;
 }>;
 
+/**
+ * The `lang` tag a transcript bubble paints for the Host-projected message
+ * locale, or `undefined` when the Host had no language fact.
+ *
+ * `und` is the Host's honest "the durable store carries no per-message language"
+ * (both the reference and the management facade project it rather than infer
+ * one), and it is deliberately NOT painted: `lang="und"` would override the
+ * surface's own document language - breaking the `:lang(zh)` narration styling -
+ * while omitting the attribute lets the message keep exactly the language the
+ * document already declares. A concrete locale the Host did project (the
+ * contract's `en`/`zh-CN`) is returned so the bubble can say the text's own
+ * language.
+ */
+export function browserMessageLanguageTag(locale: BrowserMessageV1["locale"]): string | undefined {
+  return locale === "und" ? undefined : locale;
+}
+
 export type BrowserTurnV1 = Readonly<{
   handle: string;
   state: "queued" | "running" | "response_visible" | "stopping" | "completed" | "cancelled" | "failed";
@@ -483,7 +500,8 @@ function isBrowserOpeningVariant(value: unknown): value is BrowserOpeningVariant
     isNonNegativeSafeInteger(value.index) &&
     isPositiveSafeInteger(value.count) &&
     value.index < value.count &&
-    (value.label === null || (typeof value.label === "string" && value.label.length >= 1 && value.label.length <= 128)) &&
+    (value.label === null ||
+      (typeof value.label === "string" && value.label.length >= 1 && value.label.length <= 128)) &&
     typeof value.locked === "boolean"
   );
 }
@@ -590,11 +608,7 @@ function isChat(value: unknown): boolean {
   )
     return false;
   if (value.title !== null && !isLengthBoundedString(value.title, 0, 256)) return false;
-  if (
-    !Array.isArray(value.transcript) ||
-    !value.transcript.every(isBrowserMessage)
-  )
-    return false;
+  if (!Array.isArray(value.transcript) || !value.transcript.every(isBrowserMessage)) return false;
   if (
     !isRecord(value.draft) ||
     !hasExactKeys(value.draft, CHAT_DRAFT_KEYS) ||
@@ -693,7 +707,9 @@ function isSnapshot(value: unknown): value is TavernStateSnapshotV1 {
   if (
     "voice" in value &&
     value.voice !== null &&
-    (!isRecord(value.voice) || !hasExactKeys(value.voice, VOICE_SURFACE_KEYS) || !isOneOf(value.voice.state, VOICE_SURFACE_STATES))
+    (!isRecord(value.voice) ||
+      !hasExactKeys(value.voice, VOICE_SURFACE_KEYS) ||
+      !isOneOf(value.voice.state, VOICE_SURFACE_STATES))
   )
     return false;
   if (value.eventStream !== null && !isEventStream(value.eventStream)) return false;
@@ -811,7 +827,6 @@ export function validateSubmissionStatus(value: unknown): MessageSubmissionStatu
   if (!isMessageSubmissionStatus(value)) throw new TavernProtocolError();
   return value;
 }
-
 
 function validateCancelTurnResult(value: unknown): CancelTurnResultV1 {
   if (!isCancelTurnResult(value)) throw new TavernProtocolError();

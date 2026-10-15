@@ -101,9 +101,16 @@ export function MarkdownMessage({
   text,
   className,
   trailingHtml = "",
+  lang,
 }: {
   text: string;
   className?: string;
+  /**
+   * The message's own language, when the Host projected one: it lands on the
+   * rendered text so assistive tech and `:lang()` styling read the text's
+   * language instead of the surface's. Omitted when the Host carried none.
+   */
+  lang?: string | undefined;
   /**
    * A static, trusted fragment inserted inside the sanitised Markdown's last
    * block - the streaming caret, and nothing else. It is not model output, and
@@ -116,5 +123,5 @@ export function MarkdownMessage({
   // The parse is memoised per text so a streaming preview delta elsewhere in the
   // surface never re-parses (or re-sanitises) a settled message.
   const html = useMemo(() => withTrailingHtml(renderCompanionMarkdown(text), trailingHtml), [text, trailingHtml]);
-  return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className={className} lang={lang} dangerouslySetInnerHTML={{ __html: html }} />;
 }

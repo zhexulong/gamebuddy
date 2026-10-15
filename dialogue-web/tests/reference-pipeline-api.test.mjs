@@ -15,6 +15,7 @@ import {
   REFERENCE_PIPELINE_PROFILE_ID,
   TavernProblemError,
   TavernProtocolError,
+  browserMessageLanguageTag,
   createReferencePipelineApi,
   validateDraft,
   validateEvent,
@@ -613,4 +614,14 @@ test("factory defaults to a usable client without touching the network", async (
   assert.equal(typeof api.submit, "function");
   assert.equal(typeof api.readSubmissionStatus, "function");
   assert.throws(() => createReferencePipelineApi(null), /fetch-like/);
+});
+test("browserMessageLanguageTag paints a projected language and omits the Host's unknown", () => {
+  // `und` is the Host's honest "no per-message language fact" (both facades
+  // project it rather than infer one). Painting it would override the document
+  // language the `:lang(zh)` narration styling and assistive tech rely on, so
+  // the bubble inherits instead; a concrete projected locale is painted verbatim
+  // so a message in another language can say so.
+  assert.equal(browserMessageLanguageTag("und"), undefined);
+  assert.equal(browserMessageLanguageTag("en"), "en");
+  assert.equal(browserMessageLanguageTag("zh-CN"), "zh-CN");
 });

@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { ChevronLeft, ChevronRight, LoaderCircle, RefreshCw } from "lucide-react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
+import { browserMessageLanguageTag } from "../reference-pipeline-api";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 /**
@@ -125,6 +126,11 @@ export const MessageBubble = memo(function MessageBubble({
     !isPlayer && openingVariant !== undefined && !openingVariant.locked && openingVariant.count > 1
       ? openingVariant
       : undefined;
+  // The Host's per-message language, painted on the text only: the author line
+  // and the swipe/regenerate controls are player-facing UI words and must keep
+  // the surface's own language. `und` paints nothing (browserMessageLanguageTag),
+  // so the document's language still styles a CJK beat through `:lang(zh)`.
+  const languageTag = browserMessageLanguageTag(message.locale);
 
   return (
     <li
@@ -205,7 +211,12 @@ export const MessageBubble = memo(function MessageBubble({
         {/* Both sides author text, and a `*beat*` is the same format on both:
             the same sanitised Markdown renderer reads a person's words exactly as
             it reads the companion's, so the identical beat cannot render two ways. */}
-        <MarkdownMessage className="message-bubble" text={message.text} trailingHtml={CARET_MARKUP} />
+        <MarkdownMessage
+          className="message-bubble"
+          text={message.text}
+          trailingHtml={CARET_MARKUP}
+          lang={languageTag}
+        />
         {!isPlayer && onRegenerate && (
           <div className="message-actions">
             <button
