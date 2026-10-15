@@ -29,16 +29,26 @@ export const LIVE_RUN_TEXT_MAX_ENTRIES = 40;
 // A bare `[A-Za-z0-9_-]{32,}` was too eager: it also matches a long run of ordinary letters, so prose
 // would have been replaced by `<REDACTED>`. A real token of that length carries a digit or an upper-case
 // character (hex, base64, uuid, key); a lower-case word does not. Prefix-marked shapes stay unconditional.
-const SECRET_SHAPES = /(sk-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{10,}|(?=[A-Za-z0-9_-]*[0-9A-Z])[A-Za-z0-9_-]{32,})/g;
+const SECRET_SHAPES =
+  /(sk-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{10,}|(?=[A-Za-z0-9_-]*[0-9A-Z])[A-Za-z0-9_-]{32,})/g;
 const MACRO_SHAPES = /\{\{[^}]*\}\}/g;
+
+/**
+ * Redact credentials only, bounded. Exported because a caller whose evidence IS the macro
+ * (the content gates report `{{user}}` residue as a finding) must be able to bound and scramble
+ * secrets without also deleting the finding.
+ */
+export function redactLiveRunSecrets(value, { maxChars = LIVE_RUN_TEXT_MAX_CHARS } = {}) {
+  const raw = typeof value === "string" ? value : "";
+  return raw.slice(0, maxChars).replace(SECRET_SHAPES, "<REDACTED>");
+}
 
 /**
  * Bound and redact one piece of text. Non-strings become the empty string: a caller that passes an
  * object must not have it stringified into the evidence by accident.
  */
 export function redactLiveRunText(value, { maxChars = LIVE_RUN_TEXT_MAX_CHARS } = {}) {
-  const raw = typeof value === "string" ? value : "";
-  return raw.slice(0, maxChars).replace(SECRET_SHAPES, "<REDACTED>").replace(MACRO_SHAPES, "<MACRO>");
+  return redactLiveRunSecrets(value, { maxChars }).replace(MACRO_SHAPES, "<MACRO>");
 }
 
 /**
