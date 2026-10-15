@@ -190,6 +190,14 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   const startedAtMs = now();
   const factsByType = new Map();
   const dispatches = [];
+  // Observation continuity is MEASURED, never assumed. A run whose tail observed nothing must not be able to report
+  // a clean pass: measured on a real session, 107 consecutive observation failures covered the last 216 s of 600 s
+  // and the report still said `passed`.
+  let observationCycles = 0;
+  let observationFailures = 0;
+  let firstObservationFailureMs = null;
+  let lastObservationFailureMs = null;
+  let lastSuccessfulObservationMs = null;
 
   // Every fact the Mod emits, not only receipts: the point of the trace is that a reviewer can see what the
   // companion was reacting to, not only what it did.
@@ -218,7 +226,9 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
 
       let snapshot = null;
       try {
+        observationCycles += 1;
         snapshot = await observeTopologySnapshot(client, topology, { actionable: false, timeoutMs: 5_000 });
+        lastSuccessfulObservationMs = now() - startedAtMs;
         positions({
           atMs: now() - startedAtMs,
           revision: snapshot.revision ?? null,
@@ -228,11 +238,11 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
           actionable: snapshot.actionable ?? null,
         });
       } catch (error) {
-        timeline({
-          atMs: now() - startedAtMs,
-          type: "loop_observation_failed",
-          detail: String(error?.message ?? error),
-        });
+        const atMs = now() - startedAtMs;
+        observationFailures += 1;
+        firstObservationFailureMs ??= atMs;
+        lastObservationFailureMs = atMs;
+        timeline({ atMs, type: "loop_observation_failed", detail: String(error?.message ?? error) });
       }
       // The host's tile has no bridge field; it is read from the Mod's own line when the world printed one, and
       // otherwise recorded as absent WITH the reason. The farmhand's tile is never substituted for it.
@@ -304,8 +314,20 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
     hostLogPath !== null || aiLogPath !== null
       ? archiveGameLogs({ hostLogPath, aiLogPath, targetDir: join(traceDir, "smapi") })
       : [];
+  const endedAtMs = now();
+  // How long the run went at the end without a single usable observation. A large value means the tail measured
+  // nothing, whatever the verdict says.
+  const unobservedTailMs =
+    lastSuccessfulObservationMs === null
+      ? endedAtMs - startedAtMs
+      : endedAtMs - startedAtMs - lastSuccessfulObservationMs;
   return Object.freeze({
-    durationSeconds: (now() - startedAtMs) / 1_000,
+    durationSeconds: (endedAtMs - startedAtMs) / 1_000,
+    observationCycles,
+    observationFailures,
+    firstObservationFailureMs,
+    lastObservationFailureMs,
+    unobservedTailMs,
     steps: plan.steps.length,
     dispatched: Object.freeze([...dispatches]),
     agentTurns: agentTurns.length,

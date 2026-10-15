@@ -278,11 +278,18 @@ export async function main(argv) {
   // The driver wraps the runner's stdout into its own JSON (`actionResult`), so the loop's record is ESCAPED inside a
   // string field rather than a line of its own -- which is why this was null on a run that produced a full report.
   const loopResult = parseLoopResult(run.stdout) ?? parseLoopResult(driverResult?.actionResult ?? "");
+  // A verdict that ignores a third of the session is not a verdict. `passed` additionally requires that the loop
+  // observed throughout: measured on a real run, 107 consecutive observation failures covered the last 216 s of a
+  // 600 s session and it still reported a clean pass.
+  const unobservedTailMs = Number.isFinite(loopResult?.unobservedTailMs) ? loopResult.unobservedTailMs : 0;
+  const observedGap = unobservedTailMs > 30_000;
   const state =
     run.timedOut === true
       ? "blocked"
       : driverResult?.state === "action_passed" && run.exitCode === 0
-        ? "passed"
+        ? observedGap
+          ? "degraded"
+          : "passed"
         : "failed";
 
   const report = {
@@ -293,7 +300,9 @@ export async function main(argv) {
         ? "multiplayer_loop_timeout"
         : state === "passed"
           ? "multiplayer_loop_completed"
-          : `multiplayer_loop_failed:${driverResult?.state ?? "no_driver_result"}`,
+          : state === "degraded"
+            ? `multiplayer_loop_observed_gap:${Math.round(unobservedTailMs / 1000)}s`
+            : `multiplayer_loop_failed:${driverResult?.state ?? "no_driver_result"}`,
     scenario: request.scenario,
     runner: request.runner,
     saveName: request.saveName,

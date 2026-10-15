@@ -39,9 +39,12 @@ test("a duration outside the bound is refused rather than clamped", () => {
   assert.equal(parseLoopArgs([...BASE, "--duration-seconds", "900"]).durationSeconds, 900);
 });
 
-test("defaults are the chat scenario and the loop runner itself", () => {
+test("defaults are an EMPTY Host scenario and the loop runner itself", () => {
   const request = parseLoopArgs(BASE);
-  assert.equal(request.scenario, "native_farmhand_chat_v1");
+  // Empty is the correct default, not a placeholder: `HostAutomationConfig.IsValid` accepts an empty `FixtureScenario`
+  // or one of 25 hard-coded values, and a loop needs no world precondition beyond the farmhand's own cabin. A named
+  // scenario outside that list makes the Host reject its fixture configuration and never load the world (measured).
+  assert.equal(request.scenario, "");
   assert.equal(request.runner, "run-stardew-native-local-player-multiplayer-live-loop-smoke.mjs");
   // An absent plan is legal: it means "observe only".
   assert.equal(request.plan, null);
