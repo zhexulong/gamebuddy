@@ -2023,7 +2023,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     && !string.IsNullOrWhiteSpace(warp.TargetName)
                     && warp.X >= 0 && warp.Y >= 0 && warp.X <= 1000 && warp.Y <= 1000
                     && warp.TargetX >= 0 && warp.TargetY >= 0 && warp.TargetX <= 1000 && warp.TargetY <= 1000)
-                .Select(warp => new BridgeWarp(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY))
+                // The leg's accessibility, from the SAME authority the navigation topology filters its edges with
+                // (`Game1NavigationWorldSource.IsLocationAccessible`, fail-closed), so an agent can tell a usable exit
+                // from a locked door instead of probing. `null` is never produced: an unmeasurable leg fails closed to
+                // the same `false` the topology would have used to drop it.
+                .Select(warp => new BridgeWarp(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY,
+                    Game1NavigationWorldSource.IsLocationAccessible(warp.TargetName)))
                 .ToArray(),
             advertisedCapabilities.Contains("enter_exit", StringComparer.Ordinal) ? DiscoverDoorTargets(player) : null,
             advertisedCapabilities.Contains("till_soil", StringComparer.Ordinal) ? DiscoverSoilTiles(player) : null,

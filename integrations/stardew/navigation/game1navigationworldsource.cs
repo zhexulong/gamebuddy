@@ -263,7 +263,7 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
         }
     }
 
-    private static bool IsLocationAccessible(string locationName)
+    internal static bool IsLocationAccessible(string locationName)
     {
         try
         {
