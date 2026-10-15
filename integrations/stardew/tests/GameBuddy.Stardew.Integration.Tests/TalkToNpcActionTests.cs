@@ -55,9 +55,11 @@ public sealed class TalkToNpcActionTests
         "talk_to_npc_native_exception",
         // Borrowed from the family rather than re-spelled: the same two facts the other
         // NPC actions already report. `target_out_of_reach` is owned by the shared
-        // approach leg (TryBeginToolApproach), not by this file.
+        // approach leg (TryBeginToolApproach / CompleteToolApproach), which is also the
+        // leg that decides a walk ended out of reach -- including a villager that walked
+        // away while the actor was walking to where it had been.
         "hands_not_empty",
-        "target_out_of_range",
+        "target_out_of_reach",
     };
 
     [Fact]
@@ -186,9 +188,12 @@ public sealed class TalkToNpcActionTests
         executed.Should().Contain("\"hands_not_empty\"");
 
         // The snapshot coordinate is never trusted: reach is measured against the live tile
-        // on both the request path and the post-approach path.
+        // on both the request path and the post-approach path, and an arrival that lands
+        // outside it is the approach leg's own `target_out_of_reach`, not the planner's
+        // out-of-range refusal.
         code.Should().NotContain("IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)");
-        executed.Should().Contain("\"target_out_of_range\"");
+        executed.Should().Contain("\"target_out_of_reach\"");
+        executed.Should().Contain("reach=1;approach=target_moved");
     }
 
     [Fact]

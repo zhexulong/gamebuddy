@@ -139,8 +139,8 @@ namespace GameBuddy.Stardew;
 // construction and is not distinguishable from an unknown one here), an NPC
 // state that makes the native entry refuse before any dialogue logic
 // (`talk_to_npc_target_unavailable`), an actor whose hands are not empty
-// (`hands_not_empty`, the existing family code), out of reach
-// (`target_out_of_range` / `target_out_of_reach`, the existing family codes),
+// (`hands_not_empty`, the existing family code), a walk that ended out of reach
+// (`target_out_of_reach`, the existing approach-leg code),
 // the native entry declining the interaction (`talk_to_npc_not_handled`), the
 // native entry handling it through a branch that produced no dialogue
 // (`talk_to_npc_no_dialogue`), the native call throwing
@@ -208,9 +208,14 @@ internal sealed partial class ExecutionManager
         StardewValley.NPC npc = resolution.Npc!;
         int npcTileX = (int)npc.Tile.X;
         int npcTileY = (int)npc.Tile.Y;
+        // The villager walks too, so this is the post-approach re-check, not the
+        // planner's out-of-range refusal: the actor DID arrive, and the person has
+        // moved. `target_out_of_reach` is the shared approach leg's own vocabulary
+        // for "the walk ended out of reach", and both tiles are reported so the
+        // moved target is visible rather than inferred.
         if (!IsTileWithinChebyshevRadius(Game1.player, npcTileX, npcTileY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range",
-                $"{resolution.Identity};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_reach",
+                $"{resolution.Identity};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;approach=target_moved");
 
         Friendship? friendship = Game1.player.friendshipData.TryGetValue(npc.Name, out Friendship? record) ? record : null;
         bool talkedToTodayBefore = friendship?.TalkedToToday ?? false;

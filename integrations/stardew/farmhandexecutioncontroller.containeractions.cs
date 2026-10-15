@@ -1,6 +1,7 @@
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.Network;
 using StardewValley.Objects;
 
 namespace GameBuddy.Stardew;
@@ -24,6 +25,13 @@ namespace GameBuddy.Stardew;
 // intent, and it resolves through GameLocation.GetFridge() + the room's map tile
 // because it never enters location.objects. Both targets run the identical
 // transaction, so only resolution and the opaque target id differ.
+//
+// Shared-container contention: a chest and the fridge are world objects more than one player
+// can reach at once, so both bodies read the container's own native lock (Chest.GetMutex(), the
+// same NetMutex the vanilla menu path acquires while a player has it open) immediately before
+// the write and refuse BY NAME (`container_in_use`) when another player already holds it. The
+// shared admission serialises only THIS actor's body; it cannot see the other player's hands.
+// See ContainerContentionRefusal.
 internal sealed partial class ExecutionManager
 {
     public LocalExecutionReceipt RequestLocalChestStore(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
@@ -90,6 +98,11 @@ internal sealed partial class ExecutionManager
         Chest chest = container.Chest;
         if (!string.Equals(BuildContainerTargetId(location, targetX, targetY, chest, container.IsFridge), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_target_changed", $"target={targetX},{targetY}");
+        // Another player's open container outranks this actor's hands: the shared admission can
+        // only see that THIS body is free, so the container's own native lock is the authority on
+        // whether its inventory is already in use.
+        if (ReadContainerContentionRefusal(chest) is string contentionRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, contentionRefusal, $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};container={(container.IsFridge ? "fridge" : "chest")};lock=held_by_other_player");
 
         int playerStackBefore = storedItem.Stack;
         int chestStackBefore = ChestItemCount(chest, expectedQualifiedItemId);
@@ -174,6 +187,10 @@ internal sealed partial class ExecutionManager
         Chest chest = container.Chest;
         if (!string.Equals(BuildContainerTargetId(location, targetX, targetY, chest, container.IsFridge), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "chest_target_changed", $"target={targetX},{targetY}");
+        // Same contention ruling as chest_store: the container is resolved here too, and the
+        // native lock is the only thing that can say another player already has it open.
+        if (ReadContainerContentionRefusal(chest) is string contentionRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, contentionRefusal, $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};container={(container.IsFridge ? "fridge" : "chest")};lock=held_by_other_player");
 
         Item? target = chest.GetItemsForPlayer().FirstOrDefault(item => item is not null && string.Equals(item.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal) && item.Stack > 0);
         if (target is null)
@@ -207,4 +224,40 @@ internal sealed partial class ExecutionManager
 
     private static int ChestItemCount(Chest chest, string qualifiedItemId) =>
         chest.GetItemsForPlayer().Where(item => item is not null && string.Equals(item.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal)).Sum(item => item.Stack);
+
+    /// <summary>
+    /// The named refusal for a storage container ANOTHER player already has open. A placed
+    /// chest and the kitchen fridge are world objects more than one player can reach at once,
+    /// and the shared admission only ever serialises THIS actor's body: it can see that the
+    /// actor is idle, never that another player's hands are already in the container.
+    /// </summary>
+    internal const string ContainerInUse = "container_in_use";
+
+    /// <summary>
+    /// The container-contention ruling: null when the acting player may use the container,
+    /// otherwise the named refusal. The facts/decision split <see cref="WorldModel"/> uses, so
+    /// the ruling is pinnable without a live game thread. <paramref name="locked"/> is the
+    /// native lock's "somebody owns this container" reading and <paramref name="heldLocally"/> is
+    /// "that somebody is the acting player". A LOCALLY held lock is the actor's own open
+    /// container UI, which the shared admission's non-Modal profiles already refuse as a hold,
+    /// so only a lock owned by another player is contention.
+    /// </summary>
+    internal static string? ContainerContentionRefusal(bool locked, bool heldLocally) =>
+        locked && !heldLocally ? ContainerInUse : null;
+
+    /// <summary>
+    /// Reads that ruling off one live container. <c>Chest.GetMutex()</c> is the game's own
+    /// cross-player container lock (<see cref="NetMutex"/>): the vanilla menu path acquires it
+    /// while a player has the container open (<c>Chest.checkForAction</c> -
+    /// <c>GetMutex().RequestLock</c>), and the net-synced owner makes that hold visible on every
+    /// client. A menu-free write that ignored it would race the incumbent's open menu over the
+    /// same inventory. Only containers <see cref="IsOwnedOrdinaryChest"/> admits reach this - no
+    /// <c>GlobalInventoryId</c>, no special chest type - so <c>GetMutex()</c> is the chest's own
+    /// field and mints no team mutex as a side effect.
+    /// </summary>
+    private static string? ReadContainerContentionRefusal(Chest chest)
+    {
+        NetMutex mutex = chest.GetMutex();
+        return ContainerContentionRefusal(mutex.IsLocked(), mutex.IsLockHeld());
+    }
 }

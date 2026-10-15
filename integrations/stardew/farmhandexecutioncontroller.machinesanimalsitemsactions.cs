@@ -410,20 +410,68 @@ internal sealed partial class ExecutionManager
             return admissionRefusal;
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool tool || tool is not MilkPail and not Shears)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_tool_not_owned", $"slot={slot}");
+
+        StardewValley.GameLocation location = Game1.player.currentLocation;
         // Identity-bound admission, same reasoning as RequestLocalPetAnimal: a
         // FarmAnimal wanders inside its building, so matching its live tile to the
         // coordinate captured at snapshot time makes the request a race.
         // BuildAnimalProductTargetId hashes location + myID + slot + tool + produce
         // and takes no coordinate at all, so the coordinate comparison was an
         // extra binding that could only ever reject a legitimate request.
-        StardewValley.GameLocation location = Game1.player.currentLocation;
-        FarmAnimal? animal = location.animals.Values.FirstOrDefault(candidate =>
-            string.Equals(BuildAnimalProductTargetId(location, slot, candidate, tool), expectedTargetId, StringComparison.Ordinal));
+        FarmAnimal? animal = ResolveAnimalProductTarget(location, slot, tool, expectedTargetId);
         if (animal is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_target_gone", $"target={expectedTargetId}");
-        // Range against the animal's current tile -- what the interaction needs.
-        if (!IsAnimalProductTargetInRange(Game1.player, (int)animal.Tile.X, (int)animal.Tile.Y))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={expectedTargetId};animal={(int)animal.Tile.X},{(int)animal.Tile.Y}");
+        // Every position-independent precondition is validated BEFORE the geometry
+        // decision, so the actor is not sent walking for an animal it could not
+        // milk on arrival. The execution body re-validates all of it, because the
+        // animal can lose its produce, grow, or be claimed while the actor walks.
+        if (animal.currentProduce.Value is null || !animal.isAdult() || !animal.CanGetProduceWithTool(tool))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_target_changed", $"target={expectedTargetId}");
+        StardewValley.Object produce = ItemRegistry.Create<StardewValley.Object>("(O)" + animal.currentProduce.Value);
+        if (!Game1.player.couldInventoryAcceptThisItem(produce.QualifiedItemId, animal.hasEatenAnimalCracker.Value ? 2 : 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", null);
+
+        // Out of the native Chebyshev-1 radius, walk in rather than refuse -- the
+        // same 5.2 ruling the tool family follows. This used to be a bare distance
+        // check with no pathfinding, so an animal published inside the radius-6
+        // discovery window and refused past radius 1 was unreachable without the
+        // Agent moving the actor itself and re-observing between every step -- which
+        // is exactly the case a FarmAnimal (and the Pet family sharing this handler
+        // group) makes routine by wandering.
+        int animalTileX = (int)animal.Tile.X;
+        int animalTileY = (int)animal.Tile.Y;
+        if (!IsAnimalProductTargetInRange(Game1.player, animalTileX, animalTileY))
+            return this.TryBeginToolApproach(requestId, executionId, "collect_animal_product", location, animalTileX, animalTileY, expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteCollectAnimalProduct(arrivalExecutionId, arrivalRequestId, slot, expectedTargetId, requestedDeadlineMs), nowMs, requestedDeadlineMs);
+
+        return this.ExecuteCollectAnimalProduct(executionId, requestId, slot, expectedTargetId, requestedDeadlineMs);
+    }
+
+    /// <summary>
+    /// Executes collect_animal_product against the current world. An approach leg can
+    /// take several ticks while the animal wanders, so the animal is re-resolved from
+    /// its opaque id and its LIVE tile drives the range gate, the facing and the click
+    /// aim: aiming at the coordinate the snapshot published would hand the tool a tile
+    /// the animal has already left, and the native binding guard would then refuse the
+    /// exact animal this body just validated.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteCollectAnimalProduct(string executionId, string requestId, int slot, string expectedTargetId, long requestedDeadlineMs)
+    {
+        GameLocation location = Game1.player.currentLocation;
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool tool || tool is not MilkPail and not Shears)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_tool_not_owned", $"slot={slot}");
+        FarmAnimal? animal = ResolveAnimalProductTarget(location, slot, tool, expectedTargetId);
+        if (animal is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_target_gone", $"target={expectedTargetId}");
+        // Range against the animal's current tile -- what the interaction needs. A
+        // walk that ends out of reach is the shared approach vocabulary, not an
+        // out-of-range planner refusal, and both tiles are reported so the moved
+        // target is visible rather than inferred.
+        int animalTileX = (int)animal.Tile.X;
+        int animalTileY = (int)animal.Tile.Y;
+        if (!IsAnimalProductTargetInRange(Game1.player, animalTileX, animalTileY))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_reach",
+                $"target={expectedTargetId};animal={animalTileX},{animalTileY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;approach=target_moved");
         if (animal.currentProduce.Value is null || !animal.isAdult() || !animal.CanGetProduceWithTool(tool))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_target_changed", $"target={expectedTargetId}");
         int produceStack = animal.hasEatenAnimalCracker.Value ? 2 : 1;
@@ -436,7 +484,7 @@ internal sealed partial class ExecutionManager
         int previousFacingDirection = Game1.player.FacingDirection;
         string toolKind = tool is MilkPail ? "milk_pail" : "shears";
         float staminaBefore = Game1.player.Stamina;
-        LocalAnimalProductCollectionSpec specification = new(executionId, requestId, location.NameOrUniqueName, slot, targetX, targetY, expectedTargetId,
+        LocalAnimalProductCollectionSpec specification = new(executionId, requestId, location.NameOrUniqueName, slot, animalTileX, animalTileY, expectedTargetId,
             animal.myID.Value, animal.type.Value, produce.QualifiedItemId, toolKind, produceStack, inventoryBefore, previousSlot, staminaBefore, this.revision, requestedDeadlineMs);
         Game1.player.CurrentToolIndex = slot;
         // Follow the target-version input path, rather than calling Tool.beginUsing
@@ -444,8 +492,8 @@ internal sealed partial class ExecutionManager
         // starts the tool animation and later invokes Farmer.useTool/Tool.DoFunction.
         // MilkPail/Shears select from GetToolLocation, so orient the Farmhand at the
         // already-revalidated exact animal before beginning that native lifecycle.
-        Game1.player.FacingDirection = GetCardinalFacingDirectionToTile(Game1.player, targetX, targetY);
-        Game1.player.lastClick = new Vector2(targetX * 64f + 32f, targetY * 64f + 32f);
+        Game1.player.FacingDirection = GetCardinalFacingDirectionToTile(Game1.player, animalTileX, animalTileY);
+        Game1.player.lastClick = new Vector2(animalTileX * 64f + 32f, animalTileY * 64f + 32f);
         Game1.player.BeginUsingTool();
         FarmAnimal? boundAnimal = tool switch
         {
@@ -468,6 +516,16 @@ internal sealed partial class ExecutionManager
         this.AddTrace(accepted);
         return accepted;
     }
+
+    /// <summary>
+    /// Re-derives the farm animal a published opaque id names, from the actor's
+    /// CURRENT location. BuildAnimalProductTargetId is location + animal id + slot +
+    /// tool + produce, so an animal that walked between the snapshot and this read
+    /// resolves to the same subject.
+    /// </summary>
+    private static FarmAnimal? ResolveAnimalProductTarget(StardewValley.GameLocation location, int slot, Tool tool, string expectedTargetId) =>
+        location.animals.Values.FirstOrDefault(candidate =>
+            string.Equals(BuildAnimalProductTargetId(location, slot, candidate, tool), expectedTargetId, StringComparison.Ordinal));
 
     /// <summary>Experimental native pet interaction. The native Pet.checkAction path owns daily petting and friendship mutation.</summary>
     public LocalExecutionReceipt RequestLocalPetAnimal(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
@@ -500,10 +558,38 @@ internal sealed partial class ExecutionManager
         // location + petId, so the coordinate comparison was a second, redundant
         // binding: redundant, and weaker, because it proved where the pet had been
         // rather than where it is.
-        StardewValley.GameLocation location = Game1.player.currentLocation;
-        Pet? pet = location.characters.OfType<Pet>().FirstOrDefault(candidate =>
-            string.Equals(BuildPetTargetId(location, (int)candidate.Tile.X, (int)candidate.Tile.Y, candidate), expectedTargetId, StringComparison.Ordinal)
-            && (!candidate.lastPetDay.TryGetValue(Game1.player.UniqueMultiplayerID, out int lastDay) || lastDay != Game1.Date.TotalDays));
+        GameLocation location = Game1.player.currentLocation;
+        Pet? pet = ResolvePetTarget(location, expectedTargetId);
+        if (pet is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_target_gone", $"target={expectedTargetId}");
+        if (Game1.player.CurrentItem is not null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hands_not_empty", null);
+        // Out of the native Chebyshev-1 radius, walk in rather than refuse -- the
+        // same 5.2 ruling the tool family follows. This used to be a bare distance
+        // check with no pathfinding, so a pet published inside the radius-6 discovery
+        // window and refused past radius 1 was unreachable without the Agent moving
+        // the actor itself and re-observing between every step, even though a Pet's
+        // own data makes wandering the normal case rather than the exception.
+        int petTileX = (int)pet.Tile.X;
+        int petTileY = (int)pet.Tile.Y;
+        if (!IsTileWithinChebyshevRadius(Game1.player, petTileX, petTileY, 1))
+            return this.TryBeginToolApproach(requestId, executionId, "pet_animal", location, petTileX, petTileY, expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecutePetAnimal(arrivalExecutionId, arrivalRequestId, expectedTargetId, requestedDeadlineMs), nowMs, requestedDeadlineMs);
+
+        return this.ExecutePetAnimal(executionId, requestId, expectedTargetId, requestedDeadlineMs);
+    }
+
+    /// <summary>
+    /// Executes pet_animal against the current world. An approach leg can take several
+    /// ticks and a Pet walks on its own, so the pet is re-resolved from its opaque id
+    /// and reach is measured against its LIVE tile. A pet that walked out of the radius
+    /// while the actor walked to where it had been is refused with the shared approach
+    /// vocabulary, never petted through a stale coordinate.
+    /// </summary>
+    private LocalExecutionReceipt ExecutePetAnimal(string executionId, string requestId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        GameLocation location = Game1.player.currentLocation;
+        Pet? pet = ResolvePetTarget(location, expectedTargetId);
         if (pet is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_target_gone", $"target={expectedTargetId}");
         if (Game1.player.CurrentItem is not null)
@@ -513,8 +599,9 @@ internal sealed partial class ExecutionManager
         // accept a stale position and reject a pet that had walked into reach.
         int petTileX = (int)pet.Tile.X;
         int petTileY = (int)pet.Tile.Y;
-        if (!Utility.tileWithinRadiusOfPlayer(petTileX, petTileY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={expectedTargetId};pet={petTileX},{petTileY}");
+        if (!IsTileWithinChebyshevRadius(Game1.player, petTileX, petTileY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_reach",
+                $"target={expectedTargetId};pet={petTileX},{petTileY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;approach=target_moved");
 
         int friendshipBefore = pet.friendshipTowardFarmer.Value;
         LocalPettingSpec specification = new(executionId, requestId, location.NameOrUniqueName, petTileX, petTileY, expectedTargetId, pet.petId.Value.ToString("N"), friendshipBefore, Math.Min(1000, friendshipBefore + 12), Game1.Date.TotalDays, this.revision, requestedDeadlineMs);
@@ -531,6 +618,17 @@ internal sealed partial class ExecutionManager
         this.AddTrace(accepted);
         return accepted;
     }
+
+    /// <summary>
+    /// Re-derives the pet a published opaque id names, from the actor's CURRENT
+    /// location, on the game thread. BuildPetTargetId is location + petId only, so a
+    /// Pet that walked between the snapshot and this read resolves to the same subject;
+    /// the day filter is the same one discovery applies.
+    /// </summary>
+    private static Pet? ResolvePetTarget(StardewValley.GameLocation location, string expectedTargetId) =>
+        location.characters.OfType<Pet>().FirstOrDefault(candidate =>
+            string.Equals(BuildPetTargetId(location, (int)candidate.Tile.X, (int)candidate.Tile.Y, candidate), expectedTargetId, StringComparison.Ordinal)
+            && (!candidate.lastPetDay.TryGetValue(Game1.player.UniqueMultiplayerID, out int lastDay) || lastDay != Game1.Date.TotalDays));
 
     /// <summary>Experimental read-only NPC relationship inspection. It never invokes NPC interaction or creates missing friendship records.</summary>
     public LocalExecutionReceipt RequestLocalInspectNpcRelationship(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
