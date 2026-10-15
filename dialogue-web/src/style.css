@@ -124,6 +124,11 @@
   --composer-min-height: 48px;
   --composer-max-height: 176px;
   --timeline-reading-measure: 800px;
+  /* The action beat's own typographic voice. A Latin beat is set apart from the
+     speech by the italic `<em>` gives it; CJK type has no true italic, so the
+     CJK beat is set apart by this tracking instead. One token, so every surface
+     that paints a beat opens the same amount. */
+  --beat-tracking: 0.1em;
   --drawer-max-width: 420px;
   --touch-target-min: 44px;
   --row-min-height: 52px;
@@ -3153,7 +3158,16 @@
    of on the card. `--text-secondary` measures 9.30:1 on the companion card and
    6.27:1 on the player's bubble, so the beat is both quieter than the speech
    (14.75:1) and clear of the floor. The colour is a de-emphasis, never the only
-   carrier - the text and its `<em>` are.
+   carrier - the text and its `<em>` and the beat's own tracking are.
+
+   That tone is a brightness step of 1.58:1 between the two text colours, and a
+   brightness step alone is not a shape: with the CJK slant retired below, a
+   Chinese action beat and the dialogue beside it read as one grey mass. So the
+   beat also carries the narration's own typography - `--beat-tracking`, opened
+   well past the dialogue's own spacing - and the distinction becomes a shape a
+   reader sees in the glyph rhythm rather than a step in luminance. It states no
+   colour, so every ratio here is unchanged (measured 9.30:1 and 14.75:1 before
+   and after).
 
    The bubble's `pre-wrap` is neutralised for rendered Markdown: with `pre-wrap`
    the newlines between `<p>`/`<blockquote>`/`<li>` are preserved *as well as*
@@ -3171,13 +3185,14 @@
 
   .message-bubble em.message-action {
     color: var(--text-secondary);
-    letter-spacing: 0.01em;
+    letter-spacing: var(--beat-tracking);
   }
 
   /* CJK type has no true italic: a slanted CJK beat renders as a mechanically
    smeared face, so this rule retires the slant. It retires the slant *only*:
    the weight stays the dialogue's own, because a bolder beat is not a quieter
-   one. Latin keeps the italic the base rule leaves in place. */
+   one, and the tracking above is what tells the beat from the speech once the
+   slant is gone. Latin keeps the italic the base rule leaves in place. */
   .message-bubble em.message-action:lang(zh) {
     font-style: normal;
   }

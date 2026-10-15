@@ -257,6 +257,7 @@ async function sampleContrast(page: Page, selectors: readonly string[]) {
         size,
         weight,
         fontStyle: style.fontStyle,
+        letterSpacing: style.letterSpacing,
         ratio: background === null ? 0 : Number(ratio(parse(style.color), background).toFixed(2)),
       };
     });
@@ -379,6 +380,25 @@ test("defect 1: the CJK beat drops the faux italic without gaining weight", asyn
   expect(prose!.fontStyle, "the dialogue beside it is upright too").toBe("normal");
   expect(beat!.weight, "the CJK beat is not heavier than the dialogue").toBeLessThanOrEqual(prose!.weight);
   expect(beat!.ratio, "the CJK beat clears the floor on the card").toBeGreaterThanOrEqual(4.5);
+
+  // The slant is gone, so the tone was the only thing telling the CJK beat from
+  // the speech: `--text-secondary` against `--text-primary` is a 1.58:1
+  // brightness step, which the audit read as one grey mass. The beat also
+  // carries the narration's own tracking now (`--beat-tracking`, theme.polish),
+  // and that is the distinction - it states no colour, so the two tones and
+  // their ratios are exactly what they were.
+  const tracking = Number.parseFloat(beat!.letterSpacing);
+  console.log(
+    `[defect-1 zh tracking] beat ${beat!.letterSpacing} (${tracking}px) vs dialogue ${prose!.letterSpacing}; ` +
+      `tones ${beat!.color} ${beat!.ratio}:1 and ${prose!.color} ${prose!.ratio}:1`,
+  );
+  expect(
+    tracking,
+    `the CJK beat's tracking is ${beat!.letterSpacing} against the dialogue's ${prose!.letterSpacing}`,
+  ).toBeGreaterThanOrEqual(1);
+  expect(prose!.letterSpacing, "the dialogue keeps the paragraph's own spacing").toBe("normal");
+  expect(beat!.ratio, "the beat's tone is unchanged by the tracking").toBeGreaterThanOrEqual(4.5);
+  expect(prose!.ratio, "the dialogue's tone stays the brighter of the two").toBeGreaterThan(beat!.ratio);
 });
 
 // --- defect 2 ----------------------------------------------------------------
