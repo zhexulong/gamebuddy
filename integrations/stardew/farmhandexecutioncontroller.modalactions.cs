@@ -35,17 +35,35 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// <summary>
     /// Operation-shaped native menus whose CLOSE path is a pure cancel with no
     /// world side effect. Audited against the target version: none of these classes
-    /// overrides exitThisMenu (so closing runs the generic exitActiveMenu), and
-    /// every side effect they own (purchase, craft, take, pick a floor) lives on its
-    /// own commit path, never on the close path. Narrative modals
-    /// (LetterViewerMenu, Billboard) stay out of this set on purpose: they already
-    /// applied their effect when they OPENED, and finishing someone's reading
-    /// progress is the player's call, not this action's.
+    /// overrides exitThisMenu or cleanupBeforeExit (so closing runs the generic
+    /// teardown), and every side effect they own (purchase, craft, take, pick a
+    /// floor, the day-end save) lives on its own commit path, never on the close
+    /// path. Narrative modals (LetterViewerMenu, Billboard) stay out of this set on
+    /// purpose: they already applied their effect when they OPENED, and finishing
+    /// someone's reading progress is the player's call, not this action's.
+    ///
+    /// ShippingMenu is the morning-after-sleep summary a day rollover pushes onto
+    /// Game1.endOfNightMenus (Game1.cs:9121) and it holds the actor until it is
+    /// cleared, so a multi-day run needs it in this set. It satisfies the criterion:
+    /// it overrides neither exitThisMenu nor cleanupBeforeExit, sets no exit hook,
+    /// and its only click/hotkey action - okClicked (ShippingMenu.cs:690-696) - sets
+    /// display flags only. The day-end save it owns is driven by its own update
+    /// (ShippingMenu.cs:361-428), not by the close path.
+    ///
+    /// LevelUpMenu, the other menu the same rollover can push, is deliberately NOT
+    /// here: its close hook cleanupBeforeExit (LevelUpMenu.cs:629-635) calls
+    /// okButtonClicked (:637-643) -> getLevelPerk (:659-686, maxHealth / mail /
+    /// health / stamina) and RemoveLevelFromLevelList (:645-648), so a close writes
+    /// saved state. A pending profession choice is NOT silently picked - professions
+    /// are added only by the in-menu choice (:487/:500) and AddMissedProfessionChoices
+    /// (:334-348) re-offers a level whose profession is still -1 - but the level perk
+    /// is applied on close, which a dismiss channel never asked for.
     /// </summary>
     private static readonly HashSet<string> DismissibleOperationModalTypes = new(StringComparer.Ordinal)
     {
         "ShopMenu", "ItemGrabMenu", "GameMenu", "MineElevatorMenu",
         "CraftingPage", "ForgeMenu", "MuseumMenu", "TailoringMenu",
+        "ShippingMenu",
     };
 
     /// <summary>

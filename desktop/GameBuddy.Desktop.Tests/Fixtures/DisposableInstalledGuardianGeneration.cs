@@ -178,7 +178,7 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
 
     private static async Task RunHostPublisherAsync(string script, string outputRoot, string fixtureRuntimeRoot)
     {
-        var start = new ProcessStartInfo(FindTestPublisherNodeExecutable())
+        var start = new ProcessStartInfo(TestNodeRuntime.ResolveExecutable())
         {
             WorkingDirectory = Path.GetDirectoryName(script)!,
             UseShellExecute = false,
@@ -197,16 +197,6 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
         if (process.ExitCode != 0) throw new InvalidOperationException($"The canonical Host production artifact publisher failed: {await stderr.ConfigureAwait(false)}");
         _ = await stdout.ConfigureAwait(false);
         _ = await stderr.ConfigureAwait(false);
-    }
-
-    // This interpreter is solely a test-harness dependency for the canonical publisher;
-    // it is never copied into, advertised by, or admitted from the published generation.
-    private static string FindTestPublisherNodeExecutable()
-    {
-        var systemNode = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "node.exe");
-        if (File.Exists(systemNode)) return systemNode;
-
-        throw new InvalidOperationException("test_publisher_node_unavailable");
     }
 
     public ValueTask DisposeAsync()

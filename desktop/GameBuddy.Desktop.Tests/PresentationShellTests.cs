@@ -1,3 +1,4 @@
+using GameBuddy.Desktop.Tests.Fixtures;
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Text;
@@ -584,7 +585,7 @@ public sealed class PresentationShellTests
 
     private static Process StartNodeProcess(string scriptPath, string[] arguments)
     {
-        var start = new ProcessStartInfo(NodeExecutable())
+        var start = new ProcessStartInfo(TestNodeRuntime.ResolveExecutable())
         {
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -601,12 +602,6 @@ public sealed class PresentationShellTests
         var bytes = Encoding.UTF8.GetBytes(frame);
         await client.WriteAsync(bytes);
         await client.FlushAsync();
-    }
-
-    private static string NodeExecutable()
-    {
-        var node = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "node.exe");
-        return File.Exists(node) ? node : throw new InvalidOperationException("test_publisher_node_unavailable");
     }
 
     /// <summary>

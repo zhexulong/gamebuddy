@@ -4494,27 +4494,128 @@ test("Chats surface switches the mounted conversation on click and refuses a sta
   await expect(surface.getByRole("status")).toContainText("Operation failed.");
   await expect.poll(() => listReads).toBeGreaterThan(readsBefore);
 
-  // An idle switch: the Host switches the mounted conversation in process and answers `switched`, so
-  // the browser reloads the mounted conversation and the transcript shown is the target's. No restart
-  // happens anywhere, and no "next start" promise is made.
+  // An idle switch: the Host switches the mounted conversation in process and answers `switched`, and
+  // the shell adopts the target's snapshot and brings the player to it (ADR-0010 Class A - choosing a
+  // conversation is a focus transfer). No restart happens anywhere, and no "next start" promise is made.
   selectStatus = 200;
   selectTarget = secondHandle;
   await surface.getByTestId("chat-item").nth(1).getByTestId("chat-select").click();
   await expect.poll(() => selectRequests).toBe(2);
-  await expect(surface.getByTestId("chat-item").nth(1)).toHaveAttribute("data-selected", "true");
-  await expect(surface.getByRole("status")).toContainText("Chat switched.");
 
-  // The mounted conversation is the target's: returning to the conversation shows its transcript.
-  await page.goBack();
+  // Choosing the conversation is what shows it: the Chats list is gone and the target's transcript is
+  // the conversation on screen.
+  await expect(page.getByTestId("chats-surface")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("This is the second conversation.");
   await expect(page.getByRole("region", { name: "Chat transcript" })).not.toContainText("The game projection is read-only.");
 
-  // The now-mounted chat is a no-op again: the switch did not leave a second admission behind.
-  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  // Browser Back returns to the list, where the chosen row is the selected one - the move added the
+  // conversation's own entry rather than replacing the list's.
+  await page.goBack();
   await expect(surface.getByTestId("chat-item").nth(1)).toHaveAttribute("data-selected", "true");
+
+  // The now-mounted chat is a no-op again: the switch did not leave a second admission behind.
   await surface.getByTestId("chat-item").nth(1).getByTestId("chat-select").click();
   await page.waitForTimeout(50);
   expect(selectRequests, "re-selecting the mounted chat must not create a second admission").toBe(2);
+});
+
+/**
+ * Selecting a Chat is a focus transfer: the conversation it names is what the
+ * player is looking at next (ADR-0010 Class A - "click another conversation and
+ * it shows immediately", the behaviour ChatGPT, Claude and SillyTavern all have).
+ *
+ * The measured defect this pins: the row's click moved the mount, the selected
+ * cursor and the live stream, but the shell stayed on the Chats list, so the
+ * player had to find the Chat entry in the app bar and click it by hand to see
+ * the conversation they had just chosen.
+ *
+ * The assertions, and the failure each one catches:
+ *  - after the `switched` answer the Chat surface is the shown one and the Chats
+ *    list is gone: catches a selection that only moved the cursor;
+ *  - the conversation's own title and transcript are what the player sees:
+ *    catches a switch that showed the Chat surface but kept the previous
+ *    conversation mounted in it;
+ *  - Browser Back returns to the Chats list with the chosen row selected:
+ *    catches a surface move that replaced the list's history entry instead of
+ *    adding the conversation's own.
+ */
+test("selecting a chat from the Chats list shows that conversation", async ({ page }) => {
+  const secondHandle = "C".repeat(42) + "A";
+  let mountedHandle = handle;
+  let selectRequests = 0;
+  const listOf = () => ({
+    apiVersion: 1,
+    chats: [
+      { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle },
+      {
+        handle: secondHandle,
+        title: "Second conversation",
+        status: "active",
+        managementRevision: 1,
+        isSelected: mountedHandle === secondHandle,
+      },
+    ],
+  });
+  const secondChat = {
+    ...chat,
+    selection: { chatHandle: secondHandle, generation: 2, stateRevision: secondHandle },
+    chat: {
+      ...chat.chat,
+      title: "Second conversation",
+      transcript: [
+        {
+          handle: "E".repeat(42) + "A",
+          role: "companion",
+          text: "This is the second conversation.",
+          locale: "und",
+          order: 0,
+          revision: 1,
+        },
+      ],
+    },
+  };
+  const mountedRoot = () => ({ ...root, chat: mountedHandle === handle ? chat : secondChat });
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+  await page.route(/(\/api\/tavern\/v1\/chats)(\?|$)/, (route) => {
+    if (route.request().method() === "GET") return route.fulfill(jsonOk(listOf()));
+    return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ code: "not_found" }) });
+  });
+  await page.route("**/api/tavern/v1/chat/select", async (route) => {
+    selectRequests += 1;
+    const body = route.request().postDataJSON() as { chatHandle: string };
+    mountedHandle = body.chatHandle;
+    return route.fulfill(jsonOk({ apiVersion: 1, status: "switched" }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const chats = page.getByTestId("chats-surface");
+  await expect(chats.getByTestId("chat-item")).toHaveCount(2);
+
+  await chats.getByTestId("chat-item").nth(1).getByTestId("chat-select").click();
+  await expect.poll(() => selectRequests).toBe(1);
+
+  // The chosen conversation is what the player is now looking at.
+  const conversation = page.getByTestId("chat-surface");
+  await expect(conversation).toBeVisible();
+  await expect(chats).toHaveCount(0);
+  await expect(conversation.locator(".timeline-heading h1")).toHaveText("Second conversation");
+  await expect(conversation.getByRole("region", { name: "Chat transcript" })).toContainText(
+    "This is the second conversation.",
+  );
+
+  // The list is a real step back, not a replaced entry.
+  await page.goBack();
+  await expect(page.getByTestId("chats-surface")).toBeVisible();
+  await expect(page.getByTestId("chats-surface").getByTestId("chat-item").nth(1)).toHaveAttribute(
+    "data-selected",
+    "true",
+  );
 });
 
 /**
@@ -4615,13 +4716,13 @@ test("switching chats reseeds the composer from the target chat's own durable dr
   // The player types something the Host has not been told about.
   await composer.fill("Unsaved line typed in the first chat");
 
-  // Switch to the second conversation.
+  // Switch to the second conversation. Choosing it shows it (ADR-0010 Class A), so the composer
+  // asserted below belongs to the conversation that was just mounted, not to the list.
   await page.getByRole("button", { name: "Chats", exact: true }).click();
   const chats = page.getByTestId("chats-surface");
   await expect(chats.getByTestId("chat-item")).toHaveCount(2);
   await chats.getByTestId("chat-item").nth(1).getByTestId("chat-select").click();
   await expect.poll(() => selectRequests).toBe(1);
-  await page.goBack();
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("This is the second conversation.");
 
   // The box shows the target chat's own draft, not the text typed in the chat
@@ -4648,11 +4749,9 @@ test("switching chats reseeds the composer from the target chat's own durable dr
  *    click.
  *  - `chat-select-pending` while the request is out, gone once it lands: catches a click that looks
  *    ignored - the acknowledgement is a request, never a refusal.
- *  - The switched notice and the target row marked selected: catches a Host answer that refuses the
- *    switch (the old `turn_in_flight` reading) instead of performing it.
- *  - The transcript being the target's and no longer the first chat's: catches a `switched` answer
- *    that did not actually move the mounted conversation - the failure mode where only the *next*
- *    start would have honoured the choice.
+ *  - The Chats list giving way to the target's transcript: catches a Host answer that refuses the
+ *    switch (the old `turn_in_flight` reading) instead of performing it, and a switch that moved the
+ *    mount but left the player on the list.
  *  - The interrupted turn's produced text present again after switching back, with its Stop gone:
  *    catches an abort that throws away the part of the reply the player had already been shown.
  */
@@ -4764,12 +4863,11 @@ test("clicking another chat while a turn generates aborts that turn and switches
   // The click is acknowledged while the request is out - a request, never a refusal.
   await expect(surface.getByTestId("chat-select-pending")).toContainText("Switching");
   await expect.poll(() => selectRequests).toBe(1);
-  await expect(surface.getByRole("status")).toContainText("Chat switched.");
-  await expect(surface.getByTestId("chat-item").nth(1)).toHaveAttribute("data-selected", "true");
-  await expect(surface.getByTestId("chat-select-pending")).toHaveCount(0);
 
-  // The mounted conversation really moved: the transcript is the target's, not the first chat's.
-  await page.goBack();
+  // The switched answer moved the mount and brought the player to it: the transcript is the target's,
+  // not the first chat's, and the list is gone. The reply was held 300 ms while the aborted turn
+  // settled, so this also catches a switch that claimed to happen before the abort settled.
+  await expect(page.getByTestId("chats-surface")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("This is the second conversation.");
   await expect(page.getByRole("region", { name: "Chat transcript" })).not.toContainText("The game projection is read-only.");
 
@@ -4780,7 +4878,7 @@ test("clicking another chat while a turn generates aborts that turn and switches
   selectGeneration = 2;
   await surface.getByTestId("chat-item").first().getByTestId("chat-select").click();
   await expect.poll(() => selectRequests).toBe(2);
-  await page.goBack();
+  await expect(page.getByTestId("chats-surface")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(producedText);
   await expect(chatSurface.getByRole("button", { name: "Stop" })).toHaveCount(0);
 });

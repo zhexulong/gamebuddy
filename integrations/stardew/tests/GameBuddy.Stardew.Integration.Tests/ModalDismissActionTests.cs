@@ -190,15 +190,66 @@ public sealed class ModalDismissActionTests
     public void Dismiss_WhitelistsOnlyAuditedOperationMenus()
     {
         // The whitelist is a source-audited claim: every member closes through the
-        // generic exitActiveMenu (no exitThisMenu override) with its side effects on
-        // the commit paths rather than the close path. Narrative modals already
-        // applied their effect when they opened, so finishing them is not this
-        // action's call.
-        foreach (string audited in new[] { "ShopMenu", "ItemGrabMenu", "GameMenu", "MineElevatorMenu", "CraftingPage", "ForgeMenu", "MuseumMenu", "TailoringMenu" })
+        // generic teardown (no exitThisMenu or cleanupBeforeExit override) with its
+        // side effects on the commit paths rather than the close path. Narrative
+        // modals already applied their effect when they opened, so finishing them is
+        // not this action's call, and the world-affecting morning menu (LevelUpMenu)
+        // fails the same criterion.
+        foreach (string audited in new[] { "ShopMenu", "ItemGrabMenu", "GameMenu", "MineElevatorMenu", "CraftingPage", "ForgeMenu", "MuseumMenu", "TailoringMenu", "ShippingMenu" })
             ExecutionManager.IsDismissibleOperationModalType(audited).Should().BeTrue($"{audited} is an audited operation menu");
 
-        foreach (string narrative in new[] { "LetterViewerMenu", "Billboard", "DialogueBox", "SomeFutureMenu" })
-            ExecutionManager.IsDismissibleOperationModalType(narrative).Should().BeFalse($"{narrative} must not be dismissed blindly");
+        foreach (string refused in new[] { "LetterViewerMenu", "Billboard", "DialogueBox", "SomeFutureMenu", "LevelUpMenu" })
+            ExecutionManager.IsDismissibleOperationModalType(refused).Should().BeFalse($"{refused} must not be dismissed blindly");
+    }
+
+    /// <summary>
+    /// The whitelist's criterion is about the CLOSE path alone, and the two menus a
+    /// day rollover can push onto Game1.endOfNightMenus (Game1.cs:9121/:9132) are
+    /// pinned against the native source in BOTH directions, so the negative case
+    /// cannot be flipped later without a red test:
+    ///
+    ///  - ShippingMenu closes through the generic teardown. It overrides neither
+    ///    exitThisMenu nor cleanupBeforeExit and sets no exit hook, and its only
+    ///    click/hotkey action okClicked (ShippingMenu.cs:690-696) sets display flags;
+    ///    the day-end save it owns runs in update (:361-428), never on the close path.
+    ///    So it belongs in the set.
+    ///  - LevelUpMenu must never join it: its close hook cleanupBeforeExit
+    ///    (LevelUpMenu.cs:629-635) runs okButtonClicked -> getLevelPerk and
+    ///    RemoveLevelFromLevelList, so closing it writes saved state (a level perk)
+    ///    and drops the pending level. The profession choice is NOT silently picked
+    ///    (it is added only by the in-menu choice, :487/:500), but that does not make
+    ///    the close a pure cancel.
+    /// </summary>
+    [Fact]
+    public void MorningMenus_AreDecidedByTheirClosePath_InTheNativeSource()
+    {
+        string[] shipping = File.ReadAllLines(RepositoryPath(
+            "ref", "external", "StardewValleyDecompiled", "Stardew Valley", "StardewValley.Menus", "ShippingMenu.cs"));
+        shipping[690 - 1].Should().Contain("private void okClicked()");
+        shipping[415 - 1].Should().Contain("saveGameMenu = new SaveGameMenu();");
+        shipping[365 - 1].Should().Contain("exitThisMenu(playSound: false);");
+        string shippingText = string.Join('\n', shipping);
+        shippingText.Should().NotContain(
+            "override void exitThisMenu",
+            "ShippingMenu leaves the generic close intact, which is the whole reason it is dismissible");
+        shippingText.Should().NotContain(
+            "override void cleanupBeforeExit",
+            "no close hook means the close owns no world write");
+        shippingText.Should().NotContain("exitFunction", "the close path carries no deferred side effect");
+
+        string[] levelUp = File.ReadAllLines(RepositoryPath(
+            "ref", "external", "StardewValleyDecompiled", "Stardew Valley", "StardewValley.Menus", "LevelUpMenu.cs"));
+        levelUp[629 - 1].Should().Contain("protected override void cleanupBeforeExit()");
+        levelUp[631 - 1].Should().Contain("if (isActive)");
+        levelUp[633 - 1].Should().Contain("okButtonClicked();");
+        levelUp[639 - 1].Should().Contain("getLevelPerk(currentSkill, currentLevel);");
+        levelUp[640 - 1].Should().Contain("RemoveLevelFromLevelList();");
+        levelUp[645 - 1].Should().Contain("public virtual void RemoveLevelFromLevelList()");
+        levelUp[487 - 1].Should().Contain("Game1.player.professions.Add(professionsToChoose[0]);");
+
+        ExecutionManager.IsDismissibleOperationModalType("ShippingMenu").Should().BeTrue("its close path is a pure cancel");
+        ExecutionManager.IsDismissibleOperationModalType("LevelUpMenu").Should().BeFalse(
+            "its close writes saved state, so a dismiss channel would be a silent world change");
     }
 
     [Fact]

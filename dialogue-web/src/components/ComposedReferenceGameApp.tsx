@@ -900,6 +900,13 @@ export function ComposedReferenceGameApp() {
    * mounted Chat and mounted the selected one, so the mounted identity itself is
    * new: this shell rebuilds its session from the fresh snapshot (there is nothing
    * to reconcile it with) and restarts the live cursor on the new conversation.
+   *
+   * Choosing a conversation is a focus transfer (ADR-0010 Class A): the chosen
+   * conversation is what the player is looking at next, so the read that adopts
+   * the new mount also moves the region to it. The move is the same surface
+   * selection the app bar's Chat entry makes, history entry included, so Browser
+   * Back returns to the Chats list rather than leaving it replaced. A failed
+   * read never moves the region: it commits the shell's problem view instead.
    */
   const handleChatSwitched = (): void => {
     const current = viewRef.current;
@@ -909,6 +916,7 @@ export function ComposedReferenceGameApp() {
         const root = await composedApiRef.current.readState();
         const draft = await tavernApiRef.current.readDraft();
         adoptMountedChat(root, draft);
+        openPanelOf(CHAT_PANEL, chatEntryRef)();
       } catch (error) {
         commit(problemView(error, messages(current.locale)));
       }
