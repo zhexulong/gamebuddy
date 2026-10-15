@@ -75,6 +75,8 @@ function convertedPreset(card: unknown, rawBook: unknown) {
   const preview = previewStCard(card, "gamebuddy.companion.default");
   const profile = validateIdentityProfile(candidateToIdentityProfile(preview, 1));
   const candidate = preview.profileCandidate;
+  const scenario =
+    typeof preview.scenario === "string" && preview.scenario.trim() !== "" ? preview.scenario : undefined;
   const greetings: Array<Readonly<{ label: string; text: string }>> = [];
   if (typeof candidate.firstGreeting === "string" && candidate.firstGreeting.trim() !== "")
     greetings.push(Object.freeze({ label: "Default", text: candidate.firstGreeting }));
@@ -82,19 +84,28 @@ function convertedPreset(card: unknown, rawBook: unknown) {
     if (typeof text === "string" && text.trim() !== "")
       greetings.push(Object.freeze({ label: `Alternate ${index + 1}`, text }));
   });
-  return { profile, worldBook: validateWorldBook(rawBook), greetings };
+  return { profile, worldBook: validateWorldBook(rawBook), scenario, greetings };
 }
 
 function assertPresetMatches(expected: ReturnType<typeof convertedPreset>): void {
   assert.deepEqual(DEFAULT_COMPANION_PRESET.profile, expected.profile);
   assert.deepEqual(DEFAULT_COMPANION_PRESET.worldBook, expected.worldBook);
+  // The card's scenario is not profile text (the decoder keeps it candidate-only),
+  // so it has its own field on the preset — and it must be the card's own text,
+  // because `default-companion-seed.ts` installs the durable scenario record from it.
+  assert.deepEqual(DEFAULT_COMPANION_PRESET.scenario, expected.scenario);
   assert.deepEqual(DEFAULT_COMPANION_PRESET.greetings, expected.greetings);
 }
 
 test("the shipped compiled preset equals the product converter's output for the COMMITTED card", () => {
-  const expected = convertedPreset(committedAsset("card.json"), committedAsset("worldbook.json"));
+  const card = committedAsset("card.json") as { data: { scenario: string } };
+  const expected = convertedPreset(card, committedAsset("worldbook.json"));
   assert.equal(expected.profile.identity.name, "琥珀");
   assertPresetMatches(expected);
+  // The card's own scenario travels with the compiled preset verbatim — it is the
+  // value the fresh-root seed turns into the companion's durable scenario record.
+  assert.equal(DEFAULT_COMPANION_PRESET.scenario, card.data.scenario);
+  assert.ok((DEFAULT_COMPANION_PRESET.scenario ?? "").includes("星露谷"));
 });
 
 test("the committed card's system_prompt is carried into the shipped profile as characterVoice", () => {
