@@ -710,6 +710,12 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // the Farm's walkability/reachability boundary is measured rather than
   // assumed. Not a new action; it grants no capability.
   move_ladder: "run-stardew-native-local-player-move-ladder-smoke.mjs",
+  // The multi-day crossing harness: drives the published advance_day N times over a Given
+  // whose FIRST rollover raises the morning-after ShippingMenu, and clears it with the
+  // product's own dismiss_modal while the night is still in flight (the menu is pushed
+  // before DayStarted, so it can never be handled after the terminal). Not a new action;
+  // it grants no capability.
+  multi_day: "run-stardew-native-local-player-multi-day-smoke.mjs",
   // WIA world-interruption live proofs (world-interruption-arbitration.md
   // §4.1 ② / §4.3): drive the SAME published move_to_tile action over fixtures
   // that stage a world-change mid-move, measuring that the running body loop

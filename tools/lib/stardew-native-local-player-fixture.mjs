@@ -682,6 +682,11 @@ export function fixtureActions(action) {
   // advance_day and production dispatches it. Its own route, native sleep answer
   // and Saving/Saved/DayStarted observation are the action's business, so no
   // other capability is a prerequisite here.
+  // The multi-day crossing harness: the SAME published advance_day plus the product's own
+  // dismiss_modal. The rollover's morning-after menu is cleared by production, not by the
+  // runner, so both are published; the scenario pins clock/season and seeds one shippable
+  // object so the FIRST rollover raises that menu. Not a new action; it grants no capability.
+  if (action === "multi_day") return ["advance_day", "dismiss_modal"];
   if (action === "advance_day") return ["advance_day"];
   throw new Error("invalid_native_local_fixture_action");
 }
@@ -739,6 +744,10 @@ export function fixtureScenario(actions, action) {
   // select the ordinary craft scenario whose product fits, and the chain would have
   // no partial disposition to recover from.
   if (action === "craft_partial_recovery_chain") return "native_craft_item_partial_v1";
+  // The multi-day crossing must win over the plain advance_day fallback below: its action
+  // set contains advance_day, and the ordinary move-only world would arm a Given that
+  // provisions nothing (no pinned clock, no shipment, no bed guarantee).
+  if (action === "multi_day") return "native_multi_day_v1";
   // The lifecycle action owns its own route and preconditions; it needs no
   // fixture scenario beyond the ordinary move-only world.
   if (actions.includes("advance_day")) return "";

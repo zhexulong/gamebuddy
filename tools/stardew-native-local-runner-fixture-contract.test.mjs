@@ -135,6 +135,9 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // The ladder probe keys its scenario on its own harness label ("move_ladder"),
   // because the SAME published move_to_tile action is what it drives.
   "run-stardew-native-local-player-move-ladder-smoke.mjs": "move_ladder",
+  // The multi-day crossing is the same shape: the SAME published advance_day is what it
+  // drives, and its Given is selected by its own harness label.
+  "run-stardew-native-local-player-multi-day-smoke.mjs": "multi_day",
   "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs": "wia_modal_dismiss_chain",
   "run-stardew-native-local-player-wia-modal-interrupt-smoke.mjs": "wia_modal_interrupt",
   "run-stardew-native-local-player-wia-eat-interrupt-smoke.mjs": "wia_eat_interrupt",

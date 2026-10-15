@@ -193,6 +193,11 @@ public sealed class NativeLocalPlayerFixtureConfig
         // ten-minute update, and the mailbox Given.
         "native_use_warp_item_v1", "native_pan_ore_v1", "native_claim_mail_attachment_v1",
         "native_tailoring_v1",
+        // The multi-day crossing Given: clock/season pinned to spring day 5, the actor
+        // home with a real bed, one shippable object seeded so the FIRST rollover
+        // raises the morning-after ShippingMenu, and no pending level-up. Native-local
+        // only (a single-player night is the topology the multi-day gate runs on).
+        "native_multi_day_v1",
 
     };
 
