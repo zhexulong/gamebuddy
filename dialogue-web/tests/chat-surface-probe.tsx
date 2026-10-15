@@ -290,6 +290,22 @@ const chatProbe = {
   resetTextReads(): void {
     reads.clear();
   },
+  /**
+   * The transcript scroller's own geometry, so a spec can measure where the
+   * reader actually is rather than trust a class name or an attribute.
+   */
+  timelineScroll(): { scrollTop: number; scrollHeight: number; clientHeight: number } | null {
+    const element = document.querySelector("section.timeline");
+    if (!(element instanceof HTMLElement)) return null;
+    return { scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
+  },
+  /** Move the scroller the way a reader would, and let the scroll listener see it. */
+  setTimelineScrollTop(top: number): void {
+    const element = document.querySelector("section.timeline");
+    if (!(element instanceof HTMLElement)) return;
+    element.scrollTop = top;
+    element.dispatchEvent(new Event("scroll"));
+  },
 };
 
 (window as unknown as { chatProbe: typeof chatProbe }).chatProbe = chatProbe;

@@ -2,6 +2,17 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { MessageBubble } from "./MessageBubble";
 
+/**
+ * How close to the end counts as "the reader is at the tail". A reader parked
+ * within this many pixels of the bottom is following along; anyone further up
+ * has deliberately scrolled back and owns the viewport.
+ */
+const TAIL_FOLLOW_THRESHOLD_PX = 24;
+
+function isAtBottom(element: HTMLElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= TAIL_FOLLOW_THRESHOLD_PX;
+}
+
 export function Timeline({
   transcript,
   companionName,
@@ -48,6 +59,15 @@ export function Timeline({
   // third printing of the same name is not an anchor.
   const anchorName = companionName.trim() || labels.companion;
   const sectionRef = useRef<HTMLElement>(null);
+  /**
+   * Whether the reader is parked at the newest content. A streaming reply
+   * re-renders this component on every token, so the follow-the-tail effect
+   * below must not drag a reader who has scrolled up back to the bottom. It
+   * follows only while they are already at the tail; otherwise it leaves the
+   * viewport exactly where they put it. The ref starts `true` so an
+   * already-populated transcript still begins scrolled to the end on mount.
+   */
+  const atBottomRef = useRef(true);
   const onSwipeRef = useRef(onSwipe);
   const onRegenerateRef = useRef(onRegenerate);
   const onOpeningVariantRef = useRef(onOpeningVariant);
@@ -87,19 +107,34 @@ export function Timeline({
    * surface never offers an affordance the Host would have to reject.
    */
   const regenerateHandle =
-    regenerateHandler !== undefined &&
-    transcript.length > 1 &&
-    transcript[transcript.length - 1]?.role === "companion"
+    regenerateHandler !== undefined && transcript.length > 1 && transcript[transcript.length - 1]?.role === "companion"
       ? transcript[transcript.length - 1]!.handle
       : null;
 
-  // Keep the newest message in view: the effect re-runs when the visible
-  // content changes (message count or the streaming preview text) and also on
-  // mount, so an already-populated transcript still starts scrolled to the end.
+  // Track the reader's own position: every scroll (a wheel, a drag, a keyboard
+  // page-down or our own programmatic follow) updates whether they are at the
+  // tail. `passive` because the listener never prevents the native scroll.
   useEffect(() => {
-    if (sectionRef.current) {
-      sectionRef.current.scrollTop = sectionRef.current.scrollHeight;
-    }
+    const section = sectionRef.current;
+    if (section === null) return;
+    const onScroll = (): void => {
+      atBottomRef.current = isAtBottom(section);
+    };
+    section.addEventListener("scroll", onScroll, { passive: true });
+    return () => section.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Keep the newest content in view, but only while the reader is already
+  // following it. A layout effect runs synchronously after the DOM mutation and
+  // before paint, so the decision uses the reader's last real scroll and cannot
+  // race an asynchronous scroll event triggered by the content change itself.
+  // The effect re-runs when the visible content changes (message count or the
+  // streaming preview text) and on mount; a reader who scrolled up keeps their
+  // position, because `atBottomRef` is then false.
+  useLayoutEffect(() => {
+    const section = sectionRef.current;
+    if (section === null || !atBottomRef.current) return;
+    section.scrollTop = section.scrollHeight;
   }, [transcript.length, preview?.text]);
 
   return (
@@ -107,12 +142,7 @@ export function Timeline({
     // unreachable for a keyboard-only player (axe: scrollable-region-focusable,
     // serious). tabIndex makes the region itself the scroll target; the label is
     // already the region's accessible name, so focus announces where it landed.
-    <section
-      ref={sectionRef}
-      className="timeline"
-      aria-label={labels.chatTranscript}
-      tabIndex={0}
-    >
+    <section ref={sectionRef} className="timeline" aria-label={labels.chatTranscript} tabIndex={0}>
       {/* The title band is the conversation's own title, so it exists only once
           the Host has published one. The catalogue's untitled placeholder is not
           a title: printed above the transcript it repeated the surface heading's
@@ -131,9 +161,7 @@ export function Timeline({
         // carries the companion's monogram and name. It is the transcript's own
         // zero state, so the first message replaces it.
         <div className="empty-state empty-state-anchor" data-empty-anchor="">
-          <p className="empty-state-opening">
-            {labels.emptyChatOpening.replace("{{name}}", anchorName)}
-          </p>
+          <p className="empty-state-opening">{labels.emptyChatOpening.replace("{{name}}", anchorName)}</p>
         </div>
       ) : (
         <ol className="message-list">
