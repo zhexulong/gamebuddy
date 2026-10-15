@@ -4619,6 +4619,63 @@ test("selecting a chat from the Chats list shows that conversation", async ({ pa
 });
 
 /**
+ * The other side of the focus transfer: a `turn_in_flight` answer is not a switch.
+ * The Host deliberately stayed where it was (ADR-0010's narrow `accepted_queued`
+ * window, where there is no cancel migration to abort with and the mount cannot be
+ * torn down), so the shell must not move the region either - the player keeps the
+ * list, the recorded selection stays durable, and the refusal is stated rather than
+ * silently ignored.
+ *
+ * The assertions, and the failure each one catches:
+ *  - the refusal notice is what the surface shows: catches a `turn_in_flight` answer
+ *    being reported as a completed switch;
+ *  - the Chats list is still the shown surface and no Chat surface was mounted:
+ *    catches a surface move keyed on the click rather than on the Host's answer.
+ */
+test("a turn_in_flight selection answer leaves the player on the Chats list", async ({ page }) => {
+  const secondHandle = "C".repeat(42) + "A";
+  let selectRequests = 0;
+  const listOf = () => ({
+    apiVersion: 1,
+    chats: [
+      { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: true },
+      {
+        handle: secondHandle,
+        title: "Second conversation",
+        status: "active",
+        managementRevision: 1,
+        isSelected: false,
+      },
+    ],
+  });
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+  await page.route(/(\/api\/tavern\/v1\/chats)(\?|$)/, (route) => {
+    if (route.request().method() === "GET") return route.fulfill(jsonOk(listOf()));
+    return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ code: "not_found" }) });
+  });
+  await page.route("**/api/tavern/v1/chat/select", (route) => {
+    selectRequests += 1;
+    return route.fulfill(jsonOk({ apiVersion: 1, status: "turn_in_flight" }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const chats = page.getByTestId("chats-surface");
+  await chats.getByTestId("chat-item").nth(1).getByTestId("chat-select").click();
+  await expect.poll(() => selectRequests).toBe(1);
+
+  // The refusal is stated, and the player is still where they were.
+  await expect(chats.getByRole("status")).toContainText("runtime stayed where it is");
+  await expect(page.getByTestId("chats-surface")).toBeVisible();
+  await expect(page.getByTestId("chat-surface")).toHaveCount(0);
+});
+
+/**
  * A Chat switch reseeds the composer from the target chat's own durable draft.
  *
  * The failure this catches: the field-seeding rule keyed only on the durable
