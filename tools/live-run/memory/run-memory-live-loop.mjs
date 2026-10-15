@@ -47,8 +47,21 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
-import { evaluateProbeReply, loadProbeManifest, openEventStream, probeTurnCommittedGate, probeVerdict } from "../chat/run-chat-live-audit.mjs";
-import { attributeMemoryFunnel, foldCommittedRenderedIdsFromMarkers, m0DigestsFromMarkers, m0SourcesFromMarkers, renderedMemoryIdsFromMarkers, renderedChaptersFromMarkers } from "../../lib/memory-funnel.mjs";
+import {
+  evaluateProbeReply,
+  loadProbeManifest,
+  openEventStream,
+  probeTurnCommittedGate,
+  probeVerdict,
+} from "../chat/run-chat-live-audit.mjs";
+import {
+  attributeMemoryFunnel,
+  foldCommittedRenderedIdsFromMarkers,
+  m0DigestsFromMarkers,
+  m0SourcesFromMarkers,
+  renderedMemoryIdsFromMarkers,
+  renderedChaptersFromMarkers,
+} from "../../lib/memory-funnel.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 import { checkHistorianRubric, identifyHistorianPrompt, readCompartments } from "../../lib/historian-rubric.mjs";
 
@@ -120,16 +133,13 @@ function createIdentity() {
 }
 
 function usage() {
-  return "usage: node tools/live-run/memory/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>] [--language <bcp47>] [--fixture-fold-threshold <tokens>] [--require-chapter]";
+  return "usage: node tools/live-run/memory/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>] [--language <bcp47>] [--fixture-fold-threshold <tokens>] [--require-chapter] [--reflect]";
 }
 
 function parseArguments(argv) {
   // Flags that stand alone. Everything else takes exactly one value; treating a boolean as
   // value-taking made `--require-chapter` demand an argument it never has.
-  const booleanFlags = new Set([
-    "--require-chapter",
-    "--require-historian-rubric",
-  ]);
+  const booleanFlags = new Set(["--require-chapter", "--require-historian-rubric", "--reflect"]);
   const flags = new Map([
     ["--report", undefined],
     ["--seed", undefined],
@@ -137,26 +147,29 @@ function parseArguments(argv) {
     ["--manifest", undefined],
     ["--card", undefined],
     ["--language", undefined],
-  // Compress the fold's window-derived trigger for this run, so a fold (and therefore a chapter)
-  // happens inside a CI-sized conversation. This sets the Host's TEST-ONLY channel, which the runtime
-  // writes into its OWN user-scope config inside the run's root - the only scope Magic Context accepts
-  // a lowered trigger from (a project file may only raise it). Never an operator surface.
-  ["--fixture-fold-threshold", undefined],
-  // Refuse to pass when no chapter appeared, so a fold fixture cannot silently stop folding.
-  ["--require-chapter", undefined],
-  // Same idea for the historian output obligations: a run may only be cited as evidence when the
-  // mechanical obligations in historian-prompt-rubric.md held.
-  ["--require-historian-rubric", undefined],
-]);
+    // Compress the fold's window-derived trigger for this run, so a fold (and therefore a chapter)
+    // happens inside a CI-sized conversation. This sets the Host's TEST-ONLY channel, which the runtime
+    // writes into its OWN user-scope config inside the run's root - the only scope Magic Context accepts
+    // a lowered trigger from (a project file may only raise it). Never an operator surface.
+    ["--fixture-fold-threshold", undefined],
+    // Refuse to pass when no chapter appeared, so a fold fixture cannot silently stop folding.
+    ["--require-chapter", undefined],
+    // Same idea for the historian output obligations: a run may only be cited as evidence when the
+    // mechanical obligations in historian-prompt-rubric.md held.
+    ["--require-historian-rubric", undefined],
+    // The candidate arm of reflect-outcome-plan.md: one reflection between the seeded turns and the
+    // probe, so the ONLY difference between two otherwise identical runs is whether that reflection ran.
+    ["--reflect", undefined],
+  ]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help") return Object.freeze({ help: true });
-  		if (!flags.has(flag)) throw new Error(`${usage()} (unknown flag: ${flag})`);
-		if (booleanFlags.has(flag)) {
-			flags.set(flag, "true");
-			continue;
-		}
-		const value = argv[index + 1];
+    if (!flags.has(flag)) throw new Error(`${usage()} (unknown flag: ${flag})`);
+    if (booleanFlags.has(flag)) {
+      flags.set(flag, "true");
+      continue;
+    }
+    const value = argv[index + 1];
     // A value that is itself a known flag means the caller forgot it; refusing is
     // better than silently consuming the next flag as text.
     if (value === undefined || flags.has(value)) throw new Error(usage());
@@ -172,6 +185,8 @@ function parseArguments(argv) {
   const requireHistorianRubric = flags.get("--require-historian-rubric");
   if (requireHistorianRubric !== undefined && requireHistorianRubric !== "true")
     throw new Error(`${usage()} (--require-historian-rubric takes no value)`);
+  const reflect = flags.get("--reflect");
+  if (reflect !== undefined && reflect !== "true") throw new Error(`${usage()} (--reflect takes no value)`);
   const foldThreshold = flags.get("--fixture-fold-threshold");
   if (foldThreshold !== undefined && !/^[1-9][0-9]{2,6}$/u.test(foldThreshold))
     throw new Error(`${usage()} (--fixture-fold-threshold is a token count, for example 6000)`);
@@ -186,6 +201,7 @@ function parseArguments(argv) {
     foldThreshold: foldThreshold === undefined ? undefined : Number.parseInt(foldThreshold, 10),
     requireChapter: requireChapter === "true",
     requireHistorianRubric: requireHistorianRubric === "true",
+    reflect: reflect === "true",
     seed: flags.get("--seed"),
     question: flags.get("--question"),
   });
@@ -202,8 +218,7 @@ function parseArguments(argv) {
  */
 async function resolveScenario({ manifestPath, seed, question }) {
   if (manifestPath === undefined) {
-    const inlineSeed =
-      seed ?? "Remember this for later: I retired after many years delivering the post.";
+    const inlineSeed = seed ?? "Remember this for later: I retired after many years delivering the post.";
     return Object.freeze({
       seeds: Object.freeze([inlineSeed]),
       seed: inlineSeed,
@@ -218,8 +233,7 @@ async function resolveScenario({ manifestPath, seed, question }) {
     });
   }
   const manifest = loadProbeManifest(await readFile(resolve(manifestPath), "utf8"));
-  if (manifest.probes.length !== 1)
-    throw new Error("probe_fixture_multi_probe_unsupported");
+  if (manifest.probes.length !== 1) throw new Error("probe_fixture_multi_probe_unsupported");
   const probe = manifest.probes[0];
   const probeStep = probe.steps.find((step) => step.kind === "probe");
   // EVERY seed step, in order - not just the first.
@@ -253,10 +267,8 @@ async function resolveScenario({ manifestPath, seed, question }) {
   // correct reading of the store - yet the probe's forbidden set scores it
   // `supersede.fail/old_retained`, which would be read as a memory regression. The run
   // that exposed this reported renderedIdCount: 2 with the asked-about fact present.
-  const supersedes =
-    probe.dimension === "supersession" && seedSteps.length > 1 ? askedSeed.text : undefined;
-  const initialSeeds =
-    supersedes === undefined ? seedSteps.map((step) => step.text) : [seedSteps[0].text];
+  const supersedes = probe.dimension === "supersession" && seedSteps.length > 1 ? askedSeed.text : undefined;
+  const initialSeeds = supersedes === undefined ? seedSteps.map((step) => step.text) : [seedSteps[0].text];
   return Object.freeze({
     seeds: Object.freeze(initialSeeds),
     ...(supersedes === undefined ? {} : { supersedes }),
@@ -277,18 +289,18 @@ async function resolveScenario({ manifestPath, seed, question }) {
     forbiddenKeywords: probeStep.forbiddenKeywords ?? [],
     // The fixture's own threshold must survive into scoring (audit finding: the
     // loop hardcoded 0.5, silently over-ruling a manifest that declares 1.0).
- 			minHitRate: Number.isFinite(probeStep.minHitRate) ? probeStep.minHitRate : 0.5,
-			// The fixture's filler steps are the DISTANCE the probe is supposed to cross: they are
-			// real conversation that happened between the seed and the question, and the fixture
-			// declares a distance it assumes they created. They were never sent, so the loop
-			// measured a zero-distance conversation while still reporting the declared distance -
-			// and no turn count could ever reach the historian's fold threshold, which is why a
-			// fold (and therefore a compartment or a chapter) never appeared in these runs.
-			fillers: Object.freeze(
-				probe.steps.flatMap((step) => (step.kind === "filler" && typeof step.text === "string" ? [step.text] : [])),
-			),
-		});
-	}
+    minHitRate: Number.isFinite(probeStep.minHitRate) ? probeStep.minHitRate : 0.5,
+    // The fixture's filler steps are the DISTANCE the probe is supposed to cross: they are
+    // real conversation that happened between the seed and the question, and the fixture
+    // declares a distance it assumes they created. They were never sent, so the loop
+    // measured a zero-distance conversation while still reporting the declared distance -
+    // and no turn count could ever reach the historian's fold threshold, which is why a
+    // fold (and therefore a compartment or a chapter) never appeared in these runs.
+    fillers: Object.freeze(
+      probe.steps.flatMap((step) => (step.kind === "filler" && typeof step.text === "string" ? [step.text] : [])),
+    ),
+  });
+}
 
 async function deadlineFetch(url, init = {}) {
   const controller = new AbortController();
@@ -356,14 +368,14 @@ async function installLanguagePreference(root, locale) {
   if (locale === undefined) return undefined;
   const storeDir = new URL("../../../host/dist-test/", import.meta.url);
   const { PlayerPreferenceStore, playerPreferencePath } = await import(
-    new URL("settings/player-preference-store.js", storeDir),
+    new URL("settings/player-preference-store.js", storeDir)
   );
   // The store writes under the product's durable path lock, which releases
   // through the Windows stale-lock reclaimer the runtime binds; this process
   // writes before any child exists, so it binds the same capability itself.
   const { bindWindowsStaleLockReclaimer } = await import(new URL("path-lock.js", storeDir));
   const { createBuildWindowsStaleLockReclaimer } = await import(
-    new URL("windows-stale-lock-reclaimer/index.js", storeDir),
+    new URL("windows-stale-lock-reclaimer/index.js", storeDir)
   );
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
   const store = new PlayerPreferenceStore(playerPreferencePath(root));
@@ -474,8 +486,7 @@ export async function setCompanionLanguage(origin, client, locale) {
   });
   if (!written.ok) throw new Error(`language_update_failed:${written.status}`);
   const stored = await read();
-  if (stored?.locale !== locale)
-    throw new Error(`language_update_not_durable:${String(stored?.locale)}`);
+  if (stored?.locale !== locale) throw new Error(`language_update_not_durable:${String(stored?.locale)}`);
   return Object.freeze({ requested: locale, stored: stored.locale, revision: stored.revision });
 }
 
@@ -529,7 +540,11 @@ export async function seedMemory(origin, client, seedTexts, supersedeText) {
     if (!seeded) {
       // Stop at the first unproven write: later seeds would otherwise be reported
       // against a store that never received the earlier ones.
-      return Object.freeze({ durable: false, rowCount: rows.length, projectionChanged: after?.projectionRevision !== before.projectionRevision });
+      return Object.freeze({
+        durable: false,
+        rowCount: rows.length,
+        projectionChanged: after?.projectionRevision !== before.projectionRevision,
+      });
     }
     if (!replacing) {
       firstHandle ??= rows.find((row) => row.content === seedText)?.handle;
@@ -555,18 +570,18 @@ export async function seedMemory(origin, client, seedTexts, supersedeText) {
  * product failure, and letting it end the run reports the harness's impatience as a product fact.
  */
 async function readChatState(origin, client, attempts = 8) {
-	for (let attempt = 0; attempt < attempts; attempt += 1) {
-		try {
-			const response = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
-				headers: { Cookie: client.cookie, Origin: origin },
-			});
-			return await response.json().catch(() => undefined);
-		} catch (error) {
-			if (attempt === attempts - 1) throw error;
-			await new Promise((resolve) => setTimeout(resolve, 1_000));
-		}
-	}
-	return undefined;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
+        headers: { Cookie: client.cookie, Origin: origin },
+      });
+      return await response.json().catch(() => undefined);
+    } catch (error) {
+      if (attempt === attempts - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -579,28 +594,28 @@ async function readChatState(origin, client, attempts = 8) {
  * sending, and this waits first for a DIFFERENT handle, then for that turn's own terminal.
  */
 async function awaitSubmittedTurnTerminal(origin, client, previousHandle) {
-	const readTurn = async () => (await readChatState(origin, client))?.chat?.turn ?? null;
-	for (let attempt = 0; attempt < 240; attempt += 1) {
-		const seen = await readTurn();
-		if (seen === null || seen.handle === previousHandle) {
-			await new Promise((resolve) => setTimeout(resolve, 250));
-			continue;
-		}
-		for (let settled = 0; settled < 240; settled += 1) {
-			const turn = await readTurn();
-			if (turn === null) return Object.freeze({ observed: true, terminalState: "cleared" });
-			if (turn.handle !== seen.handle) {
-				// A different turn replaced it; report this one as unsettled rather than credit
-				// another turn's terminal to it.
-				return Object.freeze({ observed: true, terminalState: "superseded" });
-			}
-			if (turn.state === "completed" || turn.state === "failed" || turn.state === "cancelled")
-				return Object.freeze({ observed: true, terminalState: turn.state });
-			await new Promise((resolve) => setTimeout(resolve, 500));
-		}
-		return Object.freeze({ observed: true, terminalState: "unsettled" });
-	}
-	return Object.freeze({ observed: false, terminalState: "never-visible" });
+  const readTurn = async () => (await readChatState(origin, client))?.chat?.turn ?? null;
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    const seen = await readTurn();
+    if (seen === null || seen.handle === previousHandle) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      continue;
+    }
+    for (let settled = 0; settled < 240; settled += 1) {
+      const turn = await readTurn();
+      if (turn === null) return Object.freeze({ observed: true, terminalState: "cleared" });
+      if (turn.handle !== seen.handle) {
+        // A different turn replaced it; report this one as unsettled rather than credit
+        // another turn's terminal to it.
+        return Object.freeze({ observed: true, terminalState: "superseded" });
+      }
+      if (turn.state === "completed" || turn.state === "failed" || turn.state === "cancelled")
+        return Object.freeze({ observed: true, terminalState: turn.state });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return Object.freeze({ observed: true, terminalState: "unsettled" });
+  }
+  return Object.freeze({ observed: false, terminalState: "never-visible" });
 }
 
 /**
@@ -613,13 +628,14 @@ async function awaitSubmittedTurnTerminal(origin, client, previousHandle) {
  * honoured.
  */
 async function awaitChatIdle(origin, client, attempts = 600) {
-	for (let attempt = 0; attempt < attempts; attempt += 1) {
-		const snapshot = await readChatState(origin, client);
-		const turn = snapshot?.chat?.turn ?? null;
-		if (turn === null || turn.state === "completed" || turn.state === "failed" || turn.state === "cancelled") return true;
-		await new Promise((resolve) => setTimeout(resolve, 1_000));
-	}
-	return false;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const snapshot = await readChatState(origin, client);
+    const turn = snapshot?.chat?.turn ?? null;
+    if (turn === null || turn.state === "completed" || turn.state === "failed" || turn.state === "cancelled")
+      return true;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  return false;
 }
 
 /**
@@ -634,18 +650,17 @@ async function awaitChatIdle(origin, client, attempts = 600) {
  * turn's answer and report a memory miss that never happened.
  */
 async function runChatTurn(origin, client, text) {
-	// Honour the barrier: if the previous turn never settles, the honest outcome is a harness
-	// failure, not a submission the product will refuse with `turn_busy`.
-	if (!(await awaitChatIdle(origin, client)))
-		throw new Error(`predecessor_turn_did_not_settle:${text.slice(0, 24)}`);
-	const state = await readChatState(origin, client);
-	// The handle of the turn that is currently on record; the wait below uses it to tell a NEW turn
-	// from the predecessor's lagging record.
-	const previousHandle = state?.chat?.turn?.handle ?? null;
-	const companionBefore = Array.isArray(state?.chat?.transcript)
-		? state.chat.transcript.filter((message) => message?.role === "companion").length
-		: 0;
-	const selectionGeneration = state?.selection?.generation;
+  // Honour the barrier: if the previous turn never settles, the honest outcome is a harness
+  // failure, not a submission the product will refuse with `turn_busy`.
+  if (!(await awaitChatIdle(origin, client))) throw new Error(`predecessor_turn_did_not_settle:${text.slice(0, 24)}`);
+  const state = await readChatState(origin, client);
+  // The handle of the turn that is currently on record; the wait below uses it to tell a NEW turn
+  // from the predecessor's lagging record.
+  const previousHandle = state?.chat?.turn?.handle ?? null;
+  const companionBefore = Array.isArray(state?.chat?.transcript)
+    ? state.chat.transcript.filter((message) => message?.role === "companion").length
+    : 0;
+  const selectionGeneration = state?.selection?.generation;
   if (!Number.isSafeInteger(selectionGeneration)) throw new Error("selection_generation_unavailable");
   const draftRevision = Number.isSafeInteger(state?.chat?.draft?.revision) ? state.chat.draft.revision : undefined;
 
@@ -685,25 +700,25 @@ async function runChatTurn(origin, client, text) {
     );
   }
 
- 	// Terminal wait, bounded on the AUTHORITATIVE projection rather than on the SSE stream.
-	// With several turns in one run the stream replays earlier terminals (it starts from an
-	// epoch and the previous turn's terminal is already committed), so "the stream settled"
-	// can mean "the PREVIOUS turn settled" - which read a queued probe turn as if it had no
-	// reply. The two-phase wait cannot be fooled that way: it first requires THIS turn to be
-	// visible, then waits for that turn's own terminal.
-	const terminal = await awaitSubmittedTurnTerminal(origin, client, previousHandle);
-	if (!terminal.observed) {
-		// Never surfaced. Report it as what it is rather than reading a reply that belongs to
-		// another turn.
-		return Object.freeze({
-			turnState: "never-visible",
-			streamTerminal: terminal.terminalState,
-			committedCompanionMessages: companionBefore,
-			committedCompanionDelta: 0,
-			committedText: undefined,
-		});
-	}
-	return readTurnOutcome(origin, client, terminal.terminalState, companionBefore);
+  // Terminal wait, bounded on the AUTHORITATIVE projection rather than on the SSE stream.
+  // With several turns in one run the stream replays earlier terminals (it starts from an
+  // epoch and the previous turn's terminal is already committed), so "the stream settled"
+  // can mean "the PREVIOUS turn settled" - which read a queued probe turn as if it had no
+  // reply. The two-phase wait cannot be fooled that way: it first requires THIS turn to be
+  // visible, then waits for that turn's own terminal.
+  const terminal = await awaitSubmittedTurnTerminal(origin, client, previousHandle);
+  if (!terminal.observed) {
+    // Never surfaced. Report it as what it is rather than reading a reply that belongs to
+    // another turn.
+    return Object.freeze({
+      turnState: "never-visible",
+      streamTerminal: terminal.terminalState,
+      committedCompanionMessages: companionBefore,
+      committedCompanionDelta: 0,
+      committedText: undefined,
+    });
+  }
+  return readTurnOutcome(origin, client, terminal.terminalState, companionBefore);
 }
 
 /**
@@ -712,20 +727,20 @@ async function runChatTurn(origin, client, text) {
  * count IS this turn's delta - there are no earlier turns to leak in.
  */
 async function readTurnOutcome(origin, client, streamTerminal, companionBefore) {
- 	const snapshot = await readChatState(origin, client);
-	const turnState = snapshot?.chat?.turn?.state ?? null;
-	const transcript = Array.isArray(snapshot?.chat?.transcript) ? snapshot.chat.transcript : [];
-	const companion = transcript.filter((message) => message?.role === "companion");
-	// The reply THIS turn added. A multi-turn run (the fixture's fillers, then the probe) has
-	// earlier companion messages, so taking the last entry would score the previous turn's answer.
-	const reply = companion.length > companionBefore ? companion[companionBefore] : undefined;
-	return Object.freeze({
-		turnState,
-		streamTerminal: streamTerminal ?? null,
-		committedCompanionMessages: companion.length,
-		committedCompanionDelta: companion.length - companionBefore,
-		committedText: typeof reply?.text === "string" ? reply.text : undefined,
-	});
+  const snapshot = await readChatState(origin, client);
+  const turnState = snapshot?.chat?.turn?.state ?? null;
+  const transcript = Array.isArray(snapshot?.chat?.transcript) ? snapshot.chat.transcript : [];
+  const companion = transcript.filter((message) => message?.role === "companion");
+  // The reply THIS turn added. A multi-turn run (the fixture's fillers, then the probe) has
+  // earlier companion messages, so taking the last entry would score the previous turn's answer.
+  const reply = companion.length > companionBefore ? companion[companionBefore] : undefined;
+  return Object.freeze({
+    turnState,
+    streamTerminal: streamTerminal ?? null,
+    committedCompanionMessages: companion.length,
+    committedCompanionDelta: companion.length - companionBefore,
+    committedText: typeof reply?.text === "string" ? reply.text : undefined,
+  });
 }
 
 const noopRecorder = Object.freeze({ record() {} });
@@ -738,14 +753,27 @@ const noopRecorder = Object.freeze({ record() {} });
  * on the SAME root/continuity renders it into m[0] — the cross-surface
  * embodiment path that a chat-only memory loop cannot close by itself.
  */
-export async function seedMemoriesViaManagementSurface({ root, deploymentManifestPath, seeds, supersedes, language, outputRoot, readyTimeoutMs, gameSessionMode = "fresh", onPhase } = {}) {
+export async function seedMemoriesViaManagementSurface({
+  root,
+  deploymentManifestPath,
+  seeds,
+  supersedes,
+  language,
+  outputRoot,
+  readyTimeoutMs,
+  gameSessionMode = "fresh",
+  onPhase,
+} = {}) {
   const markers = [];
   // Phase marks: the seed is the dominant cold-start cost (~49s measured in a real
   // ladder-5 run), so the caller needs to know WHICH part costs it - booting the
   // management composition, or the memory CRUD calls it makes afterwards.
   const phases = {};
   const seedStartedAtMs = Date.now();
-  const mark = (name) => { phases[name] = Date.now() - seedStartedAtMs; onPhase?.(name, phases[name]); };
+  const mark = (name) => {
+    phases[name] = Date.now() - seedStartedAtMs;
+    onPhase?.(name, phases[name]);
+  };
   const launch = await launchDesktopCompositionGateChild({
     outputRoot: outputRoot ?? OUTPUT_ROOT,
     root,
@@ -758,16 +786,16 @@ export async function seedMemoriesViaManagementSurface({ root, deploymentManifes
       const child = spawn(command, args, options);
       child.stderr?.setEncoding?.("utf8");
       child.stderr?.on?.("data", (chunk) => {
-      		for (const line of String(chunk).split("\n")) {
-			if (
-				line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
-  							line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
-  							line.startsWith(PROBE_M0_DIGEST_PREFIX) ||
-  							line.startsWith(PROBE_M0_SOURCES_PREFIX) ||
-  							line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
-			)
-				markers.push(line.trim());
-		}
+        for (const line of String(chunk).split("\n")) {
+          if (
+            line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
+            line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
+            line.startsWith(PROBE_M0_DIGEST_PREFIX) ||
+            line.startsWith(PROBE_M0_SOURCES_PREFIX) ||
+            line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
+          )
+            markers.push(line.trim());
+        }
       });
       return child;
     },
@@ -787,10 +815,14 @@ export async function seedMemoriesViaManagementSurface({ root, deploymentManifes
     // The player's language choice, written through the same mounted product
     // route the management UI uses, so the runtime's own read is what phase 2
     // exercises.
-    const languageResult =
-      language === undefined ? undefined : await setCompanionLanguage(origin, client, language);
+    const languageResult = language === undefined ? undefined : await setCompanionLanguage(origin, client, language);
     mark("languageWrittenMs");
-    return Object.freeze({ result, languageResult, markers: Object.freeze([...markers]), phases: Object.freeze({ ...phases }) });
+    return Object.freeze({
+      result,
+      languageResult,
+      markers: Object.freeze([...markers]),
+      phases: Object.freeze({ ...phases }),
+    });
   } finally {
     launch.dispose?.();
     await stopChildGracefully(launch.child);
@@ -834,53 +866,53 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
   await mkdir(root, { recursive: true });
   const nonceSha256 = createHash("sha256").update(randomBytes(32)).digest("hex");
 
- 	let stderr = "";
-	// Keep the TAIL as well as the head: the head is what the startup narration prints, so a
-	// bounded head-only capture reports the beginning of the run, never the failure. The tail is
-	// what makes a failed run diagnosable at all.
-	let stderrTail = "";
-	const pendingAppends = [];
+  let stderr = "";
+  // Keep the TAIL as well as the head: the head is what the startup narration prints, so a
+  // bounded head-only capture reports the beginning of the run, never the failure. The tail is
+  // what makes a failed run diagnosable at all.
+  let stderrTail = "";
+  const pendingAppends = [];
   // Marker channel (Class B, owner decision D-1): Magic Context reports its own
   // materialization facts on stderr, including which memory ids it assembled into
   // m[0]. We collect the lines here instead of only keeping a bounded diagnostic
   // tail, because those markers are the ONLY observability the L2 (assembly) stage
   // has - the Host never sees m[0] bytes and the persistence row is not exposed.
- 	const markers = [];
- 	const launch = await launchDesktopCompositionGateChild({
- 		outputRoot: OUTPUT_ROOT,
- 		root,
- 		surface,
- 		nonceSha256,
- 		manifestPath: deploymentManifestPath,
- 		readyTimeoutMs: START_TIMEOUT_MS,
- 		gameSessionMode,
- 		spawnImpl: (command, args, options) => {
- 			const child = spawn(command, args, options);
- 			child.stderr?.setEncoding?.("utf8");
-					child.stderr?.on?.("data", (chunk) => {
-						if (stderr.length < 2_048) stderr = `${stderr}${chunk}`;
-						stderrTail = `${stderrTail}${chunk}`.slice(-8_192);
- 				// Harness-level capture: full child stderr lands in the run directory
- 				// (git-ignored, local only), so a reviewer can see the real
- 				// materialization narration instead of only the marker lines.
- 				if (capture !== undefined && capture !== null)
- 					pendingAppends.push(capture.append(`child-${surface}.stderr.log`, String(chunk)).catch(() => {}));
- 				for (const line of String(chunk).split("\n")) {
- 					// Strictly prefixed and parsed: an unrelated stderr line can never be
- 					// mistaken for a materialization fact.
- 					if (
- 						line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
-  							line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
-  							line.startsWith(PROBE_M0_DIGEST_PREFIX) ||
-  							line.startsWith(PROBE_M0_SOURCES_PREFIX) ||
-  							line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
- 					)
- 						markers.push(line.trim());
- 				}
- 			});
- 			return child;
- 		},
- 	});
+  const markers = [];
+  const launch = await launchDesktopCompositionGateChild({
+    outputRoot: OUTPUT_ROOT,
+    root,
+    surface,
+    nonceSha256,
+    manifestPath: deploymentManifestPath,
+    readyTimeoutMs: START_TIMEOUT_MS,
+    gameSessionMode,
+    spawnImpl: (command, args, options) => {
+      const child = spawn(command, args, options);
+      child.stderr?.setEncoding?.("utf8");
+      child.stderr?.on?.("data", (chunk) => {
+        if (stderr.length < 2_048) stderr = `${stderr}${chunk}`;
+        stderrTail = `${stderrTail}${chunk}`.slice(-8_192);
+        // Harness-level capture: full child stderr lands in the run directory
+        // (git-ignored, local only), so a reviewer can see the real
+        // materialization narration instead of only the marker lines.
+        if (capture !== undefined && capture !== null)
+          pendingAppends.push(capture.append(`child-${surface}.stderr.log`, String(chunk)).catch(() => {}));
+        for (const line of String(chunk).split("\n")) {
+          // Strictly prefixed and parsed: an unrelated stderr line can never be
+          // mistaken for a materialization fact.
+          if (
+            line.startsWith(PROBE_M0_MEMORY_IDS_PREFIX) ||
+            line.startsWith(PROBE_M0_CHAPTERS_PREFIX) ||
+            line.startsWith(PROBE_M0_DIGEST_PREFIX) ||
+            line.startsWith(PROBE_M0_SOURCES_PREFIX) ||
+            line.startsWith(PROBE_FOLD_COMMITTED_PREFIX)
+          )
+            markers.push(line.trim());
+        }
+      });
+      return child;
+    },
+  });
   try {
     const launchUrl = await launch.waitForReady();
     const url = new URL(launchUrl);
@@ -894,18 +926,18 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
     // summary was written (audit NOTE-5).
     await Promise.allSettled(pendingAppends);
     return Object.freeze({ result, markers: Object.freeze([...markers]) });
- 	} catch (error) {
-		// Flush what the child said BEFORE rethrowing. Flushing only on the success path meant a
-		// failed run left an empty capture directory - the evidence of the failure itself was the
-		// thing thrown away, which is exactly when it is needed.
-		await Promise.allSettled(pendingAppends);
-		const diagnostic = stderrTail.trim().length > 0 ? stderrTail.trim() : stderr.trim();
-		throw new Error(
-			diagnostic.length > 0
-				? `${surface}:${error?.message ?? "surface_failed"}:${diagnostic}`
-				: `${surface}:${error?.message ?? "surface_failed"}:child_stderr_empty`,
-		);
-	} finally {
+  } catch (error) {
+    // Flush what the child said BEFORE rethrowing. Flushing only on the success path meant a
+    // failed run left an empty capture directory - the evidence of the failure itself was the
+    // thing thrown away, which is exactly when it is needed.
+    await Promise.allSettled(pendingAppends);
+    const diagnostic = stderrTail.trim().length > 0 ? stderrTail.trim() : stderr.trim();
+    throw new Error(
+      diagnostic.length > 0
+        ? `${surface}:${error?.message ?? "surface_failed"}:${diagnostic}`
+        : `${surface}:${error?.message ?? "surface_failed"}:child_stderr_empty`,
+    );
+  } finally {
     launch.dispose?.();
     await stopChildGracefully(launch.child);
   }
@@ -950,10 +982,7 @@ async function stopChildGracefully(child, timeoutMs = 30_000) {
   // Escalate. `kill` without a signal is the portable hard stop; SIGTERM is
   // equivalent on Windows and unreliable elsewhere, so it is not used as a fallback.
   child.kill();
-  await Promise.race([
-    exited,
-    new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(false), 5_000)),
-  ]);
+  await Promise.race([exited, new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(false), 5_000))]);
 }
 
 /**
@@ -1036,7 +1065,9 @@ function readTagWindows(root) {
   let db;
   try {
     db = new DatabaseSync(dbPath, { readOnly: true });
-    const rows = db.prepare("SELECT tool_name, status, COUNT(*) AS n FROM tags WHERE type = 'tool' GROUP BY tool_name, status").all();
+    const rows = db
+      .prepare("SELECT tool_name, status, COUNT(*) AS n FROM tags WHERE type = 'tool' GROUP BY tool_name, status")
+      .all();
     const perTool = new Map();
     for (const row of rows) {
       const name = typeof row.tool_name === "string" ? row.tool_name : "(unnamed)";
@@ -1103,7 +1134,75 @@ function verdict_gap(reason) {
   return Object.freeze({ event: "observability_gap", reason });
 }
 
-export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, question, cardPath } = {}) {
+/**
+ * One reflection over this run's OWN store, asked for through the existing dreamer harness.
+ *
+ * This is the candidate arm's whole intervention (reflect-outcome-plan.md): the arms are two
+ * otherwise identical runs and the only difference is this call. It runs as a child process
+ * because the harness opens the run's own store itself, resolving the context directory and the
+ * project identity the store's meta row already carries - an in-process import here would have to
+ * re-derive both, and deriving an identity from a directory lands on a different partition.
+ *
+ * Never throws. A reflection that did not run is an OBSERVATION, not a failed loop: the caller
+ * records it under `observations.reflection`, and a reader must then treat the arm as one whose
+ * intervention did not happen rather than as a candidate that showed no effect.
+ */
+async function runReflectionOnce({ root, continuityId, reportPath, timeoutMs = 600_000 }) {
+  const harness = fileURLToPath(new URL("../../run-dreamer-live-task.mjs", import.meta.url));
+  const startedAtMs = Date.now();
+  const child = spawn(
+    process.execPath,
+    [harness, "--root", root, "--continuity", continuityId, "--task", "reflect", "--report", reportPath],
+    { stdio: ["ignore", "pipe", "pipe"], env: process.env },
+  );
+  let stdout = "";
+  let stderr = "";
+  child.stdout?.setEncoding?.("utf8");
+  child.stderr?.setEncoding?.("utf8");
+  child.stdout?.on?.("data", (chunk) => {
+    stdout = `${stdout}${chunk}`.slice(-8_192);
+  });
+  child.stderr?.on?.("data", (chunk) => {
+    stderr = `${stderr}${chunk}`.slice(-8_192);
+  });
+  const exited = new Promise((resolveExit) => child.once("exit", (code) => resolveExit(code)));
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill();
+  }, timeoutMs);
+  const exitCode = await exited;
+  clearTimeout(timer);
+  // The harness prints ONE JSON line as its verdict; anything else on stdout is narration and is
+  // kept verbatim rather than parsed. A verdict we cannot read is reported as unread, never guessed.
+  const verdictLine = stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("{"))
+    .at(-1);
+  let verdict;
+  try {
+    verdict = verdictLine === undefined ? undefined : JSON.parse(verdictLine);
+  } catch {
+    verdict = undefined;
+  }
+  return Object.freeze({
+    // `ran` is what the candidate arm needs: the harness itself reports it executed one reflection.
+    ran: timedOut === false && exitCode === 0 && verdict?.verdict !== "failed",
+    exitCode: timedOut === false ? (typeof exitCode === "number" ? exitCode : null) : null,
+    timedOut,
+    verdict: typeof verdict?.verdict === "string" ? verdict.verdict : null,
+    // How many rows the reflection actually wrote, when the harness could report it.
+    addedRows: Number.isSafeInteger(verdict?.added) ? verdict.added : null,
+    failure: typeof verdict?.failure === "string" ? verdict.failure : null,
+    reportPath,
+    elapsedMs: Date.now() - startedAtMs,
+    stdout: stdout.trim().slice(-2_048),
+    stderrTail: stderr.trim().slice(-2_048),
+  });
+}
+
+export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, question, cardPath, reflect } = {}) {
   if (typeof reportPath !== "string" || reportPath.length === 0) throw new Error("report_path_required");
   const scenario = await resolveScenario({ manifestPath, seed, question });
   const identity = createIdentity();
@@ -1127,10 +1226,7 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     const installedLanguage = await installLanguagePreference(root, requestedLanguage);
     if (installedLanguage !== undefined)
       process.stderr.write(`[memory-loop] language=${String(installedLanguage.stored)}\n`);
-    const installedCard =
-      cardPath === undefined
-        ? undefined
-        : await installCharacterCard(root, identity, cardPath);
+    const installedCard = cardPath === undefined ? undefined : await installCharacterCard(root, identity, cardPath);
     // ONE deployment manifest and ONE bootstrap operation for the whole loop. The
     // authority marker records the bootstrap operation, and `known` open validates it
     // exactly - so writing a second manifest with a fresh bootstrapOperationId made
@@ -1167,9 +1263,7 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     const seeded = seededResult.result;
     const languageEvidence = installedLanguage;
     if (languageEvidence !== undefined)
-      process.stderr.write(
-        `[memory-loop] phase1 language=${String(languageEvidence.stored)}\n`,
-      );
+      process.stderr.write(`[memory-loop] phase1 language=${String(languageEvidence.stored)}\n`);
     else process.stderr.write(`[memory-loop] phase1 language=<unset>\n`);
     process.stderr.write(`[memory-loop] phase1 durable=${seeded.durable}\n`);
 
@@ -1226,13 +1320,15 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     // teardown commit and this phase mount as a successor. Without it the product
     // rejects the mount with `chat_runtime_reentry_selection_invalid`; see the
     // blocked branch below for that case.
-   	// (A lever for the historian's fold trigger deliberately does NOT live here. It is 65% of the
-	// model's usable range, so a fold needs ~487k tokens of context on the product's million-token
-	// model - unreachable in a test, and the declared window in `pi-agent/models.json` is rewritten at
-	// chat mount, so patching that file beforehand does nothing. Measured, not assumed: after five
-	// real turns Magic Context recorded compartments=0, times_execute_threshold_reached=0 and ~1% of
-	// the 750k usable range in use.)
-	process.stderr.write(`[memory-loop] phase2 chat-only launching known\n`);
+    // (A lever for the historian's fold trigger deliberately does NOT live here. It is 65% of the
+    // model's usable range, so a fold needs ~487k tokens of context on the product's million-token
+    // model - unreachable in a test, and the declared window in `pi-agent/models.json` is rewritten at
+    // chat mount, so patching that file beforehand does nothing. Measured, not assumed: after five
+    // real turns Magic Context recorded compartments=0, times_execute_threshold_reached=0 and ~1% of
+    // the 750k usable range in use.)
+    process.stderr.write(`[memory-loop] phase2 chat-only launching known\n`);
+    // The candidate arm's one intervention, filled in by the chat phase below.
+    let reflectionObservation;
     let chatResult;
     try {
       chatResult = await withSurface({
@@ -1241,12 +1337,26 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         deploymentManifestPath,
         gameSessionMode: "known",
         capture,
-   					run: async (origin, client) => {
-						// Real turns first, in fixture order, so the probe is asked at the declared distance
-						// rather than immediately after the seed.
-		    for (const filler of scenario.fillers ?? []) await runChatTurn(origin, client, filler);
-						return runChatTurn(origin, client, scenario.question);
-					},
+        run: async (origin, client) => {
+          // Real turns first, in fixture order, so the probe is asked at the declared distance
+          // rather than immediately after the seed.
+          for (const filler of scenario.fillers ?? []) await runChatTurn(origin, client, filler);
+          // The reflection runs AFTER those turns have landed and BEFORE the probe is sent, so the
+          // material it reflects on is on the same store the probe then answers from - and the
+          // rows it wrote are inside the context the probe turn is given. Running it after the
+          // probe would put its rows outside the turn being scored, which measures nothing.
+          if (reflect === true) {
+            reflectionObservation = await runReflectionOnce({
+              root,
+              continuityId: identity.continuityId,
+              reportPath: join(capture.dir, "reflect.json"),
+            });
+            process.stderr.write(
+              `[memory-loop] reflect verdict=${String(reflectionObservation.verdict)} exit=${String(reflectionObservation.exitCode)} addedRows=${String(reflectionObservation.addedRows)} elapsedMs=${String(reflectionObservation.elapsedMs)}\n`,
+            );
+          }
+          return runChatTurn(origin, client, scenario.question);
+        },
       });
     } catch (error) {
       const message = String(error?.message ?? error);
@@ -1259,22 +1369,24 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
       });
       const report = Object.freeze({
         schema: "memory_live_loop/v1",
-      identity: Object.freeze({ continuityId: identity.continuityId }),
-      runtimeRootKey: createHash("sha256").update(identity.continuityId).digest("hex").slice(0, 16),
-      scenario: Object.freeze({
-        ...(scenario.probeId === undefined ? {} : { probeId: scenario.probeId }),
-        ...(scenario.manifestDigest === undefined ? {} : { manifestDigest: scenario.manifestDigest }),
-        dimension: scenario.dimension,
-      }),
-      // Which surface answered. The seeded fact, the Memory authority and the
-      // Magic Context materializer are shared with the Game surface, which answers
-      // through the running game instead; the name is recorded so a reader never
-      // has to guess what this report measured.
-      askingSurface: "chat",
-      ...(installedCard === undefined
-        ? {}
-        : { card: Object.freeze({ profileId: installedCard.profileId, canonicalHash: installedCard.canonicalHash }) }),
-      seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
+        identity: Object.freeze({ continuityId: identity.continuityId }),
+        runtimeRootKey: createHash("sha256").update(identity.continuityId).digest("hex").slice(0, 16),
+        scenario: Object.freeze({
+          ...(scenario.probeId === undefined ? {} : { probeId: scenario.probeId }),
+          ...(scenario.manifestDigest === undefined ? {} : { manifestDigest: scenario.manifestDigest }),
+          dimension: scenario.dimension,
+        }),
+        // Which surface answered. The seeded fact, the Memory authority and the
+        // Magic Context materializer are shared with the Game surface, which answers
+        // through the running game instead; the name is recorded so a reader never
+        // has to guess what this report measured.
+        askingSurface: "chat",
+        ...(installedCard === undefined
+          ? {}
+          : {
+              card: Object.freeze({ profileId: installedCard.profileId, canonicalHash: installedCard.canonicalHash }),
+            }),
+        seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
         chat: Object.freeze({
           attempted: true,
           launched: false,
@@ -1308,19 +1420,19 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     // cannot say whether the id was missing or we simply asked the wrong question.
     // Resolve the chapters rendered into m[0] (v1 chapter rollup marker).
     const chapters = renderedChaptersFromMarkers(chatResult.markers);
-  // Historian output rubric + prompt identity (design/architecture/historian-prompt-rubric.md). The
-  // root still exists here, and the compartments in it are what the historian actually wrote, so the
-  // mechanical obligations are checked against real output rather than against the prompt text. This is
-  // what makes a prompt edit comparable: same fixture, two prompt variants, one table of obligations.
-  const historianRubric = checkHistorianRubric(readCompartments(root));
-  // The reclaim lanes are the only thing that flips a tag's status, so this is where a `protected_tools`
-  // policy shows up: a protected tool should keep its newest frame active while older ones are dropped.
-  const protectedTools = readTagWindows(root);
-  const historianPrompt = identifyHistorianPrompt(
-    process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT === undefined
-      ? root
-      : process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT,
-  );
+    // Historian output rubric + prompt identity (design/architecture/historian-prompt-rubric.md). The
+    // root still exists here, and the compartments in it are what the historian actually wrote, so the
+    // mechanical obligations are checked against real output rather than against the prompt text. This is
+    // what makes a prompt edit comparable: same fixture, two prompt variants, one table of obligations.
+    const historianRubric = checkHistorianRubric(readCompartments(root));
+    // The reclaim lanes are the only thing that flips a tag's status, so this is where a `protected_tools`
+    // policy shows up: a protected tool should keep its newest frame active while older ones are dropped.
+    const protectedTools = readTagWindows(root);
+    const historianPrompt = identifyHistorianPrompt(
+      process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT === undefined
+        ? root
+        : process.env.GAMEBUDDY_MEMORY_LOOP_OUTPUT_ROOT,
+    );
 
     const renderedIds = renderedIdsForRun(chatResult.markers);
     // Real-fold evidence for a `fold`-distance probe: the vendor's fold-commit
@@ -1391,31 +1503,36 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
         // m[0] it presented. `lorebookConstantPresent` is the claim itself; the
         // kinds are reported raw so a reader can see what else rode the baseline.
         protectedTools,
-    m0Sources: Object.freeze({
+        // The paired A/B of reflect-outcome-plan.md. `null` means THIS arm asked for no reflection
+        // (the baseline); an object with `ran: false` means the candidate arm's intervention never
+        // happened, which must not be read as "the reflection had no effect".
+        reflection:
+          reflect === true ? (reflectionObservation ?? Object.freeze({ ran: false, reason: "never_reached" })) : null,
+        m0Sources: Object.freeze({
           markerObserved: m0Sources?.observed === true,
           stableKinds: m0Sources?.stableKinds ?? null,
           volatileKinds: m0Sources?.volatileKinds ?? null,
           lorebookConstantPresent: m0Sources?.lorebookConstantPresent ?? null,
         }),
         ...(replyObservation === null
-        ? {}
-        : {
-            replyLanguage: Object.freeze({
-              cjkRatio: replyObservation.cjkRatio,
-              primaryScript: replyObservation.primaryScript,
-              chineseEffective: replyObservation.chineseEffective,
+          ? {}
+          : {
+              replyLanguage: Object.freeze({
+                cjkRatio: replyObservation.cjkRatio,
+                primaryScript: replyObservation.primaryScript,
+                chineseEffective: replyObservation.chineseEffective,
+              }),
+              persona: Object.freeze({
+                committedChars: replyObservation.committedChars,
+                signals: replyObservation.signals,
+                ...(replyObservation.assistantShell === true ? { assistantShell: true } : {}),
+              }),
+              // The reply itself. A language observation without the text it was taken from
+              // cannot be judged: "the companion answered in Chinese" and "the observation
+              // is wrong" look identical. This is the live run's own evidence copy, the same
+              // way the harness records the question it asked.
+              replyText: Object.freeze({ text: replyObservation.text }),
             }),
-            persona: Object.freeze({
-              committedChars: replyObservation.committedChars,
-              signals: replyObservation.signals,
-              ...(replyObservation.assistantShell === true ? { assistantShell: true } : {}),
-            }),
-            // The reply itself. A language observation without the text it was taken from
-            // cannot be judged: "the companion answered in Chinese" and "the observation
-            // is wrong" look identical. This is the live run's own evidence copy, the same
-            // way the harness records the question it asked.
-            replyText: Object.freeze({ text: replyObservation.text }),
-          }),
       }),
       seed: Object.freeze({ durable: true, rowCount: seeded.rowCount, projectionChanged: seeded.projectionChanged }),
       // The L2 comparison facts, content-free but auditable: which side of the
@@ -1432,15 +1549,15 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
       // is the chapter block byte-stable? `null` means the vendor never
       // emitted the marker; a number (possibly 0) means it did.
       chapters: Object.freeze({
-      markerObserved: chapters !== undefined,
-      renderedCount: chapters?.count ?? null,
-      ...(chapters?.digest === undefined ? {} : { blockDigest: chapters.digest }),
-    }),
-    // Which prompt produced the compartments above, and whether the output kept the obligations the
-    // prompt exists to teach. A prompt change is invisible without the variant name; the violations are
-    // per-compartment so a reader sees WHICH one broke an obligation.
-    historianPrompt,
-    historianRubric,
+        markerObserved: chapters !== undefined,
+        renderedCount: chapters?.count ?? null,
+        ...(chapters?.digest === undefined ? {} : { blockDigest: chapters.digest }),
+      }),
+      // Which prompt produced the compartments above, and whether the output kept the obligations the
+      // prompt exists to teach. A prompt change is invisible without the variant name; the violations are
+      // per-compartment so a reader sees WHICH one broke an obligation.
+      historianPrompt,
+      historianRubric,
       chat: Object.freeze({
         attempted: true,
         turnState: chat.turnState ?? null,
@@ -1459,10 +1576,10 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-	const parsed = parseArguments(process.argv.slice(2));
-	if (parsed.help) {
-		process.stdout.write(`${usage()}\n`);
-	} else {
+  const parsed = parseArguments(process.argv.slice(2));
+  if (parsed.help) {
+    process.stdout.write(`${usage()}\n`);
+  } else {
     requestedLanguage = parsed.language;
     if (parsed.foldThreshold !== undefined) {
       process.env.GAMEBUDDY_MAGIC_CONTEXT_TEST_EXECUTE_THRESHOLD_TOKENS = String(parsed.foldThreshold);
@@ -1474,18 +1591,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       );
     }
     const report = await runMemoryLiveLoop({
-			reportPath: parsed.reportPath,
-			manifestPath: parsed.manifestPath,
-			seed: parsed.seed,
-			question: parsed.question,
-			cardPath: parsed.cardPath,
-		});
+      reportPath: parsed.reportPath,
+      manifestPath: parsed.manifestPath,
+      seed: parsed.seed,
+      question: parsed.question,
+      cardPath: parsed.cardPath,
+      reflect: parsed.reflect,
+    });
     if (parsed.requireChapter && (report.chapters?.renderedCount ?? 0) < 1) {
-			process.stderr.write(
-				`[memory-loop] FAILED: --require-chapter but m[0] carried no chapter (markerObserved=${String(
-					report.chapters?.markerObserved,
-				)}, renderedCount=${String(report.chapters?.renderedCount)}); the fold did not happen in this fixture\n`,
-			);
+      process.stderr.write(
+        `[memory-loop] FAILED: --require-chapter but m[0] carried no chapter (markerObserved=${String(
+          report.chapters?.markerObserved,
+        )}, renderedCount=${String(report.chapters?.renderedCount)}); the fold did not happen in this fixture\n`,
+      );
       process.exit(1);
     }
     if (parsed.requireHistorianRubric && (report.historianRubric?.violations?.length ?? 0) > 0) {
