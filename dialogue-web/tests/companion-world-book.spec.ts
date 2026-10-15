@@ -191,3 +191,47 @@ test("a world book that carries no entries says so instead of showing a zero", a
   await expect(block.locator("[data-companion-world-book-count]")).toHaveCount(0);
   await expect(block.locator("[data-companion-world-book-entry]")).toHaveCount(0);
 });
+
+
+/**
+ * The trigger list is a wall at the narrow width. Measured on the shipped set
+ * (`shots-final10`, d-characters-swipe): at 400x800 the Characters surface is a
+ * single column, `[data-companion-world-book-list]` alone was 714 px of unwrapped
+ * trigger words with no way to fold it, and the surface's content scrolled 2810 px
+ * in a 682 px region. The entries are a disclosure now (closed by default), so the
+ * count is what the section costs until the player asks for the words - and the
+ * rows are still in the DOM, so nothing was deleted to make it fit.
+ */
+test("the companion's trigger list folds into a disclosure at 400x800", async ({ page }) => {
+  const entries = Array.from({ length: 8 }, (_, index) => ({
+    title: `词条 ${index}`,
+    keys: ["料理", "做饭", "黑莓脆皮乐", "土豆饼", "绿茶", "防风草", "清晨", "拓荒"],
+    constant: false,
+  }));
+  await stubCharacters(page, { apiVersion: 1, present: true, entries });
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  await page.setViewportSize({ width: 400, height: 800 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=characters`);
+  const surface = page.getByTestId("characters-surface");
+  await expect(surface).toBeVisible();
+
+  const block = surface.locator("[data-companion-world-book]");
+  await expect(block).toBeVisible();
+  const disclosure = block.locator("[data-companion-world-book-disclosure]");
+  await expect(disclosure).toBeVisible();
+  // The count is the disclosure's own summary, and it is visible while closed.
+  await expect(block.locator("[data-companion-world-book-count]")).toBeVisible();
+  await expect(block.locator("[data-companion-world-book-count]")).toHaveText("她自己的世界书里有 8 条词条");
+
+  // Closed by default: every row is still in the DOM, none of them is painted.
+  const rows = block.locator("[data-companion-world-book-entry]");
+  await expect(rows).toHaveCount(8);
+  await expect(rows.first()).toBeHidden();
+  const collapsed = await block.evaluate((node) => Math.round(node.getBoundingClientRect().height));
+
+  await disclosure.locator("summary").click();
+  await expect(rows.first()).toBeVisible();
+  const expanded = await block.evaluate((node) => Math.round(node.getBoundingClientRect().height));
+  console.log(`[world-book-disclosure] collapsed=${collapsed} expanded=${expanded}`);
+  expect(expanded, "opening the disclosure reveals the trigger list").toBeGreaterThan(collapsed + 200);
+});

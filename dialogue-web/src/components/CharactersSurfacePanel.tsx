@@ -1,10 +1,7 @@
+import { ChevronDown } from "lucide-react";
 import { type ReactElement, useEffect, useState } from "react";
 import type { Locale } from "../i18n";
-import type {
-  CompanionWorldBookV1,
-  ManagementPipelineApi,
-  WorldInfoStateV1,
-} from "../management-pipeline-api";
+import type { CompanionWorldBookV1, ManagementPipelineApi, WorldInfoStateV1 } from "../management-pipeline-api";
 import type { WorldInfoSurfaceSource } from "./management-surface-panels";
 import { CharactersPanel } from "./CharactersPanel";
 import { characterLabels } from "./character-domain-labels";
@@ -112,10 +109,18 @@ function CompanionWorldBookSection({
         // header is the shape a player reads as "nothing was kept".
         <p data-companion-world-book-empty>{labels.companionWorldBookNoEntries}</p>
       ) : (
-        <>
-          <p data-companion-world-book-count>
-            {labels.companionWorldBookCount.replace("{{count}}", String(entries.length))}
-          </p>
+        // The trigger list is what this section is for, so its count is the
+        // disclosure's own summary and the entries open on request. At 400x800 the
+        // single Characters column stacks six sections and this was another 714 px
+        // of unwrapped trigger words below them; the rows stay in the DOM, so the
+        // count and every key remain readable once the disclosure opens.
+        <details className="custom-disclosure" data-companion-world-book-disclosure>
+          <summary>
+            <ChevronDown size={16} aria-hidden="true" />
+            <span data-companion-world-book-count>
+              {labels.companionWorldBookCount.replace("{{count}}", String(entries.length))}
+            </span>
+          </summary>
           <div role="list" data-companion-world-book-list>
             {entries.map((entry, index) => (
               // A world book's entry id is a durable storage fact the browser is
@@ -134,7 +139,7 @@ function CompanionWorldBookSection({
               </div>
             ))}
           </div>
-        </>
+        </details>
       )}
     </section>
   );
@@ -166,9 +171,7 @@ function CharacterWorldBookPanel({
     try {
       const source = await read();
       setGeneration(source.selectionGeneration);
-      return source.worldInfo === null
-        ? { kind: "unavailable" }
-        : { kind: "ready", worldInfo: source.worldInfo };
+      return source.worldInfo === null ? { kind: "unavailable" } : { kind: "ready", worldInfo: source.worldInfo };
     } catch {
       return { kind: "error" };
     }
