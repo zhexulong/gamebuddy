@@ -189,9 +189,11 @@ export function ChatsSurfacePanel({
   // The row's destructive action is a deliberate one: the first click only arms
   // this, and the request waits for the confirm button. Same shape as the Game
   // surface's endgame block, so the product has one vocabulary for it.
-  const [confirmation, setConfirmation] = useState<
-    Readonly<{ handle: string; operation: "archive" | "trash"; selectedAtArm: string }> | null
-  >(null);
+  const [confirmation, setConfirmation] = useState<Readonly<{
+    handle: string;
+    operation: "archive" | "trash";
+    selectedAtArm: string;
+  }> | null>(null);
   const { inline, report } = useSurfaceNotice(onNotice);
 
   useEffect(() => {
@@ -386,6 +388,10 @@ export function ChatsSurfacePanel({
           list.map((chat) => {
             const isSelected = chat.handle === currentChatHandle;
             const isSelecting = chat.handle === selecting;
+            // The confirmation belongs to exactly one row, and while it is armed that row's
+            // rename/archive/trash strip steps aside: the confirmation is the row's only action
+            // until it is answered.
+            const armedHere = confirmation !== null && confirmation.handle === chat.handle;
             return (
               <div
                 key={chat.handle}
@@ -422,66 +428,80 @@ export function ChatsSurfacePanel({
                     </div>
                   </>
                 ) : (
-                  <div className="chat-item-main">
-                    <button
-                      type="button"
-                      className="chat-item-title chat-select-btn"
-                      data-testid="chat-select"
-                      aria-current={isSelected ? "true" : undefined}
-                      disabled={selectAvailable === false || selecting !== null}
-                      onClick={() => selectChat(chat.handle)}
-                    >
-                      {chat.title ?? labels.untitledChat}
-                    </button>
-                    {/* The transient acknowledgement: the switch request is out, so the click is
-                        not ignored. Never a refusal - the row stays enabled while a turn runs. */}
-                    {isSelecting && (
-                      <span className="chat-item-badge" data-testid="chat-select-pending">
-                        {labels.chatSelectSwitching}
-                      </span>
-                    )}
-                    <div className="chat-item-actions">
-                      {renameAvailable !== false && (
-                        <button
-                          type="button"
-                          className="icon-button-small"
-                          title={labels.renameChat}
-                          aria-label={labels.renameChat}
-                          onClick={() => setEditing({ handle: chat.handle, title: chat.title ?? "" })}
-                        >
-                          <Pencil size={14} aria-hidden="true" />
-                        </button>
+                  <>
+                    <div className="chat-item-main">
+                      <button
+                        type="button"
+                        className="chat-item-title chat-select-btn"
+                        data-testid="chat-select"
+                        aria-current={isSelected ? "true" : undefined}
+                        disabled={selectAvailable === false || selecting !== null}
+                        onClick={() => selectChat(chat.handle)}
+                      >
+                        {chat.title ?? labels.untitledChat}
+                      </button>
+                      {/* The transient acknowledgement: the switch request is out, so the click is
+                          not ignored. Never a refusal - the row stays enabled while a turn runs. */}
+                      {isSelecting && (
+                        <span className="chat-item-badge" data-testid="chat-select-pending">
+                          {labels.chatSelectSwitching}
+                        </span>
                       )}
-                      {/* Every row carries its own archive/trash arm+confirm, so cleaning up history
-                          no longer means switching into each Chat first. */}
-                      {retentionAvailable !== false && (
-                        <>
-                          <button
-                            type="button"
-                            className="icon-button-small"
-                            title={labels.chatRetentionArchive}
-                            aria-label={labels.chatRetentionArchive}
-                            onClick={() =>
-                              setConfirmation({ handle: chat.handle, operation: "archive", selectedAtArm: currentChatHandle })
-                            }
-                          >
-                            <Archive size={14} aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            className="icon-button-small"
-                            title={labels.chatRetentionTrash}
-                            aria-label={labels.chatRetentionTrash}
-                            onClick={() =>
-                              setConfirmation({ handle: chat.handle, operation: "trash", selectedAtArm: currentChatHandle })
-                            }
-                          >
-                            <Trash2 size={14} aria-hidden="true" />
-                          </button>
-                        </>
+                      {armedHere ? null : (
+                        <div className="chat-item-actions">
+                          {renameAvailable !== false && (
+                            <button
+                              type="button"
+                              className="icon-button-small"
+                              title={labels.renameChat}
+                              aria-label={labels.renameChat}
+                              onClick={() => setEditing({ handle: chat.handle, title: chat.title ?? "" })}
+                            >
+                              <Pencil size={14} aria-hidden="true" />
+                            </button>
+                          )}
+                          {/* Every row carries its own archive/trash arm+confirm, so cleaning up history
+                              no longer means switching into each Chat first. */}
+                          {retentionAvailable !== false && (
+                            <>
+                              <button
+                                type="button"
+                                className="icon-button-small"
+                                title={labels.chatRetentionArchive}
+                                aria-label={labels.chatRetentionArchive}
+                                onClick={() =>
+                                  setConfirmation({
+                                    handle: chat.handle,
+                                    operation: "archive",
+                                    selectedAtArm: currentChatHandle,
+                                  })
+                                }
+                              >
+                                <Archive size={14} aria-hidden="true" />
+                              </button>
+                              <button
+                                type="button"
+                                className="icon-button-small"
+                                title={labels.chatRetentionTrash}
+                                aria-label={labels.chatRetentionTrash}
+                                onClick={() =>
+                                  setConfirmation({
+                                    handle: chat.handle,
+                                    operation: "trash",
+                                    selectedAtArm: currentChatHandle,
+                                  })
+                                }
+                              >
+                                <Trash2 size={14} aria-hidden="true" />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       )}
                     </div>
-                    {confirmation !== null && confirmation.handle === chat.handle && (
+                    {/* The confirmation is its own row of the card, below the title row: it never
+                        shares a line with the title or with the row's controls. */}
+                    {armedHere && (
                       <div className="chat-item-confirm" data-testid="chat-retention-confirm">
                         <p className="chat-item-confirm-prompt" role="status">
                           {confirmation.operation === "archive"
@@ -514,7 +534,7 @@ export function ChatsSurfacePanel({
                         </div>
                       </div>
                     )}
-                  </div>
+                  </>
                 )}
               </div>
             );
@@ -525,11 +545,15 @@ export function ChatsSurfacePanel({
   );
 }
 
-
 function memoryViewOf(result: MemoryReadV1): MemoryView {
   return result.memories.length === 0
     ? { kind: "empty", projectionRevision: result.projectionRevision, chapters: result.chapters }
-    : { kind: "ready", rows: result.memories, projectionRevision: result.projectionRevision, chapters: result.chapters };
+    : {
+        kind: "ready",
+        rows: result.memories,
+        projectionRevision: result.projectionRevision,
+        chapters: result.chapters,
+      };
 }
 
 /**
@@ -952,7 +976,9 @@ export function SettingsSurfacePanel({
         // hits settings_revision_conflict), so re-read the authority before the
         // failure is shown and never keep a local value the store did not accept.
         const notice =
-          error instanceof TavernProblemError && error.code === "settings_revision_conflict" ? ("conflict" as const) : null;
+          error instanceof TavernProblemError && error.code === "settings_revision_conflict"
+            ? ("conflict" as const)
+            : null;
         try {
           const restated = await api.readModelProfiles();
           setModelProfilesView({ kind: "ready", profiles: restated, pending: null, notice });
@@ -989,15 +1015,19 @@ export function SettingsSurfacePanel({
           connectionView={connectionView}
           labels={labels}
           onCreate={createConnection}
-          onTest={(connectionId) => void mutateConnection(async (client, token) => {
-            if (connectionView.kind !== "ready") throw new TavernProtocolError();
-            const probe = await client.testConnection(connectionId, connectionView.state.revision, token);
-            return probe.state;
-          }, false)}
-          onActivate={(connectionId) => void mutateConnection(async (client, token) => {
-            if (connectionView.kind !== "ready") throw new TavernProtocolError();
-            return await client.activateConnection(connectionId, connectionView.state.revision, token);
-          }, true)}
+          onTest={(connectionId) =>
+            void mutateConnection(async (client, token) => {
+              if (connectionView.kind !== "ready") throw new TavernProtocolError();
+              const probe = await client.testConnection(connectionId, connectionView.state.revision, token);
+              return probe.state;
+            }, false)
+          }
+          onActivate={(connectionId) =>
+            void mutateConnection(async (client, token) => {
+              if (connectionView.kind !== "ready") throw new TavernProtocolError();
+              return await client.activateConnection(connectionId, connectionView.state.revision, token);
+            }, true)
+          }
           onSelectModel={(connectionId, modelId, thinkingLevel: TavernConnectionThinkingLevelV1) =>
             void mutateConnection(async (client, token) => {
               if (connectionView.kind !== "ready") throw new TavernProtocolError();
@@ -1008,10 +1038,12 @@ export function SettingsSurfacePanel({
               );
             }, false)
           }
-          onRemove={(connectionId) => void mutateConnection(async (client, token) => {
-            if (connectionView.kind !== "ready") throw new TavernProtocolError();
-            return await client.removeConnection(connectionId, connectionView.state.revision, token);
-          }, false)}
+          onRemove={(connectionId) =>
+            void mutateConnection(async (client, token) => {
+              if (connectionView.kind !== "ready") throw new TavernProtocolError();
+              return await client.removeConnection(connectionId, connectionView.state.revision, token);
+            }, false)
+          }
         />
       )}
       {modelProfilesView.kind === "ready" && (

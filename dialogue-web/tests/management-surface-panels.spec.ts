@@ -689,3 +689,106 @@ test("the Memory panel shows the companion's chapters and opens one for correcti
   // stubbed more faithfully than a chapter fixture does, and a half-driven assertion would be worse than none.
   expect(chapters[0]?.status).toBe("sealed");
 });
+
+/**
+ * The armed row's confirmation is its own row of the card, and the row's
+ * destructive controls step aside while it is armed.
+ *
+ * The measured defect: `.chat-item-confirm` was rendered *inside* the
+ * horizontal `.chat-item-main` flex row, so the prompt and its two buttons
+ * shared one line with the title and the edit/archive/trash icons. The title
+ * then had to break mid-word - `.chat-item-title` carries `overflow-wrap:
+ * anywhere` (style.css:1890) - and the old action strip stayed on screen next
+ * to the confirmation, so one arming read as two competing action strips.
+ *
+ * The assertions quote geometry, not a class name:
+ *  - the confirmation's top is at or below the title row's bottom: catches the
+ *    confirmation sharing the title row's line;
+ *  - arming does not add a line to the title: catches the title being squeezed
+ *    mid-word by a confirmation that took its width (the title can only get
+ *    *wider* while armed once the action strip steps aside);
+ *  - while armed the row exposes no rename/archive/trash control: catches the
+ *    old action strip still competing with the confirmation. The controls are
+ *    matched by `title`, not by text, because the confirmation's own confirm
+ *    button is legitimately named "Archive".
+ */
+test("the armed Chats row puts the confirmation on its own line and hides the row's controls", async ({ page }) => {
+  // One unbreakable run long enough that the row's title wraps at every width
+  // the surface is measured at; a mid-word break is then visible as a line.
+  // 190 characters, inside the list contract's 256-character title bound.
+  const longTitle = "Farmnoteswithoutanybreakthatkeepgrowing".repeat(5);
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedDraft) }),
+  );
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        chats: [{ handle: chatHandle, title: longTitle, status: "active", managementRevision: 1, isSelected: true }],
+      }),
+    }),
+  );
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  const row = page.getByTestId("chats-surface").getByTestId("chat-item").first();
+  await expect(row).toBeVisible();
+
+  const measure = async () =>
+    await row.evaluate((node) => {
+      const main = node.querySelector(".chat-item-main") as HTMLElement;
+      const confirm = node.querySelector(".chat-item-confirm") as HTMLElement | null;
+      const title = node.querySelector(".chat-select-btn") as HTMLElement;
+      const range = document.createRange();
+      range.selectNodeContents(title);
+      const titleLines = range.getClientRects().length;
+      return {
+        titleLines,
+        titleWidth: Math.round(title.getBoundingClientRect().width),
+        mainBottom: Math.round(main.getBoundingClientRect().bottom),
+        confirmTop: confirm === null ? null : Math.round(confirm.getBoundingClientRect().top),
+        rowHeight: Math.round(node.getBoundingClientRect().height),
+      };
+    });
+
+  // One navigation, and the arm is cancelled between widths: re-navigating to the
+  // same URL only moves the fragment, so the app would stay mounted (and armed)
+  // and the next "Archive" click would land on the confirmation's own button.
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 400, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(row).toBeVisible();
+
+    const unarmed = await measure();
+    await row.getByRole("button", { name: "Archive", exact: true }).click();
+    const confirm = row.getByTestId("chat-retention-confirm");
+    await expect(confirm).toBeVisible();
+    const armed = await measure();
+    console.log(`[chats-armed] ${viewport.width}x${viewport.height}: ${JSON.stringify({ unarmed, armed })}`);
+
+    // The confirmation is a row of the card, below the title row.
+    const geometry = `${viewport.width}x${viewport.height} ${JSON.stringify({ unarmed, armed })}`;
+    expect(armed.confirmTop, `confirmation must start at or below the title row's bottom (${geometry})`).not.toBeNull();
+    expect(armed.confirmTop!, `confirmation must start at or below the title row's bottom (${geometry})`).toBeGreaterThanOrEqual(
+      armed.mainBottom - 1,
+    );
+    // Arming must not squeeze the title into an extra line.
+    expect(armed.titleLines, `arming added a line to the title (${geometry})`).toBeLessThanOrEqual(unarmed.titleLines);
+    // The row's own controls step aside for the confirmation. Matched by
+    // `title` so the confirmation's confirm button (named "Archive") is not it.
+    await expect(row.getByTitle("Rename Chat")).toHaveCount(0);
+    await expect(row.getByTitle("Archive")).toHaveCount(0);
+    await expect(row.getByTitle("Trash")).toHaveCount(0);
+
+    // Keep the chat: back to the resting row for the next width.
+    await confirm.getByTestId("chat-retention-confirm-no").click();
+    await expect(confirm).toHaveCount(0);
+  }
+});
