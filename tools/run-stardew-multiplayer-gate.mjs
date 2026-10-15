@@ -423,7 +423,7 @@ async function main(argv) {
     hostScopePresent: armed?.hostScope ?? null,
     driverExitCode: outcome.driverExitCode ?? null,
     driverResult: outcome.driverResult ?? null,
-      driverStderrPresent: outcome.driverStderrPresent ?? null,
+    driverStderrPresent: outcome.driverStderrPresent ?? null,
     driverStderrTail: outcome.driverStderrTail ?? null,
   };
 }
