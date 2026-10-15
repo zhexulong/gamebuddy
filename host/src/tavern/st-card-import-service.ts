@@ -184,6 +184,7 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
     ...(value.worldBookCandidates.length === 0
       ? {}
       : { worldBookCandidates: Object.freeze(value.worldBookCandidates) }),
+    ...(value.worldBookScanDepth === undefined ? {} : { worldBookScanDepth: value.worldBookScanDepth }),
   });
 }
 function reportFromDecode(importId: string, report: StCardImportReport, sourceHash: string): StCardImportRecord {
@@ -202,9 +203,7 @@ function reportFromDecode(importId: string, report: StCardImportReport, sourceHa
       ? {}
       : {
           losses: Object.freeze(
-            report.losses.map((loss) =>
-              Object.freeze({ field: loss.field, reason: loss.reason, count: loss.count }),
-            ),
+            report.losses.map((loss) => Object.freeze({ field: loss.field, reason: loss.reason, count: loss.count })),
           ),
         }),
   });

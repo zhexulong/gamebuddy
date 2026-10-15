@@ -3,6 +3,8 @@ const TAVERN_SCHEMA_VERSION = 1 as const;
 const ID = /^[A-Za-z0-9._-]{1,128}$/u;
 const TEXT = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
 const SINGLE_LINE = /[\u0000-\u001F\u007F-\u009F]/u;
+/** The same recent-message window bound the persisted `WorldBook` enforces. */
+const MAX_CANDIDATE_WORLDBOOK_SCAN_DEPTH = 64;
 type RuntimeEligibility = "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
 type ArtifactRevision = Readonly<{ schemaVersion: typeof TAVERN_SCHEMA_VERSION; revision: number }>;
 export type CharacterCandidate = ArtifactRevision &
@@ -31,6 +33,12 @@ export type CharacterCandidate = ArtifactRevision &
        */
       keys?: readonly string[];
     }>[];
+    /**
+     * The card's own `character_book.scan_depth`, when it declared one. It rides
+     * the book into `worldbook.json` and bounds per-turn World Info selection;
+     * absent means the Host applies its documented default depth.
+     */
+    worldBookScanDepth?: number;
   }>;
 /**
  * Player-scoped library metadata. This is deliberately not an IdentityProfile
@@ -171,6 +179,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
       "reviewState",
       "fields",
       "worldBookCandidates",
+      "worldBookScanDepth",
     ])
   )
     fail();
@@ -219,6 +228,14 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
   const sourceHash = requiredHash(v.sourceHash);
   const name = requiredSingleLine(v.name, 128);
   const reviewState = requiredReviewState(v.reviewState);
+  const worldBookScanDepth = v.worldBookScanDepth;
+  if (
+    worldBookScanDepth !== undefined &&
+    (!Number.isSafeInteger(worldBookScanDepth) ||
+      (worldBookScanDepth as number) < 1 ||
+      (worldBookScanDepth as number) > MAX_CANDIDATE_WORLDBOOK_SCAN_DEPTH)
+  )
+    fail();
   return freeze({
     schemaVersion: TAVERN_SCHEMA_VERSION,
     revision: requiredRevision(v.revision),
@@ -230,6 +247,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
     reviewState,
     fields: freeze(fields),
     ...(worldBookCandidates === undefined ? {} : { worldBookCandidates: freeze(worldBookCandidates) }),
+    ...(worldBookScanDepth === undefined ? {} : { worldBookScanDepth: worldBookScanDepth as number }),
   });
 }
 function candidateReview(v: Record<string, unknown>): CandidateReviewRecord {
@@ -265,7 +283,18 @@ function candidateReview(v: Record<string, unknown>): CandidateReviewRecord {
   });
 }
 function importRecord(v: Record<string, unknown>): StCardImportRecord {
-  if (!only(v, ["schemaVersion", "revision", "importId", "source", "sourceFormat", "sourceHash", "dispositions", "losses"]))
+  if (
+    !only(v, [
+      "schemaVersion",
+      "revision",
+      "importId",
+      "source",
+      "sourceFormat",
+      "sourceHash",
+      "dispositions",
+      "losses",
+    ])
+  )
     fail();
   const dispositions = array(v.dispositions, 256).map((x) => {
     if (!record(x) || !only(x, ["field", "classification", "reason"])) fail();
@@ -302,8 +331,7 @@ function importRecord(v: Record<string, unknown>): StCardImportRecord {
   });
 }
 function importHistory(v: Record<string, unknown>): StCardImportHistoryRecord {
-  if (!only(v, ["schemaVersion", "revision", "importId", "occurredAtMs", "cardName", "companionId", "counts"]))
-    fail();
+  if (!only(v, ["schemaVersion", "revision", "importId", "occurredAtMs", "cardName", "companionId", "counts"])) fail();
   const counts = v.counts;
   if (
     !record(counts) ||
@@ -509,7 +537,8 @@ function requiredHash(v: unknown): string {
   return v;
 }
 function requiredRevision(v: unknown): number {
-  if (!revision(v)) fail();  return v;
+  if (!revision(v)) fail();
+  return v;
 }
 function requiredTimestamp(v: unknown): number {
   if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0) fail();

@@ -133,13 +133,14 @@ export type AuthoredContextVolatileSourceRef = Readonly<{
 }>;
 
 /** Ephemeral catalog candidate; `content` is never copied into a durable plan. */
-export type AuthoredContextVolatileSourceCandidate = AuthoredContextVolatileSourceRef & Readonly<{
-  content: string;
-  budgetTokens: number;
-  selectionKeys: readonly string[];
-  secondaryKeys?: readonly string[];
-  selectiveLogic?: 0 | 1 | 2 | 3;
-}>;
+export type AuthoredContextVolatileSourceCandidate = AuthoredContextVolatileSourceRef &
+  Readonly<{
+    content: string;
+    budgetTokens: number;
+    selectionKeys: readonly string[];
+    secondaryKeys?: readonly string[];
+    selectiveLogic?: 0 | 1 | 2 | 3;
+  }>;
 
 /**
  * Selects World Info entries using only the accepted player text and a bounded
@@ -178,11 +179,16 @@ export function selectAuthoredContextVolatileSourceRefs(
           candidate.secondaryKeys.length === 0 ||
           candidate.secondaryKeys.some((key) => typeof key !== "string" || key.trim().length === 0))) ||
       (candidate.selectiveLogic !== undefined &&
-        !(typeof candidate.selectiveLogic === "number" && ([0, 1, 2, 3] as readonly number[]).includes(candidate.selectiveLogic))) ||
+        !(
+          typeof candidate.selectiveLogic === "number" &&
+          ([0, 1, 2, 3] as readonly number[]).includes(candidate.selectiveLogic)
+        )) ||
       seen.has(candidate.sourceId)
     )
       throw new Error("invalid_chat_turn_context_volatile_candidate");
-    const primaryMatch = candidate.selectionKeys.some((key) => corpus.includes(key.normalize("NFC").trim().toLowerCase()));
+    const primaryMatch = candidate.selectionKeys.some((key) =>
+      corpus.includes(key.normalize("NFC").trim().toLowerCase()),
+    );
     if (!primaryMatch) continue;
 
     if (candidate.secondaryKeys !== undefined && candidate.secondaryKeys.length > 0) {
@@ -219,6 +225,29 @@ export function selectAuthoredContextVolatileSourceRefs(
   }
   refs.sort((a, b) => (a.totalOrderKey < b.totalOrderKey ? -1 : a.totalOrderKey > b.totalOrderKey ? 1 : 0));
   return Object.freeze({ refs: Object.freeze(refs), tokenCount });
+}
+
+/**
+ * The scan depth a world book applies when it declares none of its own. It is a
+ * documented default, not the mechanism: a book that carries its own
+ * `scanDepth` (the card's `character_book.scan_depth`) overrides it.
+ */
+export const DEFAULT_WORLDBOOK_SCAN_DEPTH = 2;
+
+/**
+ * The bounded visible tail a world book's per-turn selection scans: the newest
+ * `scanDepth` visible messages, oldest first, as plain text. It is deliberately
+ * NOT the whole transcript - the bound is the point - and it reuses the durable
+ * transcript the caller already holds rather than a second history buffer. A
+ * non-positive or non-integer depth yields the empty tail (the accepted player
+ * text alone), never the whole history.
+ */
+export function boundedVisibleTail(messages: readonly Pick<ChatThreadMessage, "text">[], scanDepth: number): string {
+  if (!Number.isSafeInteger(scanDepth) || scanDepth < 1) return "";
+  return messages
+    .slice(Math.max(0, messages.length - scanDepth))
+    .map((message) => message.text)
+    .join("\n");
 }
 
 export type AcceptedTurnAuthoredContextPlan = Readonly<{
@@ -323,7 +352,9 @@ export function validateAcceptedTurnAuthoredContextPlan(value: unknown): Accepte
     }
     volatilePrevious = totalOrderKey;
     volatileSeen.add(sourceId);
-    validatedVolatileSources.push(Object.freeze({ sourceId, kind, revision, canonicalHash, totalOrderKey, provenance }));
+    validatedVolatileSources.push(
+      Object.freeze({ sourceId, kind, revision, canonicalHash, totalOrderKey, provenance }),
+    );
   }
 
   return Object.freeze({
@@ -541,11 +572,12 @@ export type CreateChatThreadRequest = Readonly<{
 export type IdentityProfileMetadataReader = Readonly<{
   readExact(): Promise<Readonly<{ profileId: string; revision: number; canonicalHash: string }>>;
 }>;
-type ProfileAwareCreateRequest = CreateChatThreadRequest & Readonly<{
-  profileId: string;
-  profileRevision: number;
-  profileCanonicalHash: string;
-}>;
+type ProfileAwareCreateRequest = CreateChatThreadRequest &
+  Readonly<{
+    profileId: string;
+    profileRevision: number;
+    profileCanonicalHash: string;
+  }>;
 
 export type InitialChatExactContentCapability = Readonly<{
   /** Opens only an already persisted, exact thread/surface binding. */
@@ -598,11 +630,7 @@ export type ChatThreadStore = Readonly<{
     messageId: string,
     selection: Readonly<{ targetIndex?: number; direction?: "prev" | "next" }>,
   ): Promise<ChatThreadState>;
-  appendSwipeVariant?(
-    chatThreadId: string,
-    messageId: string,
-    newText: string,
-  ): Promise<ChatThreadState>;
+  appendSwipeVariant?(chatThreadId: string, messageId: string, newText: string): Promise<ChatThreadState>;
   /**
    * Ordinary exact-turn Stop mutation. It is intentionally independent from
    * the retired P4/P5 transition authority: the service supplies a current
@@ -673,7 +701,7 @@ export type ChatThreadStore = Readonly<{
 type IdempotencyRecord = Readonly<{ key: string; fingerprint: string; result: AcceptedQueuedTurn }>;
 
 const genuineChatThreadStores = new WeakSet<object>();
-  const storeRouteKey = (root: string, continuityKey: string): string => `${root}\u001f${continuityKey}`;
+const storeRouteKey = (root: string, continuityKey: string): string => `${root}\u001f${continuityKey}`;
 type MountedAttemptClaimInput = Readonly<{
   chatThreadId: string;
   chatSurfaceSessionId: string;
@@ -1031,7 +1059,9 @@ export function createProfileAwareChatThreadCreationCapability(
   return capability;
 }
 
-export function isProfileAwareChatThreadCreationCapability(value: unknown): value is ProfileAwareChatThreadCreationCapability {
+export function isProfileAwareChatThreadCreationCapability(
+  value: unknown,
+): value is ProfileAwareChatThreadCreationCapability {
   return !!value && typeof value === "object" && profileAwareCreationCapabilities.has(value);
 }
 
@@ -1088,9 +1118,9 @@ function initSchema(db: DatabaseSync): void {
   }
   if (version !== 0) throw new Error("chat_thread_schema_version_mismatch");
 
-  const existingTables = db.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-  ).all() as any[];
+  const existingTables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    .all() as any[];
   if (existingTables.length !== 0) throw new Error("chat_thread_schema_version_mismatch");
 
   db.exec(`
@@ -1394,8 +1424,7 @@ function assertNormalizedSchema(db: DatabaseSync): void {
   const tables = new Set(
     (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[]).map((row) => row.name),
   );
-  if (requiredTables.some((table) => !tables.has(table)))
-    throw new Error("chat_thread_schema_mismatch");
+  if (requiredTables.some((table) => !tables.has(table))) throw new Error("chat_thread_schema_mismatch");
   const threadColumns = new Set(
     (db.prepare("PRAGMA table_info(tavern_threads)").all() as any[]).map((column) => column.name),
   );
@@ -1510,46 +1539,84 @@ export function createChatThreadStore(
     validateCreate(request);
     const profile = validateProfileMetadata(await profileMetadataReader.readExact());
     const profileAwareRequest: ProfileAwareCreateRequest = Object.freeze({
-         ...request,
-         profileId: profile.profileId,
-         profileRevision: profile.profileRevision,
-         profileCanonicalHash: profile.profileCanonicalHash,
+      ...request,
+      profileId: profile.profileId,
+      profileRevision: profile.profileRevision,
+      profileCanonicalHash: profile.profileCanonicalHash,
     });
     return withDb((db) => {
-        const existing = db.prepare("SELECT 1 FROM tavern_threads WHERE thread_id = ?").get(profileAwareRequest.chatThreadId);
-        if (existing) {
-          throw new ExactThreadAlreadyExistsError();
-        }
-        const timestamp = now();
-        const opening = normalizeOpening(request.opening);
-        const initialMessages: ChatThreadMessage[] =
-          opening === "blank"
-            ? []
-            : [validateMessage({ messageId: opening.messageId, role: "companion", kind: "opening", text: opening.text, occurredAtMs: timestamp, greetingSource: opening.source })];
-        const greeting = opening === "blank" ? null : opening.source;
-        db.prepare(
-          `INSERT INTO tavern_threads (
+      const existing = db
+        .prepare("SELECT 1 FROM tavern_threads WHERE thread_id = ?")
+        .get(profileAwareRequest.chatThreadId);
+      if (existing) {
+        throw new ExactThreadAlreadyExistsError();
+      }
+      const timestamp = now();
+      const opening = normalizeOpening(request.opening);
+      const initialMessages: ChatThreadMessage[] =
+        opening === "blank"
+          ? []
+          : [
+              validateMessage({
+                messageId: opening.messageId,
+                role: "companion",
+                kind: "opening",
+                text: opening.text,
+                occurredAtMs: timestamp,
+                greetingSource: opening.source,
+              }),
+            ];
+      const greeting = opening === "blank" ? null : opening.source;
+      db.prepare(
+        `INSERT INTO tavern_threads (
             thread_id, companion_id, continuity_id, title, persona_id, scenario_id,
             chat_surface_session_id, profile_id, profile_revision, profile_canonical_hash,
             lifecycle_status, management_revision, created_at_ms, updated_at_ms,
             opening_kind, opening_message_id, greeting_set_id, greeting_source_revision, greeting_canonical_hash,
             greeting_variant_id, greeting_profile_revision, greeting_scenario_revision, opening_locked_at_event_id
           ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+      ).run(
+        profileAwareRequest.chatThreadId,
+        profileAwareRequest.companionId,
+        profileAwareRequest.continuityId,
+        profileAwareRequest.personaId ?? null,
+        profileAwareRequest.scenarioId ?? null,
+        profileAwareRequest.chatSurfaceSessionId,
+        profileAwareRequest.profileId,
+        profileAwareRequest.profileRevision,
+        profileAwareRequest.profileCanonicalHash,
+        timestamp,
+        timestamp,
+        opening === "blank" ? "blank" : "greeting",
+        opening === "blank" ? null : opening.messageId,
+        greeting?.greetingSetId ?? null,
+        greeting?.sourceRevision ?? null,
+        greeting?.canonicalHash ?? null,
+        greeting?.variantId ?? null,
+        greeting?.profileRevision ?? null,
+        greeting?.scenarioRevision ?? null,
+      );
+      for (const binding of profileAwareRequest.stableArtifactBindings ?? [])
+        db.prepare(
+          `INSERT INTO tavern_thread_stable_artifact_bindings (thread_id, kind, source_id, revision, canonical_hash) VALUES (?, ?, ?, ?, ?)`,
         ).run(
-          profileAwareRequest.chatThreadId, profileAwareRequest.companionId, profileAwareRequest.continuityId,
-          profileAwareRequest.personaId ?? null, profileAwareRequest.scenarioId ?? null, profileAwareRequest.chatSurfaceSessionId,
-          profileAwareRequest.profileId, profileAwareRequest.profileRevision, profileAwareRequest.profileCanonicalHash,
-          timestamp, timestamp,
-          opening === "blank" ? "blank" : "greeting", opening === "blank" ? null : opening.messageId,
-          greeting?.greetingSetId ?? null, greeting?.sourceRevision ?? null, greeting?.canonicalHash ?? null,
-          greeting?.variantId ?? null, greeting?.profileRevision ?? null, greeting?.scenarioRevision ?? null,
+          profileAwareRequest.chatThreadId,
+          binding.kind,
+          binding.sourceId,
+          binding.revision,
+          binding.canonicalHash,
         );
-        for (const binding of profileAwareRequest.stableArtifactBindings ?? [])
-          db.prepare(`INSERT INTO tavern_thread_stable_artifact_bindings (thread_id, kind, source_id, revision, canonical_hash) VALUES (?, ?, ?, ?, ?)`)
-            .run(profileAwareRequest.chatThreadId, binding.kind, binding.sourceId, binding.revision, binding.canonicalHash);
-        if (profileAwareRequest.worldBookBinding) writeWorldInfoBinding(db, profileAwareRequest.chatThreadId, profileAwareRequest.worldBookBinding, profileAwareRequest.worldBookBinding);
-        for (const message of initialMessages) insertMessage(db, profileAwareRequest.chatThreadId, message);
-        db.prepare(`INSERT INTO tavern_drafts (thread_id, draft_content, revision, updated_at_ms) VALUES (?, NULL, 0, ?)`).run(profileAwareRequest.chatThreadId, timestamp);
+      if (profileAwareRequest.worldBookBinding)
+        writeWorldInfoBinding(
+          db,
+          profileAwareRequest.chatThreadId,
+          profileAwareRequest.worldBookBinding,
+          profileAwareRequest.worldBookBinding,
+        );
+      for (const message of initialMessages) insertMessage(db, profileAwareRequest.chatThreadId, message);
+      db.prepare(
+        `INSERT INTO tavern_drafts (thread_id, draft_content, revision, updated_at_ms) VALUES (?, NULL, 0, ?)`,
+      ).run(profileAwareRequest.chatThreadId, timestamp);
       return readStateFromDb(db, profileAwareRequest.chatThreadId);
     });
   };
@@ -1597,8 +1664,7 @@ export function createChatThreadStore(
         const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
         if (!threadRow) throw new ExactThreadNotFoundError();
         const thread = rowToThread(db, threadRow);
-        if (thread.chatSurfaceSessionId !== chatSurfaceSessionId)
-          throw new ExactThreadSurfaceMismatchError();
+        if (thread.chatSurfaceSessionId !== chatSurfaceSessionId) throw new ExactThreadSurfaceMismatchError();
 
         const selectedAtMs = now();
         db.prepare(
@@ -1625,8 +1691,7 @@ export function createChatThreadStore(
       assertId("chatThreadId", chatThreadId);
       return withDb((db) => {
         const state = readStateFromDb(db, chatThreadId);
-        if (state.thread.chatSurfaceSessionId !== chatSurfaceSessionId)
-          throw new ExactThreadSurfaceMismatchError();
+        if (state.thread.chatSurfaceSessionId !== chatSurfaceSessionId) throw new ExactThreadSurfaceMismatchError();
         return state;
       });
     },
@@ -1643,9 +1708,32 @@ export function createChatThreadStore(
           throw new Error("chat_thread_opening_locked");
 
         const updatedAt = now();
-        const openingMessage: ChatThreadMessage | null = opening === "blank" ? null : validateMessage({ messageId: opening.messageId, role: "companion", kind: "opening", text: opening.text, occurredAtMs: updatedAt, greetingSource: opening.source });
+        const openingMessage: ChatThreadMessage | null =
+          opening === "blank"
+            ? null
+            : validateMessage({
+                messageId: opening.messageId,
+                role: "companion",
+                kind: "opening",
+                text: opening.text,
+                occurredAtMs: updatedAt,
+                greetingSource: opening.source,
+              });
         const greeting = opening === "blank" ? null : opening.source;
-        db.prepare("UPDATE tavern_threads SET opening_kind = ?, opening_message_id = ?, greeting_set_id = ?, greeting_source_revision = ?, greeting_canonical_hash = ?, greeting_variant_id = ?, greeting_profile_revision = ?, greeting_scenario_revision = ?, updated_at_ms = ? WHERE thread_id = ?").run(opening === "blank" ? "blank" : "greeting", opening === "blank" ? null : opening.messageId, greeting?.greetingSetId ?? null, greeting?.sourceRevision ?? null, greeting?.canonicalHash ?? null, greeting?.variantId ?? null, greeting?.profileRevision ?? null, greeting?.scenarioRevision ?? null, updatedAt, chatThreadId);
+        db.prepare(
+          "UPDATE tavern_threads SET opening_kind = ?, opening_message_id = ?, greeting_set_id = ?, greeting_source_revision = ?, greeting_canonical_hash = ?, greeting_variant_id = ?, greeting_profile_revision = ?, greeting_scenario_revision = ?, updated_at_ms = ? WHERE thread_id = ?",
+        ).run(
+          opening === "blank" ? "blank" : "greeting",
+          opening === "blank" ? null : opening.messageId,
+          greeting?.greetingSetId ?? null,
+          greeting?.sourceRevision ?? null,
+          greeting?.canonicalHash ?? null,
+          greeting?.variantId ?? null,
+          greeting?.profileRevision ?? null,
+          greeting?.scenarioRevision ?? null,
+          updatedAt,
+          chatThreadId,
+        );
         replaceOpeningMessage(db, chatThreadId, openingMessage);
         return readStateFromDb(db, chatThreadId);
       });
@@ -1663,8 +1751,21 @@ export function createChatThreadStore(
         }
         const lockedAt = current.thread.openingLockedAtEventId ?? message.messageId;
         const updatedAt = now();
-        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?").run(updatedAt, lockedAt, chatThreadId);
-        insertMessage(db, chatThreadId, validateMessage({ messageId: message.messageId, role: "player", kind: "player", text: message.text, occurredAtMs: message.occurredAtMs, greetingSource: null }));
+        db.prepare(
+          "UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?",
+        ).run(updatedAt, lockedAt, chatThreadId);
+        insertMessage(
+          db,
+          chatThreadId,
+          validateMessage({
+            messageId: message.messageId,
+            role: "player",
+            kind: "player",
+            text: message.text,
+            occurredAtMs: message.occurredAtMs,
+            greetingSource: null,
+          }),
+        );
         return readStateFromDb(db, chatThreadId);
       });
     },
@@ -1681,8 +1782,21 @@ export function createChatThreadStore(
         }
         const lockedAt = current.thread.openingLockedAtEventId ?? response.messageId;
         const updatedAt = now();
-        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?").run(updatedAt, lockedAt, chatThreadId);
-        insertMessage(db, chatThreadId, validateMessage({ messageId: response.messageId, role: "companion", kind: "response", text: response.text, occurredAtMs: response.occurredAtMs, greetingSource: null }));
+        db.prepare(
+          "UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?",
+        ).run(updatedAt, lockedAt, chatThreadId);
+        insertMessage(
+          db,
+          chatThreadId,
+          validateMessage({
+            messageId: response.messageId,
+            role: "companion",
+            kind: "response",
+            text: response.text,
+            occurredAtMs: response.occurredAtMs,
+            greetingSource: null,
+          }),
+        );
         return readStateFromDb(db, chatThreadId);
       });
     },
@@ -1745,13 +1859,10 @@ export function createChatThreadStore(
       return withDb((db) => {
         const current = readStateFromDb(db, input.chatThreadId);
         const thread = current.thread;
-        if (thread.chatSurfaceSessionId !== input.chatSurfaceSessionId)
-          throw new ExactThreadSurfaceMismatchError();
-        if ((thread.lifecycleStatus ?? "active") !== "active")
-          throw new Error("chat_thread_lifecycle_not_active");
+        if (thread.chatSurfaceSessionId !== input.chatSurfaceSessionId) throw new ExactThreadSurfaceMismatchError();
+        if ((thread.lifecycleStatus ?? "active") !== "active") throw new Error("chat_thread_lifecycle_not_active");
         const ledger = current.turnLedger;
-        if (ledger === null || ledger.turnId !== input.expectedTurnId)
-          throw new Error("chat_turn_not_current");
+        if (ledger === null || ledger.turnId !== input.expectedTurnId) throw new Error("chat_turn_not_current");
         if (isTerminalLedger(ledger)) {
           if (!isTurnWithAttempt(ledger) || ledger.attempt.attemptId !== input.expectedAttemptId)
             throw new Error("chat_turn_not_current");
@@ -1782,7 +1893,8 @@ export function createChatThreadStore(
         });
         persistTurn(db, input.chatThreadId, nextLedger);
         db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(
-          input.cancelledAtMs, input.chatThreadId,
+          input.cancelledAtMs,
+          input.chatThreadId,
         );
         const readBack = readStateFromDb(db, input.chatThreadId);
         if (readBack.turnLedger?.status !== "cancelled" || readBack.turnLedger.turnId !== input.expectedTurnId)
@@ -1806,13 +1918,20 @@ export function createChatThreadStore(
           current.thread.continuityId !== input.continuityId
         )
           throw new Error("chat_thread_scope_mismatch");
-        if (current.thread.updatedAtMs !== input.expectedUpdatedAtMs)
-          throw new Error("chat_thread_revision_conflict");
+        if (current.thread.updatedAtMs !== input.expectedUpdatedAtMs) throw new Error("chat_thread_revision_conflict");
         const updatedAt = now();
         // Binding edits are desired-state mutations. An applied catalog is retained
         // until the coordinator acknowledges replacement, including pending unbind.
-        writeWorldInfoBinding(db, input.chatThreadId, input.binding ? freezeStableWorldBookBinding(input.binding) : undefined, current.thread.appliedWorldBookBinding);
-        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(updatedAt, input.chatThreadId);
+        writeWorldInfoBinding(
+          db,
+          input.chatThreadId,
+          input.binding ? freezeStableWorldBookBinding(input.binding) : undefined,
+          current.thread.appliedWorldBookBinding,
+        );
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(
+          updatedAt,
+          input.chatThreadId,
+        );
 
         return readStateFromDb(db, input.chatThreadId);
       });
@@ -1841,11 +1960,11 @@ export function createChatThreadStore(
         );
         const nextRevision = currentManagementRevision + 1;
 
-        db.prepare("UPDATE tavern_threads SET lifecycle_status = ?, management_revision = ?, trash_restore_status = ? WHERE thread_id = ?").run(
-          transition.status, nextRevision, transition.trashRestoreStatus ?? null, input.chatThreadId,
-        );
+        db.prepare(
+          "UPDATE tavern_threads SET lifecycle_status = ?, management_revision = ?, trash_restore_status = ? WHERE thread_id = ?",
+        ).run(transition.status, nextRevision, transition.trashRestoreStatus ?? null, input.chatThreadId);
 
-        return (readStateFromDb(db, input.chatThreadId)).thread;
+        return readStateFromDb(db, input.chatThreadId).thread;
       });
     },
 
@@ -1869,7 +1988,7 @@ export function createChatThreadStore(
           input.chatThreadId,
         );
 
-        return (readStateFromDb(db, input.chatThreadId)).thread;
+        return readStateFromDb(db, input.chatThreadId).thread;
       });
     },
 
@@ -1911,7 +2030,7 @@ export function createChatThreadStore(
           "UPDATE tavern_drafts SET revision = ?, draft_content = ?, updated_at_ms = ? WHERE thread_id = ?",
         ).run(nextRevision, text, updatedAt, input.chatThreadId);
 
-        return (readStateFromDb(db, input.chatThreadId)).draft;
+        return readStateFromDb(db, input.chatThreadId).draft;
       }),
     );
   }
@@ -1973,9 +2092,11 @@ export function createChatThreadStore(
       if (thread.lifecycleStatus !== "active") throw new Error("chat_thread_lifecycle_not_active");
 
       const fingerprint = acceptanceFingerprint(input);
-      const existingRow = db.prepare(
-        "SELECT i.fingerprint, i.turn_id, t.idempotency_key, t.message_id, t.accepted_at_ms FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id AND t.thread_id = i.thread_id WHERE i.thread_id = ? AND i.idempotency_key = ?",
-      ).get(input.chatThreadId, input.idempotencyKey) as any;
+      const existingRow = db
+        .prepare(
+          "SELECT i.fingerprint, i.turn_id, t.idempotency_key, t.message_id, t.accepted_at_ms FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id AND t.thread_id = i.thread_id WHERE i.thread_id = ? AND i.idempotency_key = ?",
+        )
+        .get(input.chatThreadId, input.idempotencyKey) as any;
       if (existingRow !== undefined) {
         if (existingRow.fingerprint !== fingerprint) throw new Error("idempotency_conflict");
         return validateAcceptedTurn({
@@ -2009,13 +2130,26 @@ export function createChatThreadStore(
       });
 
       const lockedAt = thread.openingLockedAtEventId ?? messageId;
-      insertMessage(db, input.chatThreadId, validateMessage({ messageId, role: "player", kind: "player", text: input.text, occurredAtMs: acceptedAtMs, greetingSource: null }));
-      persistTurn(db, input.chatThreadId, result);
-      db.prepare("INSERT INTO tavern_chat_submit_idempotency (thread_id, idempotency_key, fingerprint, turn_id) VALUES (?, ?, ?, ?)").run(
-        input.chatThreadId, input.idempotencyKey, fingerprint, turnId,
+      insertMessage(
+        db,
+        input.chatThreadId,
+        validateMessage({
+          messageId,
+          role: "player",
+          kind: "player",
+          text: input.text,
+          occurredAtMs: acceptedAtMs,
+          greetingSource: null,
+        }),
       );
+      persistTurn(db, input.chatThreadId, result);
+      db.prepare(
+        "INSERT INTO tavern_chat_submit_idempotency (thread_id, idempotency_key, fingerprint, turn_id) VALUES (?, ?, ?, ?)",
+      ).run(input.chatThreadId, input.idempotencyKey, fingerprint, turnId);
       db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?").run(
-        acceptedAtMs, lockedAt, input.chatThreadId,
+        acceptedAtMs,
+        lockedAt,
+        input.chatThreadId,
       );
       persistContextPlan(db, createAcceptedContextPlan(thread, input, turnId), turnId);
 
@@ -2061,7 +2195,10 @@ export function createChatThreadStore(
       });
 
       persistTurn(db, input.chatThreadId, claimed);
-      db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(claimedAtMs, input.chatThreadId);
+      db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(
+        claimedAtMs,
+        input.chatThreadId,
+      );
 
       const readBack = readStateFromDb(db, input.chatThreadId);
       if (
@@ -2194,7 +2331,10 @@ export function createChatThreadStore(
       }
 
       persistTurn(db, input.chatThreadId, nextLedger);
-      db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(observedAtMs, input.chatThreadId);
+      db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(
+        observedAtMs,
+        input.chatThreadId,
+      );
 
       const readBack = readStateFromDb(db, input.chatThreadId);
       const readBackLedger = readBack.turnLedger;
@@ -2268,7 +2408,18 @@ export function createChatThreadStore(
             presentation,
           });
 
-          insertMessage(db, input.chatThreadId, validateMessage({ messageId: command.message.messageId, role: "companion", kind: "response", text: command.message.text, occurredAtMs: command.message.occurredAtMs, greetingSource: null }));
+          insertMessage(
+            db,
+            input.chatThreadId,
+            validateMessage({
+              messageId: command.message.messageId,
+              role: "companion",
+              kind: "response",
+              text: command.message.text,
+              occurredAtMs: command.message.occurredAtMs,
+              greetingSource: null,
+            }),
+          );
           break;
         }
         case "claim_completion": {
@@ -2309,11 +2460,7 @@ export function createChatThreadStore(
           // A claimed cancel is already this turn's durable winner: the runner that
           // owns the prompt drain finishes it with `cancel`, so a later failure can no
           // longer replace an interruption with a failure.
-          if (
-            ledger.status === "attempt_starting" ||
-            ledger.status === "cancel_claimed" ||
-            isTerminalLedger(ledger)
-          )
+          if (ledger.status === "attempt_starting" || ledger.status === "cancel_claimed" || isTerminalLedger(ledger))
             throw new Error("p5_presentation_terminal_immutable");
           nextLedger = freezeFailedTurn({
             turnId: ledger.turnId,
@@ -2345,36 +2492,89 @@ export function createChatThreadStore(
 function greetingSourceFromRow(row: any): GreetingSource | null {
   if (row.greeting_set_id === null || row.greeting_set_id === undefined) return null;
   return freezeGreetingSource({
-    greetingSetId: row.greeting_set_id, sourceRevision: row.greeting_source_revision,
-    canonicalHash: row.greeting_canonical_hash, variantId: row.greeting_variant_id,
-    profileRevision: row.greeting_profile_revision, scenarioRevision: row.greeting_scenario_revision,
+    greetingSetId: row.greeting_set_id,
+    sourceRevision: row.greeting_source_revision,
+    canonicalHash: row.greeting_canonical_hash,
+    variantId: row.greeting_variant_id,
+    profileRevision: row.greeting_profile_revision,
+    scenarioRevision: row.greeting_scenario_revision,
   });
 }
 
 function rowToThread(db: DatabaseSync, row: any): ChatThread {
   const greeting = greetingSourceFromRow(row);
-  const openingSelection: OpeningSelection = row.opening_kind === "blank"
-    ? Object.freeze({ kind: "blank" })
-    : validateOpeningSelection({ kind: "greeting", messageId: row.opening_message_id, source: greeting });
-  const stableArtifactBindings = freezeStableArtifactBindings((db.prepare(
-    "SELECT kind, source_id, revision, canonical_hash FROM tavern_thread_stable_artifact_bindings WHERE thread_id = ? ORDER BY kind",
-  ).all(row.thread_id) as any[]).map((binding) => ({
-    kind: binding.kind, sourceId: binding.source_id, revision: binding.revision, canonicalHash: binding.canonical_hash,
-  })));
-  const world = db.prepare("SELECT * FROM tavern_thread_world_info_bindings WHERE thread_id = ?").get(row.thread_id) as any;
-  const worldBookBinding: TavernStableWorldInfoBinding | undefined = !world || world.revision == null ? undefined : world.source === "managed_world_info"
-    ? freezeStableWorldBookBinding({ source: "managed_world_info", publicTitle: world.public_title, revision: world.revision, canonicalHash: world.canonical_hash })
-    : freezeStableWorldBookBinding({ worldBookId: world.world_book_id, revision: world.revision, canonicalHash: world.canonical_hash, provenance: world.provenance });
-  const appliedWorldBookBinding: TavernStableWorldInfoBinding | undefined = !world || world.applied_revision == null ? undefined : world.source === "managed_world_info"
-    ? freezeStableWorldBookBinding({ source: "managed_world_info", publicTitle: world.applied_public_title, revision: world.applied_revision, canonicalHash: world.applied_canonical_hash })
-    : freezeStableWorldBookBinding({ worldBookId: world.applied_world_book_id, revision: world.applied_revision, canonicalHash: world.applied_canonical_hash, provenance: world.provenance });
+  const openingSelection: OpeningSelection =
+    row.opening_kind === "blank"
+      ? Object.freeze({ kind: "blank" })
+      : validateOpeningSelection({ kind: "greeting", messageId: row.opening_message_id, source: greeting });
+  const stableArtifactBindings = freezeStableArtifactBindings(
+    (
+      db
+        .prepare(
+          "SELECT kind, source_id, revision, canonical_hash FROM tavern_thread_stable_artifact_bindings WHERE thread_id = ? ORDER BY kind",
+        )
+        .all(row.thread_id) as any[]
+    ).map((binding) => ({
+      kind: binding.kind,
+      sourceId: binding.source_id,
+      revision: binding.revision,
+      canonicalHash: binding.canonical_hash,
+    })),
+  );
+  const world = db
+    .prepare("SELECT * FROM tavern_thread_world_info_bindings WHERE thread_id = ?")
+    .get(row.thread_id) as any;
+  const worldBookBinding: TavernStableWorldInfoBinding | undefined =
+    !world || world.revision == null
+      ? undefined
+      : world.source === "managed_world_info"
+        ? freezeStableWorldBookBinding({
+            source: "managed_world_info",
+            publicTitle: world.public_title,
+            revision: world.revision,
+            canonicalHash: world.canonical_hash,
+          })
+        : freezeStableWorldBookBinding({
+            worldBookId: world.world_book_id,
+            revision: world.revision,
+            canonicalHash: world.canonical_hash,
+            provenance: world.provenance,
+          });
+  const appliedWorldBookBinding: TavernStableWorldInfoBinding | undefined =
+    !world || world.applied_revision == null
+      ? undefined
+      : world.source === "managed_world_info"
+        ? freezeStableWorldBookBinding({
+            source: "managed_world_info",
+            publicTitle: world.applied_public_title,
+            revision: world.applied_revision,
+            canonicalHash: world.applied_canonical_hash,
+          })
+        : freezeStableWorldBookBinding({
+            worldBookId: world.applied_world_book_id,
+            revision: world.applied_revision,
+            canonicalHash: world.applied_canonical_hash,
+            provenance: world.provenance,
+          });
   return freezeThread({
-    schemaVersion: CHAT_THREAD_SCHEMA_VERSION, chatThreadId: row.thread_id, companionId: row.companion_id,
-    continuityId: row.continuity_id, profileId: validateProfileId(row.profile_id), profileRevision: validatePositiveInteger(row.profile_revision, "profile_revision"), profileCanonicalHash: validateCanonicalHash(row.profile_canonical_hash), ...(row.persona_id ? { personaId: row.persona_id } : {}),
-    ...(row.scenario_id ? { scenarioId: row.scenario_id } : {}), stableArtifactBindings,
-    ...(worldBookBinding ? { worldBookBinding } : {}), ...(appliedWorldBookBinding ? { appliedWorldBookBinding } : {}), chatSurfaceSessionId: row.chat_surface_session_id,
-    createdAtMs: row.created_at_ms, updatedAtMs: row.updated_at_ms, openingSelection,
-    title: validateStoredThreadTitle(row.title), lifecycleStatus: validateLifecycleStatus(row.lifecycle_status),
+    schemaVersion: CHAT_THREAD_SCHEMA_VERSION,
+    chatThreadId: row.thread_id,
+    companionId: row.companion_id,
+    continuityId: row.continuity_id,
+    profileId: validateProfileId(row.profile_id),
+    profileRevision: validatePositiveInteger(row.profile_revision, "profile_revision"),
+    profileCanonicalHash: validateCanonicalHash(row.profile_canonical_hash),
+    ...(row.persona_id ? { personaId: row.persona_id } : {}),
+    ...(row.scenario_id ? { scenarioId: row.scenario_id } : {}),
+    stableArtifactBindings,
+    ...(worldBookBinding ? { worldBookBinding } : {}),
+    ...(appliedWorldBookBinding ? { appliedWorldBookBinding } : {}),
+    chatSurfaceSessionId: row.chat_surface_session_id,
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+    openingSelection,
+    title: validateStoredThreadTitle(row.title),
+    lifecycleStatus: validateLifecycleStatus(row.lifecycle_status),
     managementRevision: validateManagementRevision(row.management_revision),
     ...(row.trash_restore_status ? { trashRestoreStatus: validateTrashRestoreStatus(row.trash_restore_status) } : {}),
     openingLockedAtEventId: row.opening_locked_at_event_id ?? null,
@@ -2382,7 +2582,11 @@ function rowToThread(db: DatabaseSync, row: any): ChatThread {
 }
 
 function readMessages(db: DatabaseSync, threadId: string): ChatThreadMessage[] {
-  const swipeRows = db.prepare("SELECT message_id, swipe_index, text FROM tavern_message_swipes WHERE thread_id = ? ORDER BY message_id, swipe_index").all(threadId) as any[];
+  const swipeRows = db
+    .prepare(
+      "SELECT message_id, swipe_index, text FROM tavern_message_swipes WHERE thread_id = ? ORDER BY message_id, swipe_index",
+    )
+    .all(threadId) as any[];
   const swipes = new Map<string, string[]>();
   for (const swipe of swipeRows) {
     const values = swipes.get(swipe.message_id) ?? [];
@@ -2390,7 +2594,9 @@ function readMessages(db: DatabaseSync, threadId: string): ChatThreadMessage[] {
     values.push(swipe.text);
     swipes.set(swipe.message_id, values);
   }
-  return (db.prepare("SELECT * FROM tavern_messages WHERE thread_id = ? ORDER BY append_ordinal").all(threadId) as any[]).map((row) => {
+  return (
+    db.prepare("SELECT * FROM tavern_messages WHERE thread_id = ? ORDER BY append_ordinal").all(threadId) as any[]
+  ).map((row) => {
     const swipeValues = swipes.get(row.message_id);
     if (row.role === "companion") {
       if (swipeValues === undefined) throw new Error("invalid_chat_thread_swipe_order");
@@ -2420,21 +2626,34 @@ function readMessages(db: DatabaseSync, threadId: string): ChatThreadMessage[] {
 }
 
 function insertMessage(db: DatabaseSync, threadId: string, message: ChatThreadMessage): void {
-  const ordinalRow = db.prepare("SELECT COALESCE(MAX(append_ordinal), -1) AS ordinal FROM tavern_messages WHERE thread_id = ?").get(threadId) as any;
+  const ordinalRow = db
+    .prepare("SELECT COALESCE(MAX(append_ordinal), -1) AS ordinal FROM tavern_messages WHERE thread_id = ?")
+    .get(threadId) as any;
   const source = message.greetingSource;
-  db.prepare(`INSERT INTO tavern_messages (thread_id, message_id, append_ordinal, role, kind, text, occurred_at_ms, parent_id, active_swipe_index, greeting_set_id, greeting_source_revision, greeting_canonical_hash, greeting_variant_id, greeting_profile_revision, greeting_scenario_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    threadId, message.messageId, ordinalRow.ordinal + 1, message.role, message.kind, message.text, message.occurredAtMs,
-    message.parentId ?? null, message.activeSwipeIndex ?? 0, source?.greetingSetId ?? null, source?.sourceRevision ?? null,
-    source?.canonicalHash ?? null, source?.variantId ?? null, source?.profileRevision ?? null, source?.scenarioRevision ?? null,
+  db.prepare(
+    `INSERT INTO tavern_messages (thread_id, message_id, append_ordinal, role, kind, text, occurred_at_ms, parent_id, active_swipe_index, greeting_set_id, greeting_source_revision, greeting_canonical_hash, greeting_variant_id, greeting_profile_revision, greeting_scenario_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    threadId,
+    message.messageId,
+    ordinalRow.ordinal + 1,
+    message.role,
+    message.kind,
+    message.text,
+    message.occurredAtMs,
+    message.parentId ?? null,
+    message.activeSwipeIndex ?? 0,
+    source?.greetingSetId ?? null,
+    source?.sourceRevision ?? null,
+    source?.canonicalHash ?? null,
+    source?.variantId ?? null,
+    source?.profileRevision ?? null,
+    source?.scenarioRevision ?? null,
   );
   if (message.role === "companion") {
     for (const [index, text] of (message.swipes ?? [message.text]).entries())
-      db.prepare("INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, ?, ?)").run(
-        threadId,
-        message.messageId,
-        index,
-        text,
-      );
+      db.prepare(
+        "INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, ?, ?)",
+      ).run(threadId, message.messageId, index, text);
   }
 }
 
@@ -2443,38 +2662,103 @@ function replaceOpeningMessage(db: DatabaseSync, threadId: string, message: Chat
   if (message) insertMessage(db, threadId, message);
 }
 
-function writeWorldInfoBinding(db: DatabaseSync, threadId: string, binding: TavernStableWorldInfoBinding | undefined, applied: TavernStableWorldInfoBinding | undefined): void {
+function writeWorldInfoBinding(
+  db: DatabaseSync,
+  threadId: string,
+  binding: TavernStableWorldInfoBinding | undefined,
+  applied: TavernStableWorldInfoBinding | undefined,
+): void {
   db.prepare("DELETE FROM tavern_thread_world_info_bindings WHERE thread_id = ?").run(threadId);
   if (binding === undefined && applied === undefined) return;
   // Desired and applied must share a source family; mixed-family replacement is
   // not a valid projection and is rejected before SQLite mutation.
   const shape = binding ?? applied!;
-  if ((binding && applied) && (('source' in binding) !== ('source' in applied))) throw new Error("world_info_binding_mismatch");
+  if (binding && applied && "source" in binding !== "source" in applied) throw new Error("world_info_binding_mismatch");
   if ("source" in shape) {
     const desired = binding && "source" in binding ? binding : undefined;
     const appliedManaged = applied && "source" in applied ? applied : undefined;
-    db.prepare("INSERT INTO tavern_thread_world_info_bindings (thread_id, source, public_title, revision, canonical_hash, applied_public_title, applied_revision, applied_canonical_hash) VALUES (?, 'managed_world_info', ?, ?, ?, ?, ?, ?)").run(threadId, desired?.publicTitle ?? null, desired?.revision ?? null, desired?.canonicalHash ?? null, appliedManaged?.publicTitle ?? null, appliedManaged?.revision ?? null, appliedManaged?.canonicalHash ?? null);
+    db.prepare(
+      "INSERT INTO tavern_thread_world_info_bindings (thread_id, source, public_title, revision, canonical_hash, applied_public_title, applied_revision, applied_canonical_hash) VALUES (?, 'managed_world_info', ?, ?, ?, ?, ?, ?)",
+    ).run(
+      threadId,
+      desired?.publicTitle ?? null,
+      desired?.revision ?? null,
+      desired?.canonicalHash ?? null,
+      appliedManaged?.publicTitle ?? null,
+      appliedManaged?.revision ?? null,
+      appliedManaged?.canonicalHash ?? null,
+    );
   } else {
     const desired = binding && !("source" in binding) ? binding : undefined;
     const appliedWorld = applied && !("source" in applied) ? applied : undefined;
-    db.prepare("INSERT INTO tavern_thread_world_info_bindings (thread_id, source, world_book_id, revision, canonical_hash, provenance, applied_world_book_id, applied_revision, applied_canonical_hash) VALUES (?, 'world_book', ?, ?, ?, ?, ?, ?, ?)").run(threadId, desired?.worldBookId ?? null, desired?.revision ?? null, desired?.canonicalHash ?? null, desired?.provenance ?? appliedWorld?.provenance ?? null, appliedWorld?.worldBookId ?? null, appliedWorld?.revision ?? null, appliedWorld?.canonicalHash ?? null);
+    db.prepare(
+      "INSERT INTO tavern_thread_world_info_bindings (thread_id, source, world_book_id, revision, canonical_hash, provenance, applied_world_book_id, applied_revision, applied_canonical_hash) VALUES (?, 'world_book', ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      threadId,
+      desired?.worldBookId ?? null,
+      desired?.revision ?? null,
+      desired?.canonicalHash ?? null,
+      desired?.provenance ?? appliedWorld?.provenance ?? null,
+      appliedWorld?.worldBookId ?? null,
+      appliedWorld?.revision ?? null,
+      appliedWorld?.canonicalHash ?? null,
+    );
   }
 }
 
 function persistTurn(db: DatabaseSync, threadId: string, ledger: ChatTurnLedger): void {
-  db.prepare("UPDATE tavern_turns SET is_current = 0 WHERE thread_id = ? AND turn_id <> ?").run(threadId, ledger.turnId);
-  db.prepare(`INSERT INTO tavern_turns (turn_id, thread_id, status, idempotency_key, message_id, accepted_at_ms, is_current) VALUES (?, ?, ?, ?, ?, ?, 1) ON CONFLICT(turn_id) DO UPDATE SET status = excluded.status, is_current = 1`).run(ledger.turnId, threadId, ledger.status, ledger.idempotencyKey, ledger.messageId, ledger.acceptedAtMs);
+  db.prepare("UPDATE tavern_turns SET is_current = 0 WHERE thread_id = ? AND turn_id <> ?").run(
+    threadId,
+    ledger.turnId,
+  );
+  db.prepare(
+    `INSERT INTO tavern_turns (turn_id, thread_id, status, idempotency_key, message_id, accepted_at_ms, is_current) VALUES (?, ?, ?, ?, ?, ?, 1) ON CONFLICT(turn_id) DO UPDATE SET status = excluded.status, is_current = 1`,
+  ).run(ledger.turnId, threadId, ledger.status, ledger.idempotencyKey, ledger.messageId, ledger.acceptedAtMs);
   if (!isTurnWithAttempt(ledger)) return;
   db.prepare("DELETE FROM tavern_turn_attempts WHERE turn_id = ?").run(ledger.turnId);
   const attempt = ledger.attempt;
-  db.prepare("INSERT INTO tavern_turn_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(ledger.turnId, attempt.generation, attempt.attemptId, attempt.claimedAtMs, attempt.selectionGeneration, attempt.runtimeBindingDigest, attempt.runtimeOwner.ownerToken, attempt.runtimeOwner.runtimeInstanceId, attempt.runtimeOwner.ownerPid, attempt.runtimeOwner.ownerProcessStartIdentity);
+  db.prepare("INSERT INTO tavern_turn_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+    ledger.turnId,
+    attempt.generation,
+    attempt.attemptId,
+    attempt.claimedAtMs,
+    attempt.selectionGeneration,
+    attempt.runtimeBindingDigest,
+    attempt.runtimeOwner.ownerToken,
+    attempt.runtimeOwner.runtimeInstanceId,
+    attempt.runtimeOwner.ownerPid,
+    attempt.runtimeOwner.ownerProcessStartIdentity,
+  );
   db.prepare("DELETE FROM tavern_turn_observations WHERE turn_id = ?").run(ledger.turnId);
   db.prepare("DELETE FROM tavern_turn_presentations WHERE turn_id = ?").run(ledger.turnId);
   db.prepare("DELETE FROM tavern_turn_terminalizations WHERE turn_id = ?").run(ledger.turnId);
-  if (ledger.observation) db.prepare("INSERT INTO tavern_turn_observations VALUES (?, ?, ?, ?, ?, ?)").run(ledger.turnId, ledger.observation.phase, "reasonCode" in ledger.observation ? ledger.observation.reasonCode : null, "source" in ledger.observation ? ledger.observation.source : null, "statusClass" in ledger.observation ? ledger.observation.statusClass : null, ledger.observation.observedAtMs);
+  if (ledger.observation)
+    db.prepare("INSERT INTO tavern_turn_observations VALUES (?, ?, ?, ?, ?, ?)").run(
+      ledger.turnId,
+      ledger.observation.phase,
+      "reasonCode" in ledger.observation ? ledger.observation.reasonCode : null,
+      "source" in ledger.observation ? ledger.observation.source : null,
+      "statusClass" in ledger.observation ? ledger.observation.statusClass : null,
+      ledger.observation.observedAtMs,
+    );
   const presentation = presentationOf(ledger);
-  if (presentation) db.prepare("INSERT INTO tavern_turn_presentations VALUES (?, ?, ?, ?, ?)").run(ledger.turnId, presentation.expressionId, presentation.messageId, presentation.cancelEpoch, presentation.committedAtMs);
-  db.prepare("INSERT INTO tavern_turn_terminalizations VALUES (?, ?, ?, ?, ?, ?, ?)").run(ledger.turnId, ledger.status === "completion_claimed" || ledger.status === "completed" ? ledger.completionClaimedAtMs : null, ledger.status === "completed" ? ledger.completedAtMs : null, ledger.status === "cancel_claimed" || ledger.status === "cancelled" ? ledger.cancelClaimedAtMs : null, ledger.status === "cancelled" ? ledger.cancelledAtMs : null, ledger.status === "failed" ? ledger.failedAtMs : null, ledger.status === "failed" ? ledger.reasonCode : null);
+  if (presentation)
+    db.prepare("INSERT INTO tavern_turn_presentations VALUES (?, ?, ?, ?, ?)").run(
+      ledger.turnId,
+      presentation.expressionId,
+      presentation.messageId,
+      presentation.cancelEpoch,
+      presentation.committedAtMs,
+    );
+  db.prepare("INSERT INTO tavern_turn_terminalizations VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    ledger.turnId,
+    ledger.status === "completion_claimed" || ledger.status === "completed" ? ledger.completionClaimedAtMs : null,
+    ledger.status === "completed" ? ledger.completedAtMs : null,
+    ledger.status === "cancel_claimed" || ledger.status === "cancelled" ? ledger.cancelClaimedAtMs : null,
+    ledger.status === "cancelled" ? ledger.cancelledAtMs : null,
+    ledger.status === "failed" ? ledger.failedAtMs : null,
+    ledger.status === "failed" ? ledger.reasonCode : null,
+  );
 }
 
 function readTurnLedger(db: DatabaseSync, row: any): ChatTurnLedger {
@@ -2557,7 +2841,8 @@ function readTurnLedger(db: DatabaseSync, row: any): ChatTurnLedger {
 }
 
 function validateProfileId(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0 || value === "unknown") throw new Error("invalid_chat_thread_profile");
+  if (typeof value !== "string" || value.length === 0 || value === "unknown")
+    throw new Error("invalid_chat_thread_profile");
   return value;
 }
 function validatePositiveInteger(value: unknown, label: string): number {
@@ -2568,38 +2853,135 @@ function validateCanonicalHash(value: unknown): string {
   if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) throw new Error("invalid_chat_thread_profile");
   return value;
 }
-function isExactId(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/u.test(value); }
-function isExactProfileId(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_.-]{1,128}$/u.test(value) && value !== "unknown"; }
+function isExactId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/u.test(value);
+}
+function isExactProfileId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,128}$/u.test(value) && value !== "unknown";
+}
 
-function readContextPlan(db: DatabaseSync, turnId: string, thread: ChatThread): AcceptedTurnAuthoredContextPlan | undefined {
+function readContextPlan(
+  db: DatabaseSync,
+  turnId: string,
+  thread: ChatThread,
+): AcceptedTurnAuthoredContextPlan | undefined {
   const row = db.prepare("SELECT * FROM tavern_turn_context_plans WHERE turn_id = ?").get(turnId) as any;
   if (row === undefined) throw new Error("chat_turn_context_plan_missing");
-  if (row.thread_id !== thread.chatThreadId || row.continuity_id !== thread.continuityId || row.companion_id !== thread.companionId || row.profile_id !== thread.profileId || row.profile_revision !== thread.profileRevision || row.profile_canonical_hash !== thread.profileCanonicalHash || row.chat_surface_session_id !== thread.chatSurfaceSessionId) throw new Error("chat_turn_context_plan_scope_mismatch");
-  const sources = (db.prepare("SELECT * FROM tavern_turn_context_sources WHERE turn_id = ? ORDER BY ordinal").all(turnId) as any[]).map((source, ordinal) => {
+  if (
+    row.thread_id !== thread.chatThreadId ||
+    row.continuity_id !== thread.continuityId ||
+    row.companion_id !== thread.companionId ||
+    row.profile_id !== thread.profileId ||
+    row.profile_revision !== thread.profileRevision ||
+    row.profile_canonical_hash !== thread.profileCanonicalHash ||
+    row.chat_surface_session_id !== thread.chatSurfaceSessionId
+  )
+    throw new Error("chat_turn_context_plan_scope_mismatch");
+  const sources = (
+    db.prepare("SELECT * FROM tavern_turn_context_sources WHERE turn_id = ? ORDER BY ordinal").all(turnId) as any[]
+  ).map((source, ordinal) => {
     if (source.ordinal !== ordinal) throw new Error("chat_turn_context_source_order_invalid");
-    return Object.freeze({ sourceId: source.source_id, kind: source.kind, revision: source.revision, canonicalHash: source.canonical_hash, totalOrderKey: source.total_order_key });
+    return Object.freeze({
+      sourceId: source.source_id,
+      kind: source.kind,
+      revision: source.revision,
+      canonicalHash: source.canonical_hash,
+      totalOrderKey: source.total_order_key,
+    });
   });
-  if (sources.some((source, index) => index > 0 && source.totalOrderKey <= sources[index - 1]!.totalOrderKey)) throw new Error("chat_turn_context_source_order_invalid");
-  if (!Number.isSafeInteger(row.stable_token_count) || row.stable_token_count < 0 || !Number.isSafeInteger(row.volatile_token_count) || row.volatile_token_count < 0) throw new Error("chat_turn_context_token_mismatch");
-  const volatileSources = (db.prepare("SELECT * FROM tavern_turn_context_volatile_sources WHERE turn_id = ? ORDER BY ordinal").all(turnId) as any[]).map((source, ordinal) => {
-    if (source.ordinal !== ordinal || source.durable_turn_id !== turnId) throw new Error("chat_turn_context_volatile_source_order_invalid");
-    return Object.freeze({ sourceId: source.source_id, kind: source.kind, revision: source.revision, canonicalHash: source.canonical_hash, totalOrderKey: source.total_order_key, provenance: source.provenance });
+  if (sources.some((source, index) => index > 0 && source.totalOrderKey <= sources[index - 1]!.totalOrderKey))
+    throw new Error("chat_turn_context_source_order_invalid");
+  if (
+    !Number.isSafeInteger(row.stable_token_count) ||
+    row.stable_token_count < 0 ||
+    !Number.isSafeInteger(row.volatile_token_count) ||
+    row.volatile_token_count < 0
+  )
+    throw new Error("chat_turn_context_token_mismatch");
+  const volatileSources = (
+    db
+      .prepare("SELECT * FROM tavern_turn_context_volatile_sources WHERE turn_id = ? ORDER BY ordinal")
+      .all(turnId) as any[]
+  ).map((source, ordinal) => {
+    if (source.ordinal !== ordinal || source.durable_turn_id !== turnId)
+      throw new Error("chat_turn_context_volatile_source_order_invalid");
+    return Object.freeze({
+      sourceId: source.source_id,
+      kind: source.kind,
+      revision: source.revision,
+      canonicalHash: source.canonical_hash,
+      totalOrderKey: source.total_order_key,
+      provenance: source.provenance,
+    });
   });
-  if (volatileSources.some((source, index) => index > 0 && source.totalOrderKey <= volatileSources[index - 1]!.totalOrderKey)) throw new Error("chat_turn_context_volatile_source_order_invalid");
-  return Object.freeze({ threadId: row.thread_id, turnId, continuityId: row.continuity_id, companionId: row.companion_id, playerId: row.player_id, profileId: row.profile_id, profileRevision: row.profile_revision, profileCanonicalHash: row.profile_canonical_hash, chatSurfaceSessionId: row.chat_surface_session_id, stableSources: Object.freeze(sources), stableTokenCount: row.stable_token_count, volatileSources: Object.freeze(volatileSources), volatileTokenCount: row.volatile_token_count });
+  if (
+    volatileSources.some(
+      (source, index) => index > 0 && source.totalOrderKey <= volatileSources[index - 1]!.totalOrderKey,
+    )
+  )
+    throw new Error("chat_turn_context_volatile_source_order_invalid");
+  return Object.freeze({
+    threadId: row.thread_id,
+    turnId,
+    continuityId: row.continuity_id,
+    companionId: row.companion_id,
+    playerId: row.player_id,
+    profileId: row.profile_id,
+    profileRevision: row.profile_revision,
+    profileCanonicalHash: row.profile_canonical_hash,
+    chatSurfaceSessionId: row.chat_surface_session_id,
+    stableSources: Object.freeze(sources),
+    stableTokenCount: row.stable_token_count,
+    volatileSources: Object.freeze(volatileSources),
+    volatileTokenCount: row.volatile_token_count,
+  });
 }
 
 function persistContextPlan(db: DatabaseSync, plan: AcceptedTurnAuthoredContextPlan, turnId: string): void {
-  db.prepare("INSERT INTO tavern_turn_context_plans (turn_id, thread_id, continuity_id, companion_id, player_id, profile_id, profile_revision, profile_canonical_hash, chat_surface_session_id, stable_token_count, volatile_token_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(turnId, plan.threadId, plan.continuityId, plan.companionId, plan.playerId, plan.profileId, plan.profileRevision, plan.profileCanonicalHash, plan.chatSurfaceSessionId, plan.stableTokenCount, plan.volatileTokenCount);
-  for (const [ordinal, source] of plan.stableSources.entries()) db.prepare("INSERT INTO tavern_turn_context_sources (turn_id, ordinal, source_id, kind, revision, canonical_hash, total_order_key) VALUES (?, ?, ?, ?, ?, ?, ?)").run(turnId, ordinal, source.sourceId, source.kind, source.revision, source.canonicalHash, source.totalOrderKey);
+  db.prepare(
+    "INSERT INTO tavern_turn_context_plans (turn_id, thread_id, continuity_id, companion_id, player_id, profile_id, profile_revision, profile_canonical_hash, chat_surface_session_id, stable_token_count, volatile_token_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    turnId,
+    plan.threadId,
+    plan.continuityId,
+    plan.companionId,
+    plan.playerId,
+    plan.profileId,
+    plan.profileRevision,
+    plan.profileCanonicalHash,
+    plan.chatSurfaceSessionId,
+    plan.stableTokenCount,
+    plan.volatileTokenCount,
+  );
+  for (const [ordinal, source] of plan.stableSources.entries())
+    db.prepare(
+      "INSERT INTO tavern_turn_context_sources (turn_id, ordinal, source_id, kind, revision, canonical_hash, total_order_key) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(turnId, ordinal, source.sourceId, source.kind, source.revision, source.canonicalHash, source.totalOrderKey);
   // The volatile table has NINE columns; the placeholder list used to carry ten, so persisting ANY volatile
   // source threw `10 values for 9 columns` — which the Chat service re-wrapped as
   // `chat_pipeline_service_unavailable` and the browser saw as HTTP 503. Invisible until volatile sources
   // actually existed (managed World Info was never wired, so this INSERT never ran).
-  for (const [ordinal, source] of plan.volatileSources.entries()) db.prepare("INSERT INTO tavern_turn_context_volatile_sources (turn_id, ordinal, durable_turn_id, source_id, kind, revision, canonical_hash, total_order_key, provenance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(turnId, ordinal, turnId, source.sourceId, source.kind, source.revision, source.canonicalHash, source.totalOrderKey, source.provenance);
+  for (const [ordinal, source] of plan.volatileSources.entries())
+    db.prepare(
+      "INSERT INTO tavern_turn_context_volatile_sources (turn_id, ordinal, durable_turn_id, source_id, kind, revision, canonical_hash, total_order_key, provenance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      turnId,
+      ordinal,
+      turnId,
+      source.sourceId,
+      source.kind,
+      source.revision,
+      source.canonicalHash,
+      source.totalOrderKey,
+      source.provenance,
+    );
 }
 
-function createAcceptedContextPlan(thread: ChatThread, input: MountedAcceptanceInput, turnId: string): AcceptedTurnAuthoredContextPlan {
+function createAcceptedContextPlan(
+  thread: ChatThread,
+  input: MountedAcceptanceInput,
+  turnId: string,
+): AcceptedTurnAuthoredContextPlan {
   const preparation = input.authoredContextPreparation;
   validateAuthoredContextPreparation(preparation);
   let previous = "";
@@ -2636,13 +3018,26 @@ function createAcceptedContextPlan(thread: ChatThread, input: MountedAcceptanceI
     const canonicalHash = source.canonicalHash;
     const totalOrderKey = source.totalOrderKey;
     const provenance = source.provenance;
-    if (!isExactId(sourceId) || kind !== "lorebook_entry" || typeof revision !== "string" || typeof canonicalHash !== "string" || !/^[a-f0-9]{64}$/.test(canonicalHash) || typeof totalOrderKey !== "string" || totalOrderKey <= volatilePrevious || typeof provenance !== "string" || provenance.length === 0 || volatileSeen.has(sourceId)) throw new Error("invalid_chat_turn_context_volatile_plan");
+    if (
+      !isExactId(sourceId) ||
+      kind !== "lorebook_entry" ||
+      typeof revision !== "string" ||
+      typeof canonicalHash !== "string" ||
+      !/^[a-f0-9]{64}$/.test(canonicalHash) ||
+      typeof totalOrderKey !== "string" ||
+      totalOrderKey <= volatilePrevious ||
+      typeof provenance !== "string" ||
+      provenance.length === 0 ||
+      volatileSeen.has(sourceId)
+    )
+      throw new Error("invalid_chat_turn_context_volatile_plan");
     volatilePrevious = totalOrderKey;
     volatileSeen.add(sourceId);
     return Object.freeze({ sourceId, kind, revision, canonicalHash, totalOrderKey, provenance });
   });
   const volatileTokenCount = preparation.volatileTokenCount ?? 0;
-  if (!Number.isSafeInteger(volatileTokenCount) || volatileTokenCount < 0) throw new Error("chat_turn_context_token_mismatch");
+  if (!Number.isSafeInteger(volatileTokenCount) || volatileTokenCount < 0)
+    throw new Error("chat_turn_context_token_mismatch");
   return Object.freeze({
     threadId: thread.chatThreadId,
     turnId,
@@ -2667,16 +3062,24 @@ function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadStat
   const thread = rowToThread(db, threadRow);
   const messages = readMessages(db, chatThreadId);
   const draftRow = db.prepare("SELECT * FROM tavern_drafts WHERE thread_id = ?").get(chatThreadId) as any;
-  const draft = draftRow ? validateDraft({ revision: draftRow.revision, text: draftRow.draft_content ?? null }) : validateDraft({ revision: 0, text: null });
-  const turnRow = db.prepare("SELECT * FROM tavern_turns WHERE thread_id = ? AND is_current = 1").get(chatThreadId) as any;
+  const draft = draftRow
+    ? validateDraft({ revision: draftRow.revision, text: draftRow.draft_content ?? null })
+    : validateDraft({ revision: 0, text: null });
+  const turnRow = db
+    .prepare("SELECT * FROM tavern_turns WHERE thread_id = ? AND is_current = 1")
+    .get(chatThreadId) as any;
   const turnLedger = turnRow ? readTurnLedger(db, turnRow) : null;
   const currentTurnContextPlan =
     turnRow && (turnRow.status === "accepted_queued" || turnRow.status === "attempt_starting")
       ? readContextPlan(db, turnRow.turn_id, thread)
       : undefined;
-  const idempotency = (db.prepare(
-    "SELECT i.idempotency_key, i.fingerprint, t.turn_id, t.idempotency_key AS turn_idempotency_key, t.message_id, t.accepted_at_ms FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id WHERE i.thread_id = ? ORDER BY i.idempotency_key",
-  ).all(chatThreadId) as any[]).map((entry) =>
+  const idempotency = (
+    db
+      .prepare(
+        "SELECT i.idempotency_key, i.fingerprint, t.turn_id, t.idempotency_key AS turn_idempotency_key, t.message_id, t.accepted_at_ms FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id WHERE i.thread_id = ? ORDER BY i.idempotency_key",
+      )
+      .all(chatThreadId) as any[]
+  ).map((entry) =>
     validateIdempotency({
       key: entry.idempotency_key,
       fingerprint: entry.fingerprint,
@@ -2691,7 +3094,14 @@ function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadStat
   );
   validateOpeningConsistency(thread, messages);
   validateTurnIntegrity(messages, turnLedger, idempotency);
-  return freezeState({ thread, messages, draft, turnLedger, idempotency, ...(currentTurnContextPlan === undefined ? {} : { currentTurnContextPlan }) });
+  return freezeState({
+    thread,
+    messages,
+    draft,
+    turnLedger,
+    idempotency,
+    ...(currentTurnContextPlan === undefined ? {} : { currentTurnContextPlan }),
+  });
 }
 
 function validateActiveSelection(value: unknown): ActiveChatThreadSelection {
@@ -2827,9 +3237,7 @@ function validateMessage(value: unknown): ChatThreadMessage {
   const greetingSourceValue = value.greetingSource;
   const parentId = typeof value.parentId === "string" ? value.parentId : value.parentId === null ? null : undefined;
   const swipes =
-    Array.isArray(value.swipes) && value.swipes.every(isText)
-      ? Object.freeze([...value.swipes])
-      : undefined;
+    Array.isArray(value.swipes) && value.swipes.every(isText) ? Object.freeze([...value.swipes]) : undefined;
   const activeSwipeIndex =
     typeof value.activeSwipeIndex === "number" &&
     Number.isSafeInteger(value.activeSwipeIndex) &&
@@ -2851,7 +3259,10 @@ function validateMessage(value: unknown): ChatThreadMessage {
     (kind === "player" && role === "player" && greetingSourceValue === null) ||
     (kind === "response" && role === "companion" && greetingSourceValue === null);
   if (!validGrammar) throw new Error("invalid_chat_thread_message");
-  if (swipes !== undefined && (swipes.length === 0 || activeSwipeIndex === undefined || activeSwipeIndex >= swipes.length))
+  if (
+    swipes !== undefined &&
+    (swipes.length === 0 || activeSwipeIndex === undefined || activeSwipeIndex >= swipes.length)
+  )
     throw new Error("invalid_chat_thread_message");
   if (kind === "player" && (swipes !== undefined || activeSwipeIndex !== undefined || parentId !== undefined))
     throw new Error("invalid_chat_thread_message");
@@ -2876,7 +3287,14 @@ function validateMessage(value: unknown): ChatThreadMessage {
 }
 
 function validateOpeningConsistency(thread: ChatThread, messages: readonly ChatThreadMessage[]): void {
-  if (messages.some((message) => message.parentId !== undefined && message.parentId !== null && !messages.some((parent) => parent.messageId === message.parentId)))
+  if (
+    messages.some(
+      (message) =>
+        message.parentId !== undefined &&
+        message.parentId !== null &&
+        !messages.some((parent) => parent.messageId === message.parentId),
+    )
+  )
     throw new Error("invalid_chat_thread_parent_message");
   if (messages.some((message, index) => message.kind === "opening" && index !== 0))
     throw new Error("invalid_chat_thread_opening_consistency");
@@ -3380,9 +3798,17 @@ function validateAuthoredContextPreparation(value: MountedAcceptanceInput["autho
     value.stableTokenCount < 0
   )
     throw new Error("chat_turn_context_token_mismatch");
-   if (value.sourceRefs.some((source) => !isRecord(source))) throw new Error("invalid_chat_turn_context_plan");
-   if (value.volatileSourceRefs !== undefined && (!Array.isArray(value.volatileSourceRefs) || value.volatileSourceRefs.some((source) => !isRecord(source)))) throw new Error("invalid_chat_turn_context_volatile_plan");
-   if (value.volatileTokenCount !== undefined && (!Number.isSafeInteger(value.volatileTokenCount) || value.volatileTokenCount < 0)) throw new Error("chat_turn_context_token_mismatch");
+  if (value.sourceRefs.some((source) => !isRecord(source))) throw new Error("invalid_chat_turn_context_plan");
+  if (
+    value.volatileSourceRefs !== undefined &&
+    (!Array.isArray(value.volatileSourceRefs) || value.volatileSourceRefs.some((source) => !isRecord(source)))
+  )
+    throw new Error("invalid_chat_turn_context_volatile_plan");
+  if (
+    value.volatileTokenCount !== undefined &&
+    (!Number.isSafeInteger(value.volatileTokenCount) || value.volatileTokenCount < 0)
+  )
+    throw new Error("chat_turn_context_token_mismatch");
 }
 
 function validateAttemptClaimInput(value: MountedAttemptClaimInput): void {
@@ -3878,12 +4304,20 @@ function validateWorldInfoApplyInput(input: MountedWorldInfoApplyInput): void {
   if (input.expectedOldAppliedBinding !== undefined) freezeStableWorldBookBinding(input.expectedOldAppliedBinding);
 }
 
-function sameBinding(a: TavernStableWorldInfoBinding | undefined, b: TavernStableWorldInfoBinding | undefined): boolean {
+function sameBinding(
+  a: TavernStableWorldInfoBinding | undefined,
+  b: TavernStableWorldInfoBinding | undefined,
+): boolean {
   if (a === undefined || b === undefined) return a === b;
   if ("source" in a && "source" in b)
     return a.publicTitle === b.publicTitle && a.revision === b.revision && a.canonicalHash === b.canonicalHash;
   if (!("source" in a) && !("source" in b))
-    return a.worldBookId === b.worldBookId && a.revision === b.revision && a.canonicalHash === b.canonicalHash && a.provenance === b.provenance;
+    return (
+      a.worldBookId === b.worldBookId &&
+      a.revision === b.revision &&
+      a.canonicalHash === b.canonicalHash &&
+      a.provenance === b.provenance
+    );
   return false;
 }
 

@@ -165,14 +165,14 @@ const mountPreamble = `
   const commandFor = (fx, overrides) => Object.freeze({ apiVersion: 1, selectionGeneration: fx.generation, text: "Synthetic player request", locale: "en", expectedDraftRevision: 0, ...overrides });
   const serviceFor = (fx, fakeStart) => createChatPipelineService({ manifest: fx.manifest, lease: fx.lease, profile, deps: Object.freeze({ start: Object.freeze({ start: fakeStart }) }) });
   const knownServiceFor = (manifest, lease, fakeStart) => createChatPipelineService({ manifest, lease, profile, deps: Object.freeze({ start: Object.freeze({ start: fakeStart }) }) });
-  async function driveToTerminal(fx, terminal) {
+  async function driveToTerminal(fx, terminal, responseId = "response_01") {
     return internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
       internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
         const times = [await nextTime(), await nextTime(), await nextTime(), await nextTime(), await nextTime()];
         await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
         const running = await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
         if (terminal === "failed") return scope.transitionPresentation({ operation: "fail", reasonCode: "runtime_unavailable", failedAtMs: times[2] });
-        const committed = await scope.transitionPresentation({ operation: "commit_presentation", cancelEpoch: 0, message: { messageId: "response_01", text: "Synthetic companion reply.", occurredAtMs: times[2] }, committedAtMs: times[2] });
+        const committed = await scope.transitionPresentation({ operation: "commit_presentation", cancelEpoch: 0, message: { messageId: responseId, text: "Synthetic companion reply.", occurredAtMs: times[2] }, committedAtMs: times[2] });
         const completionClaimed = await scope.transitionPresentation({ operation: "claim_completion", claimedAtMs: times[3] });
         return scope.transitionPresentation({ operation: "complete", completedAtMs: times[4] });
       }),
@@ -779,5 +779,50 @@ test(
     assert.deepEqual(output.afterResponseSwipes, ["Synthetic companion reply."]);
     assert.deepEqual(output.refusedState, { messages: 3, idempotency: 1 });
     assert.equal(output.afterIdempotency, 2);
+  },
+);
+
+test(
+  "the bounded visible tail reaches a keyword planted on the previous turn, and the depth bounds it",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  const readPlan = async () => (await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId)).currentTurnContextPlan;
+  const sourceIds = (plan) => plan === undefined ? null : plan.volatileSources.map((s) => s.sourceId).slice().sort();
+  // Turn 1 plants the default world book's own trigger word.
+  await service.submitAfterResponseCommit(commandFor(fx, { text: "今天下雨了" }), "a".repeat(22), async () => undefined);
+  await waitFor(() => startCalls === 1);
+  const plan1 = sourceIds(await readPlan());
+  await driveToTerminal(fx, "completed", "response_turn_1");
+  // Turn 2 says nothing matching: the entry is reachable only through the
+  // bounded visible tail, not the current player line alone.
+  await service.submitAfterResponseCommit(commandFor(fx, { text: "接着聊聊别的吧", expectedDraftRevision: 1 }), "b".repeat(22), async () => undefined);
+  await waitFor(() => startCalls === 2);
+  const plan2 = sourceIds(await readPlan());
+  await driveToTerminal(fx, "completed", "response_turn_2");
+  // Turn 3: the planted turn is now OUTSIDE the depth-2 window, so the same
+  // trigger word must NOT reach the entry - the window widened by the declared
+  // amount, it did not become the whole transcript.
+  await service.submitAfterResponseCommit(commandFor(fx, { text: "还是别的话题", expectedDraftRevision: 2 }), "c".repeat(22), async () => undefined);
+  await waitFor(() => startCalls === 3);
+  const plan3 = sourceIds(await readPlan());
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({ plan1, plan2, plan3, startCalls }));
+`);
+    const plan1 = output.plan1 as string[];
+    const plan2 = output.plan2 as string[];
+    const plan3 = output.plan3 as string[];
+    // Sanity: selection is live at all (turn 1 matches on its own text).
+    assert.ok(plan1.length >= 1, `plan1 should carry the matching entry, got ${JSON.stringify(plan1)}`);
+    // The previous turn's keyword still reaches its entry through the tail.
+    assert.equal(plan2.length, 1, `plan2 should carry exactly the tail-matched entry, got ${JSON.stringify(plan2)}`);
+    // Outside the declared depth the entry is NOT retrieved.
+    assert.deepEqual(plan3, []);
+    assert.equal(output.startCalls, 3);
   },
 );

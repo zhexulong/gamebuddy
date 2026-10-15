@@ -12,6 +12,11 @@ export type AcceptPlayerTurnCommand = Readonly<{
   locale: string;
   idempotencyKey: string;
   expectedDraftRevision: number;
+  /**
+   * The bounded visible transcript tail the per-turn World Info selection also
+   * scans, composed by the Host from the durable read-back. Never browser input.
+   */
+  boundedVisibleTail?: string;
 }>;
 export type PlayerTurnAcceptor = Readonly<{
   accept(command: AcceptPlayerTurnCommand): Promise<AcceptedQueuedTurn>;
@@ -37,6 +42,7 @@ export function createPlayerTurnAcceptor(
             locale: command.locale,
             idempotencyKey: command.idempotencyKey,
             expectedDraftRevision: command.expectedDraftRevision,
+            ...(command.boundedVisibleTail === undefined ? {} : { boundedVisibleTail: command.boundedVisibleTail }),
           }),
         );
       } catch (error) {

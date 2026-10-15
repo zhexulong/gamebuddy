@@ -147,6 +147,7 @@ export async function provisionNewCompanion(
     threads,
     approved,
     candidate.worldBookCandidates,
+    candidate.worldBookScanDepth,
   );
 }
 
@@ -157,6 +158,7 @@ async function provisionNewCompanionNamespace(
   suppliedThreads?: ChatThreadStore,
   approved?: ReadonlyMap<string, string>,
   worldBookCandidates?: CharacterCandidate["worldBookCandidates"],
+  worldBookScanDepth?: number,
 ): Promise<NewCompanionProvision> {
   const paths = resolveRuntimePaths(identity, root);
   // The containment-aware lock creates and verifies each parent component
@@ -184,6 +186,7 @@ async function provisionNewCompanionNamespace(
             worldBookId: `gamebuddy-worldbook-${identity.companionId}`,
             revision: 1,
             alwaysOnPremise: "",
+            ...(worldBookScanDepth === undefined ? {} : { scanDepth: worldBookScanDepth }),
             entries: Object.freeze(
               worldBookCandidates.map((entry) =>
                 Object.freeze({
@@ -224,16 +227,11 @@ async function provisionNewCompanionNamespace(
       }
       const threads = suppliedThreads ?? createChatThreadStore(paths.runtimeCwd, identityKey(identity));
       try {
-        const library = createTavernLibraryService(
-          tavernPaths,
-          new TavernArtifactStore(paths.root),
-          threads,
-          {
-            async readExact() {
-              return identityProfileMetadata(await readIdentityProfile(paths.identityProfilePath));
-            },
+        const library = createTavernLibraryService(tavernPaths, new TavernArtifactStore(paths.root), threads, {
+          async readExact() {
+            return identityProfileMetadata(await readIdentityProfile(paths.identityProfilePath));
           },
-        );
+        });
         const companion = await library.createNewCompanion({
           companionId: identity.companionId,
           continuityId: identity.continuityId!,
@@ -306,9 +304,7 @@ function reviewedProfile(
   // silently, and it is bounded like every other identity field.
   const reviewedName = fields.get("name")?.trim();
   const name =
-    reviewedName === undefined || reviewedName.length === 0
-      ? base.identity.name
-      : reviewedName.slice(0, 128);
+    reviewedName === undefined || reviewedName.length === 0 ? base.identity.name : reviewedName.slice(0, 128);
   const identity = Object.freeze({
     ...base.identity,
     name,
@@ -388,7 +384,12 @@ function isId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9._-]{1,128}$/u.test(value);
 }
 function text(value: unknown, max: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value);
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= max &&
+    !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
+  );
 }
 function positive(value: unknown): boolean {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;

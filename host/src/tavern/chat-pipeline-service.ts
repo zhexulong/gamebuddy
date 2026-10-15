@@ -1,11 +1,12 @@
 import type { Static } from "typebox";
+import { join } from "node:path";
 import {
   isCurrentMountedChatRuntimeLease,
   stopMountedChatPresentationEpoch,
   type MountedChatRuntimeLease,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { identityKey } from "../runtime.js";
+import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import {
   type BrowserMessageV1,
   type BrowserTurnV1,
@@ -41,9 +42,13 @@ import {
   type ChatThreadState,
   type ChatTurnLedger,
   type CompletedTurn,
+  boundedVisibleTail,
   createChatThreadStore,
+  DEFAULT_WORLDBOOK_SCAN_DEPTH,
   type FailedTurn,
+  type TavernStableWorldInfoBinding,
 } from "./chat-thread-store.js";
+import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import { createPlayerTurnAcceptor } from "./player-turn-acceptance.js";
 import { createProviderAttemptClaimer } from "./provider-attempt-claim.js";
 import { startMountedChatProvider } from "./chat-provider-start.js";
@@ -61,9 +66,7 @@ function isNonTerminalLedger(ledger: ChatTurnLedger): boolean {
 
 /** Stop is actionable only after the exact prompt has reached durable arm. */
 function isCancellableLedger(ledger: ChatTurnLedger): boolean {
-  return (
-    (ledger.status === "attempt_starting" && ledger.observation?.phase === "armed") || ledger.status === "running"
-  );
+  return (ledger.status === "attempt_starting" && ledger.observation?.phase === "armed") || ledger.status === "running";
 }
 
 /**
@@ -187,39 +190,72 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
 
   const eventStream = options.eventStream;
   const speechSink = options.speechSink;
-  const start: ChatPipelineStartDependency = options.deps?.start ?? Object.freeze({
-    start: async () =>
-      await startMountedChatProvider(
-        manifest,
-        lease,
-        eventStream === undefined || !profile.routeIds.includes("events")
-          ? undefined
-          : Object.freeze({
-              publish: async (preview) => {
-                eventStream.publish({
-                  eventType: "companion.delta",
-                  selectionGeneration: lease.browserProjection.selectionGeneration,
-                  payload: Object.freeze({
-                    // The browser has no access to Pi/provider message identity;
-                    // scope the volatile preview to the Host-owned turn instead.
-                    turnHandle: lease.browserProjection.projectTurnHandle(preview.turnId),
-                    delta: preview.delta,
-                  }),
-                });
-              },
-              clear: async () => {
-                // A terminal state event immediately follows the provider run.
-                // The browser treats that state as the volatile-preview clear.
-              },
-            }),
-        speechSink === undefined ? undefined : speechSink,
-      ),
-  });
+  const start: ChatPipelineStartDependency =
+    options.deps?.start ??
+    Object.freeze({
+      start: async () =>
+        await startMountedChatProvider(
+          manifest,
+          lease,
+          eventStream === undefined || !profile.routeIds.includes("events")
+            ? undefined
+            : Object.freeze({
+                publish: async (preview) => {
+                  eventStream.publish({
+                    eventType: "companion.delta",
+                    selectionGeneration: lease.browserProjection.selectionGeneration,
+                    payload: Object.freeze({
+                      // The browser has no access to Pi/provider message identity;
+                      // scope the volatile preview to the Host-owned turn instead.
+                      turnHandle: lease.browserProjection.projectTurnHandle(preview.turnId),
+                      delta: preview.delta,
+                    }),
+                  });
+                },
+                clear: async () => {
+                  // A terminal state event immediately follows the provider run.
+                  // The browser treats that state as the volatile-preview clear.
+                },
+              }),
+          speechSink === undefined ? undefined : speechSink,
+        ),
+    });
   const accept = createPlayerTurnAcceptor(manifest, lease);
   const claim = createProviderAttemptClaimer(manifest, lease);
   // One store per service instance: the store owns exactly one lazily opened
   // connection, reused by every request and terminated by this service's close.
   const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
+  const runtimeCwd = resolveRuntimePaths(manifest.principal, manifest.runtimeRoot).runtimeCwd;
+  /**
+   * The bound world book's declared per-turn scan depth, read from the exact
+   * artifact once per revision. A book that declares none (or an unreadable or
+   * mismatched artifact) applies the documented default; the window never falls
+   * back to scanning the whole transcript. The bound metadata is re-verified
+   * here so a rebound or replaced book can never widen this mount's window.
+   */
+  const scanDepthByBinding = new Map<string, number>();
+  const worldBookScanDepth = async (binding: TavernStableWorldInfoBinding | undefined): Promise<number> => {
+    if (binding === undefined || "source" in binding) return DEFAULT_WORLDBOOK_SCAN_DEPTH;
+    const key = `${binding.worldBookId}\u001f${binding.revision}\u001f${binding.canonicalHash}`;
+    const cached = scanDepthByBinding.get(key);
+    if (cached !== undefined) return cached;
+    let depth = DEFAULT_WORLDBOOK_SCAN_DEPTH;
+    try {
+      const book = await readWorldBook(join(runtimeCwd, "worldbook.json"));
+      const metadata = worldBookMetadata(book);
+      if (
+        book.worldBookId === binding.worldBookId &&
+        metadata.revision === binding.revision &&
+        metadata.canonicalHash === binding.canonicalHash
+      )
+        depth = book.scanDepth ?? DEFAULT_WORLDBOOK_SCAN_DEPTH;
+    } catch {
+      // A missing or unreadable book is not this submit's failure: the
+      // selection simply runs with the documented default depth.
+    }
+    scanDepthByBinding.set(key, depth);
+    return depth;
+  };
 
   let closing = false;
   let closed = false;
@@ -279,6 +315,14 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       pending += 1;
       try {
         const before = await resumeState();
+        // The per-turn selection scans the accepted player line plus a BOUNDED
+        // visible tail: the newest messages the bound world book declares. With
+        // no tail the retrieval could only ever see the current line, so a
+        // keyword planted a turn earlier never reached its entry.
+        const boundedTail = boundedVisibleTail(
+          before.messages,
+          await worldBookScanDepth(before.thread.worldBookBinding),
+        );
         const duplicate = before.idempotency.some((record) => record.key === idempotencyKey);
         const accepted = await accept.accept(
           Object.freeze({
@@ -286,6 +330,7 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
             locale: command.locale,
             idempotencyKey,
             expectedDraftRevision: command.expectedDraftRevision ?? before.draft.revision,
+            boundedVisibleTail: boundedTail,
           }),
         );
         const acceptedState = await resumeState();
@@ -361,7 +406,8 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
       const state = await resumeState();
       const ledger = state.turnLedger;
-      if (ledger === null || lease.browserProjection.projectTurnHandle(ledger.turnId) !== turnHandle) throw unavailable();
+      if (ledger === null || lease.browserProjection.projectTurnHandle(ledger.turnId) !== turnHandle)
+        throw unavailable();
       if (!isNonTerminalLedger(ledger)) return projectTurn(lease, ledger);
       if (!isCancellableLedger(ledger) || !("attempt" in ledger)) return projectTurn(lease, ledger);
       const expected = Object.freeze({ turnId: ledger.turnId, attemptId: ledger.attempt.attemptId });
@@ -621,7 +667,10 @@ function projectTurn(lease: MountedChatRuntimeLease, ledger: ChatTurnLedger): Br
   const state =
     ledger.status === "accepted_queued" || ledger.status === "attempt_starting"
       ? "queued"
-      : ledger.status === "running" || ledger.status === "presentation_committed" || ledger.status === "completion_claimed" || ledger.status === "cancel_claimed"
+      : ledger.status === "running" ||
+          ledger.status === "presentation_committed" ||
+          ledger.status === "completion_claimed" ||
+          ledger.status === "cancel_claimed"
         ? "running"
         : ledger.status;
   return Object.freeze({

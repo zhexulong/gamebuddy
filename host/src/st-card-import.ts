@@ -3,7 +3,7 @@ import type { IdentityProfile } from "./identity-profile.js";
 import { hasUnrenderedMacro, macroTable, renderMacros, renderWorldBookText } from "./tavern/macro-engine.js";
 import { DEFAULT_COMPANION_LOCALE, type CompanionLocale } from "./settings/player-preference-store.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
-import type { WorldBookEntry } from "./worldbook.js";
+import { MAX_WORLDBOOK_SCAN_DEPTH, type WorldBookEntry } from "./worldbook.js";
 
 const MAX_JSON_DEPTH = ST_CARD_DECODER_LIMITS_V1.jsonDepth;
 const MAX_JSON_NODES = ST_CARD_DECODER_LIMITS_V1.jsonNodes;
@@ -58,11 +58,7 @@ function createLossLedger(): StCardImportLossLedger {
   });
 }
 
-type StCardImportClassification =
-  | "accepted_typed"
-  | "preserved_opaque"
-  | "dropped_unsupported"
-  | "rejected_invalid";
+type StCardImportClassification = "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
 export type StCardImportDisposition = Readonly<{
   field: string;
   classification: StCardImportClassification;
@@ -87,6 +83,13 @@ export type StCardImportCandidate = Readonly<{
    */
   extensions?: Readonly<Record<string, unknown>>;
   worldBookCandidates: readonly WorldBookEntry[];
+  /**
+   * The card's own `character_book.scan_depth`, when it declared a usable one.
+   * It bounds how many of the newest visible messages per-turn World Info
+   * selection scans, and rides the book into `worldbook.json`; absent means the
+   * Host applies its documented default depth.
+   */
+  worldBookScanDepth?: number;
 }>;
 export type StCardImportReport = Readonly<{
   source: "json" | "png";
@@ -119,6 +122,8 @@ export type StCardImportPreview = Readonly<{
   /** The card's open-by-design `extensions` object, carried inert and verbatim. */
   extensions?: Readonly<Record<string, unknown>>;
   worldBookCandidates: readonly WorldBookEntry[];
+  /** The card's own `character_book.scan_depth`, when it declared a usable one. */
+  worldBookScanDepth?: number;
   unsupportedFields: readonly string[];
   /** The bounded, counted losses this card's import took - never silent. */
   losses: readonly StCardImportLoss[];
@@ -135,9 +140,8 @@ export type StCardImportPreview = Readonly<{
 export function decodeStCard(input: string | Uint8Array): StCardImportReport {
   const bytes = typeof input === "string" ? Buffer.from(input, "utf8") : input;
   const source = isPng(bytes) ? "png" : "json";
-  const maxInputBytes = source === "png"
-    ? ST_CARD_DECODER_LIMITS_V1.inputBytesPng
-    : ST_CARD_DECODER_LIMITS_V1.inputBytesJson;
+  const maxInputBytes =
+    source === "png" ? ST_CARD_DECODER_LIMITS_V1.inputBytesPng : ST_CARD_DECODER_LIMITS_V1.inputBytesJson;
   if (bytes.byteLength > maxInputBytes) return rejected(source, "input", "input_too_large");
   const json = source === "png" ? extractPngCardJson(bytes) : decodeUtf8(bytes);
   if (json === undefined)
@@ -269,6 +273,7 @@ function reportFromValue(value: Record<string, unknown>, source: "json" | "png")
       ...(preview.systemPrompt === undefined ? {} : { systemPrompt: preview.systemPrompt }),
       ...(preview.extensions === undefined ? {} : { extensions: preview.extensions }),
       worldBookCandidates: preview.worldBookCandidates,
+      ...(preview.worldBookScanDepth === undefined ? {} : { worldBookScanDepth: preview.worldBookScanDepth }),
     }),
     softHints: preview.softHints,
     losses: preview.losses,
@@ -301,9 +306,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
   const examples =
     parsedExamples.length > 0 || greeting === undefined
       ? parsedExamples
-      : Object.freeze([
-          Object.freeze({ user: "(starts the journey)", companion: greeting }),
-        ]);
+      : Object.freeze([Object.freeze({ user: "(starts the journey)", companion: greeting })]);
   // The card's OWN material and nothing else. `description` is who she is
   // (core); `personality` is how she treats the player (interactionStyle). The
   // ST v2/v3 spec has no expression-style field at all, so a card that never
@@ -320,7 +323,8 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
           core: description ?? personality!,
           ...(description === undefined || personality === undefined ? {} : { interactionStyle: personality }),
         });
-  const worldBookCandidates = extractCharacterBook(data.character_book, format, name, losses);
+  const worldBook = extractCharacterBook(data.character_book, format, name, losses);
+  const worldBookCandidates = worldBook.entries;
   // `system_prompt` is a standard v2/v3 card field: it carries the card's own
   // performance directive (the `characterVoice` the profile renders after the
   // floor) and is review-visible. It is bounded tighter than the generic text
@@ -374,6 +378,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
     ...(systemPrompt === undefined ? {} : { systemPrompt }),
     ...(extensions === undefined ? {} : { extensions }),
     worldBookCandidates: Object.freeze(worldBookCandidates),
+    ...(worldBook.scanDepth === undefined ? {} : { worldBookScanDepth: worldBook.scanDepth }),
     unsupportedFields: Object.freeze(unsupportedFields),
   });
 }
@@ -511,10 +516,10 @@ function disposition(
 }
 function playableKeys(value: unknown): Readonly<{ keys: readonly string[]; dropped: number }> {
   if (!Array.isArray(value)) return Object.freeze({ keys: Object.freeze([]), dropped: 0 });
-  const usable = value
-    .flatMap((key) => (typeof key === "string" ? [key.trim()] : []))
-    .filter((key) => key.length > 0);
-  const keys = Object.freeze(usable.filter((key) => key.length <= MAX_WORLDBOOK_KEY_CHARS).slice(0, MAX_WORLDBOOK_KEYS));
+  const usable = value.flatMap((key) => (typeof key === "string" ? [key.trim()] : [])).filter((key) => key.length > 0);
+  const keys = Object.freeze(
+    usable.filter((key) => key.length <= MAX_WORLDBOOK_KEY_CHARS).slice(0, MAX_WORLDBOOK_KEYS),
+  );
   // The card's own trigger words the entry could not carry: the per-word bound
   // and the 16-key cap are bounded decisions, but a dropped trigger word is what
   // makes a keyword-gated entry unreachable, so the count is reported.
@@ -529,15 +534,26 @@ function extractCharacterBook(
   format: "st-v2" | "st-v3",
   charName: string,
   losses: StCardImportLossLedger,
-): WorldBookEntry[] {
+): Readonly<{ entries: readonly WorldBookEntry[]; scanDepth?: number }> {
   if (!isRecord(value) || utf8Bytes(JSON.stringify(value)) > ST_CARD_DECODER_LIMITS_V1.characterBookBytes)
-    return [];
+    return Object.freeze({ entries: Object.freeze([]) });
+  // The card's own recent-message scan window. Only a usable positive integer
+  // inside the Host bound is carried; anything else leaves the book undeclared
+  // and the Host applies its documented default depth rather than a widened one.
+  const declaredScanDepth = value.scan_depth;
+  const scanDepth =
+    typeof declaredScanDepth === "number" &&
+    Number.isSafeInteger(declaredScanDepth) &&
+    declaredScanDepth >= 1 &&
+    declaredScanDepth <= MAX_WORLDBOOK_SCAN_DEPTH
+      ? declaredScanDepth
+      : undefined;
   const entries = Array.isArray(value.entries)
     ? value.entries
     : isRecord(value.entries)
       ? Object.values(value.entries)
       : undefined;
-  if (entries === undefined) return [];
+  if (entries === undefined) return Object.freeze({ entries: Object.freeze([]) });
   const candidates: WorldBookEntry[] = [];
   let unreadableContent = 0;
   let unrenderableContent = 0;
@@ -597,7 +613,10 @@ function extractCharacterBook(
   losses.record("character_book.entries", "worldbook_entry_content_unreadable", unreadableContent);
   losses.record("character_book.entries", "unrenderable_worldbook_entry", unrenderableContent);
   losses.record("character_book.keys", "worldbook_keys_truncated", truncatedKeys);
-  return candidates;
+  return Object.freeze({
+    entries: Object.freeze(candidates),
+    ...(scanDepth === undefined ? {} : { scanDepth }),
+  });
 }
 function parseExamples(
   value: string | undefined,

@@ -7,6 +7,13 @@ import { hasUnrenderedMacro, renderWorldBookText } from "./tavern/macro-engine.j
 const WORLDBOOK_SCHEMA_VERSION = 1 as const;
 const MAX_ENTRIES = 128;
 const MAX_QUERY_RESULTS = 4;
+/**
+ * The largest `scan_depth` a book may declare. SillyTavern's own field is a
+ * small recent-message window, never a whole-transcript scan; the bound keeps a
+ * hand-edited or adversarial book from making per-turn selection walk the entire
+ * history.
+ */
+export const MAX_WORLDBOOK_SCAN_DEPTH = 64;
 /** Product policy: limits only prevent physical blowup, never the player's
  * choices. A worldbook entry loads losslessly up to an anti-blowup ceiling
  * (64 KiB chars); smaller per-entry caps would silently truncate long setting
@@ -46,6 +53,13 @@ export type WorldBook = Readonly<{
   worldBookId: string;
   revision: number;
   alwaysOnPremise: string;
+  /**
+   * The card's own `character_book.scan_depth`, when it declared one: how many
+   * of the newest visible transcript messages the per-turn volatile selection
+   * scans for this book's trigger keys. Absent means the book declared none, and
+   * the Host applies its documented default depth.
+   */
+  scanDepth?: number;
   entries: readonly WorldBookEntry[];
 }>;
 export type WorldBookMetadata = Readonly<{ worldBookId: string; revision: number; canonicalHash: string }>;
@@ -58,6 +72,7 @@ function canonicalWorldBook(book: WorldBook): string {
     worldBookId: book.worldBookId,
     revision: book.revision,
     alwaysOnPremise: book.alwaysOnPremise,
+    ...(book.scanDepth === undefined ? {} : { scanDepth: book.scanDepth }),
     entries: book.entries.map((entry) => ({ ...entry })),
   });
 }
@@ -76,9 +91,12 @@ export function validateWorldBook(value: unknown): WorldBook {
     !isPositiveInt(value.revision) ||
     // The premise may be empty: a card-worldbook with no global premise is a
     // legal book — the constant entries carry the always-on background.
-    (typeof value.alwaysOnPremise !== "string" ||
-      value.alwaysOnPremise.length > 1_024 ||
-      /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value.alwaysOnPremise)) ||
+    typeof value.alwaysOnPremise !== "string" || value.alwaysOnPremise.length > 1_024 ||
+    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value.alwaysOnPremise) ||
+    (value.scanDepth !== undefined &&
+      (!Number.isSafeInteger(value.scanDepth) ||
+        (value.scanDepth as number) < 1 ||
+        (value.scanDepth as number) > MAX_WORLDBOOK_SCAN_DEPTH)) ||
     !Array.isArray(value.entries) ||
     value.entries.length > MAX_ENTRIES
   )
@@ -90,6 +108,7 @@ export function validateWorldBook(value: unknown): WorldBook {
     worldBookId: value.worldBookId,
     revision: value.revision,
     alwaysOnPremise: value.alwaysOnPremise,
+    ...(value.scanDepth === undefined ? {} : { scanDepth: value.scanDepth as number }),
     entries: Object.freeze(entries),
   });
 }
@@ -235,7 +254,13 @@ function validateEntry(value: unknown): WorldBookEntry {
     // The card's trigger words survive the projection: the volatile per-turn selection matches them against
     // what the player actually said, so dropping them here would make keyword-gated entries unreachable.
     ...(Array.isArray(value.keys)
-      ? { keys: Object.freeze(value.keys.filter((key): key is string => typeof key === "string" && key.trim().length > 0 && key.length <= 64).slice(0, 16)) }
+      ? {
+          keys: Object.freeze(
+            value.keys
+              .filter((key): key is string => typeof key === "string" && key.trim().length > 0 && key.length <= 64)
+              .slice(0, 16),
+          ),
+        }
       : {}),
     ...(value.integrationId === undefined ? {} : { integrationId: value.integrationId }),
     ...(value.saveId === undefined ? {} : { saveId: value.saveId }),
@@ -257,7 +282,12 @@ function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function isText(value: unknown, max: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value);
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= max &&
+    !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
+  );
 }
 function isId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(value);

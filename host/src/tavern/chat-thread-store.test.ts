@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
@@ -58,7 +58,11 @@ const source: GreetingSource = {
 };
 const opening = { messageId: "opening_01", text: "Welcome to the tavern.", source } as const;
 
-const profileReader = { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } };
+const profileReader = {
+  async readExact() {
+    return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) };
+  },
+};
 async function store(key = "a".repeat(64)) {
   const root = await canonicalTestRoot("gamebuddy-chat-thread-");
   let time = 10;
@@ -72,11 +76,11 @@ function request(openingSelection: "blank" | typeof opening = opening) {
     chatThreadId: "thread_01",
     companionId: "companion_01",
     continuityId: "continuity_01",
-     chatSurfaceSessionId: "surface_01",
-     profileId: "profile_01",
-     profileRevision: 1,
-     profileCanonicalHash: "a".repeat(64),
-     opening: openingSelection,
+    chatSurfaceSessionId: "surface_01",
+    profileId: "profile_01",
+    profileRevision: 1,
+    profileCanonicalHash: "a".repeat(64),
+    opening: openingSelection,
   } as const;
 }
 
@@ -97,12 +101,38 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
           )
           .all() as any[]
       ).map((row) => row.name);
-      assert.deepEqual(tables.sort(), ["tavern_active_selection", "tavern_chat_submit_idempotency", "tavern_drafts", "tavern_message_swipes", "tavern_messages", "tavern_thread_stable_artifact_bindings", "tavern_thread_world_info_bindings", "tavern_threads", "tavern_turn_attempts", "tavern_turn_observations", "tavern_turn_presentations", "tavern_turn_terminalizations", "tavern_turns"]);
-      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('tavern_threads') WHERE name IN ('metadata_json', 'opening_selection_json')").get() as any).count, 0);
+      assert.deepEqual(tables.sort(), [
+        "tavern_active_selection",
+        "tavern_chat_submit_idempotency",
+        "tavern_drafts",
+        "tavern_message_swipes",
+        "tavern_messages",
+        "tavern_thread_stable_artifact_bindings",
+        "tavern_thread_world_info_bindings",
+        "tavern_threads",
+        "tavern_turn_attempts",
+        "tavern_turn_observations",
+        "tavern_turn_presentations",
+        "tavern_turn_terminalizations",
+        "tavern_turns",
+      ]);
+      assert.equal(
+        (
+          db
+            .prepare(
+              "SELECT COUNT(*) AS count FROM pragma_table_info('tavern_threads') WHERE name IN ('metadata_json', 'opening_selection_json')",
+            )
+            .get() as any
+        ).count,
+        0,
+      );
 
       // Verify no 0-byte .lock files exist in continuity directory
       const files = await readdir(join(root, "tavern", "v3", "continuities", key));
-      assert.equal(files.some((f) => f.endsWith(".lock")), false);
+      assert.equal(
+        files.some((f) => f.endsWith(".lock")),
+        false,
+      );
     } finally {
       db.close();
     }
@@ -113,7 +143,7 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
 });
 
 test("greeting openings require an exact canonical hash on write and reject invalid hashes", async () => {
-    const { root, store: s, creation } = await store();
+  const { root, store: s, creation } = await store();
   try {
     await assert.rejects(
       creation.createExplicit({
@@ -408,10 +438,7 @@ test("active thread selection persists singleton and detects surface mismatch", 
     const read = await s.readActiveThreadSelection();
     assert.deepEqual(read, selection);
 
-    await assert.rejects(
-      () => s.selectActiveThread("thread_01", "wrong_surface"),
-      /chat_thread_surface_mismatch/,
-    );
+    await assert.rejects(() => s.selectActiveThread("thread_01", "wrong_surface"), /chat_thread_surface_mismatch/);
   } finally {
     s.close?.();
     await rm(root, { recursive: true, force: true });
@@ -490,24 +517,78 @@ test("concurrent transactions across store instances preserve monotonic manageme
 test("World Info desired edits preserve applied revision, pending unbind is durable, and stale acceptance is blocked", async () => {
   const root = await canonicalTestRoot("gamebuddy-chat-world-info-lifecycle-");
   const key = createHash("sha256").update(["player_01", "companion_01", "continuity_01"].join("\u001f")).digest("hex");
-  const revision1: TavernStableManagedWorldInfoBinding = Object.freeze({ source: "managed_world_info", publicTitle: "Pelican Town", revision: 1, canonicalHash: "a".repeat(64) });
-  const revision2: TavernStableManagedWorldInfoBinding = Object.freeze({ source: "managed_world_info", publicTitle: "Pelican Town", revision: 2, canonicalHash: "b".repeat(64) });
+  const revision1: TavernStableManagedWorldInfoBinding = Object.freeze({
+    source: "managed_world_info",
+    publicTitle: "Pelican Town",
+    revision: 1,
+    canonicalHash: "a".repeat(64),
+  });
+  const revision2: TavernStableManagedWorldInfoBinding = Object.freeze({
+    source: "managed_world_info",
+    publicTitle: "Pelican Town",
+    revision: 2,
+    canonicalHash: "b".repeat(64),
+  });
   try {
     const s = createChatThreadStore(root, key);
     const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
-    await creation.createExplicit({ chatThreadId: "thread_01", companionId: "companion_01", continuityId: "continuity_01", chatSurfaceSessionId: "surface_01", worldBookBinding: revision1, opening: "blank" });
+    await creation.createExplicit({
+      chatThreadId: "thread_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatSurfaceSessionId: "surface_01",
+      worldBookBinding: revision1,
+      opening: "blank",
+    });
     let state = await s.resumeThread("thread_01", "surface_01");
     assert.deepEqual(state.thread.worldBookBinding, revision1);
     assert.deepEqual(state.thread.appliedWorldBookBinding, revision1);
-    state = await s.appendPlayer("thread_01", { messageId: "player_01", text: "active turn", occurredAtMs: Date.now() });
-    state = await s.setWorldBookBinding!({ chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", companionId: "companion_01", continuityId: "continuity_01", expectedUpdatedAtMs: state.thread.updatedAtMs, binding: revision2 });
+    state = await s.appendPlayer("thread_01", {
+      messageId: "player_01",
+      text: "active turn",
+      occurredAtMs: Date.now(),
+    });
+    state = await s.setWorldBookBinding!({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      expectedUpdatedAtMs: state.thread.updatedAtMs,
+      binding: revision2,
+    });
     assert.deepEqual(state.thread.worldBookBinding, revision2);
     assert.deepEqual(state.thread.appliedWorldBookBinding, revision1);
     await assert.rejects(
-      () => import("./chat-thread-store.js").then(({ acceptMountedPlayerMessage }) => acceptMountedPlayerMessage({ runtimeRoot: root, playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01", chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", selectionGeneration: 1 }, { text: "blocked", locale: "en", idempotencyKey: "abcdefghijklmnopqrstuv", expectedDraftRevision: 0, authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 } })),
+      () =>
+        import("./chat-thread-store.js").then(({ acceptMountedPlayerMessage }) =>
+          acceptMountedPlayerMessage(
+            {
+              runtimeRoot: root,
+              playerId: "player_01",
+              companionId: "companion_01",
+              continuityId: "continuity_01",
+              chatThreadId: "thread_01",
+              chatSurfaceSessionId: "surface_01",
+              selectionGeneration: 1,
+            },
+            {
+              text: "blocked",
+              locale: "en",
+              idempotencyKey: "abcdefghijklmnopqrstuv",
+              expectedDraftRevision: 0,
+              authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+            },
+          ),
+        ),
       /context_unavailable/,
     );
-    state = await s.setWorldBookBinding!({ chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", companionId: "companion_01", continuityId: "continuity_01", expectedUpdatedAtMs: state.thread.updatedAtMs });
+    state = await s.setWorldBookBinding!({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      expectedUpdatedAtMs: state.thread.updatedAtMs,
+    });
     assert.equal(state.thread.worldBookBinding, undefined);
     assert.deepEqual(state.thread.appliedWorldBookBinding, revision1);
     s.close?.();
@@ -519,19 +600,69 @@ test("World Info desired edits preserve applied revision, pending unbind is dura
 test("coordinator-branded World Info acknowledgement applies only the exact desired binding after terminal settlement", async () => {
   const root = await canonicalTestRoot("gamebuddy-chat-world-info-ack-");
   const key = createHash("sha256").update(["player_01", "companion_01", "continuity_01"].join("\u001f")).digest("hex");
-  const revision1: TavernStableManagedWorldInfoBinding = Object.freeze({ source: "managed_world_info", publicTitle: "Pelican Town", revision: 1, canonicalHash: "a".repeat(64) });
-  const revision2: TavernStableManagedWorldInfoBinding = Object.freeze({ source: "managed_world_info", publicTitle: "Pelican Town", revision: 2, canonicalHash: "b".repeat(64) });
+  const revision1: TavernStableManagedWorldInfoBinding = Object.freeze({
+    source: "managed_world_info",
+    publicTitle: "Pelican Town",
+    revision: 1,
+    canonicalHash: "a".repeat(64),
+  });
+  const revision2: TavernStableManagedWorldInfoBinding = Object.freeze({
+    source: "managed_world_info",
+    publicTitle: "Pelican Town",
+    revision: 2,
+    canonicalHash: "b".repeat(64),
+  });
   const authority = createMountedTurnTransitionAuthority();
   const operation = authority.mintOperation();
   try {
     const s = createChatThreadStore(root, key);
     const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
-    await creation.createExplicit({ chatThreadId: "thread_01", companionId: "companion_01", continuityId: "continuity_01", chatSurfaceSessionId: "surface_01", worldBookBinding: revision1, opening: "blank" });
+    await creation.createExplicit({
+      chatThreadId: "thread_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatSurfaceSessionId: "surface_01",
+      worldBookBinding: revision1,
+      opening: "blank",
+    });
     let state = await s.resumeThread("thread_01", "surface_01");
-    await s.setWorldBookBinding!({ chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", companionId: "companion_01", continuityId: "continuity_01", expectedUpdatedAtMs: state.thread.updatedAtMs, binding: revision2 });
-    state = await acknowledgeMountedWorldInfoBinding({ authority: authority.authority, operationAuthority: operation.authority, runtimeRoot: root, playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01", chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", binding: revision2, expectedOldAppliedBinding: revision1 });
+    await s.setWorldBookBinding!({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      expectedUpdatedAtMs: state.thread.updatedAtMs,
+      binding: revision2,
+    });
+    state = await acknowledgeMountedWorldInfoBinding({
+      authority: authority.authority,
+      operationAuthority: operation.authority,
+      runtimeRoot: root,
+      playerId: "player_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      binding: revision2,
+      expectedOldAppliedBinding: revision1,
+    });
     assert.deepEqual(state.thread.appliedWorldBookBinding, revision2);
-    await assert.rejects(() => acknowledgeMountedWorldInfoBinding({ authority: authority.authority, operationAuthority: operation.authority, runtimeRoot: root, playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01", chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", binding: revision1, expectedOldAppliedBinding: revision1 }), /chat_thread_worldbook_applied_conflict/);
+    await assert.rejects(
+      () =>
+        acknowledgeMountedWorldInfoBinding({
+          authority: authority.authority,
+          operationAuthority: operation.authority,
+          runtimeRoot: root,
+          playerId: "player_01",
+          companionId: "companion_01",
+          continuityId: "continuity_01",
+          chatThreadId: "thread_01",
+          chatSurfaceSessionId: "surface_01",
+          binding: revision1,
+          expectedOldAppliedBinding: revision1,
+        }),
+      /chat_thread_worldbook_applied_conflict/,
+    );
     s.close?.();
   } finally {
     operation.revoke();
@@ -555,9 +686,21 @@ test("volatile selector uses accepted text and bounded tail while returning refs
   };
   const selected = selectAuthoredContextVolatileSourceRefs("Discuss the Moon Festival", "visible tail", [candidate]);
   assert.equal(selected.tokenCount, 12);
-  assert.deepEqual(selected.refs, [{ sourceId: candidate.sourceId, kind: candidate.kind, revision: candidate.revision, canonicalHash: candidate.canonicalHash, totalOrderKey: candidate.totalOrderKey, provenance: candidate.provenance }]);
+  assert.deepEqual(selected.refs, [
+    {
+      sourceId: candidate.sourceId,
+      kind: candidate.kind,
+      revision: candidate.revision,
+      canonicalHash: candidate.canonicalHash,
+      totalOrderKey: candidate.totalOrderKey,
+      provenance: candidate.provenance,
+    },
+  ]);
   assert.equal("content" in selected.refs[0]!, false);
-  assert.deepEqual(selectAuthoredContextVolatileSourceRefs("unrelated", "visible tail", [candidate]), { refs: [], tokenCount: 0 });
+  assert.deepEqual(selectAuthoredContextVolatileSourceRefs("unrelated", "visible tail", [candidate]), {
+    refs: [],
+    tokenCount: 0,
+  });
 });
 
 test("volatile selector respects secondaryKeys and selectiveLogic across all 4 modes", async () => {
@@ -615,7 +758,12 @@ test("volatile selector respects secondaryKeys and selectiveLogic across all 4 m
 
   // Scenario C: corpus has primary "magic" and both secondaries "fire" and "water"
   {
-    const res = selectAuthoredContextVolatileSourceRefs("cast magic fire and water", "tail", [cand0, cand1, cand2, cand3]);
+    const res = selectAuthoredContextVolatileSourceRefs("cast magic fire and water", "tail", [
+      cand0,
+      cand1,
+      cand2,
+      cand3,
+    ]);
     const ids = res.refs.map((r) => r.sourceId);
     // 0 (AND ANY): true (2/2 match) -> triggered
     // 1 (NOT ALL): false (2/2 match, !allSecondary is false) -> suppressed
@@ -626,7 +774,12 @@ test("volatile selector respects secondaryKeys and selectiveLogic across all 4 m
 
   // Scenario D: corpus has both secondaries "fire" and "water", but NO primary "magic"
   {
-    const res = selectAuthoredContextVolatileSourceRefs("fire and water everywhere", "tail", [cand0, cand1, cand2, cand3]);
+    const res = selectAuthoredContextVolatileSourceRefs("fire and water everywhere", "tail", [
+      cand0,
+      cand1,
+      cand2,
+      cand3,
+    ]);
     // None should trigger because primaryMatch fails
     assert.deepEqual(res.refs, []);
     assert.equal(res.tokenCount, 0);
@@ -771,14 +924,14 @@ test("P4 durable turn acceptance, claim, start, and presentation transitions wor
       text: "Hello from P4",
       locale: "en-US",
       idempotencyKey: "abcdefghijklmnopqrstuv",
-        expectedDraftRevision: 0,
-        authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
-     });
+      expectedDraftRevision: 0,
+      authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+    });
     assert.equal(accepted.status, "accepted_queued");
 
     const acceptedState = await s.resumeThread("thread_01", "surface_01");
-       assert.deepEqual(acceptedState.currentTurnContextPlan, {
-       threadId: "thread_01",
+    assert.deepEqual(acceptedState.currentTurnContextPlan, {
+      threadId: "thread_01",
       turnId: accepted.turnId,
       continuityId: "continuity_01",
       companionId: "companion_01",
@@ -839,4 +992,59 @@ test("P4 durable turn acceptance, claim, start, and presentation transitions wor
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("the volatile scan window is the bound book's declared depth, not the whole transcript", async () => {
+  const { boundedVisibleTail, DEFAULT_WORLDBOOK_SCAN_DEPTH, selectAuthoredContextVolatileSourceRefs } = await import(
+    "./chat-thread-store.js"
+  );
+  const { validateWorldBook } = await import("../worldbook.js");
+  const content = "雨天恩赐与安排";
+  const candidate = {
+    sourceId: "worldbook_entry_1",
+    kind: "lorebook_entry" as const,
+    revision: "1",
+    canonicalHash: createHash("sha256").update(content).digest("hex"),
+    totalOrderKey: "0001",
+    provenance: "worldbook/1",
+    content,
+    budgetTokens: 12,
+    selectionKeys: ["下雨"],
+  };
+  // The trigger word lives in the OLDER of the two visible messages.
+  const messages: ReadonlyArray<Readonly<{ text: string }>> = [{ text: "今天下雨了" }, { text: "接着聊聊别的吧" }];
+  const baseBook = Object.freeze({
+    schemaVersion: 1 as const,
+    worldBookId: "wb_01",
+    revision: 1,
+    alwaysOnPremise: "",
+    entries: Object.freeze([]),
+  });
+  const declaresNone = validateWorldBook(baseBook);
+  const declaresOne = validateWorldBook({ ...baseBook, scanDepth: 1 });
+  assert.equal(declaresNone.scanDepth, undefined);
+  assert.equal(declaresOne.scanDepth, 1);
+
+  // A book that declares none applies the documented default (2), so the older
+  // turn is inside the window and its keyword reaches the entry.
+  const defaultDepth = declaresNone.scanDepth ?? DEFAULT_WORLDBOOK_SCAN_DEPTH;
+  assert.equal(defaultDepth, 2);
+  assert.equal(boundedVisibleTail(messages, defaultDepth), "今天下雨了\n接着聊聊别的吧");
+  assert.equal(
+    selectAuthoredContextVolatileSourceRefs("", boundedVisibleTail(messages, defaultDepth), [candidate]).refs.length,
+    1,
+  );
+
+  // The same book declaring depth 1 narrows the window by exactly the declared
+  // amount: the older turn falls out and the entry is not retrieved.
+  assert.equal(declaresOne.scanDepth, 1);
+  assert.equal(boundedVisibleTail(messages, declaresOne.scanDepth!), "接着聊聊别的吧");
+  assert.deepEqual(
+    selectAuthoredContextVolatileSourceRefs("", boundedVisibleTail(messages, declaresOne.scanDepth!), [candidate]),
+    { refs: [], tokenCount: 0 },
+  );
+
+  // A non-positive or non-integer depth never degrades to scanning everything.
+  assert.equal(boundedVisibleTail(messages, 0), "");
+  assert.equal(boundedVisibleTail(messages, Number.NaN), "");
 });
