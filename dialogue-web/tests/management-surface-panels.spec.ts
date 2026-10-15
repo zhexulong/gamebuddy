@@ -1003,3 +1003,105 @@ test("archiving the last active chat stops the live stream instead of leaving it
   await expect.poll(async () => (await streamState())[0]?.closed).toBe(true);
   expect(await streamState()).toHaveLength(1);
 });
+
+
+/**
+ * The Settings surface's field groups are forms, not reading columns.
+ *
+ * Measured on the product Settings surface at 1440x900 before the fix: every
+ * control was the whole 1408 px surface wide (`#connection-base-url` 1408x44,
+ * `#ui-language` 1408x44), so a label and its own control read as two unrelated
+ * lines. The two `<select>`s the review called "native" (`#connection-provider`,
+ * 渠道; `#connection-api-shape`, API 协议) are in fact the app's own `.form-select`
+ * treatment: `appearance: none`, the drawn gradient arrow, `color-scheme: dark`.
+ * This pins the measure and the treatment together.
+ */
+test("the Settings field groups keep a form measure and the app's own select treatment", async ({ page }) => {
+  const escapeHatch = {
+    providerId: "openai-compatible",
+    label: "OpenAI-compatible",
+    setupFields: ["apiKey", "baseUrl", "apiShape", "modelId"],
+    allowedPlayerModels: [],
+    escapeHatch: true,
+    environmentManaged: false,
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(composedRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/settings/language", (route) => route.fulfill(json200({ revision: 1, locale: "en-US" })));
+  await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
+    route.fulfill(
+      json200({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
+    route.fulfill(json200({ devices: [], defaultSelectable: true })),
+  );
+  await page.route("**/api/tavern/v1/settings/connection", (route) =>
+    route.fulfill(json200({ apiVersion: 1, revision: 1, active: null, connections: [], providers: [escapeHatch] })),
+  );
+  await page.route("**/api/tavern/v1/settings/profiles", (route) =>
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        chat: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "high" },
+        game: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "high" },
+        recommendedModels: [],
+      }),
+    ),
+  );
+  await page.route(/\/api\/tavern\/v1\/chats(\?|$)/, (route) => route.fulfill(json200({ apiVersion: 1, chats: [] })));
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=settings`);
+  const surface = page.getByTestId("settings-surface");
+  await expect(surface).toBeVisible();
+  // The connection group renders only once its read resolves.
+  await expect(surface.locator("#connection-provider")).toBeVisible();
+
+  const measured = await surface.evaluate((root) => {
+    const read = (selector: string) => {
+      const node = root.querySelector<HTMLElement>(selector);
+      if (node === null) return null;
+      const style = getComputedStyle(node);
+      return {
+        width: Math.round(node.getBoundingClientRect().width),
+        appearance: style.appearance,
+        backgroundImage: style.backgroundImage,
+      };
+    };
+    const content = root.querySelector<HTMLElement>(".surface-content");
+    return {
+      surfaceContent: content === null ? 0 : Math.round(content.getBoundingClientRect().width),
+      connectionForm: read(".connection-form"),
+      provider: read("#connection-provider"),
+      apiShape: read("#connection-api-shape"),
+      baseUrl: read("#connection-base-url"),
+      uiLanguage: read("#ui-language"),
+      voiceDevice: read("#voice-output-device"),
+    };
+  });
+  console.log(`[settings-measure] ${JSON.stringify(measured)}`);
+
+  // The surface keeps the desktop width; the controls do not.
+  expect(measured.surfaceContent, "the desktop panel is the wide surface").toBeGreaterThan(1200);
+  const groups = {
+    connectionForm: measured.connectionForm,
+    provider: measured.provider,
+    apiShape: measured.apiShape,
+    baseUrl: measured.baseUrl,
+    uiLanguage: measured.uiLanguage,
+    voiceDevice: measured.voiceDevice,
+  };
+  for (const [name, group] of Object.entries(groups)) {
+    expect(group, `${name} is rendered`).not.toBeNull();
+    expect(group!.width, `${name} keeps the form measure, not the panel width`).toBeLessThanOrEqual(640);
+    expect(group!.width, `${name} keeps a usable width`).toBeGreaterThanOrEqual(320);
+  }
+
+  // The two selects carry the product's own treatment, never the OS control.
+  for (const [name, control] of Object.entries({ provider: measured.provider, apiShape: measured.apiShape })) {
+    expect(control!.appearance, `${name} retires the native control chrome`).toBe("none");
+    expect(control!.backgroundImage, `${name} draws the app's own arrow`).toContain("linear-gradient");
+  }
+});

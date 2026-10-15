@@ -124,6 +124,12 @@
   --composer-min-height: 48px;
   --composer-max-height: 176px;
   --timeline-reading-measure: 800px;
+  /* The measure a Settings field group is laid out on. A `width: 100%` field on
+     the management surface otherwise stretches to the whole panel (1408 px at
+     1440x900), where a label and its own control read as two unrelated lines.
+     The form measure is narrow enough to keep one label/control column while the
+     read-back lists and prose beside it keep the room the surface gives them. */
+  --management-form-measure: 640px;
   /* The action beat's own typographic voice. A Latin beat is set apart from the
      speech by the italic `<em>` gives it; CJK type has no true italic, so the
      CJK beat is set apart by this tracking instead. One token, so every surface
@@ -2992,6 +2998,16 @@
   /* The connection form's own select/input treatment follows the same theme. */
   .connection-form .form-select {
     min-height: var(--touch-target-min);
+  }
+
+  /* The settings field stacks are forms, not reading columns: they take the form
+   measure instead of the whole surface, so a label and the control it names stay
+   one column. The read-back lists, prose and character grid beside them are not
+   field stacks and keep the width the surface gives them. */
+  .connection-form,
+  [data-connection-list],
+  .voice-device-selector {
+    max-width: var(--management-form-measure);
   }
 
   .management-settings-details dd {
