@@ -40,6 +40,9 @@ export function Timeline({
     swipePrevious: string;
     swipeNext: string;
     regenerateVariant: string;
+    /** The catalogue's words for the Host's own greeting-variant labels. */
+    openingVariantDefault: string;
+    openingVariantAlternate: string;
   };
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate?: (messageHandle: string) => void;

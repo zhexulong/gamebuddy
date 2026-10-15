@@ -437,3 +437,26 @@ test("defect 5: a button beside a full-width field keeps its label on one line",
   expect(characters.height, "the label fits inside the 44px floor").toBe(44);
   expect(memory.height, "the label fits inside the 44px floor").toBe(44);
 });
+
+
+// --- the opening switcher's label vocabulary ---------------------------------
+
+/**
+ * The opening switcher printed the Host's own greeting-set label raw, so an
+ * otherwise zh-CN surface read `Default 1/2`: `openingVariant.label` is the
+ * greeting set's structural entry name (`Default`, `Alternate N`, built from the
+ * card's 1-based order in `new-companion-service.ts`), not a player word. The
+ * catalogue now carries that vocabulary and the switcher translates it, keeping
+ * the Host's own order in an alternate's name and the position beside it.
+ */
+test("the opening switcher translates the Host's variant label into the UI language", async ({ page }) => {
+  await mountShell(page, { root: composedRoot({ transcript: [{ role: "companion", text: "炉子上的热水刚开。", opening: true }] }) });
+  const indicator = page.locator(".swipe-indicator");
+  await expect(indicator).toBeVisible();
+
+  const measured = (await indicator.textContent())?.trim() ?? "";
+  console.log(`[variant-label zh] ${JSON.stringify(measured)}`);
+  expect(measured, "the Host's default greeting reads as the catalogue's own word").toContain("默认");
+  expect(measured, "and its position in the set is still shown").toContain("1/2");
+  expect(measured, "the Host's English literal never reaches a zh-CN surface").not.toContain("Default");
+});

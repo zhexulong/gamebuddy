@@ -14,17 +14,37 @@ import { MarkdownMessage } from "./MarkdownMessage";
 const CARET_MARKUP = '<span class="message-caret" aria-hidden="true"></span>';
 
 /**
- * The opening switcher's own words. The Host publishes the committed variant's
- * position in the greeting set and, whenever the set carried one, the variant's
- * own label - the card's own 1-based order (`Default`, `Alternate 1`,
- * `new-companion-service.ts` `buildGreetingVariants`). Both are shown: the label
- * names the opening the player is looking at, the position says how many there
- * are. A set the Host published no label for leaves the position alone rather
- * than inventing a name for the variant.
+ * The switcher's own words. The Host publishes the committed variant's position in
+ * the greeting set and, whenever the set carried one, the variant's own label -
+ * the greeting set's entry name, `Default` or `Alternate N` (the card's own 1-based
+ * order, `new-companion-service.ts` `buildGreetingVariants`). That label is the
+ * Host's structural spelling, not a player word, so it is translated through the
+ * catalogue and a label outside that closed vocabulary is shown as published rather
+ * than invented. Both are shown: the label names the opening the player is looking
+ * at, the position says how many there are. A set the Host published no label for
+ * leaves the position alone.
  */
-function openingVariantWords(variant: Readonly<{ label: string | null; index: number; count: number }>): string {
+function openingVariantWords(
+  variant: Readonly<{ label: string | null; index: number; count: number }>,
+  labels: Readonly<{ openingVariantDefault: string; openingVariantAlternate: string }>,
+): string {
   const position = `${variant.index + 1}/${variant.count}`;
-  return variant.label === null ? position : `${variant.label} ${position}`;
+  return variant.label === null ? position : `${openingVariantLabel(variant.label, labels)} ${position}`;
+}
+
+/**
+ * The Host's greeting-variant vocabulary (`Default` / `Alternate N`) in player
+ * words. The card's own order in the alternate's label is preserved, because that
+ * order is what the player sees in the authored opening, not the set position the
+ * indicator prints beside it.
+ */
+function openingVariantLabel(
+  label: string,
+  labels: Readonly<{ openingVariantDefault: string; openingVariantAlternate: string }>,
+): string {
+  if (label === "Default") return labels.openingVariantDefault;
+  const alternate = /^Alternate (\d+)$/u.exec(label);
+  return alternate === null ? label : labels.openingVariantAlternate.replace("{{index}}", alternate[1]!);
 }
 
 /**
@@ -74,6 +94,8 @@ export const MessageBubble = memo(function MessageBubble({
     swipePrevious: string;
     swipeNext: string;
     regenerateVariant: string;
+    openingVariantDefault: string;
+    openingVariantAlternate: string;
   }>;
 }) {
   const isPlayer = message.role === "player";
@@ -125,7 +147,7 @@ export const MessageBubble = memo(function MessageBubble({
                 >
                   <ChevronLeft size={14} aria-hidden="true" />
                 </button>
-                <span className="swipe-indicator">{openingVariantWords(openingChoice)}</span>
+                <span className="swipe-indicator">{openingVariantWords(openingChoice, labels)}</span>
                 <button
                   type="button"
                   className="swipe-btn"

@@ -48,22 +48,26 @@ const en = {
   gameCreateFormTitle: "Start a new game session",
   gameCreateIntegration: "Game integration",
   gameCreateContinuityBinding: "Continuity binding",
-  gameCreateContinuityBindingHint: "Optional. Leave empty to create the session without binding it to your continuity identity.",
+  gameCreateContinuityBindingHint:
+    "Optional. Leave empty to create the session without binding it to your continuity identity.",
   gameCreateInProgress: "Creating the game session...",
-  gameCreateFailed: "The game session could not be created. No partial session was left behind; the latest authoritative game state is shown.",
+  gameCreateFailed:
+    "The game session could not be created. No partial session was left behind; the latest authoritative game state is shown.",
   gameCreateUnavailable: "The game session could not be created right now. Reload the page or try again.",
   gameSyncing: "Syncing the game connection...",
   gameLaunch: "Play with companion",
   gameLaunchFailed: "The game launch result is uncertain. The latest authoritative game state is shown.",
   stardewCabinSelection: "Stardew cabin selection",
   stardewCabinsLoading: "Loading available cabins…",
-  stardewCabinsUnavailable: "The cabin list could not be read: the Host returned no cabin list. Reload the page and try again.",
+  stardewCabinsUnavailable:
+    "The cabin list could not be read: the Host returned no cabin list. Reload the page and try again.",
   stardewCabinsAwaitingSession:
     "There is no game session to read cabins from yet. Finish steps 1 and 2 above: the cabins to confirm appear here once the companion moves in.",
   stardewCabinsEmpty: "No cabins are currently available.",
   stardewCabinConfirm: "Confirm cabin",
   stardewManifestAdmitted: "Cabin request admitted. Waiting for the next game setup step.",
-  stardewCabinConfirmationUncertain: "Confirmation is still awaiting verification. Do not confirm again. Wait for recovery or reload the page to recover manually.",
+  stardewCabinConfirmationUncertain:
+    "Confirmation is still awaiting verification. Do not confirm again. Wait for recovery or reload the page to recover manually.",
 
   // Navigation & Drawers
   chats: "Chats",
@@ -200,8 +204,10 @@ const en = {
   connectionSettings: "Connection and model",
   connectionActiveLabel: "Active connection",
   connectionNoneActive: "No connection selected",
-  connectionNoSelectionNotice: "No connection has been selected. Until one is activated, the assistant keeps using the built-in default connection.",
-  connectionActivationNotice: "Connection activated. It applies from your next conversation; one already in progress is not switched.",
+  connectionNoSelectionNotice:
+    "No connection has been selected. Until one is activated, the assistant keeps using the built-in default connection.",
+  connectionActivationNotice:
+    "Connection activated. It applies from your next conversation; one already in progress is not switched.",
   connectionProvider: "Provider",
   connectionRecommended: "recommended",
   connectionEscapeHatch: "OpenAI-compatible endpoint",
@@ -270,6 +276,13 @@ const en = {
   swipePrevious: "Previous variant",
   swipeNext: "Next variant",
   regenerateVariant: "Regenerate",
+  // The Host's own name for the greeting variant a new chat opened on: it labels
+  // the greeting set's entries `Default` / `Alternate N` (the card's own 1-based
+  // order). The catalogue carries that vocabulary so a zh-CN UI never prints the
+  // Host's English literal. `{{index}}` is the card's own order, not the set
+  // position the indicator already shows beside it.
+  openingVariantDefault: "Default",
+  openingVariantAlternate: "Alternate {{index}}",
 
   problemBootstrapUnavailableTitle: "Unable to open chat",
   problemBootstrapUnavailableDetail: "The bootstrap handoff is unavailable.",
@@ -285,8 +298,7 @@ const en = {
     "This GameBuddy build does not serve the route the page asked for. Update GameBuddy or reload the page.",
   problemInternalErrorTitle: "Unable to read chat",
   problemInternalErrorDetail: "GameBuddy reported an internal error (code {{code}}).",
-  problemInternalErrorCauseDetail:
-    "GameBuddy reported an internal error (code {{code}}; cause {{cause}}).",
+  problemInternalErrorCauseDetail: "GameBuddy reported an internal error (code {{code}}; cause {{cause}}).",
   problemInternalErrorNoCode: "none reported",
 
   // Characters (design/28 §2) — companion library + persona/scenario/greeting
@@ -324,7 +336,8 @@ const en = {
   chatRetentionTrash: "Trash",
   chatRetentionFailed: "The chat lifecycle could not be changed.",
   cardImportTitle: "Import card",
-  cardImportHint: "Paste a character card (SillyTavern V2/V3 JSON). You review what is included before it becomes a companion.",
+  cardImportHint:
+    "Paste a character card (SillyTavern V2/V3 JSON). You review what is included before it becomes a companion.",
   cardImportStage: "Review card",
   cardImportStaging: "Reviewing…",
   cardImportFieldsTitle: "Included fields",
@@ -492,8 +505,7 @@ const en = {
   // The terminal operation is set apart from Stop/Disconnect: it reads as its
   // own block, and its wording must not promise reversibility it does not have.
   gameEndgame: "End the game",
-  gameEndgameConfirm:
-    "This ends and permanently closes the player's game world. This cannot be undone. Continue?",
+  gameEndgameConfirm: "This ends and permanently closes the player's game world. This cannot be undone. Continue?",
   gameEndgameConfirmYes: "End the game",
   gameEndgameConfirmNo: "Keep playing",
   gameEndgameInProgress: "Ending the game...",
@@ -519,8 +531,7 @@ const en = {
   // first click arms, only the confirm button sends, and the cancel keeps the
   // current state. The words state the consequence and never promise
   // reversibility the action does not have.
-  chatRetentionArchiveConfirm:
-    "Archive this chat? It leaves the active list and can be restored later. Continue?",
+  chatRetentionArchiveConfirm: "Archive this chat? It leaves the active list and can be restored later. Continue?",
   chatRetentionArchiveConfirmYes: "Archive",
   chatRetentionTrashConfirm:
     "Move this chat to the trash? It leaves the active list and can be restored later. Continue?",
@@ -587,7 +598,8 @@ const zh: Messages = {
   stardewCabinSelection: "星露谷小屋选择",
   stardewCabinsLoading: "正在读取可用小屋…",
   stardewCabinsUnavailable: "无法读取小屋选项：Host 没有返回小屋列表。请重新加载页面后再试。",
-  stardewCabinsAwaitingSession: "还没有可以读取小屋的游戏会话。先完成上面第 1、2 步；伴侣住进农舍后，可确认的小屋会出现在这里。",
+  stardewCabinsAwaitingSession:
+    "还没有可以读取小屋的游戏会话。先完成上面第 1、2 步；伴侣住进农舍后，可确认的小屋会出现在这里。",
   stardewCabinsEmpty: "当前没有可用小屋。",
   stardewCabinConfirm: "确认小屋",
   stardewManifestAdmitted: "小屋请求已接纳，正在等待下一步游戏设置。",
@@ -732,8 +744,7 @@ const zh: Messages = {
   connectionApiShapeHint: "该端点使用的接口协议。必须与你的服务端实际提供的协议一致，否则会被拒绝。",
   connectionApiKey: "API Key",
   connectionApiKeyWriteOnly: "只写：它保存给你的伙伴使用，之后不会再回显。",
-  connectionApiKeyLocalHint:
-    "不需要密钥的本地服务也需要在这里填一个占位值（例如 `ollama`），该端点会忽略它。",
+  connectionApiKeyLocalHint: "不需要密钥的本地服务也需要在这里填一个占位值（例如 `ollama`），该端点会忽略它。",
   connectionModel: "模型",
   connectionModelId: "模型 ID",
   connectionModelIdHint: "该端点提供的模型名，例如 qwen2.5-coder:7b",
@@ -786,6 +797,8 @@ const zh: Messages = {
   swipePrevious: "上一个变体",
   swipeNext: "下一个变体",
   regenerateVariant: "重新生成",
+  openingVariantDefault: "默认",
+  openingVariantAlternate: "备用 {{index}}",
 
   problemBootstrapUnavailableTitle: "无法打开聊天",
   problemBootstrapUnavailableDetail: "Bootstrap 令牌不可用。",
@@ -797,12 +810,10 @@ const zh: Messages = {
   problemSessionExpiredDetail:
     "你的 GameBuddy 会话已失效，因此没有可读取的内容。请重新启动 GameBuddy，并重新加载它打开的页面。",
   problemRouteUnavailableTitle: "无法访问聊天",
-  problemRouteUnavailableDetail:
-    "当前 GameBuddy 版本不提供该页面请求的路由。请更新 GameBuddy，或重新加载页面。",
+  problemRouteUnavailableDetail: "当前 GameBuddy 版本不提供该页面请求的路由。请更新 GameBuddy，或重新加载页面。",
   problemInternalErrorTitle: "无法读取聊天",
   problemInternalErrorDetail: "GameBuddy 报告了内部错误（代码 {{code}}）。",
-  problemInternalErrorCauseDetail:
-    "GameBuddy 报告了内部错误（代码 {{code}}；原因 {{cause}}）。",
+  problemInternalErrorCauseDetail: "GameBuddy 报告了内部错误（代码 {{code}}；原因 {{cause}}）。",
   problemInternalErrorNoCode: "未报告任何代码",
 
   // Characters (design/28 §2)
@@ -982,12 +993,15 @@ const zh: Messages = {
   // 高级配置：这里是玩家可见文案，不出现上游工具名、他人的文件名或路由；
   // 只说清楚这些设置存在文件里、本页面不能改，以及因此没有可编辑的内容。
   advancedPiSettingsTitle: "高级配置",
-  advancedPiSettingsHint: "直接编辑完整设置文件：`providers` 下每个条目就是伙伴读取的一条连接（baseUrl、api、apiKey、models 等）。",
+  advancedPiSettingsHint:
+    "直接编辑完整设置文件：`providers` 下每个条目就是伙伴读取的一条连接（baseUrl、api、apiKey、models 等）。",
   advancedPiSettingsSave: "保存高级配置",
   advancedPiSettingsApplied: "已保存。将在伙伴下次启动时读取。",
-  advancedPiSettingsNoRoute: "伙伴的模型与连接设置保存在同一个设置文件里：你在上方设置的服务商、模型和密钥，会和其他设置一起写进这个文件。本页面无法修改该文件，所以这里没有可编辑的内容。",
+  advancedPiSettingsNoRoute:
+    "伙伴的模型与连接设置保存在同一个设置文件里：你在上方设置的服务商、模型和密钥，会和其他设置一起写进这个文件。本页面无法修改该文件，所以这里没有可编辑的内容。",
   advancedPiSettingsInvalidJson: "这不是合法的 JSON：请检查括号、逗号和引号后重试。未写入任何内容。",
-  advancedPiSettingsInvalidShape: "这不是合法的设置文件：顶层只能有 providers，且每个 provider 条目必须是对象。未写入任何内容。",
+  advancedPiSettingsInvalidShape:
+    "这不是合法的设置文件：顶层只能有 providers，且每个 provider 条目必须是对象。未写入任何内容。",
 
   // --- 终局操作 lane：唯一会彻底结束游戏世界的刻意控件 ---
   gameEndgame: "结束游戏",
