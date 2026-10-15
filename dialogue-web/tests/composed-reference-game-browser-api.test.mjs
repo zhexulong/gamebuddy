@@ -9,6 +9,7 @@ import {
   validateComposedReferenceGameRoot,
 } from "../src/composed-reference-game-browser-api.ts";
 import { composedProblemView } from "../src/composed-problem-view.ts";
+import { createManagementPipelineApi } from "../src/management-pipeline-api.ts";
 import { messages } from "../src/i18n.ts";
 import { composeReferenceGameBrowserProfile } from "../../host/src/composed-browser-contract/index.js";
 import { createComposedReferenceGameBrowserRequestHandler } from "../../host/src/composed-reference-game-browser.js";
@@ -1208,6 +1209,71 @@ test("anything the client cannot classify shows the code it actually received", 
   assert.equal(
     offline.detail,
     labels.problemInternalErrorDetail.replace("{{code}}", labels.problemInternalErrorNoCode),
+  );
+});
+
+// A management refusal is raised by the other client module and caught by the composed
+// shell (`ComposedReferenceGameApp.handleOpeningVariant` -> `selectOpeningVariant`,
+// `.handleCurrentChatRemoved` -> `listChats`/`selectChat`), which hands exactly what it
+// caught to `composedProblemView`. The regression this catches: each client module
+// declared its own `TavernProblemError`, so the view's `instanceof` was false for
+// everything the management path threw and every one of those refusals arrived with no
+// code at all - the player read "none reported" instead of the refusal the Host named.
+
+/** The validated non-2xx the management client surfaces as its own problem error. */
+function managementRefusal(code, retryable = false) {
+  return new Response(
+    JSON.stringify({ type: "about:blank", title: "Refused", status: 409, code, requestId: HANDLE, retryable }),
+    { status: 409, headers: { "content-type": "application/json" } },
+  );
+}
+
+async function refusedByManagement(code, retryable = false) {
+  const api = createManagementPipelineApi(async () => managementRefusal(code, retryable));
+  return api.readDraft().then(
+    () => {
+      throw new Error("expected the management read to be refused");
+    },
+    (error) => error,
+  );
+}
+
+test("a management refusal keeps its own problem code instead of collapsing to none reported", async () => {
+  const labels = messages("en");
+
+  // An unclassified code is named rather than replaced by an invented one.
+  const busy = await refusedByManagement("dialogue_busy");
+  assert.equal(busy.code, "dialogue_busy");
+  assert.equal(
+    composedProblemView(busy, labels).detail,
+    labels.problemInternalErrorDetail.replace("{{code}}", "dialogue_busy"),
+  );
+
+  // A code the view already classifies keeps its own words, not the internal-error sentence.
+  const reconciliation = await refusedByManagement("state_reconciliation_required");
+  assert.equal(composedProblemView(reconciliation, labels).detail, labels.problemReconciliationFailedDetail);
+
+  // `retryable` is a field the class carries and the code does not, so the retryable
+  // refusal keeps its own presentation too - a bare `code === "..."` comparison would
+  // have dropped it.
+  const outage = await refusedByManagement("runtime_unavailable", true);
+  assert.equal(composedProblemView(outage, labels).detail, labels.problemTemporarilyUnavailableDetail);
+});
+
+test("a management protocol failure is named as a protocol failure, not as none reported", async () => {
+  const labels = messages("en");
+  // The same defect, second class: `TavernProtocolError` is declared in both client
+  // modules and the view names only one constructor's identity.
+  const api = createManagementPipelineApi(async () => new Response("not-json", { status: 200 }));
+  const protocol = await api.readDraft().then(
+    () => {
+      throw new Error("expected the management read to fail closed");
+    },
+    (error) => error,
+  );
+  assert.equal(
+    composedProblemView(protocol, labels).detail,
+    labels.problemInternalErrorDetail.replace("{{code}}", "tavern_protocol_error"),
   );
 });
 

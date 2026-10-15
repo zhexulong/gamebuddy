@@ -307,6 +307,78 @@ test("composed profile fails closed on a malformed root", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Game state" })).toHaveCount(0);
 });
 
+test("a management refusal keeps its own problem code instead of none reported", async ({ page }) => {
+  // The opening choice is a *management* mutation (`PUT /api/tavern/v1/chat/opening`
+  // through `management-pipeline-api`), and the shell hands what it caught straight to
+  // `composedProblemView`. The management client used to declare its own
+  // `TavernProblemError`, so that check was false for everything this path threw and the
+  // shell's only diagnostic - which of the opening's closed refusals happened - was
+  // replaced by "none reported".
+  const opening = {
+    ...chat,
+    chat: {
+      ...chat.chat,
+      transcript: [
+        {
+          handle: characterHandle,
+          role: "companion",
+          text: "Good morning.",
+          locale: "und",
+          order: 0,
+          revision: 1,
+          openingVariant: { variantId: "greeting-1", index: 0, count: 2, label: null, locked: false },
+        },
+      ],
+    },
+  };
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, chat: opening }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+  await page.route("**/api/tavern/v1/chat/opening", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        type: "about:blank",
+        title: "Opening already sealed",
+        status: 409,
+        code: "chat_opening_locked",
+        requestId: characterHandle,
+        retryable: false,
+      }),
+    }),
+  );
+  // A refusal is resolved by the authoritative reread, so it becomes the player's
+  // problem only when that reread cannot run either - the state this journey puts the
+  // mount in, and the state in which the message is the only thing the player has.
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        type: "about:blank",
+        title: "State unavailable",
+        status: 503,
+        code: "state_unavailable",
+        requestId: characterHandle,
+        retryable: true,
+      }),
+    }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Next variant" }).click();
+
+  await expect(page.getByRole("alert")).toContainText(
+    "GameBuddy reported an internal error (code chat_opening_locked).",
+  );
+  await expect(page.getByRole("alert")).not.toContainText("none reported");
+});
+
 
 test("uncertain Stardew handoff waits for manual recovery without refetch or retry", async ({ page }) => {
   let cabinReadRequests = 0;

@@ -6,7 +6,9 @@
  *
  * This module is deliberately dependency-free and closed:
  *
- * - it imports nothing (no Host package, no typebox, no runtime code);
+ * - it imports no Host package, no typebox and no runtime code: the only import is the
+ *   problem identity `./reference-pipeline-api` already declares (that module imports
+ *   nothing either);
  * - every DTO validator is strict and local: extra fields are rejected,
  *   handles are canonical opaque unpadded base64url strings, and every union
  *   accepts only its exact frozen variants;
@@ -20,6 +22,8 @@
  * There is no SSE, polling, timer, storage, generated handle, local list or
  * mock anywhere in this module.
  */
+
+import { TavernProblemError, TavernProtocolError } from "./reference-pipeline-api";
 
 const TAVERN_BROWSER_API_VERSION = 1 as const;
 const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
@@ -587,10 +591,10 @@ export const CONNECTION_API_SHAPES = [
   "bedrock-converse-stream",
   "mistral-conversations",
   "pi-messages",
-  ] as const;
-  export type TavernConnectionApiShapeV1 = (typeof CONNECTION_API_SHAPES)[number];
-  /** Derived from the one list, so the type cannot drift from the validator's. */
-  export type TavernConnectionThinkingLevelV1 = (typeof CONNECTION_THINKING_LEVELS)[number];
+] as const;
+export type TavernConnectionApiShapeV1 = (typeof CONNECTION_API_SHAPES)[number];
+/** Derived from the one list, so the type cannot drift from the validator's. */
+export type TavernConnectionThinkingLevelV1 = (typeof CONNECTION_THINKING_LEVELS)[number];
 export type TavernConnectionReadinessV1 = "unconfigured" | "configured" | "ready" | "failed";
 export type TavernConnectionFailureV1 =
   | "invalid_endpoint"
@@ -713,34 +717,14 @@ export type TavernModelProfileUpdateCommandV1 = Readonly<{
 
 // --- Errors. ---
 
-/** A validated RFC-9457-style server problem; carries the frozen problem fields. */
-export class TavernProblemError extends Error {
-  readonly type: string;
-  readonly title: string;
-  readonly status: number;
-  readonly code: string;
-  readonly requestId: string;
-  readonly retryable: boolean;
-
-  constructor(problem: TavernProblemV1) {
-    super(problem.title);
-    this.name = "TavernProblemError";
-    this.type = problem.type;
-    this.title = problem.title;
-    this.status = problem.status;
-    this.code = problem.code;
-    this.requestId = problem.requestId;
-    this.retryable = problem.retryable;
-  }
-}
-
-/** Every opaque protocol failure; the fixed message never echoes raw body text. */
-export class TavernProtocolError extends Error {
-  constructor() {
-    super("tavern_browser_api/v1 protocol error");
-    this.name = "TavernProtocolError";
-  }
-}
+/**
+ * The problem identity this module throws is the one `./reference-pipeline-api`
+ * already declares, re-exported so a management failure and a chat failure are the
+ * same `instanceof` at the one place a failure becomes a player-visible problem
+ * (`composed-problem-view.ts`). A second declaration here would make that check
+ * false for every management refusal and drop its `code` before the player reads it.
+ */
+export { TavernProblemError, TavernProtocolError };
 
 /**
  * The player-facing sentence for a failed management call, with the server's
@@ -985,7 +969,7 @@ const SNAPSHOT_CHAT_KEYS = ["companion", "title", "transcript", "draft", "turn",
 const CHAT_COMPANION_KEYS = ["name"] as const;
 const CHAT_DRAFT_KEYS = ["revision", "present"] as const;
 const MEMORY_KEYS = ["readAvailable", "mutationAvailable", "projectionRevision"] as const;
-  const MEMORY_ITEM_KEYS = ["handle", "title", "content", "category", "status", "origin", "pinned"] as const;
+const MEMORY_ITEM_KEYS = ["handle", "title", "content", "category", "status", "origin", "pinned"] as const;
 const MEMORY_READ_KEYS = ["apiVersion", "projectionRevision", "memories", "chapters"] as const;
 const MEMORY_MUTATION_CREATE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "content"] as const;
 const MEMORY_MUTATION_UPDATE_KEYS = [
@@ -1073,12 +1057,7 @@ const CONNECTION_PROVIDER_KEYS = [
   "escapeHatch",
   "environmentManaged",
 ] as const;
-const CONNECTION_MODEL_KEYS = [
-  "modelId",
-  "modelLabel",
-  "allowedThinkingLevels",
-  "defaultThinkingLevel",
-] as const;
+const CONNECTION_MODEL_KEYS = ["modelId", "modelLabel", "allowedThinkingLevels", "defaultThinkingLevel"] as const;
 const CONNECTION_PROBE_KEYS = ["apiVersion", "connectionId", "outcome", "failure", "state"] as const;
 const CONNECTION_SETUP_FIELDS = ["apiKey", "apiShape", "baseUrl", "modelId"] as const;
 // The thinking levels the embedded runtime accepts, mirroring pi's own
@@ -1109,13 +1088,7 @@ const RECOMMENDED_MODEL_KEYS = [
   "allowedThinkingLevels",
   "defaultThinkingLevel",
 ] as const;
-const MODEL_PROFILE_UPDATE_KEYS = [
-  "apiVersion",
-  "surface",
-  "expectedRevision",
-  "modelId",
-  "thinkingLevel",
-] as const;
+const MODEL_PROFILE_UPDATE_KEYS = ["apiVersion", "surface", "expectedRevision", "modelId", "thinkingLevel"] as const;
 const MODEL_PROFILE_SURFACES = ["chat", "game"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1399,11 +1372,7 @@ const IMPORT_HISTORY_COUNTS_KEYS = [
 ] as const;
 const IMPORT_HISTORY_ENTRY_KEYS = ["importId", "occurredAtMs", "cardName", "counts"] as const;
 const IMPORT_HISTORY_KEYS = ["apiVersion", "entries"] as const;
-const IMPORT_ELIGIBILITY = new Set([
-  "candidate_only",
-  "profile_eligible_after_explicit_review",
-  "never_runtime",
-]);
+const IMPORT_ELIGIBILITY = new Set(["candidate_only", "profile_eligible_after_explicit_review", "never_runtime"]);
 const IMPORT_CLASSIFICATION = new Set([
   "accepted_typed",
   "preserved_opaque",
@@ -1465,11 +1434,7 @@ function hasOptionalLosses(value: Record<string, unknown>, keys: readonly string
 }
 
 function isReviewedFields(value: unknown): value is readonly string[] {
-  return (
-    Array.isArray(value) &&
-    value.length <= 32 &&
-    value.every((field) => isLengthBoundedString(field, 1, 64))
-  );
+  return Array.isArray(value) && value.length <= 32 && value.every((field) => isLengthBoundedString(field, 1, 64));
 }
 
 function isStCardImportStageResult(value: unknown): value is StCardImportStageResultV1 {
@@ -1894,7 +1859,8 @@ function isVoicePreference(value: unknown): value is TavernVoicePreferenceV1 {
     (value.disclosureVersion === null || isOneOf(value.disclosureVersion, VOICE_DISCLOSURE_VERSIONS)) &&
     isOneOf(value.consent, VOICE_CONSENTS) &&
     (value.decidedAtMs === null || isNonNegativeSafeInteger(value.decidedAtMs)) &&
-    (value.outputDevice === null || (typeof value.outputDevice === "string" && /^waveout:[0-9]{1,4}$/.test(value.outputDevice))) &&
+    (value.outputDevice === null ||
+      (typeof value.outputDevice === "string" && /^waveout:[0-9]{1,4}$/.test(value.outputDevice))) &&
     (value.consent === "undecided"
       ? value.disclosureVersion === null && value.decidedAtMs === null
       : value.decidedAtMs !== null && (value.consent !== "accepted" || value.disclosureVersion === "mimo-cloud-tts-v1"))
@@ -1936,7 +1902,8 @@ function isVoicePreferenceConsentCommand(value: unknown): value is TavernVoicePr
   if (value.action === "setOutputDevice")
     return (
       hasExactKeys(value, VOICE_PREFERENCE_DEVICE_KEYS) &&
-      (value.outputDevice === null || (typeof value.outputDevice === "string" && /^waveout:[0-9]{1,4}$/.test(value.outputDevice)))
+      (value.outputDevice === null ||
+        (typeof value.outputDevice === "string" && /^waveout:[0-9]{1,4}$/.test(value.outputDevice)))
     );
   return value.action === "revoke" && hasExactKeys(value, VOICE_PREFERENCE_REVOKE_KEYS);
 }
@@ -2087,7 +2054,9 @@ function isConnectionState(value: unknown): value is TavernConnectionStateV1 {
   // active flag, and it must be the row the active selection names.
   const activeRows = value.connections.filter((row) => row.active);
   if (value.active === null) return activeRows.length === 0;
-  return activeRows.length === 1 && activeRows[0]!.connectionId === (value.active as TavernConnectionActiveV1).connectionId;
+  return (
+    activeRows.length === 1 && activeRows[0]!.connectionId === (value.active as TavernConnectionActiveV1).connectionId
+  );
 }
 
 export function validateConnectionState(value: unknown): TavernConnectionStateV1 {
@@ -2432,10 +2401,7 @@ export type ManagementPipelineApi = Readonly<{
   /** GET /api/tavern/v1/settings/connection (browser session; no CSRF header). */
   readConnection(): Promise<TavernConnectionStateV1>;
   /** POST /api/tavern/v1/settings/connections: creates a draft record whose credential is write-only. */
-  createConnection(
-    command: TavernConnectionCreateCommandV1,
-    csrfToken: string,
-  ): Promise<TavernConnectionStateV1>;
+  createConnection(command: TavernConnectionCreateCommandV1, csrfToken: string): Promise<TavernConnectionStateV1>;
   /** POST /api/tavern/v1/settings/connections/:id/test against the Host-owned probe. */
   testConnection(connectionId: string, expectedRevision: number, csrfToken: string): Promise<TavernConnectionProbeV1>;
   /** POST /api/tavern/v1/settings/connections/:id/activate: selects only a ready record. */
@@ -2451,11 +2417,7 @@ export type ManagementPipelineApi = Readonly<{
     csrfToken: string,
   ): Promise<TavernConnectionStateV1>;
   /** DELETE /api/tavern/v1/settings/connections/:id: removes an inactive record and its credential. */
-  removeConnection(
-    connectionId: string,
-    expectedRevision: number,
-    csrfToken: string,
-  ): Promise<TavernConnectionStateV1>;
+  removeConnection(connectionId: string, expectedRevision: number, csrfToken: string): Promise<TavernConnectionStateV1>;
   /**
    * GET /api/tavern/v1/settings/profiles (browser session; no CSRF header). The
    * two surfaces' own model profiles plus the shipped guidance catalog.
@@ -2466,10 +2428,7 @@ export type ManagementPipelineApi = Readonly<{
    * The model id may be anything the player typed; the Host never checks it
    * against the recommended catalog.
    */
-  updateModelProfile(
-    command: TavernModelProfileUpdateCommandV1,
-    csrfToken: string,
-  ): Promise<TavernModelProfilesV1>;
+  updateModelProfile(command: TavernModelProfileUpdateCommandV1, csrfToken: string): Promise<TavernModelProfilesV1>;
   /** GET /api/tavern/v1/companions: metadata-only companion library. */
   listCompanions(): Promise<CompanionListV1>;
   /** GET /api/tavern/v1/companions/:handle: safe detail for one projected handle. */
@@ -2719,8 +2678,7 @@ export function createManagementPipelineApi(
       command: TavernLanguagePreferenceCommandV1,
       csrfToken: string,
     ): Promise<TavernLanguagePreferenceV1> {
-      if (!isLanguagePreferenceCommand(command) || !isOpaqueHandle(csrfToken))
-        throw new TavernProtocolError();
+      if (!isLanguagePreferenceCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
       const result = await exchange(
         fetchLike,
         "PUT",
@@ -2889,7 +2847,13 @@ export function createManagementPipelineApi(
     },
     async readCompanionWorldBook(handle: string): Promise<CompanionWorldBookV1> {
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
-      return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/worldbook`, 200, validateCompanionWorldBook);
+      return exchange(
+        fetchLike,
+        "GET",
+        `/api/tavern/v1/companions/${handle}/worldbook`,
+        200,
+        validateCompanionWorldBook,
+      );
     },
     async updateCompanionVoice(
       handle: string,
@@ -3040,7 +3004,11 @@ export function createManagementPipelineApi(
           expectedManagementRevision,
         },
       );
-      observe(operation === "archive" ? "chat.archive" : operation === "restore" ? "chat.restore" : "chat.trash", "passed", String(result.managementRevision));
+      observe(
+        operation === "archive" ? "chat.archive" : operation === "restore" ? "chat.restore" : "chat.trash",
+        "passed",
+        String(result.managementRevision),
+      );
       return result;
     },
     async stageStCardImport(card: string, csrfToken: string): Promise<StCardImportStageResultV1> {
@@ -3067,7 +3035,12 @@ export function createManagementPipelineApi(
       approvedAtMs: number,
       csrfToken: string,
     ): Promise<StCardImportReviewResultV1> {
-      if (!isOpaqueHandle(importId) || !isOpaqueHandle(csrfToken) || !isNonNegativeSafeInteger(approvedAtMs) || !isReviewedFields(reviewedFields))
+      if (
+        !isOpaqueHandle(importId) ||
+        !isOpaqueHandle(csrfToken) ||
+        !isNonNegativeSafeInteger(approvedAtMs) ||
+        !isReviewedFields(reviewedFields)
+      )
         throw new TavernProtocolError();
       const result = await exchange(
         fetchLike,
@@ -3096,13 +3069,7 @@ export function createManagementPipelineApi(
       return result;
     },
     async readStCardImportHistory(): Promise<StCardImportHistoryV1> {
-      return exchange(
-        fetchLike,
-        "GET",
-        "/api/tavern/v1/import-history",
-        200,
-        validateStCardImportHistory,
-      );
+      return exchange(fetchLike, "GET", "/api/tavern/v1/import-history", 200, validateStCardImportHistory);
     },
   });
 }
