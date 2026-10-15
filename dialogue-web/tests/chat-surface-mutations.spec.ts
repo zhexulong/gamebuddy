@@ -1,15 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * The swipe and regenerate mutations' busy presentation, mounted.
+ * The message-level chat mutations' busy presentation, mounted.
  *
  * This is the presentation contract the shell's single-flight guard projects:
  * while a chat mutation (`chatMutation` in `ComposedReferenceGameApp`) is in
- * flight for one message, that message's own swipe and regenerate controls are
- * disabled and the row is marked busy; when the mutation settles the row
- * returns to idle. The probe drives `Timeline`'s `pending` prop exactly as the
- * shell drives it, so these assertions pin the same selectors the shell's
- * `data-pending`/`aria-busy` outputs feed.
+ * flight for one message, that message's own variant swipe, opening choice and
+ * regenerate controls are disabled and the row is marked busy; when the mutation
+ * settles the row returns to idle. The probe drives `Timeline`'s `pending` prop
+ * exactly as the shell drives it, so these assertions pin the same selectors the
+ * shell's `data-pending`/`aria-busy` outputs feed.
  *
  * The failure each assertion catches:
  *
@@ -36,6 +36,13 @@ import { expect, test, type Page } from "@playwright/test";
  *    reply it appended an unrelated pair at the tail, and on the opening it
  *    appended the literal "\u8bf7\u7ee7\u7eed". It is therefore offered on one row
  *    only, and a transcript that offers it anywhere else is the defect.
+ * 6. `the opening switcher reports its own mutation in flight` and 7. `a pending
+ *    mutation on one message never disables another message's switcher` - the
+ *    same `data-pending`/`aria-busy` projection for the new-chat opening choice
+ *    (`chat.opening`): the row that is mutating says so and disables its own
+ *    switcher, and no other row's switcher is collateral damage.
+ * 8. `renders the opening switcher's busy state` - the same animation contract
+ *    on the opening choice's own row.
  *
  * Every journey here builds a real conversation through `setConversation`: the
  * all-companion shortcut of `setTranscript` is a renderer fixture, and a
@@ -54,8 +61,9 @@ type ChatProbe = {
   setConversation(entries: readonly Readonly<{ role: "player" | "companion"; text: string }>[]): void;
   setPreview(text: string | null): void;
   setVoice(state: { state: "unavailable" | "ready" | "speaking" } | null): void;
-  setPending(pending: { kind: "swipe" | "regenerate"; handle: string } | null): void;
+  setPending(pending: { kind: "swipe" | "regenerate" | "opening"; handle: string } | null): void;
   withSwipes(handle: string, text: string): void;
+  withOpening(handle: string, text: string): void;
   pendingAttrs(
     handle: string,
   ):
@@ -63,6 +71,7 @@ type ChatProbe = {
         ariaBusy: string | null;
         dataPending: string | null;
         swipeDisabled: boolean;
+        switcherDisabled: boolean;
         regenerateDisabled: boolean;
       }
     | null;
@@ -233,4 +242,86 @@ test("offers regeneration on the transcript's last companion row, and nowhere el
     { role: "companion", text: "A second reply." },
   ]));
   expect(await offered()).toEqual(["h3"]);
+});
+
+/**
+ * The new-chat opening choice (`chat.opening`) drives the same busy projection through the same
+ * `.swipe-btn` pair, so its own row is pinned here rather than left to the placement rule above.
+ */
+test("the opening switcher reports its own mutation in flight and clears it when it settles", async ({ page }) => {
+  await openProbe(page);
+  await page.evaluate(() => window.chatProbe.setConversation([
+    { role: "companion", text: "The lantern over the porch is still lit." },
+  ]));
+  await page.evaluate(() => window.chatProbe.withOpening("h0", "The lantern over the porch is still lit."));
+
+  // The opening choice is open, so its own switcher is offered and idle.
+  await expect(page.locator(".swipe-controls")).toHaveCount(1);
+  await expect(page.locator(".swipe-indicator")).toHaveText("Default 1/2");
+  let attrs = await page.evaluate(() => window.chatProbe.pendingAttrs("h0"));
+  expect(attrs).not.toBeNull();
+  expect(attrs?.ariaBusy).toBeNull();
+  expect(attrs?.dataPending).toBeNull();
+  expect(attrs?.switcherDisabled).toBe(false);
+
+  // The choice is in flight: the row says so and its own switcher is disabled.
+  await page.evaluate(() => window.chatProbe.setPending({ kind: "opening", handle: "h0" }));
+  attrs = await page.evaluate(() => window.chatProbe.pendingAttrs("h0"));
+  expect(attrs?.ariaBusy).toBe("true");
+  expect(attrs?.dataPending).toBe("opening");
+  expect(attrs?.switcherDisabled).toBe(true);
+
+  // Settling clears both.
+  await page.evaluate(() => window.chatProbe.setPending(null));
+  attrs = await page.evaluate(() => window.chatProbe.pendingAttrs("h0"));
+  expect(attrs?.ariaBusy).toBeNull();
+  expect(attrs?.dataPending).toBeNull();
+  expect(attrs?.switcherDisabled).toBe(false);
+});
+
+test("a pending mutation on one message never disables another message's switcher", async ({ page }) => {
+  await openProbe(page);
+  await page.evaluate(() => window.chatProbe.setTranscript(["First.", "Second."]));
+  await page.evaluate(() => window.chatProbe.withOpening("h0", "First."));
+  await page.evaluate(() => window.chatProbe.withOpening("h1", "Second."));
+  await expect(page.locator(".swipe-controls")).toHaveCount(2);
+
+  await page.evaluate(() => window.chatProbe.setPending({ kind: "opening", handle: "h0" }));
+
+  // h0 is busy and disabled...
+  const first = await page.evaluate(() => window.chatProbe.pendingAttrs("h0"));
+  expect(first?.ariaBusy).toBe("true");
+  expect(first?.switcherDisabled).toBe(true);
+  // ...h1 stays idle and fully operable.
+  const second = await page.evaluate(() => window.chatProbe.pendingAttrs("h1"));
+  expect(second?.ariaBusy).toBeNull();
+  expect(second?.switcherDisabled).toBe(false);
+});
+
+/**
+ * The same "label with no rendering" failure, on the opening choice's own row: the attribute
+ * alone cannot catch a missing rule, so this pairs it with the computed animation.
+ */
+test("renders the opening switcher's busy state, not just the busy attribute", async ({ page }) => {
+  await openProbe(page);
+  await page.evaluate(() => window.chatProbe.setConversation([
+    { role: "companion", text: "The lantern over the porch is still lit." },
+  ]));
+  await page.evaluate(() => window.chatProbe.withOpening("h0", "The lantern over the porch is still lit."));
+
+  const idle = await page.evaluate(() => window.chatProbe.pendingAnimation("h0"));
+  expect(idle?.animationName).toBe("none");
+
+  await page.evaluate(() => window.chatProbe.setPending({ kind: "opening", handle: "h0" }));
+  await expect(page.locator("li[data-handle='h0']")).toHaveAttribute("data-pending", "opening");
+
+  const busy = await page.evaluate(() => window.chatProbe.pendingAnimation("h0"));
+  expect(busy?.animationName).toContain("message-pending-breathe");
+  expect(busy?.animationDuration).not.toBe("0s");
+  expect(busy?.transitionDuration).not.toBe("0s");
+
+  // Settling removes the animation again.
+  await page.evaluate(() => window.chatProbe.setPending(null));
+  const settled = await page.evaluate(() => window.chatProbe.pendingAnimation("h0"));
+  expect(settled?.animationName).toBe("none");
 });

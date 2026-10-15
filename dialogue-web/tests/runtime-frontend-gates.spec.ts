@@ -86,8 +86,10 @@ type FixtureOptions = Readonly<{
   companionName?: string;
   /** `null` is a chat the Host has published no title for at all. */
   title?: string | null;
-  /** Marks the first companion message as the committed variant of a swipe set. */
+  /** Marks the transcript's last companion message as the committed variant of a swipe set. */
   swipe?: boolean;
+  /** Marks message zero as a greeting set's committed variant, still open for choice. */
+  opening?: boolean;
 }>;
 
 function handleFor(index: number): string {
@@ -96,6 +98,11 @@ function handleFor(index: number): string {
 
 function composedRoot(options: FixtureOptions = {}) {
   const transcript = options.transcript ?? DEFAULT_TRANSCRIPT;
+  // The row a regeneration sits on: the transcript's own last companion reply.
+  const lastCompanionIndex = transcript.reduce(
+    (last, message, index) => (message.role === "companion" ? index : last),
+    -1,
+  );
   return {
     apiVersion: 1,
     build: {
@@ -124,8 +131,11 @@ function composedRoot(options: FixtureOptions = {}) {
           locale: "und",
           order: index,
           revision: 1,
-          ...(options.swipe === true && message.role === "companion" && index === 0
+          ...(options.swipe === true && index === lastCompanionIndex
             ? { swipeInfo: { currentIndex: 1, totalSwipes: 2, label: "1/2", hasPrevious: true, hasNext: true } }
+            : {}),
+          ...(options.opening === true && index === 0 && message.role === "companion"
+            ? { openingVariant: { variantId: "V".repeat(42) + "A", index: 0, count: 2, label: "Default", locked: false } }
             : {}),
         })),
         draft: { revision: 0, present: false },
@@ -896,26 +906,30 @@ test("gate 7: a new conversation opens on a real empty state and prints no place
 });
 
 /**
- * Gate 8: the regenerate control is a control, and the swipe pair reads with it.
+ * Gate 8: the message-level controls are controls.
  *
  * The capture run measured it at 75x21 px, an 11 px label, a transparent
  * background and no border - the smallest interactive target and the smallest
  * type anywhere in the product, on the one control that repeats a companion's
- * answer. The failure this catches: a control that is only a caption-sized muted
- * text row, invisible as an affordance and unusable as a target, beside a swipe
- * pair that is not the same kind of thing.
+ * answer. The failures this catches: a control that is only a caption-sized muted
+ * text row, invisible as an affordance and unusable as a target; and either
+ * switcher - the variant pair and the opening choice that share one
+ * `.swipe-controls` shape - dropping under the same floor or onto a transparent
+ * background.
  */
-test("gate 8: the regenerate control clears the touch floor with a visible affordance", async ({ page }) => {
-  // The transcript ends on the companion's own reply. Regeneration re-asks the
-  // last thing the player said, so it is offered on the transcript's last
-  // companion row only: a fixture ending on the player's line is a state in
-  // which the control must not exist at all.
+test("gate 8: the message-level controls clear the touch floor with a visible affordance", async ({ page }) => {
+  // One transcript carrying both shapes: the opening the player may still choose
+  // (message zero), and a swiped companion row at the tail - the row regeneration
+  // re-asks. A fixture ending on the player's line is a state in which the
+  // regenerate control must not exist at all.
   await mountShell(page, {
     root: composedRoot({
+      opening: true,
       swipe: true,
       transcript: [DEFAULT_TRANSCRIPT[0]!, DEFAULT_TRANSCRIPT[1]!, DEFAULT_TRANSCRIPT[2]!],
     }),
   });
+  await expect(page.locator(".message-list > li"), "the transcript is still the three rows it served").toHaveCount(3);
 
   const measured = await page.evaluate(() => {
     const read = (selector: string) => {
@@ -931,7 +945,13 @@ test("gate 8: the regenerate control clears the touch floor with a visible affor
         text: (node.textContent ?? "").trim(),
       };
     };
-    return { regenerate: read(".regenerate-btn"), group: read(".swipe-controls"), button: read(".swipe-btn") };
+    return {
+      regenerate: read(".regenerate-btn"),
+      openingGroup: read(".message-list > li:first-child .swipe-controls"),
+      openingButton: read(".message-list > li:first-child .swipe-btn"),
+      swipeGroup: read(".message-list > li:last-child .swipe-controls"),
+      swipeButton: read(".message-list > li:last-child .swipe-btn"),
+    };
   });
 
   const transparent = ["transparent", "rgba(0, 0, 0, 0)"];
@@ -944,26 +964,27 @@ test("gate 8: the regenerate control clears the touch floor with a visible affor
       failures.push(`the regenerate control computes to a transparent background (${measured.regenerate.backgroundColor})`);
     if (measured.regenerate.fontSize < 12) failures.push(`the regenerate control's label is ${measured.regenerate.fontSize}px`);
   }
-  // The swiped variant's pair sits in the same message, so it keeps the same
-  // floor and the same visible affordance - one control group, not two species.
-  for (const [what, node] of [
-    ["the swipe group", measured.group],
-    ["a swipe button", measured.button],
+  // Both switchers are one control group, so each keeps the same floor and the
+  // same visible affordance the regenerate control is held to - one species, not two.
+  for (const [what, group, button] of [
+    ["the opening switcher", measured.openingGroup, measured.openingButton],
+    ["the swipe switcher", measured.swipeGroup, measured.swipeButton],
   ] as const) {
-    if (node === null) {
-      failures.push(`${what} is not rendered for a swiped message`);
+    if (group === null) {
+      failures.push(`${what} is not rendered`);
       continue;
     }
-    if (node.height < 44) failures.push(`${what} is ${node.height}px tall, under the 44px floor the regenerate control keeps`);
+    if (group.height < 44) failures.push(`${what} is ${group.height}px tall, under the 44px floor the regenerate control keeps`);
+    if (transparent.includes(group.backgroundColor))
+      failures.push(`${what} computes to a transparent background (${group.backgroundColor})`);
+    if (button === null) failures.push(`${what} has no button`);
   }
-  if (measured.group !== null && transparent.includes(measured.group.backgroundColor))
-    failures.push(`the swipe group computes to a transparent background (${measured.group.backgroundColor})`);
 
   record(
     "gate-8",
-    `regenerate ${measured.regenerate?.width}x${measured.regenerate?.height} @${measured.regenerate?.fontSize}px bg=${measured.regenerate?.backgroundColor}; swipe group ${measured.group?.height}px / button ${measured.button?.height}px; ${failures.length} failure(s)`,
+    `regenerate ${measured.regenerate?.width}x${measured.regenerate?.height} @${measured.regenerate?.fontSize}px bg=${measured.regenerate?.backgroundColor}; opening group ${measured.openingGroup?.height}px / button ${measured.openingButton?.height}px; swipe group ${measured.swipeGroup?.height}px / button ${measured.swipeButton?.height}px; ${failures.length} failure(s)`,
   );
-  expect(failures, "the regenerate control is a real target and the swipe pair matches it").toEqual([]);
+  expect(failures, "every message-level control is a real target").toEqual([]);
 });
 
 /**

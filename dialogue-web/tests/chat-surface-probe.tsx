@@ -55,7 +55,7 @@ type Model = Readonly<{
   preview: Readonly<{ turnHandle: string; text: string }> | null;
   voice: VoiceSurfaceStateV1 | null;
   /** The chat mutation in flight, exactly as the shell projects it to Timeline. */
-  pending: Readonly<{ kind: "swipe" | "regenerate"; handle: string }> | null;
+  pending: Readonly<{ kind: "swipe" | "regenerate" | "opening"; handle: string }> | null;
 }>;
 
 let model: Model = { transcript: [], preview: null, voice: null, pending: null };
@@ -125,7 +125,7 @@ const chatProbe = {
     model = { ...model, voice: state };
     rerender?.();
   },
-  setPending(pending: { kind: "swipe" | "regenerate"; handle: string } | null): void {
+  setPending(pending: { kind: "swipe" | "regenerate" | "opening"; handle: string } | null): void {
     model = { ...model, pending };
     rerender?.();
   },
@@ -155,14 +155,48 @@ const chatProbe = {
     model = { ...model, transcript };
     rerender?.();
   },
-  /** True when the bubble for `handle` carries the busy pending projection. */
-  pendingAttrs(handle: string): { ariaBusy: string | null; dataPending: string | null; swipeDisabled: boolean; regenerateDisabled: boolean } | null {
+  /** A transcript entry whose opening the Host still leaves open for choice. */
+  withOpening(handle: string, text: string): void {
+    const existing = model.transcript.find((m) => m.handle === handle);
+    const opened: BrowserMessageV1 = Object.freeze({
+      handle,
+      role: existing?.role ?? "companion",
+      text,
+      locale: existing?.locale ?? "und",
+      order: existing?.order ?? 0,
+      revision: existing?.revision ?? 1,
+      openingVariant: Object.freeze({ variantId: "V".repeat(42) + "A", index: 0, count: 2, label: "Default", locked: false }),
+    });
+    const idx = model.transcript.findIndex((m) => m.handle === handle);
+    const transcript =
+      idx === -1
+        ? [...model.transcript, opened]
+        : model.transcript.map((m, i) => (i === idx ? opened : m));
+    model = { ...model, transcript };
+    rerender?.();
+  },
+  /**
+   * True when the bubble for `handle` carries the busy pending projection, and whether each of
+   * its own controls is disabled. `switcherDisabled` and `swipeDisabled` read the same
+   * `.swipe-btn` pair: the opening switcher and the variant switcher are one control shape, so a
+   * row's pair is whichever of the two the Host published for it.
+   */
+  pendingAttrs(handle: string): {
+    ariaBusy: string | null;
+    dataPending: string | null;
+    swipeDisabled: boolean;
+    switcherDisabled: boolean;
+    regenerateDisabled: boolean;
+  } | null {
     const li = document.querySelector(`li[data-handle="${handle}"]`);
     if (li === null) return null;
+    const buttons = [...li.querySelectorAll(".swipe-btn")] as HTMLButtonElement[];
+    const switcherDisabled = buttons.length > 0 && buttons.every((button) => button.disabled);
     return {
       ariaBusy: li.getAttribute("aria-busy"),
       dataPending: li.getAttribute("data-pending"),
-      swipeDisabled: [...li.querySelectorAll(".swipe-btn")].every((b) => (b as HTMLButtonElement).disabled) && li.querySelectorAll(".swipe-btn").length > 0,
+      swipeDisabled: switcherDisabled,
+      switcherDisabled,
       regenerateDisabled: (li.querySelector(".regenerate-btn") as HTMLButtonElement | null)?.disabled ?? false,
     };
   },
