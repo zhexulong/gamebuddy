@@ -112,7 +112,10 @@ internal sealed class DerivedDestinationSet
             {
                 string identity = location.NameOrUniqueName;
                 string? fallbackLabel = TryGetDisplayLabel(fallbackData, identity);
-                IReadOnlyList<string>? aliases = BuildExplicitAliases(label, TryGetDisplayLabel(currentData, identity), fallbackLabel);
+                // The INTERNAL identity is always an alias. This directory is built from `Data/Locations` display names
+                // while the topology's node set is built from `Game1.locations`, and that asymmetry made
+                // `find_destination("Farm")` answer `not_found` for a location the graph itself uses as a node.
+                IReadOnlyList<string> aliases = WithIdentityAlias(BuildExplicitAliases(label, TryGetDisplayLabel(currentData, identity), fallbackLabel), identity);
                 sourceNodes.Add(new NavigationSourceNode(
                     $"location:{identity}", label,
                     new NavigationDestination(contentOwner, identity, label, null, fallbackLabel, aliases),
@@ -124,12 +127,15 @@ internal sealed class DerivedDestinationSet
             {
                 if (matches.Length != 1)
                     continue;
-                string? label = TryGetDisplayLabel(currentData, identity);
-                if (string.IsNullOrWhiteSpace(label))
-                    continue;
+                string? displayLabel = TryGetDisplayLabel(currentData, identity);
+                // A location WITHOUT a display label is still a destination: the graph's nodes come from
+                // `Game1.locations`, and the Farm has no `Data/Locations.DisplayName`, so skipping these removed the very
+                // nodes a multi-hop plan has to name (`find_destination("Farm")` answered `not_found`). The internal
+                // identity is published as the label and as an alias, so a friendly name and an internal one both resolve.
+                string label = string.IsNullOrWhiteSpace(displayLabel) ? identity : displayLabel;
                 string? fallbackLabel = TryGetDisplayLabel(fallbackData, identity);
                 contextualLabels.TryGetValue(identity, out string? contextLabel);
-                IReadOnlyList<string>? aliases = BuildExplicitAliases(label, contextLabel, fallbackLabel);
+                IReadOnlyList<string> aliases = WithIdentityAlias(BuildExplicitAliases(label, contextLabel, fallbackLabel), identity);
                 destinations.Add(new NavigationDestination(contentOwner, identity, label, null, fallbackLabel, aliases));
             }
 
@@ -184,6 +190,19 @@ internal sealed class DerivedDestinationSet
         string text = TokenParser.ParseText(value.DisplayName, null, null, null) ?? string.Empty;
         return text.Length is >= 1 and <= 128 ? text : null;
     }
+
+    /// <summary>
+    /// The alias set with the internal identity ensured present. The destination directory is built from
+    /// `Data/Locations` display names while the topology nodes are `Game1.locations`, so a name a plan can read off
+    /// the graph must also be a name this search answers.
+    /// </summary>
+    private static IReadOnlyList<string> WithIdentityAlias(IReadOnlyList<string>? aliases, string identity)
+    {
+        if (aliases is null || aliases.Count == 0)
+            return new[] { identity };
+        return aliases.Contains(identity, StringComparer.Ordinal) ? aliases : aliases.Append(identity).ToArray();
+    }
+
 
     private static IReadOnlyList<string>? BuildExplicitAliases(string canonicalLabel, string? currentLabel, string? fallbackLabel)
     {
