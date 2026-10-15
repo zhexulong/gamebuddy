@@ -819,6 +819,60 @@ test("recognizes all current erased import-type forms but never erases executabl
   );
 });
 
+test("allows a symbol-keyed globalThis property, but stays fail-closed on unknown or shadowed symbol keys", async () => {
+  const shape = { "host/src/farmhand-companion-preview.ts": "export {};\n" };
+  await withFixture(
+    {
+      ...shape,
+      "host/src/main.ts": [
+        'const slot = Symbol.for("gamebuddy.import-boundary.symbol");',
+        "const binding = (globalThis as typeof globalThis & { [slot]?: unknown })[slot];",
+        'const direct = globalThis[Symbol.for("gamebuddy.import-boundary.direct")];',
+        "void binding; void direct;",
+      ].join("\n"),
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.equal(report.verdict, "passed", JSON.stringify(report.violations));
+    },
+  );
+  await withFixture(
+    {
+      ...shape,
+      "host/src/main.ts": ['const key = "process";', "const binding = globalThis[key];", "void binding;"].join("\n"),
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.deepEqual(report.violations, [
+        {
+          kind: "unresolved_dynamic_require",
+          importer: "host/src/main.ts",
+          specifier: null,
+          line: 2,
+          detail: "dynamic_requires_are_not_statically_resolvable",
+        },
+      ]);
+    },
+  );
+  await withFixture(
+    {
+      ...shape,
+      "host/src/main.ts": [
+        'const Symbol = { for: () => "process" };',
+        'const binding = globalThis[Symbol.for("gamebuddy.import-boundary.shadowed")];',
+        "void binding;",
+      ].join("\n"),
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.deepEqual(
+        report.violations.map(({ kind, line }) => ({ kind, line })),
+        [{ kind: "unresolved_dynamic_require", line: 2 }],
+      );
+    },
+  );
+});
+
 test("does not mistake private methods named require for CommonJS ingress, but follows private require bindings", async () => {
   await withFixture(
     {
@@ -1119,7 +1173,8 @@ test("enforces the generic mounted-turn facade, coordinator, authority, store, a
       "  return await startMountedAttempt(manifest, lease, invocation => consumeMountedAttemptInvocationAdmission(invocation, scope => runMountedProviderStartLedger(scope, previewPublisher)));",
       "}",
     ].join("\n"),
-    [execution]: "export async function runMountedProviderStartLedger(scope: unknown, preview?: unknown) { return scope ?? preview; }\n",
+    [execution]:
+      "export async function runMountedProviderStartLedger(scope: unknown, preview?: unknown) { return scope ?? preview; }\n",
     [transitionAuthority]: "export function createMountedTurnTransitionAuthority() {}\n",
     [coordinator]: [
       'import { createMountedTurnTransitionAuthority } from "../tavern/chat-thread-store.mounted-turn-transition.internal.js";',
@@ -1129,7 +1184,8 @@ test("enforces the generic mounted-turn facade, coordinator, authority, store, a
       "export const startMountedAttempt = 5; export const consumeMountedAttemptInvocationAdmission = 6;",
       "void createMountedTurnTransitionAuthority; void transitionMountedProviderStart; void transitionMountedPresentation;",
     ].join("\n"),
-    [store]: "export const acceptMountedPlayerMessage = 1; export const claimMountedAttempt = 2; export const transitionMountedProviderStart = 3; export const transitionMountedPresentation = 4;\n",
+    [store]:
+      "export const acceptMountedPlayerMessage = 1; export const claimMountedAttempt = 2; export const transitionMountedProviderStart = 3; export const transitionMountedPresentation = 4;\n",
   };
   await withFixture(intended, (root) => {
     const report = checkHostProductionImportBoundary({ root, roots });
@@ -1138,15 +1194,34 @@ test("enforces the generic mounted-turn facade, coordinator, authority, store, a
     assert.ok(report.inspectedFiles.includes(coordinator));
   });
   for (const [name, source, expectedKind] of [
-    ["authority mint", 'import { createMountedTurnTransitionAuthority } from "./tavern/chat-thread-store.mounted-turn-transition.internal";\n', "unauthorized_mounted_turn_transition_authority_import"],
-    ["provider transition", 'import { transitionMountedProviderStart } from "./tavern/chat-thread-store";\n', "unauthorized_mounted_turn_store_ingress_import"],
-    ["presentation transition", 'import { transitionMountedPresentation } from "./tavern/chat-thread-store";\n', "unauthorized_mounted_turn_store_ingress_import"],
-    ["acceptance bridge", 'import "./tavern/player-turn-acceptance.internal";\n', "unauthorized_mounted_turn_bridge_import"],
+    [
+      "authority mint",
+      'import { createMountedTurnTransitionAuthority } from "./tavern/chat-thread-store.mounted-turn-transition.internal";\n',
+      "unauthorized_mounted_turn_transition_authority_import",
+    ],
+    [
+      "provider transition",
+      'import { transitionMountedProviderStart } from "./tavern/chat-thread-store";\n',
+      "unauthorized_mounted_turn_store_ingress_import",
+    ],
+    [
+      "presentation transition",
+      'import { transitionMountedPresentation } from "./tavern/chat-thread-store";\n',
+      "unauthorized_mounted_turn_store_ingress_import",
+    ],
+    [
+      "acceptance bridge",
+      'import "./tavern/player-turn-acceptance.internal";\n',
+      "unauthorized_mounted_turn_bridge_import",
+    ],
     ["claim bridge", 'import "./tavern/provider-attempt-claim.internal";\n', "unauthorized_mounted_turn_bridge_import"],
   ]) {
     await withFixture({ ...intended, "host/src/main.ts": source }, (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(report.violations.some((item) => item.kind === expectedKind), name);
+      assert.ok(
+        report.violations.some((item) => item.kind === expectedKind),
+        name,
+      );
     });
   }
   await withFixture(
@@ -1187,7 +1262,10 @@ test("enforces the generic mounted-turn facade, coordinator, authority, store, a
     {
       ...intended,
       [providerStart]: intended[providerStart]
-        .replace("previewPublisher?: NativeChatPreviewPublisher", "previewPublisher?: NativeChatPreviewPublisher, speechSink?: unknown, extra?: unknown")
+        .replace(
+          "previewPublisher?: NativeChatPreviewPublisher",
+          "previewPublisher?: NativeChatPreviewPublisher, speechSink?: unknown, extra?: unknown",
+        )
         .replace(
           "runMountedProviderStartLedger(scope, previewPublisher)",
           "runMountedProviderStartLedger(scope, previewPublisher, speechSink)",

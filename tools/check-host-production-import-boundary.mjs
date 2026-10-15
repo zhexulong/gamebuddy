@@ -54,10 +54,7 @@ const CHAT_THREAD_STORE_MODULE = "tavern/chat-thread-store.ts";
 const MOUNTED_TURN_TRANSITION_AUTHORITY_MODULE = "tavern/chat-thread-store.mounted-turn-transition.internal.ts";
 const ACCEPTANCE_COORDINATOR_IMPORTS = new Set(["acceptMountedDurableTurn", "consumeMountedDurableAdmission"]);
 const CLAIM_COORDINATOR_IMPORTS = new Set(["claimMountedAttempt", "consumeMountedAttemptAdmission"]);
-const PROVIDER_START_COORDINATOR_IMPORTS = new Set([
-  "startMountedAttempt",
-  "consumeMountedAttemptInvocationAdmission",
-]);
+const PROVIDER_START_COORDINATOR_IMPORTS = new Set(["startMountedAttempt", "consumeMountedAttemptInvocationAdmission"]);
 const MOUNTED_STORE_IMPORTS = new Set([
   "acceptMountedPlayerMessage",
   "claimMountedAttempt",
@@ -616,7 +613,8 @@ function isExactProviderStartImplementation(source) {
     implementation.name?.text !== "startMountedChatProvider" ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
-    (implementation.parameters.length < 2 || implementation.parameters.length > 4) ||
+    implementation.parameters.length < 2 ||
+    implementation.parameters.length > 4 ||
     implementation.parameters.some(
       (parameter, index) =>
         parameter.name.kind !== ts.SyntaxKind.Identifier ||
@@ -682,11 +680,13 @@ function isExactProviderStartImplementation(source) {
     scopeCallback.body.arguments.length === implementation.parameters.length - 1 &&
     ts.isIdentifier(scopeCallback.body.arguments[0]) &&
     scopeCallback.body.arguments[0].text === scope &&
-    implementation.parameters.slice(2).every(
-      (parameter, offset) =>
-        ts.isIdentifier(scopeCallback.body.arguments[offset + 1]) &&
-        scopeCallback.body.arguments[offset + 1].text === parameter.name.getText(file),
-    )
+    implementation.parameters
+      .slice(2)
+      .every(
+        (parameter, offset) =>
+          ts.isIdentifier(scopeCallback.body.arguments[offset + 1]) &&
+          scopeCallback.body.arguments[offset + 1].text === parameter.name.getText(file),
+      )
   );
 }
 
@@ -703,11 +703,96 @@ function staticModuleMemberEnd(all, index, moduleBindings, property) {
   return -1;
 }
 
+/** Every identifier a binding name introduces, including destructured and rest elements. */
+function bindingIdentifiers(name) {
+  if (ts.isIdentifier(name)) return [name];
+  const identifiers = [];
+  for (const element of name.elements) {
+    if (ts.isOmittedExpression(element)) continue;
+    identifiers.push(...bindingIdentifiers(element.name));
+  }
+  return identifiers;
+}
+/** `Symbol()` and `Symbol.for(...)` are the two calls that yield a symbol value; `Symbol.keyFor` yields a string. */
+function isSymbolValueExpression(expression) {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  )
+    current = current.expression;
+  if (!ts.isCallExpression(current)) return false;
+  const callee = current.expression;
+  if (ts.isIdentifier(callee)) return callee.text === "Symbol";
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === "Symbol" &&
+    callee.name.text === "for"
+  );
+}
+
 function staticReferences(source) {
   const result = [];
   const all = tokens(source);
   const erasedTypeOffsets = erasedImportTypeOffsets(source);
   const ast = ts.createSourceFile("production-source.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  // A computed `globalThis[...]` can reach the string-keyed `process`/`global`
+  // capability only if its key can be one of those strings. A key that is
+  // provably a symbol value cannot: `globalThis[symbol]` and
+  // `globalThis["process"]` are different properties. The only symbol shape
+  // production uses is a `const` bound to `Symbol.for(...)`/`Symbol(...)` (a
+  // `const` cannot be reassigned), so resolve exactly that, and treat a name
+  // declared more than once - or any binding that shadows the `Symbol` builtin
+  // itself - as unknown and fail closed.
+  const symbolDeclarations = new Map();
+  const recordDeclaration = (name, symbolValued) => {
+    if (!ts.isIdentifier(name)) return;
+    const entry = symbolDeclarations.get(name.text) ?? { count: 0, symbolValued: false };
+    entry.count += 1;
+    entry.symbolValued ||= symbolValued;
+    symbolDeclarations.set(name.text, entry);
+  };
+  const collectDeclarations = (node) => {
+    if (ts.isVariableDeclaration(node)) {
+      const isConst = ts.isVariableDeclarationList(node.parent) && (node.parent.flags & ts.NodeFlags.Const) !== 0;
+      for (const identifier of bindingIdentifiers(node.name))
+        recordDeclaration(
+          identifier,
+          isConst && node.initializer !== undefined && isSymbolValueExpression(node.initializer),
+        );
+    } else if (ts.isParameter(node)) {
+      for (const identifier of bindingIdentifiers(node.name)) recordDeclaration(identifier, false);
+    } else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name !== undefined) {
+      recordDeclaration(node.name, false);
+    } else if (ts.isImportClause(node) && node.name !== undefined) {
+      recordDeclaration(node.name, false);
+    } else if (ts.isImportSpecifier(node) || ts.isNamespaceImport(node) || ts.isImportEqualsDeclaration(node)) {
+      recordDeclaration(node.name, false);
+    }
+    ts.forEachChild(node, collectDeclarations);
+  };
+  collectDeclarations(ast);
+  const symbolBuiltinIsShadowed = (symbolDeclarations.get("Symbol")?.count ?? 0) > 0;
+  const symbolValuedNames = new Set(
+    symbolBuiltinIsShadowed
+      ? []
+      : [...symbolDeclarations].filter(([, entry]) => entry.count === 1 && entry.symbolValued).map(([name]) => name),
+  );
+  const isProvablySymbolKey = (expression) => {
+    let current = expression;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isNonNullExpression(current)
+    )
+      current = current.expression;
+    if (ts.isIdentifier(current)) return symbolValuedNames.has(current.text);
+    return !symbolBuiltinIsShadowed && isSymbolValueExpression(current);
+  };
   const inspectRuntimeLoaders = (node) => {
     const unwrapTransparentGlobalReceiver = (value) => {
       let current = value;
@@ -753,7 +838,8 @@ function staticReferences(source) {
     const hasComputedGlobalMember =
       ts.isElementAccessExpression(node) &&
       globalObject(node.expression) &&
-      !ts.isStringLiteral(node.argumentExpression);
+      !ts.isStringLiteral(node.argumentExpression) &&
+      !isProvablySymbolKey(node.argumentExpression);
     const processCapablePath = (value) => {
       const unwrapped = unwrapTransparentGlobalReceiver(value);
       return (ts.isIdentifier(unwrapped) && unwrapped.text === "process") || globalProcessPath(unwrapped);
@@ -1207,7 +1293,9 @@ export function checkHostProductionImportBoundary({
   }
   // Mounted-turn facades, private bridges, and provider start are mandatory production
   // inspection roots whenever present, even when application roots do not import them.
-  const allRoots = [...new Set([...roots, ...MOUNTED_TURN_COMPOSITION_ROOTS.filter((path) => existsSync(resolve(root, path)))])];
+  const allRoots = [
+    ...new Set([...roots, ...MOUNTED_TURN_COMPOSITION_ROOTS.filter((path) => existsSync(resolve(root, path)))]),
+  ];
   const absoluteRoots = allRoots.map((path) => resolve(root, path));
   const pending = [];
   const visited = new Set();
@@ -1423,7 +1511,10 @@ export function checkHostProductionImportBoundary({
           ),
         );
       }
-      if ((isAnyMountedTurnBridge(root, importer) || isProviderStart(root, importer)) && isSemanticProductionCoordinatorInternal(root, target)) {
+      if (
+        (isAnyMountedTurnBridge(root, importer) || isProviderStart(root, importer)) &&
+        isSemanticProductionCoordinatorInternal(root, target)
+      ) {
         const allowed = isProviderStart(root, importer)
           ? PROVIDER_START_COORDINATOR_IMPORTS
           : isClaimBridge(root, importer)
@@ -1442,9 +1533,7 @@ export function checkHostProductionImportBoundary({
           );
       }
       if (isAnyMountedTurnBridge(root, importer) && isChatThreadStore(root, target)) {
-        const expectedIngress = isClaimBridge(root, importer)
-          ? "claimMountedAttempt"
-          : "acceptMountedPlayerMessage";
+        const expectedIngress = isClaimBridge(root, importer) ? "claimMountedAttempt" : "acceptMountedPlayerMessage";
         const exactStoreIngress =
           expectedIngress !== null &&
           reference.kind === "import" &&
@@ -1511,7 +1600,7 @@ export function checkHostProductionImportBoundary({
             facade: "claimMountedProviderAttemptFromFacade",
             runner: "claimMountedAttempt",
             consumer: "consumeMountedAttemptAdmission",
-             store: "claimStoreMountedAttempt",
+            store: "claimStoreMountedAttempt",
             storeImported: "claimMountedAttempt",
             command: false,
           })
