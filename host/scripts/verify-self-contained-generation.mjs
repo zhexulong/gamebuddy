@@ -78,7 +78,7 @@ export function parseRuntimeAdmission(text) {
  * Enumerates the artifact set the owner's acceptance depends on, by name, and
  * refuses with the exact missing piece rather than a generic failure.
  */
-export async function assertGenerationArtifactSet({ generationRoot, runtimeAdmission, declaredPackages }) {
+async function assertGenerationArtifactSet({ generationRoot, runtimeAdmission, declaredPackages }) {
   const required = [
     ["package.json", "missing_generation_manifest"],
     ["production-inventory.json", "missing_production_inventory"],

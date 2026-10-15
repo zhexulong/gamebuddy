@@ -5,7 +5,7 @@ import { renderMacros } from "../macro-engine.js";
 import type { TavernArtifactStore } from "../artifact-store.js";
 import { type Scenario, validateTavernArtifact } from "../types.js";
 
-export type PlayerScenarioProjection = Readonly<{
+type PlayerScenarioProjection = Readonly<{
   revision: number;
   name: string;
   description: string;
@@ -151,10 +151,7 @@ function preview(value: string): string {
  * rendered description is previewed AFTER rendering, so a macro that straddles
  * the preview bound is resolved whole rather than truncated into a stray `{{`.
  */
-export function renderScenarioProjection(
-  projection: PlayerScenarioProjection,
-  macros: MacroTable,
-): PlayerScenarioProjection {
+function renderScenarioProjection(projection: PlayerScenarioProjection, macros: MacroTable): PlayerScenarioProjection {
   const description = renderMacros(projection.description, macros);
   return Object.freeze({
     revision: projection.revision,
