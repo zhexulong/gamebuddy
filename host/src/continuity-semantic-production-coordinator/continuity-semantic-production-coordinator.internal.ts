@@ -1133,6 +1133,36 @@ export async function consumeMountedDurableAdmission<T>(
 }
 
 /**
+ * The one authorized swipe-position ingress. `store.selectSwipe` requires the
+ * coordinator-minted mounted transition authority, and only a live mounted lease
+ * record holds one; so a caller that has a store but no live mount cannot mutate
+ * a reply position. It neither creates nor selects a Chat and never prompts Pi.
+ */
+export async function selectMountedSwipeVariant(
+  manifest: HostDeploymentManifest,
+  lease: MountedChatRuntimeLease,
+  input: Readonly<{ messageId: string; targetIndex?: number; direction?: "prev" | "next" }>,
+): Promise<import("../tavern/chat-thread-store.js").ChatThreadState> {
+  const record = mountedChatRuntimeLeases.get(lease);
+  if (
+    record === undefined ||
+    !record.active ||
+    manifest.runtimeRoot !== record.runtimeRoot ||
+    manifest.principal.playerId !== record.principal.playerId ||
+    manifest.principal.companionId !== record.principal.companionId ||
+    manifest.principal.continuityId !== record.principal.continuityId ||
+    typeof input.messageId !== "string" ||
+    input.messageId.length === 0
+  )
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_swipe_selection_unavailable");
+  const store = record.store();
+  return await store.selectSwipe!(record.transitionAuthority.authority, record.chatThreadId, input.messageId, {
+    ...(input.targetIndex === undefined ? {} : { targetIndex: input.targetIndex }),
+    ...(input.direction === undefined ? {} : { direction: input.direction }),
+  });
+}
+
+/**
  * Coordinator-private cancel seam. It synchronously revokes the current
  * presentation epoch, then records the exact durable cancel claim while the
  * running prompt is drained. P6 may later supply an authenticated ingress,

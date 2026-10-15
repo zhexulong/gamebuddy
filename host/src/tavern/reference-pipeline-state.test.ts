@@ -450,9 +450,11 @@ test(
   const store = fx.store();
   const durable = await store.resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
   const reply = durable.messages.find((message) => message.role === "companion" && message.kind === "response");
-  await store.appendSwipeVariant(fx.lease.chatThreadId, reply.messageId, "A second variant.");
+  const { createMountedTurnTransitionAuthority } = await import(new URL("./chat-thread-store.mounted-turn-transition.internal.js", storeUrl).href);
+  const swipeAuthority = createMountedTurnTransitionAuthority();
+  await store.appendSwipeVariant(swipeAuthority.authority, fx.lease.chatThreadId, reply.messageId, "A second variant.");
   const withVariant = await fx.facade.read();
-  await store.selectSwipe(fx.lease.chatThreadId, reply.messageId, { direction: "prev" });
+  await internal.selectMountedSwipeVariant(fx.manifest, fx.lease, { messageId: reply.messageId, direction: "prev" });
   const restored = await fx.facade.read();
   await fx.lease.close();
   await fx.authority.close();

@@ -653,11 +653,17 @@ export type ChatThreadStore = Readonly<{
     }>,
   ): Promise<ChatThreadState>;
   selectSwipe?(
+    authority: MountedTurnTransitionAuthority,
     chatThreadId: string,
     messageId: string,
     selection: Readonly<{ targetIndex?: number; direction?: "prev" | "next" }>,
   ): Promise<ChatThreadState>;
-  appendSwipeVariant?(chatThreadId: string, messageId: string, newText: string): Promise<ChatThreadState>;
+  appendSwipeVariant?(
+    authority: MountedTurnTransitionAuthority,
+    chatThreadId: string,
+    messageId: string,
+    newText: string,
+  ): Promise<ChatThreadState>;
   /**
    * Ordinary exact-turn Stop mutation. It is intentionally independent from
    * the retired P4/P5 transition authority: the service supplies a current
@@ -790,6 +796,12 @@ export type PresentationTransition =
       operation: "commit_presentation";
       cancelEpoch: number;
       message: Readonly<{ messageId: string; text: string; occurredAtMs: number }>;
+      committedAtMs: number;
+    }>
+  | Readonly<{
+      operation: "commit_variant";
+      cancelEpoch: number;
+      variant: Readonly<{ targetMessageId: string; text: string; occurredAtMs: number }>;
       committedAtMs: number;
     }>
   | Readonly<{ operation: "claim_completion"; claimedAtMs: number }>
@@ -1840,7 +1852,8 @@ export function createChatThreadStore(
       });
     },
 
-    async selectSwipe(chatThreadId, messageId, selection): Promise<ChatThreadState> {
+    async selectSwipe(authority, chatThreadId, messageId, selection): Promise<ChatThreadState> {
+      assertMountedTurnTransitionAuthority(authority);
       assertId("chatThreadId", chatThreadId);
       assertId("messageId", messageId);
       return withDb((db) => {
@@ -1863,7 +1876,8 @@ export function createChatThreadStore(
       });
     },
 
-    async appendSwipeVariant(chatThreadId, messageId, newText): Promise<ChatThreadState> {
+    async appendSwipeVariant(authority, chatThreadId, messageId, newText): Promise<ChatThreadState> {
+      assertMountedTurnTransitionAuthority(authority);
       assertId("chatThreadId", chatThreadId);
       assertId("messageId", messageId);
       assertText(newText);
@@ -2465,6 +2479,54 @@ export function createChatThreadStore(
               greetingSource: null,
             }),
           );
+          break;
+        }
+        case "commit_variant": {
+          // A variant turn owns no new companion message: it appends a swipe to
+          // the existing reply position its ledger names, which is exactly the
+          // durable effect `appendSwipeVariant` performs - now only reachable
+          // through this authority-checked transition.
+          const variant = ledger.variant;
+          if (variant === undefined || variant.targetMessageId !== command.variant.targetMessageId)
+            throw new Error("chat_variant_target_mismatch");
+          const target = messages.find((message) => message.messageId === command.variant.targetMessageId);
+          if (target === undefined || target.role !== "companion" || target.kind !== "response")
+            throw new Error("chat_variant_target_not_found");
+          if (ledger.status === "presentation_committed") {
+            if (
+              ledger.presentation.expressionId !== command.variant.targetMessageId ||
+              ledger.presentation.cancelEpoch !== command.cancelEpoch ||
+              target.text !== command.variant.text
+            )
+              throw new Error("chat_variant_commit_conflict");
+            nextLedger = ledger;
+            break;
+          }
+          if (ledger.status !== "running") throw new Error("p5_presentation_source_running_required");
+          const variantPresentation = freezePresentationCommit(
+            Object.freeze({
+              expressionId: command.variant.targetMessageId,
+              messageId: command.variant.targetMessageId,
+              cancelEpoch: command.cancelEpoch,
+              committedAtMs: command.committedAtMs,
+            }),
+          );
+          nextLedger = freezePresentationCommittedTurn({
+            ...ledger,
+            status: "presentation_committed",
+            presentation: variantPresentation,
+          });
+          const nextIndex = target.swipes?.length ?? 1;
+          if (target.swipes === undefined)
+            db.prepare(
+              "INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, 0, ?)",
+            ).run(input.chatThreadId, command.variant.targetMessageId, target.text);
+          db.prepare(
+            "INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, ?, ?)",
+          ).run(input.chatThreadId, command.variant.targetMessageId, nextIndex, command.variant.text);
+          db.prepare(
+            "UPDATE tavern_messages SET text = ?, active_swipe_index = ? WHERE thread_id = ? AND message_id = ?",
+          ).run(command.variant.text, nextIndex, input.chatThreadId, command.variant.targetMessageId);
           break;
         }
         case "claim_completion": {
@@ -4008,6 +4070,7 @@ function presentationOf(ledger: Exclude<ChatTurnLedger, AcceptedQueuedTurn>): Pr
 
 function timestampFor(command: PresentationTransition): number {
   if (command.operation === "commit_presentation") return command.committedAtMs;
+  if (command.operation === "commit_variant") return command.committedAtMs;
   if (command.operation === "claim_completion") return command.claimedAtMs;
   if (command.operation === "complete") return command.completedAtMs;
   if (command.operation === "claim_cancel") return command.claimedAtMs;
@@ -4069,6 +4132,35 @@ function validatePresentationTransition(value: PresentationTransition): Presenta
         committedAtMs: committedAtMs as number,
       });
     }
+    case "commit_variant": {
+      if (!isRecord(value.variant)) break;
+      const variant = value.variant as Record<string, unknown>;
+      const cancelEpoch = value.cancelEpoch;
+      const committedAtMs = value.committedAtMs;
+      if (
+        !onlyKeys(value, ["operation", "cancelEpoch", "variant", "committedAtMs"]) ||
+        !Number.isSafeInteger(cancelEpoch) ||
+        (cancelEpoch as number) < 0 ||
+        !isTimestamp(committedAtMs) ||
+        !onlyKeys(variant, ["targetMessageId", "text", "occurredAtMs"])
+      )
+        break;
+      validateNormalMessage({
+        messageId: variant.targetMessageId as string,
+        text: variant.text as string,
+        occurredAtMs: variant.occurredAtMs as number,
+      });
+      return Object.freeze({
+        operation: "commit_variant",
+        cancelEpoch: cancelEpoch as number,
+        variant: Object.freeze({
+          targetMessageId: variant.targetMessageId as string,
+          text: variant.text as string,
+          occurredAtMs: variant.occurredAtMs as number,
+        }),
+        committedAtMs: committedAtMs as number,
+      });
+    }
     case "claim_completion":
       if (onlyKeys(value, ["operation", "claimedAtMs"]) && isTimestamp(value.claimedAtMs))
         return Object.freeze({ operation: "claim_completion", claimedAtMs: value.claimedAtMs });
@@ -4114,7 +4206,7 @@ function assertP5ReadBack(
   if (ledger === null) throw new Error("chat_p5_readback_mismatch");
   const operation = command.operation;
   const expected =
-    operation === "commit_presentation"
+    operation === "commit_presentation" || operation === "commit_variant"
       ? "presentation_committed"
       : operation === "claim_completion"
         ? "completion_claimed"
@@ -4127,8 +4219,13 @@ function assertP5ReadBack(
               : "failed";
   if (ledger.status !== expected || !isTurnWithAttempt(ledger)) throw new Error("chat_p5_readback_mismatch");
   if (ledger.attempt.attemptId !== input.attemptId) throw new Error("chat_p5_readback_mismatch");
-  if (operation === "commit_presentation" && ledger.status === "presentation_committed") {
-    if (ledger.presentation.expressionId !== command.message.messageId) throw new Error("chat_p5_readback_mismatch");
+  if (
+    (operation === "commit_presentation" || operation === "commit_variant") &&
+    ledger.status === "presentation_committed"
+  ) {
+    const committedExpressionId =
+      operation === "commit_presentation" ? command.message.messageId : command.variant.targetMessageId;
+    if (ledger.presentation.expressionId !== committedExpressionId) throw new Error("chat_p5_readback_mismatch");
   }
   if (operation === "fail" && ledger.status === "failed" && ledger.reasonCode !== command.reasonCode)
     throw new Error("chat_p5_readback_mismatch");

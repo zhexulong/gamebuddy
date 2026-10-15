@@ -860,3 +860,157 @@ test("the ordinary acceptance behind today's regenerate appends a second player 
     await removeTestRoot(root);
   }
 });
+
+/**
+ * Creates a thread whose reply is already durably committed, then a running
+ * variant turn that targets that reply. The variant turn mints no player row;
+ * its attempt is the only turn state.
+ */
+async function prepareRunningVariant(
+  root: string,
+): Promise<Readonly<{ attemptId: string; store: ReturnType<typeof createChatThreadStore>; base: number }>> {
+  const store = openStore(
+    root,
+    (() => {
+      let current = 100;
+      return () => current++;
+    })(),
+  );
+  const creation = createProfileAwareChatThreadCreationCapability(store, {
+    async readExact() {
+      return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) };
+    },
+  });
+  await creation.createExplicit({
+    chatThreadId: "thread_01",
+    companionId: "companion_01",
+    continuityId: "continuity_01",
+    chatSurfaceSessionId: "surface_01",
+    opening: {
+      messageId: "opening_01",
+      text: "Welcome to the tavern.",
+      source: {
+        greetingSetId: "greetings_01",
+        sourceRevision: 2,
+        canonicalHash: "a".repeat(64),
+        variantId: "alternate_01",
+        profileRevision: 3,
+        scenarioRevision: null,
+      },
+    },
+  });
+  await store.appendPlayer("thread_01", { messageId: "player_01", text: "Hello", occurredAtMs: 101 });
+  await store.commitResponse("thread_01", { messageId: "response_01", text: "First reply.", occurredAtMs: 102 });
+  const { acceptMountedPlayerMessage } = await import("./chat-thread-store.js");
+  const binding = bindingFor(root);
+  await acceptMountedPlayerMessage(binding, {
+    text: "Hello",
+    locale: "en-US",
+    idempotencyKey: "abcdefghijklmnopqrstuv",
+    expectedDraftRevision: 0,
+    variantTargetMessageId: "response_01",
+    authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+  });
+  const claimed = await claimMountedAttempt(binding);
+  const attemptId = claimed.attempt.attemptId;
+  const prefix = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
+  await transitionMountedProviderStart(
+    { ...bindingFor(root), attemptId },
+    { operation: "arm", observedAtMs: prefix + 1 },
+  );
+  await transitionMountedProviderStart(
+    { ...bindingFor(root), attemptId },
+    { operation: "running", statusClass: "success", observedAtMs: prefix + 2 },
+  );
+  const base = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
+  return { attemptId, store, base };
+}
+
+/**
+ * Item (c): the same-position variant commits through the presentation path. It
+ * appends a swipe to the existing reply row - no INSERT, no new player row - and
+ * an identical replay is idempotent. Every assertion reads the store back.
+ */
+test("commit_variant appends a swipe to the existing reply position and replays identically", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-p5-variant-");
+  try {
+    const { attemptId, store, base } = await prepareRunningVariant(root);
+    const committedAt = base + 10;
+    const committed = await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      {
+        operation: "commit_variant",
+        cancelEpoch: 0,
+        variant: { targetMessageId: "response_01", text: "Second reply.", occurredAtMs: committedAt },
+        committedAtMs: committedAt,
+      },
+    );
+    assert.equal(committed.status, "presentation_committed");
+    if (committed.status === "presentation_committed") {
+      assert.deepEqual(committed.presentation, {
+        expressionId: "response_01",
+        messageId: "response_01",
+        cancelEpoch: 0,
+        committedAtMs: committedAt,
+      });
+    }
+    const state = await store.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      state.messages.map((message) => message.messageId),
+      ["opening_01", "player_01", "response_01"],
+    );
+    assert.deepEqual(
+      state.messages.filter((message) => message.role === "player").map((message) => message.messageId),
+      ["player_01"],
+    );
+    const reply = state.messages[2]!;
+    assert.deepEqual(reply.swipes, ["First reply.", "Second reply."]);
+    assert.equal(reply.activeSwipeIndex, 1);
+    assert.equal(reply.text, "Second reply.");
+
+    // Replay of the identical variant command is idempotent and never appends a
+    // third swipe.
+    const replayed = await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      {
+        operation: "commit_variant",
+        cancelEpoch: 0,
+        variant: { targetMessageId: "response_01", text: "Second reply.", occurredAtMs: committedAt },
+        committedAtMs: committedAt,
+      },
+    );
+    assert.equal(replayed.status, "presentation_committed");
+    const afterReplay = await store.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(afterReplay.messages[2]!.swipes, ["First reply.", "Second reply."]);
+
+    // A conflicting replay is refused and mutates nothing.
+    await assert.rejects(
+      () =>
+        transitionMountedPresentation(
+          { ...bindingFor(root), attemptId },
+          {
+            operation: "commit_variant",
+            cancelEpoch: 0,
+            variant: { targetMessageId: "response_01", text: "A third reply.", occurredAtMs: committedAt },
+            committedAtMs: committedAt,
+          },
+        ),
+      /chat_variant_commit_conflict/,
+    );
+
+    // The same position is still a normal swipe position: selectSwipe restores
+    // the first text without adding a row.
+    const restored = await store.selectSwipe!(testTransitionAuthority.authority, "thread_01", "response_01", {
+      direction: "prev",
+    });
+    assert.deepEqual(
+      restored.messages.map((message) => message.messageId),
+      ["opening_01", "player_01", "response_01"],
+    );
+    assert.equal(restored.messages[2]!.text, "First reply.");
+    assert.equal(restored.messages[2]!.activeSwipeIndex, 0);
+    assert.deepEqual(restored.messages[2]!.swipes, ["First reply.", "Second reply."]);
+  } finally {
+    await removeTestRoot(root);
+  }
+});

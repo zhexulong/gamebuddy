@@ -2,6 +2,7 @@ import type { Static } from "typebox";
 import { join } from "node:path";
 import {
   isCurrentMountedChatRuntimeLease,
+  selectMountedSwipeVariant,
   stopMountedChatPresentationEpoch,
   type MountedChatRuntimeLease,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
@@ -458,7 +459,8 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
           lease.browserProjection.projectMessageHandle(m.messageId) === command.messageHandle,
       );
       if (!targetMessage) throw unavailable();
-      const state = await store.selectSwipe!(lease.chatThreadId, targetMessage.messageId, {
+      const state = await selectMountedSwipeVariant(manifest, lease, {
+        messageId: targetMessage.messageId,
         ...(command.direction === undefined ? {} : { direction: command.direction }),
         ...(command.targetIndex === undefined ? {} : { targetIndex: command.targetIndex }),
       });
