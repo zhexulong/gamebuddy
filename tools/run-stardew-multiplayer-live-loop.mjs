@@ -207,8 +207,12 @@ export async function main(argv) {
   const resultFile = join(runRoot, "driver-result.json");
   // The Mod reads only these two variables; the game instances are started by the
   // driver, so the loop runner gets its plan and trace directory by environment.
-  const hostLog = join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
-  const aiLog = join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", "SMAPI-latest.player-2.txt");
+  // THIS run's own streams. The driver redirects each role's console output into `$ProbeRoot/logs`, and the
+  // machine-global `SMAPI-latest*.txt` files are shared by every Stardew process on the box and overwritten by
+  // whichever run starts last -- archiving those put ANOTHER lane's logs into this trace (verified: the archived
+  // host log named a `D:\gb-fixture-lane\...` mods root while this run's was under `E:\gb-loop\`).
+  const hostLog = join(probeRoot, "logs", "host.stdout.log");
+  const aiLog = join(probeRoot, "logs", "ai-client.stdout.log");
 
   await mkdir(runRoot, { recursive: true });
   await mkdir(traceRoot, { recursive: true });
@@ -271,7 +275,9 @@ export async function main(argv) {
   writeFileSync(join(runRoot, "driver.stdout.txt"), run.stdout, "utf8");
   writeFileSync(join(runRoot, "driver.stderr.txt"), run.stderr, "utf8");
   const driverResult = parseDriverResult(run.stdout);
-  const loopResult = parseLoopResult(run.stdout);
+  // The driver wraps the runner's stdout into its own JSON (`actionResult`), so the loop's record is ESCAPED inside a
+  // string field rather than a line of its own -- which is why this was null on a run that produced a full report.
+  const loopResult = parseLoopResult(run.stdout) ?? parseLoopResult(driverResult?.actionResult ?? "");
   const state =
     run.timedOut === true
       ? "blocked"
