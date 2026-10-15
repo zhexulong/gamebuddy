@@ -43,6 +43,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeLocalClaimMailAttachmentFixture",
         "InitializeNativeLocalEnterExitWarpActionFixture",
         "InstallNativeLocalEnterMineLadderFixture",
+        "InitializeNativeLocalMoveLadderFixture",
         "InstallNativeLocalTailoringFixture",
         "InitializeNativeLocalColorPlacedObjectFixture",
         "InstallNativeLocalTalkToNpcFixture",
