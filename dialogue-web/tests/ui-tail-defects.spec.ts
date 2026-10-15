@@ -30,6 +30,13 @@ type TurnFixture = Readonly<{ state: string; canCancel: boolean }>;
 type RootOptions = Readonly<{
   /** The mounted Chat's authoritative turn, or null for an idle conversation. */
   turn?: TurnFixture | null;
+  /**
+   * Project `chat.submit` as available while that turn exists. The real Host
+   * never does (it projects the operation as `busy` whenever a turn exists); the
+   * poll-budget journeys use this shape, so the composer's own lock can be told
+   * apart from the turn fact.
+   */
+  submitAvailableWithTurn?: boolean;
   transcript?: readonly Readonly<Record<string, unknown>>[];
 }>;
 
@@ -57,7 +64,12 @@ function composedRoot(options: RootOptions = {}) {
               },
             ]
           : [
-              { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "busy", routeId: "chat.submit" },
+              {
+                operationId: "chat.submit",
+                labelKey: "tavern.operation.submit",
+                availability: options.submitAvailableWithTurn === true ? "available" : "busy",
+                routeId: "chat.submit",
+              },
               {
                 operationId: "chat.cancel",
                 labelKey: "tavern.operation.cancel",
@@ -332,9 +344,12 @@ test("item 4: a queued turn reads as busy instead of a greyed-out send button", 
       stopButtons: section.querySelectorAll(".stop-button").length,
       busy: busy === null ? null : { tag: busy.tagName.toLowerCase(), label: busy.getAttribute("aria-label") },
       statusWord: status === null ? null : status.getAttribute("aria-label"),
+      fieldDisabled: section.querySelector<HTMLTextAreaElement>(".composer-textarea")!.disabled,
     };
   });
   console.log(`[item-4 queued] ${JSON.stringify(measured)}`);
+
+  expect(measured.fieldDisabled, "the Host projects chat.submit as busy, so the field is locked").toBe(true);
 
   expect(measured.sendButtons, "no greyed send button stands in for a running turn").toBe(0);
   expect(measured.stopButtons, "and no Stop is offered where the Host cannot cancel").toBe(0);
@@ -466,4 +481,35 @@ test("item 8: one long opening does not fill the whole Chats card", async ({ pag
     `the card measures ${measured.cardHeight}px of the ${measured.viewportHeight}px first screen`,
   ).toBeLessThan(200);
   expect(Number.parseInt(measured.clamp, 10), "and the clamp is a real line clamp").toBeGreaterThanOrEqual(2);
+});
+
+/**
+ * The field's own lock and the action slot answer two different questions, and
+ * this pins the split: the field follows the Host's own "would a submission be
+ * accepted now" (`disabled` = `!submitAvailable`), while the slot shows the turn.
+ *
+ * The poll-budget journeys run with a turn the Host still reports as `running`
+ * while its submit operation stays available - a shape the real Host never
+ * projects (`chat.submit` is `busy` whenever a turn exists, per
+ * `reference-pipeline-state.ts` `projectOperations`) - and there the field must
+ * stay usable: a client-side lock keyed to the turn would outlive the poll's own
+ * budget and keep the player out of the conversation for good, which is exactly
+ * what `composed-reference-game-browser.spec.ts` ("a turn that never settles")
+ * measures after the budget expires.
+ */
+test("item 4: the field's lock is the Host's submit availability, not the turn", async ({ page }) => {
+  await stubShell(page, { turn: { state: "running", canCancel: false }, submitAvailableWithTurn: true });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+
+  const measured = await page.evaluate(() => ({
+    fieldDisabled: document.querySelector<HTMLTextAreaElement>(".composer-textarea")!.disabled,
+    busy: document.querySelectorAll(".composer-section [data-composer-busy]").length,
+    stop: document.querySelectorAll(".composer-section .stop-button").length,
+  }));
+  console.log(`[item-4 split] ${JSON.stringify(measured)}`);
+
+  expect(measured.busy, "the turn in flight is still shown in the action slot").toBe(1);
+  expect(measured.stop, "and Stop is still withheld where the Host cannot cancel").toBe(0);
+  expect(measured.fieldDisabled, "the field follows the Host's submit availability, not the turn").toBe(false);
 });

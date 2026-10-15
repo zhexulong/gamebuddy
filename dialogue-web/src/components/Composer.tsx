@@ -197,7 +197,13 @@ export function Composer({
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           rows={1}
-          disabled={disabled || isGenerating}
+          // The field's own lock is the Host's answer to "would a submission be
+          // accepted now" (`disabled` = `!submitAvailable`, which is false while a
+          // turn exists because the Host projects `chat.submit` as busy then). A
+          // turn in flight is therefore shown by the action slot below, not by a
+          // second, client-side lock here: the poll's own budget ending must leave
+          // the field usable the moment the Host would take a message again.
+          disabled={disabled}
           aria-label={placeholder}
         />
         <div className="composer-actions">
