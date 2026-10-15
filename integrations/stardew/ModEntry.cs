@@ -2682,7 +2682,7 @@ public sealed partial class ModEntry : Mod
     /// BodyProgramJournal store. A missing or non-canonical root makes the store
     /// constructor fail closed in the caller; no reflection or guessed path is ever used.
     /// </summary>
-    private static string GetBodyProgramJournalRoot() => StardewModdingAPI.Constants.SavesPath;
+    internal static string GetBodyProgramJournalRoot() => StardewModdingAPI.Constants.DataPath;
 
     /// <summary>
     /// Mod-minted opaque policy identity bound to this exact live capability

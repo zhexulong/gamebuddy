@@ -6,16 +6,44 @@ namespace GameBuddy.Stardew;
 
 /// <summary>
 /// Mod-owned, scope-fixed journal on the admitted per-user Stardew data root.
-/// The target and its temporary sibling are always on the same volume.
+/// The target and its temporary sibling are always on the same volume, and one
+/// scope path is held by at most one live writer through the scope lease below.
 /// </summary>
-internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
+internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore, IDisposable
 {
     internal const string SchemaNamespace = "BodyProgramJournal-v1";
+
+    /// <summary>
+    /// Named reason this store reports when another live store already holds the
+    /// same scope path. Two writers on one scope path would each commit a
+    /// complete state replacement, so one of them would silently drop the
+    /// other's authority transitions; the second writer fails closed instead.
+    /// </summary>
+    internal const string ScopeContendedReason = "body_program_journal_scope_contended";
+
     private const int MaximumPathLength = 240;
+
+    /// <summary>
+    /// ERROR_SHARING_VIOLATION as an HRESULT: the operating system's own proof
+    /// that an existing handle denies sharing this path. Any other IOException
+    /// from the same open is a different failure and is not reported as scope
+    /// contention.
+    /// </summary>
+    private const int SharingViolationHResult = unchecked((int)0x80070020);
     private readonly string canonicalRoot;
     private readonly string targetPath;
+    private readonly string leasePath;
     private readonly object lifecycleGate = new();
+    private FileStream? scopeLease;
     private bool closed;
+
+    /// <summary>
+    /// The named reason a write failed closed for. Only a lost scope lease has a
+    /// name here; a successful write and every other failure both leave it null,
+    /// so the returned boolean stays the verdict and this is only the one case a
+    /// caller cannot otherwise tell apart from a generic persistence failure.
+    /// </summary>
+    internal string? ScopeContentionReason { get; private set; }
 
     internal WindowsBodyProgramJournalStore(string canonicalRoot, BridgeScope scope)
     {
@@ -57,13 +85,25 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
 
         this.canonicalRoot = fullRoot;
         this.targetPath = candidate;
+        this.leasePath = Path.Combine(scopeDirectory, ".journal.lock");
     }
 
     internal void Close()
     {
         lock (this.lifecycleGate)
+        {
             this.closed = true;
+            this.scopeLease?.Dispose();
+            this.scopeLease = null;
+        }
     }
+
+    /// <summary>
+    /// The disposable-surface twin of <see cref="Close"/>. The scope lease is a
+    /// real retained handle, so the store is a disposable resource; the Mod
+    /// lifecycle still closes it by name at its own close point.
+    /// </summary>
+    public void Dispose() => this.Close();
 
     public BodyProgramJournalReadResult Read()
     {
@@ -145,6 +185,12 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
             string directory = Path.GetDirectoryName(this.targetPath)!;
             if (!EnsureNonReparseDirectoryTree(this.canonicalRoot, directory))
                 return false;
+            if (!this.TryHoldScopeLease(out bool contended))
+            {
+                this.ScopeContentionReason = contended ? ScopeContendedReason : null;
+                return false;
+            }
+            this.ScopeContentionReason = null;
             temporaryPath = Path.Combine(directory, $".journal.{Guid.NewGuid():N}.tmp");
 
             using (FileStream stream = new(
@@ -161,10 +207,17 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
                 stream.Flush(flushToDisk: true);
             }
 
-            // This check is deliberately immediately before the path-based commit. Windows does
-            // not expose an atomic "non-reparse path + replace" operation through this API; the
-            // remaining rename/reparse race is therefore an explicit evidence gap, not hidden by
-            // claiming that the preflight is a binding.
+            // The commit point. The temp was created as a literal sibling of the
+            // target, so the rename below cannot cross a volume boundary: the
+            // same-volume precondition is a property of how the temp is named,
+            // not a probe that could fail. The preflight is deliberately
+            // immediately before the path-based commit and is not claimed to be
+            // a binding: Windows exposes no atomic "non-reparse path + replace"
+            // operation through this API, so a reparse substitution landing
+            // between the check and the rename is the one residual race. It is
+            // recorded here rather than hidden, and it is left open because
+            // closing it needs handle-relative NtCreateFile opens, a native
+            // boundary this store does not own.
             if (!TryGetSafeTarget(this.targetPath, out bool targetExists))
                 return false;
 
@@ -187,6 +240,46 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore
                 try { File.Delete(temporaryPath); }
                 catch { /* A stale temp is never an authority. */ }
             }
+        }
+    }
+
+    /// <summary>
+    /// Fails closed when another live store already holds this exact scope path,
+    /// and holds that path for this store's write lifetime once it does. The
+    /// guard is the operating system's own refusal of a second
+    /// <see cref="FileShare.None"/> handle on the scope's lease file: the file's
+    /// existence is never the lock, only a live retained handle is, so a lease
+    /// file left behind by a crashed process is not a permanent refusal and no
+    /// staleness rule has to be guessed here. Reads and the restart fence are
+    /// deliberately unaffected: a reopened store may always read the committed
+    /// target, and only a second writer is refused.
+    /// </summary>
+    private bool TryHoldScopeLease(out bool contended)
+    {
+        contended = false;
+        if (this.scopeLease is not null)
+            return true;
+        try
+        {
+            if (!TryGetSafeTarget(this.leasePath, out _))
+                return false;
+            this.scopeLease = new FileStream(
+                this.leasePath,
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.None,
+                bufferSize: 1,
+                options: FileOptions.None);
+            return true;
+        }
+        catch (IOException exception) when (exception.HResult == SharingViolationHResult)
+        {
+            contended = true;
+            return false;
+        }
+        catch
+        {
+            return false;
         }
     }
 
