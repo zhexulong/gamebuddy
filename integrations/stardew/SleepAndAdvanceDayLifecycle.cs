@@ -67,8 +67,16 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// a client it syncs over the network; both happen before the new day is
     /// actually playable. Claiming <c>day_advanced</c> before DayStarted would
     /// let the Agent act mid-save.
+    ///
+    /// The budget is the ACTION's own (its descriptor allows 540 s), not a tighter
+    /// one of its own: measured live, a native night had not reached DayStarted 60 s
+    /// after the counter advanced - the run reported <c>day_start_not_observed</c> and
+    /// then the new day's own snapshot arrived (dayOfMonth +1, clock +120, actionable)
+    /// - so the previous 3600-frame budget was reporting the engine as late clock rather
+    /// than the night as unfinished. The lifecycle's overall <c>timeoutSeconds</c>
+    /// deadline still bounds this, so a night that genuinely never starts cannot spin.
     /// </summary>
-    private const int DayStartFrameBudget = 3600;
+    private const int DayStartFrameBudget = 540 * 60;
 
     private readonly int minimumOnlineFarmers;
 
