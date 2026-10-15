@@ -13,6 +13,7 @@ import {
   transitionMountedProviderStart as rawTransitionP4MountedProviderStart,
   transitionMountedPresentation as rawTransitionP5MountedPresentation,
   acknowledgeMountedWorldInfoBinding,
+  boundedVisibleTail,
   type TavernStableManagedWorldInfoBinding,
 } from "./chat-thread-store.js";
 import { createMountedTurnTransitionAuthority } from "./chat-thread-store.mounted-turn-transition.internal.js";
@@ -1047,4 +1048,77 @@ test("the volatile scan window is the bound book's declared depth, not the whole
   // A non-positive or non-integer depth never degrades to scanning everything.
   assert.equal(boundedVisibleTail(messages, 0), "");
   assert.equal(boundedVisibleTail(messages, Number.NaN), "");
+});
+
+/**
+ * The durable half of the same-position variant decision, pinned where it already holds. The two
+ * writes a regenerate/swipe path must use are `appendSwipeVariant` and `selectSwipe`, and neither
+ * may add a transcript row: the reply position gains variants, the transcript does not grow. Every
+ * assertion is made on a read-back, and the variant-scan assertion reads the same bounded tail the
+ * per-turn World Info selection uses, so "the active variant is the visible one" is proven against
+ * the Host's own context assembly rather than against this store's return value.
+ */
+test("a swipe variant is the same reply position: one player row, and the active variant is the text the Host reads", async () => {
+  const { root, store: s, creation } = await store();
+  const reopened = createChatThreadStore(root, "a".repeat(64));
+  try {
+    await creation.createExplicit(request());
+    await s.appendPlayer("thread_01", { messageId: "player_01", text: "Hello", occurredAtMs: 101 });
+    await s.commitResponse("thread_01", { messageId: "response_01", text: "Hello back", occurredAtMs: 102 });
+
+    const after = await s.appendSwipeVariant!("thread_01", "response_01", "Hello again");
+    assert.deepEqual(
+      after.messages.map((message) => message.messageId),
+      ["opening_01", "player_01", "response_01"],
+    );
+    assert.deepEqual(
+      after.messages.filter((message) => message.role === "player").map((message) => message.messageId),
+      ["player_01"],
+    );
+    const reply = after.messages[2]!;
+    assert.deepEqual(reply.swipes, ["Hello back", "Hello again"]);
+    assert.equal(reply.activeSwipeIndex, 1);
+    assert.equal(reply.text, "Hello again");
+    // The bounded visible tail the per-turn World Info selection scans carries the active
+    // variant and not the abandoned one.
+    assert.equal(boundedVisibleTail(after.messages, 2), "Hello\nHello again");
+
+    const restored = await s.selectSwipe!("thread_01", "response_01", { direction: "prev" });
+    assert.deepEqual(
+      restored.messages.map((message) => message.messageId),
+      ["opening_01", "player_01", "response_01"],
+    );
+    assert.equal(restored.messages[2]!.text, "Hello back");
+    assert.equal(restored.messages[2]!.activeSwipeIndex, 0);
+    assert.deepEqual(restored.messages[2]!.swipes, ["Hello back", "Hello again"]);
+    assert.equal(boundedVisibleTail(restored.messages, 2), "Hello\nHello back");
+
+    // Both halves are durable, not this store's own memory: a second connection on the same
+    // root/continuity reads the same position and the same selection.
+    const durable = await reopened.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      durable.messages.map((message) => message.messageId),
+      ["opening_01", "player_01", "response_01"],
+    );
+    assert.equal(durable.messages[2]!.text, "Hello back");
+    assert.equal(durable.messages[2]!.activeSwipeIndex, 0);
+    assert.deepEqual(durable.messages[2]!.swipes, ["Hello back", "Hello again"]);
+
+    // A player line is never a variant position, in either direction, and an unknown
+    // message is not a silent no-op.
+    await assert.rejects(
+      () => s.appendSwipeVariant!("thread_01", "player_01", "Not a reply"),
+      /chat_thread_swipe_not_allowed/,
+    );
+    await assert.rejects(
+      () => s.selectSwipe!("thread_01", "player_01", { direction: "next" }),
+      /chat_thread_swipe_not_allowed/,
+    );
+    await assert.rejects(() => s.appendSwipeVariant!("thread_01", "missing_01", "No"), /message_not_found/);
+    await assert.rejects(() => s.selectSwipe!("thread_01", "missing_01", { direction: "next" }), /message_not_found/);
+  } finally {
+    reopened.close?.();
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
 });

@@ -253,11 +253,7 @@ test(
       if (entry.turn !== null) {
         assert.equal(TavernBrowserValidatorsV1.BrowserTurnV1Schema.Check(entry.turn), true, entry.target);
         assert.equal(entry.turn.projectionRevision, 1, entry.target);
-        assert.equal(
-          entry.turn.canCancel,
-          entry.target === "running",
-          entry.target,
-        );
+        assert.equal(entry.turn.canCancel, entry.target === "running", entry.target);
         assert.match(entry.turn.handle, /^[A-Za-z0-9_-]{43}$/, entry.target);
         assert.notEqual(entry.turn.handle, entry.turnId, entry.target);
       }
@@ -270,9 +266,8 @@ test(
           {
             operationId: "chat.submit",
             labelKey: "tavern.operation.submit",
-            availability: entry.turn === null || ["completed", "cancelled", "failed"].includes(entry.target)
-              ? "available"
-              : "busy",
+            availability:
+              entry.turn === null || ["completed", "cancelled", "failed"].includes(entry.target) ? "available" : "busy",
             routeId: "chat.submit",
           },
           {
@@ -425,7 +420,12 @@ test(
     assert.equal(queued.turn?.state, "queued");
     assert.deepEqual(queued.operations, [
       { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "busy", routeId: "chat.submit" },
-      { operationId: "chat.cancel", labelKey: "tavern.operation.cancel", availability: "unavailable", routeId: "chat.cancel" },
+      {
+        operationId: "chat.cancel",
+        labelKey: "tavern.operation.cancel",
+        availability: "unavailable",
+        routeId: "chat.cancel",
+      },
     ]);
     for (const operation of [...pristine.operations, ...queued.operations])
       assert.equal(TavernBrowserValidatorsV1.TavernBrowserOperationV1Schema.Check(operation), true);
@@ -434,5 +434,80 @@ test(
         assert.equal(TavernBrowserValidatorsV1.BrowserTurnV1Schema.Check(readable.turn), true);
     }
     assert.equal(result.profileRejection, "Error: reference_pipeline_state_unavailable");
+  },
+);
+
+test(
+  "a swipe variant reaches the browser as the same reply position, and the Host publishes the plain position",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const result = (await mounted(`
+  const fx = await fixture();
+  await drive(fx, "completed");
+  const before = await fx.facade.read();
+  // The two writes a regenerate/swipe path owns, through the store itself: the reply
+  // position gains a variant, no transcript row is created by either write.
+  const store = fx.store();
+  const durable = await store.resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const reply = durable.messages.find((message) => message.role === "companion" && message.kind === "response");
+  await store.appendSwipeVariant(fx.lease.chatThreadId, reply.messageId, "A second variant.");
+  const withVariant = await fx.facade.read();
+  await store.selectSwipe(fx.lease.chatThreadId, reply.messageId, { direction: "prev" });
+  const restored = await fx.facade.read();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({ before, withVariant, restored }));
+`)) as Record<string, unknown>;
+    const before = result.before as ReferencePipelineState;
+    const withVariant = result.withVariant as ReferencePipelineState;
+    const restored = result.restored as ReferencePipelineState;
+
+    // The reply the drive committed is one position of a one-position set.
+    const firstPosition = before.transcript.find((message) => message.text === "Synthetic companion reply.");
+    assert.ok(firstPosition, "the committed reply is in the transcript");
+    assert.equal(firstPosition.swipeInfo, undefined, "a one-position reply publishes no swipe control");
+    assert.equal(before.transcript.filter((message) => message.role === "player").length, 1);
+
+    // The variant is the same reply position: same handle, same order, same row count,
+    // still exactly one player row. A variant that appended a row would change all three.
+    const appended = withVariant.transcript.find((message) => message.swipeInfo !== undefined);
+    assert.ok(appended, "the appended variant is projected with its swipe position");
+    assert.equal(appended.handle, firstPosition.handle, "the variant is the same reply position");
+    assert.equal(appended.order, firstPosition.order, "the variant keeps the reply's transcript order");
+    assert.equal(appended.role, "companion");
+    assert.equal(appended.text, "A second variant.");
+    assert.deepEqual(appended.swipeInfo, {
+      currentIndex: 1,
+      totalSwipes: 2,
+      label: "2/2",
+      hasPrevious: true,
+      hasNext: false,
+    });
+    assert.equal(withVariant.transcript.length, before.transcript.length);
+    assert.equal(withVariant.transcript.filter((message) => message.role === "player").length, 1);
+    assert.equal(
+      withVariant.transcript.filter((message) => message.text === "Synthetic companion reply.").length,
+      0,
+      "the abandoned variant is no longer the visible text",
+    );
+
+    // Selecting the previous variant swaps the text back at the same position.
+    const selected = restored.transcript.find((message) => message.swipeInfo !== undefined);
+    assert.ok(selected);
+    assert.equal(selected.handle, firstPosition.handle);
+    assert.equal(selected.text, "Synthetic companion reply.");
+    assert.deepEqual(selected.swipeInfo, {
+      currentIndex: 0,
+      totalSwipes: 2,
+      label: "1/2",
+      hasPrevious: false,
+      hasNext: true,
+    });
+    assert.equal(restored.transcript.length, before.transcript.length);
+    assert.equal(restored.transcript.filter((message) => message.role === "player").length, 1);
+
+    for (const readable of [before, withVariant, restored])
+      for (const message of readable.transcript)
+        assert.equal(TavernBrowserValidatorsV1.BrowserMessageV1Schema.Check(message), true);
   },
 );
