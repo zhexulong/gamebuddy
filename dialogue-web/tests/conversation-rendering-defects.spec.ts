@@ -10,8 +10,11 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  *      inboard. A player's avatar belongs on the outer (right) boundary.
  *   2. The player's own line was printed twice: the monogram read 你 and the
  *      author line above the bubble read 你 again, so input read as "[你] 你: 你好".
- *   3. The surface heading's scripted focus was painted in the saturated accent,
- *      so every static one-word heading read as an unclicked pink badge.
+ *   3. The surface heading's focus indicator was painted in the saturated accent,
+ *      so every static one-word heading read as an unclicked pink badge. Its
+ *      replacement hairline then measured 1.48:1 - under the 3:1 a focus
+ *      indicator needs - on the mount and keyboard paths, and the pointer path
+ *      drew no indicator at all.
  *   4. The first screen stacked four titles - the app bar's mark and companion,
  *      the surface heading, the transcript's untitled placeholder - and printed
  *      the companion's name a third time in the zero state's plate.
@@ -279,34 +282,124 @@ test("defect 2: the player's own line is not repeated above the bubble", async (
 
 // --- defect 3 ----------------------------------------------------------------
 
-test("defect 3: the surface heading's scripted focus is a colourless hairline, not the accent badge", async ({ page }) => {
+/**
+ * The heading's focus indicator is read the way the eye meets it: the outline the
+ * browser computed, composited over the tone it is drawn on, as a WCAG contrast
+ * ratio. Both the outline and the colour behind it come from the live cascade.
+ */
+const headingFocusReading = () => {
+  const heading = document.querySelector<HTMLElement>(".surface-header h2")!;
+  const style = getComputedStyle(heading);
+  const parse = (value: string): [number, number, number, number] => {
+    const match = /rgba?\(([^)]+)\)/u.exec(value);
+    if (match === null) return [0, 0, 0, 0];
+    const parts = match[1]!.split(",").map((part) => Number(part.trim()));
+    return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+  };
+  const linear = (channel: number): number => {
+    const scaled = channel / 255;
+    return scaled <= 0.04045 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = (rgb: readonly number[]): number =>
+    0.2126 * linear(rgb[0]!) + 0.7152 * linear(rgb[1]!) + 0.0722 * linear(rgb[2]!);
+  let backdrop: number[] = [12, 11, 11];
+  for (let node: HTMLElement | null = heading; node !== null; node = node.parentElement) {
+    const value = parse(getComputedStyle(node).backgroundColor);
+    if (value[3] === 1) {
+      backdrop = [value[0]!, value[1]!, value[2]!];
+      break;
+    }
+  }
+  const outline = parse(style.outlineColor);
+  const composited = [0, 1, 2].map(
+    (index) => outline[index]! * outline[3]! + backdrop[index]! * (1 - outline[3]!),
+  );
+  const ratio =
+    (Math.max(luminance(composited), luminance(backdrop)) + 0.05) /
+    (Math.min(luminance(composited), luminance(backdrop)) + 0.05);
+  return {
+    text: (heading.textContent ?? "").trim(),
+    isActive: document.activeElement === heading,
+    focusVisible: heading.matches(":focus-visible"),
+    outlineStyle: style.outlineStyle,
+    outlineWidth: style.outlineWidth,
+    outlineColor: style.outlineColor,
+    backdrop: `rgb(${backdrop.join(", ")})`,
+    ratio: Math.round(ratio * 100) / 100,
+  };
+};
+
+/**
+ * The heading is focused by the shell, not by the player, and the measured matrix
+ * is the whole point of this test:
+ *
+ *   path             :focus-visible  outline before            contrast before
+ *   mount            true            1px rgba(255,255,255,.15)       1.48:1
+ *   pointer switch   false           none - no indicator at all           -
+ *   keyboard switch  true            1px rgba(255,255,255,.15)       1.48:1
+ *
+ * So `--border-strong` was under the 3:1 floor a focus indicator needs on the two
+ * paths that drew it, and the pointer path drew nothing at all. One
+ * `:focus-visible` selector cannot separate "a surface entered with the keyboard"
+ * from "a page that has had no input yet" - Chromium matches it for both - so the
+ * heading cannot wear the product's gold ring on the keyboard path alone without
+ * wearing it for the whole pre-interaction life of the surface. It keeps one
+ * quiet, colourless indicator on every path instead, at a contrast that clears
+ * 3:1; the distinction that survives is the one the lane drew (a grey hairline on
+ * the heading, the product's ring on the controls).
+ *
+ * The assertions, and the failure each one catches:
+ *  - the heading takes focus on all three paths: catches a surface that moved
+ *    focus somewhere else entirely;
+ *  - the indicator is drawn, is a 1 px hairline and is not the accent on all
+ *    three: catches the saturated 2px badge border coming back, and catches the
+ *    pointer path being left with no indicator;
+ *  - every drawn hairline measures 3:1 or better against the tone behind it:
+ *    catches the 1.48:1 `--border-strong` hairline, which is what the audit
+ *    measured as 1.3:1;
+ *  - a control reached with the keyboard still paints the product's own ring:
+ *    catches a quiet heading indicator that quietly replaced the real focus ring
+ *    everywhere.
+ */
+test("defect 3: the surface heading's focus indicator is a colourless hairline that clears 3:1 on every path", async ({ page }) => {
   await mountShell(page);
 
-  const focused = await page.evaluate(() => {
-    const heading = document.querySelector<HTMLElement>(".surface-header h2")!;
-    const style = getComputedStyle(heading);
-    return {
-      text: (heading.textContent ?? "").trim(),
-      isActive: document.activeElement === heading,
-      focusVisible: heading.matches(":focus-visible"),
-      outlineStyle: style.outlineStyle,
-      outlineWidth: style.outlineWidth,
-      outlineColor: style.outlineColor,
-      borderRadius: style.borderRadius,
-    };
-  });
-  console.log(`[defect-3] mount: ${JSON.stringify(focused)}`);
+  const mounted = await page.evaluate(headingFocusReading);
+  console.log(`[defect-3] mount: ${JSON.stringify(mounted)}`);
+  expect(mounted.isActive, "the heading takes focus on mount").toBe(true);
 
-  expect(focused.isActive, "the heading takes focus on mount").toBe(true);
-  expect(focused.outlineStyle, "scripted focus still shows an indicator").not.toBe("none");
-  expect(focused.outlineWidth, "the indicator is a hairline, not a 2px badge border").toBe("1px");
-  expect(
-    focused.outlineColor,
-    `the scripted focus ring is ${focused.outlineColor}, the saturated accent; it must be a low-contrast hairline`,
-  ).not.toBe("rgb(200, 120, 125)");
+  // A surface switch made with the pointer, and one made with the keyboard: the
+  // two paths a player actually reaches a surface by.
+  await openSurface(page, "游戏", "game-surface");
+  const pointer = await page.evaluate(headingFocusReading);
+  console.log(`[defect-3] pointer switch: ${JSON.stringify(pointer)}`);
+  expect(pointer.isActive, "the heading takes focus on a pointer switch").toBe(true);
+
+  const entry = page.getByRole("button", { name: "角色", exact: true });
+  if (!(await entry.isVisible())) await page.getByRole("button", { name: "更多", exact: true }).click();
+  await entry.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("characters-surface")).toBeVisible();
+  const keyboard = await page.evaluate(headingFocusReading);
+  console.log(`[defect-3] keyboard switch: ${JSON.stringify(keyboard)}`);
+  expect(keyboard.isActive, "the heading takes focus on a keyboard switch").toBe(true);
+
+  for (const [path, reading] of Object.entries({ mounted, pointer, keyboard })) {
+    const geometry = `${path} ${JSON.stringify(reading)}`;
+    expect(reading.outlineStyle, `scripted focus still shows an indicator (${geometry})`).not.toBe("none");
+    expect(reading.outlineWidth, `the indicator is a hairline, not a 2px badge border (${geometry})`).toBe("1px");
+    expect(
+      reading.outlineColor,
+      `the ${path} focus ring is ${reading.outlineColor}, the saturated accent; it must be a low-contrast hairline (${geometry})`,
+    ).not.toBe("rgb(200, 120, 125)");
+    expect(
+      reading.ratio,
+      `the ${path} focus hairline measures ${reading.ratio}:1 on ${reading.backdrop}; a focus indicator needs 3:1 (${geometry})`,
+    ).toBeGreaterThanOrEqual(3);
+  }
 
   // The keyboard floor: a control reached with the keyboard still paints the
-  // product's own focus ring, so the low-contrast heading did not delete focus
+  // product's own focus ring, so the quiet heading did not delete focus
   // visibility for the path that needs it.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press("Tab");
