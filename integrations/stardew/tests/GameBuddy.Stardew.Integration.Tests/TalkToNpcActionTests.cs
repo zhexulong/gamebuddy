@@ -192,7 +192,7 @@ public sealed class TalkToNpcActionTests
     }
 
     [Fact]
-    public void Catalog_TalkToNpc_IsAnExperimentalNpcSocialActionWithTargetArguments()
+    public void Catalog_TalkToNpc_IsALiveVerifiedNpcSocialActionWithTargetArguments()
     {
         FarmhandActionRegistration? registration = FarmhandActionCatalog.Registrations
             .FirstOrDefault(entry => entry.ActionId == "talk_to_npc");
@@ -200,9 +200,10 @@ public sealed class TalkToNpcActionTests
         registration.Should().NotBeNull();
         registration!.FamilyId.Should().Be("npc_social");
         registration.IdentityVersion.Should().Be(1);
-        // Experimental until its own native-local live gate passes; the promotion to
-        // LiveVerified is a separate catalog edit owned by the parent.
-        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        // LiveVerified: its own shared-world gate passed through the real multiplayer entry
+        // (`tools/run-stardew-multiplayer-gate.mjs`), with a native DialogueBox, `talked_to_today`
+        // false -> true and friendship points 0 -> 20 among the receipt's evidence.
+        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         registration.Kind.Should().Be(FarmhandOperationKind.Execution);
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
 

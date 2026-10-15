@@ -4622,25 +4622,32 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             : "fixture_native_setup_failed";
     }
 
-    private void InitializeNativeNpcRelationshipFixture(StardewValley.Farm farm)
+    /// <summary>
+    /// The Farmhand this save's attachment belongs to: the persisted ATTACHMENT BINDING first, because only the
+    /// native-local bootstrap ever writes a live value into <c>config.PlayerId</c> - in the shared-world topology
+    /// that field still holds the profile's placeholder, and parsing it is what used to fail closed with
+    /// <c>fixture_farmhand_id_invalid</c> before any scenario could arm. The binding's id is a NUMBER (the
+    /// manifest's is the string), so the two forms are reconciled here rather than conflated at every call site.
+    /// </summary>
+    private long ResolveBoundFarmhandId()
     {
-        // Prefer the ATTACHMENT BINDING, which is the product's own record of which Farmhand belongs to this save and world.
-// `config.PlayerId` only carries a live value on the native-local path (the bootstrap writes it there); in the
-// shared-world topology it still holds the profile's placeholder, and parsing that is why this method used to fail
-// closed with `fixture_farmhand_id_invalid` before any scenario could run.
-        string saveIdForBinding = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        string worldIdForBinding = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        FarmhandBindingStore? bindingStore = this.Helper.Data.ReadSaveData<FarmhandBindingStore>(FarmhandProvisioningProtocol.SaveDataKey);
-        long? boundFarmhandId = bindingStore?.Bindings?
-            .FirstOrDefault(candidate => candidate.SaveId == saveIdForBinding && candidate.WorldId == worldIdForBinding)?
+        string saveId = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string worldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        FarmhandBindingStore? bindings = this.Helper.Data.ReadSaveData<FarmhandBindingStore>(FarmhandProvisioningProtocol.SaveDataKey);
+        long? boundFarmhandId = bindings?.Bindings?
+            .FirstOrDefault(candidate => candidate.SaveId == saveId && candidate.WorldId == worldId)?
             .FarmhandId;
-        // The binding is a NUMBER here (unlike the manifest's string id), and `config.PlayerId` is the str
-        // form the native-local bootstrap writes - so the two are reconciled, not conflated.
         if (!long.TryParse(this.config.PlayerId, out long configuredFarmhandId))
             configuredFarmhandId = 0;
         long farmhandId = boundFarmhandId ?? configuredFarmhandId;
         if (farmhandId <= 0)
             throw new InvalidOperationException("fixture_farmhand_id_invalid");
+        return farmhandId;
+    }
+
+    private void InitializeNativeNpcRelationshipFixture(StardewValley.Farm farm)
+    {
+        long farmhandId = this.ResolveBoundFarmhandId();
         Farmer? farmhand = Game1.GetPlayer(farmhandId, onlyOnline: false);
         if (farmhand is null)
             throw new InvalidOperationException("fixture_bound_farmhand_missing");
@@ -4724,23 +4731,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
 
     private void InitializeNativeUseItemFixture(StardewValley.Farm farm)
     {
-        // Prefer the ATTACHMENT BINDING, which is the product's own record of which Farmhand belongs to this save and world.
-// `config.PlayerId` only carries a live value on the native-local path (the bootstrap writes it there); in the
-// shared-world topology it still holds the profile's placeholder, and parsing that is why this method used to fail
-// closed with `fixture_farmhand_id_invalid` before any scenario could run.
-        string saveIdForBinding = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        string worldIdForBinding = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        FarmhandBindingStore? bindingStore = this.Helper.Data.ReadSaveData<FarmhandBindingStore>(FarmhandProvisioningProtocol.SaveDataKey);
-        long? boundFarmhandId = bindingStore?.Bindings?
-            .FirstOrDefault(candidate => candidate.SaveId == saveIdForBinding && candidate.WorldId == worldIdForBinding)?
-            .FarmhandId;
-        // The binding is a NUMBER here (unlike the manifest's string id), and `config.PlayerId` is the str
-        // form the native-local bootstrap writes - so the two are reconciled, not conflated.
-        if (!long.TryParse(this.config.PlayerId, out long configuredFarmhandId))
-            configuredFarmhandId = 0;
-        long farmhandId = boundFarmhandId ?? configuredFarmhandId;
-        if (farmhandId <= 0)
-            throw new InvalidOperationException("fixture_farmhand_id_invalid");
+        long farmhandId = this.ResolveBoundFarmhandId();
         Farmer? farmhand = Game1.GetPlayer(farmhandId, onlyOnline: false);
         bool ownsRetainedCabin = farmhand is not null && farm.buildings
             .Select(building => building.GetIndoors())
@@ -4771,23 +4762,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
 
     private void InitializeNativeHarvestCropFixture(StardewValley.Farm farm)
     {
-        // Prefer the ATTACHMENT BINDING, which is the product's own record of which Farmhand belongs to this save and world.
-// `config.PlayerId` only carries a live value on the native-local path (the bootstrap writes it there); in the
-// shared-world topology it still holds the profile's placeholder, and parsing that is why this method used to fail
-// closed with `fixture_farmhand_id_invalid` before any scenario could run.
-        string saveIdForBinding = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        string worldIdForBinding = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        FarmhandBindingStore? bindingStore = this.Helper.Data.ReadSaveData<FarmhandBindingStore>(FarmhandProvisioningProtocol.SaveDataKey);
-        long? boundFarmhandId = bindingStore?.Bindings?
-            .FirstOrDefault(candidate => candidate.SaveId == saveIdForBinding && candidate.WorldId == worldIdForBinding)?
-            .FarmhandId;
-        // The binding is a NUMBER here (unlike the manifest's string id), and `config.PlayerId` is the str
-        // form the native-local bootstrap writes - so the two are reconciled, not conflated.
-        if (!long.TryParse(this.config.PlayerId, out long configuredFarmhandId))
-            configuredFarmhandId = 0;
-        long farmhandId = boundFarmhandId ?? configuredFarmhandId;
-        if (farmhandId <= 0)
-            throw new InvalidOperationException("fixture_farmhand_id_invalid");
+        long farmhandId = this.ResolveBoundFarmhandId();
         Farmer? farmhand = Game1.GetPlayer(farmhandId, onlyOnline: false);
         bool ownsRetainedCabin = farmhand is not null && farm.buildings
             .Select(building => building.GetIndoors())
@@ -4840,23 +4815,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
 
     private void InitializeNativePickupForageFixture(StardewValley.Farm farm)
     {
-        // Prefer the ATTACHMENT BINDING, which is the product's own record of which Farmhand belongs to this save and world.
-// `config.PlayerId` only carries a live value on the native-local path (the bootstrap writes it there); in the
-// shared-world topology it still holds the profile's placeholder, and parsing that is why this method used to fail
-// closed with `fixture_farmhand_id_invalid` before any scenario could run.
-        string saveIdForBinding = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        string worldIdForBinding = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        FarmhandBindingStore? bindingStore = this.Helper.Data.ReadSaveData<FarmhandBindingStore>(FarmhandProvisioningProtocol.SaveDataKey);
-        long? boundFarmhandId = bindingStore?.Bindings?
-            .FirstOrDefault(candidate => candidate.SaveId == saveIdForBinding && candidate.WorldId == worldIdForBinding)?
-            .FarmhandId;
-        // The binding is a NUMBER here (unlike the manifest's string id), and `config.PlayerId` is the str
-        // form the native-local bootstrap writes - so the two are reconciled, not conflated.
-        if (!long.TryParse(this.config.PlayerId, out long configuredFarmhandId))
-            configuredFarmhandId = 0;
-        long farmhandId = boundFarmhandId ?? configuredFarmhandId;
-        if (farmhandId <= 0)
-            throw new InvalidOperationException("fixture_farmhand_id_invalid");
+        long farmhandId = this.ResolveBoundFarmhandId();
         Farmer? farmhand = Game1.GetPlayer(farmhandId, onlyOnline: false);
         if (farmhand is null)
             throw new InvalidOperationException("fixture_bound_farmhand_missing");
@@ -4944,23 +4903,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
 
     private void InitializeNativePickupItemFixture(StardewValley.Farm farm)
     {
-        // Prefer the ATTACHMENT BINDING, which is the product's own record of which Farmhand belongs to this save and world.
-// `config.PlayerId` only carries a live value on the native-local path (the bootstrap writes it there); in the
-// shared-world topology it still holds the profile's placeholder, and parsing that is why this method used to fail
-// closed with `fixture_farmhand_id_invalid` before any scenario could run.
-        string saveIdForBinding = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        string worldIdForBinding = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        FarmhandBindingStore? bindingStore = this.Helper.Data.ReadSaveData<FarmhandBindingStore>(FarmhandProvisioningProtocol.SaveDataKey);
-        long? boundFarmhandId = bindingStore?.Bindings?
-            .FirstOrDefault(candidate => candidate.SaveId == saveIdForBinding && candidate.WorldId == worldIdForBinding)?
-            .FarmhandId;
-        // The binding is a NUMBER here (unlike the manifest's string id), and `config.PlayerId` is the str
-        // form the native-local bootstrap writes - so the two are reconciled, not conflated.
-        if (!long.TryParse(this.config.PlayerId, out long configuredFarmhandId))
-            configuredFarmhandId = 0;
-        long farmhandId = boundFarmhandId ?? configuredFarmhandId;
-        if (farmhandId <= 0)
-            throw new InvalidOperationException("fixture_farmhand_id_invalid");
+        long farmhandId = this.ResolveBoundFarmhandId();
         Farmer? farmhand = Game1.GetPlayer(farmhandId, onlyOnline: false);
         if (farmhand is null)
             throw new InvalidOperationException("fixture_bound_farmhand_missing");
@@ -5047,23 +4990,7 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     /// </summary>
     private Farmer ResolveHostAutomationFarmhand(StardewValley.Farm farm)
     {
-        // Prefer the ATTACHMENT BINDING, which is the product's own record of which Farmhand belongs to this save and world.
-// `config.PlayerId` only carries a live value on the native-local path (the bootstrap writes it there); in the
-// shared-world topology it still holds the profile's placeholder, and parsing that is why this method used to fail
-// closed with `fixture_farmhand_id_invalid` before any scenario could run.
-        string saveIdForBinding = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        string worldIdForBinding = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        FarmhandBindingStore? bindingStore = this.Helper.Data.ReadSaveData<FarmhandBindingStore>(FarmhandProvisioningProtocol.SaveDataKey);
-        long? boundFarmhandId = bindingStore?.Bindings?
-            .FirstOrDefault(candidate => candidate.SaveId == saveIdForBinding && candidate.WorldId == worldIdForBinding)?
-            .FarmhandId;
-        // The binding is a NUMBER here (unlike the manifest's string id), and `config.PlayerId` is the str
-        // form the native-local bootstrap writes - so the two are reconciled, not conflated.
-        if (!long.TryParse(this.config.PlayerId, out long configuredFarmhandId))
-            configuredFarmhandId = 0;
-        long farmhandId = boundFarmhandId ?? configuredFarmhandId;
-        if (farmhandId <= 0)
-            throw new InvalidOperationException("fixture_farmhand_id_invalid");
+        long farmhandId = this.ResolveBoundFarmhandId();
         Farmer? farmhand = Game1.GetPlayer(farmhandId, onlyOnline: false);
         bool ownsRetainedCabin = farmhand is not null && farm.buildings
             .Select(building => building.GetIndoors())

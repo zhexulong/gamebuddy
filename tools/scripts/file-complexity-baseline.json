@@ -1,11 +1,11 @@
 {
   "note": "核心文件的当前行数，记录自提交树。复杂度棘轮以它作为比较基准：只有比它更大才失败，绝对上限见 check-file-complexity-gate.mjs 的 CEILINGS。请在单独提交里重新记录。",
-  "revision": "e603136e",
+  "revision": "4afdc5b4",
   "sizes": {
-    "integrations/stardew/ModEntry.cs": 2927,
-    "integrations/stardew/ModEntry.Fixtures.cs": 5357,
+    "integrations/stardew/ModEntry.cs": 2926,
+    "integrations/stardew/ModEntry.Fixtures.cs": 5370,
     "host/src/continuity-semantic-store/continuity-semantic-production-store.ts": 5042,
-    "host/src/protocol.ts": 5618,
-    "dialogue-web/src/components/ComposedReferenceGameApp.tsx": 1157
+    "host/src/protocol.ts": 4950,
+    "dialogue-web/src/components/ComposedReferenceGameApp.tsx": 1270
   }
 }

@@ -25,6 +25,10 @@ public sealed class ModEntryFixtureBoundaryTests
     {
         "TryInitializeNativeLocalPlayerFixture", "TryBootstrapNativeLocalPlayerFixture",
         "IsReachableFromStart",
+        // The shared binding resolution the scenario helpers share: it belongs to this partial like every other fixture
+        // member, so the boundary rule registers it rather than exempting the file.
+        "ResolveBoundFarmhandId",
+        "TryResolveSharedWorldTalkToNpcWarpRoute",
         "FindNativeLocalPlaySessionStartTile",
         // Note: the probe that returns a named tuple (`(Vector2, Vector2)?`) is deliberately absent here. The
         // boundary scanner's pattern does not match tuple-returning declarations, so listing it would fail the
