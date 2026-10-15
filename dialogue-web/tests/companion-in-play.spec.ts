@@ -198,9 +198,9 @@ async function importCard(page: import("@playwright/test").Page): Promise<void> 
 }
 
 const IN_PLAY_EN =
-  "The companion in play is fixed when GameBuddy starts — a companion imported or created here joins your library, and becomes the one in play only when GameBuddy later starts with her.";
+  "The companion in play is chosen by the start-up configuration — a companion imported or created here is archived safely in your local companion library, and becomes the one in play only when GameBuddy later starts with her.";
 const IN_PLAY_ZH =
-  "在玩的伙伴在 GameBuddy 启动时就已确定——你在这里导入或创建的伙伴会加入伙伴库，只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。";
+  "在玩的伙伴由启动配置选定——你在这里导入或创建的伙伴会安全归档到本地伙伴库，只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。";
 const IMPORT_DETAIL_EN =
   "She joins your library; the companion in play is fixed at start-up, so she becomes the one in play only when GameBuddy later starts with her.";
 const IMPORT_DETAIL_ZH =

@@ -37,8 +37,16 @@ try {
   });
   console.log(`pre-commit: ${output.trim().split(/\r?\n/).slice(-1)[0] ?? "formatted"}`);
 } catch (error) {
-  console.error(`pre-commit: the formatter failed\n${error.stdout ?? ""}${error.stderr ?? ""}`);
-  process.exit(1);
+  const detail = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+  // Biome exits 1 when every given path is one its configuration ignores (for example
+  // `dialogue-web/tests/**`). That is not a formatting failure, and blocking a commit on it would
+  // stop anyone from committing under an ignored directory - so it passes, with the reason printed.
+  if (/were provided but ignored|No files were processed/i.test(detail)) {
+    console.log("pre-commit: nothing to format (the formatter ignores these paths)");
+  } else {
+    console.error(`pre-commit: the formatter failed\n${detail}`);
+    process.exit(1);
+  }
 }
 
 // Re-stage only the files this hook was allowed to touch: a formatting change must ride along with
