@@ -312,6 +312,13 @@ export type ProviderInvocationScope = Readonly<{
       ownerPid: number;
       ownerProcessStartIdentity: string;
     }>;
+    /**
+     * Present only for a same-position variant turn: the existing companion
+     * message this turn re-generates in place, with the anchor player message
+     * its prompt came from. The P5 runner commits a `commit_variant` for it
+     * instead of a `commit_presentation` insert.
+     */
+    variant: Readonly<{ targetMessageId: string; anchorMessageId: string }> | null;
   }>;
   /** Coordinator-minted fixed start-admission deadline, struck exactly once per execution scope. */
   deadlineAtMs: number;
@@ -752,6 +759,7 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
       chatSurfaceSessionId: mounted.chatSurfaceSessionId,
       runtimeBindingDigest: attempt.runtimeBindingDigest,
       runtimeOwner: attempt.runtimeOwner,
+      variant: record.turn.variant ?? null,
     });
     operationAuthority = mounted.transitionAuthority.mintOperation();
     const scopedOperationAuthority = operationAuthority;
@@ -1067,9 +1075,7 @@ export async function consumeMountedDurableAdmission<T>(
       selectionGeneration: number;
       profile: Readonly<{ profileId: string; revision: number; canonicalHash: string }>;
       authoredContextCapability: Readonly<{
-        prepare(
-          transientPreflightId: string,
-        ): Readonly<{
+        prepare(transientPreflightId: string): Readonly<{
           sourceRefs: readonly Readonly<Record<string, string>>[];
           stableTokenCount: number;
           volatileSourceRefs: readonly Readonly<Record<string, string>>[];

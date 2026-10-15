@@ -52,6 +52,7 @@ const facts = Object.freeze({
     ownerPid: 1234,
     ownerProcessStartIdentity: "process_01",
   }),
+  variant: null,
 });
 
 function attemptStarting(observation?: AttemptObservationV1): AttemptStartingTurn {
@@ -103,14 +104,17 @@ type AuthoredStableSourceRef = Readonly<Record<string, string>>;
 type AuthoredVolatileSourceRef = Readonly<Record<string, string>>;
 
 type ScopeOverrides = Readonly<{
+  facts?: ProviderInvocationScope["facts"];
   assertAdmission?: () => void;
   beginActivePrompt?: () => () => void;
   readAcceptedMessageText?: () => Promise<string>;
-  readAcceptedAuthoredContextPlan?: () => Promise<Readonly<{
-    turnId: string;
-    stableSources: readonly AuthoredStableSourceRef[];
-    volatileSources: readonly AuthoredVolatileSourceRef[];
-  }>>;
+  readAcceptedAuthoredContextPlan?: () => Promise<
+    Readonly<{
+      turnId: string;
+      stableSources: readonly AuthoredStableSourceRef[];
+      volatileSources: readonly AuthoredVolatileSourceRef[];
+    }>
+  >;
   authoredContextCapability?: Readonly<{
     assertInstall(
       durableTurnId: string,
@@ -224,6 +228,20 @@ function createScope(overrides: ScopeOverrides = {}) {
       });
       return durablePresentation;
     }
+    if (command.operation === "commit_variant") {
+      if (durablePresentation.status !== "running") throw new Error("p5_presentation_commit_source_required");
+      durablePresentation = Object.freeze({
+        ...durableRunning,
+        status: "presentation_committed" as const,
+        presentation: Object.freeze({
+          expressionId: command.variant.targetMessageId,
+          messageId: command.variant.targetMessageId,
+          cancelEpoch: command.cancelEpoch,
+          committedAtMs: command.committedAtMs,
+        }),
+      });
+      return durablePresentation;
+    }
     if (command.operation === "claim_completion") {
       if (durablePresentation.status === "running" && overrides.stopWinsCompletionClaim) {
         durablePresentation = Object.freeze({
@@ -311,7 +329,7 @@ function createScope(overrides: ScopeOverrides = {}) {
     throw new Error("unexpected_p5_transition");
   };
   const scope = Object.freeze({
-    facts,
+    facts: overrides.facts ?? facts,
     deadlineAtMs: Date.now() + 120_000,
     runtimeSession: runtimeSession ?? Object.freeze({}),
     transitionStore,
@@ -319,15 +337,18 @@ function createScope(overrides: ScopeOverrides = {}) {
     readAcceptedMessageText: overrides.readAcceptedMessageText ?? (async () => "Hello"),
     readAcceptedAuthoredContextPlan:
       overrides.readAcceptedAuthoredContextPlan ??
-      (async () => Object.freeze({ turnId: facts.turnId, stableSources: Object.freeze([]), volatileSources: Object.freeze([]) })),
-    authoredContextCapability: overrides.authoredContextCapability ?? Object.freeze({
-      assertInstall: (
-        _durableTurnId: string,
-        _refs: readonly AuthoredStableSourceRef[],
-        _volatileRefs?: readonly AuthoredVolatileSourceRef[],
-      ) => undefined,
-      clearVolatileForTurn: (_durableTurnId: string) => undefined,
-    }),
+      (async () =>
+        Object.freeze({ turnId: facts.turnId, stableSources: Object.freeze([]), volatileSources: Object.freeze([]) })),
+    authoredContextCapability:
+      overrides.authoredContextCapability ??
+      Object.freeze({
+        assertInstall: (
+          _durableTurnId: string,
+          _refs: readonly AuthoredStableSourceRef[],
+          _volatileRefs?: readonly AuthoredVolatileSourceRef[],
+        ) => undefined,
+        clearVolatileForTurn: (_durableTurnId: string) => undefined,
+      }),
     assertAdmission: overrides.assertAdmission ?? (() => undefined),
     beginActivePrompt: overrides.beginActivePrompt ?? (() => () => undefined),
     readCurrentTurnLedger:
@@ -335,7 +356,8 @@ function createScope(overrides: ScopeOverrides = {}) {
       (async () => {
         const terminal = overrides.terminalLedger?.();
         if (terminal !== undefined) return terminal;
-        if (durablePresentation === undefined) return attemptStarting(Object.freeze({ phase: "armed", observedAtMs: 1 }));
+        if (durablePresentation === undefined)
+          return attemptStarting(Object.freeze({ phase: "armed", observedAtMs: 1 }));
         return durablePresentation;
       }),
     canPreviewNativeContent: () => true,
@@ -346,7 +368,6 @@ function createScope(overrides: ScopeOverrides = {}) {
   return { scope, transitions, presentationTransitions };
 }
 
-
 test("P4c installs the durable authored-context plan before its plain-text prompt", async () => {
   const events: string[] = [];
   let promptText: string | undefined;
@@ -355,7 +376,15 @@ test("P4c installs the durable authored-context plan before its plain-text promp
       events.push("read-plan");
       return Object.freeze({
         turnId: facts.turnId,
-        stableSources: Object.freeze([Object.freeze({ sourceId: "persona_01", kind: "persona", revision: "1", canonicalHash: "a".repeat(64), totalOrderKey: "01" })]),
+        stableSources: Object.freeze([
+          Object.freeze({
+            sourceId: "persona_01",
+            kind: "persona",
+            revision: "1",
+            canonicalHash: "a".repeat(64),
+            totalOrderKey: "01",
+          }),
+        ]),
         volatileSources: Object.freeze([]),
       });
     },
@@ -373,7 +402,9 @@ test("P4c installs the durable authored-context plan before its plain-text promp
       return "plain player text";
     },
     runtimeSession: Object.freeze({
-      installTavernProviderStartObserver() { return () => undefined; },
+      installTavernProviderStartObserver() {
+        return () => undefined;
+      },
       session: Object.freeze({
         prompt(text: string) {
           promptText = text;
@@ -398,13 +429,20 @@ test("P4c fails closed on an authored-context mismatch before prompt", async () 
         _durableTurnId: string,
         _refs: readonly AuthoredStableSourceRef[],
         _volatileRefs?: readonly AuthoredVolatileSourceRef[],
-      ) { throw new Error("authored_context_catalog_mismatch"); },
+      ) {
+        throw new Error("authored_context_catalog_mismatch");
+      },
       clearVolatileForTurn: (_durableTurnId: string) => undefined,
     }),
     runtimeSession: Object.freeze({
-      installTavernProviderStartObserver() { return () => undefined; },
+      installTavernProviderStartObserver() {
+        return () => undefined;
+      },
       session: Object.freeze({
-        prompt() { promptCalls += 1; return Promise.resolve(); },
+        prompt() {
+          promptCalls += 1;
+          return Promise.resolve();
+        },
       }),
     }),
   });
@@ -492,8 +530,14 @@ test("P4c runs when native assistant output settles before the provider observer
 
   assert.equal(result.outcome, "completed");
   assert.equal(result.ledger.status, "completed");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
-  assert.deepEqual(presentationTransitions.map(({ operation }) => operation), ["commit_presentation", "claim_completion", "complete"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "running"],
+  );
+  assert.deepEqual(
+    presentationTransitions.map(({ operation }) => operation),
+    ["commit_presentation", "claim_completion", "complete"],
+  );
 });
 
 test("P5 commits final native assistant content once after durable running and clears its preview", async () => {
@@ -554,8 +598,14 @@ test("P5 commits final native assistant content once after durable running and c
 
   assert.equal(result.outcome, "completed");
   assert.equal(result.ledger.status, "completed");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
-  assert.deepEqual(presentationTransitions.map(({ operation }) => operation), ["commit_presentation", "claim_completion", "complete"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "running"],
+  );
+  assert.deepEqual(
+    presentationTransitions.map(({ operation }) => operation),
+    ["commit_presentation", "claim_completion", "complete"],
+  );
   const commit = presentationTransitions[0];
   assert.equal(commit?.operation, "commit_presentation");
   assert.equal(commit?.operation === "commit_presentation" && commit.message.text, "Visible native content.");
@@ -618,11 +668,10 @@ test("P5 normalizes native preview deltas before the browser event contract and 
 
   assert.equal(result.outcome, "completed");
   assert.equal(result.ledger.status, "completed");
-  assert.deepEqual(presentationTransitions.map(({ operation }) => operation), [
-    "commit_presentation",
-    "claim_completion",
-    "complete",
-  ]);
+  assert.deepEqual(
+    presentationTransitions.map(({ operation }) => operation),
+    ["commit_presentation", "claim_completion", "complete"],
+  );
   const events = eventStream.subscribe({ epoch: eventStream.epoch, after: 0, generation: facts.selectionGeneration });
   assert.equal(events.kind, "replay");
   assert.deepEqual(events.kind === "replay" ? events.events.map((event) => event.payload) : [], [
@@ -709,8 +758,14 @@ test("P4c terminalizes a rejected prompt after an observation as durable runtime
   assert.equal(result.outcome, "failed");
   assert.equal(result.ledger.status, "failed");
   assert.equal(result.ledger.reasonCode, "runtime_unavailable");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
-  assert.deepEqual(presentationTransitions.map(({ operation }) => operation), ["fail"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "running"],
+  );
+  assert.deepEqual(
+    presentationTransitions.map(({ operation }) => operation),
+    ["fail"],
+  );
 });
 
 test("P4c returns a normal durable Stop winner when an aborted prompt rejects", async () => {
@@ -737,7 +792,10 @@ test("P4c returns a normal durable Stop winner when an aborted prompt rejects", 
   assert.equal(promptCalls, 1);
   assert.equal(result.outcome, "cancelled");
   assert.equal(result.ledger.status, "cancelled");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm"],
+  );
   assert.deepEqual(presentationTransitions, []);
 });
 
@@ -796,7 +854,10 @@ test("P4c rereads a normal Stop winner after provider settlement", async () => {
   assert.equal(promptCalls, 1);
   assert.equal(result.outcome, "cancelled");
   assert.equal(result.ledger.status, "cancelled");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "running"],
+  );
   assert.deepEqual(presentationTransitions, []);
 });
 
@@ -917,5 +978,55 @@ test("the pre-fix reading is what this gate catches: a Stop's own abort becomes 
     assert.equal(planted.reasonCode, "runtime_unavailable", `planted ${phase}`);
     assert.deepEqual(planted.operationsAfterClaim, ["fail"], `planted ${phase}`);
     assert.equal(planted.presentation, phase === "presentation_committed", `planted ${phase}`);
+  }
+});
+
+test("a variant turn's bound facts select the commit_variant path and never mint a new message id", async () => {
+  let observer: Observer | undefined;
+  const variantFacts = Object.freeze({
+    ...facts,
+    variant: Object.freeze({ targetMessageId: "response_01", anchorMessageId: "player_01" }),
+  });
+  const { scope, presentationTransitions } = createScope({
+    facts: variantFacts,
+    presentationCommitted: () => true,
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver(onStart: Observer) {
+        observer = onStart;
+        return () => undefined;
+      },
+      session: (() => {
+        const listeners = new Set<(event: unknown) => void>();
+        const emit = (event: unknown): void => {
+          for (const listener of [...listeners]) listener(event);
+        };
+        return Object.freeze({
+          subscribe(listener: (event: unknown) => void) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+          async prompt() {
+            const partial = nativeAssistant([nativeText("")]);
+            emit({ type: "message_start", message: partial });
+            emit({ type: "message_end", message: nativeAssistant([nativeText("Regenerated reply.")]) });
+            observer?.(Object.freeze({ statusClass: "success" as const }));
+          },
+        });
+      })(),
+    }),
+  });
+
+  const result = await runMountedProviderStart(scope);
+
+  assert.equal(result.outcome, "completed");
+  assert.deepEqual(
+    presentationTransitions.map(({ operation }) => operation),
+    ["commit_variant", "claim_completion", "complete"],
+  );
+  const commit = presentationTransitions[0];
+  assert.equal(commit?.operation, "commit_variant");
+  if (commit?.operation === "commit_variant") {
+    assert.equal(commit.variant.targetMessageId, "response_01");
+    assert.equal(commit.variant.text, "Regenerated reply.");
   }
 });

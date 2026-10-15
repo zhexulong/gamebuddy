@@ -1,4 +1,8 @@
-import { attachNativeCompanionContent, CHAT_TRANSCRIPT_SCAFFOLDING, CHAT_TRANSCRIPT_STAGE_DIRECTION } from "../native-companion-content.js";
+import {
+  attachNativeCompanionContent,
+  CHAT_TRANSCRIPT_SCAFFOLDING,
+  CHAT_TRANSCRIPT_STAGE_DIRECTION,
+} from "../native-companion-content.js";
 import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { NativeChatPreview } from "./provider-invocation.js";
 import type {
@@ -210,10 +214,7 @@ export async function runMountedProviderStart(
       // Arm linearization: the exact session surface is unavailable before a
       // Host invocation, so the durable record may safely classify not_started.
       scope.assertAdmission();
-      requireAttemptStarting(
-        await scope.transitionStore({ operation: "arm", observedAtMs: Date.now() }),
-        "arm",
-      );
+      requireAttemptStarting(await scope.transitionStore({ operation: "arm", observedAtMs: Date.now() }), "arm");
       // Exact session surface unavailable before the Host invocation. The
       // surviving process records its local pre-invocation proof durably.
       const ledger = requireAttemptStarting(
@@ -226,89 +227,109 @@ export async function runMountedProviderStart(
       );
       return { outcome: "not_started", ledger };
     }
-    nativeObserver = attachNativeCompanionContent(runtimeSession.session, {
-      onPreviewDelta: async (delta) => {
-        if (!scope.canPreviewNativeContent()) return;
-        // Each browser event carries an incremental, non-durable fragment.
-        // It is scoped to the Host-owned turn, never a Pi message identity.
-        // The browser contract accepts only NFC text. Pi may split a composed
-        // character across chunks, so normalize each isolated preview fragment
-        // before its volatile projection; final durable content is normalized
-        // independently by the observer.
-        const safeDelta = delta.normalize("NFC");
-        // Same delta stream feeds the Host-owned voice sink when one is
-        // attached; a voice failure is Voice-local and never poisons the
-        // observer's browser preview or the durable P5 commit.
-        if (speechSink !== undefined) {
-          try {
-            await speechSink.append(safeDelta);
-          } catch {
-            // Voice degradation: the surface reader will project unavailable.
+    nativeObserver = attachNativeCompanionContent(
+      runtimeSession.session,
+      {
+        onPreviewDelta: async (delta) => {
+          if (!scope.canPreviewNativeContent()) return;
+          // Each browser event carries an incremental, non-durable fragment.
+          // It is scoped to the Host-owned turn, never a Pi message identity.
+          // The browser contract accepts only NFC text. Pi may split a composed
+          // character across chunks, so normalize each isolated preview fragment
+          // before its volatile projection; final durable content is normalized
+          // independently by the observer.
+          const safeDelta = delta.normalize("NFC");
+          // Same delta stream feeds the Host-owned voice sink when one is
+          // attached; a voice failure is Voice-local and never poisons the
+          // observer's browser preview or the durable P5 commit.
+          if (speechSink !== undefined) {
+            try {
+              await speechSink.append(safeDelta);
+            } catch {
+              // Voice degradation: the surface reader will project unavailable.
+            }
           }
-        }
-        if (Buffer.byteLength(safeDelta, "utf8") > 16_384 || previewPublisher === undefined) return;
-        try {
-          await previewPublisher.publish(
-            Object.freeze({ turnId: scope.facts.turnId, delta: safeDelta }),
-          );
-        } catch {
-          // Preview publication is explicitly non-durable. A stream/client
-          // schema failure must not poison observer drain or strand P5 running.
-          return;
-        }
-        previewPublished = true;
-      },
-      onFinalText: async (text) => {
-        // Also finalize the voice sink so the speech job is settled.
-        if (speechSink !== undefined) {
+          if (Buffer.byteLength(safeDelta, "utf8") > 16_384 || previewPublisher === undefined) return;
           try {
-            await speechSink.finalize();
+            await previewPublisher.publish(Object.freeze({ turnId: scope.facts.turnId, delta: safeDelta }));
           } catch {
-            // Voice degradation is always graceful.
+            // Preview publication is explicitly non-durable. A stream/client
+            // schema failure must not poison observer drain or strand P5 running.
+            return;
           }
-        }
-        // Pi may emit its final assistant message before the asynchronous P4
-        // observer continuation writes durable `running`. The content callback
-        // therefore waits for that exact barrier; it never commits early.
-        if (!(await runningBarrier)) return;
-        const reservation = scope.reserveNativeContentCommit();
-        if (reservation === undefined) return;
-        try {
-          const committedAtMs = Date.now();
-          const committed = await scope.transitionPresentation({
-            operation: "commit_presentation",
-            cancelEpoch: reservation.cancelEpoch,
-            message: {
-              messageId: responseMessageId ??= nativeResponseMessageId(scope.facts.attemptId),
-              text,
-              occurredAtMs: committedAtMs,
-            },
-            committedAtMs,
-          });
-          if (committed.status !== "presentation_committed")
-            throw new Error("native_content_presentation_commit_rejected");
-        } catch (error) {
-          // Observer callback failure is not a terminal authority. Preserve a
-          // Stop winner when one exists; otherwise let the ordinary P5 failure
-          // transition below terminalize the already-durable running attempt.
-          finalPresentationFailure = error;
-        } finally {
-          reservation.release();
-        }
-      },
-      onRejected: async (reason) => {
-        // A rejected/error turn must not leave a speech job half-open.
-        if (speechSink !== undefined) {
+          previewPublished = true;
+        },
+        onFinalText: async (text) => {
+          // Also finalize the voice sink so the speech job is settled.
+          if (speechSink !== undefined) {
+            try {
+              await speechSink.finalize();
+            } catch {
+              // Voice degradation is always graceful.
+            }
+          }
+          // Pi may emit its final assistant message before the asynchronous P4
+          // observer continuation writes durable `running`. The content callback
+          // therefore waits for that exact barrier; it never commits early.
+          if (!(await runningBarrier)) return;
+          const reservation = scope.reserveNativeContentCommit();
+          if (reservation === undefined) return;
           try {
-            await speechSink.cancel();
-          } catch {
-            // Voice degradation is always graceful.
+            const committedAtMs = Date.now();
+            // A same-position variant turn re-generates an existing reply: it
+            // appends a swipe to that exact message instead of inserting a new
+            // companion row. The target comes only from the coordinator-bound
+            // facts, never from provider content.
+            const variant = scope.facts.variant;
+            const committed = await scope.transitionPresentation(
+              variant === null
+                ? {
+                    operation: "commit_presentation",
+                    cancelEpoch: reservation.cancelEpoch,
+                    message: {
+                      messageId: (responseMessageId ??= nativeResponseMessageId(scope.facts.attemptId)),
+                      text,
+                      occurredAtMs: committedAtMs,
+                    },
+                    committedAtMs,
+                  }
+                : {
+                    operation: "commit_variant",
+                    cancelEpoch: reservation.cancelEpoch,
+                    variant: {
+                      targetMessageId: variant.targetMessageId,
+                      text,
+                      occurredAtMs: committedAtMs,
+                    },
+                    committedAtMs,
+                  },
+            );
+            if (committed.status !== "presentation_committed")
+              throw new Error("native_content_presentation_commit_rejected");
+          } catch (error) {
+            // Observer callback failure is not a terminal authority. Preserve a
+            // Stop winner when one exists; otherwise let the ordinary P5 failure
+            // transition below terminalize the already-durable running attempt.
+            finalPresentationFailure = error;
+          } finally {
+            reservation.release();
           }
-        }
-        if (reason === "error") finalPresentationFailure = new Error("native_content_provider_error");
-        if (reason !== "error") finalPresentationFailure = new Error(`native_content_${reason}`);
+        },
+        onRejected: async (reason) => {
+          // A rejected/error turn must not leave a speech job half-open.
+          if (speechSink !== undefined) {
+            try {
+              await speechSink.cancel();
+            } catch {
+              // Voice degradation is always graceful.
+            }
+          }
+          if (reason === "error") finalPresentationFailure = new Error("native_content_provider_error");
+          if (reason !== "error") finalPresentationFailure = new Error(`native_content_${reason}`);
+        },
       },
-    }, { stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION, scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING });
+      { stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION, scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING },
+    );
     nativeObserver.open();
     // Open one exact speech job for this turn when a voice sink is attached.
     if (speechSink !== undefined) {
@@ -371,7 +392,8 @@ export async function runMountedProviderStart(
     const plan = await scope.readAcceptedAuthoredContextPlan();
     const refs = plan.stableSources.map((source) => Object.freeze({ ...source }));
     const volatileRefs = plan.volatileSources.map((source) => Object.freeze({ ...source }));
-    if (typeof scope.authoredContextCapability.assertInstall !== "function") throw new Error("semantic_chat_runtime_authored_context_unavailable");
+    if (typeof scope.authoredContextCapability.assertInstall !== "function")
+      throw new Error("semantic_chat_runtime_authored_context_unavailable");
     scope.authoredContextCapability.assertInstall(scope.facts.turnId, refs, volatileRefs);
     const text = await scope.readAcceptedMessageText();
     // The message read is asynchronous, so it cannot share the previous
@@ -399,13 +421,15 @@ export async function runMountedProviderStart(
     // queued turn; a synchronous throw is equivalent to rejection.
     const settlePrompt = (): Promise<"fulfilled" | "rejected"> => {
       try {
-        return promptFn.call(runtimeSession.session, text, {
-          expandPromptTemplates: false,
-          source: "rpc",
-        }).then(
-          () => "fulfilled" as const,
-          () => "rejected" as const,
-        );
+        return promptFn
+          .call(runtimeSession.session, text, {
+            expandPromptTemplates: false,
+            source: "rpc",
+          })
+          .then(
+            () => "fulfilled" as const,
+            () => "rejected" as const,
+          );
       } catch {
         return Promise.resolve("rejected");
       }
