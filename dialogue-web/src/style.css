@@ -4326,4 +4326,12 @@
     color: var(--text-secondary);
     cursor: progress;
   }
+  /* The card-import trigger keeps its own width. The import card is a column flex
+     container (`.management-settings-section > section`), so the shared
+     `.small-button` inside it stretched to the panel: measured 742px inside a
+     744px card. It is the card's own control - a button with a label - not a
+     full-width field, so it aligns to the start of its column instead. */
+  [data-card-import] > [data-card-import-trigger] {
+    align-self: flex-start;
+  }
 } /* end @layer theme.polish */

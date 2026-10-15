@@ -362,3 +362,39 @@ test("item 4: Stop is offered exactly while the Host allows cancelling", async (
   expect(measured.sendButtons, "and not Send").toBe(0);
   expect(measured.busy, "the busy indicator gives way to the Stop control").toBe(0);
 });
+
+// --- item 7: the card-import trigger keeps its own width ---
+
+/**
+ * The import card is a column flex container
+ * (`style.css` `.management-settings-section > section`), so the shared
+ * `.small-button` inside it stretched to the panel's full width: measured
+ * 742px inside a 744px card, with `align-self: auto`. The button is a label with
+ * a 44 px floor, not a field, so it keeps its own width at the start of its column.
+ */
+test("item 7: the choose-file trigger is the width of its label, not the panel's", async ({ page }) => {
+  await stubShell(page);
+  await stubCardImport(page);
+  await openCharacters(page);
+
+  const measured = await page.evaluate(() => {
+    const trigger = document.querySelector<HTMLElement>("[data-card-import-trigger]")!;
+    const card = document.querySelector<HTMLElement>("[data-card-import]")!;
+    const cardBox = card.getBoundingClientRect();
+    return {
+      triggerWidth: Math.round(trigger.getBoundingClientRect().width),
+      cardContentWidth: Math.round(cardBox.width - 24),
+      alignSelf: getComputedStyle(trigger).alignSelf,
+      label: (trigger.textContent ?? "").trim(),
+    };
+  });
+  console.log(`[item-7] ${JSON.stringify(measured)}`);
+
+  expect(measured.label, "the trigger is the product's own labelled control").toBe("Choose card file");
+  expect(
+    measured.triggerWidth,
+    `the trigger measures ${measured.triggerWidth}px inside a ${measured.cardContentWidth}px card`,
+  ).toBeLessThan(measured.cardContentWidth / 2);
+  expect(measured.triggerWidth, "and it never falls below the 44 px touch floor").toBeGreaterThanOrEqual(44);
+  expect(measured.alignSelf, "the button keeps its own width in the card's column flex").toBe("flex-start");
+});
