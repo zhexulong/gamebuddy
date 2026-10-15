@@ -29,6 +29,7 @@ import { expect, test } from "@playwright/test";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";
+const worldInfoItemHandle = "V".repeat(42) + "A";
 const csrfToken = "C".repeat(42) + "A";
 const expiresAtMs = 1_900_000_000_000;
 
@@ -234,4 +235,122 @@ test("the companion's trigger list folds into a disclosure at 400x800", async ({
   const expanded = await block.evaluate((node) => Math.round(node.getBoundingClientRect().height));
   console.log(`[world-book-disclosure] collapsed=${collapsed} expanded=${expanded}`);
   expect(expanded, "opening the disclosure reveals the trigger list").toBeGreaterThan(collapsed + 200);
+});
+
+/**
+ * The companion's own trigger list is the card/list layer, measured against the
+ * bindable library's rows IN THE SAME MOUNT.
+ *
+ * The measured defect (`shots-final10`, 10-角色-1440x900): the two lists render
+ * one above the other on the Characters surface, and only the library's rows had
+ * stylesheet rules - `[data-world-book-list]`, used by
+ * `CharactersSurfacePanel.tsx:230` - while the companion's own list
+ * (`data-companion-world-book-list`, `:124`, shipped by 6c447329) matched no rule
+ * at all. So the seven entries at the foot of the surface painted as bare,
+ * squeezed text: transparent, no border, no padding, no row floor, and 14 px
+ * body copy beside 13 px sibling rows.
+ *
+ * The comparison is geometry and typography read off the live cascade, not a
+ * class or attribute check, and both rows are measured in one page: the
+ * companion's first entry against the library's first (attachable) row. The
+ * properties compared are the ones the card/list layer declares for both.
+ */
+test("the companion's own trigger list draws the same card rows as the bindable library beside it", async ({ page }) => {
+  await stubCharacters(page, {
+    apiVersion: 1,
+    present: true,
+    entries: [
+      { title: "温室", keys: ["温室", "玻璃房"], constant: false },
+      { title: "洒水器", keys: ["洒水器", "灌溉"], constant: false },
+    ],
+  });
+  // The attachable library is non-empty here, so its own row is the comparison.
+  // Registered after `stubCharacters`, which is what makes it win the match.
+  await page.route("**/api/tavern/v1/world-info", (route) =>
+    route.fulfill(
+      jsonOk({
+        state: "none",
+        revision: handle,
+        items: [{ handle: worldInfoItemHandle, title: "Pelican Town", summary: null, selected: false, pending: false }],
+      }),
+    ),
+  );
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  const surface = await openCharacters(page, "角色");
+
+  const block = surface.locator("[data-companion-world-book]");
+  await expect(block).toBeVisible();
+  const disclosure = block.locator("[data-companion-world-book-disclosure]");
+  await disclosure.locator("summary").click();
+  await expect(block.locator("[data-companion-world-book-entry]").first()).toBeVisible();
+  await expect(surface.locator("[data-world-book-list] > [role=listitem]").first()).toBeVisible();
+
+  const measured = await surface.evaluate((node) => {
+    const readList = (selector: string) => {
+      const list = node.querySelector<HTMLElement>(selector);
+      if (list === null) return null;
+      const style = getComputedStyle(list);
+      return {
+        display: style.display,
+        direction: style.flexDirection,
+        gap: style.rowGap,
+        listStyle: style.listStyleType,
+        marker: style.listStylePosition,
+      };
+    };
+    const read = (selector: string) => {
+      const row = node.querySelector<HTMLElement>(selector);
+      if (row === null) return null;
+      const style = getComputedStyle(row);
+      const strong = row.querySelector<HTMLElement>("strong");
+      const strongStyle = strong === null ? null : getComputedStyle(strong);
+      const rect = row.getBoundingClientRect();
+      return {
+        height: Math.round(rect.height),
+        background: style.backgroundColor,
+        borderWidth: style.borderTopWidth,
+        borderStyle: style.borderTopStyle,
+        borderColor: style.borderTopColor,
+        radius: style.borderTopLeftRadius,
+        padding: `${style.paddingTop} ${style.paddingRight} ${style.paddingBottom} ${style.paddingLeft}`,
+        listStyle: style.listStyleType,
+        strongFontSize: strongStyle?.fontSize ?? null,
+        strongFontWeight: strongStyle?.fontWeight ?? null,
+        strongColor: strongStyle?.color ?? null,
+      };
+    };
+    return {
+      companion: read("[data-companion-world-book-list] > [data-companion-world-book-entry]"),
+      library: read("[data-world-book-list] > [role=listitem]"),
+      companionList: readList("[data-companion-world-book-list]"),
+      libraryList: readList("[data-world-book-list]"),
+    };
+  });
+  console.log(`[companion-world-book-list] measured: ${JSON.stringify(measured)}`);
+
+  const { companion, library, companionList, libraryList } = measured;
+  expect(companion, "the companion's own entry row renders").not.toBeNull();
+  expect(library, "the bindable library's own row renders").not.toBeNull();
+  // One card treatment for both rows: the same tone, hairline, radius, padding
+  // and row floor, measured in one mount.
+  expect(companion!.background, "the companion's entry is a card, not bare text").toBe(library!.background);
+  expect(companion!.background, "the card tone, not the surface behind it").not.toBe("rgba(0, 0, 0, 0)");
+  expect({ width: companion!.borderWidth, style: companion!.borderStyle, color: companion!.borderColor }).toEqual({
+    width: library!.borderWidth,
+    style: library!.borderStyle,
+    color: library!.borderColor,
+  });
+  expect(companion!.radius).toBe(library!.radius);
+  expect(companion!.padding).toBe(library!.padding);
+  expect(companion!.height, "the entry clears the 52 px row floor").toBeGreaterThanOrEqual(52);
+  // The typography of both rows, not only the container.
+  expect(companion!.strongFontSize).toBe(library!.strongFontSize);
+  expect(companion!.strongFontWeight).toBe(library!.strongFontWeight);
+  expect(companion!.strongColor).toBe(library!.strongColor);
+  // A `role="list"` of drawers/cards paints no markers either way, and the two
+  // containers are the same column with the same 8 px cadence.
+  expect(companion!.listStyle).toBe(library!.listStyle);
+  expect(companionList).toEqual(libraryList);
+  expect(companionList!.display, "the list itself is a column").toBe("flex");
+  expect(companionList!.listStyle, "no marker from the container").toBe("none");
 });

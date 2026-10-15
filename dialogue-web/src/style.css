@@ -3588,6 +3588,47 @@
     margin-top: var(--space-2);
   }
 
+  /* The companion's OWN world book is a third list, not the bindable library
+   above: its rows carry a title and the entry's trigger words and no control at
+   all, while the library's rows carry the Attach/Detach pair. It is the same
+   card/list layer, but it keeps its own selectors rather than joining the
+   library's rule - the two are different features (what the player attaches vs
+   what the companion already reads), and the library's rule names a
+   `.composer-actions` row this list never renders. The rows were bare, squeezed
+   text: no card, no padding, no row floor, and 14 px body copy where every
+   sibling row reads 13 px. */
+  [data-companion-world-book-list] {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  [data-companion-world-book-entry] {
+    min-height: var(--row-min-height);
+    padding: var(--space-3);
+    background-color: var(--surface-card);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-sm);
+  }
+
+  [data-companion-world-book-entry] > strong {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  [data-companion-world-book-entry] > p {
+    margin: var(--space-1) 0 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
+
   [data-import-history-entry] > span {
     display: block;
     font-size: 13px;
