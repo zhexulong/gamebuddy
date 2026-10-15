@@ -87,6 +87,16 @@ const facade = memory.createGameBuddyPlayerMemoryCrudFacade({
 });
 const list = () => facade.listMemories({ continuityId, profileId, profileRevision });
 
+// The plan reads metric 4 from "the written rows of the candidate arm, read from Magic Context's own
+// database". The player-visible facade is the other half of the picture (what the panel would show), and for a
+// root whose rows live under an identity scheme the facade does not resolve, it reports nothing at all - which
+// is why the database itself is the primary observation here.
+const storeRows = () =>
+  db
+    .prepare("SELECT id, project_path, category, content FROM memories WHERE project_path = ? ORDER BY id")
+    .all(projectIdentity);
+
+const rowsBefore = storeRows();
 const before = await list();
 process.stderr.write(`[dreamer-task] memories before: ${before.length}\n`);
 process.stderr.write(`[dreamer-task] project identity: ${String(projectIdentity)}\n`);
@@ -97,6 +107,11 @@ process.stderr.write(`[dreamer-task] project identity: ${String(projectIdentity)
 // without one.
 const loaded = dreamer.loadPiConfig();
 const dreamerConfig = dreamer.dreamerRunConfig(loaded.config, loaded.config);
+// The domain decides which fact categories a task may write. This runtime's project config says
+// `ongoing-interaction`; the loaded config may not have picked that up, and with the coding default every
+// reflected category is rejected - which looks exactly like "the task ran and wrote nothing".
+if (dreamerConfig?.memory !== undefined) dreamerConfig.memory.domain = "ongoing-interaction";
+process.stderr.write(`[dreamer-task] memory domain for this run: ${String(dreamerConfig?.memory?.domain)}\n`);
 const registrationOwner = {};
 dreamer.registerPiDreamerProject({
   db,
@@ -118,9 +133,10 @@ try {
   failure = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 } finally {
   dreamer.unregisterPiDreamerProject({ projectIdentity, registrationOwner });
-  db.close?.();
+  // The store stays open: the delta is read after the run, and closing here made that read throw.
 }
 
+const rowsAfter = storeRows();
 const after = await list();
 const added = after.filter((row) => !before.some((prior) => prior.handle === row.handle));
 const report = {
@@ -132,6 +148,14 @@ const report = {
   failure: failure ?? null,
   run: result ?? null,
   memories: { before: before.length, after: after.length, added: added.length },
+  databaseDelta: {
+    before: rowsBefore.length,
+    after: rowsAfter.length,
+    added: rowsAfter.length - rowsBefore.length,
+    addedRows: rowsAfter
+      .slice(rowsBefore.length)
+      .map((row) => ({ id: row.id, category: row.category ?? null, content: row.content ?? null })),
+  },
   addedRows: added.map((row) => ({
     handle: row.handle,
     origin: row.origin ?? null,
@@ -141,8 +165,9 @@ const report = {
   // Outcome metric 4 of reflect-outcome-plan.md: no written row may assert an inferred trait, mood, preference
   // or relationship interpretation as something the player said. The plan puts that check on the rows, so the
   // rows travel with the report and this flags the phrasing that would break it.
-  metricInferenceAttribution: added
-    .map((row) => ({ handle: row.handle, content: String(row.content ?? "") }))
+  metricInferenceAttribution: rowsAfter
+    .slice(rowsBefore.length)
+    .map((row) => ({ handle: String(row.id), content: String(row.content ?? "") }))
     .filter((row) =>
       /\b(you (said|told|mentioned|shared|explained)|player (said|stated|reported))\b/iu.test(row.content),
     )
