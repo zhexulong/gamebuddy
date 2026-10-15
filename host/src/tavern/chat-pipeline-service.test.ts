@@ -763,9 +763,18 @@ test(
     assert.equal(accepted.value?.message.role, "player");
     assert.equal(accepted.value?.message.text, "Synthetic player request");
     assert.equal(output.startCalls, 2);
-    // Honest semantics, pinned: regeneration is a new tail turn, NOT an in-place
-    // variant. The companion reply it re-asked is byte-identical and carries no
-    // swipe variants; the transcript grew by exactly the new player line.
+    // What the code does today, pinned: regeneration re-asks the tail reply as a
+    // NEW tail turn, so the transcript carries a second player row with the same
+    // words. That is a stand-in, not the declared semantic: the designs define
+    // regenerate as a variant at the SAME companion message position - "重新生成 |
+    // 同 swipe(表现层)" (design/tasks/active/frontend-functional-alignment-inventory.md:28),
+    // "Host 可在同一 Tavern Message 位置保存多个 MessageVariant；只让选中 variant 进入后续
+    // 可见历史" (design/archive/legacy-sources/09_BDD_VALIDATION_PLAN.md:805-806). The
+    // capability that would honour it - a presentation that targets an existing
+    // message, plus Pi session-tree binding - is not carried by this contract, and
+    // design/archive/legacy-sources/24_TAVERN_COMPATIBILITY_IMPLEMENTATION_PLAN.md:341
+    // forbids registering the operation before that capability passes. These rows
+    // pin the deviation, not a product decision.
     assert.deepEqual(output.roles, ["companion", "player", "companion"]);
     assert.deepEqual(output.kinds, ["opening", "player", "response"]);
     assert.deepEqual(output.afterRoles, ["companion", "player", "companion", "player"]);
