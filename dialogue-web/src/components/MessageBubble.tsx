@@ -48,6 +48,21 @@ function openingVariantLabel(
 }
 
 /**
+ * The swipe switcher's own words. The Host publishes the swipe position in the
+ * standard SillyTavern / Pi spelling, `◀ 1/3 ▶` (`formatSwipeLabel`,
+ * `host/src/tavern/message-tree.ts:94-98`; the swipe route writes the same shape
+ * inline at `chat-pipeline-service.ts:476`). The arrows in that spelling are its
+ * decoration of the position, and this control draws the real pair - printing
+ * them too is arrows inside arrows. The position itself is shown exactly as the
+ * Host published it, with only that decoration read back out: a label the Host
+ * sends without arrows (a browser journey's own fixture, or a future spelling)
+ * passes through untouched.
+ */
+function swipePosition(label: string): string {
+  return label.replace(/^[\s◀]+/u, "").replace(/[\s▶]+$/u, "");
+}
+
+/**
  * Memoised so a streaming delta - which re-renders the conversation with a new
  * preview - cannot re-render a settled message and re-parse its Markdown. The
  * transcript's message objects are immutable and keep their identity across a
@@ -172,7 +187,7 @@ export const MessageBubble = memo(function MessageBubble({
                 >
                   <ChevronLeft size={14} aria-hidden="true" />
                 </button>
-                <span className="swipe-indicator">{swipeInfo.label}</span>
+                <span className="swipe-indicator">{swipePosition(swipeInfo.label)}</span>
                 <button
                   type="button"
                   className="swipe-btn"

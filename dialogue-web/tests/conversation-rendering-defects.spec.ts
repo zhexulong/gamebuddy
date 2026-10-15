@@ -28,7 +28,13 @@ const projectionRevision = "P".repeat(42) + "A";
 const playerMessageHandle = "X".repeat(42) + "A";
 const openedMessageHandle = "W".repeat(42) + "A";
 
-type Message = Readonly<{ role: "player" | "companion"; text: string; opening?: boolean }>;
+type Message = Readonly<{
+  role: "player" | "companion";
+  text: string;
+  opening?: boolean;
+  /** The position the Host publishes for a swipe set, in its own `◀ 1/3 ▶` spelling. */
+  swipes?: Readonly<{ index: number; total: number }>;
+}>;
 
 function composedRoot(options: Readonly<{ transcript?: readonly Message[]; title?: string | null }> = {}) {
   const transcript = options.transcript ?? [];
@@ -61,6 +67,20 @@ function composedRoot(options: Readonly<{ transcript?: readonly Message[]; title
           ...(message.opening === true
             ? { openingVariant: { variantId: "V".repeat(42) + "A", index: 0, count: 2, label: "Default", locked: false } }
             : {}),
+          ...(message.swipes === undefined
+            ? {}
+            : {
+                swipeInfo: {
+                  currentIndex: message.swipes.index,
+                  totalSwipes: message.swipes.total,
+                  // The Host's exact shape: `formatSwipeLabel`
+                  // (`host/src/tavern/message-tree.ts:97`) and the swipe route's
+                  // own inline template both wrap the position in the arrows.
+                  label: `\u25c0 ${message.swipes.index + 1}/${message.swipes.total} \u25b6`,
+                  hasPrevious: message.swipes.index > 0,
+                  hasNext: message.swipes.index < message.swipes.total - 1,
+                },
+              }),
         })),
         draft: { revision: 0, present: false },
         turn: null,
@@ -459,4 +479,51 @@ test("the opening switcher translates the Host's variant label into the UI langu
   expect(measured, "the Host's default greeting reads as the catalogue's own word").toContain("默认");
   expect(measured, "and its position in the set is still shown").toContain("1/2");
   expect(measured, "the Host's English literal never reaches a zh-CN surface").not.toContain("Default");
+});
+
+// --- the swipe switcher's own arrows ------------------------------------------
+
+/**
+ * The swipe switcher drew the Host's arrows inside its own.
+ *
+ * The Host publishes the swipe position in the standard SillyTavern / Pi
+ * spelling, `◀ 1/3 ▶` (`formatSwipeLabel`, `host/src/tavern/message-tree.ts:94-98`;
+ * the swipe route writes the same shape inline at
+ * `host/src/tavern/chat-pipeline-service.ts:471-479`), and `MessageBubble`
+ * printed that string verbatim between its own `ChevronLeft` / `ChevronRight`
+ * buttons - so a message that has more than one swipe read as arrows inside
+ * arrows. The pinned screenshot run (`shots-final10`) never showed it because no
+ * message in that transcript carried more than one swipe, so the route's own
+ * shape is what this journey serves.
+ *
+ * The assertions, and the failure each one catches:
+ *  - the indicator is the Host's position alone: catches the label's `◀`/`▶`
+ *    decoration printed beside the real pair;
+ *  - the switcher still owns exactly the two named buttons: catches the fix that
+ *    drops the buttons instead of the decoration, which would leave the position
+ *    as text with nothing to press.
+ */
+test("the swipe switcher draws one pair of arrows, not the Host's arrows inside its own", async ({ page }) => {
+  await mountShell(page, {
+    root: composedRoot({
+      transcript: [
+        { role: "player", text: "你好" },
+        { role: "companion", text: "雨下得真透，地里的土都喝饱了。", swipes: { index: 1, total: 3 } },
+      ],
+    }),
+  });
+
+  const controls = page.locator(".swipe-controls");
+  await expect(controls).toBeVisible();
+  const measured = await controls.evaluate((node) => ({
+    indicator: (node.querySelector(".swipe-indicator")?.textContent ?? "").trim(),
+    text: (node.textContent ?? "").trim(),
+    buttons: [...node.querySelectorAll("button")].map((button) => (button.getAttribute("aria-label") ?? "").trim()),
+  }));
+  console.log(`[swipe-switcher] measured: ${JSON.stringify(measured)}`);
+
+  expect(measured.indicator, "the indicator is the Host's position, undecorated").toBe("2/3");
+  expect(measured.text, "the left arrow belongs to the button, not to the label").not.toContain("◀");
+  expect(measured.text, "the right arrow belongs to the button, not to the label").not.toContain("▶");
+  expect(measured.buttons, "the switcher is still the two real buttons").toEqual(["上一个变体", "下一个变体"]);
 });
