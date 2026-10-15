@@ -14,6 +14,20 @@ import { MarkdownMessage } from "./MarkdownMessage";
 const CARET_MARKUP = '<span class="message-caret" aria-hidden="true"></span>';
 
 /**
+ * The opening switcher's own words. The Host publishes the committed variant's
+ * position in the greeting set and, whenever the set carried one, the variant's
+ * own label - the card's own 1-based order (`Default`, `Alternate 1`,
+ * `new-companion-service.ts` `buildGreetingVariants`). Both are shown: the label
+ * names the opening the player is looking at, the position says how many there
+ * are. A set the Host published no label for leaves the position alone rather
+ * than inventing a name for the variant.
+ */
+function openingVariantWords(variant: Readonly<{ label: string | null; index: number; count: number }>): string {
+  const position = `${variant.index + 1}/${variant.count}`;
+  return variant.label === null ? position : `${variant.label} ${position}`;
+}
+
+/**
  * Memoised so a streaming delta - which re-renders the conversation with a new
  * preview - cannot re-render a settled message and re-parse its Markdown. The
  * transcript's message objects are immutable and keep their identity across a
@@ -111,7 +125,7 @@ export const MessageBubble = memo(function MessageBubble({
                 >
                   <ChevronLeft size={14} aria-hidden="true" />
                 </button>
-                <span className="swipe-indicator">{`${openingChoice.index + 1}/${openingChoice.count}`}</span>
+                <span className="swipe-indicator">{openingVariantWords(openingChoice)}</span>
                 <button
                   type="button"
                   className="swipe-btn"

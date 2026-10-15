@@ -4088,8 +4088,9 @@ test("a card with no opening material shows no chip and invents none", async ({ 
  * `continuity-semantic-production-coordinator.internal.ts`
  * `materializeExpectedChatContent`), so by the time a player looks at the first
  * screen it already carries the companion's committed opening, projected with
- * `openingVariant`. Choosing among those variants is that message's own `< 1/2 >`
- * switcher, which records the choice through the Host's `chat.opening` route.
+ * `openingVariant`. Choosing among those variants is that message's own switcher
+ * (`Default 1/2` - the Host's label for the committed variant and its position in
+ * the set), which records the choice through the Host's `chat.opening` route.
  *
  * The failure this catches: a variant chooser anywhere but that switcher - a
  * composer row whose taps submitted the companion's own paragraph as the
@@ -4155,10 +4156,11 @@ test("the opening's variant switcher lives on the opening bubble, and the compos
   await expect(surface.locator("[data-empty-anchor]")).toHaveCount(0);
 
   // ... and choosing among the variants is the opening bubble's own control, not
-  // a composer row: the message carries the Host's unlocked `1/2` switcher.
+  // a composer row: the message carries the Host's unlocked switcher, worded with
+  // the Host's own label for the committed variant and its position in the set.
   await expect(surface.locator(".composer-chip, .composer-chips-row")).toHaveCount(0);
   const opening = surface.locator(".message.companion").first();
-  await expect(opening.locator(".swipe-indicator")).toHaveText("1/2");
+  await expect(opening.locator(".swipe-indicator")).toHaveText("Default 1/2");
   await expect(opening.locator(".swipe-btn")).toHaveCount(2);
   expect(greetingReads, "the composer column reads no opening material").toBe(0);
 });

@@ -513,3 +513,57 @@ test("item 4: the field's lock is the Host's submit availability, not the turn",
   expect(measured.stop, "and Stop is still withheld where the Host cannot cancel").toBe(0);
   expect(measured.fieldDisabled, "the field follows the Host's submit availability, not the turn").toBe(false);
 });
+
+// --- item 10: the opening switcher shows the Host's own variant label ---
+
+const OPENING_VARIANT_ID = "V".repeat(42) + "A";
+const openingMessageHandle = "W".repeat(42) + "A";
+
+function openingTranscript(label: string | null) {
+  return [
+    {
+      handle: openingMessageHandle,
+      role: "companion",
+      text: "The lantern over the porch is still lit.",
+      locale: "und",
+      order: 0,
+      revision: 1,
+      openingVariant: { variantId: OPENING_VARIANT_ID, index: 0, count: 2, label, locked: false },
+    },
+  ];
+}
+
+/**
+ * The switcher printed the position and dropped the Host's own label for the
+ * committed variant, which the projection has always carried: `openingVariant.label`
+ * (`reference-pipeline-state.ts` `projectOpeningVariant`) is the greeting set's own
+ * name for the variant - `Default`, `Alternate 1`, built from the card's 1-based
+ * order (`new-companion-service.ts` `buildGreetingVariants`) - and both DTOs type
+ * and validate it (`reference-pipeline-api.ts`, `management-pipeline-api.ts`).
+ * Measured before the fix: the indicator read `"1/2"` for a payload labelled
+ * `Default`.
+ */
+test("item 10: the opening switcher renders the variant label the Host published", async ({ page }) => {
+  await stubShell(page, { transcript: openingTranscript("Default") });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const indicator = page.locator(".swipe-indicator");
+  await expect(indicator).toBeVisible();
+
+  const measured = await indicator.evaluate((node) => (node.textContent ?? "").trim());
+  console.log(`[item-10 labelled] ${JSON.stringify(measured)}`);
+
+  expect(measured, "the Host's own name for the variant reaches the player").toContain("Default");
+  expect(measured, "and the position in the set is still shown").toContain("1/2");
+});
+
+test("item 10: a variant the Host published no label for keeps the plain position", async ({ page }) => {
+  await stubShell(page, { transcript: openingTranscript(null) });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const indicator = page.locator(".swipe-indicator");
+  await expect(indicator).toBeVisible();
+
+  const measured = await indicator.evaluate((node) => (node.textContent ?? "").trim());
+  console.log(`[item-10 unlabelled] ${JSON.stringify(measured)}`);
+
+  expect(measured, "an unpublished label invents no name").toBe("1/2");
+});
