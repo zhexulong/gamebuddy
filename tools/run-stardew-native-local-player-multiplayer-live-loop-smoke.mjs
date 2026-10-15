@@ -330,6 +330,10 @@ async function dispatch(client, receipts, { action, args, snapshot, sequence }) 
       snapshot,
       requestId,
       idempotencyKey: `${requestId}_idem`,
+      // `executeFresh` derives the request deadline from this and `deadlineAfter` refuses a missing or out-of-range
+      // value (`stardew-native-smoke-harness-v1.mjs:51-53`), which the first two educated runs hit as
+      // `invalid_native_request_timeout`.
+      timeoutMs: 15_000,
     });
     if (accepted?.state !== "accepted")
       return { action, requestId, state: accepted?.state ?? "unknown", reason: accepted?.reasonCode ?? "not_accepted" };
