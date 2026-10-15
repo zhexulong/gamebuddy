@@ -29,6 +29,10 @@ import { expect, test, type Page } from "@playwright/test";
  *   6. **Refuted.** The composer is in flow, so it cannot cover the transcript:
  *      measured 72 px of clearance at 400x800 and 71 px at 1440x900 with the
  *      transcript scrolled to its end.
+ *   7. No control in the product had a pressed state: the stylesheet declared
+ *      zero `:active` selectors, so a nav entry, a sheet button and a disclosure
+ *      summary all looked identical down and up. Measured while held, at
+ *      1440x900: `translate: none` and no movement on all three.
  */
 
 const token = "A".repeat(43);
@@ -646,3 +650,84 @@ for (const viewport of [
     expect(short.lastMessageBottom, "a short transcript leaves a gap by construction").toBeLessThan(short.composerTop);
   });
 }
+
+// --- defect 7 ----------------------------------------------------------------
+
+/**
+ * A held control answers the press, and the answer is the same one everywhere.
+ *
+ * The stylesheet declared no `:active` selector at all, so nothing in the
+ * product responded to a press: a nav entry, a sheet button and a disclosure
+ * summary were indistinguishable down and up. The press is one beat - the
+ * control moves down by `--press-shift` while it is held - declared once on the
+ * shell every control renders inside, so a control added tomorrow presses
+ * without its own rule.
+ *
+ * The reading is the held control's own box: `translate` while held, and the
+ * y its bounding rect lands on, against the same two values at rest. The press
+ * is a transform, so the last leg asks the same question with
+ * `prefers-reduced-motion: reduce` and requires the movement to be gone.
+ */
+test("defect 7: a held control answers with the product's own press beat, and reduced motion drops it", async ({ page }) => {
+  await mountShell(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+
+  /** Holds the pointer down on the control and reads it while it is held. */
+  const press = async (selector: string) => {
+    const control = page.locator(selector).first();
+    await expect(control, `${selector} is on screen`).toBeVisible();
+    const read = () =>
+      control.evaluate((node) => {
+        const style = getComputedStyle(node);
+        return { translate: style.translate, y: Math.round(node.getBoundingClientRect().y) };
+      });
+    const rest = await read();
+    const box = await control.boundingBox();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.mouse.down();
+    // The beat is `--motion-duration-fast` (150 ms): read the settled value, not
+    // an interpolated one.
+    await page.waitForTimeout(250);
+    const held = await read();
+    await page.mouse.up();
+    return { rest, held };
+  };
+
+  const shift = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--press-shift").trim(),
+  );
+  expect(shift, "the press beat is a token, not a literal per rule").not.toBe("");
+
+  const nav = await press(".app-bar .nav-button");
+  await page.getByRole("button", { name: "会话", exact: true }).click();
+  await expect(page.getByTestId("chats-surface")).toBeVisible();
+  const sheet = await press("[data-testid='chats-surface'] .small-button");
+  await page.getByRole("button", { name: "角色", exact: true }).click();
+  await expect(page.getByTestId("characters-surface")).toBeVisible();
+  const disclosure = await press("[data-card-import] details.custom-disclosure > summary");
+  console.log(`[press] shift=${shift} nav=${JSON.stringify(nav)} sheet=${JSON.stringify(sheet)} disclosure=${JSON.stringify(disclosure)}`);
+
+  for (const [name, reading] of Object.entries({ nav, sheet, disclosure })) {
+    expect(reading.rest.translate, `${name} is at rest before the press`).toBe("none");
+    expect(
+      reading.held.translate,
+      `${name} pressed is the token's own shift (${JSON.stringify(reading)})`,
+    ).toContain(shift);
+    expect(
+      reading.held.y - reading.rest.y,
+      `${name} moves down by exactly one press (${JSON.stringify(reading)})`,
+    ).toBe(1);
+  }
+
+  // The same press, with the player's reduced-motion preference honoured.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const reduced = await press(".app-bar .nav-button");
+  console.log(`[press] reduced-motion nav=${JSON.stringify(reduced)}`);
+  expect(reduced.rest.translate, "the control is still at rest").toBe("none");
+  expect(
+    reduced.held.translate,
+    `reduced motion drops the press's movement (${JSON.stringify(reduced)})`,
+  ).toBe("none");
+  expect(reduced.held.y - reduced.rest.y, "and the control does not move").toBe(0);
+});

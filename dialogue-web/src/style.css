@@ -147,6 +147,11 @@
   --drawer-max-width: 420px;
   --touch-target-min: 44px;
   --row-min-height: 52px;
+  /* The press beat's own geometry: how far a held control travels. One token, so
+     a nav entry, a sheet button and a disclosure summary press by the same
+     amount, and a press reads as the product's gesture rather than a
+     component's. */
+  --press-shift: 1px;
   /* The monospaced stack every code-shaped value reads: the swipe indicator, a
      code block, an id. Written once here so a `code` element and the chrome
      around it never drift apart. */
@@ -4494,5 +4499,32 @@
      list's. */
   .chat-list {
     max-width: var(--management-form-measure);
+  }
+  /* ==========================================================================
+   The press beat: one state, one token, every control the product ships
+
+   No control in the product answered a press: the sheet declared zero `:active`
+   selectors, so a nav entry, a sheet button and a disclosure summary all looked
+   identical down and up. The presses are one beat now - the control itself
+   travels down by `--press-shift` while it is held - declared once on the shell
+   every control is rendered inside, so a control added tomorrow presses without
+   a rule of its own and no component can drift to its own press.
+
+   The beat is a transform, so it carries the reduced-motion escape the sheet's
+   motion gate requires: a player who asked for reduced motion presses a control
+   that answers the pointer without moving. It is deliberately instantaneous -
+   no `transition` - because a press has to land on the pointer's own frame to
+   read as a press at all, and a state change that draws no frames in between is
+   not an animation for the gate to report.
+   ========================================================================== */
+
+  .tavern-app-shell :is(button, summary):active:not(:disabled) {
+    translate: 0 var(--press-shift);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tavern-app-shell :is(button, summary):active:not(:disabled) {
+      translate: none;
+    }
   }
 } /* end @layer theme.polish */
