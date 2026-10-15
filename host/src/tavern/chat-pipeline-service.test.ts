@@ -126,7 +126,7 @@ const mountPreamble = `
   const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest, createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest } = coordinator;
   const { createChatPipelineService } = await import(serviceUrl);
   const { createChatThreadStore } = await import(storeUrl);
-  const { identityKey } = await import(runtimeUrl);
+  const { identityKey, resolveRuntimePaths } = await import(runtimeUrl);
   const { composeTavernProfile } = await import(contractUrl);
   const internal = await import(internalUrl);
   const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", storeUrl).href);
@@ -792,46 +792,89 @@ test(
 );
 
 test(
-  "the bounded visible tail reaches a keyword planted on the previous turn, and the depth bounds it",
+  "the bounded visible tail reaches a keyword while the bound book's declared depth includes it, and stops one turn past it",
   { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
   async () => {
     const output = await mounted(`
   const fx = await fixture();
   let startCalls = 0;
   const service = serviceFor(fx, async () => { startCalls += 1; });
-  const readPlan = async () => (await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId)).currentTurnContextPlan;
-  const sourceIds = (plan) => plan === undefined ? null : plan.volatileSources.map((s) => s.sourceId).slice().sort();
-  // Turn 1 plants the default world book's own trigger word.
-  await service.submitAfterResponseCommit(commandFor(fx, { text: "今天下雨了" }), "a".repeat(22), async () => undefined);
-  await waitFor(() => startCalls === 1);
-  const plan1 = sourceIds(await readPlan());
-  await driveToTerminal(fx, "completed", "response_turn_1");
-  // Turn 2 says nothing matching: the entry is reachable only through the
-  // bounded visible tail, not the current player line alone.
-  await service.submitAfterResponseCommit(commandFor(fx, { text: "接着聊聊别的吧", expectedDraftRevision: 1 }), "b".repeat(22), async () => undefined);
-  await waitFor(() => startCalls === 2);
-  const plan2 = sourceIds(await readPlan());
-  await driveToTerminal(fx, "completed", "response_turn_2");
-  // Turn 3: the planted turn is now OUTSIDE the depth-2 window, so the same
-  // trigger word must NOT reach the entry - the window widened by the declared
-  // amount, it did not become the whole transcript.
-  await service.submitAfterResponseCommit(commandFor(fx, { text: "还是别的话题", expectedDraftRevision: 2 }), "c".repeat(22), async () => undefined);
-  await waitFor(() => startCalls === 3);
-  const plan3 = sourceIds(await readPlan());
+  const resume = () => fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const sourceIds = (plan) => plan === undefined ? [] : plan.volatileSources.map((s) => s.sourceId).slice().sort();
+  const { readFile } = await import("node:fs/promises");
+  // The BOUND BOOK - not a literal in this test - owns the window: its declared
+  // scan depth and its own trigger words. Reading them here is what keeps a
+  // content edit ("depth 2 -> 4", reworded keys, a new opening) from pinning
+  // this assertion to yesterday's bytes.
+  const runtimeCwd = resolveRuntimePaths(principal, fx.root).runtimeCwd;
+  const book = JSON.parse(await readFile(runtimeCwd + "/worldbook.json", "utf8"));
+  const declaredDepth = book.scanDepth;
+  if (!Number.isSafeInteger(declaredDepth) || declaredDepth < 1) throw new Error("worldbook_has_no_declared_depth");
+  const opening = (await resume()).messages[0].text;
+  const neutral = ["接着聊聊别的吧", "还是别的话题"];
+  const reply = "Synthetic companion reply.";
+  // A trigger word is usable as the plant only while it is the ONLY thing that
+  // can select its entry: none of that entry's keys may already ride in the
+  // opening, the neutral turns or the synthetic reply, so the entry's presence
+  // below is caused by the planted turn alone.
+  const keywordEntries = book.entries.filter((entry) => entry.constant !== true);
+  const plantedIndex = keywordEntries.findIndex((entry) => {
+    const keys = entry.keys ?? [];
+    return keys.length > 0 && keys.every((key) => ![opening, reply, ...neutral].some((text) => text.includes(key)));
+  });
+  if (plantedIndex < 0) throw new Error("worldbook_has_no_isolatable_trigger");
+  const plantedKey = keywordEntries[plantedIndex].keys[0];
+  const plantedSourceId = book.worldBookId + "_entry_" + (plantedIndex + 1);
+  // The selection scans the transcript BEFORE the current turn is accepted, so
+  // the planted turn-1 player message (index 1) rides the tail while
+  // 2*turn - 2 <= declaredDepth; the first turn past that is the boundary.
+  const lastReachableTurn = Math.floor((declaredDepth + 2) / 2);
+  const plans = [];
+  const scannedMessageCounts = [];
+  for (let turn = 1; turn <= lastReachableTurn + 1; turn += 1) {
+    const before = await resume();
+    const text = turn === 1 ? plantedKey : neutral[(turn - 2) % neutral.length];
+    await service.submitAfterResponseCommit(commandFor(fx, { text, expectedDraftRevision: turn - 1 }), String.fromCharCode(96 + turn).repeat(22), async () => undefined);
+    await waitFor(() => startCalls === turn);
+    plans.push(sourceIds((await resume()).currentTurnContextPlan));
+    scannedMessageCounts.push(before.messages.length);
+    await driveToTerminal(fx, "completed", "response_turn_" + turn);
+  }
   await service.close();
   await fx.lease.close();
   await fx.authority.close();
-  process.stdout.write(JSON.stringify({ plan1, plan2, plan3, startCalls }));
+  process.stdout.write(JSON.stringify({ plans, scannedMessageCounts, declaredDepth, plantedKey, plantedSourceId, lastReachableTurn, startCalls }));
 `);
-    const plan1 = output.plan1 as string[];
-    const plan2 = output.plan2 as string[];
-    const plan3 = output.plan3 as string[];
-    // Sanity: selection is live at all (turn 1 matches on its own text).
-    assert.ok(plan1.length >= 1, `plan1 should carry the matching entry, got ${JSON.stringify(plan1)}`);
-    // The previous turn's keyword still reaches its entry through the tail.
-    assert.equal(plan2.length, 1, `plan2 should carry exactly the tail-matched entry, got ${JSON.stringify(plan2)}`);
-    // Outside the declared depth the entry is NOT retrieved.
-    assert.deepEqual(plan3, []);
-    assert.equal(output.startCalls, 3);
+    const plans = output.plans as string[][];
+    const declaredDepth = output.declaredDepth as number;
+    const lastReachableTurn = output.lastReachableTurn as number;
+    const plantedSourceId = output.plantedSourceId as string;
+    assert.equal(output.startCalls, lastReachableTurn + 1);
+    assert.equal(plans.length, lastReachableTurn + 1);
+    // While the planted turn is inside the bound book's declared window the entry
+    // is retrieved - and from turn 2 on the CURRENT line no longer carries the
+    // word, so the tail is what reaches it.
+    for (let turn = 1; turn <= lastReachableTurn; turn += 1) {
+      const plan = plans[turn - 1] ?? [];
+      assert.ok(
+        plan.includes(plantedSourceId),
+        `turn ${turn} is inside declaredDepth=${declaredDepth} and must carry ${plantedSourceId}, got ${JSON.stringify(plan)}`,
+      );
+    }
+    // One turn past the declared window the same word must NOT reach its entry:
+    // the window is bounded by the declared depth, never the whole transcript.
+    const beyond = plans[lastReachableTurn] ?? [];
+    assert.equal(
+      beyond.includes(plantedSourceId),
+      false,
+      `turn ${lastReachableTurn + 1} is past declaredDepth=${declaredDepth} and must not carry ${plantedSourceId}, got ${JSON.stringify(beyond)}`,
+    );
+    // The exclusion is real: the boundary turn scans more messages than the
+    // declared window holds, so something HAD to fall out of it.
+    const scannedAtBoundary = (output.scannedMessageCounts as number[])[lastReachableTurn] ?? 0;
+    assert.ok(
+      scannedAtBoundary > declaredDepth,
+      `the boundary turn scans ${scannedAtBoundary} messages against declaredDepth=${declaredDepth}`,
+    );
   },
 );
