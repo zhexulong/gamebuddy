@@ -210,39 +210,38 @@
 /* Element-level geometry, not component styling: it belongs under every other
    layer, so it is written into the lowest declared one. */
 @layer theme.reset {
-
-/* ==========================================================================
+  /* ==========================================================================
    CSS Reset & Base Geometry
    ========================================================================== */
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
 
-html,
-body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
-  height: 100dvh;
-  overflow: hidden;
-  font-family:
-    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "Microsoft YaHei",
-    sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--text-primary);
-  background-color: var(--surface-canvas);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-}
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    height: 100dvh;
+    overflow: hidden;
+    font-family:
+      ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "Microsoft YaHei",
+      sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    background-color: var(--surface-canvas);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
 
-/* The mount frame, and the first link of the height chain.
+  /* The mount frame, and the first link of the height chain.
 
    `html` and `body` are the viewport (`100dvh`) and the document never scrolls;
    the mount root is where that definite height has to be handed to the layout.
@@ -257,22 +256,21 @@ body {
    past the window, and the frame is sometimes shorter than the window and
    sometimes taller. One frame, declared once, for every mount root this
    stylesheet serves. */
-#root,
-#probe-root {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
+  #root,
+  #probe-root {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
 
-/* Focus Visibility Standard */
-:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
+  /* Focus Visibility Standard */
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
 } /* end @layer theme.reset */
 
 /* Everything below this comment is the preserved pre-阶段三 stylesheet, named
@@ -280,754 +278,755 @@ body {
    accident, and the authored 阶段三 work that follows it is its own layer
    (`theme.polish`) rather than the tail of this one. */
 @layer theme.legacy {
+  /* Skip Link for Keyboard Accessibility */
+  .skip-link {
+    position: absolute;
+    top: -100px;
+    left: 16px;
+    z-index: 1000;
+    padding: 8px 16px;
+    min-height: var(--touch-target-min);
+    display: inline-flex;
+    align-items: center;
+    background: var(--surface-raised);
+    color: var(--text-primary);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    font-weight: 500;
+    text-decoration: none;
+    transition: top var(--motion-duration-fast) var(--motion-ease-out);
+  }
 
-/* Skip Link for Keyboard Accessibility */
-.skip-link {
-  position: absolute;
-  top: -100px;
-  left: 16px;
-  z-index: 1000;
-  padding: 8px 16px;
-  min-height: var(--touch-target-min);
-  display: inline-flex;
-  align-items: center;
-  background: var(--surface-raised);
-  color: var(--text-primary);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-sm);
-  font-weight: 500;
-  text-decoration: none;
-  transition: top var(--motion-duration-fast) var(--motion-ease-out);
-}
+  .skip-link:focus {
+    top: 16px;
+  }
 
-.skip-link:focus {
-  top: 16px;
-}
-
-/* ==========================================================================
+  /* ==========================================================================
    App Shell & Header
    ========================================================================== */
 
-.tavern-app-shell,
-.app-shell {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100vh;
-  height: 100dvh;
-  overflow: hidden;
-  background-color: var(--surface-canvas);
-}
+  .tavern-app-shell,
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    background-color: var(--surface-canvas);
+  }
 
-.app-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: var(--appbar-height);
-  min-height: var(--appbar-height);
-  padding: 0 16px;
-  background-color: var(--surface-panel);
-  border-bottom: 1px solid var(--border-subtle);
-  user-select: none;
-  z-index: 10;
-}
+  .app-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: var(--appbar-height);
+    min-height: var(--appbar-height);
+    padding: 0 16px;
+    background-color: var(--surface-panel);
+    border-bottom: 1px solid var(--border-subtle);
+    user-select: none;
+    z-index: 10;
+  }
 
-.app-bar-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-  min-width: 0;
-  font-weight: 600;
-  font-size: 15px;
-  color: var(--text-primary);
-}
+  .app-bar-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    min-width: 0;
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--text-primary);
+  }
 
-/* The wordmark is the first thing to go when the bar gets narrow; the brand
+  /* The wordmark is the first thing to go when the bar gets narrow; the brand
    mark and the companion stay (design/26 §7.1, 375 px compact app bar). */
-.app-bar-brand-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-}
+  .app-bar-brand-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
 
-/* The app-bar title is the one element every shell shares; it takes the
+  /* The app-bar title is the one element every shell shares; it takes the
    remaining width and ellipsises, so a long companion or chat name never
    pushes the app-bar actions out of the viewport. */
-.app-bar-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+  .app-bar-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
-.app-bar-brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-xs);
-  background-color: var(--accent-solid);
-  color: var(--palette-gray-100);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-}
+  .app-bar-brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-xs);
+    background-color: var(--accent-solid);
+    color: var(--palette-gray-100);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
 
-.app-bar-companion {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-}
+  .app-bar-companion {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+  }
 
-/* The connection/turn status sits next to the companion it describes, divided
+  /* The connection/turn status sits next to the companion it describes, divided
    from the name by a hairline rather than a literal separator glyph
    (design/26 §4.1: `Mira · Online`, unobtrusive). */
-.app-bar-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: 2px;
-  padding-left: 10px;
-  border-left: 1px solid var(--border-subtle);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.app-bar-companion strong {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  border-radius: var(--radius-sm);
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 600;
-  user-select: none;
-}
-
-.avatar-small {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  font-size: 12px;
-}
-
-.app-bar-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.read-only-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 8px;
-  font-size: 11px;
-  color: var(--text-disabled);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xs);
-  background-color: var(--surface-raised);
-  white-space: nowrap;
-}
-
-.online-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xs);
-  background-color: var(--surface-raised);
-  white-space: nowrap;
-}
-
-.status-dot {
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background-color: var(--success);
-  box-shadow: 0 0 6px rgba(79, 174, 154, 0.4);
-}
-
-.nav-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: var(--touch-target-min);
-  padding: 0 12px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all var(--motion-duration-fast) var(--motion-ease-out);
-  white-space: nowrap;
-}
-
-.nav-button:hover {
-  background-color: var(--surface-raised);
-  color: var(--text-primary);
-  border-color: var(--border-subtle);
-}
-
-.nav-button.active {
-  background-color: var(--surface-raised);
-  color: var(--accent);
-  border-color: var(--border-strong);
-}
-
-@media (max-width: 860px) {
-  .nav-button .nav-label {
-    display: none;
+  .app-bar-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 2px;
+    padding-left: 10px;
+    border-left: 1px solid var(--border-subtle);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    white-space: nowrap;
   }
+
+  .app-bar-companion strong {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    user-select: none;
+  }
+
+  .avatar-small {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    font-size: 12px;
+  }
+
+  .app-bar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .read-only-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    font-size: 11px;
+    color: var(--text-disabled);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    background-color: var(--surface-raised);
+    white-space: nowrap;
+  }
+
+  .online-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    background-color: var(--surface-raised);
+    white-space: nowrap;
+  }
+
+  .status-dot {
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background-color: var(--success);
+    box-shadow: 0 0 6px rgba(79, 174, 154, 0.4);
+  }
+
   .nav-button {
-    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: var(--touch-target-min);
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--motion-duration-fast) var(--motion-ease-out);
+    white-space: nowrap;
+  }
+
+  .nav-button:hover {
+    background-color: var(--surface-raised);
+    color: var(--text-primary);
+    border-color: var(--border-subtle);
+  }
+
+  .nav-button.active {
+    background-color: var(--surface-raised);
+    color: var(--accent);
+    border-color: var(--border-strong);
+  }
+
+  @media (max-width: 860px) {
+    .nav-button .nav-label {
+      display: none;
+    }
+    .nav-button {
+      padding: 0;
+      width: var(--touch-target-min);
+      height: var(--touch-target-min);
+      justify-content: center;
+    }
+  }
+
+  .icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: var(--touch-target-min);
     height: var(--touch-target-min);
-    justify-content: center;
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition:
+      background-color var(--motion-duration-fast) var(--motion-ease-out),
+      color var(--motion-duration-fast) var(--motion-ease-out),
+      border-color var(--motion-duration-fast) var(--motion-ease-out);
   }
-}
 
-.icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--touch-target-min);
-  height: var(--touch-target-min);
-  min-width: var(--touch-target-min);
-  min-height: var(--touch-target-min);
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-out),
-    color var(--motion-duration-fast) var(--motion-ease-out),
-    border-color var(--motion-duration-fast) var(--motion-ease-out);
-}
+  .icon-button:hover {
+    background-color: var(--surface-raised);
+    color: var(--text-primary);
+    border-color: var(--border-subtle);
+  }
 
-.icon-button:hover {
-  background-color: var(--surface-raised);
-  color: var(--text-primary);
-  border-color: var(--border-subtle);
-}
+  .icon-button.active {
+    background-color: var(--surface-raised);
+    color: var(--accent);
+    border-color: var(--border-strong);
+  }
 
-.icon-button.active {
-  background-color: var(--surface-raised);
-  color: var(--accent);
-  border-color: var(--border-strong);
-}
-
-/* ==========================================================================
+  /* ==========================================================================
    Main Content Layout & Reading Axis
    ========================================================================== */
 
-.app-main-content,
-.main-content {
-  flex: 1 1 0%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  width: 100%;
-  max-width: var(--timeline-reading-measure);
-  margin: 0 auto;
-  padding: 0 16px;
-}
+  .app-main-content,
+  .main-content {
+    flex: 1 1 0%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    width: 100%;
+    max-width: var(--timeline-reading-measure);
+    margin: 0 auto;
+    padding: 0 16px;
+  }
 
-.chat-view {
-  flex: 1 1 0%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: var(--timeline-reading-measure);
-  margin: 0 auto;
-  padding: 0 16px;
-}
+  .chat-view {
+    flex: 1 1 0%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: var(--timeline-reading-measure);
+    margin: 0 auto;
+    padding: 0 16px;
+  }
 
-.timeline {
-  flex: 1 1 0%;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 20px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-subtle) transparent;
-}
+  .timeline {
+    flex: 1 1 0%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 20px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-subtle) transparent;
+  }
 
-.timeline-heading {
-  text-align: center;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-subtle);
-}
+  .timeline-heading {
+    text-align: center;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
 
-.timeline-heading h1 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
+  .timeline-heading h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
 
-.message-list {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
+  .message-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
 
-.message {
-  display: flex;
-  gap: 10px;
-  max-width: 100%;
-}
+  .message {
+    display: flex;
+    gap: 10px;
+    max-width: 100%;
+  }
 
-.message.companion {
-  align-self: flex-start;
-  max-width: 85%;
-}
+  .message.companion {
+    align-self: flex-start;
+    max-width: 85%;
+  }
 
-.message.player {
-  align-self: flex-end;
-  flex-direction: row-reverse;
-  max-width: 85%;
-}
+  .message.player {
+    align-self: flex-end;
+    flex-direction: row-reverse;
+    max-width: 85%;
+  }
 
-.message-body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
+  .message-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
 
-/* The name here is the wire's own maximum (256 units), and the author line is a
+  /* The name here is the wire's own maximum (256 units), and the author line is a
    flex item of `.message-header`: without a wrap opportunity its min-content is
    the whole name, which pushes the line and the conversation sideways. `anywhere`
    (not `break-word`) is what makes the min-content one character. */
-.message-author {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-disabled);
-  overflow-wrap: anywhere;
-}
+  .message-author {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-disabled);
+    overflow-wrap: anywhere;
+  }
 
-.message.player .message-author {
-  text-align: right;
-}
+  .message.player .message-author {
+    text-align: right;
+  }
 
-.message-bubble {
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  font-size: 14px;
-  line-height: 1.72;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
+  .message-bubble {
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    line-height: 1.72;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
 
-.message.companion .message-bubble {
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-  border-top-left-radius: var(--radius-xs);
-}
+  .message.companion .message-bubble {
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    border-top-left-radius: var(--radius-xs);
+  }
 
-.message.player .message-bubble {
-  background-color: var(--selection);
-  border: 1px solid var(--palette-burgundy-border);
-  color: var(--palette-gray-100);
-  border-top-right-radius: var(--radius-xs);
-}
+  .message.player .message-bubble {
+    background-color: var(--selection);
+    border: 1px solid var(--palette-burgundy-border);
+    color: var(--palette-gray-100);
+    border-top-right-radius: var(--radius-xs);
+  }
 
-.message-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
+  .message-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
 
-/* The message's own control group: the swipe pair and regenerate are the same
+  /* The message's own control group: the swipe pair and regenerate are the same
    kind of target - one 44 px floor (`--touch-target-min`), one card tone, one
    hairline - so the two read as one group rather than a control sitting beside
    a caption. Regenerate was a transparent 11 px text row here, the smallest
    target and the smallest type anywhere in the product. */
-.swipe-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: var(--touch-target-min);
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-2);
-  font-size: 12px;
-}
+  .swipe-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-height: var(--touch-target-min);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-2);
+    font-size: 12px;
+  }
 
-.swipe-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  min-width: var(--touch-target-min);
-  min-height: var(--touch-target-min);
-  border-radius: var(--radius-xs);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color var(--motion-duration-fast), background-color var(--motion-duration-fast);
-}
+  .swipe-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+    border-radius: var(--radius-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      color var(--motion-duration-fast),
+      background-color var(--motion-duration-fast);
+  }
 
-.swipe-btn:hover:not(:disabled) {
-  color: var(--text-primary);
-  background-color: var(--surface-panel);
-}
+  .swipe-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    background-color: var(--surface-panel);
+  }
 
-.swipe-btn:disabled {
-  color: var(--text-disabled);
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+  .swipe-btn:disabled {
+    color: var(--text-disabled);
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 
-.swipe-indicator {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  user-select: none;
-  padding: 0 2px;
-}
+  .swipe-indicator {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    user-select: none;
+    padding: 0 2px;
+  }
 
-.message-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-}
+  .message-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
 
-.regenerate-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: var(--touch-target-min);
-  padding: 0 var(--space-3);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-out),
-    border-color var(--motion-duration-fast) var(--motion-ease-out),
-    color var(--motion-duration-fast) var(--motion-ease-out);
-}
+  .regenerate-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-height: var(--touch-target-min);
+    padding: 0 var(--space-3);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition:
+      background-color var(--motion-duration-fast) var(--motion-ease-out),
+      border-color var(--motion-duration-fast) var(--motion-ease-out),
+      color var(--motion-duration-fast) var(--motion-ease-out);
+  }
 
-.regenerate-btn:hover:not(:disabled) {
-  color: var(--text-primary);
-  background-color: var(--surface-hover);
-  border-color: var(--border-strong);
-}
+  .regenerate-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    background-color: var(--surface-hover);
+    border-color: var(--border-strong);
+  }
 
-.regenerate-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+  .regenerate-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    Draft Section (P3 Read-Only Named Region)
    ========================================================================== */
 
-.draft-section {
-  flex-shrink: 0;
-  border-top: 1px solid var(--border-subtle);
-  background-color: var(--surface-panel);
-  padding: 12px 16px;
-  padding-bottom: calc(12px + env(safe-area-inset-bottom));
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-}
+  .draft-section {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border-subtle);
+    background-color: var(--surface-panel);
+    padding: 12px 16px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  }
 
-.draft-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
+  .draft-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
 
-.draft-header h2 {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
+  .draft-header h2 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
 
-.draft-content {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-  max-height: 120px;
-  overflow-y: auto;
-}
+  .draft-content {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    max-height: 120px;
+    overflow-y: auto;
+  }
 
-.draft-empty {
-  color: var(--text-disabled);
-  font-style: normal;
-}
+  .draft-empty {
+    color: var(--text-disabled);
+    font-style: normal;
+  }
 
-/* A shell that is still reading its first projection: one quiet centred line,
+  /* A shell that is still reading its first projection: one quiet centred line,
    never a stand-in transcript or a disabled control set. */
-.state-placeholder {
-  flex: 1 1 0%;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 16px;
-  text-align: center;
-}
+  .state-placeholder {
+    flex: 1 1 0%;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 16px;
+    text-align: center;
+  }
 
-.loading-text {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-disabled);
-}
+  .loading-text {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-disabled);
+  }
 
-/* The turn-outcome notice under the transcript: a status line, not an error. */
-.reference-turn-notice {
-  flex-shrink: 0;
-  margin: 0 0 12px;
-  padding: 8px 12px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--text-secondary);
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-left: 3px solid var(--warning);
-  border-radius: var(--radius-sm);
-}
+  /* The turn-outcome notice under the transcript: a status line, not an error. */
+  .reference-turn-notice {
+    flex-shrink: 0;
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-left: 3px solid var(--warning);
+    border-radius: var(--radius-sm);
+  }
 
-/* The one-line surface notices live in `theme.polish` (see the banner family
+  /* The one-line surface notices live in `theme.polish` (see the banner family
    there): they are text a panel's own paragraph rule would otherwise win on
    specificity, and the layer is what decides instead of an escalating selector. */
 
-/* Saved-draft region: the labelled read-only band a shell shows above its
+  /* Saved-draft region: the labelled read-only band a shell shows above its
    composer. Padding is horizontal-only because the band is full-bleed inside
    the reading-measure column that already carries the side padding. */
-.reference-draft-section {
-  flex-shrink: 0;
-  border-top: 1px solid var(--border-subtle);
-  background-color: var(--surface-panel);
-  padding: 12px 0 calc(12px + env(safe-area-inset-bottom)) 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
+  .reference-draft-section {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border-subtle);
+    background-color: var(--surface-panel);
+    padding: 12px 0 calc(12px + env(safe-area-inset-bottom)) 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
 
-.reference-draft-section h2 {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-disabled);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
+  .reference-draft-section h2 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-disabled);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
 
-.reference-draft-section p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-  max-height: 120px;
-  overflow-y: auto;
-}
+  .reference-draft-section p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    max-height: 120px;
+    overflow-y: auto;
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    Empty & Loading & Problem States
    ========================================================================== */
 
-.empty-state {
-  flex: 1 1 0%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 32px 16px;
-  color: var(--text-secondary);
-}
+  .empty-state {
+    flex: 1 1 0%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 32px 16px;
+    color: var(--text-secondary);
+  }
 
-.empty-state p {
-  margin: 8px 0 0;
-  font-size: 14px;
-  color: var(--text-disabled);
-}
+  .empty-state p {
+    margin: 8px 0 0;
+    font-size: 14px;
+    color: var(--text-disabled);
+  }
 
-.problem-view {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  height: 100dvh;
-  padding: 24px 16px;
-  background-color: var(--surface-canvas);
-}
+  .problem-view {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    height: 100dvh;
+    padding: 24px 16px;
+    background-color: var(--surface-canvas);
+  }
 
-.problem-card {
-  width: 100%;
-  max-width: 460px;
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
+  .problem-card {
+    width: 100%;
+    max-width: 460px;
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
 
-.problem-card h1 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--palette-crimson-base);
-}
+  .problem-card h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--palette-crimson-base);
+  }
 
-.problem-card p {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
+  .problem-card p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    Interactive Composer Section
    ========================================================================== */
 
-.composer-section {
-  flex-shrink: 0;
-  border-top: 1px solid var(--border-subtle);
-  background-color: var(--surface-panel);
-  padding: 12px 16px;
-  padding-bottom: calc(12px + env(safe-area-inset-bottom));
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 100%;
-}
+  .composer-section {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border-subtle);
+    background-color: var(--surface-panel);
+    padding: 12px 16px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+  }
 
-.composer-container {
-  width: 100%;
-  max-width: var(--timeline-reading-measure);
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 6px 8px 6px 12px;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
-}
+  .composer-container {
+    width: 100%;
+    max-width: var(--timeline-reading-measure);
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 6px 8px 6px 12px;
+    transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+  }
 
-.composer-container:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
+  .composer-container:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
 
-.composer-textarea {
-  flex: 1 1 0%;
-  min-height: 36px;
-  max-height: 176px;
-  background: transparent;
-  border: none;
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 14px;
-  line-height: 1.5;
-  padding: 6px 0;
-  resize: none;
-  outline: none;
-}
+  .composer-textarea {
+    flex: 1 1 0%;
+    min-height: 36px;
+    max-height: 176px;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 6px 0;
+    resize: none;
+    outline: none;
+  }
 
-.composer-textarea::placeholder {
-  color: var(--text-disabled);
-}
+  .composer-textarea::placeholder {
+    color: var(--text-disabled);
+  }
 
-.composer-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 2px;
-}
+  .composer-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 2px;
+  }
 
-/* Voice surface single-point status dot (additive v1 snapshot field). */
-.voice-status-dot {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  color: var(--text-disabled);
-  transition: color var(--motion-duration-fast) var(--motion-ease-out);
-}
-.voice-status-unavailable {
-  color: var(--text-disabled);
-}
-.voice-status-ready {
-  color: var(--success, #2f9e44);
-}
-.voice-status-speaking {
-  color: var(--success, #2f9e44);
-}
+  /* Voice surface single-point status dot (additive v1 snapshot field). */
+  .voice-status-dot {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    color: var(--text-disabled);
+    transition: color var(--motion-duration-fast) var(--motion-ease-out);
+  }
+  .voice-status-unavailable {
+    color: var(--text-disabled);
+  }
+  .voice-status-ready {
+    color: var(--success, #2f9e44);
+  }
+  .voice-status-speaking {
+    color: var(--success, #2f9e44);
+  }
 
-/*
+  /*
    The mic's halo, and the reason it is exactly one state wide.
 
    `tavern_browser_api/v1` closes the voice surface to `unavailable | ready |
@@ -1043,628 +1042,628 @@ body {
    dot's own transition, and a loop long enough to read as a soft halo rather
    than as a strobe. prefers-reduced-motion removes the motion entirely, below.
 */
-.voice-pulse-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 2px solid currentColor;
-  pointer-events: none;
-  will-change: transform, opacity;
-  animation: voice-pulse-ring 1.6s var(--motion-ease-smooth) infinite;
-}
-@keyframes voice-pulse-ring {
-  0% {
-    transform: scale(0.8);
+  .voice-pulse-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    pointer-events: none;
+    will-change: transform, opacity;
+    animation: voice-pulse-ring 1.6s var(--motion-ease-smooth) infinite;
+  }
+  @keyframes voice-pulse-ring {
+    0% {
+      transform: scale(0.8);
+      opacity: 0.6;
+    }
+    70% {
+      transform: scale(1.75);
+      opacity: 0;
+    }
+    100% {
+      transform: scale(1.75);
+      opacity: 0;
+    }
+  }
+
+  /* Motion off is not state off: the labelled state and its colour stay, and only
+   the halo's motion goes. */
+  @media (prefers-reduced-motion: reduce) {
+    .voice-pulse-ring {
+      animation: none;
+    }
+  }
+
+  .composer-button {
+    width: var(--touch-target-min);
+    height: var(--touch-target-min);
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    cursor: pointer;
+    transition: all var(--motion-duration-fast) var(--motion-ease-out);
+  }
+
+  .send-button {
+    background-color: var(--accent-solid);
+    color: var(--palette-gray-100);
+  }
+
+  .send-button:hover:not(:disabled) {
+    background-color: var(--accent-solid-hover);
+  }
+
+  .send-button:disabled {
+    background-color: var(--surface-panel);
+    color: var(--text-disabled);
+    cursor: not-allowed;
     opacity: 0.6;
   }
-  70% {
-    transform: scale(1.75);
-    opacity: 0;
+
+  .stop-button {
+    background-color: var(--palette-crimson-base);
+    color: #fff;
   }
-  100% {
-    transform: scale(1.75);
-    opacity: 0;
+
+  .stop-button:hover {
+    background-color: #e27575;
   }
-}
 
-/* Motion off is not state off: the labelled state and its colour stay, and only
-   the halo's motion goes. */
-@media (prefers-reduced-motion: reduce) {
-  .voice-pulse-ring {
-    animation: none;
-  }
-}
-
-.composer-button {
-  width: var(--touch-target-min);
-  height: var(--touch-target-min);
-  min-width: var(--touch-target-min);
-  min-height: var(--touch-target-min);
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  cursor: pointer;
-  transition: all var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.send-button {
-  background-color: var(--accent-solid);
-  color: var(--palette-gray-100);
-}
-
-.send-button:hover:not(:disabled) {
-  background-color: var(--accent-solid-hover);
-}
-
-.send-button:disabled {
-  background-color: var(--surface-panel);
-  color: var(--text-disabled);
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.stop-button {
-  background-color: var(--palette-crimson-base);
-  color: #fff;
-}
-
-.stop-button:hover {
-  background-color: #e27575;
-}
-
-/* ==========================================================================
+  /* ==========================================================================
    Full Context Drawers & Management Panels
    ========================================================================== */
 
-.backdrop-overlay {
-  position: fixed;
-  inset: 0;
-  background-color: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(2px);
-  z-index: 100;
-  animation: backdrop-in var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.context-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 100%;
-  max-width: var(--drawer-max-width);
-  background-color: var(--surface-panel);
-  border-left: 1px solid var(--border-subtle);
-  display: flex;
-  flex-direction: column;
-  z-index: 101;
-  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
-  animation: drawer-in var(--motion-duration-normal) var(--motion-ease-drawer);
-}
-
-.drawer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: var(--appbar-height);
-  padding: 0 16px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.drawer-title-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-primary);
-}
-
-.drawer-title-group h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.drawer-actions-bar {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-subtle);
-  background-color: var(--surface-canvas);
-}
-
-.drawer-content {
-  flex: 1 1 0%;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.drawer-footer {
-  padding: 12px 16px;
-  border-top: 1px solid var(--border-subtle);
-  padding-bottom: calc(12px + env(safe-area-inset-bottom));
-}
-
-/* Tabs */
-.tab-navigation {
-  display: flex;
-  border-bottom: 1px solid var(--border-subtle);
-  background-color: var(--surface-canvas);
-}
-
-.tab-button {
-  flex: 1 1 0%;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.tab-button:hover {
-  color: var(--text-primary);
-}
-
-.tab-button.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-/* Lists & Cards */
-.chat-list,
-.companion-list,
-.world-info-list,
-.memory-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.chat-item-card,
-.world-info-card,
-.memory-item-card {
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  padding: 12px;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.chat-item-card:hover,
-.world-info-card:hover,
-.memory-item-card:hover {
-  border-color: var(--border-strong);
-}
-
-.chat-item-card.selected {
-  border-color: var(--accent);
-  background-color: var(--selection);
-}
-
-.chat-item-main {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.chat-select-btn {
-  flex: 1 1 0%;
-  background: transparent;
-  border: none;
-  text-align: left;
-  cursor: pointer;
-  padding: 0;
-  color: inherit;
-  /* The row's select control is the whole title line, so it carries the touch
-     floor itself; without it the pressable target is the 16px text box. */
-  min-height: var(--touch-target-min);
-}
-
-.chat-item-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-primary);
-  margin-bottom: 2px;
-}
-
-.chat-item-meta {
-  font-size: 12px;
-  color: var(--text-disabled);
-}
-
-.chat-item-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.icon-button-small {
-  width: var(--touch-target-min);
-  height: var(--touch-target-min);
-  min-width: var(--touch-target-min);
-  min-height: var(--touch-target-min);
-  border-radius: var(--radius-xs);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-out),
-    color var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.icon-button-small:hover {
-  background-color: var(--palette-gray-700);
-  color: var(--text-primary);
-}
-
-/* Active Companion Card */
-.active-companion-card {
-  background: linear-gradient(135deg, var(--surface-raised) 0%, var(--palette-burgundy-dark) 100%);
-  border: 1px solid var(--palette-burgundy-border);
-  border-radius: var(--radius-md);
-  padding: 16px;
-  margin-bottom: 12px;
-}
-
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.companion-avatar-large {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background-color: var(--palette-burgundy-base);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  font-weight: bold;
-}
-
-.badge-active {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--palette-teal-base);
-  margin-top: 2px;
-}
-
-.companion-persona-text {
-  margin: 12px 0 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-
-.section-subtitle {
-  margin: 16px 0 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-disabled);
-  text-transform: uppercase;
-}
-
-.companion-list-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  cursor: pointer;
-}
-
-.companion-list-item:hover {
-  border-color: var(--accent);
-}
-
-.companion-list-item.active {
-  border-color: var(--accent);
-  background-color: var(--selection);
-}
-
-.monogram-small {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background-color: var(--palette-gray-700);
-  color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: bold;
-}
-
-/* World Info Tags */
-.entry-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.entry-key-tag {
-  font-size: 11px;
-  font-weight: 600;
-  background-color: var(--palette-gray-700);
-  color: var(--palette-gold-base);
-  padding: 2px 6px;
-  border-radius: var(--radius-xs);
-}
-
-.entry-title {
-  margin: 0 0 4px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.entry-content {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
-
-.switch-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-/* Memory Cards */
-.memory-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.status-tag {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: var(--radius-xs);
-}
-
-.status-tag.permanent {
-  background-color: var(--palette-burgundy-dark);
-  color: var(--palette-burgundy-base);
-  border: 1px solid var(--palette-burgundy-border);
-}
-
-.status-tag.active {
-  background-color: var(--palette-gray-700);
-  color: var(--palette-teal-base);
-}
-
-.memory-time {
-  font-size: 11px;
-  color: var(--text-disabled);
-}
-
-.memory-fact {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
-
-/* Forms & Inputs */
-.form-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.form-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.form-input,
-.form-textarea,
-.form-select {
-  width: 100%;
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 14px;
-  padding: 8px 12px;
-  outline: none;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.form-input:focus,
-.form-textarea:focus,
-.form-select:focus {
-  border-color: var(--accent);
-}
-
-.button-group {
-  display: flex;
-  gap: 8px;
-}
-
-.primary-button {
-  height: var(--touch-target-min);
-  padding: 0 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background-color: var(--accent-solid);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.primary-button:hover:not(:disabled) {
-  background-color: var(--accent-solid-hover);
-}
-
-.primary-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.small-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  /* design/26 §7.1: every pointer control keeps a 44 px minimum hit target. The
-     management shell already forced this; the composed shell had 32 px buttons. */
-  min-height: var(--touch-target-min);
-  min-width: var(--touch-target-min);
-  padding: 0 12px;
-  border-radius: var(--radius-sm);
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-out),
-    border-color var(--motion-duration-fast) var(--motion-ease-out),
-    color var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.small-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.small-button.primary {
-  background-color: var(--accent-solid);
-  border-color: var(--accent-solid);
-  color: #fff;
-}
-
-.small-button:hover {
-  background-color: var(--palette-gray-700);
-}
-
-.success-text {
-  font-size: 12px;
-  color: var(--palette-teal-base);
-  margin: 0;
-}
-
-.empty-subtle {
-  font-size: 13px;
-  color: var(--text-disabled);
-  text-align: center;
-  padding: 24px 0;
-  margin: 0;
-}
-
-/* Settings Sections */
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.settings-section-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-primary);
-}
-
-.settings-section-title h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.model-info-card {
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.model-info-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 13px;
-}
-
-.model-info-row .label {
-  color: var(--text-disabled);
-}
-
-.model-info-row .value {
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.badge-highlight {
-  background-color: var(--palette-burgundy-dark);
-  color: var(--palette-burgundy-base);
-  padding: 2px 6px;
-  border-radius: var(--radius-xs);
-  font-size: 11px;
-}
-
-/* App Bar Responsive */
-.button-text-responsive {
-  display: inline;
-}
-
-@media (max-width: 768px) {
-  .button-text-responsive {
-    display: none;
+  .backdrop-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(2px);
+    z-index: 100;
+    animation: backdrop-in var(--motion-duration-fast) var(--motion-ease-out);
   }
-}
 
-/* ==========================================================================
+  .context-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: var(--drawer-max-width);
+    background-color: var(--surface-panel);
+    border-left: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    z-index: 101;
+    box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+    animation: drawer-in var(--motion-duration-normal) var(--motion-ease-drawer);
+  }
+
+  .drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: var(--appbar-height);
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .drawer-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-primary);
+  }
+
+  .drawer-title-group h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .drawer-actions-bar {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    background-color: var(--surface-canvas);
+  }
+
+  .drawer-content {
+    flex: 1 1 0%;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .drawer-footer {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-subtle);
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  /* Tabs */
+  .tab-navigation {
+    display: flex;
+    border-bottom: 1px solid var(--border-subtle);
+    background-color: var(--surface-canvas);
+  }
+
+  .tab-button {
+    flex: 1 1 0%;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--motion-duration-fast) var(--motion-ease-out);
+  }
+
+  .tab-button:hover {
+    color: var(--text-primary);
+  }
+
+  .tab-button.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* Lists & Cards */
+  .chat-list,
+  .companion-list,
+  .world-info-list,
+  .memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .chat-item-card,
+  .world-info-card,
+  .memory-item-card {
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+    transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+  }
+
+  .chat-item-card:hover,
+  .world-info-card:hover,
+  .memory-item-card:hover {
+    border-color: var(--border-strong);
+  }
+
+  .chat-item-card.selected {
+    border-color: var(--accent);
+    background-color: var(--selection);
+  }
+
+  .chat-item-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .chat-select-btn {
+    flex: 1 1 0%;
+    background: transparent;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    padding: 0;
+    color: inherit;
+    /* The row's select control is the whole title line, so it carries the touch
+     floor itself; without it the pressable target is the 16px text box. */
+    min-height: var(--touch-target-min);
+  }
+
+  .chat-item-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+  }
+
+  .chat-item-meta {
+    font-size: 12px;
+    color: var(--text-disabled);
+  }
+
+  .chat-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .icon-button-small {
+    width: var(--touch-target-min);
+    height: var(--touch-target-min);
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+    border-radius: var(--radius-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition:
+      background-color var(--motion-duration-fast) var(--motion-ease-out),
+      color var(--motion-duration-fast) var(--motion-ease-out);
+  }
+
+  .icon-button-small:hover {
+    background-color: var(--palette-gray-700);
+    color: var(--text-primary);
+  }
+
+  /* Active Companion Card */
+  .active-companion-card {
+    background: linear-gradient(135deg, var(--surface-raised) 0%, var(--palette-burgundy-dark) 100%);
+    border: 1px solid var(--palette-burgundy-border);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .companion-avatar-large {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background-color: var(--palette-burgundy-base);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    font-weight: bold;
+  }
+
+  .badge-active {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--palette-teal-base);
+    margin-top: 2px;
+  }
+
+  .companion-persona-text {
+    margin: 12px 0 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
+
+  .section-subtitle {
+    margin: 16px 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-disabled);
+    text-transform: uppercase;
+  }
+
+  .companion-list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    cursor: pointer;
+  }
+
+  .companion-list-item:hover {
+    border-color: var(--accent);
+  }
+
+  .companion-list-item.active {
+    border-color: var(--accent);
+    background-color: var(--selection);
+  }
+
+  .monogram-small {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background-color: var(--palette-gray-700);
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+  }
+
+  /* World Info Tags */
+  .entry-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+
+  .entry-key-tag {
+    font-size: 11px;
+    font-weight: 600;
+    background-color: var(--palette-gray-700);
+    color: var(--palette-gold-base);
+    padding: 2px 6px;
+    border-radius: var(--radius-xs);
+  }
+
+  .entry-title {
+    margin: 0 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .entry-content {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+
+  .switch-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  /* Memory Cards */
+  .memory-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+
+  .status-tag {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: var(--radius-xs);
+  }
+
+  .status-tag.permanent {
+    background-color: var(--palette-burgundy-dark);
+    color: var(--palette-burgundy-base);
+    border: 1px solid var(--palette-burgundy-border);
+  }
+
+  .status-tag.active {
+    background-color: var(--palette-gray-700);
+    color: var(--palette-teal-base);
+  }
+
+  .memory-time {
+    font-size: 11px;
+    color: var(--text-disabled);
+  }
+
+  .memory-fact {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+
+  /* Forms & Inputs */
+  .form-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .form-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .form-input,
+  .form-textarea,
+  .form-select {
+    width: 100%;
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 14px;
+    padding: 8px 12px;
+    outline: none;
+    transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+  }
+
+  .form-input:focus,
+  .form-textarea:focus,
+  .form-select:focus {
+    border-color: var(--accent);
+  }
+
+  .button-group {
+    display: flex;
+    gap: 8px;
+  }
+
+  .primary-button {
+    height: var(--touch-target-min);
+    padding: 0 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background-color: var(--accent-solid);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color var(--motion-duration-fast) var(--motion-ease-out);
+  }
+
+  .primary-button:hover:not(:disabled) {
+    background-color: var(--accent-solid-hover);
+  }
+
+  .primary-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .small-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    /* design/26 §7.1: every pointer control keeps a 44 px minimum hit target. The
+     management shell already forced this; the composed shell had 32 px buttons. */
+    min-height: var(--touch-target-min);
+    min-width: var(--touch-target-min);
+    padding: 0 12px;
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      background-color var(--motion-duration-fast) var(--motion-ease-out),
+      border-color var(--motion-duration-fast) var(--motion-ease-out),
+      color var(--motion-duration-fast) var(--motion-ease-out);
+  }
+
+  .small-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .small-button.primary {
+    background-color: var(--accent-solid);
+    border-color: var(--accent-solid);
+    color: #fff;
+  }
+
+  .small-button:hover {
+    background-color: var(--palette-gray-700);
+  }
+
+  .success-text {
+    font-size: 12px;
+    color: var(--palette-teal-base);
+    margin: 0;
+  }
+
+  .empty-subtle {
+    font-size: 13px;
+    color: var(--text-disabled);
+    text-align: center;
+    padding: 24px 0;
+    margin: 0;
+  }
+
+  /* Settings Sections */
+  .settings-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .settings-section-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-primary);
+  }
+
+  .settings-section-title h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .model-info-card {
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .model-info-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+  }
+
+  .model-info-row .label {
+    color: var(--text-disabled);
+  }
+
+  .model-info-row .value {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  .badge-highlight {
+    background-color: var(--palette-burgundy-dark);
+    color: var(--palette-burgundy-base);
+    padding: 2px 6px;
+    border-radius: var(--radius-xs);
+    font-size: 11px;
+  }
+
+  /* App Bar Responsive */
+  .button-text-responsive {
+    display: inline;
+  }
+
+  @media (max-width: 768px) {
+    .button-text-responsive {
+      display: none;
+    }
+  }
+
+  /* ==========================================================================
    Settings & management panels (design/26 §4.2, §6.4; design/28 §2)
 
    These panels are mounted by BOTH shells - the P9 management surface and the
@@ -1675,322 +1674,322 @@ body {
    spacing. Only a rule the management drawer alone wants stays scoped, below.
    ========================================================================== */
 
-.management-settings-section {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 4px 0 16px;
-}
+  .management-settings-section {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 4px 0 16px;
+  }
 
-/* A hairline separates one field group from the next; the first group has
+  /* A hairline separates one field group from the next; the first group has
    nothing above it to separate itself from. */
-.management-settings-section + .management-settings-section {
-  border-top: 1px solid var(--border-subtle);
-  padding-top: 16px;
-}
+  .management-settings-section + .management-settings-section {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 16px;
+  }
 
-.management-settings-section h2 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text-primary);
-}
+  .management-settings-section h2 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--text-primary);
+  }
 
-.management-settings-section > p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--text-secondary);
-}
+  .management-settings-section > p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+  }
 
-.management-settings-hint,
-.field-hint {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-disabled);
-  overflow-wrap: anywhere;
-}
+  .management-settings-hint,
+  .field-hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-disabled);
+    overflow-wrap: anywhere;
+  }
 
-/* Label/value read-back rows: the label is quiet, the value is the fact. */
-.management-settings-details {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-}
+  /* Label/value read-back rows: the label is quiet, the value is the fact. */
+  .management-settings-details {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+  }
 
-.management-settings-details div {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
+  .management-settings-details div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
 
-.management-settings-details dt {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
+  .management-settings-details dt {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
 
-.management-settings-details dd {
-  margin: 0;
-  font-weight: 500;
-  text-align: right;
-  overflow-wrap: anywhere;
-}
+  .management-settings-details dd {
+    margin: 0;
+    font-weight: 500;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
 
-/* One labelled control stack (companion language, voice device). */
-.voice-device-selector {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
+  /* One labelled control stack (companion language, voice device). */
+  .voice-device-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
 
-/* --- Connection and model management (design/28 §1) --- */
-.connection-form,
-[data-connection-list] {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
+  /* --- Connection and model management (design/28 §1) --- */
+  .connection-form,
+  [data-connection-list] {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
 
-.connection-form label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
+  .connection-form label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
 
-.connection-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin: 0;
-  padding: 8px 0 0;
-  list-style: none;
-}
+  .connection-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 0;
+    padding: 8px 0 0;
+    list-style: none;
+  }
 
-/* One saved connection: a single-level card, because the section that holds it
+  /* One saved connection: a single-level card, because the section that holds it
    is a group, not a card (design/26 §6.4). The readiness border is a second
    carrier beside the status word, never the only one. */
-.connection-row {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.connection-row[data-readiness="ready"] {
-  border-color: rgba(79, 174, 154, 0.45);
-}
-
-.connection-row[data-readiness="failed"] {
-  border-color: rgba(217, 101, 101, 0.45);
-}
-
-.connection-row .composer-actions {
-  flex-wrap: wrap;
-}
-
-.connection-row [data-connection-failure] {
-  color: var(--danger);
-}
-
-@media (max-width: 560px) {
-  .connection-row .composer-actions {
+  .connection-row {
+    display: flex;
     flex-direction: column;
-    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
   }
-}
 
-/* --- Model profiles (design/28 §2.3) --- */
-.model-profile-editor {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-}
+  .connection-row[data-readiness="ready"] {
+    border-color: rgba(79, 174, 154, 0.45);
+  }
 
-.model-profile-editor h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
+  .connection-row[data-readiness="failed"] {
+    border-color: rgba(217, 101, 101, 0.45);
+  }
 
-.model-profile-editor label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
+  .connection-row .composer-actions {
+    flex-wrap: wrap;
+  }
 
-.model-profile-suggestions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
+  .connection-row [data-connection-failure] {
+    color: var(--danger);
+  }
 
-.model-profile-suggestions > span {
-  margin-right: 2px;
-  font-size: 12px;
-  color: var(--text-disabled);
-}
+  @media (max-width: 560px) {
+    .connection-row .composer-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+  }
 
-/* --- Memory panel --- */
-.tavern-memory-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-  padding: 4px 0 calc(12px + env(safe-area-inset-bottom)) 0;
-}
+  /* --- Model profiles (design/28 §2.3) --- */
+  .model-profile-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
 
-.tavern-memory-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
+  .model-profile-editor h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
 
-.tavern-memory-title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
+  .model-profile-editor label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
 
-.tavern-memory-section .memory-list {
-  gap: 8px;
-}
+  .model-profile-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
 
-.tavern-memory-section .memory-item-card {
-  padding: 10px 12px;
-}
+  .model-profile-suggestions > span {
+    margin-right: 2px;
+    font-size: 12px;
+    color: var(--text-disabled);
+  }
 
-.memory-item-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
+  /* --- Memory panel --- */
+  .tavern-memory-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+    padding: 4px 0 calc(12px + env(safe-area-inset-bottom)) 0;
+  }
 
-.memory-item-meta {
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
+  .tavern-memory-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
 
-.chat-item-title {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
+  .tavern-memory-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
 
-/* --- Characters (design/28 §2) ---
+  .tavern-memory-section .memory-list {
+    gap: 8px;
+  }
+
+  .tavern-memory-section .memory-item-card {
+    padding: 10px 12px;
+  }
+
+  .memory-item-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+
+  .memory-item-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  .chat-item-title {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* --- Characters (design/28 §2) ---
    The character domain owns this markup; these are the group/section and row
    classes it adopts (the handoff is named in the commit message). The attribute
    hooks below mirror the classes for the markup that exists today, so the
    surface reads correctly on both shells before that handoff lands. */
 
-.management-settings-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
+  .management-settings-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
 
-/* One authored-content group (companions, persona, scenario, opening) is a
+  /* One authored-content group (companions, persona, scenario, opening) is a
    single-level card inside its section group, like a saved connection. */
-.management-settings-section > section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-}
+  .management-settings-section > section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
 
-.management-settings-section > section > h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
+  .management-settings-section > section > h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
 
-/* Companion library rows: 52 px minimum, the documented list-row height. */
-.characters-list,
-[data-companion-list] {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
+  /* Companion library rows: 52 px minimum, the documented list-row height. */
+  .characters-list,
+  [data-companion-list] {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
 
-.characters-row,
-[data-companion-entry] {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 52px;
-  padding: 8px 12px;
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-}
+  .characters-row,
+  [data-companion-entry] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 52px;
+    padding: 8px 12px;
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
 
-.companion-current-badge {
-  font-style: normal;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  color: var(--accent);
-  background-color: var(--palette-burgundy-dark);
-  border: 1px solid var(--palette-burgundy-border);
-  border-radius: var(--radius-xs);
-  white-space: nowrap;
-}
+  .companion-current-badge {
+    font-style: normal;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    color: var(--accent);
+    background-color: var(--palette-burgundy-dark);
+    border: 1px solid var(--palette-burgundy-border);
+    border-radius: var(--radius-xs);
+    white-space: nowrap;
+  }
 
-/* One opening variant: its own small stack, so the textarea and its Discard
+  /* One opening variant: its own small stack, so the textarea and its Discard
    never drift away from the variant they belong to. */
-.opening-variant-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-}
+  .opening-variant-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    Management shell only (P9 gamebuddy.tavern-management.chat-list-title).
    Everything the two shells share moved above; what stays here is the
    management drawer's own layout, which the composed shell does not mount.
    ========================================================================== */
 
-[data-profile="management"] .app-bar {
-  gap: 8px;
-}
+  [data-profile="management"] .app-bar {
+    gap: 8px;
+  }
 
-[data-profile="management"] .reference-draft-section {
-  gap: 8px;
-}
+  [data-profile="management"] .reference-draft-section {
+    gap: 8px;
+  }
 
-[data-profile="management"] .reference-draft-section textarea {
-  resize: vertical;
-  overflow-wrap: anywhere;
-}
+  [data-profile="management"] .reference-draft-section textarea {
+    resize: vertical;
+    overflow-wrap: anywhere;
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    Composed reference Game surface (design/26 §4.2 "Game" panel)
 
    The Game surface is the shell's single contextual drawer, not an inline
@@ -2011,541 +2010,539 @@ body {
    name.
    ========================================================================== */
 
-/* The documented scrim: `#0007`, no blur (design/26 §4.2, §6.1). The shared
+  /* The documented scrim: `#0007`, no blur (design/26 §4.2, §6.1). The shared
    `.backdrop-overlay` is another surface's primitive, so the composed drawer
    sets its own value instead of changing it under a different lane. */
-.composed-drawer-backdrop {
-  background-color: #0007;
-  backdrop-filter: none;
-}
+  .composed-drawer-backdrop {
+    background-color: #0007;
+    backdrop-filter: none;
+  }
 
-/* Exactly one drawer at a time, anchored right, full height, safe-area aware. */
-.composed-game-panel {
-  padding-bottom: env(safe-area-inset-bottom);
-}
+  /* Exactly one drawer at a time, anchored right, full height, safe-area aware. */
+  .composed-game-panel {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 
-.composed-game-drawer {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
+  .composed-game-drawer {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
 
-.game-group {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
+  .game-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
 
-.game-group-title {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-disabled);
-}
+  .game-group-title {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-disabled);
+  }
 
-.game-panel-empty {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-disabled);
-}
+  .game-panel-empty {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-disabled);
+  }
 
-/* The read-only Game data disclosure. It is a `<details>`, so it is collapsed
+  /* The read-only Game data disclosure. It is a `<details>`, so it is collapsed
    by default and the panel's reading order is unchanged until a player opens it.
    When it is open the dump is a bounded scroller, and it takes focus because a
    scrollable region that cannot take focus is unreachable for a keyboard-only
    player (axe: scrollable-region-focusable). The summary's own treatment is the
    shared disclosure one (see `.custom-disclosure` below). */
-.game-diagnostics {
-  margin-top: 4px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-subtle);
-}
+  .game-diagnostics {
+    margin-top: 4px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+  }
 
-.game-diagnostics-note {
-  margin: 0 0 8px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
+  .game-diagnostics-note {
+    margin: 0 0 8px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
 
-.game-diagnostics-note[data-tone="warning"] {
-  color: var(--text-disabled);
-}
+  .game-diagnostics-note[data-tone="warning"] {
+    color: var(--text-disabled);
+  }
 
-.game-diagnostics-json {
-  margin: 0;
-  max-height: 320px;
-  overflow: auto;
-  padding: 12px;
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  white-space: pre;
-  overflow-wrap: normal;
-}
+  .game-diagnostics-json {
+    margin: 0;
+    max-height: 320px;
+    overflow: auto;
+    padding: 12px;
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    white-space: pre;
+    overflow-wrap: normal;
+  }
 
-/* Connection facts: one bounded panel of label/value rows, not a loose wall of
+  /* Connection facts: one bounded panel of label/value rows, not a loose wall of
    underlined lines. The `dt`/`dd` pair stays adjacent inside one row so the
    row's text content is exactly `label` + `value` (the browser spec reads it
    that way), and a single column keeps the label and its value on one axis
    however wide the surface grows. */
-.game-facts {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0;
-  margin: 0;
-  padding: 2px 14px;
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-}
+  .game-facts {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+    margin: 0;
+    padding: 2px 14px;
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
 
-.game-fact {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 40px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border-subtle);
-}
+  .game-fact {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 40px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
 
-.game-fact:last-child {
-  border-bottom: none;
-}
+  .game-fact:last-child {
+    border-bottom: none;
+  }
 
-.game-fact dt {
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
+  .game-fact dt {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
 
-.game-fact dd {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  text-align: right;
-  overflow-wrap: anywhere;
-}
+  .game-fact dd {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
 
-/* Tone variants for the shared status dot, so an in-panel dot can carry the
+  /* Tone variants for the shared status dot, so an in-panel dot can carry the
    same colours as the semantic feedback tokens. */
-.status-dot[data-tone="progress"] {
-  background-color: var(--accent);
-  box-shadow: 0 0 6px rgba(200, 120, 125, 0.4);
-  animation: game-status-pulse 1.4s ease-in-out infinite;
-}
+  .status-dot[data-tone="progress"] {
+    background-color: var(--accent);
+    box-shadow: 0 0 6px rgba(200, 120, 125, 0.4);
+    animation: game-status-pulse 1.4s ease-in-out infinite;
+  }
 
-.status-dot[data-tone="warning"] {
-  background-color: var(--warning);
-  box-shadow: 0 0 6px rgba(214, 168, 91, 0.4);
-}
+  .status-dot[data-tone="warning"] {
+    background-color: var(--warning);
+    box-shadow: 0 0 6px rgba(214, 168, 91, 0.4);
+  }
 
-.status-dot[data-tone="danger"] {
-  background-color: var(--danger);
-  box-shadow: 0 0 6px rgba(217, 101, 101, 0.4);
-}
+  .status-dot[data-tone="danger"] {
+    background-color: var(--danger);
+    box-shadow: 0 0 6px rgba(217, 101, 101, 0.4);
+  }
 
-.status-dot[data-tone="neutral"] {
-  background-color: var(--text-disabled);
-  box-shadow: none;
-}
+  .status-dot[data-tone="neutral"] {
+    background-color: var(--text-disabled);
+    box-shadow: none;
+  }
 
-/* Status lines. One primitive, five honest tones: a hard failure, an uncertain
+  /* Status lines. One primitive, five honest tones: a hard failure, an uncertain
    or temporary outcome, guidance for what to do next, a positive admission,
    and work in progress. The sentence itself always says which one it is, so
    tone is never the only carrier of the state. */
-.game-status {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 0;
-  padding: 8px 12px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--text-secondary);
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-left: 3px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-}
+  .game-status {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-left: 3px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+  }
 
-.game-status::before {
-  content: "";
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  margin-top: 6px;
-  border-radius: 50%;
-  background-color: var(--text-disabled);
-}
+  .game-status::before {
+    content: "";
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    margin-top: 6px;
+    border-radius: 50%;
+    background-color: var(--text-disabled);
+  }
 
-.game-status[data-tone="progress"] {
-  border-left-color: var(--accent);
-}
+  .game-status[data-tone="progress"] {
+    border-left-color: var(--accent);
+  }
 
-.game-status[data-tone="progress"]::before {
-  background-color: var(--accent);
-  animation: game-status-pulse 1.4s ease-in-out infinite;
-}
+  .game-status[data-tone="progress"]::before {
+    background-color: var(--accent);
+    animation: game-status-pulse 1.4s ease-in-out infinite;
+  }
 
-.game-status[data-tone="danger"] {
-  background-color: rgba(217, 101, 101, 0.12);
-  border-color: rgba(217, 101, 101, 0.32);
-  border-left-color: var(--danger);
-}
+  .game-status[data-tone="danger"] {
+    background-color: rgba(217, 101, 101, 0.12);
+    border-color: rgba(217, 101, 101, 0.32);
+    border-left-color: var(--danger);
+  }
 
-.game-status[data-tone="danger"]::before {
-  background-color: var(--danger);
-}
+  .game-status[data-tone="danger"]::before {
+    background-color: var(--danger);
+  }
 
-.game-status[data-tone="warning"] {
-  background-color: rgba(214, 168, 91, 0.12);
-  border-color: rgba(214, 168, 91, 0.32);
-  border-left-color: var(--warning);
-}
+  .game-status[data-tone="warning"] {
+    background-color: rgba(214, 168, 91, 0.12);
+    border-color: rgba(214, 168, 91, 0.32);
+    border-left-color: var(--warning);
+  }
 
-.game-status[data-tone="warning"]::before {
-  background-color: var(--warning);
-}
+  .game-status[data-tone="warning"]::before {
+    background-color: var(--warning);
+  }
 
-.game-status[data-tone="success"] {
-  background-color: rgba(79, 174, 154, 0.14);
-  border-color: rgba(79, 174, 154, 0.4);
-  border-left-color: var(--success);
-}
+  .game-status[data-tone="success"] {
+    background-color: rgba(79, 174, 154, 0.14);
+    border-color: rgba(79, 174, 154, 0.4);
+    border-left-color: var(--success);
+  }
 
-.game-status[data-tone="success"]::before {
-  background-color: var(--success);
-}
+  .game-status[data-tone="success"]::before {
+    background-color: var(--success);
+  }
 
-/* Action rows. An empty row renders nothing, so a state that offers no control
+  /* Action rows. An empty row renders nothing, so a state that offers no control
    leaves no phantom spacing behind. */
-.game-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.game-actions:empty {
-  display: none;
-}
-
-.game-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: var(--touch-target-min);
-  padding: 0 14px;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-out),
-    border-color var(--motion-duration-fast) var(--motion-ease-out),
-    color var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.game-action:hover:not(:disabled) {
-  background-color: var(--palette-gray-700);
-  border-color: var(--border-strong);
-}
-
-.game-action:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.game-action svg {
-  flex: 0 0 auto;
-}
-
-/* The single next action a ready state offers reads as the primary action; the
-   same command offered twice keeps its second reading as a secondary. */
-.game-action.primary {
-  background-color: var(--accent-solid);
-  border-color: var(--accent-solid);
-  color: var(--palette-gray-100);
-}
-
-.game-action.primary:hover:not(:disabled) {
-  background-color: var(--accent-solid-hover);
-  border-color: var(--accent-solid-hover);
-}
-
-/* Sub-panels inside the Game panel (cabin handoff, installation setup). */
-.game-subpanel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-subtle);
-}
-
-.game-subpanel .section-subtitle {
-  margin: 0;
-}
-
-.game-subpanel-note {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
-
-.game-choice-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.game-choice {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 52px;
-  padding: 8px 12px;
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.game-choice-label {
-  font-size: 14px;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
-
-/* Start-new-game form: a real form stack with labelled fields. */
-.game-create-form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.game-create-form h4 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.game-create-form label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
-
-.game-create-form input {
-  width: 100%;
-  min-height: var(--touch-target-min);
-  padding: 0 12px;
-  font-family: inherit;
-  font-size: 14px;
-  color: var(--text-primary);
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  outline: none;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.game-create-form input:focus {
-  border-color: var(--accent);
-}
-
-.game-create-form input::placeholder {
-  color: var(--text-disabled);
-}
-
-.game-create-integration {
-  align-self: flex-start;
-  padding: 2px 8px;
-  font-size: 12px;
-  color: var(--text-primary);
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xs);
-}
-
-/* Installation setup is a second Game panel at lower emphasis: same surface
-   and rhythm, a smaller title, its own bounded scroll for a machine that
-   reports many candidates. */
-.game-installation-panel {
-  flex: 0 0 auto;
-  max-height: min(32dvh, 300px);
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-subtle) transparent;
-}
-
-.installation-candidates {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.installation-candidate {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-height: 52px;
-  padding: 8px 12px;
-  background-color: var(--surface-raised);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.installation-candidate-label {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
-
-.installation-source {
-  padding: 1px 6px;
-  font-size: 11px;
-  color: var(--text-disabled);
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xs);
-}
-
-.installation-hint {
-  flex-basis: 100%;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-disabled);
-}
-
-.installation-candidate .game-action {
-  margin-left: auto;
-}
-
-.installation-state {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-disabled);
-}
-
-/* ==========================================================================
-   Keyframe Animations & Motion Fallbacks
-   ========================================================================== */
-
-@keyframes game-status-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-@keyframes backdrop-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes drawer-in {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-
-@media (max-width: 640px) {
-  .context-panel {
-    max-width: 100vw;
+  .game-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
   }
 
-  .app-bar-brand-name {
+  .game-actions:empty {
     display: none;
   }
 
-  .message.companion,
-  .message.player {
-    max-width: 92%;
+  .game-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: var(--touch-target-min);
+    padding: 0 14px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition:
+      background-color var(--motion-duration-fast) var(--motion-ease-out),
+      border-color var(--motion-duration-fast) var(--motion-ease-out),
+      color var(--motion-duration-fast) var(--motion-ease-out);
   }
 
-  .chat-view {
+  .game-action:hover:not(:disabled) {
+    background-color: var(--palette-gray-700);
+    border-color: var(--border-strong);
+  }
+
+  .game-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .game-action svg {
+    flex: 0 0 auto;
+  }
+
+  /* The single next action a ready state offers reads as the primary action; the
+   same command offered twice keeps its second reading as a secondary. */
+  .game-action.primary {
+    background-color: var(--accent-solid);
+    border-color: var(--accent-solid);
+    color: var(--palette-gray-100);
+  }
+
+  .game-action.primary:hover:not(:disabled) {
+    background-color: var(--accent-solid-hover);
+    border-color: var(--accent-solid-hover);
+  }
+
+  /* Sub-panels inside the Game panel (cabin handoff, installation setup). */
+  .game-subpanel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .game-subpanel .section-subtitle {
+    margin: 0;
+  }
+
+  .game-subpanel-note {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
+
+  .game-choice-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .game-choice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 52px;
+    padding: 8px 12px;
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
+
+  .game-choice-label {
+    font-size: 14px;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+
+  /* Start-new-game form: a real form stack with labelled fields. */
+  .game-create-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
+
+  .game-create-form h4 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .game-create-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+
+  .game-create-form input {
+    width: 100%;
+    min-height: var(--touch-target-min);
     padding: 0 12px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms;
-    animation-iteration-count: 1;
-    transition-duration: 0.01ms;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--text-primary);
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    outline: none;
+    transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
   }
 
-  .context-panel {
-    animation: none;
+  .game-create-form input:focus {
+    border-color: var(--accent);
   }
 
-  .backdrop-overlay {
-    animation: none;
+  .game-create-form input::placeholder {
+    color: var(--text-disabled);
   }
-}
 
+  .game-create-integration {
+    align-self: flex-start;
+    padding: 2px 8px;
+    font-size: 12px;
+    color: var(--text-primary);
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+  }
+
+  /* Installation setup is a second Game panel at lower emphasis: same surface
+   and rhythm, a smaller title, its own bounded scroll for a machine that
+   reports many candidates. */
+  .game-installation-panel {
+    flex: 0 0 auto;
+    max-height: min(32dvh, 300px);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-subtle) transparent;
+  }
+
+  .installation-candidates {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .installation-candidate {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-height: 52px;
+    padding: 8px 12px;
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
+
+  .installation-candidate-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+
+  .installation-source {
+    padding: 1px 6px;
+    font-size: 11px;
+    color: var(--text-disabled);
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+  }
+
+  .installation-hint {
+    flex-basis: 100%;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-disabled);
+  }
+
+  .installation-candidate .game-action {
+    margin-left: auto;
+  }
+
+  .installation-state {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-disabled);
+  }
+
+  /* ==========================================================================
+   Keyframe Animations & Motion Fallbacks
+   ========================================================================== */
+
+  @keyframes game-status-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  @keyframes backdrop-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes drawer-in {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .context-panel {
+      max-width: 100vw;
+    }
+
+    .app-bar-brand-name {
+      display: none;
+    }
+
+    .message.companion,
+    .message.player {
+      max-width: 92%;
+    }
+
+    .chat-view {
+      padding: 0 12px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms;
+      animation-iteration-count: 1;
+      transition-duration: 0.01ms;
+    }
+
+    .context-panel {
+      animation: none;
+    }
+
+    .backdrop-overlay {
+      animation: none;
+    }
+  }
 } /* end @layer theme.legacy */
 
 @layer theme.polish {
-
-/* ==========================================================================
+  /* ==========================================================================
    阶段三 surface/glass polish (authored on top of the preserved layer)
 
    Shared chrome follows the new surface ladder; cards keep a translucent glass
@@ -2559,102 +2556,106 @@ body {
    than by being the tail of one block that wraps everything.
    ========================================================================== */
 
-/* Cards and rows live one step above a panel; their border is the glass
+  /* Cards and rows live one step above a panel; their border is the glass
    hairline, and the resting surface is the card tone (not the darker raised
    one the old funnel left behind). */
-.chat-item-card,
-.world-info-card,
-.memory-item-card,
-.connection-row,
-.companion-list-item,
-.characters-row,
-[data-companion-entry],
-.opening-variant-row,
-.model-profile-editor,
-.game-choice,
-.installation-candidate,
-.game-create-form,
-.composed-game-panel .game-facts {
-  background-color: var(--surface-card);
-  border-color: var(--border-glass);
-}
+  .chat-item-card,
+  .world-info-card,
+  .memory-item-card,
+  .connection-row,
+  .companion-list-item,
+  .characters-row,
+  [data-companion-entry],
+  .opening-variant-row,
+  .model-profile-editor,
+  .game-choice,
+  .installation-candidate,
+  .game-create-form,
+  .composed-game-panel .game-facts {
+    background-color: var(--surface-card);
+    border-color: var(--border-glass);
+  }
 
-/* The shared drawer's body scrolls above a panel band; the drawer header stays
+  /* The shared drawer's body scrolls above a panel band; the drawer header stays
    the same panel so the panel reads as one unit. */
-.drawer-content {
-  background-color: var(--surface-canvas);
-}
+  .drawer-content {
+    background-color: var(--surface-canvas);
+  }
 
-/* Selection is a card that also reads as selected: glass accent border plus
+  /* Selection is a card that also reads as selected: glass accent border plus
    the burgundy wash, never colour alone. */
-.chat-item-card.selected,
-.companion-list-item.active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(200, 120, 125, 0.35);
-}
+  .chat-item-card.selected,
+  .companion-list-item.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(200, 120, 125, 0.35);
+  }
 
-/* The active-companion summary keeps its warm tint but settles on the card
+  /* The active-companion summary keeps its warm tint but settles on the card
    tone with a translucent burgundy edge. */
-.active-companion-card {
-  background: linear-gradient(135deg, var(--surface-card) 0%, color-mix(in srgb, var(--surface-card) 78%, var(--palette-burgundy-dark)) 100%);
-  border-color: var(--palette-burgundy-border);
-}
+  .active-companion-card {
+    background: linear-gradient(
+      135deg,
+      var(--surface-card) 0%,
+      color-mix(in srgb, var(--surface-card) 78%, var(--palette-burgundy-dark)) 100%
+    );
+    border-color: var(--palette-burgundy-border);
+  }
 
-/* Muted chips that used the raw dashed backgrounds now read against the card
+  /* Muted chips that used the raw dashed backgrounds now read against the card
    tone with the same quiet text. */
-.status-tag.active,
-.badge-active,
-.online-badge,
-.read-only-badge {
-  background-color: var(--surface-card);
-  border-color: var(--border-subtle);
-}
+  .status-tag.active,
+  .badge-active,
+  .online-badge,
+  .read-only-badge {
+    background-color: var(--surface-card);
+    border-color: var(--border-subtle);
+  }
 
-/* One consistent hover everywhere a row lifts: the Elevated tone. */
-.chat-item-card:hover,
-.world-info-card:hover,
-.memory-item-card:hover,
-.companion-list-item:hover {
-  background-color: var(--surface-hover);
-  border-color: var(--border-strong);
-}
+  /* One consistent hover everywhere a row lifts: the Elevated tone. */
+  .chat-item-card:hover,
+  .world-info-card:hover,
+  .memory-item-card:hover,
+  .companion-list-item:hover {
+    background-color: var(--surface-hover);
+    border-color: var(--border-strong);
+  }
 
-/* Message bubbles: the companion bubble is a card (Card tone, glass hairline),
+  /* Message bubbles: the companion bubble is a card (Card tone, glass hairline),
    the player bubble is the burgundy wash the product already identifies with
    (design/26 §6.1) but on the new lows. */
-.message.companion .message-bubble {
-  background-color: var(--surface-card);
-  border-color: var(--border-glass);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
-}
+  .message.companion .message-bubble {
+    background-color: var(--surface-card);
+    border-color: var(--border-glass);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
 
-/* The avatar monogram: renders, never decorative; a stable neutral plate with
+  /* The avatar monogram: renders, never decorative; a stable neutral plate with
    a fine border, and the player-side one carries the card tone. */
-.avatar,
-.avatar-small {
-  letter-spacing: 0.04em;
-  border-color: var(--border-subtle);
-}
+  .avatar,
+  .avatar-small {
+    letter-spacing: 0.04em;
+    border-color: var(--border-subtle);
+  }
 
-.avatar-large {
-  background-color: var(--surface-card);
-  color: var(--accent);
-}
+  .avatar-large {
+    background-color: var(--surface-card);
+    color: var(--accent);
+  }
 
-/* The large companion monogram (Characters/active-companion card) gets the
+  /* The large companion monogram (Characters/active-companion card) gets the
    same fine border and warm plate. */
-.companion-avatar-large {
-  background-color: var(--palette-burgundy-dark);
-  color: var(--palette-burgundy-base);
-  border: 1px solid var(--palette-burgundy-border);
-}
-/* Composer: the band is panel, the field itself a raised card. */
-.composer-container {
-  background-color: var(--surface-card);
-  border-color: var(--border-glass);
-}
+  .companion-avatar-large {
+    background-color: var(--palette-burgundy-dark);
+    color: var(--palette-burgundy-base);
+    border: 1px solid var(--palette-burgundy-border);
+  }
+  /* Composer: the band is panel, the field itself a raised card. */
+  .composer-container {
+    background-color: var(--surface-card);
+    border-color: var(--border-glass);
+  }
 
-/* Forms: one input treatment on the card tone, gold focus, no layout shift on
+  /* Forms: one input treatment on the card tone, gold focus, no layout shift on
    hover or focus. The 44 px floor is declared here, once, for the whole family:
    a padded field with a 14 px font computes to 36 px on its own, which is how
    five controls on the Characters surface were under the floor the same
@@ -2662,25 +2663,25 @@ body {
    `--touch-target-min`). The floor comes from the token now, not from padding
    arithmetic, so a later change to the padding can never quietly shrink a
    control again. */
-.composer-textarea,
-.form-input,
-.form-textarea,
-.form-select,
-.surface-model-field input,
-.surface-model-field select,
-.game-create-form input {
-  min-height: var(--touch-target-min);
-  background-color: var(--surface-card);
-}
+  .composer-textarea,
+  .form-input,
+  .form-textarea,
+  .form-select,
+  .surface-model-field input,
+  .surface-model-field select,
+  .game-create-form input {
+    min-height: var(--touch-target-min);
+    background-color: var(--surface-card);
+  }
 
-/* The composer's own field keeps its taller floor: the band is sized by the
+  /* The composer's own field keeps its taller floor: the band is sized by the
    composer token, and the textarea is the one field whose height is also
    managed per keystroke. */
-.composer-textarea {
-  min-height: var(--composer-min-height);
-}
+  .composer-textarea {
+    min-height: var(--composer-min-height);
+  }
 
-/* The select is the one control the platform will not let a dark theme have for
+  /* The select is the one control the platform will not let a dark theme have for
    free: on Windows `<select>` renders as a white box with the system's black
    arrow in the middle of the dark surface. This is the treatment the chat model
    drawer's own select already carried; every other select in the product was
@@ -2690,314 +2691,314 @@ body {
    drawing and the same token the drawer had - and `color-scheme: dark` is what
    makes the *popup* dark as well (the option list is the platform's own widget
    and no rule of ours reaches it). */
-.form-select {
-  appearance: none;
-  -webkit-appearance: none;
-  color-scheme: dark;
-  cursor: pointer;
-  padding-right: 30px;
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--text-disabled) 50%),
-    linear-gradient(135deg, var(--text-disabled) 50%, transparent 50%);
-  background-position:
-    calc(100% - 18px) 50%,
-    calc(100% - 13px) 50%;
-  background-repeat: no-repeat;
-  background-size:
-    5px 5px,
-    5px 5px;
-}
+  .form-select {
+    appearance: none;
+    -webkit-appearance: none;
+    color-scheme: dark;
+    cursor: pointer;
+    padding-right: 30px;
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--text-disabled) 50%),
+      linear-gradient(135deg, var(--text-disabled) 50%, transparent 50%);
+    background-position:
+      calc(100% - 18px) 50%,
+      calc(100% - 13px) 50%;
+    background-repeat: no-repeat;
+    background-size:
+      5px 5px,
+      5px 5px;
+  }
 
-.form-select:hover {
-  border-color: var(--border-strong);
-}
+  .form-select:hover {
+    border-color: var(--border-strong);
+  }
 
-.form-input:focus,
-.form-textarea:focus,
-.form-select:focus,
-.composer-textarea:focus,
-.surface-model-field input:focus,
-.surface-model-field select:focus,
-.game-create-form input:focus {
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 1px var(--focus-ring);
-}
+  .form-input:focus,
+  .form-textarea:focus,
+  .form-select:focus,
+  .composer-textarea:focus,
+  .surface-model-field input:focus,
+  .surface-model-field select:focus,
+  .game-create-form input:focus {
+    border-color: var(--focus-ring);
+    box-shadow: 0 0 0 1px var(--focus-ring);
+  }
 
-/* The model switcher/surface-model editor: the card presentation that answers
+  /* The model switcher/surface-model editor: the card presentation that answers
    the owner's example. Borderless in the middle so the two fields read as one
    grouped control, glass hairline around, and each row keeps a 44 px floor. */
-.surface-model-settings {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--space-2);
-}
+  .surface-model-settings {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+  }
 
-.surface-model-settings-title {
-  grid-column: 1;
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text-primary);
-}
+  .surface-model-settings-title {
+    grid-column: 1;
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--text-primary);
+  }
 
-.surface-model-settings-hint {
-  grid-column: 1;
-  margin: 0 0 2px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
+  .surface-model-settings-hint {
+    grid-column: 1;
+    margin: 0 0 2px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
 
-.surface-model-field {
-  display: grid;
-  grid-template-columns: 110px 1fr;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: var(--touch-target-min);
-  margin: 0;
-  padding: 0 4px;
-}
+  .surface-model-field {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: var(--touch-target-min);
+    margin: 0;
+    padding: 0 4px;
+  }
 
-.surface-model-field > span {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
+  .surface-model-field > span {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
 
-.surface-model-field input,
-.surface-model-field select {
-  min-height: var(--touch-target-min);
-  width: 100%;
-  font-family: inherit;
-  font-size: 14px;
-  color: var(--text-primary);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background-color: var(--surface-card);
-  outline: none;
-  transition:
-    border-color var(--motion-duration-fast) var(--motion-ease-out),
-    box-shadow var(--motion-duration-fast) var(--motion-ease-out),
-    background-color var(--motion-duration-fast) var(--motion-ease-out);
-}
+  .surface-model-field input,
+  .surface-model-field select {
+    min-height: var(--touch-target-min);
+    width: 100%;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--text-primary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-card);
+    outline: none;
+    transition:
+      border-color var(--motion-duration-fast) var(--motion-ease-out),
+      box-shadow var(--motion-duration-fast) var(--motion-ease-out),
+      background-color var(--motion-duration-fast) var(--motion-ease-out);
+  }
 
-/* The text field's own padding; the select's right side belongs to the arrow the
+  /* The text field's own padding; the select's right side belongs to the arrow the
    shared `.form-select` treatment draws. */
-.surface-model-field input {
-  padding: 0 var(--space-3);
-}
+  .surface-model-field input {
+    padding: 0 var(--space-3);
+  }
 
-.surface-model-field input + datalist {
-  display: none;
-}
+  .surface-model-field input + datalist {
+    display: none;
+  }
 
-/* The chat/game recommended chips: a 44 px chip, gold text on the card tone. */
-.surface-model-recommended {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0;
-}
+  /* The chat/game recommended chips: a 44 px chip, gold text on the card tone. */
+  .surface-model-recommended {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+  }
 
-.surface-model-recommended > span {
-  font-size: 12px;
-  color: var(--text-disabled);
-}
+  .surface-model-recommended > span {
+    font-size: 12px;
+    color: var(--text-disabled);
+  }
 
-.surface-model-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--touch-target-min);
-  padding: 0 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background-color: var(--surface-card);
-  color: var(--palette-gold-base);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-out),
-    border-color var(--motion-duration-fast) var(--motion-ease-out),
-    color var(--motion-duration-fast) var(--motion-ease-out);
-}
+  .surface-model-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--touch-target-min);
+    padding: 0 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-card);
+    color: var(--palette-gold-base);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      background-color var(--motion-duration-fast) var(--motion-ease-out),
+      border-color var(--motion-duration-fast) var(--motion-ease-out),
+      color var(--motion-duration-fast) var(--motion-ease-out);
+  }
 
-.surface-model-chip:hover:not(:disabled) {
-  background-color: var(--surface-hover);
-  border-color: var(--border-strong);
-}
+  .surface-model-chip:hover:not(:disabled) {
+    background-color: var(--surface-hover);
+    border-color: var(--border-strong);
+  }
 
-.surface-model-chip:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+  .surface-model-chip:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 
-/* The management model-profile editor uses the identical chip (management-panels.tsx). */
-.model-profile-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--touch-target-min);
-  padding: 0 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background-color: var(--surface-card);
-  color: var(--palette-gold-base);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-out),
-    border-color var(--motion-duration-fast) var(--motion-ease-out),
-    color var(--motion-duration-fast) var(--motion-ease-out);
-}
+  /* The management model-profile editor uses the identical chip (management-panels.tsx). */
+  .model-profile-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--touch-target-min);
+    padding: 0 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-card);
+    color: var(--palette-gold-base);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      background-color var(--motion-duration-fast) var(--motion-ease-out),
+      border-color var(--motion-duration-fast) var(--motion-ease-out),
+      color var(--motion-duration-fast) var(--motion-ease-out);
+  }
 
-.model-profile-chip:hover:not(:disabled) {
-  background-color: var(--surface-hover);
-  border-color: var(--border-strong);
-}
+  .model-profile-chip:hover:not(:disabled) {
+    background-color: var(--surface-hover);
+    border-color: var(--border-strong);
+  }
 
-.model-profile-chip:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+  .model-profile-chip:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 
-.surface-model-actions {
-  display: flex;
-  gap: var(--space-2);
-  margin-top: 4px;
-}
+  .surface-model-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: 4px;
+  }
 
-.surface-model-notice {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
+  .surface-model-notice {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
 
-.surface-model-notice[role="status"] {
-  color: var(--text-secondary);
-}
+  .surface-model-notice[role="status"] {
+    color: var(--text-secondary);
+  }
 
-/* The advanced Pi document editor (capability-gated) reuses the input
+  /* The advanced Pi document editor (capability-gated) reuses the input
    treatment; its textarea takes the full width. */
-.surface-advanced-settings {
-  margin-top: var(--space-3);
-  border-top: 1px solid var(--border-subtle);
-  padding-top: var(--space-3);
-}
+  .surface-advanced-settings {
+    margin-top: var(--space-3);
+    border-top: 1px solid var(--border-subtle);
+    padding-top: var(--space-3);
+  }
 
-.surface-advanced-settings h4 {
-  margin: 0 0 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
+  .surface-advanced-settings h4 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
 
-.surface-advanced-editor {
-  width: 100%;
-  background-color: var(--surface-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.55;
-  padding: 10px 12px;
-  outline: none;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
-}
+  .surface-advanced-editor {
+    width: 100%;
+    background-color: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.55;
+    padding: 10px 12px;
+    outline: none;
+    transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+  }
 
-.surface-advanced-editor:focus {
-  border-color: var(--focus-ring);
-}
+  .surface-advanced-editor:focus {
+    border-color: var(--focus-ring);
+  }
 
-/* Connection rows: the same card treatment the model editor gets, plus the
+  /* Connection rows: the same card treatment the model editor gets, plus the
    ready/failed readiness borders that stay a second carrier to the status word. */
-.connection-row {
-  padding: var(--space-3);
-  border-radius: var(--radius-sm);
-}
+  .connection-row {
+    padding: var(--space-3);
+    border-radius: var(--radius-sm);
+  }
 
-.connection-row[data-readiness="ready"] {
-  border-color: rgba(79, 174, 154, 0.5);
-}
+  .connection-row[data-readiness="ready"] {
+    border-color: rgba(79, 174, 154, 0.5);
+  }
 
-.connection-row[data-readiness="failed"] {
-  border-color: rgba(217, 101, 101, 0.5);
-}
+  .connection-row[data-readiness="failed"] {
+    border-color: rgba(217, 101, 101, 0.5);
+  }
 
-.connection-row .composer-actions {
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
+  .connection-row .composer-actions {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
 
-/* The manage model-profile editor (Settings surface, shared by both shells)
+  /* The manage model-profile editor (Settings surface, shared by both shells)
    gets the same card presentation as the surface-model editor. */
-.model-profile-editor {
-  padding: var(--space-3);
-  background-color: var(--surface-card);
-  border-color: var(--border-glass);
-}
+  .model-profile-editor {
+    padding: var(--space-3);
+    background-color: var(--surface-card);
+    border-color: var(--border-glass);
+  }
 
-.model-profile-editor h3 {
-  margin: 0 0 4px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
+  .model-profile-editor h3 {
+    margin: 0 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
 
-.model-profile-editor label {
-  display: block;
-  margin-top: var(--space-2);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
+  .model-profile-editor label {
+    display: block;
+    margin-top: var(--space-2);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
 
-.model-profile-editor .form-input {
-  width: 100%;
-  min-height: var(--touch-target-min);
-}
+  .model-profile-editor .form-input {
+    width: 100%;
+    min-height: var(--touch-target-min);
+  }
 
-.model-profile-editor .small-button {
-  margin-top: var(--space-2);
-}
+  .model-profile-editor .small-button {
+    margin-top: var(--space-2);
+  }
 
-.model-profile-suggestions {
-  margin-top: var(--space-1);
-}
+  .model-profile-suggestions {
+    margin-top: var(--space-1);
+  }
 
-/* The connection form's own select/input treatment follows the same theme. */
-.connection-form .form-select {
-  min-height: var(--touch-target-min);
-}
+  /* The connection form's own select/input treatment follows the same theme. */
+  .connection-form .form-select {
+    min-height: var(--touch-target-min);
+  }
 
-.management-settings-details dd {
-  color: var(--text-primary);
-}
+  .management-settings-details dd {
+    color: var(--text-primary);
+  }
 
-/* Game facts keep the card tone under the four-layer ladder. */
-.composed-game-panel .game-facts {
-  background-color: var(--surface-card);
-  border-color: var(--border-glass);
-}
+  /* Game facts keep the card tone under the four-layer ladder. */
+  .composed-game-panel .game-facts {
+    background-color: var(--surface-card);
+    border-color: var(--border-glass);
+  }
 
-.composed-game-panel .game-group {
-  scroll-margin-top: 8px;
-}
+  .composed-game-panel .game-group {
+    scroll-margin-top: 8px;
+  }
 
-/* Status lines: the dot that leads each sentence is now the card tone, so it
+  /* Status lines: the dot that leads each sentence is now the card tone, so it
    never punches above the text. */
-.game-status::before {
-  background-color: var(--text-disabled);
-}
+  .game-status::before {
+    background-color: var(--text-disabled);
+  }
 
-/* The composed shell's surfaces (design/104 §2; design/26 §4).
+  /* The composed shell's surfaces (design/104 §2; design/26 §4).
 
    Chat, Chats, Characters, Game, Settings, Memory and World Info are peers: each
    one takes the main region in full, exactly one is shown at a time, and the
@@ -3005,65 +3006,65 @@ body {
    of them is a modal overlay, so there is no backdrop and no focus trap -
    selecting a surface replaces the previous one, and Escape or Browser Back
    returns to the conversation. */
-.surface-view {
-  flex: 1 1 0%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  gap: 8px;
-}
+  .surface-view {
+    flex: 1 1 0%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    gap: 8px;
+  }
 
-.surface-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 0 12px;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border-subtle);
-}
+  .surface-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 0 12px;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-subtle);
+  }
 
-/* The surface's own icon is the one spot of accent in the chrome, so the
+  /* The surface's own icon is the one spot of accent in the chrome, so the
    heading reads as the surface's identity rather than as body copy. */
-.surface-header > svg {
-  flex: 0 0 auto;
-  color: var(--accent);
-}
+  .surface-header > svg {
+    flex: 0 0 auto;
+    color: var(--accent);
+  }
 
-.surface-header h2 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
+  .surface-header h2 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
 
-.surface-header h2:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
+  .surface-header h2:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
 
-.surface-content {
-  flex: 1 1 0%;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding-bottom: 16px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-subtle) transparent;
-}
+  .surface-content {
+    flex: 1 1 0%;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-bottom: 16px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-subtle) transparent;
+  }
 
-/* The conversation is a surface like the others, but its transcript scrolls
+  /* The conversation is a surface like the others, but its transcript scrolls
    above a composer that stays at the bottom, so it manages its own scrolling. */
-.surface-conversation .surface-content {
-  overflow: hidden;
-  gap: 0;
-  padding-bottom: 0;
-}
+  .surface-conversation .surface-content {
+    overflow: hidden;
+    gap: 0;
+    padding-bottom: 0;
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    The conversation's reading flow
 
    The conversation column is the transcript and the composer band, and nothing
@@ -3082,43 +3083,43 @@ body {
    `#form_sheld`).
    ========================================================================== */
 
-.composer-settings-button {
-  min-width: var(--touch-target-min);
-  min-height: var(--touch-target-min);
-}
+  .composer-settings-button {
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+  }
 
-/* The durable draft's own row: inside the composer band, above the field, and
+  /* The durable draft's own row: inside the composer band, above the field, and
    present only while a durable draft exists. It is the draft's verbs, never a
    second editor in the reading flow. */
-.composer-draft {
-  width: 100%;
-  max-width: var(--timeline-reading-measure);
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-2);
-}
+  .composer-draft {
+    width: 100%;
+    max-width: var(--timeline-reading-measure);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+  }
 
-.composer-draft-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  margin-right: auto;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text-secondary);
-}
+  .composer-draft-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin-right: auto;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-secondary);
+  }
 
-.composer-draft .success-banner,
-.composer-draft .error-banner {
-  flex: 1 1 100%;
-  padding: var(--space-1) var(--space-2);
-  font-size: 12px;
-}
+  .composer-draft .success-banner,
+  .composer-draft .error-banner {
+    flex: 1 1 100%;
+    padding: var(--space-1) var(--space-2);
+    font-size: 12px;
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    Narration and Markdown rhythm
 
    `*beat*` is the companion's stage direction, so it reads as narration rather
@@ -3140,83 +3141,83 @@ body {
    double.
    ========================================================================== */
 
-.message.companion .message-bubble {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  white-space: normal;
-}
+  .message.companion .message-bubble {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    white-space: normal;
+  }
 
-.message-bubble em.message-action {
-  color: var(--text-secondary);
-  letter-spacing: 0.01em;
-}
+  .message-bubble em.message-action {
+    color: var(--text-secondary);
+    letter-spacing: 0.01em;
+  }
 
-/* CJK type has no true italic: a slanted CJK beat renders as a mechanically
+  /* CJK type has no true italic: a slanted CJK beat renders as a mechanically
    smeared face, so this rule retires the slant. It retires the slant *only*:
    the weight stays the dialogue's own, because a bolder beat is not a quieter
    one. Latin keeps the italic the base rule leaves in place. */
-.message-bubble em.message-action:lang(zh) {
-  font-style: normal;
-}
+  .message-bubble em.message-action:lang(zh) {
+    font-style: normal;
+  }
 
-.message-bubble :is(p, blockquote, pre, ul, ol, hr) {
-  margin: 0;
-}
+  .message-bubble :is(p, blockquote, pre, ul, ol, hr) {
+    margin: 0;
+  }
 
-/* The two blocks that carry a shape of their own inside a companion's prose.
+  /* The two blocks that carry a shape of their own inside a companion's prose.
    Both are cards on the token ladder - the card tone with the glass hairline
    every card in the product carries - so formatting a reply (a quoted line, a
    fenced block) reads as hierarchy instead of as more of the same paragraph.
    The quote keeps its left rule as the quote's own marker, which is also what
    tells a quote and a code block apart at a glance when both are cards. */
-.message-bubble blockquote {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border-glass);
-  border-left: 2px solid var(--border-strong);
-  border-radius: var(--radius-xs);
-  background-color: var(--surface-card);
-  color: var(--text-secondary);
-}
+  .message-bubble blockquote {
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--border-glass);
+    border-left: 2px solid var(--border-strong);
+    border-radius: var(--radius-xs);
+    background-color: var(--surface-card);
+    color: var(--text-secondary);
+  }
 
-.message-bubble ul,
-.message-bubble ol {
-  padding-left: var(--space-5);
-}
+  .message-bubble ul,
+  .message-bubble ol {
+    padding-left: var(--space-5);
+  }
 
-.message-bubble li + li {
-  margin-top: var(--space-1);
-}
+  .message-bubble li + li {
+    margin-top: var(--space-1);
+  }
 
-.message-bubble code {
-  font-family: var(--font-mono);
-  font-size: 0.92em;
-  background-color: var(--surface-elevated);
-  border-radius: var(--radius-xs);
-  padding: 1px var(--space-1);
-}
+  .message-bubble code {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    background-color: var(--surface-elevated);
+    border-radius: var(--radius-xs);
+    padding: 1px var(--space-1);
+  }
 
-.message-bubble pre {
-  padding: var(--space-3);
-  background-color: var(--surface-card);
-  border: 1px solid var(--border-glass);
-  border-radius: var(--radius-sm);
-  /* Code lines scroll inside their own block instead of widening the column. */
-  overflow-x: auto;
-  white-space: pre;
-}
+  .message-bubble pre {
+    padding: var(--space-3);
+    background-color: var(--surface-card);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-sm);
+    /* Code lines scroll inside their own block instead of widening the column. */
+    overflow-x: auto;
+    white-space: pre;
+  }
 
-.message-bubble pre code {
-  background-color: transparent;
-  padding: 0;
-}
+  .message-bubble pre code {
+    background-color: transparent;
+    padding: 0;
+  }
 
-.message-bubble hr {
-  border: none;
-  border-top: 1px solid var(--border-subtle);
-}
+  .message-bubble hr {
+    border: none;
+    border-top: 1px solid var(--border-subtle);
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    Busy feedback for a message's own mutation
 
    The row already carries `aria-busy` and `data-pending`; without a visible
@@ -3228,98 +3229,93 @@ body {
    reduce block below) - where the disabled controls are the carrier.
    ========================================================================== */
 
-.message[data-pending] .message-bubble {
-  position: relative;
-  overflow: hidden;
-  border-color: var(--border-strong);
-  animation: message-pending-breathe 1.4s var(--motion-ease-smooth) infinite;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.message[data-pending] .message-bubble::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image: linear-gradient(
-    100deg,
-    transparent 25%,
-    rgba(255, 255, 255, 0.07) 50%,
-    transparent 75%
-  );
-  background-size: 220% 100%;
-  animation: message-pending-shimmer 1.4s linear infinite;
-}
-
-@keyframes message-pending-breathe {
-  0%,
-  100% {
-    opacity: 1;
+  .message[data-pending] .message-bubble {
+    position: relative;
+    overflow: hidden;
+    border-color: var(--border-strong);
+    animation: message-pending-breathe 1.4s var(--motion-ease-smooth) infinite;
+    transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
   }
-  50% {
-    opacity: 0.6;
-  }
-}
 
-@keyframes message-pending-shimmer {
-  from {
-    background-position: 140% 0;
+  .message[data-pending] .message-bubble::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: linear-gradient(100deg, transparent 25%, rgba(255, 255, 255, 0.07) 50%, transparent 75%);
+    background-size: 220% 100%;
+    animation: message-pending-shimmer 1.4s linear infinite;
   }
-  to {
-    background-position: -40% 0;
+
+  @keyframes message-pending-breathe {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.6;
+    }
   }
-}
 
-.message-spinner {
-  animation: message-spinner-spin 900ms linear infinite;
-}
-
-@keyframes message-spinner-spin {
-  to {
-    transform: rotate(360deg);
+  @keyframes message-pending-shimmer {
+    from {
+      background-position: 140% 0;
+    }
+    to {
+      background-position: -40% 0;
+    }
   }
-}
 
-/* The live turn's caret: streaming is shown by a moving cursor at the end of the
+  .message-spinner {
+    animation: message-spinner-spin 900ms linear infinite;
+  }
+
+  @keyframes message-spinner-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* The live turn's caret: streaming is shown by a moving cursor at the end of the
    reply, not only by a disabled control. It is inserted inside the bubble's last
    block (`MarkdownMessage`), so it trails the last character on that block's own
    line instead of becoming its own flex row below it. */
-.message[data-streaming] .message-caret {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin-left: 1px;
-  vertical-align: -0.15em;
-  background-color: var(--text-secondary);
-  animation: message-caret-blink 1s steps(2, start) infinite;
-}
-
-@keyframes message-caret-blink {
-  0%,
-  100% {
-    opacity: 1;
+  .message[data-streaming] .message-caret {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    margin-left: 1px;
+    vertical-align: -0.15em;
+    background-color: var(--text-secondary);
+    animation: message-caret-blink 1s steps(2, start) infinite;
   }
-  50% {
-    opacity: 0.15;
-  }
-}
 
-/* Motion off is not state off: the busy row keeps its stronger border and its
+  @keyframes message-caret-blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.15;
+    }
+  }
+
+  /* Motion off is not state off: the busy row keeps its stronger border and its
    disabled controls, and the caret disappears with the streaming preview. */
-@media (prefers-reduced-motion: reduce) {
-  .message[data-pending] .message-bubble,
-  .message[data-pending] .message-bubble::after,
-  .message[data-streaming] .message-caret,
-  .message-spinner {
-    animation: none;
+  @media (prefers-reduced-motion: reduce) {
+    .message[data-pending] .message-bubble,
+    .message[data-pending] .message-bubble::after,
+    .message[data-streaming] .message-caret,
+    .message-spinner {
+      animation: none;
+    }
+
+    .message[data-pending] .message-bubble {
+      opacity: 1;
+    }
   }
 
-  .message[data-pending] .message-bubble {
-    opacity: 1;
-  }
-}
-
-/* ==========================================================================
+  /* ==========================================================================
    The Memory panel's origin filter
 
    The backend already separates `player` from `companion` origin, so the panel
@@ -3327,52 +3323,52 @@ body {
    carried by `aria-pressed` plus a border/weight change, never by colour alone.
    ========================================================================== */
 
-.memory-filter {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
+  .memory-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
 
-.memory-filter-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--touch-target-min);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background-color: var(--surface-card);
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-out),
-    border-color var(--motion-duration-fast) var(--motion-ease-out),
-    color var(--motion-duration-fast) var(--motion-ease-out);
-}
+  .memory-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--touch-target-min);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-card);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      background-color var(--motion-duration-fast) var(--motion-ease-out),
+      border-color var(--motion-duration-fast) var(--motion-ease-out),
+      color var(--motion-duration-fast) var(--motion-ease-out);
+  }
 
-.memory-filter-chip:hover:not([aria-pressed="true"]) {
-  background-color: var(--surface-hover);
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-}
+  .memory-filter-chip:hover:not([aria-pressed="true"]) {
+    background-color: var(--surface-hover);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+  }
 
-.memory-filter-chip[aria-pressed="true"] {
-  background-color: var(--selection);
-  border-color: var(--accent);
-  color: var(--text-primary);
-  font-weight: 600;
-}
+  .memory-filter-chip[aria-pressed="true"] {
+    background-color: var(--selection);
+    border-color: var(--accent);
+    color: var(--text-primary);
+    font-weight: 600;
+  }
 
-.memory-item-origin {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-disabled);
-  white-space: nowrap;
-}
+  .memory-item-origin {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-disabled);
+    white-space: nowrap;
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    The zero-message anchor
 
    A conversation with no messages is the first screen a player sees, and one
@@ -3383,18 +3379,18 @@ body {
    keep in sync.
    ========================================================================== */
 
-/* Stated on the anchor's own line rather than inherited from `.empty-state p`,
+  /* Stated on the anchor's own line rather than inherited from `.empty-state p`,
    so a later re-tune of `--text-disabled` cannot move the invite away from the
    secondary grey it is drawn in. */
-.empty-state-anchor .empty-state-opening {
-  margin: var(--space-3) 0 0;
-  max-width: 46ch;
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--palette-gray-400);
-}
+  .empty-state-anchor .empty-state-opening {
+    margin: var(--space-3) 0 0;
+    max-width: 46ch;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--palette-gray-400);
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    The app bar in a mini-window strip
 
    GameBuddy usually floats beside Stardew Valley in a 400-500 px strip, and the
@@ -3415,21 +3411,21 @@ body {
    while a turn is in flight - so the state is never colour alone.
    ========================================================================== */
 
-@media (max-width: 480px) {
-  .app-bar {
-    padding: 0 var(--space-2);
+  @media (max-width: 480px) {
+    .app-bar {
+      padding: 0 var(--space-2);
+    }
+
+    .app-bar-actions {
+      gap: var(--space-1);
+    }
+
+    .app-bar-status-label {
+      display: none;
+    }
   }
 
-  .app-bar-actions {
-    gap: var(--space-1);
-  }
-
-  .app-bar-status-label {
-    display: none;
-  }
-}
-
-/* ==========================================================================
+  /* ==========================================================================
    The disclosure (`<details>`)
 
    `<details>` is the right element for "there is more here, if you want it", and
@@ -3444,53 +3440,53 @@ body {
    class is the same one both `<details>` carry now.
    ========================================================================== */
 
-.custom-disclosure > summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: var(--touch-target-min);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  cursor: pointer;
-  list-style: none;
-}
+  .custom-disclosure > summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: var(--touch-target-min);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    list-style: none;
+  }
 
-/* `list-style: none` is the standard half of this; the pseudo-element is what
+  /* `list-style: none` is the standard half of this; the pseudo-element is what
    Chromium and WebKit actually draw when they draw a marker. */
-.custom-disclosure > summary::-webkit-details-marker {
-  display: none;
-}
+  .custom-disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
 
-.custom-disclosure > summary:hover {
-  color: var(--text-primary);
-  background-color: var(--surface-hover);
-  border-radius: var(--radius-xs);
-}
+  .custom-disclosure > summary:hover {
+    color: var(--text-primary);
+    background-color: var(--surface-hover);
+    border-radius: var(--radius-xs);
+  }
 
-.custom-disclosure > summary:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
+  .custom-disclosure > summary:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
 
-.custom-disclosure > summary > svg {
-  flex: 0 0 auto;
-  color: var(--text-disabled);
-  transition: transform var(--motion-duration-fast) var(--motion-ease-out);
-}
+  .custom-disclosure > summary > svg {
+    flex: 0 0 auto;
+    color: var(--text-disabled);
+    transition: transform var(--motion-duration-fast) var(--motion-ease-out);
+  }
 
-/* A chevron that points right opens downwards... */
-.custom-disclosure[open] > summary > .game-diagnostics-chevron {
-  transform: rotate(90deg);
-}
+  /* A chevron that points right opens downwards... */
+  .custom-disclosure[open] > summary > .game-diagnostics-chevron {
+    transform: rotate(90deg);
+  }
 
-/* ...and one that points down flips up. Both are closed by default, so the
+  /* ...and one that points down flips up. Both are closed by default, so the
    open state is the only thing either rotation says. */
-.custom-disclosure[open] > summary > svg:not(.game-diagnostics-chevron) {
-  transform: rotate(180deg);
-}
+  .custom-disclosure[open] > summary > svg:not(.game-diagnostics-chevron) {
+    transform: rotate(180deg);
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    The two lists that had no rules at all
 
    The world book's entries and the card-import history are the two places the
@@ -3502,75 +3498,75 @@ body {
    and the row floor the token layer declares.
    ========================================================================== */
 
-[data-world-book-list],
-[data-import-history-entries] {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
+  [data-world-book-list],
+  [data-import-history-entries] {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
 
-[data-world-book-list] > [role="listitem"],
-[data-import-history-entries] > [data-import-history-entry] {
-  min-height: var(--row-min-height);
-  padding: var(--space-3);
-  background-color: var(--surface-card);
-  border: 1px solid var(--border-glass);
-  border-radius: var(--radius-sm);
-}
+  [data-world-book-list] > [role="listitem"],
+  [data-import-history-entries] > [data-import-history-entry] {
+    min-height: var(--row-min-height);
+    padding: var(--space-3);
+    background-color: var(--surface-card);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-sm);
+  }
 
-[data-world-book-list] > [role="listitem"] > strong {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
+  [data-world-book-list] > [role="listitem"] > strong {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
 
-[data-world-book-list] > [role="listitem"] > p {
-  margin: var(--space-1) 0 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
+  [data-world-book-list] > [role="listitem"] > p {
+    margin: var(--space-1) 0 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
 
-[data-world-book-list] > [role="listitem"] > .composer-actions {
-  margin-top: var(--space-2);
-}
+  [data-world-book-list] > [role="listitem"] > .composer-actions {
+    margin-top: var(--space-2);
+  }
 
-[data-import-history-entry] > span {
-  display: block;
-  font-size: 13px;
-  color: var(--text-primary);
-}
+  [data-import-history-entry] > span {
+    display: block;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
 
-[data-import-history-entry] > .management-settings-hint {
-  margin: 0;
-}
+  [data-import-history-entry] > .management-settings-hint {
+    margin: 0;
+  }
 
-/* The four disposition counts are a compact set of chips, not a second bulleted
+  /* The four disposition counts are a compact set of chips, not a second bulleted
    list: the entry is one row about one import, and the counts are its values. */
-[data-import-history-counts] {
-  list-style: none;
-  margin: var(--space-2) 0 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-2);
-}
+  [data-import-history-counts] {
+    list-style: none;
+    margin: var(--space-2) 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
+  }
 
-[data-import-history-counts] > li {
-  padding: 2px var(--space-2);
-  font-size: 11px;
-  color: var(--text-secondary);
-  background-color: var(--surface-elevated);
-  border-radius: var(--radius-xs);
-  white-space: nowrap;
-}
+  [data-import-history-counts] > li {
+    padding: 2px var(--space-2);
+    font-size: 11px;
+    color: var(--text-secondary);
+    background-color: var(--surface-elevated);
+    border-radius: var(--radius-xs);
+    white-space: nowrap;
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    The voice surface's status
 
    The composer's action rail is a flex row: the settings button, this status,
@@ -3583,35 +3579,35 @@ body {
    announces is never the truncated painting.
    ========================================================================== */
 
-.voice-status {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  flex: 0 1 auto;
-  overflow: hidden;
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--text-secondary);
-}
+  .voice-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+    flex: 0 1 auto;
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--text-secondary);
+  }
 
-.voice-status > .voice-status-dot {
-  flex: 0 0 auto;
-}
+  .voice-status > .voice-status-dot {
+    flex: 0 0 auto;
+  }
 
-.voice-status-label {
-  min-width: 0;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  /* Two lines, then the box's own ellipsis: enough for "Voice ready — press to
+  .voice-status-label {
+    min-width: 0;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    /* Two lines, then the box's own ellipsis: enough for "Voice ready — press to
      talk" at the mini-window width, never enough to grow the band. The clamp
      draws that ellipsis itself, which is why no `text-overflow` is stated here. */
-  -webkit-line-clamp: 2;
-}
+    -webkit-line-clamp: 2;
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    The surface notices
 
    Both shells mount them (the management banner and the composed shell's own
@@ -3628,55 +3624,55 @@ body {
    was a bare `<p>`, i.e. ordinary prose.
    ========================================================================== */
 
-.error-banner,
-.success-banner,
-.warning-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  font-size: 13px;
-  line-height: 1.5;
-  border-radius: var(--radius-sm);
-  margin: 0;
-}
+  .error-banner,
+  .success-banner,
+  .warning-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    border-radius: var(--radius-sm);
+    margin: 0;
+  }
 
-.error-banner {
-  background-color: color-mix(in srgb, var(--danger) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
-  color: var(--danger);
-}
+  .error-banner {
+    background-color: color-mix(in srgb, var(--danger) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
+    color: var(--danger);
+  }
 
-.warning-banner {
-  background-color: color-mix(in srgb, var(--warning) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
-  color: var(--warning);
-}
+  .warning-banner {
+    background-color: color-mix(in srgb, var(--warning) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
+    color: var(--warning);
+  }
 
-.success-banner {
-  background-color: color-mix(in srgb, var(--success) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
-  color: var(--success);
-}
+  .success-banner {
+    background-color: color-mix(in srgb, var(--success) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
+    color: var(--success);
+  }
 
-/* Motion off is not state off: the skip link still appears, the progress dot
+  /* Motion off is not state off: the skip link still appears, the progress dot
    still carries its tone and its state, the chevron still states the open panel.
    The universal escape is a `*` selector in `theme.interactions`, so a class rule
    beats it on specificity and a later layer beats it on order - each of those
    four sites is named here, with the selector the site itself uses, rather than
    making the universal escape `!important`. */
-@media (prefers-reduced-motion: reduce) {
-  .skip-link,
-  .status-dot[data-tone="progress"],
-  .game-status[data-tone="progress"]::before,
-  .custom-disclosure > summary > svg {
-    animation: none;
-    transition: none;
+  @media (prefers-reduced-motion: reduce) {
+    .skip-link,
+    .status-dot[data-tone="progress"],
+    .game-status[data-tone="progress"]::before,
+    .custom-disclosure > summary > svg {
+      animation: none;
+      transition: none;
+    }
   }
-}
 
-/* ==========================================================================
+  /* ==========================================================================
    Memory notebook (时光手札) — memory-surface lane
 
    The Memory surface reads as the companion's own scrapbook, so its chrome is
@@ -3686,228 +3682,227 @@ body {
    rules above are untouched.
    ========================================================================== */
 
-.memory-notebook {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background-color: var(--surface-card);
-}
+  .memory-notebook {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-card);
+  }
 
-.memory-notebook-promise {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-}
+  .memory-notebook-promise {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
 
-.memory-notebook-count {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
+  .memory-notebook-count {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
 
-.memory-item-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px var(--space-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background-color: var(--surface-elevated);
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
+  .memory-item-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px var(--space-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-elevated);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
 
-.memory-authoring {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-subtle);
-}
+  .memory-authoring {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-subtle);
+  }
 
-.memory-authoring-toggle {
-  align-self: flex-start;
-  min-height: var(--touch-target-min);
-  padding: 0 var(--space-2);
-  border: 0;
-  background: none;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: color var(--motion-duration-fast) var(--motion-ease-out);
-}
+  .memory-authoring-toggle {
+    align-self: flex-start;
+    min-height: var(--touch-target-min);
+    padding: 0 var(--space-2);
+    border: 0;
+    background: none;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color var(--motion-duration-fast) var(--motion-ease-out);
+  }
 
-.memory-authoring-toggle:hover {
-  color: var(--text-primary);
-}
+  .memory-authoring-toggle:hover {
+    color: var(--text-primary);
+  }
 
-/* --- game-surface lane: the companion capability board and the start guide ---
+  /* --- game-surface lane: the companion capability board and the start guide ---
    The board leads the panel and the machine facts are demoted last, so the
    surface reads as what the companion can do with the player. Nothing here owns
    behaviour: every card is derived from the published game projection. */
 
-.game-capability-board {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+  .game-capability-board {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
 
-.game-capability-lead {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
+  .game-capability-lead {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
 
-.game-capability-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
+  .game-capability-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
 
-.game-capability-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding: 12px 14px;
-  background-color: var(--surface-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-}
+  .game-capability-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    padding: 12px 14px;
+    background-color: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+  }
 
-.game-capability-card-icon {
-  display: flex;
-  color: var(--accent);
-}
+  .game-capability-card-icon {
+    display: flex;
+    color: var(--accent);
+  }
 
-.game-capability-card-title {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
+  .game-capability-card-title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
 
-.game-capability-card-detail {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
+  .game-capability-card-detail {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
 
-.game-capability-waiting {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-disabled);
-  overflow-wrap: anywhere;
-}
+  .game-capability-waiting {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-disabled);
+    overflow-wrap: anywhere;
+  }
 
-/* The three-step guide. The step number is the list's own counter, so it is
+  /* The three-step guide. The step number is the list's own counter, so it is
    graphic rather than text the screen reader has to read twice. */
-.game-guide-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: game-guide-step;
-}
+  .game-guide-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: game-guide-step;
+  }
 
-.game-guide-step {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  grid-template-areas:
-    "number title"
-    "number detail"
-    ".      body";
-  column-gap: 12px;
-  row-gap: 4px;
-  align-items: start;
-  padding: 12px 14px;
-  background-color: var(--surface-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-}
+  .game-guide-step {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    grid-template-areas:
+      "number title"
+      "number detail"
+      ".      body";
+    column-gap: 12px;
+    row-gap: 4px;
+    align-items: start;
+    padding: 12px 14px;
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+  }
 
-.game-guide-step::before {
-  grid-area: number;
-  counter-increment: game-guide-step;
-  content: counter(game-guide-step);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background-color: var(--surface-elevated);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-}
+  .game-guide-step::before {
+    grid-area: number;
+    counter-increment: game-guide-step;
+    content: counter(game-guide-step);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background-color: var(--surface-elevated);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 700;
+  }
 
-.game-guide-step-title {
-  grid-area: title;
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
+  .game-guide-step-title {
+    grid-area: title;
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
 
-.game-guide-step-detail {
-  grid-area: detail;
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
+  .game-guide-step-detail {
+    grid-area: detail;
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
 
-/* Everything else a step carries - its controls, its own feedback, the cabin
+  /* Everything else a step carries - its controls, its own feedback, the cabin
    handoff - spans the body column, so no control sits under the step number. */
-.game-guide-step > .game-actions,
-.game-guide-step > .game-status,
-.game-guide-step > .stardew-cabin-handoff {
-  grid-column: 2;
-}
+  .game-guide-step > .game-actions,
+  .game-guide-step > .game-status,
+  .game-guide-step > .stardew-cabin-handoff {
+    grid-column: 2;
+  }
 
-/* The demoted machine facts: the same rows, quieter than the board above. */
-.game-group-secondary {
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-subtle);
-}
+  /* The demoted machine facts: the same rows, quieter than the board above. */
+  .game-group-secondary {
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle);
+  }
 
-.game-group-secondary .game-facts {
-  padding: 0 2px;
-  background-color: transparent;
-  border-color: transparent;
-}
+  .game-group-secondary .game-facts {
+    padding: 0 2px;
+    background-color: transparent;
+    border-color: transparent;
+  }
 
-.game-group-secondary .game-fact dt {
-  font-size: 11px;
-  color: var(--text-disabled);
-}
+  .game-group-secondary .game-fact dt {
+    font-size: 11px;
+    color: var(--text-disabled);
+  }
 
-
-/* ==========================================================================
+  /* ==========================================================================
    The app bar's trailing peers fold behind one `More` on a 400 px strip
    (conversation-surface lane block)
 
@@ -3925,67 +3920,67 @@ body {
    above are untouched.
    ========================================================================== */
 
-.app-bar-more,
-.app-bar-more-menu {
-  display: contents;
-}
-
-.app-bar-more-trigger {
-  display: none;
-}
-
-@media (max-width: 480px) {
-  .app-bar-more {
-    display: block;
-    position: relative;
+  .app-bar-more,
+  .app-bar-more-menu {
+    display: contents;
   }
 
   .app-bar-more-trigger {
-    display: inline-flex;
-  }
-
-  .app-bar-more-menu {
     display: none;
   }
 
-  .app-bar-more-menu[data-open] {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    position: absolute;
-    top: calc(100% + var(--space-1));
-    right: 0;
-    z-index: 30;
-    min-width: 176px;
-    padding: var(--space-1);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    background-color: var(--surface-panel);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
-  }
+  @media (max-width: 480px) {
+    .app-bar-more {
+      display: block;
+      position: relative;
+    }
 
-  /* Inside the panel an entry is a named row again: the icon-only treatment
+    .app-bar-more-trigger {
+      display: inline-flex;
+    }
+
+    .app-bar-more-menu {
+      display: none;
+    }
+
+    .app-bar-more-menu[data-open] {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      position: absolute;
+      top: calc(100% + var(--space-1));
+      right: 0;
+      z-index: 30;
+      min-width: 176px;
+      padding: var(--space-1);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      background-color: var(--surface-panel);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Inside the panel an entry is a named row again: the icon-only treatment
      belongs to the bar's own rail, not to a list the player is choosing from. */
-  .app-bar-more-menu .nav-button {
-    width: auto;
-    height: auto;
-    min-height: var(--touch-target-min);
-    padding: 0 var(--space-2);
-    justify-content: flex-start;
-  }
+    .app-bar-more-menu .nav-button {
+      width: auto;
+      height: auto;
+      min-height: var(--touch-target-min);
+      padding: 0 var(--space-2);
+      justify-content: flex-start;
+    }
 
-  .app-bar-more-menu .nav-button .nav-label {
-    display: inline;
-  }
+    .app-bar-more-menu .nav-button .nav-label {
+      display: inline;
+    }
 
-  /* The bar's own air is already at its floor; the companion block's inner gap
+    /* The bar's own air is already at its floor; the companion block's inner gap
      is what is left to give back to the name. */
-  .app-bar-companion {
-    gap: var(--space-1);
+    .app-bar-companion {
+      gap: var(--space-1);
+    }
   }
-}
 
-/* ==========================================================================
+  /* ==========================================================================
    The surface heading's focus indicator (conversation-rendering lane block)
 
    `SurfaceView` focuses its heading whenever its surface is selected, so a
@@ -4001,11 +3996,11 @@ body {
    Appended block; the rules above are untouched.
    ========================================================================== */
 
-.surface-header h2:focus-visible {
-  outline: 1px solid var(--border-strong);
-}
+  .surface-header h2:focus-visible {
+    outline: 1px solid var(--border-strong);
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    A button beside a full-width field keeps its label on one line
    (conversation-rendering lane block)
 
@@ -4019,13 +4014,13 @@ body {
    Appended block; the rules above are untouched.
    ========================================================================== */
 
-.small-button,
-.primary-button {
-  white-space: nowrap;
-  flex-shrink: 0;
-}
+  .small-button,
+  .primary-button {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    The game session's one terminal operation (`game.endgame`)
 
    Set apart from the routine stop/disconnect row on purpose: its own block,
@@ -4060,7 +4055,7 @@ body {
     border-color: var(--danger);
   }
 
-/* ==========================================================================
+  /* ==========================================================================
    The optimistic player message (send lane)
 
    The sent text is shown immediately, marked `data-pending`, and disappears the
@@ -4119,7 +4114,7 @@ body {
       animation: none;
     }
   }
-/* ==========================================================================
+  /* ==========================================================================
    The card-import file control (character-import lane block)
 
    The audit's screenshot `10-角色-1440x900.png`: the character surface's primary
@@ -4163,27 +4158,27 @@ body {
    Appended block; the rules above are untouched.
    ========================================================================== */
 
-.card-import-file-input {
-  position: absolute;
-  width: 0;
-  height: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  /* The label text is what gave this element its `scrollWidth` (176 px at every
+  .card-import-file-input {
+    position: absolute;
+    width: 0;
+    height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    /* The label text is what gave this element its `scrollWidth` (176 px at every
      box size): at zero font size there is no text to lay out. */
-  font-size: 0;
-}
+    font-size: 0;
+  }
 
-/* The platform's own "Choose file" button inside the input is the rest of that
+  /* The platform's own "Choose file" button inside the input is the rest of that
    intrinsic size; the product draws its own trigger, so this one is retired. */
-.card-import-file-input::file-selector-button {
-  display: none;
-}
+  .card-import-file-input::file-selector-button {
+    display: none;
+  }
 
-/* ==========================================================================
+  /* ==========================================================================
    The status stays a named badge on the companion, not a floating dot
    (ruling-and-ui-defects lane block, U-02)
 
@@ -4206,27 +4201,27 @@ body {
    Appended block; the rules above are untouched.
    ========================================================================== */
 
-@media (max-width: 480px) {
-  .app-bar-companion {
-    position: relative;
-  }
+  @media (max-width: 480px) {
+    .app-bar-companion {
+      position: relative;
+    }
 
-  /* The badge sits on the monogram's lower-right corner: `avatar-small` is
+    /* The badge sits on the monogram's lower-right corner: `avatar-small` is
      28 px, and the 7 px dot lands inside it. */
-  .app-bar-status {
-    position: absolute;
-    top: auto;
-    right: auto;
-    bottom: 1px;
-    left: 17px;
-    margin: 0;
-    padding: 0;
-    border-left: 0;
-    gap: 0;
+    .app-bar-status {
+      position: absolute;
+      top: auto;
+      right: auto;
+      bottom: 1px;
+      left: 17px;
+      margin: 0;
+      padding: 0;
+      border-left: 0;
+      gap: 0;
+    }
   }
-}
 
-/* ==========================================================================
+  /* ==========================================================================
    The Chats row's destructive actions arm before they fire
    (ruling-and-ui-defects lane block, U-05)
 
@@ -4249,40 +4244,70 @@ body {
    Appended block; the rules above are untouched.
    ========================================================================== */
 
-.chat-item-confirm {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--border-subtle);
-}
+  .chat-item-confirm {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border-subtle);
+  }
 
-.chat-item-confirm-prompt {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--danger);
-}
+  .chat-item-confirm-prompt {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--danger);
+  }
 
-.chat-item-confirm-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
+  .chat-item-confirm-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-shrink: 0;
+  }
 
-.small-button.danger {
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
-  color: var(--danger);
-}
+  .small-button.danger {
+    border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+    color: var(--danger);
+  }
 
-.small-button.danger:hover:not(:disabled) {
-  background-color: color-mix(in srgb, var(--danger) 18%, transparent);
-  border-color: var(--danger);
-}
-
+  .small-button.danger:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--danger) 18%, transparent);
+    border-color: var(--danger);
+  }
 } /* end @layer theme.polish */
+
+/* ==========================================================================
+   The card-import review and result are prose, not a label/value read-back
+
+   Both blocks were rendered through `.management-settings-details`, whose whole
+   shape is a label/value pair: `space-between` rows and `dd { text-align: right }`
+   for the value column. An import-report row is not a pair - it is one sentence
+   ("Will keep 6 card fields: name, description, ...", the success line, the
+   "could not use" line) - so at the narrow surface a wrapped sentence read
+   ragged-LEFT: measured at 400x800, the keep sentence's two lines ended on one
+   right edge (371, 371) and started on two (93, 66).
+
+   The report now has its own class and is what it is: stacked sentences, read
+   from the left, with the same generous wrapping the card-exported field names
+   need (a kept field can be a long single word).
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+.card-import-report {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.card-import-report dd {
+  margin: 0;
+  font-weight: 500;
+  text-align: left;
+  overflow-wrap: anywhere;
+}

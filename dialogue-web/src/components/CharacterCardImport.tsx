@@ -228,9 +228,7 @@ export function CharacterCardImport({
     setStaged(null);
   };
 
-  const readFile = async (
-    file: File,
-  ): Promise<{ ok: true; text: string } | { ok: false; message: string }> => {
+  const readFile = async (file: File): Promise<{ ok: true; text: string } | { ok: false; message: string }> => {
     if (file.size > MAX_FILE_BYTES) return { ok: false, message: labels.importFailedTooLarge };
     const bytes = new Uint8Array(await file.arrayBuffer());
     const text = isPngBytes(bytes)
@@ -319,7 +317,7 @@ export function CharacterCardImport({
         <section aria-label={labels.importReviewTitle} data-card-import-review>
           <h4>{labels.importReviewTitle}</h4>
           <p className="management-settings-hint">{labels.importReviewHint}</p>
-          <dl className="management-settings-details" data-card-import-review-details>
+          <dl className="card-import-report" data-card-import-review-details>
             <div>
               <dd>{labels.importReviewName.replace("{{name}}", staged.name)}</dd>
             </div>
@@ -356,12 +354,22 @@ export function CharacterCardImport({
       )}
 
       {outcome !== null && (
-        <div role="status" className={outcome.kind === "created" ? "success-banner" : "error-banner"} data-card-import-result={outcome.kind}>
+        <div
+          role="status"
+          className={outcome.kind === "created" ? "success-banner" : "error-banner"}
+          data-card-import-result={outcome.kind}
+        >
           {outcome.kind === "created" ? (
-            <dl className="management-settings-details" data-card-import-details>
-              <div><dd>{labels.importCreated.replace("{{name}}", outcome.name)}</dd></div>
-              <div><dd>{labels.importCreatedDetail}</dd></div>
-              <div><dd>{labels.importKept.replace("{{count}}", String(outcome.report.keptFields.length))}</dd></div>
+            <dl className="card-import-report" data-card-import-details>
+              <div>
+                <dd>{labels.importCreated.replace("{{name}}", outcome.name)}</dd>
+              </div>
+              <div>
+                <dd>{labels.importCreatedDetail}</dd>
+              </div>
+              <div>
+                <dd>{labels.importKept.replace("{{count}}", String(outcome.report.keptFields.length))}</dd>
+              </div>
               {reportRows(outcome.report, labels)}
             </dl>
           ) : (
@@ -385,9 +393,7 @@ export function CharacterCardImport({
               {history.entries.map((entry) => (
                 <li key={entry.importId} data-import-history-entry>
                   <span>{entry.cardName}</span>
-                  <span className="management-settings-hint">
-                    {new Date(entry.occurredAtMs).toLocaleString()}
-                  </span>
+                  <span className="management-settings-hint">{new Date(entry.occurredAtMs).toLocaleString()}</span>
                   <ul data-import-history-counts>
                     <li>
                       {labels.dispositionAccepted} · {entry.counts.accepted_typed}
