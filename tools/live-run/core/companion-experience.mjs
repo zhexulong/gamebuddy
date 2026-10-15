@@ -18,14 +18,22 @@
  *     `*琥珀已经蹲在门廊前的磨石旁了*` (the companion's own name as the subject
  *     of her own action beat) followed by `*她把锄头往腰边一靠*` (a pronoun that
  *     only resolves because the previous beat named her). The gate therefore
- *     fires on exactly two shapes and nothing else: (a) a narration beat that
- *     names the companion while carrying no first-person marker, and (b) a
- *     narration beat that carries a third-person pronoun, no first-person
- *     marker, and is COREFFERENT with a preceding companion-naming beat in the
- *     same unbroken beat run. Quoted speech is removed before the analysis, so
- *     her own name inside her own dialogue never fires; a beat about another
- *     character carries neither her name nor a bound pronoun, so it never
- *     fires; and a first-person beat never fires.
+ *     fires on exactly two shapes: (a) a narration beat that names the companion
+ *     while carrying no first-person marker, and (b) a narration beat that
+ *     carries a third-person pronoun, no first-person marker, and is
+ *     COREFFERENT with the companion. The reply IS the companion's turn, so
+ *     coreference is a property of the whole reply rather than of one unbroken
+ *     beat run: the companion is bound as the referent once she voices herself
+ *     in the first person anywhere in the reply (her dialogue or a first-person
+ *     beat) or is named in a beat, and dialogue between beats no longer unbinds
+ *     her. That last clause is the live false negative this rule was widened
+ *     for: real turns interleave narration and speech, so a pronoun beat after a
+ *     quoted line used to lose its antecedent. Quoted speech is removed before
+ *     the analysis, so her own name inside her own dialogue never fires; a beat
+ *     with its own first-person marker — including one about another character,
+ *     e.g. `*阿比盖尔…朝我们…*` — never fires; and a lone bound-less pronoun
+ *     with no first-person voice anywhere in the reply is undecidable, so it
+ *     stays silent.
  *
  *  2. `pacing` — a light greeting must not become an essay. The bound is
  *     MEASURED, not chosen: see `PACING_MEASUREMENTS` for the numbers this
@@ -133,9 +141,6 @@ const QUOTED_SPANS = /“[^”\n]{0,400}”|「[^」\n]{0,400}」|『[^』\n]{0,
 /** Narration beats: markdown `*beat*` and the full-width `（beat）` a real run used. */
 const BEAT_SPANS = /(?<!\*)\*(?!\*)([^*\n]{1,400})\*(?!\*)|（([^）\n]{1,400})）/g;
 
-/** A gap between two beats that is speech or prose resets the coreference binding. */
-const GAP_BREAKS_BINDING = /[^\s，。、！？…；：,!?;:—-]/;
-
 const GREETING_PROMPTS =
   /^(你好|您好|嗨|哈喽|哈啰|在吗|早|早上好|早安|晚上好|下午好|晚安|hi|hey|hello|yo|good morning|good evening)[!！。.~～\s]*$/i;
 
@@ -194,10 +199,6 @@ function narrationBeats(text) {
   return beats;
 }
 
-function gapBetween(text, previousEnd, nextStart) {
-  return text.slice(previousEnd, nextStart);
-}
-
 /**
  * First-person anchoring over one companion reply.
  *
@@ -224,11 +225,12 @@ export function evaluateFirstPersonAnchoring({ text, companionNames }) {
   const source = typeof text === "string" ? text : "";
   const beats = narrationBeats(source);
   const matched = [];
-  let bound = false;
-  let previousEnd = null;
+  // The reply is the companion's own turn. Once she voices herself in the first
+  // person anywhere — her dialogue or a first-person beat — every third-person
+  // narration beat in the same turn is coreferent with her, and speech between
+  // beats must not unbind her.
+  let bound = FIRST_PERSON.test(source);
   for (const beat of beats) {
-    if (previousEnd !== null && GAP_BREAKS_BINDING.test(gapBetween(source, previousEnd, beat.start))) bound = false;
-    previousEnd = beat.end;
     const namesCompanion = names.some((name) => beat.body.includes(name));
     const firstPerson = FIRST_PERSON.test(beat.body);
     const thirdPerson = THIRD_PERSON.test(beat.body);
@@ -237,11 +239,9 @@ export function evaluateFirstPersonAnchoring({ text, companionNames }) {
       bound = true;
       continue;
     }
-    if (!namesCompanion && !firstPerson && thirdPerson && bound) {
+    if (!(namesCompanion || firstPerson) && thirdPerson && bound) {
       matched.push({ rule: "coreferent_third_person_narration", text: beat.body, offset: beat.start });
-      continue;
     }
-    if (namesCompanion) bound = true;
   }
   return Object.freeze({
     verdict: matched.length === 0 ? "pass" : "fail",

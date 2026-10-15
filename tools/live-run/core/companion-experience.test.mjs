@@ -33,6 +33,34 @@ const CARD_EXEMPLAR_TURNS = Object.freeze([
   "*琥珀手里正拿着一把旧剪刀修整草绳，闻言动作一顿，立刻把剪刀往腰间的小工具包里一塞。* “真的假的？这才第四天吧……” *她顺着田埂三步并作两步快步走过来，蹲在垄沟边，伸手轻轻拨开最边缘那丛墨绿色的宽叶子。泥土下露出一截圆滚滚、泛着浅金黄色的根茎。* *她两手扣住叶柄根部，稍微用劲往上一提，伴随着泥土松脱的闷响，一颗沉甸甸、带着新鲜泥土腥香的防风草被稳稳拔了出来。她用指腹抹去表层的大块黑泥，抬头朝你扬了扬，浅琥珀色的眼睛里满是抑制不住的亮光。* “长得比我想的结实多了！看来那两车枯树叶堆肥没白撒。趁着日头没升太高，我们把这一畦全拔了，顺便把土再松一遍。”",
 ]);
 
+/**
+ * The live false negative this rule was widened for (run
+ * `7aa46481425885fcce764a17`, turn 1, verbatim): the companion narrates herself
+ * in the third person across two beats and never names herself, so the old
+ * "a companion-naming beat binds the pronoun" rule saw nothing to bind and let
+ * it through. This is the counterexample the gate must cover; it may not narrow
+ * back.
+ */
+const LIVE_RUN_PRONOUN_ONLY_SELF_NARRATION = Object.freeze(
+  "*手里的铅笔头在手账封皮上敲了两下，她正蹲在门廊前看天，听见动静回过头来。*\n\n" +
+    "“醒啦？我正琢磨今天这块地呢——西头那畦土看着还是有点干。”\n\n" +
+    "*她把摊开的册子随手合上，塞进腰包。*\n\n" +
+    "“早上的粥在炉子上温着，你先垫两口。对了，种子还剩小半袋防风草，你说先补哪块？”",
+);
+
+/**
+ * The second shape the old rule lost (run `2c57ab0f938e292a528ba3ee`, turn 1,
+ * verbatim): the companion IS named in a beat, but a quoted line sits between
+ * that beat and the pronoun beat, and the old gap-reset unbound her on the
+ * intervening speech.
+ */
+const LIVE_RUN_NAMED_THEN_PRONOUN = Object.freeze(
+  "*琥珀正蹲在门廊台阶边，就着晨光数那半袋去年存下来的土豆种，指尖挨个捻过去，嘴里念念有词。听见你的声音，她抬了一下头，短发尾端还翘着，头上那枚木四叶草发卡稍微歪了点。*\n\n" +
+    "“醒了？锅里温着粥，我先喝过了，你自己盛。”\n\n" +
+    "*她把土豆种收回袋口，用草绳一系，顺手拍掉掌心的碎土，站起身往田垄那头张了一眼。*\n\n" +
+    "“雾还没散，土的表层是湿的——今天适合下种。一会儿你吃完了过来搭把手。”",
+);
+
 test("first-person anchoring fires on the observed breach", () => {
   const breach = "*琥珀已经蹲在门廊前的磨石旁了* *她把锄头往腰边一靠*";
   const verdict = evaluateFirstPersonAnchoring({ text: breach, companionNames: [COMPANION] });
@@ -68,6 +96,36 @@ test("first-person anchoring stays silent on every legitimate shape", () => {
       `expected pass for: ${text}`,
     );
   }
+});
+
+test("first-person anchoring catches the live run's pronoun-only self-narration", () => {
+  // The real false negative: two third-person narration beats, no companion name
+  // anywhere, the companion's own first-person dialogue in between. It must fail
+  // on both beats and quote them, so a reviewer sees the defect, not a rule name.
+  const verdict = evaluateFirstPersonAnchoring({
+    text: LIVE_RUN_PRONOUN_ONLY_SELF_NARRATION,
+    companionNames: [COMPANION],
+  });
+  assert.equal(verdict.verdict, "fail");
+  assert.deepEqual(
+    verdict.matched.map((entry) => entry.rule),
+    ["coreferent_third_person_narration", "coreferent_third_person_narration"],
+  );
+  assert.deepEqual(
+    verdict.matched.map((entry) => entry.text),
+    ["手里的铅笔头在手账封皮上敲了两下，她正蹲在门廊前看天，听见动静回过头来。", "她把摊开的册子随手合上，塞进腰包。"],
+  );
+});
+
+test("first-person anchoring keeps the companion bound across interleaved dialogue", () => {
+  // The named beat binds her for the WHOLE reply; the quoted line before the
+  // pronoun beat must not unbind her.
+  const verdict = evaluateFirstPersonAnchoring({ text: LIVE_RUN_NAMED_THEN_PRONOUN, companionNames: [COMPANION] });
+  assert.equal(verdict.verdict, "fail");
+  assert.deepEqual(
+    verdict.matched.map((entry) => entry.rule),
+    ["companion_named_in_narration", "coreferent_third_person_narration"],
+  );
 });
 
 test("first-person anchoring skips rather than passes when the run mounted no companion name", () => {
