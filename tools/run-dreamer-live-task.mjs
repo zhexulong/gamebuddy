@@ -14,12 +14,16 @@
  */
 import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { createGameBuddyPlayerMemoryCrudFacade, getDeclaredProjectIdentity } from "@cortexkit/pi-magic-context/memory";
-import {
-  registerPiDreamerProject,
-  runPiDreamForProject,
-  unregisterPiDreamerProject,
-} from "@cortexkit/pi-magic-context/dreamer";
+import { pathToFileURL } from "node:url";
+
+// The package lives under the host's node_modules, and a tool in `tools/` cannot resolve a bare specifier for
+// it. Its exports map is import-only, so the CJS resolver refuses it; loading the very files that map names, by
+// absolute URL, is what makes this harness runnable from the repository root.
+const hostDir = resolve(new URL("../host", import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/u, ""));
+const packageDir = join(hostDir, "node_modules", "@cortexkit", "pi-magic-context");
+const memory = await import(pathToFileURL(join(packageDir, "dist", "memory", "index.js")).href);
+const dreamer = await import(pathToFileURL(join(packageDir, "dist", "dreamer", "index.js")).href);
+const plugin = { openRuntimeDatabase: dreamer.openRuntimeDatabase };
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -47,32 +51,55 @@ if (!existsSync(contextsRoot)) blocked("no_runtime_root", `no contexts/ under ${
 const contextKeys = readdirSync(contextsRoot);
 if (contextKeys.length !== 1) blocked("ambiguous_runtime_root", `${contextKeys.length} contexts under ${root}`);
 const contextDir = join(contextsRoot, contextKeys[0]);
-const dbPath = join(contextDir, "data", "cortexkit", "magic-context", "context.db");
+const dataRoot = join(contextDir, "data");
+const dbPath = join(dataRoot, "cortexkit", "magic-context", "context.db");
 if (!existsSync(dbPath)) blocked("no_magic_context_store", dbPath);
 
-const facade = createGameBuddyPlayerMemoryCrudFacade({ continuityId, runtimeCwd: root, profileId, profileRevision });
-const list = async () => {
-  const read = await facade.listMemories({ continuityId, profileId, profileRevision });
-  return read;
-};
+// The identity the rows actually live under wins. Deriving one from the directory would land on a different
+// partition whenever the run's project identity came from a git root, and the task would reflect on nothing.
+// Magic Context resolves its store from the ambient XDG layout, so pointing it at this runtime root is how the
+// task reads the database that belongs to this run rather than the machine's.
+process.env.XDG_DATA_HOME = dataRoot;
+const db = plugin.openRuntimeDatabase();
+if (db === null) blocked("store_unavailable", `openDatabase() returned null for ${dataRoot}`);
+
+const storedIdentities = db
+  .prepare("SELECT project_path, COUNT(*) AS n FROM memories GROUP BY project_path ORDER BY n DESC")
+  .all();
+const explicitIdentity = flag("--project-identity", undefined);
+const projectIdentity =
+  explicitIdentity ?? (storedIdentities.length === 1 ? storedIdentities[0].project_path : undefined);
+if (projectIdentity === undefined) {
+  blocked(
+    "identity_ambiguous",
+    `stored memories span ${storedIdentities.length} partitions; pass --project-identity <value>`,
+  );
+}
+process.stderr.write(
+  `[dreamer-task] partitions in this store: ${storedIdentities.map((row) => `${row.n} under ${row.project_path}`).join("; ") || "(none)"}\n`,
+);
+
+const facade = memory.createGameBuddyPlayerMemoryCrudFacade({
+  continuityId,
+  runtimeCwd: root,
+  profileId,
+  profileRevision,
+});
+const list = () => facade.listMemories({ continuityId, profileId, profileRevision });
 
 const before = await list();
 process.stderr.write(`[dreamer-task] memories before: ${before.length}\n`);
-process.stderr.write(`[dreamer-task] declared project identity: ${String(getDeclaredProjectIdentity())}\n`);
-
-const projectIdentity = getDeclaredProjectIdentity();
-if (typeof projectIdentity !== "string" || projectIdentity.length === 0) {
-  blocked(
-    "no_declared_identity",
-    "the runtime declares no project identity; run the host first (identity is boot-time)",
-  );
-}
+process.stderr.write(`[dreamer-task] project identity: ${String(projectIdentity)}\n`);
 
 // The registration is the same shape the extension uses for its own timer, minus the schedule: one owner token,
-// this project identity, this root's config. `gitCommitIndexing` is off because a companion's memory does not
-// come from commits, and the embedding provider is off because this runtime ships without one.
+// this project identity, and the config the timer would have resolved. `gitCommitIndexing` is off because a
+// companion's memory does not come from commits; the embedding provider is off because this runtime ships
+// without one.
+const loaded = dreamer.loadPiConfig();
+const dreamerConfig = dreamer.dreamerRunConfig(loaded.config, loaded.config);
 const registrationOwner = {};
-registerPiDreamerProject({
+dreamer.registerPiDreamerProject({
+  db,
   projectDir: contextDir,
   projectIdentity,
   registrationOwner,
@@ -80,18 +107,18 @@ registerPiDreamerProject({
   embeddingConfig: { provider: "off" },
   memoryEnabled: true,
   gitCommitIndexing: { enabled: false, since_days: 30, max_commits: 200 },
-  config: {
-    disable: false,
-    tasks: { [task]: { schedule: "" } },
-    memory: { enabled: true, domain: "ongoing-interaction" },
-  },
+  config: dreamerConfig,
 });
 
 let result;
+let failure;
 try {
-  result = await runPiDreamForProject(projectIdentity, task, registrationOwner);
+  result = await dreamer.runPiDreamForProject(projectIdentity, task, registrationOwner);
+} catch (error) {
+  failure = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 } finally {
-  unregisterPiDreamerProject(projectIdentity, registrationOwner);
+  dreamer.unregisterPiDreamerProject({ projectIdentity, registrationOwner });
+  db.close?.();
 }
 
 const after = await list();
@@ -101,12 +128,14 @@ const report = {
   root,
   contextDir,
   task,
-  declaredIdentity: projectIdentity,
+  projectIdentity,
+  failure: failure ?? null,
   run: result ?? null,
   memories: { before: before.length, after: after.length, added: added.length },
   addedRows: added.map((row) => ({ handle: row.handle, origin: row.origin ?? null, title: row.title ?? null })),
 };
 if (reportPath !== undefined) writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 process.stdout.write(
-  `${JSON.stringify({ verdict: added.length > 0 ? "wrote" : "wrote_nothing", task, added: added.length })}\n`,
+  `${JSON.stringify({ verdict: failure !== undefined ? "failed" : added.length > 0 ? "wrote" : "wrote_nothing", task, added: added.length, failure: failure ?? null })}\n`,
 );
+process.exit(failure !== undefined ? 2 : 0);
