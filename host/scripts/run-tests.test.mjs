@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { chunkTestFiles, discoverTestFiles, exclusiveGroupsFor, machineDefaultConcurrency, runCompiledTests, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
-import { assertTestArtifactInventory, writeTestArtifactInventory } from "./test-artifact-inventory.mjs";
+import { chunkTestFiles, discoverTestFiles, exclusiveGroupsFor, machineDefaultConcurrency, preflightTestArtifact, runCompiledTests, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
+import { assertTestArtifactFreshness, assertTestArtifactInventory, writeTestArtifactInventory } from "./test-artifact-inventory.mjs";
 
 async function withFixture(run) {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-test-runner-"));
@@ -14,6 +14,32 @@ async function withFixture(run) {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+/**
+ * A fixture artifact with a fixture source tree, because the inventory now describes both: the
+ * test files it emitted and the sources it was built from. A fixed build stamp is used
+ * throughout so no assertion depends on how fast this machine writes files.
+ */
+const BUILD_STARTED_AT_MS = 1_800_000_000_000;
+
+async function withArtifactFixture(run) {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-test-artifact-"));
+  try {
+    const sourceRoot = join(root, "src");
+    const outputRoot = join(root, "dist-test");
+    await mkdir(join(sourceRoot, "tavern"), { recursive: true });
+    await mkdir(join(outputRoot, "tavern"), { recursive: true });
+    await run({ root, sourceRoot, outputRoot });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+/** A source file with an explicit write time; the stamp is compared against it. */
+async function writeSource(path, mtimeMs) {
+  await writeFile(path, "");
+  await utimes(path, new Date(mtimeMs), new Date(mtimeMs));
 }
 
 test("recursively discovers sorted nested regular test files and passes every path explicitly to Node", async () => withFixture(async (root) => {
@@ -403,32 +429,131 @@ test("fails closed at the shared suite deadline with concurrent file children", 
   ]);
 });
 
-test("records and verifies the artifact's own test-file inventory", async () => withFixture(async (root) => {
-  await mkdir(join(root, "tavern"), { recursive: true });
-  await writeFile(join(root, "runtime.test.js"), "");
-  await writeFile(join(root, "tavern", "chat.test.js"), "");
-  await writeFile(join(root, "runtime.js"), "");
+test("records and verifies the artifact's own test-file inventory and source stamp", async () => withArtifactFixture(async ({ sourceRoot, outputRoot }) => {
+  await writeSource(join(sourceRoot, "runtime.ts"), BUILD_STARTED_AT_MS - 20_000);
+  await writeSource(join(sourceRoot, "tavern", "chat-pipeline-service.test.ts"), BUILD_STARTED_AT_MS - 10_000);
+  await writeFile(join(outputRoot, "runtime.test.js"), "");
+  await writeFile(join(outputRoot, "tavern", "chat.test.js"), "");
+  await writeFile(join(outputRoot, "runtime.js"), "");
 
-  const inventory = await writeTestArtifactInventory({ outputRoot: root });
+  const inventory = await writeTestArtifactInventory({ outputRoot, sourceRoot, buildStartedAtMs: BUILD_STARTED_AT_MS });
   assert.deepEqual(inventory, {
-    schema: "gamebuddy-host-test-artifact-inventory/v1",
+    schema: "gamebuddy-host-test-artifact-inventory/v2",
+    buildStartedAtMs: BUILD_STARTED_AT_MS,
+    sourceFileCount: 2,
+    newestSourcePath: "tavern/chat-pipeline-service.test.ts",
+    newestSourceMtimeMs: BUILD_STARTED_AT_MS - 10_000,
     testFileCount: 2,
     testFiles: ["runtime.test.js", "tavern/chat.test.js"],
   });
-  assert.deepEqual(await assertTestArtifactInventory({ outputRoot: root }), { status: "complete", present: 2, expected: 2 });
+  assert.deepEqual(await assertTestArtifactInventory({ outputRoot }), { status: "complete", present: 2, expected: 2 });
+  assert.deepEqual(await assertTestArtifactFreshness({ outputRoot, sourceRoot }), { status: "fresh", sourceFileCount: 2 });
 
-  // An extra test file is not an incomplete artifact.
-  await writeFile(join(root, "extra.test.js"), "");
-  assert.equal((await assertTestArtifactInventory({ outputRoot: root })).status, "complete");
+  // An extra test file is not an incomplete artifact, and it does not make the sources look older.
+  await writeFile(join(outputRoot, "extra.test.js"), "");
+  assert.equal((await assertTestArtifactInventory({ outputRoot })).status, "complete");
+  assert.equal((await assertTestArtifactFreshness({ outputRoot, sourceRoot })).status, "fresh");
 }));
 
-test("names a shortfall as test_artifact_incomplete instead of running a partial tree", async () => withFixture(async (root) => {
-  await writeFile(join(root, "first.test.js"), "");
-  await writeFile(join(root, "second.test.js"), "");
-  await writeTestArtifactInventory({ outputRoot: root });
-  await rm(join(root, "second.test.js"));
+test("names a source newer than the artifact and the command that fixes it", async () => withArtifactFixture(async ({ sourceRoot, outputRoot }) => {
+  await writeSource(join(sourceRoot, "runtime.ts"), BUILD_STARTED_AT_MS - 20_000);
+  await writeSource(join(sourceRoot, "tavern", "chat-pipeline-service.test.ts"), BUILD_STARTED_AT_MS - 10_000);
+  await writeFile(join(outputRoot, "runtime.test.js"), "");
+  await writeTestArtifactInventory({ outputRoot, sourceRoot, buildStartedAtMs: BUILD_STARTED_AT_MS });
 
-  await assert.rejects(assertTestArtifactInventory({ outputRoot: root }), /test_artifact_incomplete:present=1:expected=2:missing=second\.test\.js/);
+  // The fix lands after the artifact was built: the artifact is still complete, and now wrong.
+  await writeSource(join(sourceRoot, "tavern", "chat-pipeline-service.test.ts"), BUILD_STARTED_AT_MS + 1_000);
+  await assert.rejects(
+    assertTestArtifactFreshness({ outputRoot, sourceRoot }),
+    /^Error: test_artifact_stale:newest_source=tavern\/chat-pipeline-service\.test\.ts:artifact_built=\d{4}-\d{2}-\d{2}T[\d:.]+Z:run=`pnpm build:test`$/,
+  );
+
+  // Rebuilding after that edit is what makes it true again.
+  await writeTestArtifactInventory({ outputRoot, sourceRoot, buildStartedAtMs: BUILD_STARTED_AT_MS + 2_000 });
+  assert.deepEqual(await assertTestArtifactFreshness({ outputRoot, sourceRoot }), { status: "fresh", sourceFileCount: 2 });
+}));
+
+test("names a source tree that changed size even when no write is newer than the build", async () => withArtifactFixture(async ({ root, sourceRoot, outputRoot }) => {
+  await writeSource(join(sourceRoot, "runtime.ts"), BUILD_STARTED_AT_MS - 20_000);
+  await writeSource(join(sourceRoot, "tavern", "chat.test.ts"), BUILD_STARTED_AT_MS - 10_000);
+  await writeFile(join(outputRoot, "runtime.test.js"), "");
+  await writeTestArtifactInventory({ outputRoot, sourceRoot, buildStartedAtMs: BUILD_STARTED_AT_MS });
+
+  // A source deleted after the build: no write time moved, but the artifact still runs the
+  // compiled test of a file that no longer exists.
+  await rm(join(sourceRoot, "runtime.ts"));
+  await assert.rejects(
+    assertTestArtifactFreshness({ outputRoot, sourceRoot }),
+    /^Error: test_artifact_stale:source_files=2->1:artifact_built=\d{4}-\d{2}-\d{2}T[\d:.]+Z:run=`pnpm build:test`$/,
+  );
+
+  // A source added with an older write time than the build.
+  await writeSource(join(sourceRoot, "runtime.ts"), BUILD_STARTED_AT_MS - 30_000);
+  await writeSource(join(sourceRoot, "tavern", "another.test.ts"), BUILD_STARTED_AT_MS - 30_000);
+  await assert.rejects(assertTestArtifactFreshness({ outputRoot, sourceRoot }), /test_artifact_stale:source_files=2->3:artifact_built=/);
+
+  // The same holds for a source tree that is empty: that is a size change, not an error about
+  // reading one.
+  await mkdir(join(root, "empty-src"), { recursive: true });
+  await assert.rejects(assertTestArtifactFreshness({ outputRoot, sourceRoot: join(root, "empty-src") }), /test_artifact_stale:source_files=2->0:/);
+}));
+
+test("fails a stale artifact at preflight, before it can produce a verdict", async () => withArtifactFixture(async ({ root, sourceRoot, outputRoot }) => {
+  await writeSource(join(sourceRoot, "runtime.ts"), BUILD_STARTED_AT_MS - 20_000);
+  await writeFile(join(outputRoot, "runtime.test.js"), "");
+  await writeTestArtifactInventory({ outputRoot, sourceRoot, buildStartedAtMs: BUILD_STARTED_AT_MS });
+  assert.deepEqual(await assertTestArtifactInventory({ outputRoot }), { status: "complete", present: 1, expected: 1 });
+
+  await writeSource(join(sourceRoot, "runtime.ts"), BUILD_STARTED_AT_MS + 1_000);
+  await assert.rejects(preflightTestArtifact({ root, outputRoot, sourceRoot }), /test_artifact_stale:newest_source=runtime\.ts:artifact_built=/);
+
+  // Rebuilt, the same fixture no longer stops at the staleness gate: the preflight continues to
+  // the verification manifest, which is the next gate and this fixture has none to read. That is
+  // the ordering being asserted, not a passing preflight.
+  await writeTestArtifactInventory({ outputRoot, sourceRoot, buildStartedAtMs: BUILD_STARTED_AT_MS + 2_000 });
+  await assert.rejects(preflightTestArtifact({ root, outputRoot, sourceRoot }), /host_verification_artifact_manifest_missing/);
+}));
+
+test("degrades honestly when the artifact cannot say how old it is", async () => withArtifactFixture(async ({ sourceRoot, outputRoot }) => {
+  await writeSource(join(sourceRoot, "runtime.ts"), BUILD_STARTED_AT_MS - 20_000);
+  await writeFile(join(outputRoot, "runtime.test.js"), "");
+  await writeFile(
+    join(outputRoot, "test-artifact-inventory.json"),
+    `${JSON.stringify({ schema: "gamebuddy-host-test-artifact-inventory/v1", testFileCount: 1, testFiles: ["runtime.test.js"] }, null, 2)}\n`,
+  );
+
+  // A v1 inventory is still a complete inventory; it simply cannot be compared against sources.
+  assert.deepEqual(await assertTestArtifactInventory({ outputRoot }), { status: "complete", present: 1, expected: 1 });
+  assert.deepEqual(await assertTestArtifactFreshness({ outputRoot, sourceRoot }), { status: "unrecorded" });
+  // So is an artifact that carries no inventory at all.
+  assert.deepEqual(await assertTestArtifactFreshness({ outputRoot: join(outputRoot, "absent"), sourceRoot }), { status: "unrecorded" });
+}));
+
+test("refuses to write an inventory that cannot say when the build froze its inputs", async () => withArtifactFixture(async ({ root, sourceRoot, outputRoot }) => {
+  await writeSource(join(sourceRoot, "runtime.ts"), BUILD_STARTED_AT_MS - 20_000);
+  await writeFile(join(outputRoot, "runtime.test.js"), "");
+
+  // Refused rather than defaulted to "now": a publish-time stamp cannot see an edit made while
+  // the compile was running, which is the edit the stamp exists to catch.
+  await assert.rejects(writeTestArtifactInventory({ outputRoot, sourceRoot }), /test_artifact_inventory_build_time_invalid/);
+  await assert.rejects(writeTestArtifactInventory({ outputRoot, sourceRoot, buildStartedAtMs: 0 }), /test_artifact_inventory_build_time_invalid/);
+  await assert.rejects(writeTestArtifactInventory({ outputRoot, sourceRoot, buildStartedAtMs: 1.5 }), /test_artifact_inventory_build_time_invalid/);
+
+  await mkdir(join(root, "empty-src"), { recursive: true });
+  await assert.rejects(
+    writeTestArtifactInventory({ outputRoot, sourceRoot: join(root, "empty-src"), buildStartedAtMs: BUILD_STARTED_AT_MS }),
+    /test_artifact_source_tree_empty/,
+  );
+}));
+
+test("names a shortfall as test_artifact_incomplete instead of running a partial tree", async () => withArtifactFixture(async ({ sourceRoot, outputRoot }) => {
+  await writeSource(join(sourceRoot, "runtime.ts"), BUILD_STARTED_AT_MS - 20_000);
+  await writeFile(join(outputRoot, "first.test.js"), "");
+  await writeFile(join(outputRoot, "second.test.js"), "");
+  await writeTestArtifactInventory({ outputRoot, sourceRoot, buildStartedAtMs: BUILD_STARTED_AT_MS });
+  await rm(join(outputRoot, "second.test.js"));
+
+  await assert.rejects(assertTestArtifactInventory({ outputRoot }), /test_artifact_incomplete:present=1:expected=2:missing=second\.test\.js/);
 }));
 
 test("degrades honestly when an artifact predates the inventory", async () => withFixture(async (root) => {

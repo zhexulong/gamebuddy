@@ -87,6 +87,14 @@ async function listFilesUnder(root, directory = root, prefix = "") {
  */
 await assertArtifactLockHeldByThisProcess();
 
+/**
+ * The moment this build froze its inputs. It is captured before the compiler runs and recorded
+ * in the inventory, because the runner compares it against the newest source write time: a
+ * source written after this point is not reliably in the artifact. Stamping the publish time
+ * instead would hide exactly the edits made while the compile was running.
+ */
+const buildStartedAtMs = Date.now();
+
 const stagingRoot = resolve(hostRoot, `.dist-test-staging-${process.pid}-${Date.now()}`);
 try {
   await rm(stagingRoot, { recursive: true, force: true });
@@ -133,5 +141,5 @@ try {
 }
 // The inventory describes what was published, so it is written once the tree is in place,
 // and the verification manifest follows it: its digest covers the whole published tree.
-await writeTestArtifactInventory({ outputRoot });
+await writeTestArtifactInventory({ outputRoot, buildStartedAtMs });
 await writeHostVerificationArtifactManifest({ root: hostRoot, outputRoot });

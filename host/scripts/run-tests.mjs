@@ -3,7 +3,7 @@ import { availableParallelism, cpus } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { runBoundedChild } from "./child-process-tool.mjs";
-import { assertTestArtifactInventory } from "./test-artifact-inventory.mjs";
+import { assertTestArtifactFreshness, assertTestArtifactInventory } from "./test-artifact-inventory.mjs";
 import { assertHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -308,19 +308,33 @@ export async function runTestBatches(paths, {
 }
 
 /**
- * Fail fast unless `dist-test` is the complete artifact the builder published.
+ * Fail fast unless `dist-test` is the complete, current artifact the builder published.
  *
  * The inventory check runs first on purpose: a half-written tree otherwise reports
  * as unrelated `ERR_MODULE_NOT_FOUND` failures that finish in tens of milliseconds,
  * which is the failure that was twice misread as a product defect. It is deliberately
  * light (counts and paths, no digests) and honest about absence: an artifact built
  * before the inventory existed warns once and still runs.
+ *
+ * The freshness check runs next, and before the verification manifest, for the same reason in
+ * the other direction: a COMPLETE artifact is not a CURRENT one, and the manifest proves
+ * currency only by hashing the whole source and dependency trees (measured: 13.4s) and then
+ * reporting a bare mismatch with no path and no remedy. One walk of `stat` calls names the
+ * source that is newer than the build and the command that fixes it, so the cheap, actionable
+ * answer comes first.
  */
-export async function preflightTestArtifact() {
-  const inventory = await assertTestArtifactInventory({ outputRoot: defaultTestRoot });
+export async function preflightTestArtifact({
+  root = hostRoot,
+  outputRoot = resolve(root, "dist-test"),
+  sourceRoot = resolve(hostRoot, "src"),
+} = {}) {
+  const inventory = await assertTestArtifactInventory({ outputRoot });
+  const freshness = await assertTestArtifactFreshness({ outputRoot, sourceRoot });
   if (inventory.status === "absent")
     console.error("host_test_artifact_inventory_absent:no test-artifact inventory was recorded; run `pnpm build:test` to record one");
-  await assertHostVerificationArtifactManifest({ root: hostRoot, outputRoot: defaultTestRoot });
+  else if (freshness.status === "unrecorded")
+    console.error("host_test_artifact_freshness_unrecorded:this inventory records no source stamp, so whether the artifact is stale can only be settled by its content digest; run `pnpm build:test` to record one");
+  await assertHostVerificationArtifactManifest({ root, outputRoot });
 }
 
 export async function runCompiledTests({
