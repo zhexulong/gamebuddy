@@ -279,6 +279,7 @@ const en = {
   swipeNavigation: "Message variants",
   swipePrevious: "Previous variant",
   swipeNext: "Next variant",
+  regenerateVariant: "Regenerate",
   // The Host's own name for the greeting variant a new chat opened on: it labels
   // the greeting set's entries `Default` / `Alternate N` (the card's own 1-based
   // order). The catalogue carries that vocabulary so a zh-CN UI never prints the
@@ -800,6 +801,7 @@ const zh: Messages = {
   swipeNavigation: "消息变体",
   swipePrevious: "上一个变体",
   swipeNext: "下一个变体",
+  regenerateVariant: "重新生成",
   openingVariantDefault: "默认",
   openingVariantAlternate: "备用 {{index}}",
 

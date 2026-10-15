@@ -55,7 +55,7 @@ type Model = Readonly<{
   preview: Readonly<{ turnHandle: string; text: string }> | null;
   voice: VoiceSurfaceStateV1 | null;
   /** The chat mutation in flight, exactly as the shell projects it to Timeline. */
-  pending: Readonly<{ kind: "opening"; handle: string }> | null;
+  pending: Readonly<{ kind: "swipe" | "regenerate"; handle: string }> | null;
 }>;
 
 let model: Model = { transcript: [], preview: null, voice: null, pending: null };
@@ -78,6 +78,8 @@ function Probe() {
         companionName="Mira"
         chatTitle="Probe"
         labels={LABELS}
+        onSwipe={() => undefined}
+        onRegenerate={() => undefined}
         pending={model.pending}
       />
       <Composer
@@ -103,8 +105,10 @@ const chatProbe = {
     rerender?.();
   },
   /**
-   * A transcript with explicit roles, so a journey about a control that is legal on
-   * one row only (the opening switcher) can build the shape it needs.
+   * A transcript with explicit roles. `setTranscript` is the renderer's own
+   * all-companion shortcut; a journey about the regenerate affordance needs a
+   * real conversation, because that control is legal on exactly one row - the
+   * transcript's last, when the companion spoke it - and never on the opening.
    */
   setConversation(entries: readonly Readonly<{ role: "player" | "companion"; text: string }>[]): void {
     model = {
@@ -121,15 +125,11 @@ const chatProbe = {
     model = { ...model, voice: state };
     rerender?.();
   },
-  setPending(pending: { kind: "opening"; handle: string } | null): void {
+  setPending(pending: { kind: "swipe" | "regenerate"; handle: string } | null): void {
     model = { ...model, pending };
     rerender?.();
   },
-  /**
-   * A transcript entry the Host still labels with its variant position. The surface must offer
-   * no switcher for it: the regenerate/swipe capability is withdrawn until its transaction
-   * exists, so this fixture is how a journey proves the position alone renders nothing.
-   */
+  /** A transcript entry with swipe variants, so the swipe controls are offered. */
   withSwipes(handle: string, text: string): void {
     const existing = model.transcript.find((m) => m.handle === handle);
     const swiped: BrowserMessageV1 = Object.freeze({
@@ -155,35 +155,15 @@ const chatProbe = {
     model = { ...model, transcript };
     rerender?.();
   },
-  /** A transcript entry whose opening the Host still leaves open for choice. */
-  withOpening(handle: string, text: string): void {
-    const existing = model.transcript.find((m) => m.handle === handle);
-    const opened: BrowserMessageV1 = Object.freeze({
-      handle,
-      role: existing?.role ?? "companion",
-      text,
-      locale: existing?.locale ?? "und",
-      order: existing?.order ?? 0,
-      revision: existing?.revision ?? 1,
-      openingVariant: Object.freeze({ variantId: "V".repeat(42) + "A", index: 0, count: 2, label: "Default", locked: false }),
-    });
-    const idx = model.transcript.findIndex((m) => m.handle === handle);
-    const transcript =
-      idx === -1
-        ? [...model.transcript, opened]
-        : model.transcript.map((m, i) => (i === idx ? opened : m));
-    model = { ...model, transcript };
-    rerender?.();
-  },
   /** True when the bubble for `handle` carries the busy pending projection. */
-  pendingAttrs(handle: string): { ariaBusy: string | null; dataPending: string | null; switcherDisabled: boolean } | null {
+  pendingAttrs(handle: string): { ariaBusy: string | null; dataPending: string | null; swipeDisabled: boolean; regenerateDisabled: boolean } | null {
     const li = document.querySelector(`li[data-handle="${handle}"]`);
     if (li === null) return null;
-    const buttons = [...li.querySelectorAll(".swipe-btn")] as HTMLButtonElement[];
     return {
       ariaBusy: li.getAttribute("aria-busy"),
       dataPending: li.getAttribute("data-pending"),
-      switcherDisabled: buttons.length > 0 && buttons.every((button) => button.disabled),
+      swipeDisabled: [...li.querySelectorAll(".swipe-btn")].every((b) => (b as HTMLButtonElement).disabled) && li.querySelectorAll(".swipe-btn").length > 0,
+      regenerateDisabled: (li.querySelector(".regenerate-btn") as HTMLButtonElement | null)?.disabled ?? false,
     };
   },
   voiceState(): string | null {

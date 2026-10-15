@@ -19,6 +19,8 @@ export function Timeline({
   chatTitle,
   labels,
   preview = null,
+  onSwipe,
+  onRegenerate,
   onOpeningVariant,
   pending = null,
 }: {
@@ -37,17 +39,21 @@ export function Timeline({
     swipeNavigation: string;
     swipePrevious: string;
     swipeNext: string;
+    regenerateVariant: string;
     /** The catalogue's words for the Host's own greeting-variant labels. */
     openingVariantDefault: string;
     openingVariantAlternate: string;
   };
+  onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
+  onRegenerate?: (messageHandle: string) => void;
   /** The new-chat opening choice for the first message; offered only when the Host publishes one. */
   onOpeningVariant?: (messageHandle: string, direction: "prev" | "next") => void;
   /**
    * The chat mutation in flight and the message it belongs to, if any. Only that
-   * message's own control goes busy.
+   * message's own controls go busy, so a swipe on one variant never disables the
+   * regenerate affordance of another.
    */
-  pending?: Readonly<{ kind: "opening"; handle: string }> | null;
+  pending?: Readonly<{ kind: "swipe" | "regenerate" | "opening"; handle: string }> | null;
 }) {
   // The anchor names the companion the way the transcript will: the profile's
   // own name, or the catalog's word for an unnamed one, so the invitation's own
@@ -78,6 +84,8 @@ export function Timeline({
    * already-populated transcript still begins scrolled to the end on mount.
    */
   const atBottomRef = useRef(true);
+  const onSwipeRef = useRef(onSwipe);
+  const onRegenerateRef = useRef(onRegenerate);
   const onOpeningVariantRef = useRef(onOpeningVariant);
 
   // The handler props are re-created by the shell on every render - including
@@ -86,13 +94,38 @@ export function Timeline({
   // per-delta identity, `memo` could never bail out and every settled message
   // would re-render (and re-parse its Markdown) on every token.
   useLayoutEffect(() => {
+    onSwipeRef.current = onSwipe;
+    onRegenerateRef.current = onRegenerate;
     onOpeningVariantRef.current = onOpeningVariant;
   });
 
+  const handleSwipe = useCallback((messageHandle: string, direction: "prev" | "next") => {
+    onSwipeRef.current?.(messageHandle, direction);
+  }, []);
+  const handleRegenerate = useCallback((messageHandle: string) => {
+    onRegenerateRef.current?.(messageHandle);
+  }, []);
   const handleOpeningVariant = useCallback((messageHandle: string, direction: "prev" | "next") => {
     onOpeningVariantRef.current?.(messageHandle, direction);
   }, []);
+  // A caller that passed no handler keeps no control: the bubble gates its
+  // swipe/regenerate affordances on the handler being present.
+  const swipeHandler = onSwipe === undefined ? undefined : handleSwipe;
+  const regenerateHandler = onRegenerate === undefined ? undefined : handleRegenerate;
   const openingVariantHandler = onOpeningVariant === undefined ? undefined : handleOpeningVariant;
+  /**
+   * Regeneration re-asks the last thing the player said, so exactly one row can
+   * offer it: the transcript's own last message, when that message is a companion
+   * reply. The opening is message zero - the only companion message a transcript
+   * can begin with - and it has no player turn to repeat, so it never carries the
+   * control. The rule is the Host's own precondition (`regenerate` in
+   * `chat-pipeline-service.ts` refuses every other target), stated here so the
+   * surface never offers an affordance the Host would have to reject.
+   */
+  const regenerateHandle =
+    regenerateHandler !== undefined && transcript.length > 1 && transcript[transcript.length - 1]?.role === "companion"
+      ? transcript[transcript.length - 1]!.handle
+      : null;
 
   // Track the reader's own position: every scroll (a wheel, a drag, a keyboard
   // page-down or our own programmatic follow) updates whether they are at the
@@ -155,6 +188,8 @@ export function Timeline({
               playerLabel={labels.you}
               labels={labels}
               pending={pending !== null && pending.handle === message.handle ? pending.kind : null}
+              onSwipe={swipeHandler}
+              onRegenerate={message.handle === regenerateHandle ? regenerateHandler : undefined}
               onOpeningVariant={openingVariantHandler}
             />
           ))}

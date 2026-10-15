@@ -46,15 +46,6 @@ export const REFERENCE_PIPELINE_OPERATION_IDS = ["chat.submit", "chat.cancel"] a
 
 // --- Frozen v1 DTO shapes (structural mirrors of host/src/tavern/browser-contract). ---
 
-/**
- * Additive v1 fact: the variant set a message belongs to, as the Host publishes it. The surface
- * renders no switcher from it: the regenerate/swipe capability is un-registered until its
- * prepared-response transaction exists, so this mirror only keeps a read that carries the fact
- * legal.
- *
- * The `label` is the Host's own spelling for the position; a message the Host labelled in an older
- * `◀ 1/3 ▶` spelling is still validated exactly as published.
- */
 type BrowserSwipeInfoV1 = Readonly<{
   currentIndex: number;
   totalSwipes: number;
@@ -906,6 +897,26 @@ export type ReferencePipelineApi = Readonly<{
     command: SubmitMessageCommandV1,
     options: Readonly<{ csrfToken: string; idempotencyKey: string }>,
   ): Promise<SubmitResultV1>;
+  /** POST /api/tavern/v1/messages/swipe with CSRF */
+  selectSwipe(
+    command: Readonly<{
+      apiVersion: 1;
+      selectionGeneration: number;
+      messageHandle: string;
+      direction?: "prev" | "next";
+      targetIndex?: number;
+    }>,
+    options: Readonly<{ csrfToken: string }>,
+  ): Promise<Readonly<{ apiVersion: 1; message: BrowserMessageV1 }>>;
+  /** POST /api/tavern/v1/messages/regenerate with CSRF, idempotency-key */
+  regenerate(
+    command: Readonly<{
+      apiVersion: 1;
+      selectionGeneration: number;
+      messageHandle: string;
+    }>,
+    options: Readonly<{ csrfToken: string; idempotencyKey: string }>,
+  ): Promise<SubmitResultV1>;
   /** POST /api/tavern/v1/turns/:turnHandle/cancel with CSRF. */
   cancel(turnHandle: string, command: CancelTurnCommandV1, csrfToken: string): Promise<CancelTurnResultV1>;
   /** POST /api/tavern/v1/message-submission-status (no CSRF/idempotency headers). */
@@ -961,6 +972,39 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
         fetchLike,
         "POST",
         "/api/tavern/v1/messages",
+        202,
+        validateSubmitResult,
+        {
+          "Content-Type": "application/json",
+          "x-csrf-token": options.csrfToken,
+          "idempotency-key": options.idempotencyKey,
+        },
+        command,
+      );
+    },
+    async selectSwipe(command, options) {
+      if (!isRecord(command) || !isOpaqueHandle(options.csrfToken)) throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/messages/swipe",
+        200,
+        (body) => {
+          if (!isRecord(body) || body.apiVersion !== 1 || !isBrowserMessage(body.message))
+            throw new TavernProtocolError();
+          return Object.freeze({ apiVersion: 1 as const, message: body.message });
+        },
+        { "Content-Type": "application/json", "x-csrf-token": options.csrfToken },
+        command,
+      );
+    },
+    async regenerate(command, options) {
+      if (!isRecord(command) || !isOpaqueHandle(options.csrfToken) || !isIdempotencyKey(options.idempotencyKey))
+        throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/messages/regenerate",
         202,
         validateSubmitResult,
         {

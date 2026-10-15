@@ -8,6 +8,7 @@ import {
 } from "./stardew/stardew-guardian-platform.js";
 import {
   buildDesktopHostExitReason,
+  DESKTOP_HOST_DRAIN_TIMEOUT_MS,
   runDesktopHostReclamation,
   type DesktopHostExitReason,
   type DesktopHostReclamationOperation,
@@ -32,6 +33,7 @@ import {
   type DesktopPresentationAdmission,
 } from "./desktop-presentation-admission-owner.js";
 import type { ChatVoiceSpeechPublisher } from "../voice.js";
+import { createCompanionSessionReflectionChild } from "./companion-session-reflection.js";
 
 declare const desktopRootLayoutCapabilityBrand: unique symbol;
 /** Opaque capability minted only after bootstrap root/layout validation. */
@@ -175,21 +177,22 @@ export async function createDesktopProductComposition(
         // over the same shared semantic authority the mounted Chat lane owns.
         chatSelection: shared.chat,
       });
-      presentationAdmission = surface === "chat-only"
-        ? await startChatOnlyPresentationAdmission({
-          ...variantInput,
-          ...(input.voiceSurface === undefined ? {} : { voiceSurface: input.voiceSurface }),
-          ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
-          ...(input.listVoiceOutputDevices === undefined
-            ? {}
-            : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
-        })
-        : await startTavernManagementPresentationAdmission({
-          ...variantInput,
-          ...(input.listVoiceOutputDevices === undefined
-            ? {}
-            : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
-        });
+      presentationAdmission =
+        surface === "chat-only"
+          ? await startChatOnlyPresentationAdmission({
+              ...variantInput,
+              ...(input.voiceSurface === undefined ? {} : { voiceSurface: input.voiceSurface }),
+              ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
+              ...(input.listVoiceOutputDevices === undefined
+                ? {}
+                : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
+            })
+          : await startTavernManagementPresentationAdmission({
+              ...variantInput,
+              ...(input.listVoiceOutputDevices === undefined
+                ? {}
+                : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
+            });
       // The composed surface is ready at the Host-owned seam: the launch URL is
       // published exactly once and never projects through the composition facade.
       input.publishLaunchUrl?.(presentationAdmission.launchUrl);
@@ -200,8 +203,13 @@ export async function createDesktopProductComposition(
       const sharedAuthorityChild = shared;
       const chatRuntimeChild = chatRuntime;
       const presentationChild = presentationAdmission;
+      // One reflection on the session that just ended, after the Chat runtime has drained and before the shared
+      // authority closes (owner ruling E: reflection is a session-end act here, not a cron task - Magic Context's
+      // own timer was measured never to reach a tick inside a play session).
+      const reflectionChild = createCompanionSessionReflectionChild(input.manifest, mountedLease.chatSurfaceSessionId);
       return createDesktopPrivateHostComposition(rootLayoutCapability, session, [
         { step: "release_shared_authority", close: () => sharedAuthorityChild.close() },
+        { step: "reflect_session", close: () => reflectionChild.close() },
         { step: "drain_chat_runtime", close: () => chatRuntimeChild.close() },
         { step: "stop_admission", close: () => presentationChild.close() },
       ]);
@@ -231,9 +239,7 @@ export async function createDesktopProductComposition(
     presentationAdmission = await startDesktopPresentationAdmission({
       ...(input.voiceSurface === undefined ? {} : { voiceSurface: input.voiceSurface }),
       ...(input.speechSink === undefined ? {} : { speechSink: input.speechSink }),
-      ...(input.listVoiceOutputDevices === undefined
-        ? {}
-        : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
+      ...(input.listVoiceOutputDevices === undefined ? {} : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
       manifest: input.manifest,
       hostArtifactRoot: resolve(dirname(fileURLToPath(import.meta.url)), ".."),
       bootstrapToken: randomBytes(32).toString("base64url"),
@@ -256,8 +262,10 @@ export async function createDesktopProductComposition(
     const lifecycleChild = lifecycleCoordinator;
     const chatRuntimeChild = chatRuntime;
     const presentationChild = presentationAdmission;
+    const reflectionChild = createCompanionSessionReflectionChild(input.manifest, mountedLease.chatSurfaceSessionId);
     return createDesktopPrivateHostComposition(rootLayoutCapability, session, [
       { step: "release_shared_authority", close: () => sharedAuthorityChild.close() },
+      { step: "reflect_session", close: () => reflectionChild.close() },
       { step: "drain_game_lifecycle", close: () => lifecycleChild.close() },
       { step: "drain_chat_runtime", close: () => chatRuntimeChild.close() },
       { step: "stop_admission", close: () => presentationChild.close() },
@@ -315,7 +323,7 @@ export function createDesktopPrivateHostComposition(
   let sessionClosePromise: Promise<void> | undefined;
   let compositionClosePromise: Promise<DesktopHostExitReason> | undefined;
   return Object.freeze({
-    close: () => compositionClosePromise ??= closeComposition(),
+    close: () => (compositionClosePromise ??= closeComposition()),
   });
 
   async function closeComposition(): Promise<DesktopHostExitReason> {
@@ -323,7 +331,7 @@ export function createDesktopPrivateHostComposition(
       ...[...children].reverse().map((child) => ({ step: child.step, close: () => child.close() })),
       { step: "release_guardian_session", close: () => closeSessionOnce() },
     ];
-    const outcomes = await runDesktopHostReclamation(operations);
+    const outcomes = await runDesktopHostReclamation(operations, DESKTOP_HOST_DRAIN_TIMEOUT_MS);
     // Keep the capability captured until every child and the authenticated
     // session have fully closed; it is not projected.
     void retainedRootLayoutCapability;

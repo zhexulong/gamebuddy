@@ -12,6 +12,9 @@ import {
 } from "./composed-reference-game-browser.js";
 import { createReferencePipelineDialogueWebDelegatedHandler } from "./reference-pipeline-dialogue-web.delegated.js";
 import {
+  type RegenerateMessageCommandV1,
+  type SwipeSelectCommandV1,
+  type SwipeSelectResultV1,
   composeReferenceTavernProfile,
   composeTavernProfile,
   referenceTavernProfileFitsCanonicalGroups,
@@ -534,11 +537,17 @@ test("delegated handler without a mounted pipeline service fails mutations close
 });
 
 /**
- * A pipeline service that refuses every message-mutation call by recording it. The withdrawn
- * Swipe/Regenerate routes must never reach it, so a call is a failure the test can see rather than
- * a value it could mistake for a served route.
+ * A pipeline service that answers only the message-mutation half of the reference profile
+ * (Regenerate and Swipe), so a test can prove the dispatcher reaches them.
  */
-function mutationRefusingService(calls: string[]): ChatPipelineService {
+function mutationService(
+  recorder: {
+    swipes: SwipeSelectCommandV1[];
+    regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
+    closes: number;
+  },
+  swipeResult: SwipeSelectResultV1,
+): ChatPipelineService {
   return Object.freeze({
     async submitAfterResponseCommit() {
       throw new Error("not_used");
@@ -549,26 +558,26 @@ function mutationRefusingService(calls: string[]): ChatPipelineService {
     async cancel() {
       throw new Error("not_used");
     },
-    async selectSwipe(): Promise<never> {
-      calls.push("selectSwipe");
-      throw new Error("withdrawn_route_reached_the_pipeline");
+    async selectSwipe(command): Promise<SwipeSelectResultV1> {
+      recorder.swipes.push(command);
+      return swipeResult;
     },
-    async regenerate(): Promise<never> {
-      calls.push("regenerate");
-      throw new Error("withdrawn_route_reached_the_pipeline");
+    async regenerate(command, idempotencyKey): Promise<SubmitResultV1> {
+      recorder.regenerations.push({ command, idempotencyKey });
+      return result;
     },
-    async close() {},
-  } as ChatPipelineService);
+    async close() {
+      recorder.closes += 1;
+    },
+  });
 }
 
-test("the production reference profile declares the closed reference slice", () => {
+test("the production reference profile declares the message-mutation group and fits the canonical groups", () => {
   const production = composeReferenceTavernProfile();
   assert.equal(referenceTavernProfileFitsCanonicalGroups(production), true);
-  // The declaration IS the closed route list: a profile that grows a route the slice does not carry
-  // fails the fit above, and the withdrawn message-mutation routes are no longer part of it.
-  assert.deepEqual(production.routeIds, tavernProfile.routeIds);
-  assert.equal(production.routeIds.includes("chat.swipe"), false);
-  assert.equal(production.routeIds.includes("chat.regenerate"), false);
+  // The declaration is the core Chat routes plus the message-mutation extension, in the canonical
+  // order: a profile that grows a route without growing a group would fail the fit above.
+  assert.deepEqual(production.routeIds, [...tavernProfile.routeIds, "chat.swipe", "chat.regenerate"]);
   assert.deepEqual(production.operationIds, ["chat.submit", "chat.cancel"]);
 });
 
@@ -605,9 +614,23 @@ test("the reference dispatcher rejects a profile that declares a route outside i
   void broker.close();
 });
 
-test("the delegated handler serves neither the withdrawn swipe nor the withdrawn regenerate route", async () => {
+test("delegated handler answers the reference profile's Swipe and Regenerate routes", async () => {
   const production = composeReferenceTavernProfile();
-  const calls: string[] = [];
+  const swipeMessage = {
+    handle,
+    role: "companion" as const,
+    text: "the second variant",
+    locale: "en" as const,
+    order: 0,
+    revision: 1,
+    swipeInfo: { currentIndex: 1, totalSwipes: 2, label: "◀ 2/2 ▶", hasPrevious: true, hasNext: false },
+  };
+  const swipeResult: SwipeSelectResultV1 = Object.freeze({ apiVersion: 1, message: Object.freeze(swipeMessage) });
+  const recorder: {
+    swipes: SwipeSelectCommandV1[];
+    regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
+    closes: number;
+  } = { swipes: [], regenerations: [], closes: 0 };
   const broker = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile: production }),
     bootstrapToken,
@@ -618,7 +641,7 @@ test("the delegated handler serves neither the withdrawn swipe nor the withdrawn
   const delegated = createReferencePipelineDialogueWebDelegatedHandler({
     profile: production,
     referenceStateFacade: facade,
-    pipelineService: mutationRefusingService(calls),
+    pipelineService: mutationService(recorder, swipeResult),
     eventStream,
     capability: broker.delegatedAuthCapability,
   });
@@ -630,17 +653,14 @@ test("the delegated handler serves neither the withdrawn swipe nor the withdrawn
     const root = (await initial.json()) as { chat: { csrfToken: string } };
     const csrf = root.chat.csrfToken;
 
-    // Both paths are still answered - as an unknown operation on this profile, never by the
-    // pipeline. The withdrawn capability is behind a hidden door rather than a broken one: the
-    // route id is declared by no profile, the request schema is never looked up, and the pipeline
-    // service that would perform the mutation is never reached.
     const swipe = await fetch(`${server.origin}/api/tavern/v1/messages/swipe`, {
       method: "POST",
       headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": csrf },
       body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, messageHandle: handle, direction: "next" }),
     });
-    assert.equal(swipe.status, 404, "the withdrawn swipe path is not a profile operation");
-    assert.equal(((await swipe.json()) as { code: string }).code, "profile_operation_unavailable");
+    const swipeBody = await swipe.text();
+    assert.equal(swipe.status, 200, `swipe must be served, got ${swipe.status} ${swipeBody}`);
+    assert.deepEqual(JSON.parse(swipeBody), { apiVersion: 1, message: swipeMessage });
 
     const regenerate = await fetch(`${server.origin}/api/tavern/v1/messages/regenerate`, {
       method: "POST",
@@ -653,11 +673,21 @@ test("the delegated handler serves neither the withdrawn swipe nor the withdrawn
       },
       body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, messageHandle: handle }),
     });
-    assert.equal(regenerate.status, 404, "the withdrawn regenerate path is not a profile operation");
-    assert.equal(((await regenerate.json()) as { code: string }).code, "profile_operation_unavailable");
-    assert.deepEqual(calls, [], "neither withdrawn route reached the pipeline service");
+    const regenerateBody = await regenerate.text();
+    assert.equal(regenerate.status, 202, `regenerate must be served, got ${regenerate.status} ${regenerateBody}`);
+    assert.deepEqual(JSON.parse(regenerateBody), result);
+    assert.deepEqual(recorder.swipes, [
+      { apiVersion: 1, selectionGeneration: 1, messageHandle: handle, direction: "next" },
+    ]);
+    assert.deepEqual(recorder.regenerations, [
+      {
+        command: { apiVersion: 1, selectionGeneration: 1, messageHandle: handle },
+        idempotencyKey: "A".repeat(22),
+      },
+    ]);
   } finally {
     await server.close();
+    assert.equal(recorder.closes, 1);
   }
 });
 

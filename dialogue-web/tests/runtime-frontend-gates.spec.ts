@@ -86,10 +86,8 @@ type FixtureOptions = Readonly<{
   companionName?: string;
   /** `null` is a chat the Host has published no title for at all. */
   title?: string | null;
-  /** Marks the transcript's last companion message as the committed variant of a swipe set. */
+  /** Marks the first companion message as the committed variant of a swipe set. */
   swipe?: boolean;
-  /** Marks message zero as a greeting set's committed variant, still open for choice. */
-  opening?: boolean;
 }>;
 
 function handleFor(index: number): string {
@@ -98,11 +96,6 @@ function handleFor(index: number): string {
 
 function composedRoot(options: FixtureOptions = {}) {
   const transcript = options.transcript ?? DEFAULT_TRANSCRIPT;
-  // The row the withdrawn regenerate control used to sit on: the transcript's last companion reply.
-  const lastCompanionIndex = transcript.reduce(
-    (last, message, index) => (message.role === "companion" ? index : last),
-    -1,
-  );
   return {
     apiVersion: 1,
     build: {
@@ -131,11 +124,8 @@ function composedRoot(options: FixtureOptions = {}) {
           locale: "und",
           order: index,
           revision: 1,
-          ...(options.swipe === true && index === lastCompanionIndex
+          ...(options.swipe === true && message.role === "companion" && index === 0
             ? { swipeInfo: { currentIndex: 1, totalSwipes: 2, label: "1/2", hasPrevious: true, hasNext: true } }
-            : {}),
-          ...(options.opening === true && index === 0 && message.role === "companion"
-            ? { openingVariant: { variantId: "V".repeat(42) + "A", index: 0, count: 2, label: "Default", locked: false } }
             : {}),
         })),
         draft: { revision: 0, present: false },
@@ -906,48 +896,26 @@ test("gate 7: a new conversation opens on a real empty state and prints no place
 });
 
 /**
- * Gate 8: the withdrawn message-mutation controls render nothing, and the one message-level
- * mutation that is registered keeps the touch floor.
+ * Gate 8: the regenerate control is a control, and the swipe pair reads with it.
  *
- * Regenerate and swipe are un-registered until their prepared-response transaction and branch
- * binding exist
- * (`design/archive/legacy-sources/24_TAVERN_COMPATIBILITY_IMPLEMENTATION_PLAN.md:341`), and the
- * capture run measured their UI at 75x21 px with an 11 px label on a transparent background - the
- * smallest interactive target and the smallest type anywhere in the product, on the one control
- * that re-sent a companion's answer and appended a second player bubble.
- *
- * The failure each direction catches: the withdrawn affordance coming back through a message's own
- * `swipeInfo` projection rather than through a registered route; and the opening switcher, which
- * IS registered (`chat.opening`), dropping back under the 44 px floor or onto a transparent
- * background.
+ * The capture run measured it at 75x21 px, an 11 px label, a transparent
+ * background and no border - the smallest interactive target and the smallest
+ * type anywhere in the product, on the one control that repeats a companion's
+ * answer. The failure this catches: a control that is only a caption-sized muted
+ * text row, invisible as an affordance and unusable as a target, beside a swipe
+ * pair that is not the same kind of thing.
  */
-test("gate 8: the withdrawn message controls render nothing and the opening switcher keeps the touch floor", async ({ page }) => {
-  // One transcript carrying both shapes: the opening the player may still choose, and a swiped
-  // companion row at the tail - the row the regenerate control used to sit on.
+test("gate 8: the regenerate control clears the touch floor with a visible affordance", async ({ page }) => {
+  // The transcript ends on the companion's own reply. Regeneration re-asks the
+  // last thing the player said, so it is offered on the transcript's last
+  // companion row only: a fixture ending on the player's line is a state in
+  // which the control must not exist at all.
   await mountShell(page, {
     root: composedRoot({
-      opening: true,
       swipe: true,
       transcript: [DEFAULT_TRANSCRIPT[0]!, DEFAULT_TRANSCRIPT[1]!, DEFAULT_TRANSCRIPT[2]!],
     }),
   });
-  await expect(page.locator(".message-list > li"), "the transcript is still the three rows it served").toHaveCount(3);
-
-  const withdrawn = await page.evaluate(() => ({
-    regenerate: document.querySelectorAll(".regenerate-btn").length,
-    messageActions: document.querySelectorAll(".message-actions").length,
-    swipedRowControls: document.querySelectorAll(".message-list > li:last-child .swipe-controls").length,
-    swipedRowIndicator: document.querySelectorAll(".message-list > li:last-child .swipe-indicator").length,
-  }));
-  expect(withdrawn, "the withdrawn controls render nothing, not even for a swipe-labelled row").toEqual({
-    regenerate: 0,
-    messageActions: 0,
-    swipedRowControls: 0,
-    swipedRowIndicator: 0,
-  });
-
-  await expect(page.locator(".swipe-controls"), "only the opening switcher is left").toHaveCount(1);
-  await expect(page.locator(".swipe-indicator")).toHaveText("Default 1/2");
 
   const measured = await page.evaluate(() => {
     const read = (selector: string) => {
@@ -963,29 +931,39 @@ test("gate 8: the withdrawn message controls render nothing and the opening swit
         text: (node.textContent ?? "").trim(),
       };
     };
-    return { group: read(".swipe-controls"), button: read(".swipe-btn") };
+    return { regenerate: read(".regenerate-btn"), group: read(".swipe-controls"), button: read(".swipe-btn") };
   });
 
   const transparent = ["transparent", "rgba(0, 0, 0, 0)"];
   const failures: string[] = [];
+  if (measured.regenerate === null) failures.push("the regenerate control is not rendered");
+  else {
+    if (measured.regenerate.height < 44)
+      failures.push(`the regenerate control is ${measured.regenerate.height}px tall, under the 44px floor`);
+    if (transparent.includes(measured.regenerate.backgroundColor))
+      failures.push(`the regenerate control computes to a transparent background (${measured.regenerate.backgroundColor})`);
+    if (measured.regenerate.fontSize < 12) failures.push(`the regenerate control's label is ${measured.regenerate.fontSize}px`);
+  }
+  // The swiped variant's pair sits in the same message, so it keeps the same
+  // floor and the same visible affordance - one control group, not two species.
   for (const [what, node] of [
-    ["the opening switcher group", measured.group],
-    ["an opening switcher button", measured.button],
+    ["the swipe group", measured.group],
+    ["a swipe button", measured.button],
   ] as const) {
     if (node === null) {
-      failures.push(`${what} is not rendered for an open greeting set`);
+      failures.push(`${what} is not rendered for a swiped message`);
       continue;
     }
-    if (node.height < 44) failures.push(`${what} is ${node.height}px tall, under the 44px floor`);
+    if (node.height < 44) failures.push(`${what} is ${node.height}px tall, under the 44px floor the regenerate control keeps`);
   }
   if (measured.group !== null && transparent.includes(measured.group.backgroundColor))
-    failures.push(`the opening switcher computes to a transparent background (${measured.group.backgroundColor})`);
+    failures.push(`the swipe group computes to a transparent background (${measured.group.backgroundColor})`);
 
   record(
     "gate-8",
-    `withdrawn regenerate=${withdrawn.regenerate}/message-actions=${withdrawn.messageActions}; opening switcher group ${measured.group?.height}px / button ${measured.button?.height}px; ${failures.length} failure(s)`,
+    `regenerate ${measured.regenerate?.width}x${measured.regenerate?.height} @${measured.regenerate?.fontSize}px bg=${measured.regenerate?.backgroundColor}; swipe group ${measured.group?.height}px / button ${measured.button?.height}px; ${failures.length} failure(s)`,
   );
-  expect(failures, "the opening switcher is a real target and the withdrawn controls are absent").toEqual([]);
+  expect(failures, "the regenerate control is a real target and the swipe pair matches it").toEqual([]);
 });
 
 /**

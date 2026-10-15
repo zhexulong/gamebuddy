@@ -35,6 +35,15 @@ export const DESKTOP_HOST_RECLAMATION_STEPS = Object.freeze([
   "drain_chat_runtime",
   /** Settle in-flight Game work, contain the AI role through its Job Object, release the bridge/control pipes. */
   "drain_game_lifecycle",
+  /**
+   * One reflection on the session that just ended, per owner ruling E.
+   *
+   * It sits after both surfaces have drained - the material it reads is only complete once their turns have
+   * settled - and before the shared semantic authority closes, because it writes an ordinary memory row through
+   * that authority. It is bounded and fails closed: a reflection that cannot run leaves nothing behind and never
+   * delays or fails the exit it belongs to.
+   */
+  "reflect_session",
   /** Close the durable semantic authority. */
   "release_shared_authority",
   /** Close the authenticated Guardian pipe; the native Guardian then exits on control EOF. */
@@ -52,6 +61,30 @@ export type DesktopHostReclamationStep = (typeof DESKTOP_HOST_RECLAMATION_STEPS)
  * and is therefore never reported as a silent skip or as a success.
  */
 export type DesktopHostReclamationStatus = "completed" | "failed" | "not_applicable";
+
+/**
+ * The one name a step gets when it did not settle inside its drain budget.
+ *
+ * A step that never settles is the exit outcome that used to leave nothing
+ * behind at all: the reclamation awaited it, so neither the exit report nor the
+ * record an operator reads afterwards was ever produced. Naming it makes that
+ * wait a findable fact on the step it belongs to, and the reclamation still runs
+ * the steps behind it - a step that cannot finish must not keep them from trying.
+ */
+export const DESKTOP_HOST_DRAIN_TIMEOUT_FAILURE = "desktop_host_drain_timeout";
+
+/**
+ * How long one reclamation step may take before it is NAMED as a failed drain.
+ *
+ * This is a hang detector, not a latency budget. A step is a sequence of
+ * operations that are each bounded elsewhere - containing the AI role through its
+ * Job Object, joining an in-flight endgame, releasing the presentation port - so
+ * a legitimately slow step settles well inside this. It is deliberately far
+ * above the per-operation waits those steps use (a minute for a Guardian
+ * operation), because naming a step that is still making progress as failed would
+ * abandon work the product still owns.
+ */
+export const DESKTOP_HOST_DRAIN_TIMEOUT_MS = 300_000;
 
 export type DesktopHostReclamationStepOutcome = Readonly<{
   step: DesktopHostReclamationStep;
@@ -90,9 +123,15 @@ export function boundedReclamationCode(error: unknown): string {
   return boundedToken.test(message) ? message : "desktop_host_close_step_failed";
 }
 
-/** Runs every step in the given order, attempting all of them, and reports each outcome. */
+/**
+ * Runs every step in the given order, attempting all of them under the drain
+ * budget, and reports each outcome. The budget is a parameter rather than a
+ * module constant so a focused test can drive a step that outlives it; every
+ * production caller passes `DESKTOP_HOST_DRAIN_TIMEOUT_MS`.
+ */
 export async function runDesktopHostReclamation(
   operations: readonly DesktopHostReclamationOperation[],
+  drainTimeoutMs: number,
 ): Promise<readonly DesktopHostReclamationStepOutcome[]> {
   const outcomes: DesktopHostReclamationStepOutcome[] = [];
   for (const operation of operations) {
@@ -101,14 +140,59 @@ export async function runDesktopHostReclamation(
       outcomes.push(Object.freeze({ step: operation.step, status: "not_applicable", failure: null }));
       continue;
     }
-    try {
-      await close();
-      outcomes.push(Object.freeze({ step: operation.step, status: "completed", failure: null }));
-    } catch (error) {
-      outcomes.push(Object.freeze({ step: operation.step, status: "failed", failure: boundedReclamationCode(error) }));
-    }
+    const failure = await runDesktopHostReclamationStep(close, drainTimeoutMs);
+    outcomes.push(
+      Object.freeze({
+        step: operation.step,
+        status: failure === null ? "completed" : "failed",
+        failure,
+      }),
+    );
   }
   return Object.freeze(outcomes);
+}
+
+/**
+ * One step under its drain budget: the bounded failure code, or null when the
+ * step completed.
+ *
+ * A step that has not settled inside its budget is abandoned and named, so the
+ * timeouts of the steps behind it start instead of waiting behind a step nothing
+ * else will end. The abandoned close is left running with its rejection observed:
+ * it has already outlived its step, and an unobserved rejection out of it would
+ * become an unhandled rejection that kills this process before the exit record
+ * the timeout exists to complete has been written.
+ */
+async function runDesktopHostReclamationStep(
+  close: () => Promise<void>,
+  drainTimeoutMs: number,
+): Promise<string | null> {
+  // A close that throws synchronously is one failure of this step like any other,
+  // so it is a rejected promise here rather than a throw that would skip the
+  // steps behind it.
+  const closeAttempt = (async (): Promise<void> => {
+    await close();
+  })();
+  closeAttempt.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      closeAttempt,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(DESKTOP_HOST_DRAIN_TIMEOUT_FAILURE));
+        }, drainTimeoutMs);
+      }),
+    ]);
+    return null;
+  } catch (error) {
+    return boundedReclamationCode(error);
+  } finally {
+    // The budget timer is the one handle this module must never leak: a live
+    // 300s timer would keep the process up for the rest of its budget after the
+    // step it belonged to already settled.
+    clearTimeout(timer);
+  }
 }
 
 /** Projects step outcomes to the one report shape. Pure; the caller owns the step order. */
