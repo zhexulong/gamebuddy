@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist-pi-activation",
+    "noEmit": false
+  },
+  "include": [],
+  "files": [
+    "src/pi-session-context-activation.test.ts",
+    "src/pi-session-context-activation.internal.ts",
+    "src/test-support/canonical-test-root.test-support.ts"
+  ]
+}
