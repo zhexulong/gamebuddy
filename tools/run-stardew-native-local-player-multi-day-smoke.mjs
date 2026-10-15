@@ -128,7 +128,11 @@ export function classifyActorHold(snapshot) {
 
 /** The Mod's own `key=value;key=value` evidence projection, read by key. */
 export function parseRolloverEvidence(evidence) {
-  const detail = typeof evidence === "string" ? evidence : "";
+  // The receipt carries the projection in ONE of two shapes and both are live: a bare string, or an object whose
+  // `detail` holds it (the shape the sibling runners read as `receipt.evidence?.detail`). Reading only the first shape
+  // made every fact `undefined`, which is how this gate first reported `rollover_day_counter_mismatch:undefined->undefined`
+  // while the Mod's own receipt said `day_advanced`.
+  const detail = typeof evidence === "string" ? evidence : typeof evidence?.detail === "string" ? evidence.detail : "";
   const facts = {};
   for (const pair of detail.split(";")) {
     const index = pair.indexOf("=");
