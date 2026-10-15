@@ -98,7 +98,7 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
       const tables = (
         db
           .prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tavern_threads', 'tavern_messages', 'tavern_message_swipes', 'tavern_thread_stable_artifact_bindings', 'tavern_thread_world_info_bindings', 'tavern_turns', 'tavern_turn_attempts', 'tavern_turn_observations', 'tavern_turn_presentations', 'tavern_turn_terminalizations', 'tavern_chat_submit_idempotency', 'tavern_drafts', 'tavern_active_selection')",
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tavern_threads', 'tavern_messages', 'tavern_message_swipes', 'tavern_thread_stable_artifact_bindings', 'tavern_thread_world_info_bindings', 'tavern_turns', 'tavern_turn_variants', 'tavern_turn_attempts', 'tavern_turn_observations', 'tavern_turn_presentations', 'tavern_turn_terminalizations', 'tavern_chat_submit_idempotency', 'tavern_drafts', 'tavern_active_selection')",
           )
           .all() as any[]
       ).map((row) => row.name);
@@ -115,6 +115,7 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
         "tavern_turn_observations",
         "tavern_turn_presentations",
         "tavern_turn_terminalizations",
+        "tavern_turn_variants",
         "tavern_turns",
       ]);
       assert.equal(

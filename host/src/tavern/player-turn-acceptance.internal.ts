@@ -12,6 +12,7 @@ type MountedAcceptanceCommand = Readonly<{
   idempotencyKey: string;
   expectedDraftRevision: number;
   boundedVisibleTail?: string;
+  variantTargetMessageId?: string;
 }>;
 
 /**

@@ -17,6 +17,12 @@ export type AcceptPlayerTurnCommand = Readonly<{
    * scans, composed by the Host from the durable read-back. Never browser input.
    */
   boundedVisibleTail?: string;
+  /**
+   * Same-position variant acceptance: target an existing companion reply and
+   * mint no player message. The prompt text then comes from the anchor player
+   * message the target answered, never from a newly accepted row.
+   */
+  variantTargetMessageId?: string;
 }>;
 export type PlayerTurnAcceptor = Readonly<{
   accept(command: AcceptPlayerTurnCommand): Promise<AcceptedQueuedTurn>;
@@ -43,6 +49,9 @@ export function createPlayerTurnAcceptor(
             idempotencyKey: command.idempotencyKey,
             expectedDraftRevision: command.expectedDraftRevision,
             ...(command.boundedVisibleTail === undefined ? {} : { boundedVisibleTail: command.boundedVisibleTail }),
+            ...(command.variantTargetMessageId === undefined
+              ? {}
+              : { variantTargetMessageId: command.variantTargetMessageId }),
           }),
         );
       } catch (error) {

@@ -14,7 +14,7 @@ import {
  * append-only messages, swipe variants, and turn lifecycle; it neither reads
  * Pi/Magic Context state nor implements message edit/branch or any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 3 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 4 as const;
 export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
@@ -105,6 +105,16 @@ export type ChatThreadMessage = Readonly<{
   activeSwipeIndex?: number;
 }>;
 
+/**
+ * A same-position variant turn regenerates an existing companion reply instead of
+ * appending one. It mints no player message: `targetMessageId` is the reply whose
+ * position it re-generates and `anchorMessageId` is the player message that reply
+ * answered, which is the only source of this variant turn's prompt text.
+ */
+export type TurnVariantTarget = Readonly<{
+  targetMessageId: string;
+  anchorMessageId: string;
+}>;
 export type ChatDraft = Readonly<{ revision: number; text: string | null }>;
 export type AcceptedQueuedTurn = Readonly<{
   turnId: string;
@@ -112,6 +122,12 @@ export type AcceptedQueuedTurn = Readonly<{
   idempotencyKey: string;
   messageId: string;
   acceptedAtMs: number;
+  /**
+   * Present only on a same-position variant turn. `messageId` is then the turn's
+   * own opaque `variant_<turnId>` identity and names no message row; the durable
+   * prompt/position facts live in `variant`.
+   */
+  variant?: TurnVariantTarget;
 }>;
 
 export type AuthoredContextSourceRef = Readonly<{
@@ -415,6 +431,7 @@ export type AttemptStartingTurn = Readonly<{
   idempotencyKey: string;
   messageId: string;
   acceptedAtMs: number;
+  variant?: TurnVariantTarget;
   attempt: AttemptClaimV1;
   /** P4c bounded observation: durable `armed` before invocation, or durable local `not_started`. */
   observation?: AttemptObservationV1;
@@ -426,6 +443,7 @@ export type RunningTurn = Readonly<{
   idempotencyKey: string;
   messageId: string;
   acceptedAtMs: number;
+  variant?: TurnVariantTarget;
   attempt: AttemptClaimV1;
   observation: AttemptObservationV1 & { phase: "running" };
 }>;
@@ -470,6 +488,7 @@ export type CancelledTurn = Readonly<{
   idempotencyKey: string;
   messageId: string;
   acceptedAtMs: number;
+  variant?: TurnVariantTarget;
   attempt: AttemptClaimV1;
   observation: AttemptObservationV1 & { phase: "armed" | "not_started" | "running" };
   presentation: PresentationCommitV1 | null;
@@ -483,6 +502,7 @@ export type FailedTurn = Readonly<{
   idempotencyKey: string;
   messageId: string;
   acceptedAtMs: number;
+  variant?: TurnVariantTarget;
   attempt: AttemptClaimV1;
   observation: AttemptObservationV1;
   presentation: PresentationCommitV1 | null;
@@ -518,6 +538,12 @@ type MountedAcceptanceInput = Readonly<{
   locale: string;
   idempotencyKey: string;
   expectedDraftRevision: number;
+  /**
+   * When present, this acceptance is a same-position variant of an existing
+   * companion reply: no player message is minted and `text` is used only for
+   * per-turn volatility selection, never persisted or read back as the prompt.
+   */
+  variantTargetMessageId?: string;
 }>;
 
 /** Player-controlled fields only. Binding facts come solely from a consumed mounted admission. */
@@ -527,6 +553,7 @@ type MountedAcceptanceCommand = Readonly<{
   idempotencyKey: string;
   expectedDraftRevision: number;
   boundedVisibleTail?: string;
+  variantTargetMessageId?: string;
   authoredContextPreparation?: Readonly<{
     sourceRefs: readonly Readonly<Record<string, string>>[];
     stableTokenCount: number;
@@ -1112,7 +1139,7 @@ export class ExactThreadSurfaceMismatchError extends Error {
 function initSchema(db: DatabaseSync): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   const version = Number(versionRow?.user_version ?? 0);
-  if (version === 3) {
+  if (version === 4) {
     assertNormalizedSchema(db);
     return;
   }
@@ -1287,6 +1314,12 @@ function initSchema(db: DatabaseSync): void {
       UNIQUE(thread_id, message_id)
     );
 
+    CREATE TABLE tavern_turn_variants (
+      turn_id TEXT PRIMARY KEY REFERENCES tavern_turns(turn_id) ON DELETE CASCADE,
+      target_message_id TEXT NOT NULL,
+      anchor_message_id TEXT NOT NULL
+    );
+
     CREATE TABLE tavern_turn_attempts (
       turn_id TEXT PRIMARY KEY REFERENCES tavern_turns(turn_id) ON DELETE CASCADE,
       generation INTEGER NOT NULL CHECK(generation = 1),
@@ -1399,7 +1432,7 @@ function initSchema(db: DatabaseSync): void {
     CREATE INDEX idx_tavern_idempotency_turn
       ON tavern_chat_submit_idempotency(turn_id);
   `);
-  db.exec("PRAGMA user_version = 3");
+  db.exec("PRAGMA user_version = 4");
   assertNormalizedSchema(db);
 }
 
@@ -1411,6 +1444,7 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     "tavern_thread_stable_artifact_bindings",
     "tavern_thread_world_info_bindings",
     "tavern_turns",
+    "tavern_turn_variants",
     "tavern_turn_attempts",
     "tavern_turn_observations",
     "tavern_turn_presentations",
@@ -1446,6 +1480,11 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     threadColumns.has("opening_selection_json") ||
     threadColumns.has("session_file")
   )
+    throw new Error("chat_thread_schema_mismatch");
+  const variantColumns = new Set(
+    (db.prepare("PRAGMA table_info(tavern_turn_variants)").all() as any[]).map((column) => column.name),
+  );
+  if (["turn_id", "target_message_id", "anchor_message_id"].some((column) => !variantColumns.has(column)))
     throw new Error("chat_thread_schema_mismatch");
 }
 
@@ -2119,29 +2158,35 @@ export function createChatThreadStore(
       if (current.draft.revision !== input.expectedDraftRevision) throw new Error("chat_draft_revision_conflict");
 
       const acceptedAtMs = now();
-      const messageId = `player_${randomUUID().replace(/-/gu, "")}`;
       const turnId = `turn_${randomUUID().replace(/-/gu, "")}`;
+      const variant =
+        input.variantTargetMessageId === undefined
+          ? undefined
+          : resolveTurnVariantTarget(current.messages, input.variantTargetMessageId);
+      const messageId = variant === undefined ? `player_${randomUUID().replace(/-/gu, "")}` : `variant_${turnId}`;
       const result = freezeAcceptedTurn({
         turnId,
         status: "accepted_queued",
         idempotencyKey: input.idempotencyKey,
         messageId,
         acceptedAtMs,
+        ...(variant === undefined ? {} : { variant }),
       });
 
-      const lockedAt = thread.openingLockedAtEventId ?? messageId;
-      insertMessage(
-        db,
-        input.chatThreadId,
-        validateMessage({
-          messageId,
-          role: "player",
-          kind: "player",
-          text: input.text,
-          occurredAtMs: acceptedAtMs,
-          greetingSource: null,
-        }),
-      );
+      const lockedAt = thread.openingLockedAtEventId ?? variant?.anchorMessageId ?? messageId;
+      if (variant === undefined)
+        insertMessage(
+          db,
+          input.chatThreadId,
+          validateMessage({
+            messageId,
+            role: "player",
+            kind: "player",
+            text: input.text,
+            occurredAtMs: acceptedAtMs,
+            greetingSource: null,
+          }),
+        );
       persistTurn(db, input.chatThreadId, result);
       db.prepare(
         "INSERT INTO tavern_chat_submit_idempotency (thread_id, idempotency_key, fingerprint, turn_id) VALUES (?, ?, ?, ?)",
@@ -2714,6 +2759,13 @@ function persistTurn(db: DatabaseSync, threadId: string, ledger: ChatTurnLedger)
   db.prepare(
     `INSERT INTO tavern_turns (turn_id, thread_id, status, idempotency_key, message_id, accepted_at_ms, is_current) VALUES (?, ?, ?, ?, ?, ?, 1) ON CONFLICT(turn_id) DO UPDATE SET status = excluded.status, is_current = 1`,
   ).run(ledger.turnId, threadId, ledger.status, ledger.idempotencyKey, ledger.messageId, ledger.acceptedAtMs);
+  db.prepare("DELETE FROM tavern_turn_variants WHERE turn_id = ?").run(ledger.turnId);
+  if (ledger.variant !== undefined)
+    db.prepare("INSERT INTO tavern_turn_variants (turn_id, target_message_id, anchor_message_id) VALUES (?, ?, ?)").run(
+      ledger.turnId,
+      ledger.variant.targetMessageId,
+      ledger.variant.anchorMessageId,
+    );
   if (!isTurnWithAttempt(ledger)) return;
   db.prepare("DELETE FROM tavern_turn_attempts WHERE turn_id = ?").run(ledger.turnId);
   const attempt = ledger.attempt;
@@ -2762,12 +2814,20 @@ function persistTurn(db: DatabaseSync, threadId: string, ledger: ChatTurnLedger)
 }
 
 function readTurnLedger(db: DatabaseSync, row: any): ChatTurnLedger {
+  const variantRow = db
+    .prepare("SELECT target_message_id, anchor_message_id FROM tavern_turn_variants WHERE turn_id = ?")
+    .get(row.turn_id) as any;
+  const variant =
+    variantRow === undefined
+      ? undefined
+      : { targetMessageId: variantRow.target_message_id, anchorMessageId: variantRow.anchor_message_id };
   const base = {
     turnId: row.turn_id,
     status: row.status,
     idempotencyKey: row.idempotency_key,
     messageId: row.message_id,
     acceptedAtMs: row.accepted_at_ms,
+    ...(variant === undefined ? {} : { variant }),
   };
   if (row.status === "accepted_queued") return validateTurnLedger(base);
 
@@ -3076,7 +3136,7 @@ function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadStat
   const idempotency = (
     db
       .prepare(
-        "SELECT i.idempotency_key, i.fingerprint, t.turn_id, t.idempotency_key AS turn_idempotency_key, t.message_id, t.accepted_at_ms FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id WHERE i.thread_id = ? ORDER BY i.idempotency_key",
+        "SELECT i.idempotency_key, i.fingerprint, t.turn_id, t.idempotency_key AS turn_idempotency_key, t.message_id, t.accepted_at_ms, v.target_message_id AS variant_target_message_id, v.anchor_message_id AS variant_anchor_message_id FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id LEFT JOIN tavern_turn_variants v ON v.turn_id = t.turn_id WHERE i.thread_id = ? ORDER BY i.idempotency_key",
       )
       .all(chatThreadId) as any[]
   ).map((entry) =>
@@ -3089,6 +3149,14 @@ function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadStat
         idempotencyKey: entry.turn_idempotency_key,
         messageId: entry.message_id,
         acceptedAtMs: entry.accepted_at_ms,
+        ...(entry.variant_target_message_id === null || entry.variant_target_message_id === undefined
+          ? {}
+          : {
+              variant: {
+                targetMessageId: entry.variant_target_message_id,
+                anchorMessageId: entry.variant_anchor_message_id,
+              },
+            }),
       },
     }),
   );
@@ -3339,11 +3407,8 @@ function freezeDraft(value: ChatDraft): ChatDraft {
 }
 
 function validateAcceptedTurn(value: unknown): AcceptedQueuedTurn {
-  if (
-    !isRecord(value) ||
-    !onlyKeys(value, ["turnId", "status", "idempotencyKey", "messageId", "acceptedAtMs"]) ||
-    value.status !== "accepted_queued"
-  )
+  if (!isRecord(value) || value.status !== "accepted_queued") throw new Error("invalid_chat_thread_turn_ledger");
+  if (!onlyKeys(value, ["turnId", "status", "idempotencyKey", "messageId", "acceptedAtMs", "variant"]))
     throw new Error("invalid_chat_thread_turn_ledger");
   assertId("turnId", value.turnId);
   assertId("messageId", value.messageId);
@@ -3355,7 +3420,33 @@ function validateAcceptedTurn(value: unknown): AcceptedQueuedTurn {
     idempotencyKey: value.idempotencyKey,
     messageId: value.messageId,
     acceptedAtMs: value.acceptedAtMs,
+    ...(value.variant === undefined ? {} : { variant: validateTurnVariantTarget(value.variant) }),
   });
+}
+
+function validateTurnVariantTarget(value: unknown): TurnVariantTarget {
+  if (!isRecord(value) || !onlyKeys(value, ["targetMessageId", "anchorMessageId"]))
+    throw new Error("invalid_chat_thread_turn_variant");
+  assertId("targetMessageId", value.targetMessageId);
+  assertId("anchorMessageId", value.anchorMessageId);
+  if (value.targetMessageId === value.anchorMessageId) throw new Error("invalid_chat_thread_turn_variant");
+  return Object.freeze({ targetMessageId: value.targetMessageId, anchorMessageId: value.anchorMessageId });
+}
+
+/**
+ * Resolves the durable position facts of a same-position variant acceptance from
+ * the transcript alone. It fails closed with a bounded code for an unknown
+ * target, a target that is not a companion reply, and a companion reply with no
+ * anchor player message before it (the opening is the only such reply).
+ */
+function resolveTurnVariantTarget(messages: readonly ChatThreadMessage[], targetMessageId: string): TurnVariantTarget {
+  const targetIndex = messages.findIndex((message) => message.messageId === targetMessageId);
+  if (targetIndex < 0) throw new Error("chat_variant_target_not_found");
+  const target = messages[targetIndex]!;
+  if (target.role !== "companion") throw new Error("chat_variant_target_not_companion");
+  const anchor = [...messages.slice(0, targetIndex)].reverse().find((message) => message.role === "player");
+  if (anchor === undefined) throw new Error("chat_variant_anchor_unavailable");
+  return Object.freeze({ targetMessageId, anchorMessageId: anchor.messageId });
 }
 
 function freezeAcceptedTurn(value: AcceptedQueuedTurn): AcceptedQueuedTurn {
@@ -3364,9 +3455,21 @@ function freezeAcceptedTurn(value: AcceptedQueuedTurn): AcceptedQueuedTurn {
 
 function validateTurnLedger(value: unknown): ChatTurnLedger {
   if (!isRecord(value)) throw new Error("invalid_chat_thread_turn_ledger");
+  const variantFields = value.variant === undefined ? {} : { variant: validateTurnVariantTarget(value.variant) };
   if (value.status === "accepted_queued") return validateAcceptedTurn(value);
   if (value.status === "attempt_starting") {
-    if (!onlyKeys(value, ["turnId", "status", "idempotencyKey", "messageId", "acceptedAtMs", "attempt", "observation"]))
+    if (
+      !onlyKeys(value, [
+        "turnId",
+        "status",
+        "idempotencyKey",
+        "messageId",
+        "acceptedAtMs",
+        "variant",
+        "attempt",
+        "observation",
+      ])
+    )
       throw new Error("invalid_chat_thread_turn_ledger");
     const observation = value.observation === undefined ? undefined : validateAttemptObservation(value.observation);
     if (observation !== undefined && observation.phase === "running")
@@ -3377,12 +3480,24 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
       idempotencyKey: value.idempotencyKey as string,
       messageId: value.messageId as string,
       acceptedAtMs: value.acceptedAtMs as number,
+      ...variantFields,
       attempt: value.attempt as AttemptClaimV1,
       ...(observation === undefined ? {} : { observation }),
     });
   }
   if (value.status === "running") {
-    if (!onlyKeys(value, ["turnId", "status", "idempotencyKey", "messageId", "acceptedAtMs", "attempt", "observation"]))
+    if (
+      !onlyKeys(value, [
+        "turnId",
+        "status",
+        "idempotencyKey",
+        "messageId",
+        "acceptedAtMs",
+        "variant",
+        "attempt",
+        "observation",
+      ])
+    )
       throw new Error("invalid_chat_thread_turn_ledger");
     const observation = validateAttemptObservation(value.observation);
     if (observation.phase !== "running") throw new Error("invalid_chat_thread_turn_ledger");
@@ -3392,6 +3507,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
       idempotencyKey: value.idempotencyKey as string,
       messageId: value.messageId as string,
       acceptedAtMs: value.acceptedAtMs as number,
+      ...variantFields,
       attempt: value.attempt as AttemptClaimV1,
       observation,
     });
@@ -3412,6 +3528,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
         idempotencyKey: value.idempotencyKey as string,
         messageId: value.messageId as string,
         acceptedAtMs: value.acceptedAtMs as number,
+        ...variantFields,
         attempt: value.attempt as AttemptClaimV1,
         observation: common.observation,
         presentation: common.presentation ?? null,
@@ -3425,6 +3542,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
         idempotencyKey: value.idempotencyKey as string,
         messageId: value.messageId as string,
         acceptedAtMs: value.acceptedAtMs as number,
+        ...variantFields,
         attempt: value.attempt as AttemptClaimV1,
         observation: common.observation as AttemptObservationV1 & { phase: "armed" | "not_started" | "running" },
         presentation: common.presentation ?? null,
@@ -3438,6 +3556,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
       idempotencyKey: value.idempotencyKey as string,
       messageId: value.messageId as string,
       acceptedAtMs: value.acceptedAtMs as number,
+      ...variantFields,
       attempt: value.attempt as AttemptClaimV1,
       observation: common.observation,
     });
@@ -3491,6 +3610,7 @@ function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
     "idempotencyKey",
     "messageId",
     "acceptedAtMs",
+    "variant",
     "attempt",
     "observation",
     "presentation",
@@ -3570,6 +3690,7 @@ function freezeAttemptStartingTurn(value: AttemptStartingTurn): AttemptStartingT
     idempotencyKey: value.idempotencyKey,
     messageId: value.messageId,
     acceptedAtMs: value.acceptedAtMs,
+    ...(value.variant === undefined ? {} : { variant: value.variant }),
   });
   const observation = value.observation === undefined ? undefined : validateAttemptObservation(value.observation);
   if (observation !== undefined && observation.phase === "running") throw new Error("invalid_chat_thread_turn_ledger");
@@ -3625,6 +3746,7 @@ function freezeRunningTurn(value: RunningTurn): RunningTurn {
     idempotencyKey: value.idempotencyKey,
     messageId: value.messageId,
     acceptedAtMs: value.acceptedAtMs,
+    ...(value.variant === undefined ? {} : { variant: value.variant }),
   });
   const observation = validateAttemptObservation(value.observation);
   if (observation.phase !== "running") throw new Error("invalid_chat_thread_turn_ledger");
@@ -3672,6 +3794,7 @@ function freezeCancelledTurn(value: CancelledTurn): CancelledTurn {
     idempotencyKey: value.idempotencyKey,
     messageId: value.messageId,
     acceptedAtMs: value.acceptedAtMs,
+    ...(value.variant === undefined ? {} : { variant: value.variant }),
   });
   const observation = validateAttemptObservation(value.observation);
   if (observation.phase !== "armed" && observation.phase !== "not_started" && observation.phase !== "running")
@@ -3700,6 +3823,7 @@ function freezeFailedTurn(value: FailedTurn): FailedTurn {
     idempotencyKey: value.idempotencyKey,
     messageId: value.messageId,
     acceptedAtMs: value.acceptedAtMs,
+    ...(value.variant === undefined ? {} : { variant: value.variant }),
   });
   const observation = validateAttemptObservation(value.observation);
   if (observation.phase !== "armed" && observation.phase !== "running")
@@ -3788,6 +3912,7 @@ function validateAcceptanceInput(value: MountedAcceptanceInput): void {
     throw new Error("invalid_chat_message_locale");
   if (!isText(value.text)) throw new Error("invalid_chat_message_text");
   assertIdempotencyKey(value.idempotencyKey);
+  if (value.variantTargetMessageId !== undefined) assertId("variantTargetMessageId", value.variantTargetMessageId);
 }
 
 function validateAuthoredContextPreparation(value: MountedAcceptanceInput["authoredContextPreparation"]): void {
@@ -4162,6 +4287,7 @@ function acceptanceFingerprint(input: MountedAcceptanceInput): string {
     input.text,
     input.locale,
     String(input.expectedDraftRevision),
+    input.variantTargetMessageId ?? "",
   ];
   const canonical = fields.map((field) => `${Buffer.byteLength(field, "utf8")}:${field}`).join("");
   return createHash("sha256").update(canonical, "utf8").digest("hex");
@@ -4180,6 +4306,15 @@ function validateTurnIntegrity(
   )
     throw new Error("invalid_chat_thread_idempotency");
   for (const record of idempotency) {
+    if (record.result.variant !== undefined) {
+      assertTurnVariantPosition(
+        messages,
+        record.result.messageId,
+        record.result.variant,
+        "invalid_chat_thread_idempotency",
+      );
+      continue;
+    }
     if (
       !messages.some(
         (message) =>
@@ -4192,7 +4327,9 @@ function validateTurnIntegrity(
     if (idempotency.length !== 0) throw new Error("invalid_chat_thread_idempotency");
     return;
   }
-  if (
+  if (turnLedger.variant !== undefined) {
+    assertTurnVariantPosition(messages, turnLedger.messageId, turnLedger.variant, "invalid_chat_thread_turn_ledger");
+  } else if (
     !messages.some(
       (message) => message.messageId === turnLedger.messageId && message.role === "player" && message.kind === "player",
     )
@@ -4203,7 +4340,8 @@ function validateTurnIntegrity(
       record.key === turnLedger.idempotencyKey &&
       record.result.turnId === turnLedger.turnId &&
       record.result.messageId === turnLedger.messageId &&
-      record.result.acceptedAtMs === turnLedger.acceptedAtMs,
+      record.result.acceptedAtMs === turnLedger.acceptedAtMs &&
+      sameTurnVariant(record.result.variant, turnLedger.variant),
   );
   if (matching.length !== 1) throw new Error("invalid_chat_thread_turn_ledger");
   if (isTurnWithAttempt(turnLedger)) {
@@ -4214,6 +4352,36 @@ function validateTurnIntegrity(
         throw new Error("invalid_chat_thread_turn_ledger");
     }
   }
+}
+
+function sameTurnVariant(left: TurnVariantTarget | undefined, right: TurnVariantTarget | undefined): boolean {
+  if (left === undefined || right === undefined) return left === undefined && right === undefined;
+  return left.targetMessageId === right.targetMessageId && left.anchorMessageId === right.anchorMessageId;
+}
+
+/**
+ * A same-position variant turn owns no player message: its `messageId` is the
+ * turn's own opaque identity, and the durable position facts must resolve to an
+ * existing companion reply and the player message it answered, in that order.
+ */
+function assertTurnVariantPosition(
+  messages: readonly ChatThreadMessage[],
+  messageId: string,
+  variant: TurnVariantTarget,
+  errorCode: string,
+): void {
+  if (messages.some((message) => message.messageId === messageId)) throw new Error(errorCode);
+  const targetIndex = messages.findIndex((message) => message.messageId === variant.targetMessageId);
+  const anchorIndex = messages.findIndex((message) => message.messageId === variant.anchorMessageId);
+  if (
+    targetIndex < 0 ||
+    anchorIndex < 0 ||
+    anchorIndex >= targetIndex ||
+    messages[targetIndex]!.role !== "companion" ||
+    messages[anchorIndex]!.role !== "player" ||
+    messages[anchorIndex]!.kind !== "player"
+  )
+    throw new Error(errorCode);
 }
 
 function freezeState(state: ChatThreadState): ChatThreadState {

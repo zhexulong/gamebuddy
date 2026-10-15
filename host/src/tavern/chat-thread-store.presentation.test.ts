@@ -115,7 +115,11 @@ async function prepareRunning(
       return () => current++;
     })(),
   );
-  const creation = createProfileAwareChatThreadCreationCapability(store, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
+  const creation = createProfileAwareChatThreadCreationCapability(store, {
+    async readExact() {
+      return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) };
+    },
+  });
   await creation.createExplicit({
     chatThreadId: "thread_01",
     companionId: "companion_01",
@@ -129,9 +133,9 @@ async function prepareRunning(
     text: "Hello",
     locale: "en-US",
     idempotencyKey: "abcdefghijklmnopqrstuv",
-       expectedDraftRevision: 0,
-       authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
-     });
+    expectedDraftRevision: 0,
+    authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+  });
   const claimed = await claimMountedAttempt(binding);
   const attemptId = claimed.attempt.attemptId;
   // The ingress store writes wall-clock timestamps, so every later command
@@ -387,8 +391,12 @@ test("presentation fail is not reachable before the provider start observation",
         return () => current++;
       })(),
     );
-    const creation = createProfileAwareChatThreadCreationCapability(store, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
-  await creation.createExplicit({
+    const creation = createProfileAwareChatThreadCreationCapability(store, {
+      async readExact() {
+        return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
+    await creation.createExplicit({
       chatThreadId: "thread_01",
       companionId: "companion_01",
       continuityId: "continuity_01",
@@ -401,9 +409,9 @@ test("presentation fail is not reachable before the provider start observation",
       text: "Hello",
       locale: "en-US",
       idempotencyKey: "abcdefghijklmnopqrstuv",
-       expectedDraftRevision: 0,
-       authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
-     });
+      expectedDraftRevision: 0,
+      authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+    });
     const claimed = await claimMountedAttempt(binding);
     const attemptId = claimed.attempt.attemptId;
     const failedAt = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs + 1;
@@ -478,7 +486,6 @@ test("presentation exact attempt binding rejects a foreign attempt or binding", 
     await removeTestRoot(root);
   }
 });
-
 
 /**
  * The Chat turn path's persistence rule, asserted end to end.
@@ -667,3 +674,189 @@ async function chatPresentationOf(modelText: string): Promise<string | undefined
   assert.deepEqual(rejections, [], "the Chat presentation must not reject a reply that carries a beat");
   return finals[0];
 }
+
+/**
+ * A same-position variant acceptance is a turn with no player message of its own.
+ * The durable position facts live on the turn and must resolve to the existing
+ * reply and the player message that reply answered; every assertion below reads
+ * the store back rather than trusting the acceptance return value.
+ */
+test("a same-position variant acceptance mints no player row and records the target and anchor", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-variant-acceptance-");
+  try {
+    const store = openStore(root);
+    const creation = createProfileAwareChatThreadCreationCapability(store, {
+      async readExact() {
+        return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
+    await creation.createExplicit({
+      chatThreadId: "thread_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatSurfaceSessionId: "surface_01",
+      opening: {
+        messageId: "opening_01",
+        text: "Welcome to the tavern.",
+        source: {
+          greetingSetId: "greetings_01",
+          sourceRevision: 2,
+          canonicalHash: "a".repeat(64),
+          variantId: "alternate_01",
+          profileRevision: 3,
+          scenarioRevision: null,
+        },
+      },
+    });
+    await store.appendPlayer("thread_01", { messageId: "player_01", text: "Hello", occurredAtMs: 101 });
+    await store.commitResponse("thread_01", { messageId: "response_01", text: "Hello back", occurredAtMs: 102 });
+
+    const { acceptMountedPlayerMessage } = await import("./chat-thread-store.js");
+    const command = {
+      text: "Hello",
+      locale: "en-US",
+      idempotencyKey: "abcdefghijklmnopqrstuv",
+      expectedDraftRevision: 0,
+      authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+    } as const;
+    // Bounded, zero-mutation refusals: an unknown target, a player line, and a
+    // companion message with no anchor player message before it (the opening).
+    await assert.rejects(
+      () => acceptMountedPlayerMessage(bindingFor(root), { ...command, variantTargetMessageId: "missing_01" }),
+      /chat_variant_target_not_found/,
+    );
+    await assert.rejects(
+      () => acceptMountedPlayerMessage(bindingFor(root), { ...command, variantTargetMessageId: "player_01" }),
+      /chat_variant_target_not_companion/,
+    );
+    await assert.rejects(
+      () => acceptMountedPlayerMessage(bindingFor(root), { ...command, variantTargetMessageId: "opening_01" }),
+      /chat_variant_anchor_unavailable/,
+    );
+
+    const accepted = await acceptMountedPlayerMessage(bindingFor(root), {
+      ...command,
+      variantTargetMessageId: "response_01",
+    });
+    assert.deepEqual(accepted.variant, { targetMessageId: "response_01", anchorMessageId: "player_01" });
+    // The variant turn's own identity is opaque and names no message row.
+    assert.equal(accepted.messageId, `variant_${accepted.turnId}`);
+
+    const state = await store.resumeThread("thread_01", "surface_01");
+    // No row was minted at all: not a player row, not a companion row.
+    assert.deepEqual(
+      state.messages.map((message) => message.messageId),
+      ["opening_01", "player_01", "response_01"],
+    );
+    assert.deepEqual(
+      state.messages.filter((message) => message.role === "player").map((message) => message.messageId),
+      ["player_01"],
+    );
+    const ledger = state.turnLedger;
+    assert.ok(ledger !== null);
+    assert.equal(ledger.status, "accepted_queued");
+    assert.deepEqual(ledger.variant, { targetMessageId: "response_01", anchorMessageId: "player_01" });
+    assert.equal(ledger.messageId, `variant_${ledger.turnId}`);
+
+    // The ledger and its idempotency record are durable: a second connection on
+    // the same root/continuity reads the same variant position facts back.
+    const durable = await openStore(root).resumeThread("thread_01", "surface_01");
+    assert.deepEqual(durable.turnLedger?.variant, { targetMessageId: "response_01", anchorMessageId: "player_01" });
+    assert.deepEqual(durable.idempotency.find((record) => record.key === command.idempotencyKey)?.result.variant, {
+      targetMessageId: "response_01",
+      anchorMessageId: "player_01",
+    });
+  } finally {
+    await removeTestRoot(root);
+  }
+});
+
+/**
+ * The red-before fact, pinned beside the green: the ordinary acceptance today's
+ * `regenerate` runs is an ordinary player submit, so it mints a second player row
+ * for the exchange it re-asks. The variant acceptance on the same shape of thread
+ * mints none. Both halves read the store back, so neither is asserted from the
+ * acceptance return value.
+ */
+test("the ordinary acceptance behind today's regenerate appends a second player row where a variant mints none", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-variant-red-before-");
+  try {
+    const store = openStore(root);
+    const creation = createProfileAwareChatThreadCreationCapability(store, {
+      async readExact() {
+        return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
+    const openingFor = (threadId: string, suffix: string) => ({
+      chatThreadId: threadId,
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatSurfaceSessionId: suffix === "01" ? "surface_01" : "surface_02",
+      opening: {
+        messageId: `opening_${suffix}`,
+        text: "Welcome to the tavern.",
+        source: {
+          greetingSetId: "greetings_01",
+          sourceRevision: 2,
+          canonicalHash: "a".repeat(64),
+          variantId: "alternate_01",
+          profileRevision: 3,
+          scenarioRevision: null,
+        },
+      },
+    });
+    for (const [threadId, suffix] of [
+      ["thread_01", "01"],
+      ["thread_02", "02"],
+    ] as const) {
+      await creation.createExplicit(openingFor(threadId, suffix));
+      await store.appendPlayer(threadId, { messageId: `player_${suffix}`, text: "Hello", occurredAtMs: 101 });
+      await store.commitResponse(threadId, { messageId: `response_${suffix}`, text: "Hello back", occurredAtMs: 102 });
+    }
+
+    const { acceptMountedPlayerMessage } = await import("./chat-thread-store.js");
+    const prepared = { sourceRefs: [], stableTokenCount: 0 } as const;
+    // The red-before half: an ordinary acceptance is what today's regenerate runs,
+    // and it mints a second player row at the transcript tail.
+    await acceptMountedPlayerMessage(bindingFor(root), {
+      text: "Hello",
+      locale: "en-US",
+      idempotencyKey: "abcdefghijklmnopqrstuv",
+      expectedDraftRevision: 0,
+      authoredContextPreparation: prepared,
+    });
+    const ordinary = await store.resumeThread("thread_01", "surface_01");
+    const ordinaryPlayerRows = ordinary.messages
+      .filter((message) => message.role === "player")
+      .map((message) => message.messageId);
+    assert.equal(ordinaryPlayerRows.length, 2);
+    assert.equal(ordinaryPlayerRows[0], "player_01");
+    assert.notEqual(ordinaryPlayerRows[1], "player_01");
+
+    // The green half: the same exchange re-asked as a variant mints no player row,
+    // and the existing reply position is untouched until a variant is committed.
+    await acceptMountedPlayerMessage(
+      { ...bindingFor(root), chatThreadId: "thread_02", chatSurfaceSessionId: "surface_02" },
+      {
+        text: "Hello",
+        locale: "en-US",
+        idempotencyKey: "bcdefghijklmnopqrstuvw",
+        expectedDraftRevision: 0,
+        authoredContextPreparation: prepared,
+        variantTargetMessageId: "response_02",
+      },
+    );
+    const variant = await store.resumeThread("thread_02", "surface_02");
+    assert.deepEqual(
+      variant.messages.map((message) => message.messageId),
+      ["opening_02", "player_02", "response_02"],
+    );
+    assert.deepEqual(
+      variant.messages.filter((message) => message.role === "player").map((message) => message.messageId),
+      ["player_02"],
+    );
+    assert.deepEqual(variant.turnLedger?.variant, { targetMessageId: "response_02", anchorMessageId: "player_02" });
+  } finally {
+    await removeTestRoot(root);
+  }
+});
