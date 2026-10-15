@@ -12,7 +12,7 @@
  * to. What it writes is an ordinary memory row (`sourceType: "dreamer"`); it does not touch compartments,
  * chapters, m0, or the player's own text.
  */
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
 
@@ -67,7 +67,9 @@ export async function reflectCompanionSessionOnce(
   input: CompanionSessionReflectionInput,
 ): Promise<CompanionSessionReflectionOutcome> {
   const timeoutMs = input.timeoutMs ?? DEFAULT_REFLECTION_TIMEOUT_MS;
-  const dataRoot = join(input.runtimeCwd, "data");
+  // Absolute, always: the vendored package refuses a relative storage directory, and a caller that hands one in
+  // would otherwise fail in a way that looks like "the reflection never works".
+  const dataRoot = join(resolve(input.runtimeCwd), "data");
   const previous = {
     storage: process.env.MAGIC_CONTEXT_STORAGE_DIR,
     xdgData: process.env.XDG_DATA_HOME,
@@ -77,12 +79,17 @@ export async function reflectCompanionSessionOnce(
   // mounted, so the reflection reads and writes the store that belongs to this conversation.
   process.env.MAGIC_CONTEXT_STORAGE_DIR = join(dataRoot, "cortexkit", "magic-context");
   process.env.XDG_DATA_HOME = dataRoot;
-  process.env.XDG_CONFIG_HOME = join(input.runtimeCwd, "config");
+  process.env.XDG_CONFIG_HOME = join(resolve(input.runtimeCwd), "config");
 
   try {
     return await withTimeout(timeoutMs, () => runOnce(dataRoot));
-  } catch {
-    // One bounded outcome, never a throw: this runs on the exit path.
+  } catch (error) {
+    // One bounded outcome, never a throw: this runs on the exit path. The reason is printed for the operator
+    // because a reflection that never works and never says why is the failure mode this whole path was written
+    // to avoid; the exit report still carries only the step's bounded code.
+    process.stderr.write(
+      `[reflection] session-end reflection failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}\n`,
+    );
     return "failed";
   } finally {
     restore("MAGIC_CONTEXT_STORAGE_DIR", previous.storage);
