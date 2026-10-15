@@ -182,6 +182,14 @@ function fixturePolicyFor(actions) {
 }
 
 /** Every runner on disk, paired with the action its config is derived from. */
+// A LONG-SESSION DRIVER, not a single-action fixture runner: it drives the multiplayer live loop rather than completing
+// one published action, so neither the gate table nor CONFIG_DRIVER_ACTION can describe it - and its filename matches
+// this test's runner pattern, which is why the completeness check swept it in. Declared by name for the same reason
+// FIXTURE_UNOWNED_RUNNERS is: any OTHER runner missing from all of these still fails.
+const SESSION_DRIVER_RUNNERS = new Set([
+  "run-stardew-native-local-player-multiplayer-live-loop-smoke.mjs",
+]);
+
 function runnerCases() {
   const onDisk = new Set(
     readdirSync(TOOLS).filter((name) => /^run-stardew-native-local-player-.*-smoke\.mjs$/.test(name)),
@@ -286,11 +294,11 @@ test("the gate table and the declared non-gate runners cover every runner on dis
   // Completeness first: a runner missing from both sources would silently skip
   // the assertion below, which is how this class of defect hides.
   const { cases, onDisk } = runnerCases();
-  const uncovered = [...onDisk].filter((name) => !cases.has(name)).sort();
+  const uncovered = [...onDisk].filter((name) => !cases.has(name) && !SESSION_DRIVER_RUNNERS.has(name)).sort();
   assert.deepEqual(
     uncovered,
     [],
-    "these runners are neither in the gate table nor declared in CONFIG_DRIVER_ACTION, so nothing checks their config contract",
+    "these runners are neither in the gate table, nor declared in CONFIG_DRIVER_ACTION, nor declared as a session driver, so nothing checks their config contract",
   );
 });
 

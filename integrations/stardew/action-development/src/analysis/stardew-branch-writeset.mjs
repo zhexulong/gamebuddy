@@ -3,9 +3,13 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
-// A static import, not `require`: the CommonJS form was correct at runtime but invisible to the reachability
-// gate, which then reported the package as an unused dependency.
-import treeSitter from "web-tree-sitter";
+// A static import, not `require`: the CommonJS form was correct at runtime but invisible to the reachability gate,
+// which then reported the package as an unused dependency. It stays static for that reason - but `web-tree-sitter` is
+// CommonJS with no detectable default export on Node 24, so the namespace is taken and unwrapped rather than assumed
+// to have one (which failed with "does not provide an export named 'default'").
+import * as treeSitterNamespace from "web-tree-sitter";
+
+const treeSitter = treeSitterNamespace.default ?? treeSitterNamespace;
 const { Language, Parser } = treeSitter;
 // The grammar is a .wasm FILE, not an importable module, so it has to be resolved as a path.
 const GRAMMAR_WASM = require.resolve("@vscode/tree-sitter-wasm/wasm/tree-sitter-c-sharp.wasm");

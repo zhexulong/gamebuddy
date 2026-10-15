@@ -292,7 +292,6 @@ async function main(argv) {
     sessionDirectory: request.sessionDirectory,
     profiles: PROFILE_NAMES,
     companionId: request.companionId,
-    // Named so the operator knows what this does NOT provide.
     // Named so the operator knows the two steps this tool does NOT perform.
     stillRequired: [
       "a save NAMED GameBuddyFixture_<id> on disk: the formal Host loads it by name, and HostAutomationConfig.IsValid",

@@ -41,7 +41,6 @@ public sealed partial class ModEntry
         ("(O)886", "IslandSouth", "Gus"),
     };
 
-    /// <summary>Once-only latch for the post-join Given verification.</summary>
     private bool sharedWorldTalkToNpcJoinVerified;
 
     /// <summary>
@@ -84,8 +83,6 @@ public sealed partial class ModEntry
     /// game's own value instead of trusting the write.
     /// </summary>
     private const int SharedWorldTalkToNpcFixtureTimeOfDay = 1300;
-
-    /// <summary>Once-only latch for the post-join Given verification.</summary>
 
     /// <summary>
     /// The first route in <see cref="SharedWorldTalkToNpcWarpRoutes"/> that the product and the

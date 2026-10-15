@@ -530,9 +530,6 @@ function describeWarpItemTargets(snapshot) {
  */
 function nameWalkFailure(context, error) {
   const message = String(error instanceof Error ? error.message : error);
-  // The route's own named failures pass through untouched; anything else is wrapped with the phase,
-  // the attempt and the last transition, so the cause survives. The wrapper's own name says which
-  // route was in flight, because a warp-item fault and a walk fault are different findings.
   if (message.startsWith("talk_to_npc_shared_world_")) return error instanceof Error ? error : new Error(message);
   const route = String(context.phase).startsWith("warp_item") ? "warp_item" : "walk";
   return new Error(

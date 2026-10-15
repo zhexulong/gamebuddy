@@ -3287,12 +3287,6 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // stacked; a farm that cannot host them fails closed instead of silently
         // presenting a poorer world than the audit claims.
         var provisioned = new List<string>();
-        // Where the companion starts must be OPEN. Every probe below returns the first eligible tile scanning
-        // from the map's origin, so the props used to cluster into that corner and fence the actor into a
-        // two-tile pocket: a live session then measured `component_tiles=2`, which made the cauliflower a few
-        // tiles away genuinely unreachable and spent the session on turns the world could not accept.
-        // Starting from an open crossroads, and keeping that crossroads' own ring clear, keeps the world
-        // navigable without scripting what the session should do.
         // Where the session starts must be an OPEN crossroads, and the props must sit NEXT TO it. Two live runs
         // measured both halves of that: starting in the Farm's corner pocket gave `component_tiles=2` (the
         // cauliflower a few tiles away was genuinely unreachable, and the session spent turns on refusals that
@@ -3450,16 +3444,6 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         this.Monitor.Log($"GameBuddy native-local-player initialized pet-animal precondition before bridge attachment: pet_type={pet.petType.Value}; tile={(int)targetTile.Value.X},{(int)targetTile.Value.Y}; friendship=0; petted_today=false; friendship_callback=false; production alone invokes Pet.checkAction and emits receipt.", LogLevel.Info);
     }
 
-    /// <summary>
-    /// The move-stall probe's only fixture fact is a native blocker (Pet or
-    /// Horse) on a three-collinear walkable line: the actor stands at A, the
-    /// blocker stands at A+(0,1), and the probe's move target is A+(0,2). The
-    /// anchor is found synchronously, but the warp completes through the native
-    /// lifecycle, so the blocker is placed and the geometry re-verified in
-    /// OnWarped against the ACTUAL post-warp tile. Nothing here invokes a
-    /// movement, interaction or action; the block is exercised by production's
-    /// move_to_tile.
-    /// </summary>
     /// <summary>Which WIA world-change interruption the fixture must stage.</summary>
     private enum WiaInterruptionFixtureKind
     {
@@ -3647,6 +3631,16 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         this.Monitor.Log("GameBuddy native-local-player initialized WIA answer-question precondition before bridge attachment.", LogLevel.Info);
     }
 
+    /// <summary>
+    /// The move-stall probe's only fixture fact is a native blocker (Pet or
+    /// Horse) on a three-collinear walkable line: the actor stands at A, the
+    /// blocker stands at A+(0,1), and the probe's move target is A+(0,2). The
+    /// anchor is found synchronously, but the warp completes through the native
+    /// lifecycle, so the blocker is placed and the geometry re-verified in
+    /// OnWarped against the ACTUAL post-warp tile. Nothing here invokes a
+    /// movement, interaction or action; the block is exercised by production's
+    /// move_to_tile.
+    /// </summary>
     private void InitializeNativeLocalMoveStallProbeFixture(Farmer player, Farm farm, bool useHorseBlock)
     {
         Vector2? anchor = FindNativeLocalMoveStallAnchor(farm);
@@ -5321,12 +5315,6 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         return this.RequireAiWorld(out state);
     }
 
-    /// <summary>
-    /// Locates the Farm's native Mine entrance action tile (the same tile the
-    /// production <c>enter_mine</c> handler validates against: Buildings layer
-    /// Action property starting with "Mine"). The fixture warps the player to
-    /// that tile so production alone performs the entry.
-    /// </summary>
 
     private static Vector2? FindNativeRaftFixtureWaterEdge(StardewValley.GameLocation location)
     {
@@ -5346,6 +5334,12 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         return null;
     }
 
+    /// <summary>
+    /// Locates the Farm's native Mine entrance action tile (the same tile the
+    /// production <c>enter_mine</c> handler validates against: Buildings layer
+    /// Action property starting with "Mine"). The fixture warps the player to
+    /// that tile so production alone performs the entry.
+    /// </summary>
     private static Vector2? FindNativeMineEntranceFixtureTarget(StardewValley.GameLocation location, Farmer player)
     {
         if (location?.map is null || location is StardewValley.Locations.MineShaft) return null;
