@@ -78,6 +78,7 @@ export function CharactersPanel({
   const [voiceText, setVoiceText] = useState("");
   const [voiceSaving, setVoiceSaving] = useState(false);
   const [voiceClearing, setVoiceClearing] = useState(false);
+  const [voiceAdding, setVoiceAdding] = useState(false);
   const [voiceNotice, setVoiceNotice] = useState<VoiceNotice>(null);
 
   const [scenario, setScenario] = useState<ScenarioV1 | "loading" | "unavailable">("loading");
@@ -112,8 +113,8 @@ export function CharactersPanel({
         const value = await api.readPersona();
         if (!activeRef.current) return;
         setPersona(value);
-        setPersonaName(value.present ? value.name ?? "" : "");
-        setPersonaDescription(value.present ? value.description ?? "" : "");
+        setPersonaName(value.present ? (value.name ?? "") : "");
+        setPersonaDescription(value.present ? (value.description ?? "") : "");
       } catch {
         if (!activeRef.current) return;
         setPersona("unavailable");
@@ -124,8 +125,8 @@ export function CharactersPanel({
         const value = await api.readScenario();
         if (!activeRef.current) return;
         setScenario(value);
-        setScenarioName(value.present ? value.name ?? "" : "");
-        setScenarioDescription(value.present ? value.description ?? "" : "");
+        setScenarioName(value.present ? (value.name ?? "") : "");
+        setScenarioDescription(value.present ? (value.description ?? "") : "");
       } catch {
         if (!activeRef.current) return;
         setScenario("unavailable");
@@ -136,7 +137,7 @@ export function CharactersPanel({
         const value = await api.readGreeting();
         if (!activeRef.current) return;
         setOpening(value);
-        setOpeningLabel(value.present ? value.label ?? "" : "");
+        setOpeningLabel(value.present ? (value.label ?? "") : "");
         setOpeningVariants(
           value.present && value.variants.length > 0
             ? value.variants.map((variant) => ({ label: variant.label ?? "", text: variant.text }))
@@ -192,6 +193,7 @@ export function CharactersPanel({
       if (activeRef.current) {
         setVoice({ kind: "ready", value: saved });
         setVoiceText(saved.characterVoice === null ? "" : saved.characterVoice.text);
+        setVoiceAdding(false);
         setVoiceNotice("saved");
       }
     } catch (error) {
@@ -212,10 +214,11 @@ export function CharactersPanel({
         csrfToken,
       );
       if (activeRef.current) {
-        // The cleared directive reads as absent, so the section itself goes away;
-        // the status line is what acknowledges the one action.
+        // The cleared directive reads as absent, so the entry point collapses
+        // back to its add control; the status line acknowledges the one action.
         setVoice({ kind: "ready", value: cleared });
         setVoiceText("");
+        setVoiceAdding(false);
         setVoiceNotice("cleared");
       }
     } catch (error) {
@@ -399,44 +402,108 @@ export function CharactersPanel({
               </p>
             )}
           </section>
-          {voice.kind === "ready" && voice.value.characterVoice !== null && (
+          {/* A cleared (or never-authored) directive reads as ABSENT. The section
+              stays mounted so the player still has an entry point for one, but it
+              never leaves an empty editor behind: absent renders an explicit add
+              control, and the provenance line appears only when a directive is
+              really there. */}
+          {voice.kind === "ready" && (
             <section aria-label={labels.voiceTitle} data-character-voice>
               <h3>{labels.voiceTitle}</h3>
-              <p className="management-settings-hint">{labels.voiceHint}</p>
-              <p data-character-voice-source>
-                {voice.value.characterVoice.source === "card" ? labels.voiceFromCard : labels.voiceEditedByYou}
+              <p className="management-settings-hint">
+                {voice.value.characterVoice === null ? labels.voiceEmptyHint : labels.voiceHint}
               </p>
-              <label className="management-settings-label" htmlFor="character-voice-text">
-                {labels.voiceText}
-              </label>
-              <textarea
-                id="character-voice-text"
-                className="form-textarea"
-                rows={4}
-                maxLength={8192}
-                value={voiceText}
-                onChange={(event) => setVoiceText(event.target.value)}
-              />
-              <div className="composer-actions">
-                <button
-                  type="button"
-                  className="small-button"
-                  data-character-voice-save
-                  disabled={voiceSaving || voiceClearing || voiceText.trim().length === 0}
-                  onClick={() => void handleSaveVoice()}
-                >
-                  {voiceSaving ? labels.saving : labels.voiceSave}
-                </button>
-                <button
-                  type="button"
-                  className="small-button"
-                  data-character-voice-clear
-                  disabled={voiceSaving || voiceClearing}
-                  onClick={() => void handleClearVoice()}
-                >
-                  {voiceClearing ? labels.saving : labels.voiceClear}
-                </button>
-              </div>
+              {voice.value.characterVoice !== null ? (
+                <>
+                  <p data-character-voice-source>
+                    {voice.value.characterVoice.source === "card" ? labels.voiceFromCard : labels.voiceEditedByYou}
+                  </p>
+                  <label className="management-settings-label" htmlFor="character-voice-text">
+                    {labels.voiceText}
+                  </label>
+                  <textarea
+                    id="character-voice-text"
+                    className="form-textarea"
+                    rows={4}
+                    maxLength={8192}
+                    value={voiceText}
+                    onChange={(event) => setVoiceText(event.target.value)}
+                  />
+                  <div className="composer-actions">
+                    <button
+                      type="button"
+                      className="small-button"
+                      data-character-voice-save
+                      disabled={voiceSaving || voiceClearing || voiceText.trim().length === 0}
+                      onClick={() => void handleSaveVoice()}
+                    >
+                      {voiceSaving ? labels.saving : labels.voiceSave}
+                    </button>
+                    <button
+                      type="button"
+                      className="small-button"
+                      data-character-voice-clear
+                      disabled={voiceSaving || voiceClearing}
+                      onClick={() => void handleClearVoice()}
+                    >
+                      {voiceClearing ? labels.saving : labels.voiceClear}
+                    </button>
+                  </div>
+                </>
+              ) : voiceAdding ? (
+                <>
+                  <label className="management-settings-label" htmlFor="character-voice-text">
+                    {labels.voiceText}
+                  </label>
+                  <textarea
+                    id="character-voice-text"
+                    className="form-textarea"
+                    rows={4}
+                    maxLength={8192}
+                    value={voiceText}
+                    onChange={(event) => setVoiceText(event.target.value)}
+                  />
+                  <div className="composer-actions">
+                    <button
+                      type="button"
+                      className="small-button"
+                      data-character-voice-save
+                      disabled={voiceSaving || voiceText.trim().length === 0}
+                      onClick={() => void handleSaveVoice()}
+                    >
+                      {voiceSaving ? labels.saving : labels.voiceSave}
+                    </button>
+                    <button
+                      type="button"
+                      className="small-button"
+                      data-character-voice-cancel
+                      disabled={voiceSaving}
+                      onClick={() => {
+                        setVoiceAdding(false);
+                        setVoiceText("");
+                        setVoiceNotice(null);
+                      }}
+                    >
+                      {labels.voiceCancel}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="composer-actions">
+                  <button
+                    type="button"
+                    className="small-button"
+                    data-character-voice-add
+                    onClick={() => {
+                      setVoiceAdding(true);
+                      setVoiceText("");
+                      setVoiceNotice(null);
+                    }}
+                  >
+                    {labels.voiceAdd}
+                  </button>
+                </div>
+              )}
               {voiceNotice !== null && (
                 <p
                   role="status"
@@ -451,18 +518,6 @@ export function CharactersPanel({
                 </p>
               )}
             </section>
-          )}
-          {/* A cleared directive reads as ABSENT: the editor is not rendered at all,
-              so no empty box is left behind (design/26 §1). The one status line below
-              is only the acknowledgement of the clear action itself. */}
-          {voice.kind === "ready" && voice.value.characterVoice === null && voiceNotice !== null && (
-            <p
-              role="status"
-              className={voiceNotice === "cleared" ? "success-banner" : "error-banner"}
-              data-character-voice-notice
-            >
-              {voiceNotice === "cleared" ? labels.voiceCleared : (voiceNotice as Readonly<{ failure: string }>).failure}
-            </p>
           )}
 
           {persona !== "unavailable" && (
@@ -622,9 +677,7 @@ export function CharactersPanel({
                           className="small-button"
                           disabled={openingVariants.length <= 1}
                           onClick={() =>
-                            setOpeningVariants((current) =>
-                              current.filter((_, itemIndex) => itemIndex !== index),
-                            )
+                            setOpeningVariants((current) => current.filter((_, itemIndex) => itemIndex !== index))
                           }
                         >
                           {labels.discard}
@@ -645,9 +698,7 @@ export function CharactersPanel({
                     <button
                       type="button"
                       className="small-button"
-                      disabled={
-                        openingSaving || openingVariants.every((variant) => variant.text.trim().length === 0)
-                      }
+                      disabled={openingSaving || openingVariants.every((variant) => variant.text.trim().length === 0)}
                       onClick={() => void handleSaveOpening()}
                     >
                       {openingSaving ? labels.saving : labels.openingSave}

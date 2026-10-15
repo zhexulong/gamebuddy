@@ -227,3 +227,55 @@ test("one-click clear removes the field, and a re-import of the same card does n
   await expect(surface.locator("[data-card-import-result=created]")).toContainText("Imported Nova.");
   await expect(surface.locator("#character-voice-text")).toHaveCount(0);
 });
+
+test("an absent directive keeps an entry point, and saving one sends the value", async ({ page }) => {
+  const calls = { puts: [] as Array<{ method: string; csrf: string | undefined; body: unknown }> };
+  // The Host reports no directive - the same read-back a clear leaves, or an
+  // imported card whose `system_prompt` was absent. Before this entry point
+  // existed the whole section was unrendered, so the player could never author
+  // one from this screen again.
+  await stubCharactersSurface(page, { profileRevision: 5, characterVoice: null }, calls);
+  await openCharactersSurface(page);
+
+  const surface = page.getByTestId("characters-surface");
+  const voice = surface.locator("[data-character-voice]");
+  await expect(voice).toBeVisible();
+  // Honesty: with no directive there is nothing to attribute, so no provenance
+  // line claims the card supplied one; and the editor is not left open as an
+  // empty box - the player asks for it.
+  await expect(voice.locator("[data-character-voice-source]")).toHaveCount(0);
+  await expect(surface.locator("#character-voice-text")).toHaveCount(0);
+
+  await voice.locator("[data-character-voice-add]").click();
+  await expect(surface.locator("#character-voice-text")).toBeVisible();
+  await surface.locator("#character-voice-text").fill("Start each line with the weather.");
+  await surface.locator("[data-character-voice-save]").click();
+
+  await expect.poll(() => calls.puts.length).toBe(1);
+  expect(calls.puts[0]?.body).toEqual({
+    apiVersion: 1,
+    expectedProfileRevision: 5,
+    text: "Start each line with the weather.",
+  });
+  expect(calls.puts[0]?.csrf).toBe(csrfToken);
+  // The Host re-reads it as the player's, so the editor now shows provenance.
+  await expect(voice.locator("[data-character-voice-source]")).toHaveText("Edited by you");
+});
+
+test("a present directive keeps its editor and offers no add entry", async ({ page }) => {
+  const calls = { puts: [] as Array<{ method: string; csrf: string | undefined; body: unknown }> };
+  await stubCharactersSurface(
+    page,
+    { profileRevision: 4, characterVoice: { text: "Stay in character.", source: "player" } },
+    calls,
+  );
+  await openCharactersSurface(page);
+
+  const surface = page.getByTestId("characters-surface");
+  const voice = surface.locator("[data-character-voice]");
+  await expect(voice.locator("[data-character-voice-source]")).toHaveText("Edited by you");
+  await expect(surface.locator("#character-voice-text")).toHaveValue("Stay in character.");
+  await expect(surface.locator("[data-character-voice-save]")).toBeVisible();
+  await expect(surface.locator("[data-character-voice-clear]")).toBeVisible();
+  await expect(surface.locator("[data-character-voice-add]")).toHaveCount(0);
+});

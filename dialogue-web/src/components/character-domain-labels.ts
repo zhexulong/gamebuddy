@@ -74,11 +74,14 @@ export type CharacterLabels = Readonly<{
 
   voiceTitle: string;
   voiceHint: string;
+  voiceEmptyHint: string;
   voiceFromCard: string;
   voiceEditedByYou: string;
   voiceText: string;
   voiceSave: string;
   voiceClear: string;
+  voiceAdd: string;
+  voiceCancel: string;
   voiceSaveFailed: string;
   voiceCleared: string;
 
@@ -188,11 +191,15 @@ const en: CharacterLabels = Object.freeze({
   voiceTitle: "Performance directive",
   voiceHint:
     "The card's own direction for how this companion performs, kept after the Host's floor. You can rewrite it or clear it; a cleared directive is absent from the prompt rather than empty.",
+  voiceEmptyHint:
+    "This companion has no performance directive yet. You can write one here; it is stored with her and used when she performs.",
   voiceFromCard: "From the card",
   voiceEditedByYou: "Edited by you",
   voiceText: "Directive",
   voiceSave: "Save directive",
   voiceClear: "Clear directive",
+  voiceAdd: "Add a performance directive",
+  voiceCancel: "Cancel",
   voiceSaveFailed: "Could not save the directive. It changed elsewhere; reload and retry.",
   voiceCleared: "Cleared.",
 
@@ -252,8 +259,7 @@ const zh: CharacterLabels = Object.freeze({
   discard: "丢弃",
 
   importTitle: "导入角色卡",
-  importHint:
-    "选择角色卡文件（.json 或 .png）。也可以在下方粘贴角色卡文本。文件在你的浏览器中读取，不会离开本机。",
+  importHint: "选择角色卡文件（.json 或 .png）。也可以在下方粘贴角色卡文本。文件在你的浏览器中读取，不会离开本机。",
   importFileLabel: "角色卡文件",
   importChooseFile: "选择角色卡文件",
   importPasteLabel: "粘贴角色卡文本",
@@ -276,7 +282,8 @@ const zh: CharacterLabels = Object.freeze({
   importFailedText: "该文件不是可读取的角色卡文本。",
   importFailedTooLarge: "该文件过大，无法导入（上限 2 MB）。",
   importReviewTitle: "导入前确认",
-  importReviewHint: "尚未导入任何内容。以下是 Host 从卡片中暂存的结果——将保留什么、无法使用什么；只有你确认后才会创建伙伴。",
+  importReviewHint:
+    "尚未导入任何内容。以下是 Host 从卡片中暂存的结果——将保留什么、无法使用什么；只有你确认后才会创建伙伴。",
   importReviewName: "卡片中的名称为 {{name}}。",
   importReviewWillKeep: "将保留 {{count}} 个卡片字段：{{fields}}。",
   importReviewConfirm: "导入此角色卡",
@@ -298,11 +305,14 @@ const zh: CharacterLabels = Object.freeze({
   voiceTitle: "演出指导",
   voiceHint:
     "卡片自带的演出指令，位于 Host 底层规则之后。你可以改写或清除；清除后提示词中不再出现该指令，而不是留下一段空文本。",
+  voiceEmptyHint: "这位同伴还没有演出指导。你可以在这里写一条；它会随她保存，并在她演出时用于提示词。",
   voiceFromCard: "来自卡片",
   voiceEditedByYou: "你已修改",
   voiceText: "指令内容",
   voiceSave: "保存指令",
   voiceClear: "清除指令",
+  voiceAdd: "添加演出指导",
+  voiceCancel: "取消",
   voiceSaveFailed: "无法保存指令。内容已在其他位置更改；请重新加载后再试。",
   voiceCleared: "已清除。",
 
