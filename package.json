@@ -19,6 +19,7 @@
     "typecheck:voice-protocol": "pnpm --dir vendor/pi-koe run typecheck:protocol",
     "test:voice-protocol": "pnpm --dir vendor/pi-koe run test:protocol",
     "lint": "node tools/scripts/check-lint-ratchet.mjs",
+    "pre-commit": "node tools/scripts/pre-commit.mjs",
     "lint:eslint": "eslint dialogue-web/src",
     "lint:ast-grep": "ast-grep scan --config sgconfig.yml dialogue-web/src",
     "format:check": "node tools/scripts/check-format-ratchet.mjs",
