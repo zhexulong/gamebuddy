@@ -16,7 +16,11 @@ import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
 import { ModelProfileStore } from "../settings/model-profile-store.js";
 import { PlayerPreferenceStore, playerPreferencePath } from "../settings/player-preference-store.js";
-import { type ComposedTavernProfile, composeTavernProfile } from "../tavern/browser-contract/index.js";
+import {
+  type ComposedTavernProfile,
+  composeReferenceTavernProfile,
+  composeTavernProfile,
+} from "../tavern/browser-contract/index.js";
 import {
   type ChatCreateResultV1,
   type ChatSelectResultV1,
@@ -45,7 +49,11 @@ import type { MemoryManagementService } from "../tavern/memory-management/memory
 import { createTavernConnectionService } from "../tavern/connection-service.js";
 import type { TavernManagementDialogueWebOptions } from "../tavern-management-dialogue-web.js";
 import type { TavernManagementDelegatedOptions } from "../tavern-management-dialogue-web.delegated.js";
-import { createReferencePipelineStateFacade, type ReferencePipelineStateFacade, type VoiceSurfaceReader } from "../tavern/reference-pipeline-state.js";
+import {
+  createReferencePipelineStateFacade,
+  type ReferencePipelineStateFacade,
+  type VoiceSurfaceReader,
+} from "../tavern/reference-pipeline-state.js";
 import { createWorldInfoBindingManagementService } from "../tavern/world-info-binding/world-info-binding-management-service.js";
 import type { WorldInfoBindingManagementService } from "../tavern/world-info-binding/world-info-binding-management-service.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
@@ -240,9 +248,7 @@ function createTavernManagementDomains(
   // the same durable `settings/model-profiles.json` the Chat and Game runtime
   // construction reads at mount, so a profile saved here is the exact profile
   // the next runtime for that surface is built with.
-  const modelProfileStore = new ModelProfileStore(
-    resolve(manifest.runtimeRoot, "settings", "model-profiles.json"),
-  );
+  const modelProfileStore = new ModelProfileStore(resolve(manifest.runtimeRoot, "settings", "model-profiles.json"));
   // The one Host-owned player preference record: the companion language the
   // runtimes read at mount and the cloud TTS consent/output, at the one
   // root-level path every settings surface reads and writes.
@@ -280,10 +286,7 @@ function createTavernManagementDomains(
     .catch(() => undefined);
   const libraryService = Object.freeze({
     async listCompanions() {
-      const [mountedName, companions] = await Promise.all([
-        mountedNamePromise,
-        libraryBase.listCompanions(),
-      ]);
+      const [mountedName, companions] = await Promise.all([mountedNamePromise, libraryBase.listCompanions()]);
       // The mounted companion is spliced in exactly once by its own
       // `companionId`; the library carries it too, so a plain concat renders the
       // current companion twice (same handle, same name).
@@ -418,17 +421,13 @@ function createTavernManagementDomains(
                 thread.companionId === manifest.principal.companionId &&
                 thread.continuityId === manifest.principal.continuityId &&
                 (thread.lifecycleStatus ?? "active") === "active" &&
-                lease.browserProjection.projectChatHandle(
-                  thread.chatThreadId,
-                  thread.chatSurfaceSessionId,
-                ) === command.chatHandle,
+                lease.browserProjection.projectChatHandle(thread.chatThreadId, thread.chatSurfaceSessionId) ===
+                  command.chatHandle,
             );
             if (target === undefined) throw new Error("chat_management_selection_conflict");
             const alreadySelected =
-              target.chatThreadId === lease.chatThreadId &&
-              target.chatSurfaceSessionId === lease.chatSurfaceSessionId;
-            if (alreadySelected)
-              return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "switched" });
+              target.chatThreadId === lease.chatThreadId && target.chatSurfaceSessionId === lease.chatSurfaceSessionId;
+            if (alreadySelected) return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "switched" });
             let status: ChatSelectResultV1["status"];
             try {
               status = (
@@ -525,12 +524,13 @@ export async function startDesktopPresentationAdmission(
   input: DesktopPresentationAdmissionInput,
 ): Promise<DesktopPresentationAdmission> {
   const tavernProfile = composeReferenceTavernProfile();
-  const profile = input.presentation === undefined
-    ? composeReferenceGameBrowserProfile({ tavernProfile })
-    : composeReferenceGameBrowserProfile({
-        tavernProfile,
-        gameProfile: input.presentation.gameProfile,
-      });
+  const profile =
+    input.presentation === undefined
+      ? composeReferenceGameBrowserProfile({ tavernProfile })
+      : composeReferenceGameBrowserProfile({
+          tavernProfile,
+          gameProfile: input.presentation.gameProfile,
+        });
   const inspector = input.inspector ?? (await createPublishedWindowsReparseInspector(input.hostArtifactRoot));
   const managementProfile = composeTavernManagementProfile();
   let lane: ChatLane | undefined;
@@ -588,11 +588,7 @@ export async function startDesktopPresentationAdmission(
     });
     const owned: { close(): Promise<void> }[] = [];
     try {
-      const worldInfoService = createTavernManagedWorldInfoService(
-        input.manifest,
-        lease,
-        managementProfile,
-      );
+      const worldInfoService = createTavernManagedWorldInfoService(input.manifest, lease, managementProfile);
       owned.push(worldInfoService);
       const { domains, owned: domainOwned } = createTavernManagementDomains(
         input.manifest,
@@ -628,9 +624,7 @@ export async function startDesktopPresentationAdmission(
               }),
             }),
         connectionService,
-        ...(input.listVoiceOutputDevices === undefined
-          ? {}
-          : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
+        ...(input.listVoiceOutputDevices === undefined ? {} : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
       });
       return Object.freeze({
         referenceStateFacade,
@@ -675,6 +669,11 @@ export async function startDesktopPresentationAdmission(
       currentLane().pipelineService.submitAfterResponseCommit(command, idempotencyKey, commit202),
     readSubmissionStatus: (query) => currentLane().pipelineService.readSubmissionStatus(query),
     cancel: (turnHandle, command) => currentLane().pipelineService.cancel(turnHandle, command),
+    // Swipe selection and Regenerate are Chat-owned mutations the reference surface serves through
+    // the same lane-swapped service: the delegated dispatcher must reach the current lane's own
+    // implementation rather than a snapshot taken at admission time.
+    selectSwipe: (command) => currentLane().pipelineService.selectSwipe!(command),
+    regenerate: (command, idempotencyKey) => currentLane().pipelineService.regenerate!(command, idempotencyKey),
     close: async () => undefined,
   });
   const stableManagementOptions = createStableManagementOptions(currentLane);
@@ -781,11 +780,8 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
  * turn-level Chat switch replaces every thread-scoped service while the shell's
  * delegated dispatcher stays exactly where it was.
  */
-function createStableManagementOptions(
-  current: () => ChatLane,
-): Omit<TavernManagementDelegatedOptions, "capability"> {
-  const laneOptions = (): Record<string, unknown> =>
-    current().management as unknown as Record<string, unknown>;
+function createStableManagementOptions(current: () => ChatLane): Omit<TavernManagementDelegatedOptions, "capability"> {
+  const laneOptions = (): Record<string, unknown> => current().management as unknown as Record<string, unknown>;
   const sample = laneOptions();
   const stable: Record<string, unknown> = { profile: sample.profile };
   for (const [serviceName, methods] of Object.entries(LANE_SERVICE_METHODS)) {
@@ -795,7 +791,7 @@ function createStableManagementOptions(
       const member = (laneOptions()[serviceName] as Record<string, unknown> | undefined)?.[method];
       if (typeof member !== "function") continue;
       forwarded[method] = (...args: unknown[]) =>
-        ((laneOptions()[serviceName] as Record<string, (...callArgs: unknown[]) => unknown>)[method]!)(...args);
+        (laneOptions()[serviceName] as Record<string, (...callArgs: unknown[]) => unknown>)[method]!(...args);
     }
     stable[serviceName] = Object.freeze(forwarded);
   }
@@ -804,29 +800,6 @@ function createStableManagementOptions(
   if (typeof sample.listVoiceOutputDevices === "function")
     stable.listVoiceOutputDevices = () => current().management.listVoiceOutputDevices!();
   return Object.freeze(stable) as Omit<TavernManagementDelegatedOptions, "capability">;
-}
-
-/**
- * The one Chat surface the single browser presentation serves. The composed
- * surface contract fixes this exact identity, so the declaration lives here
- * rather than in an operator-, bootstrap-, or browser-selected input.
- */
-function composeReferenceTavernProfile(): ComposedTavernProfile {
-  return composeTavernProfile({
-    profileId: "gamebuddy.chat-core.reference-pipeline",
-    releaseTier: "chat_core",
-    routeIds: [
-      "bootstrap",
-      "state.read",
-      "draft.read",
-      "chat.submit",
-      "chat.cancel",
-      "chat.submission_status",
-      "events",
-    ],
-    operationIds: ["chat.submit", "chat.cancel"],
-    navigationItemIds: ["chat"],
-  });
 }
 
 /**
@@ -943,7 +916,6 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
     navigationItemIds: ["chat", "memory", "characters"],
   });
 }
-
 
 /**
  * The one bounded vocabulary a failed New Chat may report: a durable storage

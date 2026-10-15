@@ -2,9 +2,9 @@ import { type Static, type TSchema, Type } from "typebox";
 import { Compile, type Validator } from "typebox/compile";
 import {
   type ComposedTavernProfile,
-  type TavernReleaseTierV1,
   TavernStateSnapshotV1Schema,
   isComposedTavernProfile,
+  referenceTavernProfileFitsCanonicalGroups,
   TavernBrowserFixtureV1,
 } from "../tavern/browser-contract/index.js";
 import {
@@ -20,21 +20,13 @@ export const COMPOSED_REFERENCE_GAME_BROWSER_API_V1 = "composed_reference_game_b
 const COMPOSED_REFERENCE_GAME_BROWSER_API_VERSION = 1 as const;
 export const COMPOSED_REFERENCE_PROFILE_ID = "gamebuddy.composed.reference-game" as const;
 
-// ─── Reference identity constants ───────────────────────────────────────────
+// ─── Reference identity ─────────────────────────────────────────────────────
 
-const REFERENCE_TAVERN_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline";
-const REFERENCE_TAVERN_RELEASE_TIER: TavernReleaseTierV1 = "chat_core";
-const REFERENCE_TAVERN_ROUTE_IDS: readonly string[] = [
-  "bootstrap",
-  "state.read",
-  "draft.read",
-  "chat.submit",
-  "chat.cancel",
-  "chat.submission_status",
-  "events",
-];
-const REFERENCE_TAVERN_OPERATION_IDS: readonly string[] = ["chat.submit", "chat.cancel"];
-const REFERENCE_TAVERN_NAVIGATION_ITEM_IDS: readonly string[] = ["chat"];
+/**
+ * The reference Tavern capability slice is the one published by the Tavern browser contract itself
+ * (`composeReferenceTavernProfile` / `referenceTavernProfileFitsCanonicalGroups`), so this composed
+ * surface holds no second copy of its route list to drift from.
+ */
 
 // ─── Strict object helper ───────────────────────────────────────────────────
 
@@ -70,10 +62,10 @@ const composedReferenceGameBrowserProfiles = new WeakSet<object>();
  *
  * Tavern profile validation:
  * - Must be a branded `ComposedTavernProfile` (from `composeTavernProfile`).
- * - Must match the exact reference identity: profileId
- *   `gamebuddy.chat-core.reference-pipeline`, releaseTier `chat_core`,
- *   ordered routeIds `[bootstrap,state.read,draft.read,chat.submit,chat.cancel,chat.submission_status,events]`,
- *   operationIds `[chat.submit,chat.cancel]`, navigationItemIds `[chat]`.
+ * - Must match the exact reference identity published by the Tavern browser
+ *   contract: `gamebuddy.chat-core.reference-pipeline`, release tier `chat_core`,
+ *   its canonical route/operation/navigation groups, and the one production
+ *   declaration `composeReferenceTavernProfile`.
  *
  * Game profile validation (when provided):
  * - Must be a branded `ComposedGameProfile` (from `composeGameProfile`).
@@ -97,7 +89,8 @@ export function composeReferenceGameBrowserProfile(input: unknown): ComposedRefe
   const descriptors = Object.getOwnPropertyDescriptors(value);
 
   // Must have at least tavernProfile; at most tavernProfile + gameProfile.
-  if (keys.length < 1 || keys.length > 2) throw new TypeError("Composed profile input must have tavernProfile and optional gameProfile");
+  if (keys.length < 1 || keys.length > 2)
+    throw new TypeError("Composed profile input must have tavernProfile and optional gameProfile");
   if (!keys.includes("tavernProfile")) throw new TypeError("Composed profile input must include tavernProfile");
 
   for (const key of keys) {
@@ -115,24 +108,16 @@ export function composeReferenceGameBrowserProfile(input: unknown): ComposedRefe
   }
 
   // Validate tavernProfile is branded and matches exact reference identity.
-  if (!isComposedTavernProfile(value.tavernProfile))
-    throw new TypeError("Tavern profile is not a composed profile");
+  if (!isComposedTavernProfile(value.tavernProfile)) throw new TypeError("Tavern profile is not a composed profile");
 
   const tavernProfile = value.tavernProfile as ComposedTavernProfile;
-  if (
-    tavernProfile.profileId !== REFERENCE_TAVERN_PROFILE_ID ||
-    tavernProfile.releaseTier !== REFERENCE_TAVERN_RELEASE_TIER ||
-    !sameOrderedValues(tavernProfile.routeIds, REFERENCE_TAVERN_ROUTE_IDS) ||
-    !sameOrderedValues(tavernProfile.operationIds, REFERENCE_TAVERN_OPERATION_IDS) ||
-    !sameOrderedValues(tavernProfile.navigationItemIds, REFERENCE_TAVERN_NAVIGATION_ITEM_IDS)
-  )
+  if (!referenceTavernProfileFitsCanonicalGroups(tavernProfile))
     throw new TypeError("Tavern profile is not the exact reference profile");
 
   // Validate gameProfile if provided.
   let gameProfile: ComposedGameProfile | null = null;
   if (value.gameProfile !== undefined) {
-    if (!isComposedGameProfile(value.gameProfile))
-      throw new TypeError("Game profile is not a composed profile");
+    if (!isComposedGameProfile(value.gameProfile)) throw new TypeError("Game profile is not a composed profile");
     gameProfile = value.gameProfile as ComposedGameProfile;
     if (!gameProfile.operationIds.includes("game.state.read"))
       throw new TypeError("Game profile must include game.state.read");
@@ -210,9 +195,3 @@ export const ComposedReferenceGameBrowserFixtureV1 = Object.freeze({
       game: GameBrowserFixtureV1.state(),
     }),
 });
-
-// ─── Private helpers ────────────────────────────────────────────────────────
-
-function sameOrderedValues(values: readonly string[], expected: readonly string[]): boolean {
-  return values.length === expected.length && values.every((value, index) => value === expected[index]);
-}

@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Compile } from "typebox/compile";
 import {
   type ComposedTavernProfile,
+  type RegenerateMessageCommandV1,
+  type SwipeSelectCommandV1,
   TavernBrowserContractV1,
   TavernBrowserValidatorsV1,
 } from "./tavern/browser-contract/index.js";
@@ -9,9 +11,9 @@ import type { ChatEventStream } from "./tavern/chat-event-stream.js";
 import type { ChatPipelineService } from "./tavern/chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
 import {
-	MAX_BOOTSTRAP_BODY_BYTES,
-	MAX_TAVERN_MESSAGE_BODY_BYTES,
-	assertReferenceProfile,
+  MAX_BOOTSTRAP_BODY_BYTES,
+  MAX_TAVERN_MESSAGE_BODY_BYTES,
+  assertReferenceProfile,
   hasRequestBody,
   isBrowserSameOriginRead,
   isExactLoopbackHost,
@@ -89,12 +91,13 @@ export function createReferencePipelineDialogueWebDelegatedHandler(
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const context = verifyComposedReferenceGameBrowserAuth(capability, request, origin);
         if (context === null) return sendProblem(response, 401, "unauthorized");
-        if (!checkComposedReferenceGameBrowserAuthCsrf(context, request)) return sendProblem(response, 403, "csrf_failed");
-     			const idempotencyKey = singleHeader(request.headers["idempotency-key"]);
-			if (!isIdempotencyKey(idempotencyKey)) return sendProblem(response, 400, "invalid_request");
-			// The message route carries the player's own text, so its ceiling is the contract's text
-			// limit with JSON-escaping headroom - never the bootstrap request's 4 KiB.
-			const body = await readJsonBody(request, MAX_TAVERN_MESSAGE_BODY_BYTES);
+        if (!checkComposedReferenceGameBrowserAuthCsrf(context, request))
+          return sendProblem(response, 403, "csrf_failed");
+        const idempotencyKey = singleHeader(request.headers["idempotency-key"]);
+        if (!isIdempotencyKey(idempotencyKey)) return sendProblem(response, 400, "invalid_request");
+        // The message route carries the player's own text, so its ceiling is the contract's text
+        // limit with JSON-escaping headroom - never the bootstrap request's 4 KiB.
+        const body = await readJsonBody(request, MAX_TAVERN_MESSAGE_BODY_BYTES);
         const route = TavernBrowserContractV1.routes.find((entry) => entry.routeId === "chat.submit");
         if (route === undefined || !("request" in route) || !Compile(route.request).Check(body))
           return sendProblem(response, 400, "invalid_request");
@@ -112,11 +115,51 @@ export function createReferencePipelineDialogueWebDelegatedHandler(
           throw new Error("chat_pipeline_service_unavailable");
         return;
       }
-      if (request.method === "POST" && /^\/api\/tavern\/v1\/turns\/[A-Za-z0-9_-]{22,128}\/cancel$/u.test(url.pathname)) {
+      if (request.method === "POST" && url.pathname === "/api/tavern/v1/messages/swipe") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const context = verifyComposedReferenceGameBrowserAuth(capability, request, origin);
         if (context === null) return sendProblem(response, 401, "unauthorized");
-        if (!checkComposedReferenceGameBrowserAuthCsrf(context, request)) return sendProblem(response, 403, "csrf_failed");
+        if (!checkComposedReferenceGameBrowserAuthCsrf(context, request))
+          return sendProblem(response, 403, "csrf_failed");
+        const body = await readJsonBody(request, MAX_BOOTSTRAP_BODY_BYTES);
+        const route = TavernBrowserContractV1.routes.find((entry) => entry.routeId === "chat.swipe");
+        if (route === undefined || !("request" in route) || !Compile(route.request).Check(body))
+          return sendProblem(response, 400, "invalid_request");
+        if (pipelineService === undefined || pipelineService.selectSwipe === undefined)
+          return sendProblem(response, 503, "runtime_unavailable");
+        const result = await pipelineService.selectSwipe(body as SwipeSelectCommandV1);
+        if (!TavernBrowserValidatorsV1.SwipeSelectResultV1Schema.Check(result))
+          throw new Error("chat_pipeline_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      if (request.method === "POST" && url.pathname === "/api/tavern/v1/messages/regenerate") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const context = verifyComposedReferenceGameBrowserAuth(capability, request, origin);
+        if (context === null) return sendProblem(response, 401, "unauthorized");
+        if (!checkComposedReferenceGameBrowserAuthCsrf(context, request))
+          return sendProblem(response, 403, "csrf_failed");
+        const idempotencyKey = singleHeader(request.headers["idempotency-key"]);
+        if (!isIdempotencyKey(idempotencyKey)) return sendProblem(response, 400, "invalid_request");
+        const body = await readJsonBody(request, MAX_BOOTSTRAP_BODY_BYTES);
+        const route = TavernBrowserContractV1.routes.find((entry) => entry.routeId === "chat.regenerate");
+        if (route === undefined || !("request" in route) || !Compile(route.request).Check(body))
+          return sendProblem(response, 400, "invalid_request");
+        if (pipelineService === undefined || pipelineService.regenerate === undefined)
+          return sendProblem(response, 503, "runtime_unavailable");
+        const result = await pipelineService.regenerate(body as RegenerateMessageCommandV1, idempotencyKey);
+        if (!TavernBrowserValidatorsV1.SubmitResultV1Schema.Check(result))
+          throw new Error("chat_pipeline_service_unavailable");
+        return sendJson(response, 202, result);
+      }
+      if (
+        request.method === "POST" &&
+        /^\/api\/tavern\/v1\/turns\/[A-Za-z0-9_-]{22,128}\/cancel$/u.test(url.pathname)
+      ) {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const context = verifyComposedReferenceGameBrowserAuth(capability, request, origin);
+        if (context === null) return sendProblem(response, 401, "unauthorized");
+        if (!checkComposedReferenceGameBrowserAuthCsrf(context, request))
+          return sendProblem(response, 403, "csrf_failed");
         const body = await readJsonBody(request, MAX_BOOTSTRAP_BODY_BYTES);
         const route = TavernBrowserContractV1.routes.find((entry) => entry.routeId === "chat.cancel");
         if (route === undefined || !("request" in route) || !Compile(route.request).Check(body))
@@ -130,7 +173,8 @@ export function createReferencePipelineDialogueWebDelegatedHandler(
         );
         if (!TavernBrowserValidatorsV1.BrowserTurnV1Schema.Check(turn))
           throw new Error("chat_pipeline_service_unavailable");
-        const disposition = turn.state === "cancelled" ? "cancelled" : turn.state === "completed" ? "completion_won" : "already_terminal";
+        const disposition =
+          turn.state === "cancelled" ? "cancelled" : turn.state === "completed" ? "completion_won" : "already_terminal";
         const result = Object.freeze({ apiVersion: 1 as const, disposition, turn });
         if (!TavernBrowserValidatorsV1.CancelTurnResultV1Schema.Check(result))
           throw new Error("chat_pipeline_service_unavailable");
@@ -155,7 +199,10 @@ export function createReferencePipelineDialogueWebDelegatedHandler(
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/events") {
         if (url.searchParams.has("unexpected") || (await hasRequestBody(request)))
           return sendProblem(response, 400, "invalid_request");
-        if (!isBrowserSameOriginRead(request, origin) || verifyComposedReferenceGameBrowserAuth(capability, request, origin) === null)
+        if (
+          !isBrowserSameOriginRead(request, origin) ||
+          verifyComposedReferenceGameBrowserAuth(capability, request, origin) === null
+        )
           return sendProblem(response, 401, "unauthorized");
         if (eventStream === undefined) return sendProblem(response, 404, "profile_operation_unavailable");
         const apiVersion = url.searchParams.get("apiVersion");

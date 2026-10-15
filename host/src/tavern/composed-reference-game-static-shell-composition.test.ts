@@ -27,8 +27,14 @@ import {
   type GameStopCommandV1,
   type StardewCabinConfirmCommandV1,
 } from "../game-browser-contract/index.js";
-import { composeTavernProfile, TavernBrowserFixtureV1 } from "./browser-contract/index.js";
+import {
+  composeReferenceTavernProfile,
+  composeTavernProfile,
+  TavernBrowserFixtureV1,
+} from "./browser-contract/index.js";
 import { createChatEventStream } from "./chat-event-stream.js";
+import type { ChatPipelineService, SubmitResultV1 } from "./chat-pipeline-service.js";
+import type { ReferencePipelineStateFacade } from "./reference-pipeline-state.js";
 import { createTestWindowsReparseInspector } from "../windows-reparse-inspector/index.test-support.js";
 import {
   startComposedReferenceGameStaticShellComposition,
@@ -51,7 +57,14 @@ const discoveryProfile = composeReferenceGameBrowserProfile({
   gameProfile: composeGameProfile({
     profileId: "gamebuddy.game.preview",
     releaseTier: "game_preview",
-    operationIds: ["game.state.read", "game.installation.discovery.read", "game.installation.discovery.confirm", "game.installation.discovery.retry", "game.installation.discovery.cancel", "game.installation.discovery.manual_picker"],
+    operationIds: [
+      "game.state.read",
+      "game.installation.discovery.read",
+      "game.installation.discovery.confirm",
+      "game.installation.discovery.retry",
+      "game.installation.discovery.cancel",
+      "game.installation.discovery.manual_picker",
+    ],
     navigationItemIds: ["game"],
   }),
 });
@@ -60,7 +73,13 @@ const cabinProfile = composeReferenceGameBrowserProfile({
   gameProfile: composeGameProfile({
     profileId: "gamebuddy.game.preview",
     releaseTier: "game_preview",
-    operationIds: ["game.state.read", "game.prerequisites.setup", "game.stop", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
+    operationIds: [
+      "game.state.read",
+      "game.prerequisites.setup",
+      "game.stop",
+      "game.stardew.cabins.read",
+      "game.stardew.cabins.confirm",
+    ],
     navigationItemIds: ["game"],
   }),
 });
@@ -112,11 +131,7 @@ const fakeFacade = Object.freeze({
 async function artifactFixture(): Promise<{ root: string; dispose(): Promise<void> }> {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-composed-shell-"));
   await mkdir(join(root, "assets"));
-  await writeFile(
-    join(root, "index.html"),
-    '<!doctype html><script src="/assets/app-abcdef12.js"></script>',
-    "utf8",
-  );
+  await writeFile(join(root, "index.html"), '<!doctype html><script src="/assets/app-abcdef12.js"></script>', "utf8");
   await writeFile(join(root, "assets", "app-abcdef12.js"), script);
   await writeFile(
     join(root, "tavern-browser-artifact-manifest.json"),
@@ -155,6 +170,97 @@ function inspector() {
   });
 }
 
+test("composed shell serves the production profile's Swipe and Regenerate over the one listener", async () => {
+  const fixture = await artifactFixture();
+  const swipeMessage = {
+    handle,
+    role: "companion" as const,
+    text: "variant two",
+    locale: "en" as const,
+    order: 0,
+    revision: 1,
+  };
+  const regenerated: SubmitResultV1 = Object.freeze({
+    apiVersion: 1,
+    disposition: "accepted",
+    message: Object.freeze({ handle, role: "companion", text: "regenerated", locale: "en", order: 1, revision: 1 }),
+    turn: Object.freeze({ handle, state: "queued", projectionRevision: 1, canCancel: false }),
+  });
+  const recorder = { swipes: 0, regenerations: 0 };
+  const pipelineService = Object.freeze({
+    async submitAfterResponseCommit() {
+      throw new Error("not_used");
+    },
+    async readSubmissionStatus() {
+      throw new Error("not_used");
+    },
+    async cancel() {
+      throw new Error("not_used");
+    },
+    async selectSwipe() {
+      recorder.swipes += 1;
+      return Object.freeze({ apiVersion: 1 as const, message: Object.freeze(swipeMessage) });
+    },
+    async regenerate() {
+      recorder.regenerations += 1;
+      return regenerated;
+    },
+    async close() {},
+  }) as unknown as ChatPipelineService;
+  const server = await startComposedReferenceGameStaticShellComposition({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile: composeReferenceTavernProfile() }),
+    bootstrapToken: token,
+    referenceStateFacade: fakeFacade as unknown as ReferencePipelineStateFacade,
+    pipelineService,
+    eventStream,
+    artifactRoot: fixture.root,
+    inspector: inspector(),
+  });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    assert.equal(bootstrap.status, 200);
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = await bootstrap.json();
+
+    const swipe = await fetch(`${server.origin}/api/tavern/v1/messages/swipe`, {
+      method: "POST",
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": root.chat.csrfToken,
+      },
+      body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, messageHandle: handle, direction: "next" }),
+    });
+    const swipeBody = await swipe.text();
+    assert.equal(swipe.status, 200, `swipe must be served, got ${swipe.status} ${swipeBody}`);
+    assert.deepEqual(JSON.parse(swipeBody), { apiVersion: 1, message: swipeMessage });
+
+    const regenerate = await fetch(`${server.origin}/api/tavern/v1/messages/regenerate`, {
+      method: "POST",
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": root.chat.csrfToken,
+        "Idempotency-Key": "A".repeat(22),
+      },
+      body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, messageHandle: handle }),
+    });
+    const regenerateBody = await regenerate.text();
+    assert.equal(regenerate.status, 202, `regenerate must be served, got ${regenerate.status} ${regenerateBody}`);
+    assert.deepEqual(JSON.parse(regenerateBody), regenerated);
+    assert.deepEqual(recorder, { swipes: 1, regenerations: 1 });
+  } finally {
+    await server.close();
+    await fixture.dispose();
+  }
+});
+
 test("composed shell serves static artifact and composed broker on one origin", async () => {
   const fixture = await artifactFixture();
   const server = await startComposedReferenceGameStaticShellComposition({
@@ -166,7 +272,12 @@ test("composed shell serves static artifact and composed broker on one origin", 
     inspector: inspector(),
   });
   try {
-    assert.match(server.launchUrl, new RegExp(`^${server.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/#profile=composed-reference-game&boot=${token}$`));
+    assert.match(
+      server.launchUrl,
+      new RegExp(
+        `^${server.origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/#profile=composed-reference-game&boot=${token}$`,
+      ),
+    );
     // Static artifact serves the shell.
     const shell = await fetch(`${server.origin}/`);
     assert.equal(shell.status, 200);
@@ -317,51 +428,37 @@ test("composed shell mounts lifecycle cabin callbacks and close prevents later d
   let setupCalls = 0;
   let stopCalls = 0;
   const lifecycleSink = Object.freeze({
-    bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) { issuer = value; },
+    bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) {
+      issuer = value;
+    },
     async readCabinChoices(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) {
       readCalls += 1;
-      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
-        issuer!,
-        admission,
-        "cabin_read",
-        () => ({
-          apiVersion: 1 as const,
-          choices: [{
+      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "cabin_read", () => ({
+        apiVersion: 1 as const,
+        choices: [
+          {
             displayLabel: "Cabin 1",
             availability: "available" as const,
             choiceHandle,
             expiresAtMs: Date.now() + 60_000,
-          }],
-        }),
-      )!;
+          },
+        ],
+      }))!;
     },
     async setupPlayerHost(
       admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
       command: Readonly<{ apiVersion: 1; idempotencyKey: string }>,
     ) {
       setupCalls += 1;
-      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
-        issuer!,
-        admission,
-        "game_setup",
-        () => {
-          assert.deepEqual(command, { apiVersion: 1, idempotencyKey });
-        },
-      );
+      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "game_setup", () => {
+        assert.deepEqual(command, { apiVersion: 1, idempotencyKey });
+      });
     },
-    async stopGame(
-      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-      command: GameStopCommandV1,
-    ) {
+    async stopGame(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission, command: GameStopCommandV1) {
       stopCalls += 1;
-      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
-        issuer!,
-        admission,
-        "game_stop",
-        () => {
-          assert.deepEqual(command, { apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1 });
-        },
-      );
+      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "game_stop", () => {
+        assert.deepEqual(command, { apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1 });
+      });
     },
     async confirmCabinChoice(
       admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
@@ -477,25 +574,36 @@ test("composed shell rejects partial cabin callback mounts before listener start
   const fixture = await artifactFixture();
   try {
     for (const lifecycleActivationBindingSink of [
-      { bindBrowserAdmissionIssuer() {}, async readCabinChoices() { return { apiVersion: 1 as const, choices: [] }; } },
-      { bindBrowserAdmissionIssuer() {}, async confirmCabinChoice() { return { apiVersion: 1 as const, status: "manifest_admitted" as const }; } },
+      {
+        bindBrowserAdmissionIssuer() {},
+        async readCabinChoices() {
+          return { apiVersion: 1 as const, choices: [] };
+        },
+      },
+      {
+        bindBrowserAdmissionIssuer() {},
+        async confirmCabinChoice() {
+          return { apiVersion: 1 as const, status: "manifest_admitted" as const };
+        },
+      },
     ]) {
       await assert.rejects(
-        () => startComposedReferenceGameStaticShellComposition({
-          profile: cabinProfile,
-          bootstrapToken: token,
-          referenceStateFacade: fakeFacade as any,
-          eventStream,
-          readGame: async (context) => ({
-            ...GameBrowserFixtureV1.state(),
-            csrfToken: context.csrfToken,
-            browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
-            build: { ...GameBrowserFixtureV1.state().build, profileId: cabinProfile.gameProfile!.profileId },
+        () =>
+          startComposedReferenceGameStaticShellComposition({
+            profile: cabinProfile,
+            bootstrapToken: token,
+            referenceStateFacade: fakeFacade as any,
+            eventStream,
+            readGame: async (context) => ({
+              ...GameBrowserFixtureV1.state(),
+              csrfToken: context.csrfToken,
+              browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+              build: { ...GameBrowserFixtureV1.state().build, profileId: cabinProfile.gameProfile!.profileId },
+            }),
+            artifactRoot: fixture.root,
+            inspector: inspector(),
+            lifecycleActivationBindingSink: lifecycleActivationBindingSink as any,
           }),
-          artifactRoot: fixture.root,
-          inspector: inspector(),
-          lifecycleActivationBindingSink: lifecycleActivationBindingSink as any,
-        }),
         /composed_reference_game_cabin_operations_mismounted/,
       );
     }
@@ -510,24 +618,109 @@ test("composed shell wires all discovery callbacks through authenticated HTTP", 
   const calls: string[] = [];
   let issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer | undefined;
   const discovery = {
-    read: async (admission: any) => { calls.push("read"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_read", () => ({ apiVersion: 1 as const, candidates: [], diagnostics: [] }))!; },
-    confirm: async (admission: any, command: any) => { calls.push("confirm"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_confirm", () => { assert.deepEqual(command, { apiVersion: 1, candidateId }); return { apiVersion: 1 as const, status: "registered" as const }; })!; },
-    retry: async (admission: any) => { calls.push("retry"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_retry", () => ({ apiVersion: 1 as const, candidates: [], diagnostics: [] }))!; },
-    cancel: async (admission: any) => { calls.push("cancel"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_cancel", () => ({ apiVersion: 1 as const, status: "cancelled" as const }))!; },
-    manualPicker: async (admission: any) => { calls.push("manual-picker"); return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer!, admission, "discovery_picker", () => ({ apiVersion: 1 as const, status: "accepted" as const }))!; },
+    read: async (admission: any) => {
+      calls.push("read");
+      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "discovery_read",
+        () => ({ apiVersion: 1 as const, candidates: [], diagnostics: [] }),
+      )!;
+    },
+    confirm: async (admission: any, command: any) => {
+      calls.push("confirm");
+      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "discovery_confirm",
+        () => {
+          assert.deepEqual(command, { apiVersion: 1, candidateId });
+          return { apiVersion: 1 as const, status: "registered" as const };
+        },
+      )!;
+    },
+    retry: async (admission: any) => {
+      calls.push("retry");
+      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "discovery_retry",
+        () => ({ apiVersion: 1 as const, candidates: [], diagnostics: [] }),
+      )!;
+    },
+    cancel: async (admission: any) => {
+      calls.push("cancel");
+      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "discovery_cancel",
+        () => ({ apiVersion: 1 as const, status: "cancelled" as const }),
+      )!;
+    },
+    manualPicker: async (admission: any) => {
+      calls.push("manual-picker");
+      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "discovery_picker",
+        () => ({ apiVersion: 1 as const, status: "accepted" as const }),
+      )!;
+    },
   };
-  const sink = { bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) { issuer = value; }, gameDiscovery: discovery };
-  const server = await startComposedReferenceGameStaticShellComposition({ profile: discoveryProfile, bootstrapToken: token, referenceStateFacade: fakeFacade as any, eventStream, readGame: async (context) => ({ ...GameBrowserFixtureV1.state(), csrfToken: context.csrfToken, browserSession: { expiresAtMs: context.browserSessionExpiresAtMs }, build: { ...GameBrowserFixtureV1.state().build, profileId: discoveryProfile.gameProfile!.profileId } }), artifactRoot: fixture.root, inspector: inspector(), lifecycleActivationBindingSink: sink as any });
+  const sink = {
+    bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) {
+      issuer = value;
+    },
+    gameDiscovery: discovery,
+  };
+  const server = await startComposedReferenceGameStaticShellComposition({
+    profile: discoveryProfile,
+    bootstrapToken: token,
+    referenceStateFacade: fakeFacade as any,
+    eventStream,
+    readGame: async (context) => ({
+      ...GameBrowserFixtureV1.state(),
+      csrfToken: context.csrfToken,
+      browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+      build: { ...GameBrowserFixtureV1.state().build, profileId: discoveryProfile.gameProfile!.profileId },
+    }),
+    artifactRoot: fixture.root,
+    inspector: inspector(),
+    lifecycleActivationBindingSink: sink as any,
+  });
   try {
-    const bootstrap = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json" }, body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }) });
-    const root = await bootstrap.json(); const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const bootstrap = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    const root = await bootstrap.json();
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
     const readHeaders = { Origin: server.origin, Cookie: cookie };
-    const mutationHeaders = { Origin: server.origin, Cookie: cookie, "X-CSRF-Token": root.chat.csrfToken, "Content-Type": "application/json" };
+    const mutationHeaders = {
+      Origin: server.origin,
+      Cookie: cookie,
+      "X-CSRF-Token": root.chat.csrfToken,
+      "Content-Type": "application/json",
+    };
     const base = `${server.origin}/api/composed-reference-game/v1/game/installation/discovery`;
     assert.equal((await fetch(base, { headers: readHeaders })).status, 200);
-    for (const [path, body] of [["confirm", { apiVersion: 1, candidateId }], ["retry", { apiVersion: 1 }], ["cancel", { apiVersion: 1 }], ["manual-picker", { apiVersion: 1 }]] as const) assert.equal((await fetch(`${base}/${path}`, { method: "POST", headers: mutationHeaders, body: JSON.stringify(body) })).status, 200);
+    for (const [path, body] of [
+      ["confirm", { apiVersion: 1, candidateId }],
+      ["retry", { apiVersion: 1 }],
+      ["cancel", { apiVersion: 1 }],
+      ["manual-picker", { apiVersion: 1 }],
+    ] as const)
+      assert.equal(
+        (await fetch(`${base}/${path}`, { method: "POST", headers: mutationHeaders, body: JSON.stringify(body) }))
+          .status,
+        200,
+      );
     assert.deepEqual(calls, ["read", "confirm", "retry", "cancel", "manual-picker"]);
-  } finally { await server.close(); await fixture.dispose(); }
+  } finally {
+    await server.close();
+    await fixture.dispose();
+  }
 });
 
 test("composed shell mounts game.launch to the lifecycle owner and returns 204", async () => {
@@ -542,7 +735,9 @@ test("composed shell mounts game.launch to the lifecycle owner and returns 204",
   let calls = 0;
   let consumedCommand: GameLaunchCommandV1 | undefined;
   const lifecycleSink = Object.freeze({
-    bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) { issuer = value; },
+    bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) {
+      issuer = value;
+    },
     async launchPlayerHost(
       admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
       receivedCommand: GameLaunchCommandV1,
@@ -626,7 +821,9 @@ test("composed shell dispatches the lifecycle activation route to the mounted ow
     artifactRoot: fixture.root,
     inspector: inspector(),
     lifecycleActivationBindingSink: Object.freeze({
-      bindBrowserAdmissionIssuer(issuer: object) { bound = issuer; },
+      bindBrowserAdmissionIssuer(issuer: object) {
+        bound = issuer;
+      },
       async activate(admission) {
         activations += 1;
         const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
@@ -658,7 +855,12 @@ test("composed shell dispatches the lifecycle activation route to the mounted ow
     const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/lifecycle/activate`, {
       method: "POST",
-      headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": root.chat.csrfToken },
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": root.chat.csrfToken,
+      },
     });
     assert.equal(response.status, 204);
     assert.equal(await response.text(), "");
@@ -709,7 +911,9 @@ test("composed shell does not listen when private lifecycle issuer binding fails
         artifactRoot: fixture.root,
         inspector: inspector(),
         lifecycleActivationBindingSink: Object.freeze({
-          bindBrowserAdmissionIssuer() { throw new Error("binding-rejected"); },
+          bindBrowserAdmissionIssuer() {
+            throw new Error("binding-rejected");
+          },
         }),
       }),
       /binding-rejected/,
@@ -763,7 +967,7 @@ test("composed shell closes and drains both handlers including delegated Tavern 
     await server.close().catch(() => {});
     await fixture.dispose();
   }
-});// ─── game.resume / game.create / game.resume.cancel wiring (B-path gap) ────
+}); // ─── game.resume / game.create / game.resume.cancel wiring (B-path gap) ────
 
 test("composed shell wires game.resume, game.create, and game.resume.cancel through the lifecycle sink", async () => {
   const fixture = await artifactFixture();
@@ -772,7 +976,9 @@ test("composed shell wires game.resume, game.create, and game.resume.cancel thro
   let issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer | undefined;
   const calls: string[] = [];
   const lifecycleSink = Object.freeze({
-    bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) { issuer = value; },
+    bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) {
+      issuer = value;
+    },
     async resume(
       admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
       command: GameSessionResumeCommandV1,
@@ -802,7 +1008,12 @@ test("composed shell wires game.resume, game.create, and game.resume.cancel thro
         admission,
         "game_create",
         () => {
-          assert.deepEqual(command, { apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: null });
+          assert.deepEqual(command, {
+            apiVersion: 1,
+            idempotencyKey,
+            integrationId: "stardew",
+            continuityIdentityId: null,
+          });
           return Object.freeze({ apiVersion: 1 as const, status: "accepted" as const, gameSessionId: sessionHandle });
         },
       );
@@ -930,7 +1141,9 @@ test("composed shell rejects a profile declaring game.create/game.resume.cancel 
         artifactRoot: fixture.root,
         inspector: inspector(),
         lifecycleActivationBindingSink: Object.freeze({
-          bindBrowserAdmissionIssuer() { /* sink without create/cancel seams */ },
+          bindBrowserAdmissionIssuer() {
+            /* sink without create/cancel seams */
+          },
         }),
       }),
       /resume cancel operation is mismounted/,
@@ -1110,7 +1323,10 @@ test("composed shell serves the mounted management domains under the one broker 
     });
     assert.equal(chats.status, 200);
     const chatsBody = (await chats.json()) as { chats: readonly { title: string }[] };
-    assert.deepEqual(chatsBody.chats.map((chat) => chat.title), ["Managed Chat"]);
+    assert.deepEqual(
+      chatsBody.chats.map((chat) => chat.title),
+      ["Managed Chat"],
+    );
 
     // The Chat routes the frozen contract owns still answer from the Chat
     // dispatcher: the two profiles coexist on the one prefix.

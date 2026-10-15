@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
-	type ComposedTavernProfile,
-	MAX_TEXT_UTF8_BYTES,
-	TAVERN_BROWSER_API_V1,
-	type TavernBrowserNavigationItemIdV1,
-	TavernBrowserValidatorsV1,
-	type TavernProblemV1,
+  type ComposedTavernProfile,
+  MAX_TEXT_UTF8_BYTES,
+  referenceTavernProfileFitsCanonicalGroups,
+  TAVERN_BROWSER_API_V1,
+  type TavernBrowserNavigationItemIdV1,
+  TavernBrowserValidatorsV1,
+  type TavernProblemV1,
 } from "./tavern/browser-contract/index.js";
 import type { ChatEventStream, ResyncReason } from "./tavern/chat-event-stream.js";
 import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
@@ -30,19 +31,6 @@ export const MAX_BOOTSTRAP_BODY_BYTES = 4 * 1024;
  * valid, which is a rejection no player could act on.
  */
 export const MAX_TAVERN_MESSAGE_BODY_BYTES = MAX_TEXT_UTF8_BYTES * 6;
-const REFERENCE_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline";
-const REFERENCE_RELEASE_TIER = "chat_core";
-const REFERENCE_ROUTE_IDS = [
-  "bootstrap",
-  "state.read",
-  "draft.read",
-  "chat.submit",
-  "chat.cancel",
-  "chat.submission_status",
-  "events",
-] as const;
-const REFERENCE_OPERATION_IDS = ["chat.submit", "chat.cancel"] as const;
-const REFERENCE_NAVIGATION_ITEM_IDS = ["chat"] as const;
 
 export type ReferencePipelineDialogueWebRequestHandler = Readonly<{
   handle(request: IncomingMessage, response: ServerResponse, origin: string): void;
@@ -114,18 +102,8 @@ function navigationItem(itemId: TavernBrowserNavigationItemIdV1) {
 }
 
 export function assertReferenceProfile(profile: ComposedTavernProfile): void {
-  if (
-    profile.profileId !== REFERENCE_PROFILE_ID ||
-    profile.releaseTier !== REFERENCE_RELEASE_TIER ||
-    !sameOrderedValues(profile.routeIds, REFERENCE_ROUTE_IDS) ||
-    !sameOrderedValues(profile.operationIds, REFERENCE_OPERATION_IDS) ||
-    !sameOrderedValues(profile.navigationItemIds, REFERENCE_NAVIGATION_ITEM_IDS)
-  )
+  if (!referenceTavernProfileFitsCanonicalGroups(profile))
     throw new Error("reference_pipeline_profile_operation_unavailable");
-}
-
-function sameOrderedValues(values: readonly string[], expected: readonly string[]): boolean {
-  return values.length === expected.length && values.every((value, index) => value === expected[index]);
 }
 
 export function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCode }> {

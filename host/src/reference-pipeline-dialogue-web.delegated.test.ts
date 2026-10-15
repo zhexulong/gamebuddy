@@ -10,10 +10,16 @@ import {
   createComposedReferenceGameBrowserRequestHandler,
   type ComposedReferenceGameBrowserReadContext,
 } from "./composed-reference-game-browser.js";
+import { createReferencePipelineDialogueWebDelegatedHandler } from "./reference-pipeline-dialogue-web.delegated.js";
 import {
-  createReferencePipelineDialogueWebDelegatedHandler,
-} from "./reference-pipeline-dialogue-web.delegated.js";
-import { composeTavernProfile, TavernBrowserFixtureV1 } from "./tavern/browser-contract/index.js";
+  type RegenerateMessageCommandV1,
+  type SwipeSelectCommandV1,
+  type SwipeSelectResultV1,
+  composeReferenceTavernProfile,
+  composeTavernProfile,
+  referenceTavernProfileFitsCanonicalGroups,
+  TavernBrowserFixtureV1,
+} from "./tavern/browser-contract/index.js";
 import type { ChatPipelineService, SubmitResultV1 } from "./tavern/chat-pipeline-service.js";
 import { createChatEventStream } from "./tavern/chat-event-stream.js";
 import type { ReferencePipelineState, ReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
@@ -77,7 +83,12 @@ const result: SubmitResultV1 = Object.freeze({
   turn: Object.freeze({ handle, state: "queued", projectionRevision: 1, canCancel: false }),
 });
 
-function service(recorder: { starts: number; statuses: number; closes: number; cancels?: string[] }): ChatPipelineService {
+function service(recorder: {
+  starts: number;
+  statuses: number;
+  closes: number;
+  cancels?: string[];
+}): ChatPipelineService {
   return Object.freeze({
     async submitAfterResponseCommit(command, idempotencyKey, commit202) {
       assert.equal(command.text, "Hello");
@@ -151,7 +162,9 @@ test("delegated handler construction rejects forged or foreign capabilities", ()
   const real = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile }),
     bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
+    async readChat(context) {
+      return stateForChat(context);
+    },
   });
   const forged = [
     Object.freeze({}),
@@ -188,7 +201,9 @@ test("delegated handler rejects invalid composition before any Tavern operation"
   const real = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile }),
     bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
+    async readChat(context) {
+      return stateForChat(context);
+    },
   });
   const invalid = composeTavernProfile({
     profileId: "gamebuddy.chat-core.reference-pipeline",
@@ -225,7 +240,9 @@ test("delegated handler serves all mounted Tavern operations with the broker ses
   const broker = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile }),
     bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
+    async readChat(context) {
+      return stateForChat(context);
+    },
   });
   const delegated = createReferencePipelineDialogueWebDelegatedHandler({
     profile: tavernProfile,
@@ -239,7 +256,7 @@ test("delegated handler serves all mounted Tavern operations with the broker ses
     const initial = await bootstrap(server.origin);
     assert.equal(initial.status, 200);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const brokerCsrf = root.chat.csrfToken;
 
     // No delegated bootstrap and no second Set-Cookie anywhere.
@@ -257,7 +274,7 @@ test("delegated handler serves all mounted Tavern operations with the broker ses
     });
     assert.equal(stateResponse.status, 200);
     assert.equal(stateResponse.headers.get("set-cookie"), null);
-    const snapshot = await stateResponse.json() as { build: { profileId: string }; csrfToken: string };
+    const snapshot = (await stateResponse.json()) as { build: { profileId: string }; csrfToken: string };
     assert.equal(snapshot.build.profileId, tavernProfile.profileId);
     assert.equal(snapshot.csrfToken, brokerCsrf);
 
@@ -362,121 +379,132 @@ test("delegated handler serves all mounted Tavern operations with the broker ses
 });
 
 test("delegated handler submits a message the contract allows, however long", async () => {
-	// The contract permits message text up to 16,384 UTF-8 bytes (`MAX_TEXT_UTF8_BYTES`,
-	// `tavern-browser-nfc-utf8-text-v1` on `SubmitMessageCommandV1.text`). The transport read this
-	// route's body with the BOOTSTRAP limit (4 KiB), so a long but perfectly valid message was
-	// refused before it ever reached the pipeline - a player typing a long message got a rejection
-	// for a message the product had already declared valid.
-	let receivedText;
-	const recorder = { starts: 0, statuses: 0, closes: 0 };
-	const broker = createComposedReferenceGameBrowserRequestHandler({
-		profile: composeReferenceGameBrowserProfile({ tavernProfile }),
-		bootstrapToken,
-		async readChat(context) { return stateForChat(context); },
-	});
-	const delegated = createReferencePipelineDialogueWebDelegatedHandler({
-		profile: tavernProfile,
-		referenceStateFacade: facade,
-		pipelineService: Object.freeze({
-			async submitAfterResponseCommit(
-				command: { text: string },
-				_key: string,
-				commit202: (committed: SubmitResultV1) => Promise<void>,
-			) {
-				receivedText = command.text;
-				await commit202(result);
-				recorder.starts += 1;
-				return result;
-			},
-			async readSubmissionStatus() {
-				recorder.statuses += 1;
-				return Object.freeze({ apiVersion: 1, disposition: "accepted" as const, committedResult: result });
-			},
-			async cancel() { throw new Error("not_used"); },
-			async close() { recorder.closes += 1; },
-		}) as unknown as ChatPipelineService,
-		eventStream,
-		capability: broker.delegatedAuthCapability,
-	});
-	const server = await start(broker, delegated);
-	try {
-		const initial = await bootstrap(server.origin);
-		const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-		const root = await initial.json() as { chat: { csrfToken: string } };
-		// 8,000 characters: inside the contract's 16,384-byte ceiling for ASCII, far outside the
-		// 4 KiB bootstrap limit the route used to read the body with.
-		const longText = "a".repeat(8_000);
-		const submit = await fetch(`${server.origin}/api/tavern/v1/messages`, {
-			method: "POST",
-			headers: {
-				Origin: server.origin,
-				Cookie: cookie,
-				"Content-Type": "application/json",
-				"X-CSRF-Token": root.chat.csrfToken,
-				"Idempotency-Key": "A".repeat(22),
-			},
-			body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, text: longText, locale: "en" }),
-		});
-		assert.equal(submit.status, 202, `long message must be accepted, got ${submit.status} ${await submit.text()}`);
-		assert.equal(receivedText, longText);
-		assert.equal(recorder.starts, 1);
-	} finally {
-		await server.close();
-	}
+  // The contract permits message text up to 16,384 UTF-8 bytes (`MAX_TEXT_UTF8_BYTES`,
+  // `tavern-browser-nfc-utf8-text-v1` on `SubmitMessageCommandV1.text`). The transport read this
+  // route's body with the BOOTSTRAP limit (4 KiB), so a long but perfectly valid message was
+  // refused before it ever reached the pipeline - a player typing a long message got a rejection
+  // for a message the product had already declared valid.
+  let receivedText;
+  const recorder = { starts: 0, statuses: 0, closes: 0 };
+  const broker = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+  });
+  const delegated = createReferencePipelineDialogueWebDelegatedHandler({
+    profile: tavernProfile,
+    referenceStateFacade: facade,
+    pipelineService: Object.freeze({
+      async submitAfterResponseCommit(
+        command: { text: string },
+        _key: string,
+        commit202: (committed: SubmitResultV1) => Promise<void>,
+      ) {
+        receivedText = command.text;
+        await commit202(result);
+        recorder.starts += 1;
+        return result;
+      },
+      async readSubmissionStatus() {
+        recorder.statuses += 1;
+        return Object.freeze({ apiVersion: 1, disposition: "accepted" as const, committedResult: result });
+      },
+      async cancel() {
+        throw new Error("not_used");
+      },
+      async close() {
+        recorder.closes += 1;
+      },
+    }) as unknown as ChatPipelineService,
+    eventStream,
+    capability: broker.delegatedAuthCapability,
+  });
+  const server = await start(broker, delegated);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    // 8,000 characters: inside the contract's 16,384-byte ceiling for ASCII, far outside the
+    // 4 KiB bootstrap limit the route used to read the body with.
+    const longText = "a".repeat(8_000);
+    const submit = await fetch(`${server.origin}/api/tavern/v1/messages`, {
+      method: "POST",
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": root.chat.csrfToken,
+        "Idempotency-Key": "A".repeat(22),
+      },
+      body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, text: longText, locale: "en" }),
+    });
+    assert.equal(submit.status, 202, `long message must be accepted, got ${submit.status} ${await submit.text()}`);
+    assert.equal(receivedText, longText);
+    assert.equal(recorder.starts, 1);
+  } finally {
+    await server.close();
+  }
 });
 
 test("delegated handler keeps a bound, and the bound is the contract's before the transport's", async () => {
-	// Two distinct ceilings, and the order matters. The contract's text limit is applied to the
-	// DECODED string (16,384 UTF-8 bytes), so text past it is a typed 400 with the service never
-	// reached. The transport's body ceiling is only a blowup guard, so a body past IT is a 413.
-	const recorder = { starts: 0, statuses: 0, closes: 0 };
-	const broker = createComposedReferenceGameBrowserRequestHandler({
-		profile: composeReferenceGameBrowserProfile({ tavernProfile }),
-		bootstrapToken,
-		async readChat(context) { return stateForChat(context); },
-	});
-	const delegated = createReferencePipelineDialogueWebDelegatedHandler({
-		profile: tavernProfile,
-		referenceStateFacade: facade,
-		pipelineService: service(recorder),
-		eventStream,
-		capability: broker.delegatedAuthCapability,
-	});
-	const server = await start(broker, delegated);
-	try {
-		const initial = await bootstrap(server.origin);
-		const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-		const root = await initial.json() as { chat: { csrfToken: string } };
-		const post = (text: string) => fetch(`${server.origin}/api/tavern/v1/messages`, {
-			method: "POST",
-			headers: {
-				Origin: server.origin,
-				Cookie: cookie,
-				"Content-Type": "application/json",
-				"X-CSRF-Token": root.chat.csrfToken,
-				"Idempotency-Key": "A".repeat(22),
-			},
-			body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, text, locale: "en" }),
-		});
-		// Past the contract's text ceiling, inside the transport's body ceiling.
-		const pastTextCeiling = await post("a".repeat(20_000));
-		assert.equal(pastTextCeiling.status, 400);
-		assert.equal((await pastTextCeiling.json() as { code: string }).code, "invalid_request");
-		// Past the transport's body ceiling.
-		const pastBodyCeiling = await post("a".repeat(200_000));
-		assert.equal(pastBodyCeiling.status, 413);
-		assert.equal((await pastBodyCeiling.json() as { code: string }).code, "payload_too_large");
-		assert.equal(recorder.starts, 0);
-	} finally {
-		await server.close();
-	}
+  // Two distinct ceilings, and the order matters. The contract's text limit is applied to the
+  // DECODED string (16,384 UTF-8 bytes), so text past it is a typed 400 with the service never
+  // reached. The transport's body ceiling is only a blowup guard, so a body past IT is a 413.
+  const recorder = { starts: 0, statuses: 0, closes: 0 };
+  const broker = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+  });
+  const delegated = createReferencePipelineDialogueWebDelegatedHandler({
+    profile: tavernProfile,
+    referenceStateFacade: facade,
+    pipelineService: service(recorder),
+    eventStream,
+    capability: broker.delegatedAuthCapability,
+  });
+  const server = await start(broker, delegated);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const post = (text: string) =>
+      fetch(`${server.origin}/api/tavern/v1/messages`, {
+        method: "POST",
+        headers: {
+          Origin: server.origin,
+          Cookie: cookie,
+          "Content-Type": "application/json",
+          "X-CSRF-Token": root.chat.csrfToken,
+          "Idempotency-Key": "A".repeat(22),
+        },
+        body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, text, locale: "en" }),
+      });
+    // Past the contract's text ceiling, inside the transport's body ceiling.
+    const pastTextCeiling = await post("a".repeat(20_000));
+    assert.equal(pastTextCeiling.status, 400);
+    assert.equal(((await pastTextCeiling.json()) as { code: string }).code, "invalid_request");
+    // Past the transport's body ceiling.
+    const pastBodyCeiling = await post("a".repeat(200_000));
+    assert.equal(pastBodyCeiling.status, 413);
+    assert.equal(((await pastBodyCeiling.json()) as { code: string }).code, "payload_too_large");
+    assert.equal(recorder.starts, 0);
+  } finally {
+    await server.close();
+  }
 });
 
 test("delegated handler without a mounted pipeline service fails mutations closed", async () => {
   const broker = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile }),
     bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
+    async readChat(context) {
+      return stateForChat(context);
+    },
   });
   const delegated = createReferencePipelineDialogueWebDelegatedHandler({
     profile: tavernProfile,
@@ -489,7 +517,7 @@ test("delegated handler without a mounted pipeline service fails mutations close
     const initial = await bootstrap(server.origin);
     assert.equal(initial.status, 200);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const submit = await fetch(`${server.origin}/api/tavern/v1/messages`, {
       method: "POST",
       headers: {
@@ -502,9 +530,164 @@ test("delegated handler without a mounted pipeline service fails mutations close
       body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, text: "Hello", locale: "en" }),
     });
     assert.equal(submit.status, 503);
-    assert.equal((await submit.json() as { code: string }).code, "runtime_unavailable");
+    assert.equal(((await submit.json()) as { code: string }).code, "runtime_unavailable");
   } finally {
     await server.close();
+  }
+});
+
+/**
+ * A pipeline service that answers only the message-mutation half of the reference profile
+ * (Regenerate and Swipe), so a test can prove the dispatcher reaches them.
+ */
+function mutationService(
+  recorder: {
+    swipes: SwipeSelectCommandV1[];
+    regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
+    closes: number;
+  },
+  swipeResult: SwipeSelectResultV1,
+): ChatPipelineService {
+  return Object.freeze({
+    async submitAfterResponseCommit() {
+      throw new Error("not_used");
+    },
+    async readSubmissionStatus() {
+      throw new Error("not_used");
+    },
+    async cancel() {
+      throw new Error("not_used");
+    },
+    async selectSwipe(command): Promise<SwipeSelectResultV1> {
+      recorder.swipes.push(command);
+      return swipeResult;
+    },
+    async regenerate(command, idempotencyKey): Promise<SubmitResultV1> {
+      recorder.regenerations.push({ command, idempotencyKey });
+      return result;
+    },
+    async close() {
+      recorder.closes += 1;
+    },
+  });
+}
+
+test("the production reference profile declares the message-mutation group and fits the canonical groups", () => {
+  const production = composeReferenceTavernProfile();
+  assert.equal(referenceTavernProfileFitsCanonicalGroups(production), true);
+  // The declaration is the core Chat routes plus the message-mutation extension, in the canonical
+  // order: a profile that grows a route without growing a group would fail the fit above.
+  assert.deepEqual(production.routeIds, [...tavernProfile.routeIds, "chat.swipe", "chat.regenerate"]);
+  assert.deepEqual(production.operationIds, ["chat.submit", "chat.cancel"]);
+});
+
+test("the reference dispatcher rejects a profile that declares a route outside its canonical groups", () => {
+  const broker = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+  });
+  // `memory.read` is a declared contract route but belongs to no reference group: a profile that
+  // advertises it claims a capability this dispatcher cannot serve. The group assertion is what
+  // refuses it at construction, rather than mounting a surface with an unanswered route.
+  const outsideGroups = composeTavernProfile({
+    profileId: "gamebuddy.chat-core.reference-pipeline",
+    releaseTier: "chat_core",
+    routeIds: [...tavernProfile.routeIds, "memory.read"],
+    operationIds: ["chat.submit", "chat.cancel"],
+    navigationItemIds: ["chat"],
+  });
+  assert.equal(referenceTavernProfileFitsCanonicalGroups(outsideGroups), false);
+  assert.throws(
+    () =>
+      createReferencePipelineDialogueWebDelegatedHandler({
+        profile: outsideGroups,
+        referenceStateFacade: facade,
+        pipelineService: service({ starts: 0, statuses: 0, closes: 0 }),
+        eventStream,
+        capability: broker.delegatedAuthCapability,
+      }),
+    /reference_pipeline_profile_operation_unavailable/,
+  );
+  void broker.close();
+});
+
+test("delegated handler answers the reference profile's Swipe and Regenerate routes", async () => {
+  const production = composeReferenceTavernProfile();
+  const swipeMessage = {
+    handle,
+    role: "companion" as const,
+    text: "the second variant",
+    locale: "en" as const,
+    order: 0,
+    revision: 1,
+    swipeInfo: { currentIndex: 1, totalSwipes: 2, label: "◀ 2/2 ▶", hasPrevious: true, hasNext: false },
+  };
+  const swipeResult: SwipeSelectResultV1 = Object.freeze({ apiVersion: 1, message: Object.freeze(swipeMessage) });
+  const recorder: {
+    swipes: SwipeSelectCommandV1[];
+    regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
+    closes: number;
+  } = { swipes: [], regenerations: [], closes: 0 };
+  const broker = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile: production }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+  });
+  const delegated = createReferencePipelineDialogueWebDelegatedHandler({
+    profile: production,
+    referenceStateFacade: facade,
+    pipelineService: mutationService(recorder, swipeResult),
+    eventStream,
+    capability: broker.delegatedAuthCapability,
+  });
+  const server = await start(broker, delegated);
+  try {
+    const initial = await bootstrap(server.origin);
+    assert.equal(initial.status, 200);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const csrf = root.chat.csrfToken;
+
+    const swipe = await fetch(`${server.origin}/api/tavern/v1/messages/swipe`, {
+      method: "POST",
+      headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": csrf },
+      body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, messageHandle: handle, direction: "next" }),
+    });
+    const swipeBody = await swipe.text();
+    assert.equal(swipe.status, 200, `swipe must be served, got ${swipe.status} ${swipeBody}`);
+    assert.deepEqual(JSON.parse(swipeBody), { apiVersion: 1, message: swipeMessage });
+
+    const regenerate = await fetch(`${server.origin}/api/tavern/v1/messages/regenerate`, {
+      method: "POST",
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrf,
+        "Idempotency-Key": "A".repeat(22),
+      },
+      body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, messageHandle: handle }),
+    });
+    const regenerateBody = await regenerate.text();
+    assert.equal(regenerate.status, 202, `regenerate must be served, got ${regenerate.status} ${regenerateBody}`);
+    assert.deepEqual(JSON.parse(regenerateBody), result);
+    assert.deepEqual(recorder.swipes, [
+      { apiVersion: 1, selectionGeneration: 1, messageHandle: handle, direction: "next" },
+    ]);
+    assert.deepEqual(recorder.regenerations, [
+      {
+        command: { apiVersion: 1, selectionGeneration: 1, messageHandle: handle },
+        idempotencyKey: "A".repeat(22),
+      },
+    ]);
+  } finally {
+    await server.close();
+    assert.equal(recorder.closes, 1);
   }
 });
 
@@ -521,15 +704,17 @@ test("only the composed shell imports the internal delegated facade in productio
   }
   const productionImporters = delegatedImporters.filter((leaf) => !leaf.endsWith(".test.ts"));
   assert.deepEqual(productionImporters, ["tavern/composed-reference-game-static-shell-composition.ts"]);
-  assert.deepEqual(
-    delegatedImporters.filter((leaf) => leaf.endsWith(".test.ts")).sort(),
-    ["reference-pipeline-dialogue-web.delegated.test.ts"],
-  );
+  assert.deepEqual(delegatedImporters.filter((leaf) => leaf.endsWith(".test.ts")).sort(), [
+    "reference-pipeline-dialogue-web.delegated.test.ts",
+  ]);
 
   // The public dialogue facade keeps no delegated factory, verifyAuth
   // callback, or broker auth DTO surface.
   const publicSource = await readFile(join(sourceRoot, "reference-pipeline-dialogue-web.ts"), "utf8");
-  assert.doesNotMatch(publicSource, /createReferencePipelineDialogueWebDelegatedHandler|DelegatedAuth|verifyAuth|delegatedAuth/);
+  assert.doesNotMatch(
+    publicSource,
+    /createReferencePipelineDialogueWebDelegatedHandler|DelegatedAuth|verifyAuth|delegatedAuth/,
+  );
   const coreSource = await readFile(join(sourceRoot, "reference-pipeline-dialogue-web.core.ts"), "utf8");
   assert.doesNotMatch(coreSource, /DelegatedAuth|verifyAuth|delegatedAuth|ComposedReferenceGameBrowser/);
 });

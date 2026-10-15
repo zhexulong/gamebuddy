@@ -463,7 +463,7 @@ export const TavernConnectionThinkingLevelV1Schema = Type.Union([
 export const TavernConnectionModelV1Schema = strictObject({
   modelId: Type.String({ minLength: 1, maxLength: 128 }),
   modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
-    allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 7 }),
+  allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 7 }),
   defaultThinkingLevel: TavernConnectionThinkingLevelV1Schema,
 });
 export const TavernConnectionProviderV1Schema = strictObject({
@@ -509,11 +509,11 @@ export const TavernConnectionV1Schema = strictObject({
   active: Type.Boolean(),
   modelId: Type.String({ minLength: 1, maxLength: 128 }),
   modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
-    thinkingLevel: TavernConnectionThinkingLevelV1Schema,
-    // What this record's model accepts. The panel offers exactly these, because the
-    // Host refuses a level the model does not advertise.
-    allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 7 }),
-    baseUrl: Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
+  thinkingLevel: TavernConnectionThinkingLevelV1Schema,
+  // What this record's model accepts. The panel offers exactly these, because the
+  // Host refuses a level the model does not advertise.
+  allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 7 }),
+  baseUrl: Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
   failure: ConnectionFailure,
   lastCheckedAtMs: Type.Union([Revision, Type.Null()]),
 });
@@ -588,7 +588,7 @@ export const TavernRecommendedModelV1Schema = strictObject({
   providerLabel: Type.String({ minLength: 1, maxLength: 128 }),
   modelId: Type.String({ minLength: 1, maxLength: 128 }),
   modelLabel: Type.String({ minLength: 1, maxLength: 128 }),
-    allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 7 }),
+  allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 7 }),
   defaultThinkingLevel: TavernConnectionThinkingLevelV1Schema,
 });
 /**
@@ -1519,6 +1519,34 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CancelTurnResultV1Schema },
   }),
   route({
+    routeId: "chat.swipe",
+    method: "POST",
+    path: "/api/tavern/v1/messages/swipe",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: SwipeSelectCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: SwipeSelectResultV1Schema },
+  }),
+  route({
+    routeId: "chat.regenerate",
+    method: "POST",
+    path: "/api/tavern/v1/messages/regenerate",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "required",
+    headers: IdempotentCsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: RegenerateMessageCommandV1Schema,
+    success: { status: 202, contentType: "application/json", schema: SubmitResultV1Schema },
+  }),
+  route({
     routeId: "memory.read",
     method: "GET",
     path: "/api/tavern/v1/memory",
@@ -2091,7 +2119,7 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernStateEventStreamV1Schema,
     TavernVoiceSurfaceStateV1Schema,
     TavernVoicePreferenceV1Schema,
-  TavernVoiceDevicesV1Schema,
+    TavernVoiceDevicesV1Schema,
     TavernVoicePreferenceConsentCommandV1Schema,
     TavernLanguagePreferenceV1Schema,
     TavernLanguagePreferenceCommandV1Schema,
@@ -2390,6 +2418,98 @@ export function composeTavernProfile(input: unknown): ComposedTavernProfile {
  */
 export function isComposedTavernProfile(value: unknown): value is ComposedTavernProfile {
   return typeof value === "object" && value !== null && composedTavernProfiles.has(value);
+}
+
+const REFERENCE_TAVERN_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline";
+const REFERENCE_TAVERN_RELEASE_TIER = "chat_core" as const;
+const REFERENCE_TAVERN_ROUTE_IDS = [
+  "bootstrap",
+  "state.read",
+  "draft.read",
+  "chat.submit",
+  "chat.cancel",
+  "chat.submission_status",
+  "events",
+] as const;
+/**
+ * The optional message-mutation extension of the reference Chat profile: Swipe and Regenerate.
+ *
+ * The browser client posts both after a completed turn (its own Regenerate and Swipe controls), so
+ * the dispatcher mounted on the composed Chat surface must reach them or the player's controls
+ * answer 404. They are routes, not operations: the browser gates Regenerate on the `chat.submit`
+ * affordance and Swipe on the message's own `swipeInfo`, so the Host projects no `state.operations`
+ * row for either.
+ *
+ * Declared as an optional group rather than folded into the core list so every existing reference
+ * profile - the standalone handler's own declaration and the API-level test slices - stays a valid
+ * capability slice, while the one production profile declares the extension. Every route a profile
+ * declares must belong to exactly one group, which `referenceTavernProfileFitsCanonicalGroups`
+ * enforces.
+ */
+const REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS = ["chat.swipe", "chat.regenerate"] as const;
+const REFERENCE_TAVERN_ROUTE_GROUPS = [
+  REFERENCE_TAVERN_ROUTE_IDS,
+  REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS,
+] as const;
+const REFERENCE_TAVERN_OPERATION_IDS = ["chat.submit", "chat.cancel"] as const;
+const REFERENCE_TAVERN_NAVIGATION_ITEM_IDS = ["chat"] as const;
+
+/**
+ * The one reference Chat capability slice of `tavern_browser_api/v1` (release tier `chat_core`): the
+ * core routes plus the message-mutation extension. Declared next to the route descriptors it selects,
+ * so the routes the dispatcher serves and the routes the profile advertises cannot drift apart.
+ */
+export function composeReferenceTavernProfile(): ComposedTavernProfile {
+  return composeTavernProfile({
+    profileId: REFERENCE_TAVERN_PROFILE_ID,
+    releaseTier: REFERENCE_TAVERN_RELEASE_TIER,
+    routeIds: [...REFERENCE_TAVERN_ROUTE_IDS, ...REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS],
+    operationIds: REFERENCE_TAVERN_OPERATION_IDS,
+    navigationItemIds: REFERENCE_TAVERN_NAVIGATION_ITEM_IDS,
+  });
+}
+
+/**
+ * The canonical-group verdict for one reference Chat profile declaration: the exact identity, the
+ * operation/navigation projections, and the route slice a reference dispatcher can serve - the
+ * required core routes plus any subset of the optional extension groups, always in the declared
+ * order. Exported so the composed-browser contract and a test can hold a declaration against these
+ * groups without mounting the surface.
+ */
+export function referenceTavernProfileFitsCanonicalGroups(profile: ComposedTavernProfile): boolean {
+  return (
+    profile.profileId === REFERENCE_TAVERN_PROFILE_ID &&
+    profile.releaseTier === REFERENCE_TAVERN_RELEASE_TIER &&
+    sameOrderedValues(profile.operationIds, REFERENCE_TAVERN_OPERATION_IDS) &&
+    sameOrderedValues(profile.navigationItemIds, REFERENCE_TAVERN_NAVIGATION_ITEM_IDS) &&
+    isCanonicalGroupSelection(profile.routeIds, REFERENCE_TAVERN_ROUTE_GROUPS, REFERENCE_TAVERN_ROUTE_IDS)
+  );
+}
+
+/**
+ * True when `values` is exactly the required group plus any subset of the optional groups that
+ * follow it, always in the declared order. A group is all-or-nothing: a partially declared group is
+ * a capability the profile claims but the mounted dispatcher cannot serve. Ordering is part of the
+ * check, so a reordered profile is a different capability slice; a route that belongs to no group
+ * makes `expected` shorter than `values` and is rejected too.
+ */
+function isCanonicalGroupSelection(
+  values: readonly string[],
+  groups: readonly (readonly string[])[],
+  required: readonly string[],
+): boolean {
+  const expected: string[] = [];
+  for (const group of groups) {
+    const present = group === required || values.some((value) => group.includes(value));
+    if (!present) continue;
+    if (!group.every((entry) => values.includes(entry))) return false;
+    expected.push(...group);
+  }
+  return expected.length === values.length && expected.every((entry, index) => entry === values[index]);
+}
+
+function sameOrderedValues(values: readonly string[], expected: readonly string[]): boolean {
+  return values.length === expected.length && values.every((value, index) => value === expected[index]);
 }
 
 /**

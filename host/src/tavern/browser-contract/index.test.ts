@@ -37,6 +37,8 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "chat.create",
       "chat.select",
       "chat.cancel",
+      "chat.swipe",
+      "chat.regenerate",
       "memory.read",
       "memory.mutate",
       "world-info.read",
@@ -201,7 +203,13 @@ test("problem codes and events are closed unions", () => {
   assert.deepEqual(TAVERN_BROWSER_PROBLEM_CODES_V1.includes("invented_code" as never), false);
   // The connection surface's problem codes are part of the same closed union,
   // so the browser can rely on each one meaning exactly one thing.
-  for (const code of ["dialogue_busy", "connection_not_found", "connection_not_ready", "connection_conflict", "connection_limit_reached"] as const) {
+  for (const code of [
+    "dialogue_busy",
+    "connection_not_found",
+    "connection_not_ready",
+    "connection_conflict",
+    "connection_limit_reached",
+  ] as const) {
     assert.equal(TAVERN_BROWSER_PROBLEM_CODES_V1.includes(code), true, code);
     assert.equal(
       TavernBrowserValidatorsV1.TavernProblemV1Schema.Check({
@@ -372,7 +380,14 @@ test("memory read projection contains only safe bounded rows and validates stric
     TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
       ...memory,
       memories: [
-        { title: "No handle", content: "content", category: "semantic", status: "active", origin: "companion", pinned: false },
+        {
+          title: "No handle",
+          content: "content",
+          category: "semantic",
+          status: "active",
+          origin: "companion",
+          pinned: false,
+        },
       ],
     }),
     false,
@@ -964,6 +979,34 @@ test("every route freezes the exact security, binding, and success policy matrix
       "application/json",
     ],
     [
+      "chat.swipe",
+      "POST",
+      "/api/tavern/v1/messages/swipe",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "chat.regenerate",
+      "POST",
+      "/api/tavern/v1/messages/regenerate",
+      "browser_session",
+      "same-origin",
+      "required",
+      "required",
+      ["x-csrf-token", "idempotency-key"],
+      [],
+      [],
+      202,
+      "application/json",
+    ],
+    [
       "memory.read",
       "GET",
       "/api/tavern/v1/memory",
@@ -1495,7 +1538,6 @@ test("every route freezes the exact security, binding, and success policy matrix
       200,
       "application/json",
     ],
-
   ];
   assert.deepEqual(
     TavernBrowserContractV1.routes.map((route) => [
