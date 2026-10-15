@@ -398,3 +398,72 @@ test("item 7: the choose-file trigger is the width of its label, not the panel's
   expect(measured.triggerWidth, "and it never falls below the 44 px touch floor").toBeGreaterThanOrEqual(44);
   expect(measured.alignSelf, "the button keeps its own width in the card's column flex").toBe("flex-start");
 });
+
+// --- item 8: a Chats card clamps the created Chat's opening ---
+
+/**
+ * The text a newly created Chat's card shows is the durable opening the Host
+ * minted, rendered as plain text with nothing bounding it. A companion's first
+ * message is a paragraph, so at 400x800 the card measured 217px with 168px of
+ * that being the opening alone - the first screen belonged to the greeting rather
+ * than to the Chats surface. The card is the acknowledgement; the conversation
+ * itself is one selection away.
+ */
+const LONG_OPENING = [
+  "*The porch lantern is still lit when she comes out, and the morning has that",
+  "washed grey light that means the frost has not lifted yet. She carries the",
+  "watering can in one hand and the seed satchel in the other, and she stops at",
+  "the edge of the tilled ground to look at what the two of you did yesterday.*",
+  '"The parsnips took. All of them, by the look of it. Come and see."',
+].join(" ");
+
+test("item 8: one long opening does not fill the whole Chats card", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 800 });
+  await stubShell(page);
+  const chatList = {
+    apiVersion: 1,
+    chats: [{ handle: chatHandle, title: "Farm morning", status: "active", managementRevision: 1, isSelected: true }],
+  };
+  await page.route("**/api/tavern/v1/chats?*", (route) => route.fulfill(jsonOk(chatList)));
+  await page.route("**/api/tavern/v1/chats", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        chat: { handle: turnHandle, title: null, status: "active", managementRevision: 1, isSelected: false },
+        opening: LONG_OPENING,
+      }),
+    ),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+  await surface.getByRole("button", { name: "New Chat", exact: true }).click();
+
+  // The created Chat's card is the one that is not a list row.
+  const card = surface.locator(".chat-item-card").first();
+  await expect(card).toContainText("New Chat");
+  const measured = await card.evaluate((node) => {
+    const preview = node.querySelector<HTMLElement>(".chat-item-main")!;
+    const style = getComputedStyle(preview);
+    return {
+      cardHeight: Math.round(node.getBoundingClientRect().height),
+      previewHeight: Math.round(preview.getBoundingClientRect().height),
+      textLength: (preview.textContent ?? "").length,
+      clamp: style.getPropertyValue("-webkit-line-clamp"),
+      viewportHeight: window.innerHeight,
+    };
+  });
+  console.log(`[item-8] ${JSON.stringify(measured)}`);
+
+  expect(measured.textLength, "the card really carries the whole opening").toBe(LONG_OPENING.length);
+  expect(
+    measured.previewHeight,
+    `the opening preview is clamped to a few lines, not the ${measured.previewHeight}px of prose it carries`,
+  ).toBeLessThan(80);
+  expect(
+    measured.cardHeight,
+    `the card measures ${measured.cardHeight}px of the ${measured.viewportHeight}px first screen`,
+  ).toBeLessThan(200);
+  expect(Number.parseInt(measured.clamp, 10), "and the clamp is a real line clamp").toBeGreaterThanOrEqual(2);
+});

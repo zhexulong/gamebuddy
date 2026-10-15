@@ -4334,4 +4334,20 @@
   [data-card-import] > [data-card-import-trigger] {
     align-self: flex-start;
   }
+  /* A newly created Chat's card carries the durable message zero the Host just
+     minted - the opening text, as it came - with no clamp, so one long opening
+     filled the card: measured at 400x800, a 217px card whose preview text alone
+     was 168px of an 800px screen. The card acknowledges what was created; it is
+     not the conversation (the created Chat is not the mounted one, and selecting
+     it shows the opening in full), so the preview is clamped to a few lines.
+
+     The selector is the one `.chat-item-main` that is preview text. Every list row
+     carries `data-testid="chat-item"` and lays its own title and controls out as a
+     horizontal row, which a `-webkit-box` clamp would break. */
+  .chat-item-card:not([data-testid]) > .chat-item-main {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
 } /* end @layer theme.polish */
