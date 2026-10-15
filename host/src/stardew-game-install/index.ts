@@ -1,12 +1,7 @@
 export {
-  GOG_DEFAULT_LIBRARY_ROOTS,
   createWindowsGogInstallationSource,
   parseGogGalaxyLibraryRoots,
   parseGogRegistryGames,
-  type StardewGogDiscoveryDiagnostic,
-  type StardewGogRegistryGame,
-  type StardewGogSource,
-  type StardewGogSourceFacts,
 } from "./gog-source.js";
 export {
   STARDEW_GAME_EXECUTABLE_FILE,
@@ -14,23 +9,15 @@ export {
   discoverStardewGameInstallation,
   probeStardewGameRoot,
   resolveStardewGameInstallation,
-  type StardewGameDiscoveryDiagnostic,
-  type StardewGameInstallSource,
-  type StardewGameInstallation,
-  type StardewGameInstallationResolution,
   type StardewGameInstallationResolverInput,
   type StardewGameRootProbe,
 } from "./discovery.js";
 export {
-  STARDEW_COMPANION_MOD_DIRECTORY,
-  STARDEW_MODS_DIRECTORY,
   decideStardewCompanionModDeployment,
   deployStardewCompanionMod,
   isCanonicalWindowsDirectory,
   readStardewCompanionModPackage,
-  type StardewCompanionModDeploymentDecision,
   type StardewCompanionModDeploymentFailure,
-  type StardewCompanionModDeploymentInput,
   type StardewCompanionModDeploymentResult,
   type StardewCompanionModPackage,
   type StardewCompanionModTargetState,

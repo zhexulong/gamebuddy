@@ -12,11 +12,11 @@ const GOG_METADATA_MAX_BYTES = 4 * 1024 * 1024;
 const GOG_REGISTRY_ENTRY_MAX = 4096;
 const WINDOWS_PATH_MAX_LENGTH = 32_767;
 
-export type StardewGogDiscoveryDiagnostic = "gog-unavailable" | "gog-metadata-unreadable" | "gog-metadata-malformed";
+type StardewGogDiscoveryDiagnostic = "gog-unavailable" | "gog-metadata-unreadable" | "gog-metadata-malformed";
 
 export type StardewGogRegistryGame = Readonly<{ gameName: string; path: string }>;
 
-export type StardewGogSourceFacts = Readonly<{
+type StardewGogSourceFacts = Readonly<{
   roots: readonly string[];
   diagnostics: readonly StardewGogDiscoveryDiagnostic[];
 }>;
@@ -35,7 +35,7 @@ type StardewWindowsGogSourceInput = Readonly<{
  * `Stardew Valley` child directory; GOG's own Galaxy library setting and the
  * per-game registry entries below add the player's actual locations.
  */
-export const GOG_DEFAULT_LIBRARY_ROOTS: readonly string[] = Object.freeze([
+const GOG_DEFAULT_LIBRARY_ROOTS: readonly string[] = Object.freeze([
   "C:\\Program Files (x86)\\GOG Galaxy\\Games",
   "C:\\GOG Games",
 ]);

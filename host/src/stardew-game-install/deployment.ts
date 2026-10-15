@@ -10,8 +10,8 @@ import { readStrictJsonFile } from "../strict-json-reader.js";
 import { createPublishedWindowsReparseInspector } from "../windows-reparse-inspector/index.js";
 import { probeStardewGameRoot } from "./discovery.js";
 
-export const STARDEW_MODS_DIRECTORY = "Mods";
-export const STARDEW_COMPANION_MOD_DIRECTORY = "GameBuddy";
+const STARDEW_MODS_DIRECTORY = "Mods";
+const STARDEW_COMPANION_MOD_DIRECTORY = "GameBuddy";
 
 const MOD_MANIFEST_FILE = "manifest.json";
 const MOD_MANIFEST_MAX_BYTES = 64 * 1024;

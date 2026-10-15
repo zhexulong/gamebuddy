@@ -9,18 +9,18 @@ import { createWindowsGogInstallationSource } from "./gog-source.js";
 export const STARDEW_GAME_EXECUTABLE_FILE = "Stardew Valley.exe";
 export const STARDEW_SMAPI_EXECUTABLE_FILE = "StardewModdingAPI.exe";
 
-export type StardewGameInstallSource = "steam" | "gog" | "chosen";
+type StardewGameInstallSource = "steam" | "gog" | "chosen";
 
 export type StardewGameRootProbe = Readonly<{ gameExecutable: boolean; smapi: boolean }>;
 
-export type StardewGameInstallation = Readonly<{
+type StardewGameInstallation = Readonly<{
   source: StardewGameInstallSource;
   installRoot: string;
   gameExecutable: string;
   smapiExecutable: string | null;
 }>;
 
-export type StardewGameDiscoveryDiagnostic =
+type StardewGameDiscoveryDiagnostic =
   | "steam-unavailable"
   | "steam-root-unverified"
   | "gog-unavailable"
