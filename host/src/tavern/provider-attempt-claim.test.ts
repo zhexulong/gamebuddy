@@ -370,3 +370,61 @@ test("provider attempt claimer mismatched manifest reaches neither claim nor a d
   assert.deepEqual(result.rejected, [true, true, true, true]);
   assert.deepEqual(result.unchanged, [true, true, true, true]);
 });
+
+/**
+ * (b) The prompt source for a same-position variant turn. A variant acceptance
+ * mints no player message, so the coordinator's prompt read must resolve the
+ * anchor player row the targeted reply answered instead of `turn.messageId`.
+ * Both the same-position row count and the prompt text are read from the child's
+ * own durable read-back, never from the acceptance return value.
+ */
+test("a variant turn reads its prompt from the anchor player row, not a minted one", async () => {
+  const result = await script(`${mountPreamble}
+    const internal = await import(new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", facadeUrl).href);
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const nextTime = async () => { await sleep(2); return Date.now(); };
+    const store = () => createChatThreadStore(root, identityKey(principal));
+    const firstClaim = await attempt.claim();
+    const completed = await internal.startMountedAttempt(manifest, lease, (invocation) =>
+      internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
+        const t = [await nextTime(), await nextTime(), await nextTime(), await nextTime(), await nextTime()];
+        await scope.transitionStore({ operation: "arm", observedAtMs: t[0] });
+        await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: t[1] });
+        await scope.transitionPresentation({ operation: "commit_presentation", cancelEpoch: 0, message: { messageId: "response_01", text: "Hello back", occurredAtMs: t[2] }, committedAtMs: t[2] });
+        await scope.transitionPresentation({ operation: "claim_completion", claimedAtMs: t[3] });
+        return scope.transitionPresentation({ operation: "complete", completedAtMs: t[4] });
+      }),
+    );
+    const beforeVariant = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    const variantAccepted = await accept.accept({ text: "Hello", locale: "en-US", idempotencyKey: "bcdefghijklmnopqrstuvw", expectedDraftRevision: beforeVariant.draft.revision, variantTargetMessageId: "response_01" });
+    const variantClaim = await attempt.claim();
+    let promptText = null;
+    await internal.startMountedAttempt(manifest, lease, (invocation) =>
+      internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
+        promptText = await scope.readAcceptedMessageText();
+        return scope.readCurrentTurnLedger();
+      }),
+    );
+    const after = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    await authority.close();
+    process.stdout.write(JSON.stringify({ firstClaim: firstClaim.status, completed: completed.status, variantAccepted, variantClaim: variantClaim.status, promptText, after }));
+  `);
+  const after = result.after as {
+    messages: { role: string; kind: string; messageId: string }[];
+    turnLedger: { status: string; variant?: { targetMessageId: string; anchorMessageId: string } };
+  };
+  const variantAccepted = result.variantAccepted as {
+    variant?: { targetMessageId: string; anchorMessageId: string };
+  };
+  assert.equal(result.firstClaim, "attempt_starting");
+  assert.equal(result.completed, "completed");
+  assert.equal(result.variantClaim, "attempt_starting");
+  // The prompt is the player message the targeted reply answered, and the
+  // variant turn minted exactly no player row of its own.
+  assert.equal(result.promptText, "Hello");
+  const playerRows = after.messages.filter((message) => message.role === "player").map((message) => message.messageId);
+  assert.equal(playerRows.length, 1);
+  assert.deepEqual(variantAccepted.variant, { targetMessageId: "response_01", anchorMessageId: playerRows[0] });
+  assert.deepEqual(after.turnLedger.variant, { targetMessageId: "response_01", anchorMessageId: playerRows[0] });
+  assert.equal(after.turnLedger.status, "attempt_starting");
+});

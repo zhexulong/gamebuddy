@@ -36,14 +36,14 @@ import type {
   ProductionGamePermit,
   ProductionGameReadback,
   ProductionGameRecoveryTarget,
-   ProductionGameSessionBindingInput,
-   ProductionGameSessionCreateInput,
-   ProductionGameSessionMetadata,
-   ProductionGameSessionWorldBinding,
-   ProductionGameSessionWorldBindingInput,
-   ProductionGameSessionWorldBindingSlotHolder,
-   ProductionGameSessionWorldBindingSlotReleaseInput,
-   ProductionGameSessionWorldBindingTerminalInput,
+  ProductionGameSessionBindingInput,
+  ProductionGameSessionCreateInput,
+  ProductionGameSessionMetadata,
+  ProductionGameSessionWorldBinding,
+  ProductionGameSessionWorldBindingInput,
+  ProductionGameSessionWorldBindingSlotHolder,
+  ProductionGameSessionWorldBindingSlotReleaseInput,
+  ProductionGameSessionWorldBindingTerminalInput,
   ProductionGameTerminalReceipt,
   ProductionGameWorld,
   ProductionSagaReadback,
@@ -149,7 +149,9 @@ export type MountedChatRuntimeLease = Readonly<{
    * Cancels only the current exact in-flight Pi prompt without exposing the Pi
    * session. A stale turn/attempt pair cannot abort a later prompt.
    */
-  abortActivePrompt(expected: Readonly<{ turnId: string; attemptId: string }>): Promise<"aborted" | "not_active" | "mismatch">;
+  abortActivePrompt(
+    expected: Readonly<{ turnId: string; attemptId: string }>,
+  ): Promise<"aborted" | "not_active" | "mismatch">;
   close(): Promise<void>;
 }>;
 export type SemanticChatRuntimeMountOptions = Readonly<{
@@ -208,7 +210,9 @@ type MountedChatRuntimeLeaseRecord = {
   readonly providerRuntimeSession?: RuntimeSession;
   /** Exact mounted authored catalog capability; never public or retained by callers. */
   authoredContextCapability?: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability;
-  refreshAuthoredContext?: (currentCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability) => Promise<import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability>;
+  refreshAuthoredContext?: (
+    currentCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability,
+  ) => Promise<import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability>;
   authoredContextRefreshPromise?: Promise<void> | undefined;
 
   /**
@@ -314,10 +318,14 @@ export type ProviderInvocationScope = Readonly<{
   /** The live materialized runtime session; only for the single prompt call. */
   runtimeSession: RuntimeSession;
   /** Callback-scoped authored-context verifier for this exact mounted session. */
-   authoredContextCapability: Readonly<{
-     assertInstall(durableTurnId: string, refs: readonly Readonly<Record<string, string>>[], volatileRefs?: readonly Readonly<Record<string, string>>[]): void;
-     clearVolatileForTurn(durableTurnId: string): void;
-    }>;
+  authoredContextCapability: Readonly<{
+    assertInstall(
+      durableTurnId: string,
+      refs: readonly Readonly<Record<string, string>>[],
+      volatileRefs?: readonly Readonly<Record<string, string>>[],
+    ): void;
+    clearVolatileForTurn(durableTurnId: string): void;
+  }>;
   /**
    * The sole store-writer port for this exact attempt's arm/not_started/running
    * transitions and provider-rejection failure. It is callback-scoped and
@@ -579,8 +587,10 @@ async function ensureCurrentAuthoredContext(
         continuityId: manifest.principal.continuityId,
         chatThreadId: record.chatThreadId,
         chatSurfaceSessionId: record.chatSurfaceSessionId,
-         ...(after.thread.worldBookBinding === undefined ? {} : { binding: after.thread.worldBookBinding }),
-         ...(state.thread.appliedWorldBookBinding === undefined ? {} : { expectedOldAppliedBinding: state.thread.appliedWorldBookBinding }),
+        ...(after.thread.worldBookBinding === undefined ? {} : { binding: after.thread.worldBookBinding }),
+        ...(state.thread.appliedWorldBookBinding === undefined
+          ? {}
+          : { expectedOldAppliedBinding: state.thread.appliedWorldBookBinding }),
       });
     } finally {
       operationAuthority.revoke();
@@ -591,8 +601,7 @@ async function ensureCurrentAuthoredContext(
   try {
     await refreshPromise;
   } finally {
-    if (record.authoredContextRefreshPromise === refreshPromise)
-      record.authoredContextRefreshPromise = undefined;
+    if (record.authoredContextRefreshPromise === refreshPromise) record.authoredContextRefreshPromise = undefined;
   }
 }
 
@@ -601,13 +610,25 @@ function isTerminalTurnStatusForCoordinator(status: string): boolean {
 }
 
 function sameBindingForCoordinator(a: unknown, b: unknown): boolean {
-  if (a === undefined || a === null || b === undefined || b === null) return (a === undefined || a === null) && (b === undefined || b === null);
+  if (a === undefined || a === null || b === undefined || b === null)
+    return (a === undefined || a === null) && (b === undefined || b === null);
   if (typeof a !== "object" || typeof b !== "object") return false;
   const left = a as Record<string, unknown>;
   const right = b as Record<string, unknown>;
   if (left.source === "managed_world_info" || right.source === "managed_world_info")
-    return left.source === "managed_world_info" && right.source === "managed_world_info" && left.publicTitle === right.publicTitle && left.revision === right.revision && left.canonicalHash === right.canonicalHash;
-  return left.worldBookId === right.worldBookId && left.revision === right.revision && left.canonicalHash === right.canonicalHash && left.provenance === right.provenance;
+    return (
+      left.source === "managed_world_info" &&
+      right.source === "managed_world_info" &&
+      left.publicTitle === right.publicTitle &&
+      left.revision === right.revision &&
+      left.canonicalHash === right.canonicalHash
+    );
+  return (
+    left.worldBookId === right.worldBookId &&
+    left.revision === right.revision &&
+    left.canonicalHash === right.canonicalHash &&
+    left.provenance === right.provenance
+  );
 }
 
 /** Tavern-private consumption seam; callers cannot observe a lease record. */
@@ -619,9 +640,7 @@ function sameBindingForCoordinator(a: unknown, b: unknown): boolean {
 export async function claimMountedAttempt(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,
-  claim: (
-    admission: MountedAttemptAdmission,
-  ) => Promise<import("../tavern/chat-thread-store.js").AttemptStartingTurn>,
+  claim: (admission: MountedAttemptAdmission) => Promise<import("../tavern/chat-thread-store.js").AttemptStartingTurn>,
 ): Promise<import("../tavern/chat-thread-store.js").AttemptStartingTurn> {
   const record = mountedChatRuntimeLeases.get(lease);
   if (
@@ -797,30 +816,34 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
     const readAcceptedMessageText = async (): Promise<string> => {
       const store = mounted.store();
       const state = await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId);
+      // A same-position variant turn owns no player message: its prompt is the
+      // anchor player row the targeted reply answered. A missing anchor or a
+      // prompt that no longer resolves to a player row fails closed on the same
+      // bounded code rather than falling back to any other text.
+      const promptMessageId = record.turn.variant?.anchorMessageId ?? record.turn.messageId;
       const message = state.messages.find(
         (candidate) =>
-          candidate.messageId === record.turn.messageId && candidate.role === "player" && candidate.kind === "player",
+          candidate.messageId === promptMessageId && candidate.role === "player" && candidate.kind === "player",
       );
       if (message === undefined)
         throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_provider_start_message_unavailable");
       return message.text;
     };
-    const readAcceptedAuthoredContextPlan = async (): Promise<import("../tavern/chat-thread-store.js").AcceptedTurnAuthoredContextPlan> => {
+    const readAcceptedAuthoredContextPlan = async (): Promise<
+      import("../tavern/chat-thread-store.js").AcceptedTurnAuthoredContextPlan
+    > => {
       assertScopeActive();
       const store = mounted.store();
       const state = await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId);
       const plan = state.currentTurnContextPlan;
-      if (plan === undefined || plan.turnId !== facts.turnId) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_plan_unavailable");
+      if (plan === undefined || plan.turnId !== facts.turnId)
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_plan_unavailable");
       return plan;
     };
     const readCurrentTurnLedger = async (): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger> => {
       const store = mounted.store();
       const ledger = (await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId)).turnLedger;
-      if (
-        ledger === null ||
-        ledger.turnId !== facts.turnId ||
-        !isTurnWithExactAttempt(ledger, facts.attemptId)
-      )
+      if (ledger === null || ledger.turnId !== facts.turnId || !isTurnWithExactAttempt(ledger, facts.attemptId))
         throw new SemanticProductionCoordinatorError("semantic_chat_runtime_turn_unavailable");
       return ledger;
     };
@@ -856,7 +879,7 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
       });
     };
     const canPreviewNativeContent = (): boolean => {
-      const previewEpoch = nativeContentPreviewEpoch ??= mounted.presentationEpoch.capture();
+      const previewEpoch = (nativeContentPreviewEpoch ??= mounted.presentationEpoch.capture());
       return record.active.value && mounted.active && mounted.presentationEpoch.isCurrent(previewEpoch);
     };
     const finalizeCancellation = async (): Promise<
@@ -886,30 +909,37 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
         facts,
         deadlineAtMs,
         runtimeSession,
-         authoredContextCapability: Object.freeze({
-            assertInstall: (durableTurnId: string, refs: readonly Readonly<Record<string, string>>[], volatileRefs?: readonly Readonly<Record<string, string>>[]) => {
-              assertScopeActive();
-              const capability = mounted.authoredContextCapability;
-              if (capability === undefined || typeof capability.assertInstall !== "function")
-                throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
-              capability.assertInstall(
-                durableTurnId,
-                refs as readonly import("@cortexkit/pi-magic-context/tavern").GameBuddyAuthoredStableSourceRef[],
-                volatileRefs as readonly import("@cortexkit/pi-magic-context/tavern").GameBuddyAuthoredVolatileSourceRef[] | undefined,
-              );
-            },
-            clearVolatileForTurn: (durableTurnId: string) => {
-              assertScopeActive();
-              const capability = mounted.authoredContextCapability;
-              if (capability === undefined || typeof capability.clearVolatileForTurn !== "function") throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
-              capability.clearVolatileForTurn(durableTurnId);
-            },
-         }),
-         transitionStore,
+        authoredContextCapability: Object.freeze({
+          assertInstall: (
+            durableTurnId: string,
+            refs: readonly Readonly<Record<string, string>>[],
+            volatileRefs?: readonly Readonly<Record<string, string>>[],
+          ) => {
+            assertScopeActive();
+            const capability = mounted.authoredContextCapability;
+            if (capability === undefined || typeof capability.assertInstall !== "function")
+              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+            capability.assertInstall(
+              durableTurnId,
+              refs as readonly import("@cortexkit/pi-magic-context/tavern").GameBuddyAuthoredStableSourceRef[],
+              volatileRefs as
+                | readonly import("@cortexkit/pi-magic-context/tavern").GameBuddyAuthoredVolatileSourceRef[]
+                | undefined,
+            );
+          },
+          clearVolatileForTurn: (durableTurnId: string) => {
+            assertScopeActive();
+            const capability = mounted.authoredContextCapability;
+            if (capability === undefined || typeof capability.clearVolatileForTurn !== "function")
+              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+            capability.clearVolatileForTurn(durableTurnId);
+          },
+        }),
+        transitionStore,
         transitionPresentation,
-         readAcceptedMessageText,
-         readAcceptedAuthoredContextPlan,
-         readCurrentTurnLedger,
+        readAcceptedMessageText,
+        readAcceptedAuthoredContextPlan,
+        readCurrentTurnLedger,
         assertAdmission,
         beginActivePrompt,
         reserveNativeContentCommit,
@@ -1034,13 +1064,25 @@ export async function consumeMountedDurableAdmission<T>(
       continuityId: string;
       chatThreadId: string;
       chatSurfaceSessionId: string;
-       selectionGeneration: number;
-       profile: Readonly<{ profileId: string; revision: number; canonicalHash: string }>;
-        authoredContextCapability: Readonly<{
-           prepare(transientPreflightId: string): Readonly<{ sourceRefs: readonly Readonly<Record<string, string>>[]; stableTokenCount: number; volatileSourceRefs: readonly Readonly<Record<string, string>>[]; volatileSourceCandidates: readonly Readonly<Record<string, unknown>>[]; volatileTokenCount: number }>;
-           materializeVolatileForTurn(turnId: string, acceptedPlayerText: string, boundedVisibleTail: string): Readonly<{ refs: readonly Readonly<Record<string, string>>[]; tokenCount: number }>;
+      selectionGeneration: number;
+      profile: Readonly<{ profileId: string; revision: number; canonicalHash: string }>;
+      authoredContextCapability: Readonly<{
+        prepare(
+          transientPreflightId: string,
+        ): Readonly<{
+          sourceRefs: readonly Readonly<Record<string, string>>[];
+          stableTokenCount: number;
+          volatileSourceRefs: readonly Readonly<Record<string, string>>[];
+          volatileSourceCandidates: readonly Readonly<Record<string, unknown>>[];
+          volatileTokenCount: number;
         }>;
-     }>,
+        materializeVolatileForTurn(
+          turnId: string,
+          acceptedPlayerText: string,
+          boundedVisibleTail: string,
+        ): Readonly<{ refs: readonly Readonly<Record<string, string>>[]; tokenCount: number }>;
+      }>;
+    }>,
   ) => Promise<T>,
 ): Promise<T> {
   const record = mountedAdmissions.get(admission);
@@ -1050,7 +1092,8 @@ export async function consumeMountedDurableAdmission<T>(
   try {
     const mounted = record.lease;
     const mountedThreadStore = mounted.store();
-    const mountedThread = (await mountedThreadStore.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId)).thread;
+    const mountedThread = (await mountedThreadStore.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId))
+      .thread;
     return await callback(
       Object.freeze({
         runtimeRoot: mounted.runtimeRoot,
@@ -1060,21 +1103,28 @@ export async function consumeMountedDurableAdmission<T>(
         chatThreadId: mounted.chatThreadId,
         chatSurfaceSessionId: mounted.chatSurfaceSessionId,
         selectionGeneration: mounted.selectionGeneration,
-        profile: Object.freeze({ profileId: mountedThread.profileId, revision: mountedThread.profileRevision, canonicalHash: mountedThread.profileCanonicalHash }),
-          authoredContextCapability: Object.freeze({
-            prepare: (transientPreflightId: string) => {
-              const capability = mounted.authoredContextCapability;
-              if (capability === undefined) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
-              if (typeof capability.prepare !== "function") throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
-              return capability.prepare(transientPreflightId);
-            },
-            materializeVolatileForTurn: (turnId: string, acceptedPlayerText: string, boundedVisibleTail: string) => {
-              const capability = mounted.authoredContextCapability;
-              if (capability === undefined || typeof capability.materializeVolatileForTurn !== "function") throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
-              return capability.materializeVolatileForTurn(turnId, acceptedPlayerText, boundedVisibleTail);
-            },
-          }),
-       }),
+        profile: Object.freeze({
+          profileId: mountedThread.profileId,
+          revision: mountedThread.profileRevision,
+          canonicalHash: mountedThread.profileCanonicalHash,
+        }),
+        authoredContextCapability: Object.freeze({
+          prepare: (transientPreflightId: string) => {
+            const capability = mounted.authoredContextCapability;
+            if (capability === undefined)
+              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+            if (typeof capability.prepare !== "function")
+              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+            return capability.prepare(transientPreflightId);
+          },
+          materializeVolatileForTurn: (turnId: string, acceptedPlayerText: string, boundedVisibleTail: string) => {
+            const capability = mounted.authoredContextCapability;
+            if (capability === undefined || typeof capability.materializeVolatileForTurn !== "function")
+              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authored_context_unavailable");
+            return capability.materializeVolatileForTurn(turnId, acceptedPlayerText, boundedVisibleTail);
+          },
+        }),
+      }),
     );
   } finally {
     record.active.value = false;
@@ -1127,7 +1177,8 @@ export async function stopMountedChatPresentationEpoch(
       ledger.attempt.runtimeOwner.ownerToken === record.attemptBinding.runtimeOwner.ownerToken &&
       ledger.attempt.runtimeOwner.runtimeInstanceId === record.attemptBinding.runtimeOwner.runtimeInstanceId &&
       ledger.attempt.runtimeOwner.ownerPid === record.attemptBinding.runtimeOwner.ownerPid &&
-      ledger.attempt.runtimeOwner.ownerProcessStartIdentity === record.attemptBinding.runtimeOwner.ownerProcessStartIdentity
+      ledger.attempt.runtimeOwner.ownerProcessStartIdentity ===
+        record.attemptBinding.runtimeOwner.ownerProcessStartIdentity
     )
       return ledger;
     throw error;
@@ -1421,28 +1472,30 @@ export type SemanticGameProductionAuthority = Readonly<{
   completeGameSessionBinding(input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata>;
   failGameSessionCreation(input: ProductionGameSessionBindingInput): Promise<ProductionGameSessionMetadata>;
   readGameSessionMetadata(input: Readonly<{ gameSessionId: string }>): Promise<ProductionGameSessionMetadata | null>;
-   listResumableGameSessions(): Promise<readonly ProductionGameSessionMetadata[]>;
-   registerGameSessionWorldBinding(input: ProductionGameSessionWorldBindingInput): Promise<ProductionGameSessionWorldBinding>;
-   readGameSessionWorldBinding(
-     input: Readonly<{ gameSessionId: string; integrationId: string }>,
-   ): Promise<ProductionGameSessionWorldBinding | null>;
-   markGameSessionWorldBindingTerminal(
-     input: ProductionGameSessionWorldBindingTerminalInput,
-   ): Promise<ProductionGameSessionWorldBinding>;
-   /**
-    * design/105 Slice 0 world-slot surface, projected exactly like the members
-    * above. The read hands back whatever holder the store has, including the
-    * handle a release demands; the release forwards the caller's holder handle
-    * and its correlated native-lease proof unchanged. Neither invents, derives,
-    * defaults or substitutes a handle, and a store refusal reaches the caller as
-    * its own bounded code rather than a generic error or a falsy return.
-    */
-   readGameSessionWorldBindingSlotHolder(
-     input: Readonly<{ integrationId: string; bindingRef: string }>,
-   ): Promise<ProductionGameSessionWorldBindingSlotHolder | null>;
-   releaseGameSessionWorldBindingSlot(
-     input: ProductionGameSessionWorldBindingSlotReleaseInput,
-   ): Promise<ProductionGameSessionWorldBinding>;
+  listResumableGameSessions(): Promise<readonly ProductionGameSessionMetadata[]>;
+  registerGameSessionWorldBinding(
+    input: ProductionGameSessionWorldBindingInput,
+  ): Promise<ProductionGameSessionWorldBinding>;
+  readGameSessionWorldBinding(
+    input: Readonly<{ gameSessionId: string; integrationId: string }>,
+  ): Promise<ProductionGameSessionWorldBinding | null>;
+  markGameSessionWorldBindingTerminal(
+    input: ProductionGameSessionWorldBindingTerminalInput,
+  ): Promise<ProductionGameSessionWorldBinding>;
+  /**
+   * design/105 Slice 0 world-slot surface, projected exactly like the members
+   * above. The read hands back whatever holder the store has, including the
+   * handle a release demands; the release forwards the caller's holder handle
+   * and its correlated native-lease proof unchanged. Neither invents, derives,
+   * defaults or substitutes a handle, and a store refusal reaches the caller as
+   * its own bounded code rather than a generic error or a falsy return.
+   */
+  readGameSessionWorldBindingSlotHolder(
+    input: Readonly<{ integrationId: string; bindingRef: string }>,
+  ): Promise<ProductionGameSessionWorldBindingSlotHolder | null>;
+  releaseGameSessionWorldBindingSlot(
+    input: ProductionGameSessionWorldBindingSlotReleaseInput,
+  ): Promise<ProductionGameSessionWorldBinding>;
   close(): Promise<void>;
 }>;
 /** Only the S4 construction zone may supply facts drawn from its active binding execution. */
@@ -1998,9 +2051,7 @@ async function createFreshChatRuntimeAuthority(
     if (!permit || !receipt)
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_evidence_missing");
     const terminal = await locked(() =>
-      provision.store.commitChatRuntimeTeardown(
-        Object.freeze({ principal: provision.principal, permit, receipt }),
-      ),
+      provision.store.commitChatRuntimeTeardown(Object.freeze({ principal: provision.principal, permit, receipt })),
     );
     if (terminal.status !== "terminal" || terminal.runtimeState !== "closed")
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_not_terminal");
@@ -2361,8 +2412,7 @@ async function createFreshChatRuntimeAuthority(
           intentKind = "create";
         }
       }
-      const mountedRecord =
-        mountedLease === undefined ? undefined : mountedChatRuntimeLeases.get(mountedLease);
+      const mountedRecord = mountedLease === undefined ? undefined : mountedChatRuntimeLeases.get(mountedLease);
       await locked(() => {
         const catalog = provision.store.readChatCatalog();
         if (
@@ -2385,8 +2435,7 @@ async function createFreshChatRuntimeAuthority(
           // with the current selection state and changes nothing.
           if (
             error instanceof Error &&
-            (error.message === "chat_selection_transition_in_flight" ||
-              error.message === "chat_selection_conflict")
+            (error.message === "chat_selection_transition_in_flight" || error.message === "chat_selection_conflict")
           )
             throw new SemanticProductionCoordinatorError("semantic_chat_selection_conflict");
           throw error;
@@ -2512,7 +2561,11 @@ async function createFreshChatRuntimeAuthority(
           throw new SemanticProductionCoordinatorError("untrusted_tavern_exact_content_receipt");
         return resumed;
       } catch (error) {
-        if (kind !== "create" || !(error instanceof TavernInitialChatExactContentPortError) || error.code !== "chat_thread_not_found")
+        if (
+          kind !== "create" ||
+          !(error instanceof TavernInitialChatExactContentPortError) ||
+          error.code !== "chat_thread_not_found"
+        )
           throw error;
         const created = await content.port.createExplicit(
           Object.freeze({
@@ -2537,116 +2590,121 @@ async function createFreshChatRuntimeAuthority(
    * successor capability for the Chat the player selected.
    */
   const startMountedChatRuntime = (): Promise<MountedChatRuntimeLease> => {
-      // This is a synchronous acceptance boundary. Once close begins, neither a
-      // previously-created start promise nor an already-active runtime may mint
-      // or return a mounted capability.
-      if (closing || closed)
-        return Promise.reject(new SemanticProductionCoordinatorError("semantic_chat_runtime_authority_closed"));
-      if (mountedStartPromise !== undefined) return mountedStartPromise;
-      mountedStartPromise = startChatRuntime().then((readback) => {
-        // startChatRuntime may have been accepted before a concurrent close.
-        // Recheck after its asynchronous work, immediately before lease minting.
-        if (closing || closed) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authority_closed");
-        const record = liveByBootstrapOperation.get(readback.operationId);
-        const runtimeSession = record?.runtime.runtimeSession;
-        if (
-          !record ||
-          !runtimeSession ||
-          readback.status !== "terminal" ||
-          readback.runtimeState !== "active" ||
-          readback.operationId !== record.bootstrapReceipt.operationId ||
-          readback.requestId !== record.bootstrapReceipt.requestId ||
-          readback.chatThreadId !== record.bootstrapReceipt.chatThreadId ||
-          readback.chatSurfaceSessionId !== record.bootstrapReceipt.chatSurfaceSessionId
-        )
-          throw new SemanticProductionCoordinatorError("semantic_chat_runtime_mount_readback_rejected");
-        // The live-gate-only reporter is emitted after the exact runtime has
-        // been committed active but before the browser server can accept input.
-        // Normal consumers still receive only the safe lease projection.
-        runtimeSession.reportTavernNarrativeGateRuntime?.();
-        const browserProjection = createMountedChatBrowserProjection(
-          readback.chatThreadId,
-          readback.chatSurfaceSessionId,
-          record.vector.selectionRevision,
-        );
-        let lease!: MountedChatRuntimeLease;
-        lease = Object.freeze({
-          // The lease exposes only profile metadata. The start runner gets the exact live
-          // runtime solely from this module's private WeakMap record below.
-          runtimeSession: Object.freeze({ profile: runtimeSession.profile }),
-          chatThreadId: readback.chatThreadId,
-          chatSurfaceSessionId: readback.chatSurfaceSessionId,
-          browserProjection,
-          async abortActivePrompt(
-            this: unknown,
-            expected: Readonly<{ turnId: string; attemptId: string }>,
-          ): Promise<"aborted" | "not_active" | "mismatch"> {
-            if (this !== lease || !isCurrentMountedChatRuntimeLease(lease))
-              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
-            if (
-              expected === null ||
-              typeof expected !== "object" ||
-              !/^[A-Za-z0-9_-]{1,128}$/u.test(expected.turnId) ||
-              !/^[A-Za-z0-9_-]{1,128}$/u.test(expected.attemptId)
-            )
-              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_abort_request_rejected");
-            const leaseRecord = mountedChatRuntimeLeases.get(lease);
-            if (leaseRecord === undefined || !leaseRecord.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
-            const activePrompt = leaseRecord.activePrompt;
-            if (activePrompt === undefined) return "not_active";
-            if (activePrompt.turnId !== expected.turnId || activePrompt.attemptId !== expected.attemptId)
-              return "mismatch";
-            if (activePrompt.aborting) return "not_active";
-            leaseRecord.activePrompt = Object.freeze({ ...activePrompt, aborting: true });
-            const session = record.runtime.runtimeSession?.session;
-            const abort = session?.abort;
-            if (typeof abort !== "function") return "not_active";
-            try {
-              await abort.call(session);
-            } catch {
-              // A failed transport abort does not change the ordinary SQLite
-              // terminal winner selected by the authenticated Stop request.
-            }
-            return "aborted";
-          },
-          close(this: unknown): Promise<void> {
-            if (this !== lease || !issuedLeases.has(lease as object))
-              return Promise.reject(new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected"));
-            const leaseRecord = mountedChatRuntimeLeases.get(lease);
-            if (leaseRecord !== undefined) {
-              leaseRecord.active = false;
-              leaseRecord.transitionAuthority.revoke();
-            }
-            return authority.close();
-          },
-        });
-        issuedLeases.add(lease as object);
-        mountedChatRuntimeLeases.set(lease, {
-          active: true,
-          runtimeRoot: provision.runtimeCwd,
-          principal: Object.freeze({ ...provision.principal }),
-          chatThreadId: readback.chatThreadId,
-          chatSurfaceSessionId: readback.chatSurfaceSessionId,
-          selectionGeneration: record.vector.selectionRevision,
-          attemptBinding: Object.freeze({
-            runtimeBindingDigest: record.bootstrapPermit.runtimeBindingDigest,
-            runtimeOwner: Object.freeze({ ...record.bootstrapPermit.owner }),
-          }),
-          ...(runtimeSession === undefined ? {} : { providerRuntimeSession: runtimeSession }),
-          ...(record.runtime.authoredContextCapability === undefined ? {} : { authoredContextCapability: record.runtime.authoredContextCapability }),
-          ...(record.runtime.refreshAuthoredContext === undefined ? {} : { refreshAuthoredContext: record.runtime.refreshAuthoredContext }),
-          startedAttemptIds: new Set<string>(),
-          transitionAuthority: createMountedTurnTransitionAuthority(),
-          presentationEpoch: createCompanionInterruption(),
-          promptSettlementWaiters: new Set<() => void>(),
-          begin,
-          store: mountedStore,
-          close: () => authority.close(),
-        });
-        mountedLease = lease;
-        return lease;
+    // This is a synchronous acceptance boundary. Once close begins, neither a
+    // previously-created start promise nor an already-active runtime may mint
+    // or return a mounted capability.
+    if (closing || closed)
+      return Promise.reject(new SemanticProductionCoordinatorError("semantic_chat_runtime_authority_closed"));
+    if (mountedStartPromise !== undefined) return mountedStartPromise;
+    mountedStartPromise = startChatRuntime().then((readback) => {
+      // startChatRuntime may have been accepted before a concurrent close.
+      // Recheck after its asynchronous work, immediately before lease minting.
+      if (closing || closed) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authority_closed");
+      const record = liveByBootstrapOperation.get(readback.operationId);
+      const runtimeSession = record?.runtime.runtimeSession;
+      if (
+        !record ||
+        !runtimeSession ||
+        readback.status !== "terminal" ||
+        readback.runtimeState !== "active" ||
+        readback.operationId !== record.bootstrapReceipt.operationId ||
+        readback.requestId !== record.bootstrapReceipt.requestId ||
+        readback.chatThreadId !== record.bootstrapReceipt.chatThreadId ||
+        readback.chatSurfaceSessionId !== record.bootstrapReceipt.chatSurfaceSessionId
+      )
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_mount_readback_rejected");
+      // The live-gate-only reporter is emitted after the exact runtime has
+      // been committed active but before the browser server can accept input.
+      // Normal consumers still receive only the safe lease projection.
+      runtimeSession.reportTavernNarrativeGateRuntime?.();
+      const browserProjection = createMountedChatBrowserProjection(
+        readback.chatThreadId,
+        readback.chatSurfaceSessionId,
+        record.vector.selectionRevision,
+      );
+      let lease!: MountedChatRuntimeLease;
+      lease = Object.freeze({
+        // The lease exposes only profile metadata. The start runner gets the exact live
+        // runtime solely from this module's private WeakMap record below.
+        runtimeSession: Object.freeze({ profile: runtimeSession.profile }),
+        chatThreadId: readback.chatThreadId,
+        chatSurfaceSessionId: readback.chatSurfaceSessionId,
+        browserProjection,
+        async abortActivePrompt(
+          this: unknown,
+          expected: Readonly<{ turnId: string; attemptId: string }>,
+        ): Promise<"aborted" | "not_active" | "mismatch"> {
+          if (this !== lease || !isCurrentMountedChatRuntimeLease(lease))
+            throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
+          if (
+            expected === null ||
+            typeof expected !== "object" ||
+            !/^[A-Za-z0-9_-]{1,128}$/u.test(expected.turnId) ||
+            !/^[A-Za-z0-9_-]{1,128}$/u.test(expected.attemptId)
+          )
+            throw new SemanticProductionCoordinatorError("semantic_chat_runtime_abort_request_rejected");
+          const leaseRecord = mountedChatRuntimeLeases.get(lease);
+          if (leaseRecord === undefined || !leaseRecord.active)
+            throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
+          const activePrompt = leaseRecord.activePrompt;
+          if (activePrompt === undefined) return "not_active";
+          if (activePrompt.turnId !== expected.turnId || activePrompt.attemptId !== expected.attemptId)
+            return "mismatch";
+          if (activePrompt.aborting) return "not_active";
+          leaseRecord.activePrompt = Object.freeze({ ...activePrompt, aborting: true });
+          const session = record.runtime.runtimeSession?.session;
+          const abort = session?.abort;
+          if (typeof abort !== "function") return "not_active";
+          try {
+            await abort.call(session);
+          } catch {
+            // A failed transport abort does not change the ordinary SQLite
+            // terminal winner selected by the authenticated Stop request.
+          }
+          return "aborted";
+        },
+        close(this: unknown): Promise<void> {
+          if (this !== lease || !issuedLeases.has(lease as object))
+            return Promise.reject(new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected"));
+          const leaseRecord = mountedChatRuntimeLeases.get(lease);
+          if (leaseRecord !== undefined) {
+            leaseRecord.active = false;
+            leaseRecord.transitionAuthority.revoke();
+          }
+          return authority.close();
+        },
       });
-      return mountedStartPromise;
+      issuedLeases.add(lease as object);
+      mountedChatRuntimeLeases.set(lease, {
+        active: true,
+        runtimeRoot: provision.runtimeCwd,
+        principal: Object.freeze({ ...provision.principal }),
+        chatThreadId: readback.chatThreadId,
+        chatSurfaceSessionId: readback.chatSurfaceSessionId,
+        selectionGeneration: record.vector.selectionRevision,
+        attemptBinding: Object.freeze({
+          runtimeBindingDigest: record.bootstrapPermit.runtimeBindingDigest,
+          runtimeOwner: Object.freeze({ ...record.bootstrapPermit.owner }),
+        }),
+        ...(runtimeSession === undefined ? {} : { providerRuntimeSession: runtimeSession }),
+        ...(record.runtime.authoredContextCapability === undefined
+          ? {}
+          : { authoredContextCapability: record.runtime.authoredContextCapability }),
+        ...(record.runtime.refreshAuthoredContext === undefined
+          ? {}
+          : { refreshAuthoredContext: record.runtime.refreshAuthoredContext }),
+        startedAttemptIds: new Set<string>(),
+        transitionAuthority: createMountedTurnTransitionAuthority(),
+        presentationEpoch: createCompanionInterruption(),
+        promptSettlementWaiters: new Set<() => void>(),
+        begin,
+        store: mountedStore,
+        close: () => authority.close(),
+      });
+      mountedLease = lease;
+      return lease;
+    });
+    return mountedStartPromise;
   };
   authority = Object.freeze({
     authority: "SEMANTIC" as const,
@@ -3580,28 +3638,28 @@ function createKnownGameAuthority(
     input: Readonly<{ gameSessionId: string }>,
   ): Promise<ProductionGameSessionMetadata | null> =>
     begin(() => locked(() => provision.store.readGameSessionMetadata(input)));
-   const listResumableGameSessions = (): Promise<readonly ProductionGameSessionMetadata[]> =>
-     begin(() => locked(() => provision.store.listResumableGameSessions()));
-   const registerGameSessionWorldBinding = (
-     input: ProductionGameSessionWorldBindingInput,
-   ): Promise<ProductionGameSessionWorldBinding> =>
-     begin(() => locked(() => provision.store.registerGameSessionWorldBinding(input)));
-   const readGameSessionWorldBinding = (
-     input: Readonly<{ gameSessionId: string; integrationId: string }>,
-   ): Promise<ProductionGameSessionWorldBinding | null> =>
-     begin(() => locked(() => provision.store.readGameSessionWorldBinding(input)));
-   const markGameSessionWorldBindingTerminal = (
-     input: ProductionGameSessionWorldBindingTerminalInput,
-   ): Promise<ProductionGameSessionWorldBinding> =>
-     begin(() => locked(() => provision.store.markGameSessionWorldBindingTerminal(input)));
-   const readGameSessionWorldBindingSlotHolder = (
-     input: Readonly<{ integrationId: string; bindingRef: string }>,
-   ): Promise<ProductionGameSessionWorldBindingSlotHolder | null> =>
-     begin(() => locked(() => provision.store.readGameSessionWorldBindingSlotHolder(input)));
-   const releaseGameSessionWorldBindingSlot = (
-     input: ProductionGameSessionWorldBindingSlotReleaseInput,
-   ): Promise<ProductionGameSessionWorldBinding> =>
-     begin(() => locked(() => provision.store.releaseGameSessionWorldBindingSlot(input)));
+  const listResumableGameSessions = (): Promise<readonly ProductionGameSessionMetadata[]> =>
+    begin(() => locked(() => provision.store.listResumableGameSessions()));
+  const registerGameSessionWorldBinding = (
+    input: ProductionGameSessionWorldBindingInput,
+  ): Promise<ProductionGameSessionWorldBinding> =>
+    begin(() => locked(() => provision.store.registerGameSessionWorldBinding(input)));
+  const readGameSessionWorldBinding = (
+    input: Readonly<{ gameSessionId: string; integrationId: string }>,
+  ): Promise<ProductionGameSessionWorldBinding | null> =>
+    begin(() => locked(() => provision.store.readGameSessionWorldBinding(input)));
+  const markGameSessionWorldBindingTerminal = (
+    input: ProductionGameSessionWorldBindingTerminalInput,
+  ): Promise<ProductionGameSessionWorldBinding> =>
+    begin(() => locked(() => provision.store.markGameSessionWorldBindingTerminal(input)));
+  const readGameSessionWorldBindingSlotHolder = (
+    input: Readonly<{ integrationId: string; bindingRef: string }>,
+  ): Promise<ProductionGameSessionWorldBindingSlotHolder | null> =>
+    begin(() => locked(() => provision.store.readGameSessionWorldBindingSlotHolder(input)));
+  const releaseGameSessionWorldBindingSlot = (
+    input: ProductionGameSessionWorldBindingSlotReleaseInput,
+  ): Promise<ProductionGameSessionWorldBinding> =>
+    begin(() => locked(() => provision.store.releaseGameSessionWorldBindingSlot(input)));
   return Object.freeze({
     authority: "SEMANTIC" as const,
     prepareEnter,
@@ -3615,13 +3673,13 @@ function createKnownGameAuthority(
     completeGameSessionBinding,
     failGameSessionCreation,
     readGameSessionMetadata,
-     listResumableGameSessions,
-     registerGameSessionWorldBinding,
-     readGameSessionWorldBinding,
-     markGameSessionWorldBindingTerminal,
-     readGameSessionWorldBindingSlotHolder,
-     releaseGameSessionWorldBindingSlot,
-     close: () => {
+    listResumableGameSessions,
+    registerGameSessionWorldBinding,
+    readGameSessionWorldBinding,
+    markGameSessionWorldBindingTerminal,
+    readGameSessionWorldBindingSlotHolder,
+    releaseGameSessionWorldBindingSlot,
+    close: () => {
       if (closePromise !== undefined) return closePromise;
       closing = true;
       const attempt = (async () => {
