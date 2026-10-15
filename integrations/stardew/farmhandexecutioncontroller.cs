@@ -1661,6 +1661,37 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
     }
 
+    /// <summary>
+    /// Releases an in-flight local move when the actor's location changed under it.
+    ///
+    /// A warp can happen with no request from this Mod: the ENGINE warps a walking player itself
+    /// whenever the tile it steps into matches a location warp (<c>Farmer.MovePositionImpl</c>,
+    /// Farmer.cs:8586, calls <c>GameLocation.isCollidingWithWarp</c> on the next-position box),
+    /// and that is the mechanism behind every map-edge warp. A move's
+    /// <c>PathFindController</c> captured the location object it was planned against
+    /// (PathFindController.cs:126) and keeps driving the actor with that captured object
+    /// (:320 <c>character.MovePosition(time, Game1.viewport, location)</c>), while every ruling in
+    /// the body loop reads the LIVE <c>localPlayer.currentLocation</c> - so a move must not
+    /// survive the change; it would keep walking the actor on a stale map.
+    ///
+    /// Only a plain move is released here. A travel or a navigation whose warp this is keeps
+    /// ownership: its terminal is minted from the warp's own postcondition by
+    /// <see cref="CompleteTravelAfterWarp"/> / <see cref="CompleteNavigationAfterWarp"/>, which the
+    /// warp funnel has already run by the time this is called.
+    /// </summary>
+    internal void InvalidateLocalMoveAfterLocationChange(string? oldLocation, string? newLocation)
+    {
+        if (this.active is null || this.activeTravel is not null || this.activeNavigate is not null)
+            return;
+        if (string.Equals(oldLocation, newLocation, StringComparison.Ordinal))
+            return;
+
+        this.revision++;
+        this.controller.Invalidate(
+            "move_location_changed",
+            $"location={oldLocation}->{newLocation};target={FormatTile(this.active.TargetTile)};path_controller_location=stale");
+    }
+
     public void InvalidateForLifecycle(string reasonCode)
     {
         this.InvalidateWoodFenceResult();
