@@ -193,6 +193,7 @@ export async function runMountedProviderStart(
     resolveRunningBarrier = resolve;
   });
   let finalPresentationFailure: unknown | undefined;
+  let variantActivation: import("../pi-session-context-activation.internal.js").PiVariantActivation | undefined;
   let responseMessageId: string | undefined;
   let previewPublished = false;
   let observationSettled = false;
@@ -281,6 +282,18 @@ export async function runMountedProviderStart(
             // companion row. The target comes only from the coordinator-bound
             // facts, never from provider content.
             const variant = scope.facts.variant;
+            if (variant !== null) {
+              // Ordering: the durable variant is committed only after the model's
+              // context carries it, because the reverse - a player-visible variant
+              // the model never saw - is the divergence a same-position turn exists
+              // to close. A refusal here leaves the position exactly as it was.
+              const activation = await scope.activateVariantPosition(text);
+              if (activation.status !== "activated") {
+                process.stderr.write(`[variant] activation refused: ${activation.reason}\n`);
+                throw new Error(`native_content_variant_activation_${activation.reason}`);
+              }
+              variantActivation = activation;
+            }
             const committed = await scope.transitionPresentation(
               variant === null
                 ? {
@@ -306,10 +319,22 @@ export async function runMountedProviderStart(
             );
             if (committed.status !== "presentation_committed")
               throw new Error("native_content_presentation_commit_rejected");
+            variantActivation = undefined;
           } catch (error) {
             // Observer callback failure is not a terminal authority. Preserve a
             // Stop winner when one exists; otherwise let the ordinary P5 failure
             // transition below terminalize the already-durable running attempt.
+            //
+            // An activated variant that did not reach a visible commit must not
+            // stay in the model's history. Only a refusal the store raises before
+            // it writes anything proves the variant is not visible; an ambiguous
+            // failure - a write whose read-back failed - may have committed it, and
+            // reverting there would produce the same divergence mirrored.
+            if (variantActivation !== undefined) {
+              if (isPresentationRefusedWithoutWrite(error) && variantActivation.revert().status !== "reverted")
+                process.stderr.write("[variant] revert refused: variant_revert_content_unavailable\n");
+              variantActivation = undefined;
+            }
             finalPresentationFailure = error;
           } finally {
             reservation.release();
@@ -564,4 +589,23 @@ export async function runMountedProviderStart(
     await nativeObserver?.close();
     releaseActivePrompt?.();
   }
+}
+
+/**
+ * The refusal codes the store raises before it writes anything, so a variant
+ * commit that threw one of them provably never became visible and the context
+ * this turn activated can be put back. Every other failure is ambiguous - a
+ * write whose read-back failed may have committed - and is deliberately left
+ * alone, because a visible variant with a reverted context is the same
+ * divergence mirrored.
+ */
+function isPresentationRefusedWithoutWrite(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message === "p5_presentation_source_running_required" ||
+      error.message === "chat_variant_target_mismatch" ||
+      error.message === "chat_variant_target_not_found" ||
+      error.message === "chat_variant_commit_conflict" ||
+      error.message === "semantic_chat_runtime_p4_attempt_invocation_rejected")
+  );
 }

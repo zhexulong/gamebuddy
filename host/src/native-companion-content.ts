@@ -87,7 +87,9 @@ export type NativeCompanionContentSinks = Readonly<{
   /** The one final safe native assistant text value, emitted at most once. */
   onFinalText(text: string): void | Promise<void>;
   /** No content is supplied to this sink. */
-  onRejected(reason: "aborted" | "error" | "empty" | "empty_text" | "tool_only" | "unsupported_content" | "identity_mismatch"): void | Promise<void>;
+  onRejected(
+    reason: "aborted" | "error" | "empty" | "empty_text" | "tool_only" | "unsupported_content" | "identity_mismatch",
+  ): void | Promise<void>;
 }>;
 
 export type NativeCompanionContentObserver = Readonly<{
@@ -129,7 +131,9 @@ export type NativeCompanionContentObserver = Readonly<{
  * text it receives is the player's or the model's.
  */
 export function attachNativeCompanionContent(
-  session: Pick<AgentSession, "subscribe"> | Readonly<{ subscribe(listener: (event: NativeCompanionContentEvent) => void): () => void }>,
+  session:
+    | Pick<AgentSession, "subscribe">
+    | Readonly<{ subscribe(listener: (event: NativeCompanionContentEvent) => void): () => void }>,
   sinks: NativeCompanionContentSinks,
   options: NativeCompanionContentOptions,
 ): NativeCompanionContentObserver {
@@ -222,9 +226,7 @@ export function attachNativeCompanionContent(
       // Pi emits shallow snapshots. A provider response ID, when available,
       // must remain consistent; its absence does not invalidate the exact
       // assistant lifecycle already started by Pi for this prompt.
-      const partial = isAssistantMessage(assistantMessageEvent.partial)
-        ? assistantMessageEvent.partial
-        : undefined;
+      const partial = isAssistantMessage(assistantMessageEvent.partial) ? assistantMessageEvent.partial : undefined;
       if (partial === undefined) return;
       const partialIdentity = identityOf(partial);
       if (trackedIdentity === undefined) {
@@ -341,8 +343,7 @@ export function attachNativeCompanionContent(
           dispatch(async () => await sinks.onIncrementalText!(present(sentence)));
         }
         const residual = messageAccumulator.flush();
-        if (!presentIsEmpty(residual))
-          dispatch(async () => await sinks.onFinalText(present(residual)));
+        if (!presentIsEmpty(residual)) dispatch(async () => await sinks.onFinalText(present(residual)));
         return;
       }
       const text = readSafeAssistantText(finalMessage, stripStageDirection, dropScaffolding);
@@ -386,6 +387,29 @@ export function attachNativeCompanionContent(
       closed = true;
     },
   });
+}
+
+/**
+ * The exact text the durable Chat transcript holds for one Pi assistant message,
+ * or `null` when that message carries none this surface can persist.
+ *
+ * Exported because a same-position variant compares a Pi entry against the row
+ * that entry produced (`pi-session-context-activation.internal.ts`), and that
+ * comparison is exact only while both sides run this one projection: the row's
+ * text is the value this function returned when the entry was committed.
+ */
+export function chatTranscriptAssistantText(message: unknown): string | null {
+  if (!isAssistantLifecycleMessage(message)) return null;
+  const flags = presentationFlags(CHAT_TRANSCRIPT_STAGE_DIRECTION, CHAT_TRANSCRIPT_SCAFFOLDING);
+  return readSafeAssistantText(message, flags.stripStageDirection, flags.dropScaffolding);
+}
+
+/** The two named presentation choices as the booleans `readSafeAssistantText` takes. */
+function presentationFlags(
+  stageDirection: StageDirectionPresentation,
+  scaffolding: ScaffoldingPresentation,
+): Readonly<{ stripStageDirection: boolean; dropScaffolding: boolean }> {
+  return { stripStageDirection: stageDirection === "strip", dropScaffolding: scaffolding === "drop" };
 }
 
 function readSafeAssistantText(
@@ -441,13 +465,13 @@ function isAssistantMessage(value: unknown): value is AssistantMessage {
     ((value as { responseId?: unknown }).responseId === undefined ||
       typeof (value as { responseId?: unknown }).responseId === "string") &&
     Array.isArray((value as { content?: unknown }).content) &&
-    ((value as { stopReason?: unknown }).stopReason === undefined || typeof (value as { stopReason?: unknown }).stopReason === "string")
+    ((value as { stopReason?: unknown }).stopReason === undefined ||
+      typeof (value as { stopReason?: unknown }).stopReason === "string")
   );
 }
 
 function identityOf(message: AssistantMessage): Readonly<{ kind: "id" | "responseId"; value: string }> | undefined {
-  if (typeof message.id === "string" && message.id.length > 0)
-    return Object.freeze({ kind: "id", value: message.id });
+  if (typeof message.id === "string" && message.id.length > 0) return Object.freeze({ kind: "id", value: message.id });
   if (typeof message.responseId === "string" && message.responseId.length > 0)
     return Object.freeze({ kind: "responseId", value: message.responseId });
   return undefined;

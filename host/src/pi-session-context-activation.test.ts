@@ -5,13 +5,14 @@ import test from "node:test";
 
 import { type AgentSession, SessionManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 
-import { activatePiSessionContextEntry } from "./pi-session-context-activation.internal.js";
+import { activatePiSessionContextEntry, activatePiVariantPosition } from "./pi-session-context-activation.internal.js";
 import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 
 const PROMPT_TEXT = "I waited at the bus stop until noon.";
 const FIRST_REPLY = "First reply: I was still on the pier.";
 const SECOND_REPLY = "Second reply: I came as soon as the rain eased.";
 const REGENERATED_REPLY = "Regenerated reply: the rain made me late.";
+const THIRD_REPLY = "Third reply: the rain stopped and I walked over.";
 const REPLACEMENT_TEXT = "Active variant: I ran the whole way.";
 const SECOND_REPLACEMENT_TEXT = "Last variant: the rain made me late, so I ran.";
 
@@ -287,6 +288,132 @@ test("a target that exists off the model's active branch is refused with a bound
     );
     assert.equal(quoted(fixture.modelMessages()), before);
     assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore);
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * One regeneration, exactly as the runner leaves the session: the position has
+ * committed one variant so far, Pi has appended the re-prompt and the new reply,
+ * and the position's own reply entry still carries the superseded text.
+ */
+test("a same-position activation replaces the only superseded reply entry", async () => {
+  const fixture = await createPiChatSession("gamebuddy-variant-position-");
+  try {
+    const before = quoted(fixture.modelMessages());
+    assert.equal(before.includes(FIRST_REPLY), true);
+    const result = activatePiVariantPosition(
+      fixture.session,
+      Object.freeze({ variantTexts: Object.freeze([FIRST_REPLY]) }),
+      SECOND_REPLY,
+    );
+    assert.equal(result.status, "activated");
+    const after = quoted(fixture.modelMessages());
+    // The superseded text is gone from every position, and the reply the player
+    // will read is the only companion text the model still carries.
+    assert.equal(after.includes(FIRST_REPLY), false);
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+    ]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The non-convergence this mechanism must not have: after a second regeneration
+ * the position owns two Pi entries that carried older variants, and leaving
+ * either in place would put a reply the player discarded back into the model's
+ * history.
+ */
+test("a second regeneration replaces every sibling the position owns", async () => {
+  const fixture = await createPiChatSession("gamebuddy-variant-second-");
+  try {
+    appendPrompt(fixture.sessionManager);
+    appendReply(fixture.sessionManager, THIRD_REPLY);
+    const result = activatePiVariantPosition(
+      fixture.session,
+      Object.freeze({ variantTexts: Object.freeze([FIRST_REPLY, SECOND_REPLY]) }),
+      THIRD_REPLY,
+    );
+    assert.equal(result.status, "activated");
+    const after = quoted(fixture.modelMessages());
+    assert.equal(after.includes(FIRST_REPLY), false);
+    assert.equal(after.includes(SECOND_REPLY), false);
+    assert.deepEqual(
+      fixture.modelMessages().filter(([role]) => role === "assistant"),
+      [
+        ["assistant", [{ type: "text", text: THIRD_REPLY }]],
+        ["assistant", [{ type: "text", text: THIRD_REPLY }]],
+        ["assistant", [{ type: "text", text: THIRD_REPLY }]],
+      ],
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+/** The revert half: an activation whose variant never became visible leaves no trace. */
+test("an activation reverts to the exact context it replaced", async () => {
+  const fixture = await createPiChatSession("gamebuddy-variant-revert-");
+  try {
+    const before = quoted(fixture.modelMessages());
+    const result = activatePiVariantPosition(
+      fixture.session,
+      Object.freeze({ variantTexts: Object.freeze([FIRST_REPLY]) }),
+      SECOND_REPLY,
+    );
+    assert.equal(result.status, "activated");
+    assert.notEqual(quoted(fixture.modelMessages()), before);
+    assert.deepEqual(result.revert(), { status: "reverted" });
+    assert.equal(quoted(fixture.modelMessages()), before);
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * Every shape the derivation cannot prove refuses, and a refusal is silent: no
+ * entry is appended, so the model's context is byte-identical afterwards.
+ */
+test("a position whose session shape cannot be proven refuses and mutates nothing", async () => {
+  const fixture = await createPiChatSession("gamebuddy-variant-refusal-");
+  try {
+    const before = quoted(fixture.modelMessages());
+    const entriesBefore = fixture.sessionManager.getEntryCount();
+    const cases = [
+      { variantTexts: [] as readonly string[], replacement: SECOND_REPLY, reason: "variant_position_has_no_variant" },
+      {
+        variantTexts: [FIRST_REPLY],
+        replacement: "a reply this session never appended",
+        reason: "variant_reply_tail_text_mismatch",
+      },
+      {
+        variantTexts: [FIRST_REPLY, SECOND_REPLY, "a third variant with no reply of its own"],
+        replacement: SECOND_REPLY,
+        reason: "variant_stale_reply_count_mismatch",
+      },
+      {
+        variantTexts: ["a variant this session never carried"],
+        replacement: SECOND_REPLY,
+        reason: "variant_stale_reply_text_mismatch",
+      },
+    ] as const;
+    for (const item of cases) {
+      const result = activatePiVariantPosition(
+        fixture.session,
+        Object.freeze({ variantTexts: Object.freeze([...item.variantTexts]) }),
+        item.replacement,
+      );
+      assert.equal(result.status, "refused", item.reason);
+      if (result.status === "refused") assert.equal(result.reason, item.reason);
+      assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore, item.reason);
+      assert.equal(quoted(fixture.modelMessages()), before, item.reason);
+    }
   } finally {
     await fixture.close();
   }

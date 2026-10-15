@@ -49,6 +49,7 @@ import type {
   ProductionSagaReadback,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import { activatePiVariantPosition } from "../pi-session-context-activation.internal.js";
 import { identityKey, type RuntimeSession } from "../runtime.js";
 import {
   acknowledgeMountedWorldInfoBinding,
@@ -333,6 +334,17 @@ export type ProviderInvocationScope = Readonly<{
     ): void;
     clearVolatileForTurn(durableTurnId: string): void;
   }>;
+  /**
+   * The Pi-side half of a same-position variant turn. It names the reply entries
+   * the turn's own target position owns, verifies each of them against the
+   * position's durable variant texts, and activates `replacement` on all of them;
+   * a position whose session shape it cannot prove refuses and the caller must
+   * leave the position unchanged. The durable binding this stands in for is the
+   * prepared-response transaction of design 24:341.
+   */
+  activateVariantPosition(
+    replacement: string,
+  ): Promise<import("../pi-session-context-activation.internal.js").PiVariantActivationResult>;
   /**
    * The sole store-writer port for this exact attempt's arm/not_started/running
    * transitions and provider-rejection failure. It is callback-scoped and
@@ -821,6 +833,35 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
         command,
       );
     };
+    /**
+     * The Pi-side half of a same-position variant turn, on the transitional
+     * session-shape binding `activatePiVariantPosition` documents. The position's
+     * own durable variant texts are the proof each entry it edits belongs to the
+     * reply this turn is re-generating; a position whose shape does not match them
+     * refuses here, before the caller's durable commit, so no variant can become
+     * visible without the model's context already carrying it.
+     */
+    const activateVariantPosition = async (
+      replacement: string,
+    ): Promise<import("../pi-session-context-activation.internal.js").PiVariantActivationResult> => {
+      assertScopeActive();
+      const variant = record.turn.variant;
+      if (variant === undefined || replacement.length === 0)
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_variant_activation_unavailable");
+      const state = await mounted.store().resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId);
+      const position = state.messages.find((message) => message.messageId === variant.targetMessageId);
+      if (position === undefined || position.role !== "companion" || position.kind !== "response")
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_variant_activation_unavailable");
+      assertScopeActive();
+      return activatePiVariantPosition(
+        runtimeSession.session,
+        Object.freeze({
+          variantTexts:
+            position.swipes === undefined || position.swipes.length === 0 ? [position.text] : position.swipes,
+        }),
+        replacement,
+      );
+    };
     const readAcceptedMessageText = async (): Promise<string> => {
       const store = mounted.store();
       const state = await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId);
@@ -945,6 +986,7 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
         }),
         transitionStore,
         transitionPresentation,
+        activateVariantPosition,
         readAcceptedMessageText,
         readAcceptedAuthoredContextPlan,
         readCurrentTurnLedger,

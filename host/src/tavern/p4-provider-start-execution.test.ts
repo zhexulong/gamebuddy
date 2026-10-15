@@ -137,6 +137,13 @@ type ScopeOverrides = Readonly<{
    * runner's cancellation settlement exists to replace.
    */
   finalizeCancellation?: () => Promise<Awaited<ReturnType<ProviderInvocationScope["finalizeCancellation"]>>>;
+  /**
+   * The Pi-side half of a variant turn. The double's default refuses, so a variant
+   * turn that does not say what its activation did cannot reach a commit by accident.
+   */
+  activateVariantPosition?: ProviderInvocationScope["activateVariantPosition"];
+  /** Makes the variant commit raise this exact store code, before it writes. */
+  refuseVariantCommitWith?: string;
 }>;
 
 function createScope(overrides: ScopeOverrides = {}) {
@@ -229,6 +236,7 @@ function createScope(overrides: ScopeOverrides = {}) {
       return durablePresentation;
     }
     if (command.operation === "commit_variant") {
+      if (overrides.refuseVariantCommitWith !== undefined) throw new Error(overrides.refuseVariantCommitWith);
       if (durablePresentation.status !== "running") throw new Error("p5_presentation_commit_source_required");
       durablePresentation = Object.freeze({
         ...durableRunning,
@@ -364,6 +372,9 @@ function createScope(overrides: ScopeOverrides = {}) {
     reserveNativeContentCommit:
       overrides.reserveNativeContentCommit ?? (() => Object.freeze({ cancelEpoch: 1, release: () => undefined })),
     finalizeCancellation: overrides.finalizeCancellation ?? (async () => undefined),
+    activateVariantPosition:
+      overrides.activateVariantPosition ??
+      (async () => Object.freeze({ status: "refused" as const, reason: "variant_position_has_no_variant" as const })),
   }) as ProviderInvocationScope;
   return { scope, transitions, presentationTransitions };
 }
@@ -981,44 +992,74 @@ test("the pre-fix reading is what this gate catches: a Stop's own abort becomes 
   }
 });
 
-test("a variant turn's bound facts select the commit_variant path and never mint a new message id", async () => {
+/**
+ * The one Pi surface a variant turn needs: a session that answers once with `reply`
+ * and the provider-start observer that classifies the answer.
+ */
+function variantRuntimeSession(reply: string): object {
   let observer: Observer | undefined;
-  const variantFacts = Object.freeze({
-    ...facts,
-    variant: Object.freeze({ targetMessageId: "response_01", anchorMessageId: "player_01" }),
+  return Object.freeze({
+    installTavernProviderStartObserver(onStart: Observer) {
+      observer = onStart;
+      return () => undefined;
+    },
+    session: (() => {
+      const listeners = new Set<(event: unknown) => void>();
+      const emit = (event: unknown): void => {
+        for (const listener of [...listeners]) listener(event);
+      };
+      return Object.freeze({
+        subscribe(listener: (event: unknown) => void) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        async prompt() {
+          const partial = nativeAssistant([nativeText("")]);
+          emit({ type: "message_start", message: partial });
+          emit({ type: "message_end", message: nativeAssistant([nativeText(reply)]) });
+          observer?.(Object.freeze({ statusClass: "success" as const }));
+        },
+      });
+    })(),
   });
+}
+
+const variantFacts = Object.freeze({
+  ...facts,
+  variant: Object.freeze({ targetMessageId: "response_01", anchorMessageId: "player_01" }),
+});
+
+function activatedVariant(contextEditEntryIds: readonly string[] = ["entry_edit_01"]) {
+  return Object.freeze({
+    status: "activated" as const,
+    contextEditEntryIds: Object.freeze([...contextEditEntryIds]),
+    revert: () => Object.freeze({ status: "reverted" as const }),
+  });
+}
+
+test("a variant turn activates before its commit_variant and never mints a new message id", async () => {
+  let presentationTransitionsAtActivation = -1;
+  let activationReplacement: string | undefined;
   const { scope, presentationTransitions } = createScope({
     facts: variantFacts,
     presentationCommitted: () => true,
-    runtimeSession: Object.freeze({
-      installTavernProviderStartObserver(onStart: Observer) {
-        observer = onStart;
-        return () => undefined;
-      },
-      session: (() => {
-        const listeners = new Set<(event: unknown) => void>();
-        const emit = (event: unknown): void => {
-          for (const listener of [...listeners]) listener(event);
-        };
-        return Object.freeze({
-          subscribe(listener: (event: unknown) => void) {
-            listeners.add(listener);
-            return () => listeners.delete(listener);
-          },
-          async prompt() {
-            const partial = nativeAssistant([nativeText("")]);
-            emit({ type: "message_start", message: partial });
-            emit({ type: "message_end", message: nativeAssistant([nativeText("Regenerated reply.")]) });
-            observer?.(Object.freeze({ statusClass: "success" as const }));
-          },
-        });
-      })(),
-    }),
+    activateVariantPosition: async (replacement: string) => {
+      // Recorded rather than asserted here: a throw inside the observer would be
+      // reported as a presentation failure instead of an ordering defect.
+      presentationTransitionsAtActivation = presentationTransitions.length;
+      activationReplacement = replacement;
+      return activatedVariant();
+    },
+    runtimeSession: variantRuntimeSession("Regenerated reply."),
   });
 
   const result = await runMountedProviderStart(scope);
 
   assert.equal(result.outcome, "completed");
+  // The ordering: the activation ran with no presentation transition behind it,
+  // and the only transition that can make the variant visible follows it.
+  assert.equal(presentationTransitionsAtActivation, 0);
+  assert.equal(activationReplacement, "Regenerated reply.");
   assert.deepEqual(
     presentationTransitions.map(({ operation }) => operation),
     ["commit_variant", "claim_completion", "complete"],
@@ -1028,5 +1069,70 @@ test("a variant turn's bound facts select the commit_variant path and never mint
   if (commit?.operation === "commit_variant") {
     assert.equal(commit.variant.targetMessageId, "response_01");
     assert.equal(commit.variant.text, "Regenerated reply.");
+  }
+});
+
+/**
+ * The refusal half of the ordering: a position the activation cannot prove is
+ * never committed, so the player-visible reply is exactly what it was.
+ */
+test("a variant turn whose activation refuses commits nothing and fails", async () => {
+  const { scope, presentationTransitions } = createScope({
+    facts: variantFacts,
+    activateVariantPosition: async () =>
+      Object.freeze({ status: "refused" as const, reason: "variant_reply_tail_text_mismatch" as const }),
+    runtimeSession: variantRuntimeSession("Regenerated reply."),
+  });
+
+  const result = await runMountedProviderStart(scope);
+
+  assert.equal(result.outcome, "failed");
+  assert.deepEqual(
+    presentationTransitions.map(({ operation }) => operation),
+    ["fail"],
+  );
+  assert.equal(result.ledger.status, "failed");
+  if (result.ledger.status === "failed") assert.equal(result.ledger.reasonCode, "runtime_unavailable");
+});
+
+/**
+ * The compensation half, asserted in both directions: a commit the store refused
+ * before writing proves the variant is not visible, so the activated context goes
+ * back; an ambiguous failure may have committed it, and reverting there would
+ * produce the same divergence mirrored.
+ */
+test("a variant commit that refused before it wrote is reverted, an ambiguous one is not", async () => {
+  for (const [code, expectedReverts] of [
+    ["p5_presentation_source_running_required", 1],
+    ["chat_presentation_readback_mismatch", 0],
+  ] as const) {
+    let reverts = 0;
+    const { scope, presentationTransitions } = createScope({
+      facts: variantFacts,
+      refuseVariantCommitWith: code,
+      activateVariantPosition: async () =>
+        Object.freeze({
+          status: "activated" as const,
+          contextEditEntryIds: Object.freeze(["entry_edit_01"]),
+          revert: () => {
+            reverts += 1;
+            return Object.freeze({ status: "reverted" as const });
+          },
+        }),
+      runtimeSession: variantRuntimeSession("Regenerated reply."),
+    });
+
+    const result = await runMountedProviderStart(scope);
+
+    assert.equal(result.outcome, "failed", code);
+    // The commit was attempted and refused before it wrote: no presentation exists,
+    // which is what makes the activated context safe to put back.
+    assert.deepEqual(
+      presentationTransitions.map(({ operation }) => operation),
+      ["commit_variant", "fail"],
+      code,
+    );
+    assert.equal(result.ledger.presentation, null, code);
+    assert.equal(reverts, expectedReverts, code);
   }
 });
