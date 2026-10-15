@@ -33,7 +33,7 @@ import {
   TavernBrowserFixtureV1,
 } from "./browser-contract/index.js";
 import { createChatEventStream } from "./chat-event-stream.js";
-import type { ChatPipelineService, SubmitResultV1 } from "./chat-pipeline-service.js";
+import type { ChatPipelineService } from "./chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./reference-pipeline-state.js";
 import { createTestWindowsReparseInspector } from "../windows-reparse-inspector/index.test-support.js";
 import {
@@ -170,22 +170,8 @@ function inspector() {
   });
 }
 
-test("composed shell serves the production profile's Swipe and Regenerate over the one listener", async () => {
+test("composed shell serves neither the withdrawn swipe nor the withdrawn regenerate route over the one listener", async () => {
   const fixture = await artifactFixture();
-  const swipeMessage = {
-    handle,
-    role: "companion" as const,
-    text: "variant two",
-    locale: "en" as const,
-    order: 0,
-    revision: 1,
-  };
-  const regenerated: SubmitResultV1 = Object.freeze({
-    apiVersion: 1,
-    disposition: "accepted",
-    message: Object.freeze({ handle, role: "companion", text: "regenerated", locale: "en", order: 1, revision: 1 }),
-    turn: Object.freeze({ handle, state: "queued", projectionRevision: 1, canCancel: false }),
-  });
   const recorder = { swipes: 0, regenerations: 0 };
   const pipelineService = Object.freeze({
     async submitAfterResponseCommit() {
@@ -199,11 +185,11 @@ test("composed shell serves the production profile's Swipe and Regenerate over t
     },
     async selectSwipe() {
       recorder.swipes += 1;
-      return Object.freeze({ apiVersion: 1 as const, message: Object.freeze(swipeMessage) });
+      throw new Error("withdrawn_route_reached_the_pipeline");
     },
     async regenerate() {
       recorder.regenerations += 1;
-      return regenerated;
+      throw new Error("withdrawn_route_reached_the_pipeline");
     },
     async close() {},
   }) as unknown as ChatPipelineService;
@@ -226,6 +212,9 @@ test("composed shell serves the production profile's Swipe and Regenerate over t
     const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
     const root = await bootstrap.json();
 
+    // The production profile declares neither route, so both paths are answered as an operation
+    // this profile does not carry - never by the pipeline service behind them. The withdrawn
+    // capability is behind a hidden door, not a broken one.
     const swipe = await fetch(`${server.origin}/api/tavern/v1/messages/swipe`, {
       method: "POST",
       headers: {
@@ -236,9 +225,8 @@ test("composed shell serves the production profile's Swipe and Regenerate over t
       },
       body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, messageHandle: handle, direction: "next" }),
     });
-    const swipeBody = await swipe.text();
-    assert.equal(swipe.status, 200, `swipe must be served, got ${swipe.status} ${swipeBody}`);
-    assert.deepEqual(JSON.parse(swipeBody), { apiVersion: 1, message: swipeMessage });
+    assert.equal(swipe.status, 404, "the withdrawn swipe path is not a profile operation");
+    assert.equal(((await swipe.json()) as { code: string }).code, "profile_operation_unavailable");
 
     const regenerate = await fetch(`${server.origin}/api/tavern/v1/messages/regenerate`, {
       method: "POST",
@@ -251,10 +239,9 @@ test("composed shell serves the production profile's Swipe and Regenerate over t
       },
       body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, messageHandle: handle }),
     });
-    const regenerateBody = await regenerate.text();
-    assert.equal(regenerate.status, 202, `regenerate must be served, got ${regenerate.status} ${regenerateBody}`);
-    assert.deepEqual(JSON.parse(regenerateBody), regenerated);
-    assert.deepEqual(recorder, { swipes: 1, regenerations: 1 });
+    assert.equal(regenerate.status, 404, "the withdrawn regenerate path is not a profile operation");
+    assert.equal(((await regenerate.json()) as { code: string }).code, "profile_operation_unavailable");
+    assert.deepEqual(recorder, { swipes: 0, regenerations: 0 });
   } finally {
     await server.close();
     await fixture.dispose();

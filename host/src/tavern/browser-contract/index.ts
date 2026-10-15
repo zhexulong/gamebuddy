@@ -1523,34 +1523,6 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CancelTurnResultV1Schema },
   }),
   route({
-    routeId: "chat.swipe",
-    method: "POST",
-    path: "/api/tavern/v1/messages/swipe",
-    auth: "browser_session",
-    origin: "same-origin",
-    csrf: "required",
-    idempotency: "none",
-    headers: CsrfHeaders,
-    pathParams: noPath,
-    query: noQuery,
-    request: SwipeSelectCommandV1Schema,
-    success: { status: 200, contentType: "application/json", schema: SwipeSelectResultV1Schema },
-  }),
-  route({
-    routeId: "chat.regenerate",
-    method: "POST",
-    path: "/api/tavern/v1/messages/regenerate",
-    auth: "browser_session",
-    origin: "same-origin",
-    csrf: "required",
-    idempotency: "required",
-    headers: IdempotentCsrfHeaders,
-    pathParams: noPath,
-    query: noQuery,
-    request: RegenerateMessageCommandV1Schema,
-    success: { status: 202, contentType: "application/json", schema: SubmitResultV1Schema },
-  }),
-  route({
     routeId: "memory.read",
     method: "GET",
     path: "/api/tavern/v1/memory",
@@ -2435,81 +2407,48 @@ const REFERENCE_TAVERN_ROUTE_IDS = [
   "chat.submission_status",
   "events",
 ] as const;
-/**
- * The optional message-mutation extension of the reference Chat profile: Swipe and Regenerate.
- *
- * The browser client posts both after a completed turn (its own Regenerate and Swipe controls), so
- * the dispatcher mounted on the composed Chat surface must reach them or the player's controls
- * answer 404. They are routes, not operations: the browser gates Regenerate on the `chat.submit`
- * affordance and Swipe on the message's own `swipeInfo`, so the Host projects no `state.operations`
- * row for either.
- *
- * Declared as an optional group rather than folded into the core list so every existing reference
- * profile - the standalone handler's own declaration and the API-level test slices - stays a valid
- * capability slice, while the one production profile declares the extension. Every route a profile
- * declares must belong to exactly one group, which `referenceTavernProfileFitsCanonicalGroups`
- * enforces.
- */
-const REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS = ["chat.swipe", "chat.regenerate"] as const;
-const REFERENCE_TAVERN_ROUTE_GROUPS = [
-  REFERENCE_TAVERN_ROUTE_IDS,
-  REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS,
-] as const;
 const REFERENCE_TAVERN_OPERATION_IDS = ["chat.submit", "chat.cancel"] as const;
 const REFERENCE_TAVERN_NAVIGATION_ITEM_IDS = ["chat"] as const;
 
 /**
- * The one reference Chat capability slice of `tavern_browser_api/v1` (release tier `chat_core`): the
- * core routes plus the message-mutation extension. Declared next to the route descriptors it selects,
- * so the routes the dispatcher serves and the routes the profile advertises cannot drift apart.
+ * The one reference Chat capability slice of `tavern_browser_api/v1` (release tier `chat_core`),
+ * and the closed set of routes it is: the list above is the whole slice, and no optional group
+ * extends it. Declared next to the route descriptors it selects, so the routes the dispatcher
+ * serves and the routes the profile advertises cannot drift apart.
+ *
+ * Regenerate and Swipe were an optional message-mutation group here. They are withdrawn until the
+ * prepared-response transaction and the branch binding exist
+ * (`design/archive/legacy-sources/24_TAVERN_COMPATIBILITY_IMPLEMENTATION_PLAN.md:341`), so no
+ * reference profile declares their route ids and the slice is closed again.
  */
 export function composeReferenceTavernProfile(): ComposedTavernProfile {
   return composeTavernProfile({
     profileId: REFERENCE_TAVERN_PROFILE_ID,
     releaseTier: REFERENCE_TAVERN_RELEASE_TIER,
-    routeIds: [...REFERENCE_TAVERN_ROUTE_IDS, ...REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS],
+    routeIds: REFERENCE_TAVERN_ROUTE_IDS,
     operationIds: REFERENCE_TAVERN_OPERATION_IDS,
     navigationItemIds: REFERENCE_TAVERN_NAVIGATION_ITEM_IDS,
   });
 }
 
 /**
- * The canonical-group verdict for one reference Chat profile declaration: the exact identity, the
+ * The canonical verdict for one reference Chat profile declaration: the exact identity, the
  * operation/navigation projections, and the route slice a reference dispatcher can serve - the
- * required core routes plus any subset of the optional extension groups, always in the declared
- * order. Exported so the composed-browser contract and a test can hold a declaration against these
- * groups without mounting the surface.
+ * closed route list above, always in the declared order. Exported so the composed-browser contract
+ * and a test can hold a declaration against it without mounting the surface.
+ *
+ * The rule is exact equality in both directions, so a profile that declares a route the slice does
+ * not carry is refused at construction rather than mounted with a route nothing answers, and a
+ * profile that drops one is refused rather than claiming a capability it no longer advertises.
  */
 export function referenceTavernProfileFitsCanonicalGroups(profile: ComposedTavernProfile): boolean {
   return (
     profile.profileId === REFERENCE_TAVERN_PROFILE_ID &&
     profile.releaseTier === REFERENCE_TAVERN_RELEASE_TIER &&
+    sameOrderedValues(profile.routeIds, REFERENCE_TAVERN_ROUTE_IDS) &&
     sameOrderedValues(profile.operationIds, REFERENCE_TAVERN_OPERATION_IDS) &&
-    sameOrderedValues(profile.navigationItemIds, REFERENCE_TAVERN_NAVIGATION_ITEM_IDS) &&
-    isCanonicalGroupSelection(profile.routeIds, REFERENCE_TAVERN_ROUTE_GROUPS, REFERENCE_TAVERN_ROUTE_IDS)
+    sameOrderedValues(profile.navigationItemIds, REFERENCE_TAVERN_NAVIGATION_ITEM_IDS)
   );
-}
-
-/**
- * True when `values` is exactly the required group plus any subset of the optional groups that
- * follow it, always in the declared order. A group is all-or-nothing: a partially declared group is
- * a capability the profile claims but the mounted dispatcher cannot serve. Ordering is part of the
- * check, so a reordered profile is a different capability slice; a route that belongs to no group
- * makes `expected` shorter than `values` and is rejected too.
- */
-function isCanonicalGroupSelection(
-  values: readonly string[],
-  groups: readonly (readonly string[])[],
-  required: readonly string[],
-): boolean {
-  const expected: string[] = [];
-  for (const group of groups) {
-    const present = group === required || values.some((value) => group.includes(value));
-    if (!present) continue;
-    if (!group.every((entry) => values.includes(entry))) return false;
-    expected.push(...group);
-  }
-  return expected.length === values.length && expected.every((entry, index) => entry === values[index]);
 }
 
 function sameOrderedValues(values: readonly string[], expected: readonly string[]): boolean {
