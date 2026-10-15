@@ -155,6 +155,11 @@ export async function runWiaModalDismissChain(
       dismissEvidence.dismissed === "true" &&
       Number.isInteger(Number(dismissed.revision));
 
+    // The recorded evidence rides on its own observation step that also names the action, so
+    // tools/record-stardew-live-receipts.mjs can extract the Mod's terminal field set from this run's
+    // artifact the way it does for clear_fish_pond.
+    trace.push({ step: "observed", action: "dismiss_modal", evidence: dismissEvidence });
+
     // ---- phase 3: resume (resumption leg) ----
     const fresh3 = await waitForActionable(client, await waitForFreshSnapshot(client, {
       minRevision: dismissed.revision,
@@ -200,6 +205,7 @@ export async function runWiaModalDismissChain(
       holdRemedy: holdRemedy === null ? null : { action: holdRemedy.action, guidance: holdRemedy.guidance },
       holdRemedyOk,
       dismissOk,
+      evidence: dismissEvidence,
       after: summarizeSnapshot(after),
       trace,
       before: summarizeSnapshot(snapshot),

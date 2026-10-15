@@ -102,6 +102,11 @@ export async function runWiaAnswerQuestionSmoke(
       answerEvidence.native_answered === "true" &&
       answerEvidence.outro_started === "true";
 
+    // The recorded evidence rides on its own observation step that also names the action, so
+    // tools/record-stardew-live-receipts.mjs can extract the Mod's terminal field set from this run's
+    // artifact the way it does for clear_fish_pond.
+    trace.push({ step: "observed", action: "answer_dialogue", evidence: answerEvidence });
+
     // ---- phase 3: the outro closes the dialogue on a later frame ----
     const after = await waitForActionable(
       client,
@@ -122,6 +127,7 @@ export async function runWiaAnswerQuestionSmoke(
       },
       interruptEvidence,
       answerEvidence,
+      evidence: answerEvidence,
       answerOk,
       after: summarizeSnapshot(after),
       trace,

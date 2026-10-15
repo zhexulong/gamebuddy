@@ -118,6 +118,17 @@ test("wia answer question passes the move-interrupted → native-answered loop",
   assert.equal(result.after.activeExecution, null);
 });
 
+test("the runner prints the evidence object the receipt-parity recorder reads", async () => {
+  // tools/record-stardew-live-receipts.mjs records a run only when its result carries the Mod's `evidence`
+  // object, so this pins the shape the corpus depends on: stop printing it and `answer_dialogue` silently
+  // drops out of the parity guard, which never runs the Host's completion rule against the producer otherwise.
+  const { client, receipts } = makeClient();
+  const result = await runWiaAnswerQuestionSmoke(client, receipts, config);
+  assert.deepEqual(result.evidence, result.answerEvidence);
+  assert.ok(Object.keys(result.evidence).length > 0);
+  assert.ok(result.trace.some((step) => step.evidence === result.evidence));
+});
+
 test("wia answer question fails closed when the answer is not accepted", async () => {
   const { client, receipts } = makeClient();
   const originalExecute = client.execute;

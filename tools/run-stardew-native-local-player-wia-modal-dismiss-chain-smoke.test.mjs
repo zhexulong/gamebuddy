@@ -165,6 +165,17 @@ test("wia dismiss chain passes the full interrupt → dismiss → resume loop", 
   assert.equal(result.after.activeExecution, null);
 });
 
+test("the runner prints the evidence object the receipt-parity recorder reads", async () => {
+  // tools/record-stardew-live-receipts.mjs records a run only when its result carries the Mod's `evidence`
+  // object, so this pins the shape the corpus depends on: stop printing it and `dismiss_modal` silently
+  // drops out of the parity guard, which never runs the Host's completion rule against the producer otherwise.
+  const { client, receipts } = makeClient();
+  const result = await runWiaModalDismissChain(client, receipts, config, { loadHostModule: hostLoader() });
+  assert.equal(result.evidence.modal_type, "DialogueBox");
+  assert.equal(result.evidence.dismissed, "true");
+  assert.ok(result.trace.some((step) => step.evidence === result.evidence));
+});
+
 test("wia dismiss chain fails closed when the interrupt is not classified", async () => {
   const { client, receipts } = makeClient();
   // 篡改 phase-1 收据为 succeeded/target_reached → 不可能是 modal_interrupted
