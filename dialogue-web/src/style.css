@@ -4279,35 +4279,33 @@
     background-color: color-mix(in srgb, var(--danger) 18%, transparent);
     border-color: var(--danger);
   }
+  /* ==========================================================================
+     The card-import review and result are prose, not a label/value read-back
+
+     Both blocks were rendered through `.management-settings-details`, whose whole
+     shape is a label/value pair: `space-between` rows and `dd { text-align: right }`
+     for the value column. An import-report row is not a pair - it is one sentence
+     ("Will keep 6 card fields: name, description, ...", the success line, the
+     "could not use" line) - so at the narrow surface a wrapped sentence read
+     ragged-LEFT: measured at 400x800, the keep sentence's two lines ended on one
+     right edge (371, 371) and started on two (93, 66).
+
+     The report now has its own class and is what it is: stacked sentences, read
+     from the left, with the same generous wrapping the card-exported field names
+     need (a kept field can be a long single word). It belongs to the highest
+     layer, with the other rules authored after `theme.polish` was named.
+     ========================================================================== */
+
+  .card-import-report {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+  }
+
+  .card-import-report dd {
+    margin: 0;
+    font-weight: 500;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
 } /* end @layer theme.polish */
-
-/* ==========================================================================
-   The card-import review and result are prose, not a label/value read-back
-
-   Both blocks were rendered through `.management-settings-details`, whose whole
-   shape is a label/value pair: `space-between` rows and `dd { text-align: right }`
-   for the value column. An import-report row is not a pair - it is one sentence
-   ("Will keep 6 card fields: name, description, ...", the success line, the
-   "could not use" line) - so at the narrow surface a wrapped sentence read
-   ragged-LEFT: measured at 400x800, the keep sentence's two lines ended on one
-   right edge (371, 371) and started on two (93, 66).
-
-   The report now has its own class and is what it is: stacked sentences, read
-   from the left, with the same generous wrapping the card-exported field names
-   need (a kept field can be a long single word).
-
-   Appended block; the rules above are untouched.
-   ========================================================================== */
-
-.card-import-report {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-}
-
-.card-import-report dd {
-  margin: 0;
-  font-weight: 500;
-  text-align: left;
-  overflow-wrap: anywhere;
-}
