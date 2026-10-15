@@ -66,6 +66,15 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativePickupItemFixture", "ResolveHostAutomationFarmhand", "ResolveHostAutomationFarmArrival",
         "InitializeNativeShipItemFixture", "InitializeNativeChestRetrieveFixture",
         "InitializeNativePetFixture", "IsFixtureAdjacentToFarmer", "IsFixtureAdjacentToPlayer",
+        // 2026-10-15：HostAutomation 夹具场景链改为场景注册表（ModEntry.Fixtures.HostAutomation.cs
+        // 命名一次、分派按 phase），每个场景实现各自拆成 ModEntry.Fixtures.HostAutomation.<Scenario>.cs；
+        // TryInitializeNativeFixtureScenario 现为 phase driver，注册表查询是 ResolveHostAutomationFixtureRegistration。
+        "ResolveHostAutomationFixtureRegistration",
+        "InitializeNativeFarmhandChatFixture", "PrepareNativeHarvestCropFixture",
+        "InitializeNativeMachineInspectFixture", "InitializeNativeTillSoilFixture",
+        "InitializeNativePlantSeedFixture", "InitializeNativeWaterCropFixture",
+        "InitializeNativeFertilizeTileFixture", "InitializeNativeFeedAnimalFixture",
+        "InitializeNativeAnimalProductFixture",
         "InstallSharedWorldTalkToNpcFixture", "VerifySharedWorldTalkToNpcJoin",
         "TryObserveNativeAutomationClientExit", "TryTriggerNativeAutomationSave", "IsNativeAutomationWorldReady",
         "MoveFixtureCommand", "EquipToolFixtureCommand", "RequireNativeLocalPlayerFixture",
