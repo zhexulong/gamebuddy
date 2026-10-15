@@ -1,4 +1,4 @@
-import { FileText, Mic, MicOff, SendHorizontal, SlidersHorizontal, Square } from "lucide-react";
+import { FileText, LoaderCircle, Mic, MicOff, SendHorizontal, SlidersHorizontal, Square } from "lucide-react";
 import { type ChangeEvent, type KeyboardEvent, type Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Messages } from "../i18n";
 
@@ -72,6 +72,7 @@ export function Composer({
   onSend,
   onStop,
   isGenerating,
+  canStop,
   disabled,
   labels,
   voice,
@@ -82,7 +83,19 @@ export function Composer({
   onChange: (text: string) => void;
   onSend: () => void;
   onStop: () => void;
+  /**
+   * True while a turn is in flight for this conversation - from the submission
+   * being admitted until the authoritative turn reaches a terminal state. It is
+   * that fact itself, and not "the Host lets me cancel it": the two differ for the
+   * whole queued window, and reading the second as the first is what made a queued
+   * turn render a disabled send button with no spinner and no stop.
+   */
   isGenerating: boolean;
+  /**
+   * True only while the Host says this exact turn can be cancelled. It decides
+   * whether the busy slot offers Stop; a turn in flight without it still says so.
+   */
+  canStop: boolean;
   disabled?: boolean;
   labels: Messages;
   /** Additive optional voice surface; absent null renders no mic icon. */
@@ -169,10 +182,7 @@ export function Composer({
             </button>
           )}
           {draftActions.notice !== null && (
-            <span
-              role="status"
-              className={draftActions.notice.kind === "success" ? "success-banner" : "error-banner"}
-            >
+            <span role="status" className={draftActions.notice.kind === "success" ? "success-banner" : "error-banner"}>
               {draftActions.notice.text}
             </span>
           )}
@@ -212,12 +222,7 @@ export function Composer({
             // management voice-preference route, not on the chat snapshot. The
             // state is projected as a readable label, not only as a dot, so a
             // player who does not hover still learns what the surface can do.
-            <span
-              className="voice-status"
-              data-voice-state={voice.state}
-              role="status"
-              title={voiceLabel}
-            >
+            <span className="voice-status" data-voice-state={voice.state} role="status" title={voiceLabel}>
               <span
                 className={
                   voice.state === "speaking"
@@ -228,30 +233,49 @@ export function Composer({
                 }
                 aria-hidden="true"
               >
-                {voice.state === "unavailable" ? <MicOff size={16} aria-hidden="true" /> : <Mic size={16} aria-hidden="true" />}
+                {voice.state === "unavailable" ? (
+                  <MicOff size={16} aria-hidden="true" />
+                ) : (
+                  <Mic size={16} aria-hidden="true" />
+                )}
                 {/* The only active-audio state this wire carries is `speaking`,
                     so the pulse ring is keyed to exactly that Host reading and
                     to nothing else. There is no recording/capturing state on
                     `tavern_browser_api/v1` to animate, and the browser's own
                     MediaRecorder is not a Host fact. Decorative: the state's
                     readable label above is the carrier (style.css). */}
-                {voice.state === "speaking" && (
-                  <span className="voice-pulse-ring" data-voice-pulse="" />
-                )}
+                {voice.state === "speaking" && <span className="voice-pulse-ring" data-voice-pulse="" />}
               </span>
               <span className="voice-status-label">{voiceLabel}</span>
             </span>
           )}
           {isGenerating ? (
-            <button
-              type="button"
-              className="composer-button stop-button"
-              onClick={onStop}
-              title={labels.stop}
-              aria-label={labels.stop}
-            >
-              <Square size={18} aria-hidden="true" />
-            </button>
+            canStop ? (
+              <button
+                type="button"
+                className="composer-button stop-button"
+                onClick={onStop}
+                title={labels.stop}
+                aria-label={labels.stop}
+              >
+                <Square size={18} aria-hidden="true" />
+              </button>
+            ) : (
+              // A turn the Host has admitted but does not allow cancelling
+              // (`accepted_queued`, `attempt_starting`, a claimed cancel, a
+              // presented response) is still a turn in flight. The slot says so
+              // rather than falling back to the send icon, which is disabled while
+              // a turn is in flight and read as a frozen UI for that whole window.
+              <span
+                className="composer-button composer-busy"
+                role="status"
+                aria-label={labels.generating}
+                title={labels.generating}
+                data-composer-busy
+              >
+                <LoaderCircle className="message-spinner" size={18} aria-hidden="true" />
+              </span>
+            )
           ) : (
             <button
               type="button"

@@ -1,12 +1,7 @@
 import { MessagesSquare } from "lucide-react";
 import type { Messages } from "../i18n";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
-import {
-  Composer,
-  type ComposerDraftActions,
-  type ComposerSettingsAction,
-  type VoiceSurfaceStateV1,
-} from "./Composer";
+import { Composer, type ComposerDraftActions, type ComposerSettingsAction, type VoiceSurfaceStateV1 } from "./Composer";
 import { SurfaceView } from "./SurfaceView";
 import { Timeline } from "./Timeline";
 
@@ -37,6 +32,7 @@ export function ChatSurface({
   onSend,
   onStop,
   isGenerating,
+  canStop,
   disabled,
   voice,
   settingsAction,
@@ -67,18 +63,18 @@ export function ChatSurface({
   onSend: () => void;
   onStop: () => void;
   isGenerating: boolean;
+  /**
+   * True only while the Host says the mounted turn can be cancelled. A turn in
+   * flight without it is still busy; it is just not the player's to stop.
+   */
+  canStop: boolean;
   disabled: boolean;
   voice?: VoiceSurfaceStateV1 | null;
   settingsAction: ComposerSettingsAction;
   draftActions: ComposerDraftActions;
 }) {
   return (
-    <SurfaceView
-      title={labels.chatPanel}
-      testId="chat-surface"
-      icon={MessagesSquare}
-      className="surface-conversation"
-    >
+    <SurfaceView title={labels.chatPanel} testId="chat-surface" icon={MessagesSquare} className="surface-conversation">
       <Timeline
         transcript={transcript}
         preview={preview}
@@ -120,6 +116,7 @@ export function ChatSurface({
         onSend={onSend}
         onStop={onStop}
         isGenerating={isGenerating}
+        canStop={canStop}
         disabled={disabled}
         labels={labels}
         voice={voice}

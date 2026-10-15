@@ -4313,4 +4313,17 @@
     text-align: left;
     overflow-wrap: anywhere;
   }
+
+  /* The composer's busy slot: a turn the Host has admitted but does not yet
+     allow cancelling (`accepted_queued`, `attempt_starting`, a claimed cancel, a
+     presented response). It takes the same 44 px slot the Stop control and the
+     send button occupy, so the row never moves, and it is deliberately not the
+     send icon in its disabled state - that is the reading that made a queued turn
+     look like a frozen UI. Its glyph is the product's one spinner, so the
+     reduced-motion escape that already covers `.message-spinner` covers this too. */
+  .composer-button.composer-busy {
+    background-color: var(--surface-panel);
+    color: var(--text-secondary);
+    cursor: progress;
+  }
 } /* end @layer theme.polish */

@@ -303,3 +303,62 @@ test("item 3: the focused composer draws the container's ring and no inner dupli
   );
   expect(focused.textarea.boxShadow, "no ring at all on the field").toBe("none");
 });
+
+// --- item 4: the queued window is busy, and Stop only where the Host allows it ---
+
+/**
+ * The Host's `accepted_queued` window as the browser sees it: the turn state is
+ * `queued` and `canCancel` is false, because the prompt has not reached durable
+ * arm yet (`reference-pipeline-state.ts` `isCancellableLedger`). The composer read
+ * `canCancel` as "a turn is in flight", so for that whole window it rendered the
+ * *send* button - disabled, since the player had just cleared the field - with no
+ * spinner and no stop: the frozen UI the audit measured.
+ *
+ * Measured before the fix: `sendButtons:1, stopButtons:0, busy:null`. After: no
+ * send button and no stop, one busy indicator named with the same word the app
+ * bar already uses for the turn.
+ */
+test("item 4: a queued turn reads as busy instead of a greyed-out send button", async ({ page }) => {
+  await stubShell(page, { turn: { state: "queued", canCancel: false } });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await expect(page.locator(".composer-container")).toBeVisible();
+
+  const measured = await page.evaluate(() => {
+    const section = document.querySelector<HTMLElement>(".composer-section")!;
+    const busy = section.querySelector<HTMLElement>("[data-composer-busy]");
+    const status = document.querySelector<HTMLElement>(".app-bar-status");
+    return {
+      sendButtons: section.querySelectorAll(".send-button").length,
+      stopButtons: section.querySelectorAll(".stop-button").length,
+      busy: busy === null ? null : { tag: busy.tagName.toLowerCase(), label: busy.getAttribute("aria-label") },
+      statusWord: status === null ? null : status.getAttribute("aria-label"),
+    };
+  });
+  console.log(`[item-4 queued] ${JSON.stringify(measured)}`);
+
+  expect(measured.sendButtons, "no greyed send button stands in for a running turn").toBe(0);
+  expect(measured.stopButtons, "and no Stop is offered where the Host cannot cancel").toBe(0);
+  expect(measured.busy, "the slot carries a busy indicator").not.toBeNull();
+  expect(
+    measured.busy!.label,
+    `the busy slot is named ${JSON.stringify(measured.busy!.label)}; the app bar words the same turn ${JSON.stringify(measured.statusWord)}`,
+  ).toBe(measured.statusWord);
+  expect(measured.busy!.label, "and the name is a real one").toBeTruthy();
+});
+
+test("item 4: Stop is offered exactly while the Host allows cancelling", async ({ page }) => {
+  await stubShell(page, { turn: { state: "running", canCancel: true } });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await expect(page.locator(".composer-container")).toBeVisible();
+
+  const measured = await page.evaluate(() => ({
+    sendButtons: document.querySelectorAll(".composer-section .send-button").length,
+    stopButtons: document.querySelectorAll(".composer-section .stop-button").length,
+    busy: document.querySelectorAll(".composer-section [data-composer-busy]").length,
+  }));
+  console.log(`[item-4 running] ${JSON.stringify(measured)}`);
+
+  expect(measured.stopButtons, "a cancellable turn offers Stop").toBe(1);
+  expect(measured.sendButtons, "and not Send").toBe(0);
+  expect(measured.busy, "the busy indicator gives way to the Stop control").toBe(0);
+});

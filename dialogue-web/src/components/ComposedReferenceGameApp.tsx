@@ -1159,7 +1159,8 @@ export function ComposedReferenceGameApp() {
                 onChange={writeInput}
                 onSend={() => void handleSend()}
                 onStop={() => void handleStop()}
-                isGenerating={stopAvailable}
+                isGenerating={turnInFlight}
+                canStop={stopAvailable}
                 disabled={!submitAvailable}
                 voice={view.session.snapshot.voice}
                 settingsAction={{

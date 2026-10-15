@@ -91,6 +91,7 @@ function Probe() {
         }}
         onStop={() => undefined}
         isGenerating={false}
+        canStop={false}
         labels={LABELS}
         voice={model.voice}
       />
