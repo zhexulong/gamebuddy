@@ -1013,6 +1013,23 @@ public sealed class BridgeProtocolSerializationTests
         reasonCode.Should().Be("invalid_observe_scene_result");
     }
 
+    [Fact]
+    public void BridgeWarp_AccessibilityIsOptionalLastMember_OmittedWhenUnmeasured()
+    {
+        // The exit's accessibility is TRI-STATE on the wire: a measured true/false is written, an
+        // unmeasured leg omits the member entirely (the serializer ignores nulls, WhenWritingNull),
+        // and ABSENT must never read as false. The Host predicate admits all three, so a producer
+        // that could not measure a leg cannot close the bridge with a bare `invalid_snapshot`.
+        BridgeProtocol.TrySerialize(new BridgeWarp(10, 11, "FarmHouse", 9, 9, true), out string accessibleJson, out string accessibleReason).Should().BeTrue(accessibleReason);
+        accessibleJson.Should().Contain("\"accessible\":true");
+
+        BridgeProtocol.TrySerialize(new BridgeWarp(10, 11, "FarmHouse", 9, 9, false), out string closedJson, out _).Should().BeTrue();
+        closedJson.Should().Contain("\"accessible\":false");
+
+        BridgeProtocol.TrySerialize(new BridgeWarp(10, 11, "FarmHouse", 9, 9), out string unmeasuredJson, out _).Should().BeTrue();
+        unmeasuredJson.Should().NotContain("accessible");
+    }
+
     private static string SceneEnvelope(string type, string payload) =>
         "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"" + type + "\",\"payload\":" + payload + "}";
 }

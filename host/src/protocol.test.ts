@@ -2741,6 +2741,33 @@ test("observe_scene result admits reachable as true, false, null or absent, and 
   // validator, not rejected as a malformed envelope.
   assert.equal(diagnoseBridgeMessage(invalid, scope, now), "invalid_observe_scene_result");
 });
+test("snapshot admits a warp's accessible as true, false, null or absent, and rejects a non-boolean", () => {
+  // `accessible` is the exit's OWN survival of the engine's accessibility gate
+  // (`Game1.isLocationAccessible`), the fact that lets an Agent pick a real hop instead of probing.
+  // Like the scene affordance's `reachable`, it is TRI-STATE and OPTIONAL: the Mod omits a null
+  // member, so ABSENT and null mean "not measured" and must never be read as false. A `hasExactKeys`
+  // predicate would refuse the Mod's own payload and close the bridge with a bare `invalid_snapshot`.
+  const warp = (accessible: boolean | null | undefined) => ({
+    sourceX: 10,
+    sourceY: 11,
+    targetLocation: "FarmHouse",
+    targetX: 9,
+    targetY: 9,
+    ...(accessible === undefined ? {} : { accessible }),
+  });
+  const forWarp = (entry: Record<string, unknown>) =>
+    newEnvelope("snapshot", scope, { ...snapshot, warps: [entry] }, "snapshot_warp_accessible_01", now);
+  // A snapshot's diagnostic sentinel for a valid payload is the literal "accepted", not null (the
+  // bridge guard matches on it), so the four admissible shapes are asserted against that sentinel.
+  assert.equal(diagnoseBridgeMessage(forWarp(warp(true)), scope, now), "accepted");
+  assert.equal(diagnoseBridgeMessage(forWarp(warp(false)), scope, now), "accepted");
+  assert.equal(diagnoseBridgeMessage(forWarp(warp(null)), scope, now), "accepted");
+  assert.equal(diagnoseBridgeMessage(forWarp(warp(undefined)), scope, now), "accepted");
+  // A measured non-boolean and an unknown key are both refused by the family predicate, and the
+  // refusal names the offending field rather than the whole snapshot.
+  for (const malformed of [{ ...warp(true), accessible: "yes" }, { ...warp(true), extra: true }])
+    assert.equal(diagnoseBridgeMessage(forWarp(malformed), scope, now), "invalid_snapshot:warps");
+});
 test("observe_scene result admits water_source affordance kind and rejects unknown kinds", () => {
   const scene = newEnvelope(
     "observe_scene_result",

@@ -164,6 +164,12 @@ activeExecution?: ActiveExecution | null;
     targetLocation: string;
     targetX: number;
     targetY: number;
+    /**
+     * Whether this exit's target location passes the engine's own accessibility gate
+     * (`Game1.isLocationAccessible`). The Mod omits a null member, so ABSENT means the leg
+     * was not measured and must never be read as `false`.
+     */
+    accessible?: boolean | null;
   }>[];
   /** Current live native door/entrance targets. */
   doorTargets?: readonly Readonly<{
@@ -4672,7 +4678,15 @@ function isFoodTargetFact(value: unknown): boolean {
 }
 
 function isWarp(value: unknown): boolean {
-  if (!isRecord(value) || !hasExactKeys(value, ["sourceX", "sourceY", "targetLocation", "targetX", "targetY"]))
+  // `accessible` is OPTIONAL: the Mod's serializer omits a null member (WhenWritingNull), so a leg it
+  // could not measure carries no key at all. ABSENT and `null` both mean "not measured" and must never
+  // be read as `false`. A `hasExactKeys` list here would refuse the Mod's own payload and close the
+  // bridge (the `tailoringTargets` failure), so the key set stays open and the optional member is
+  // type-checked when it is present.
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["sourceX", "sourceY", "targetLocation", "targetX", "targetY", "accessible"])
+  )
     return false;
   return (
     isTileCoordinate(value.sourceX) &&
@@ -4681,7 +4695,8 @@ function isWarp(value: unknown): boolean {
     value.targetLocation.length > 0 &&
     value.targetLocation.length <= 256 &&
     isTileCoordinate(value.targetX) &&
-    isTileCoordinate(value.targetY)
+    isTileCoordinate(value.targetY) &&
+    (value.accessible === undefined || value.accessible === null || typeof value.accessible === "boolean")
   );
 }
 

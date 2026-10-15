@@ -1388,6 +1388,13 @@
         },
         "targetY": {
           "$ref": "#/$defs/tile"
+        },
+        "accessible": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Whether this exit's target location passes the engine's own accessibility gate (Game1.isLocationAccessible). Omitted by the Mod, never null, when the leg was not measured; absent must never be read as false."
         }
       }
     },

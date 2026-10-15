@@ -169,12 +169,22 @@ public sealed record FarmhandActionRegistrationWire(
 /// <summary>Exact Mod-owned capability publication identity projected on authenticated bridge availability messages.</summary>
 public sealed record FarmhandPolicyIdentityWire(string Value, long CapabilityRevision);
 
+/// <summary>
+/// One exit the CURRENT location declares, published so the Agent can choose a real hop
+/// instead of probing. <see cref="Accessible"/> is the leg's own survival of the engine's
+/// accessibility gate (<c>Game1.isLocationAccessible(targetLocation)</c>, the same gate
+/// <c>TryCreateCurrentOrdinaryWarpTopology</c> applies at
+/// <c>game1navigationworldsource.cs:135</c>). Optional and LAST: the Mod's serializer omits
+/// a null member (WhenWritingNull), so ABSENT means NOT MEASURED and must never be read as
+/// <c>false</c>.
+/// </summary>
 public sealed record BridgeWarp(
     int SourceX,
     int SourceY,
     string TargetLocation,
     int TargetX,
-    int TargetY
+    int TargetY,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Accessible = null
 );
 
 public sealed record BridgeDoor(
