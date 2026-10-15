@@ -65,16 +65,27 @@ tools/live-run/
   core/
     capture.mjs        <- run-directory capture (record / append / copyTree / captureRuntimeRoot)
     capture.test.mjs
+    capture-text.mjs   <- the one place a live run keeps WORDS (bounded + redacted)
+    capture-text.test.mjs
     content-gate.mjs   <- persona/macro content facts (personaPresent, macroResidue)
     content-gate.test.mjs
+    companion-experience.mjs <- the CONTENT half: redacted exchange + three gates
+    companion-experience.test.mjs
+    browser-evidence.mjs     <- the RENDERING half: CDP session, screenshots, DOM assertions
+    browser-evidence.test.mjs
+    persona.mjs        <- the one reviewed card, compiled for every loop
+    persona.test.mjs
+    evidence-verdict.mjs, authority-identity.mjs, fixture-seeding-gate.mjs,
+    player-input-admission.mjs (+ their .test.mjs)
   game/
     run-stardew-native-local-agent-ab-live.mjs  <- Stardew ladder (LADDER=0..N)
     run-stardew-native-local-agent-ab-live.test.mjs
   chat/
-    run-chat-live-audit.mjs   <- Chat live audit harness
+    run-chat-live-audit.mjs    <- Chat live audit harness
     run-chat-live-audit.test.mjs
+    run-chat-live-content.mjs  <- the content-judging defaults over the SAME harness
   memory/
-    run-memory-live-loop.mjs  <- Memory funnel loop (management seed -> chat recall)
+    run-memory-live-loop.mjs   <- Memory funnel loop (management seed -> chat recall)
 ```
 
 The runners live under this tree (`game/`, `chat/`, `memory/`) and share
@@ -141,3 +152,105 @@ Answer "which window is the game actually rendering into under
 `StardewModdingAPI.exe`" before any further raise work: unless the real game
 window (or a child of it) can be identified, `foreground` cannot be made to mean
 "a human is watching this". Until then treat `foreground` as best-effort.
+
+## The content half: what a reviewer can now judge
+
+The trace answers "which system layer misbehaved". It deliberately cannot answer
+"was that pleasant to talk to", because it carries no words. The 2026-10 audit of
+the Chat lane recorded the consequence: `passed` for pipeline integrity, with
+`naturalness: inconclusive` and nothing to quote.
+
+So the Chat loop now produces a SECOND artifact per run, and every run gets ONE
+directory addressed by its own opaque run id:
+
+```
+.live-runs/<run-id>/
+  chat-run-audit.json          <- the frozen content-free trace (a copy of the report)
+  companion-experience.json    <- the redacted exchange + the three content verdicts
+  capture-inputs.json          <- what this run was asked to do, and what it skipped
+  capture-summary.json         <- what was captured, truncated or failed
+  harness-outcome.json         <- only when the run never started (blocked, by name)
+  shots/chat-transcript*.png   <- what the player's browser actually rendered
+  runtime-root/...             <- identity profile, world book, Magic Context db+log, session logs
+```
+
+The directory stays git-ignored (`.live-runs/`), byte-budgeted and
+failure-tolerant through `core/capture.mjs`; a capture failure is recorded in
+`capture-summary.json` and never fails the run.
+
+### `companion-experience.json`
+
+For every committed companion reply, in the turn that produced it:
+
+- the redacted **player line** and **companion line**, with byte and code-point
+  counts, sentence count and the extracted narration beats (`*…*` and `（…）`);
+- three gate verdicts, each `pass` | `fail` | `skipped`, each with the rule that
+  matched and the matched text, so a reviewer jumps straight to the defect.
+
+Redaction: credentials become `<REDACTED>`; length is bounded by the shared
+capture policy (`core/capture-text.mjs`). No prompt internals, no system prompt, no
+M0/M1 text. Macros are deliberately NOT redacted here — `{{user}}` residue IS the
+finding the hygiene gate reports.
+
+### The three gates, and where their thresholds come from
+
+| gate | fires on | bound / vocabulary |
+| --- | --- | --- |
+| `first_person_anchoring` | a narration beat that names the companion without a first-person marker; a third-person pronoun beat coreferent with a preceding companion-naming beat in the same unbroken beat run | companion display name from the mounted identity; quoted speech is removed first, so her name inside her own dialogue never fires, and a beat about another character carries neither her name nor a bound pronoun |
+| `pacing` | a reply past its rung | greeting **100 chars / 4 sentences**; task **600 chars / 20 sentences** — see below |
+| `hygiene` | template or transport residue, wall-breaking register | `{{…}}`, `<thinking>`, `<|…|>`, `[DEBUG-…]`, `<gamebuddy-…>`, code fences; plus the reviewed card's own forbidden forms (`搭档`, `您`, `主人`) and the audit's observed wall-break (`玩家`) |
+
+**Measured, not invented.** `PACING_MEASUREMENTS` in
+`core/companion-experience.mjs` carries the numbers and a test asserts the ladder
+still follows from them:
+
+- the four real committed companion replies that exist on disk are 19 / 20 / 20 /
+  33 chars and 1-3 sentences. The greeting rung is 3x the longest of them (33 ->
+  100, with 4 sentences), which is still under half the shortest authored scene
+  turn, so no scene-length reply can pass as a greeting;
+- the reviewed card's own `mes_example` companion turns are 238 / 280 / 304 chars
+  and 8 / 11 / 14 sentences. The task rung is the capture policy's own per-entry
+  bound (600 chars, 1.97x the longest authored turn) and 14+6 sentences. The named
+  failure — a 500-word screenplay dump — is an order of magnitude past it.
+
+A gate that cannot be evaluated reports `skipped` with a named reason (for
+example `companion_identity_name_unavailable`). Absence is never a pass.
+
+### The rendering half, and the one-time `boot=` token
+
+`shots/` and the DOM assertions come from the product's own browser surface driven
+over CDP — the same stack the earlier screenshot lanes used (Edge/Chrome with
+`--remote-debugging-port`, raw CDP over Node's built-in `WebSocket`), no new
+browser dependency.
+
+The one-time `boot=<token>` handoff used to be spent by the loop's own `fetch`,
+which is why a browser arriving afterwards got 401. Now **the browser redeems the
+token first** and the loop attaches to the session it created: the session cookie
+is read over CDP and the CSRF token comes from the authenticated `/state` body (a
+read never needs a CSRF header). The launch URL is delivered by `Page.navigate`,
+so it never reaches the browser's command line either. A run on a machine with no
+browser falls back to exchanging the token itself and records
+`browser: {state: "skipped", reason: "no_browser_executable_found"}`.
+
+DOM assertions compare the rendered `ol.message-list > li[data-handle]` sequence
+and bubble text against the SAME authenticated `/state` transcript the trace's
+durable facts come from, and fail on an empty bubble, a `_preview` handle after
+terminalisation, macro/transport/debug residue, or a player line that never
+rendered.
+
+### Running it, and what CI would need
+
+```
+pnpm run:chat-live-audit            # the audit's fixed two-turn sweep
+pnpm run:chat-live-content          # the content-judging defaults (real intents, browser on)
+pnpm test:chat-live-audit           # harness + content-half unit tests
+```
+
+Both run scripts need a live provider credential in the environment
+(`CPA_OAI_API_KEY`, present|absent only — no harness ever prints it) and a built
+generation at `host/dist` or `GAMEBUDDY_CHAT_AUDIT_OUTPUT_ROOT`. The content half
+additionally needs a Chromium-family browser; without one it skips by name.
+**CI cannot run the live loop today**: it needs a provider credential and a
+browser, neither of which CI has. CI CAN and does run the deterministic half —
+`test:chat-live-audit` now includes the gate tests, which prove the rules against
+real recorded replies and the archived breach without touching the network.
