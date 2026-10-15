@@ -155,3 +155,50 @@ test("malformed input fails closed instead of matching nothing", () => {
   );
   assert.throws(() => assessCompanionUtterance("x", { observedEvents: "npc_dialogue" }), CompanionBehaviourRubricError);
 });
+
+test("performance obligations are decided by the run report, and unmeasured without one", () => {
+  const obligation = (rubric, id) => rubric.obligations.find((entry) => entry.id === id);
+
+  // No run report: a performance obligation cannot be decided by reading speech, so it must say so rather than pass.
+  const without = assessCompanionBehaviourRubric({ turns: [{ turnId: "t1", text: "我先去东边看看。" }] });
+  assert.equal(obligation(without, "observation_continuity").verdict, "unmeasured");
+  assert.equal(obligation(without, "trace_snapshot_share").verdict, "unmeasured");
+  assert.equal(obligation(without, "trace_duplicate_payload_bounded").verdict, "unmeasured");
+
+  // The shape a real audit found: a 600 s session unobserved for its last 216 s, a trace that is 96.7% snapshot bytes,
+  // and one identical record repeated until it is 5.8% of the trace.
+  const broken = assessCompanionBehaviourRubric({
+    turns: [],
+    runReport: {
+      durationSeconds: 600.351,
+      observationCycles: 292,
+      observationFailures: 107,
+      unobservedTailMs: 216_000,
+      traceBytes: { total: 2_430_000, snapshot: 2_350_000, largestIdenticalRecordBytes: 141_000 },
+    },
+  });
+  assert.equal(obligation(broken, "observation_continuity").verdict, "broken");
+  assert.match(obligation(broken, "observation_continuity").detail, /unobserved tail 216s of 600s; failures 107\/292/u);
+  assert.equal(obligation(broken, "trace_snapshot_share").verdict, "broken");
+  assert.match(obligation(broken, "trace_snapshot_share").detail, /96\.7% of 2430000 B/u);
+  assert.equal(obligation(broken, "trace_duplicate_payload_bounded").verdict, "broken");
+  assert.ok(
+    broken.verdict.broken.includes("observation_continuity"),
+    "a broken performance obligation must surface in the verdict",
+  );
+
+  // A run that observed throughout and kept its trace proportionate is green on all three.
+  const healthy = assessCompanionBehaviourRubric({
+    turns: [],
+    runReport: {
+      durationSeconds: 600,
+      observationCycles: 292,
+      observationFailures: 0,
+      unobservedTailMs: 2_000,
+      traceBytes: { total: 1_000_000, snapshot: 500_000, largestIdenticalRecordBytes: 1_000 },
+    },
+  });
+  assert.equal(obligation(healthy, "observation_continuity").verdict, "green");
+  assert.equal(obligation(healthy, "trace_snapshot_share").verdict, "green");
+  assert.equal(obligation(healthy, "trace_duplicate_payload_bounded").verdict, "green");
+});

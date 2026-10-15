@@ -77,8 +77,14 @@ export function readLoopPlan(planPath) {
 }
 
 /** Append-only writer for one JSONL record. */
-function jsonlWriter(path) {
-  return (record) => appendFileSync(path, `${JSON.stringify(record)}\n`);
+function jsonlWriter(path, counted) {
+  return (record) => {
+    if (counted !== undefined) {
+      appendFileSync(path, counted(record));
+      return;
+    }
+    appendFileSync(path, `${JSON.stringify(record)}\n`);
+  };
 }
 
 /**
@@ -183,7 +189,19 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
     agentSessionJsonl = null,
   } = options;
   mkdirSync(traceDir, { recursive: true });
-  const timeline = jsonlWriter(join(traceDir, "timeline.jsonl"));
+  // Trace cost is measured, not assumed: which records the bytes went to is what a performance obligation needs, and
+  // a reviewer cannot recover it from the finished trace without guessing. `snapshot` is separated because every
+  // `*Targets` field repeats in every frame (audit of run loop-1792028924954: 189 frames, ~12.4 KB each, 96.7%).
+  const traceBytes = { total: 0, snapshot: 0, byRecord: new Map() };
+  const timelineCounted = (record) => {
+    const line = `${JSON.stringify(record)}\n`;
+    const size = Buffer.byteLength(line, "utf8");
+    traceBytes.total += size;
+    if (record.type === "snapshot") traceBytes.snapshot += size;
+    traceBytes.byRecord.set(line, (traceBytes.byRecord.get(line) ?? 0) + size);
+    return line;
+  };
+  const timeline = jsonlWriter(join(traceDir, "timeline.jsonl"), timelineCounted);
   const positions = jsonlWriter(join(traceDir, "positions.jsonl"));
   const planLog = jsonlWriter(join(traceDir, "plan.jsonl"));
 
@@ -308,7 +326,17 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   }
 
   const agentTurns = readAgentTurnsFromSession(agentSessionJsonl);
-  const rubric = assessCompanionBehaviourRubric({ turns: agentTurns });
+  const largestIdenticalRecordBytes = [...traceBytes.byRecord.values()].reduce((max, value) => Math.max(max, value), 0);
+  const runReport = Object.freeze({
+    durationSeconds: (now() - startedAtMs) / 1_000,
+    observationCycles,
+    observationFailures,
+    unobservedTailMs,
+    traceBytes: Object.freeze({ total: traceBytes.total, snapshot: traceBytes.snapshot, largestIdenticalRecordBytes }),
+  });
+  // Performance obligations read the RUN's own measurements; speech obligations read the Agent's turns. The rubric
+  // names which is which, so a plan-driven run is judged on the run without pretending it judged the companion.
+  const rubric = assessCompanionBehaviourRubric({ turns: agentTurns, runReport });
   // Archived here, before the driver's `finally` stops both games: SMAPI re-creates these files on every launch.
   const archivedLogs =
     hostLogPath !== null || aiLogPath !== null
@@ -331,6 +359,7 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
     steps: plan.steps.length,
     dispatched: Object.freeze([...dispatches]),
     agentTurns: agentTurns.length,
+    runReport,
     factsByType: Object.freeze(Object.fromEntries(factsByType)),
     archivedLogs: Object.freeze([...archivedLogs]),
     rubric,

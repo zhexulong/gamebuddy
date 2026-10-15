@@ -141,6 +141,28 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
     source: "companion-behaviour-rubric.mjs:text_stage_direction",
   }),
   Object.freeze({
+    id: "observation_continuity",
+    class: "Performance",
+    statement:
+      "The run observed throughout: the session does not end with a stretch in which nothing could be observed.",
+    provenance: "insight#4271 (a 600 s session went 216 s unobserved and still reported a pass)",
+    evidence: "runReport.unobservedTailMs",
+  }),
+  Object.freeze({
+    id: "trace_snapshot_share",
+    class: "Performance",
+    statement: "Snapshot frames do not dominate the trace; the payload a reviewer pays for stays proportionate.",
+    provenance: "audit of run loop-1792028924954: snapshots 2.35 MB of 2.43 MB (96.7%), ~12.4 KB per cycle",
+    evidence: "runReport.traceBytes.snapshot / runReport.traceBytes.total",
+  }),
+  Object.freeze({
+    id: "trace_duplicate_payload_bounded",
+    class: "Performance",
+    statement: "The trace does not spend most of its bytes repeating one identical record.",
+    provenance: "the same run: 107 identical 84 B observation-failure records",
+    evidence: "runReport.traceBytes.largestIdenticalRecordBytes / runReport.traceBytes.total",
+  }),
+  Object.freeze({
     id: "proactive_authenticity",
     class: "Unjudged",
     statement:
@@ -255,10 +277,14 @@ function matchesTextStageDirection(text) {
  * `unmeasured` — the historian rubric's rule that unjudged things are NAMED, not
  * approximated (`historian-prompt-rubric.md:46-54`).
  */
-export function assessCompanionBehaviourRubric({ turns, presence = null } = {}) {
+export function assessCompanionBehaviourRubric({ turns, presence = null, runReport = null } = {}) {
   if (!Array.isArray(turns)) fail("companion_behaviour_turns_invalid");
   if (presence !== null && (typeof presence !== "object" || Array.isArray(presence)))
     fail("companion_behaviour_presence_invalid");
+  // `runReport` carries what the RUN measured about itself (observation continuity, trace byte shares). It is a
+  // separate evidence source from speech on purpose: a performance obligation cannot be decided by reading turns.
+  if (runReport !== null && (typeof runReport !== "object" || Array.isArray(runReport)))
+    fail("companion_behaviour_run_report_invalid");
 
   const utterances = [];
   for (const turn of turns) {
@@ -319,8 +345,37 @@ export function assessCompanionBehaviourRubric({ turns, presence = null } = {}) 
   const stageDirections = utterances.filter((utterance) => utterance.textStageDirection.length > 0);
 
   const brokenFor = (id) => allFindings.filter((finding) => finding.obligation === id).length;
+  // Performance obligations are decided from the run report, and the thresholds are named rather than scored: a
+  // 36%-unobserved session and a trace that is 97% repeated frames are properties, not opinions.
+  const performanceVerdict = (obligation) => {
+    if (runReport === null) return { verdict: "unmeasured", detail: "no_run_report" };
+    const tail = Number(runReport.unobservedTailMs);
+    if (obligation.id === "observation_continuity") {
+      if (!Number.isFinite(tail)) return { verdict: "unmeasured", detail: "no_observation_measurement" };
+      return {
+        verdict: tail > 30_000 ? "broken" : "green",
+        detail: `unobserved tail ${Math.round(tail / 1000)}s of ${Math.round(Number(runReport.durationSeconds ?? 0))}s; failures ${runReport.observationFailures ?? 0}/${runReport.observationCycles ?? 0}`,
+      };
+    }
+    const bytes = runReport.traceBytes ?? null;
+    const total = Number(bytes?.total);
+    if (!Number.isFinite(total) || total <= 0) return { verdict: "unmeasured", detail: "no_trace_byte_measurement" };
+    if (obligation.id === "trace_snapshot_share") {
+      const share = Number(bytes.snapshot ?? 0) / total;
+      return {
+        verdict: share > 0.8 ? "broken" : "green",
+        detail: `snapshots ${(share * 100).toFixed(1)}% of ${total} B`,
+      };
+    }
+    const repeated = Number(bytes.largestIdenticalRecordBytes ?? 0) / total;
+    return {
+      verdict: repeated > 0.05 ? "broken" : "green",
+      detail: `one identical record = ${(repeated * 100).toFixed(1)}% of the trace`,
+    };
+  };
   const obligations = COMPANION_BEHAVIOUR_OBLIGATIONS.map((obligation) => {
     if (obligation.class === "Unjudged") return Object.freeze({ ...obligation, verdict: "unmeasured", detail: null });
+    if (obligation.class === "Performance") return Object.freeze({ ...obligation, ...performanceVerdict(obligation) });
     if (obligation.source === null) return Object.freeze({ ...obligation, verdict: "unmeasured", detail: null });
     // An Invariant/Preference with no evidence to judge is unmeasured, never green:
     // a run with no spoken turn cannot clear the leak obligations.
