@@ -734,8 +734,19 @@ test("a same-position variant acceptance mints no player row and records the tar
       /chat_variant_anchor_unavailable/,
     );
 
+    // The player is mid-sentence: a regeneration is not their message being sent, so
+    // the draft they are typing must survive it. It is set after the refusals above,
+    // which are decided against the empty draft revision the command names.
+    await store.saveDraft!({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      expectedDraftRevision: 0,
+      text: "still typing this",
+    });
+
     const accepted = await acceptMountedPlayerMessage(bindingFor(root), {
       ...command,
+      expectedDraftRevision: 1,
       variantTargetMessageId: "response_01",
     });
     assert.deepEqual(accepted.variant, { targetMessageId: "response_01", anchorMessageId: "player_01" });
@@ -748,6 +759,9 @@ test("a same-position variant acceptance mints no player row and records the tar
       state.messages.map((message) => message.messageId),
       ["opening_01", "player_01", "response_01"],
     );
+    // ... and the draft the player is typing is byte-identical: only an ordinary
+    // acceptance consumes it.
+    assert.deepEqual(state.draft, { revision: 1, text: "still typing this" });
     assert.deepEqual(
       state.messages.filter((message) => message.role === "player").map((message) => message.messageId),
       ["player_01"],

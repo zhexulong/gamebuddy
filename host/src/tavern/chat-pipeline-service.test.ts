@@ -178,6 +178,40 @@ const mountPreamble = `
       }),
     );
   }
+  async function driveVariantToCompleted(fx, position) {
+    return internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
+      internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
+        const sessionManager = scope.runtimeSession.sessionManager;
+        const appendTurn = (promptText, replyText) => {
+          sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.now() });
+          sessionManager.appendMessage({ role: "assistant", content: [{ type: "text", text: replyText }] });
+        };
+        // The reply the player already had, as the session received it when that
+        // line was sent, followed by this turn's own prompt and answer - exactly
+        // the shape Pi leaves after one same-position regeneration.
+        appendTurn(position.anchorText, position.committedReplyText);
+        appendTurn(position.anchorText, position.text);
+        const times = [await nextTime(), await nextTime(), await nextTime(), await nextTime(), await nextTime()];
+        await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
+        await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
+        const activation = await scope.activateVariantPosition(position.text);
+        const modelTexts = sessionManager
+          .buildSessionProjection()
+          .messages.map((message) =>
+            message.content.filter((part) => part.type === "text").map((part) => part.text).join(""),
+          );
+        const committed = await scope.transitionPresentation({
+          operation: "commit_variant",
+          cancelEpoch: 0,
+          variant: { targetMessageId: position.targetMessageId, text: position.text, occurredAtMs: times[2] },
+          committedAtMs: times[2],
+        });
+        await scope.transitionPresentation({ operation: "claim_completion", claimedAtMs: times[3] });
+        await scope.transitionPresentation({ operation: "complete", completedAtMs: times[4] });
+        return Object.freeze({ activation, modelTexts, committed });
+      }),
+    );
+  }
 `;
 
 async function runMountedChild(body: string, root: string): Promise<Record<string, unknown>> {
@@ -705,7 +739,7 @@ test(
 );
 
 test(
-  "regenerate refuses every target but the transcript's own tail companion reply",
+  "regenerate re-generates the transcript's tail companion reply at its own position",
   { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
   async () => {
     const output = await mounted(`
@@ -731,17 +765,68 @@ test(
   const openingTarget = await target(handleOf(openingMessage.messageId), "oooooooooooooooooooootab".slice(0, 22));
   const playerTarget = await target(handleOf(playerMessage.messageId), "pppppppppppppppppppppa");
   const unknownTarget = await target("Z".repeat(43), "uuuuuuuuuuuuuuuuuuuuua");
-  // The one target it can honour: the transcript's own tail companion reply.
+  // The one target it can honour: the transcript's own tail companion reply, and
+  // the turn that honours it is a same-position variant.
   const accepted = await target(handleOf(tailMessage.messageId), "aaaaaaaaaaaaaaaaaaaaab");
   await ticks();
-  const after = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const afterAcceptance = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
   // The refused targets mutated nothing: no fourth message, no second record.
   const refusedState = { messages: durable.messages.length, idempotency: durable.idempotency.length };
-  const responseIndex = durable.messages.indexOf(tailMessage);
+  // The variant turn's own durable facts: the transcript grew by no row at all, and
+  // the ledger's minted message id names no message the transcript carries.
+  const acceptedState = {
+    messages: afterAcceptance.messages.length,
+    idempotency: afterAcceptance.idempotency.length,
+    roles: afterAcceptance.messages.map((m) => m.role),
+    kinds: afterAcceptance.messages.map((m) => m.kind),
+    turnMessageId: afterAcceptance.turnLedger === null ? null : afterAcceptance.turnLedger.messageId,
+    turnVariant: afterAcceptance.turnLedger === null ? null : afterAcceptance.turnLedger.variant ?? null,
+  };
+  // The provider path the service's injected start stands in for: Pi appends this
+  // turn's prompt and answer, the coordinator's activation rewrites the entries the
+  // reply position owns, and only after that does the commit append the new variant
+  // to the existing reply row.
+  const driven = await driveVariantToCompleted(fx, {
+    targetMessageId: tailMessage.messageId,
+    anchorText: playerMessage.text,
+    committedReplyText: tailMessage.text,
+    text: "Regenerated companion reply.",
+  });
+  const committedState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const responseIndex = committedState.messages.findIndex((m) => m.messageId === tailMessage.messageId);
+  const selected = await run(async () =>
+    service.selectSwipe({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(tailMessage.messageId), direction: "prev" }));
+  const restored = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
   await service.close();
   await fx.lease.close();
   await fx.authority.close();
-  process.stdout.write(JSON.stringify({ openingTarget, playerTarget, unknownTarget, accepted, refusedState, startCalls, openingKind: openingMessage.kind, roles: durable.messages.map((m) => m.role), kinds: durable.messages.map((m) => m.kind), responseText: tailMessage.text, responseSwipes: tailMessage.swipes, afterRoles: after.messages.map((m) => m.role), afterIdempotency: after.idempotency.length, afterResponseText: after.messages[responseIndex].text, afterResponseSwipes: after.messages[responseIndex].swipes }));
+  process.stdout.write(JSON.stringify({
+    openingTarget, playerTarget, unknownTarget, accepted, refusedState, startCalls,
+    openingKind: openingMessage.kind,
+    roles: durable.messages.map((m) => m.role),
+    kinds: durable.messages.map((m) => m.kind),
+    tailHandle: handleOf(tailMessage.messageId),
+    playerMessageId: playerMessage.messageId,
+    tailMessageId: tailMessage.messageId,
+    committedSample: "Synthetic companion reply.",
+    regeneratedSample: "Regenerated companion reply.",
+    acceptedState, activation: driven.activation.status,
+    contextEditCount: driven.activation.status === "activated" ? driven.activation.contextEditEntryIds.length : -1,
+    modelTexts: driven.modelTexts,
+    commitStatus: driven.committed.status,
+    commitRoles: committedState.messages.map((m) => m.role),
+    commitKinds: committedState.messages.map((m) => m.kind),
+    playerRows: committedState.messages.filter((m) => m.role === "player").length,
+    commitText: committedState.messages[responseIndex].text,
+    commitSwipes: committedState.messages[responseIndex].swipes,
+    commitIndex: committedState.messages[responseIndex].activeSwipeIndex,
+    commitMessages: committedState.messages.length,
+    selected: selected.ok ? selected.value.message : selected,
+    restoredText: restored.messages[responseIndex].text,
+    restoredIndex: restored.messages[responseIndex].activeSwipeIndex,
+    restoredSwipes: restored.messages[responseIndex].swipes,
+    restoredMessages: restored.messages.length,
+  }));
 `);
     // The opening is the audit's own case, and the fixture must really carry one
     // for the refusal below to mean anything.
@@ -755,39 +840,77 @@ test(
       assert.equal(refused.ok, false, `${what} must be refused`);
       assert.match(refused.error ?? "", /chat_pipeline_service_unavailable/, what);
     }
-    // The tail companion reply is re-asked: a durable 202 for a *new* player
-    // message carrying the same text, and one provider start.
+
+    // The tail companion reply is re-generated at its own position: the acceptance
+    // names that reply, not a minted player row, and the transcript does not grow -
+    // the half the old path got wrong by asking for a second turn.
     const accepted = output.accepted as { ok: boolean; value?: SubmitResultV1 };
     assert.equal(accepted.ok, true);
     assert.equal(accepted.value?.disposition, "accepted");
-    assert.equal(accepted.value?.message.role, "player");
-    assert.equal(accepted.value?.message.text, "Synthetic player request");
+    assert.equal(accepted.value?.message.role, "companion");
+    assert.equal(accepted.value?.message.handle, output.tailHandle);
+    assert.equal(accepted.value?.message.text, output.committedSample);
     assert.equal(output.startCalls, 2);
-    // What the code does today, pinned: regeneration re-asks the tail reply as a
-    // NEW tail turn, so the transcript carries a second player row with the same
-    // words. That is a stand-in, not the declared semantic: the designs define
-    // regenerate as a variant at the SAME companion message position - "重新生成 |
-    // 同 swipe(表现层)" (design/tasks/active/frontend-functional-alignment-inventory.md:28),
-    // "Host 可在同一 Tavern Message 位置保存多个 MessageVariant；只让选中 variant 进入后续
-    // 可见历史" (design/archive/legacy-sources/09_BDD_VALIDATION_PLAN.md:805-806). The
-    // capability that would honour it - a presentation that targets an existing
-    // message, plus Pi session-tree binding - is not carried by this contract, and
-    // design/archive/legacy-sources/24_TAVERN_COMPATIBILITY_IMPLEMENTATION_PLAN.md:341
-    // forbids registering the operation before that capability passes. These rows
-    // pin the deviation, not a product decision.
+    const acceptedState = output.acceptedState as {
+      messages: number;
+      idempotency: number;
+      roles: string[];
+      kinds: string[];
+      turnMessageId: string;
+      turnVariant: { targetMessageId: string; anchorMessageId: string };
+    };
+    // Exactly one player row, before and after the variant acceptance, and no fourth
+    // message: the red-before path appended a second player row here.
     assert.deepEqual(output.roles, ["companion", "player", "companion"]);
     assert.deepEqual(output.kinds, ["opening", "player", "response"]);
-    assert.deepEqual(output.afterRoles, ["companion", "player", "companion", "player"]);
-    assert.equal(output.responseText, "Synthetic companion reply.");
-    assert.deepEqual(output.afterResponseText, "Synthetic companion reply.");
-    // The store seeds every message with the one variant it was committed with,
-    // and the projection only offers the swipe pair above one variant - so the
-    // durable fact to pin is that regeneration appended no variant in place: the
-    // reply's variant set is byte-identical before and after.
-    assert.deepEqual(output.responseSwipes, ["Synthetic companion reply."]);
-    assert.deepEqual(output.afterResponseSwipes, ["Synthetic companion reply."]);
+    assert.equal(acceptedState.messages, 3);
+    assert.deepEqual(acceptedState.roles, ["companion", "player", "companion"]);
+    assert.deepEqual(acceptedState.kinds, ["opening", "player", "response"]);
+    assert.equal(acceptedState.idempotency, 2);
+    // The accepted turn is a variant of the tail reply, anchored on the player row it
+    // answered, and its own message id is the opaque variant identity that names no row.
+    assert.match(acceptedState.turnMessageId, /^variant_turn_/);
+    assert.deepEqual(Object.keys(acceptedState.turnVariant).sort(), ["anchorMessageId", "targetMessageId"]);
+    assert.equal(acceptedState.turnVariant.anchorMessageId, output.playerMessageId);
+    assert.equal(acceptedState.turnVariant.targetMessageId, output.tailMessageId);
     assert.deepEqual(output.refusedState, { messages: 3, idempotency: 1 });
-    assert.equal(output.afterIdempotency, 2);
+
+    // The model's context carries the variant the player is about to read, and not the
+    // superseded text: the invariant this whole mechanism rests on, read from the
+    // session's own projection after the activation and before the commit.
+    assert.equal(output.activation, "activated");
+    assert.equal(output.contextEditCount, 1);
+    const modelTexts = output.modelTexts as string[];
+    assert.equal(modelTexts.filter((text) => text === output.regeneratedSample).length, 2);
+    assert.equal(modelTexts.filter((text) => text === output.committedSample).length, 0);
+    assert.equal(modelTexts.filter((text) => text === "Synthetic player request").length, 2);
+
+    // The visible half: the same companion row, same count, same order - now carrying
+    // the regenerated reply as its second variant and showing it.
+    assert.equal(output.commitStatus, "presentation_committed");
+    assert.deepEqual(output.commitRoles, ["companion", "player", "companion"]);
+    assert.deepEqual(output.commitKinds, ["opening", "player", "response"]);
+    assert.equal(output.playerRows, 1);
+    assert.equal(output.commitMessages, 3);
+    assert.deepEqual(output.commitSwipes, [output.committedSample, output.regeneratedSample]);
+    assert.equal(output.commitText, output.regeneratedSample);
+    assert.equal(output.commitIndex, 1);
+
+    // Selecting the first variant gives the player the original text back, at the same
+    // row, with both variants still there.
+    const selected = output.selected as { text?: string; swipeInfo?: Record<string, unknown> };
+    assert.equal(selected.text, output.committedSample);
+    assert.deepEqual(selected.swipeInfo, {
+      currentIndex: 0,
+      totalSwipes: 2,
+      label: "1/2",
+      hasPrevious: false,
+      hasNext: true,
+    });
+    assert.equal(output.restoredText, output.committedSample);
+    assert.equal(output.restoredIndex, 0);
+    assert.deepEqual(output.restoredSwipes, [output.committedSample, output.regeneratedSample]);
+    assert.equal(output.restoredMessages, 3);
   },
 );
 

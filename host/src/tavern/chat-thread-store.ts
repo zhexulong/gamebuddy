@@ -2212,9 +2212,13 @@ export function createChatThreadStore(
       );
       persistContextPlan(db, createAcceptedContextPlan(thread, input, turnId), turnId);
 
-      db.prepare(
-        "UPDATE tavern_drafts SET revision = ?, draft_content = NULL, updated_at_ms = ? WHERE thread_id = ?",
-      ).run(current.draft.revision + 1, acceptedAtMs, input.chatThreadId);
+      // A same-position variant turn is not the player sending the draft: the
+      // reply position is re-generated, and the text they are still typing must
+      // survive it. Only an ordinary acceptance consumes the draft.
+      if (variant === undefined)
+        db.prepare(
+          "UPDATE tavern_drafts SET revision = ?, draft_content = NULL, updated_at_ms = ? WHERE thread_id = ?",
+        ).run(current.draft.revision + 1, acceptedAtMs, input.chatThreadId);
 
       const readBack = readStateFromDb(db, input.chatThreadId);
       const durable = readBack.idempotency.find((record) => record.key === input.idempotencyKey);

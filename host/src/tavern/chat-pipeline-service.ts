@@ -513,12 +513,13 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       // literal "请继续". They are refused here as well as hidden by the surface,
       // because the browser is not the authority on what this Chat can do.
       //
-      // This is deliberately NOT an in-place variant. The durable presentation
-      // commit binds its response to a fresh attempt identity minted from the
-      // attempt (`nativeResponseMessageId`), so a variant of an existing message
-      // would need a durable concept this contract does not carry - a turn whose
-      // presentation targets an existing message - and this route never pretends
-      // to be one.
+      // The turn this accepts is a same-position variant: it names that reply and
+      // mints no player row, so its prompt is the anchor player message the reply
+      // answered - the store resolves both from the transcript and refuses a target
+      // with no anchor. The reply the player reads changes only when the provider's
+      // commit appends the new variant at this exact position, and only after the
+      // model's context already carries it; a turn that cannot do both leaves the
+      // position exactly as it was.
       const targetMessage = state.messages[state.messages.length - 1];
       if (
         targetMessage === undefined ||
@@ -531,6 +532,9 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
         .find((m: ChatThreadState["messages"][number]) => m.role === "player");
       if (parentPlayerMessage === undefined) throw unavailable();
       const promptText = parentPlayerMessage.text;
+      // A replayed key answers `duplicate` with the same durable turn, exactly as
+      // an ordinary submit does: acceptance alone is idempotent here too.
+      const duplicate = state.idempotency.some((record) => record.key === idempotencyKey);
 
       pending += 1;
       try {
@@ -540,17 +544,19 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
             locale: "und",
             idempotencyKey,
             expectedDraftRevision: state.draft.revision,
+            variantTargetMessageId: targetMessage.messageId,
           }),
         );
         const acceptedState = await resumeState();
-        const result = await projectCommittedResult(accepted, acceptedState, "accepted");
-        if (eventStream !== undefined && profile.routeIds.includes("events")) {
-          eventStream.publish({
-            eventType: "message.committed",
-            selectionGeneration: lease.browserProjection.selectionGeneration,
-            payload: result.message,
-          });
-        }
+        const result = await projectVariantAcceptedResult(
+          accepted,
+          acceptedState,
+          targetMessage.messageId,
+          duplicate ? "duplicate" : "accepted",
+        );
+        // Deliberately no `message.committed`: this acceptance commits nothing the
+        // player can see. The variant reaches the surface when the provider's commit
+        // appends it to this position and that read-back is projected.
         const attempt = startOnce();
         backgroundStarts.add(attempt);
         void attempt
@@ -578,6 +584,36 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
     },
   });
   return service;
+
+  /**
+   * The browser-safe result of a same-position variant acceptance. There is no
+   * minted player row to project: the committed representation is the reply
+   * position the turn re-generates - read back from durable state, never from the
+   * caller's command echo - plus the ledger the acceptance just created.
+   */
+  async function projectVariantAcceptedResult(
+    accepted: AcceptedQueuedTurn,
+    state: ChatThreadState,
+    targetMessageId: string,
+    disposition: "accepted" | "duplicate",
+  ): Promise<SubmitResultV1> {
+    const variant = accepted.variant;
+    if (variant === undefined || variant.targetMessageId !== targetMessageId) throw unavailable();
+    if (state.turnLedger === null || state.turnLedger.turnId !== accepted.turnId) throw unavailable();
+    const order = state.messages.findIndex((message) => message.messageId === targetMessageId);
+    const message = order < 0 ? undefined : state.messages[order];
+    if (message === undefined || message.role !== "companion" || message.kind !== "response") throw unavailable();
+    const result = Object.freeze({
+      apiVersion: TAVERN_BROWSER_API_VERSION,
+      disposition,
+      message: projectMessage(lease, message, order),
+      turn: projectTurn(lease, state.turnLedger),
+    });
+    // Fail closed unless the committed representation satisfies its frozen
+    // contract schema; a partial or invalid projection never escapes.
+    if (!TavernBrowserValidatorsV1.SubmitResultV1Schema.Check(result)) throw unavailable();
+    return result;
+  }
 
   async function projectCommittedResult(
     accepted: AcceptedQueuedTurn,
