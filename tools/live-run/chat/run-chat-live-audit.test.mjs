@@ -33,6 +33,7 @@ import {
   evaluateProviderPreSendMarker,
   evaluateProviderRuntimeMarker,
   loadProbeManifest,
+  openBrowserHalf,
   parseArguments,
   parseSseFrame,
   prepareReportTarget,
@@ -980,4 +981,30 @@ test("a conversation turn contributes a boundary reason when it is unsettled or 
   assert.equal(conversationTurnBoundaryReason(undefined), "conversation_turn_not_terminal");
   const source = await readFile(new URL("./run-chat-live-audit.mjs", import.meta.url), "utf8");
   assert.match(source, /conversationTurnBoundaryReason\(turn\)/);
+});
+
+test("a phase that cannot run records a named skip instead of passing", async () => {
+  // The owner's rule: if a phase cannot run here it must skip with a named reason,
+  // never silently pass. The browser phase is the one that can legitimately be
+  // unavailable (no Chromium-family binary), so its skip path is proved directly.
+  const environment = { skippedPhases: [], browserEvidence: undefined };
+  const previous = process.env.GAMEBUDDY_CHAT_BROWSER;
+  process.env.GAMEBUDDY_CHAT_BROWSER = "0";
+  let result;
+  try {
+    result = await openBrowserHalf({
+      launchUrl: "http://127.0.0.1:1/#profile=composed-reference-game&boot=unused",
+      origin: "http://127.0.0.1:1",
+      environment,
+    });
+  } finally {
+    if (previous === undefined) delete process.env.GAMEBUDDY_CHAT_BROWSER;
+    else process.env.GAMEBUDDY_CHAT_BROWSER = previous;
+  }
+  assert.equal(result.ok, false);
+  assert.deepEqual(environment.skippedPhases, [
+    { phase: "browser", reason: "browser_phase_disabled_by_configuration" },
+  ]);
+  assert.equal(environment.browserEvidence.state, "skipped");
+  assert.equal(environment.browserEvidence.reason, "browser_phase_disabled_by_configuration");
 });

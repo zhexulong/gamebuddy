@@ -1296,7 +1296,7 @@ function emitNewPresentationMarkers({ stderr, recorder, seen }) {
  * Failing here is never fatal: the caller falls back to exchanging the token
  * itself, and a browser that cannot run is recorded as a named skip.
  */
-async function openBrowserHalf({ launchUrl, origin, environment }) {
+export async function openBrowserHalf({ launchUrl, origin, environment }) {
   const skip = (reason) => {
     environment.skippedPhases.push({ phase: "browser", reason });
     environment.browserEvidence = { state: "skipped", reason };
