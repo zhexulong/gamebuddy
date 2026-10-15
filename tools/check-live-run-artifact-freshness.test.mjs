@@ -30,6 +30,7 @@ async function fixture({ sourceTime, outputTime, withSource = true, withOutput =
 
 const earlier = new Date("2026-10-07T10:00:00Z");
 const later = new Date("2026-10-07T12:00:00Z");
+const latest = new Date("2026-10-07T14:00:00Z");
 
 test("a fresh artifact passes", async () => {
   const root = await fixture({ sourceTime: earlier, outputTime: later });
@@ -78,6 +79,35 @@ test("an artifact with no emitted modules is stale, never silently fresh", async
   }
 });
 
+test("a test source change does not make the artifact stale, a production one does", async () => {
+  // Measured: four consecutive live runs were blocked because another lane edited a `*.test.ts` file seconds after each
+  // rebuild. A test file cannot change any production module a live run imports, so it must not count as an input --
+  // while a real production source still must.
+  const root = await mkdtemp(join(tmpdir(), "gb-freshness-test-src-"));
+  try {
+    const sourceDir = join(root, "host", "src");
+    const outputDir = join(root, "host", "dist-test");
+    await mkdir(sourceDir, { recursive: true });
+    await mkdir(outputDir, { recursive: true });
+    const production = join(sourceDir, "bridge.ts");
+    const testSource = join(sourceDir, "bridge.test.ts");
+    const output = join(outputDir, "bridge.js");
+    await writeFile(production, "export const x = 1;\n");
+    await writeFile(testSource, "export const t = 1;\n");
+    await writeFile(output, "export const x = 1;\n");
+    await utimes(production, earlier, earlier);
+    await utimes(output, later, later);
+    await utimes(testSource, later, later);
+    const withTestEdit = await assessLiveRunArtifactFreshness({ repositoryRoot: root });
+    assert.equal(withTestEdit.stale, false, "a test-only edit must not block a live run");
+    await utimes(production, latest, latest);
+    const withProductionEdit = await assessLiveRunArtifactFreshness({ repositoryRoot: root });
+    assert.equal(withProductionEdit.stale, true, "a production edit must still block it");
+    assert.match(withProductionEdit.inputs.path, /bridge\.ts$/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test("the message a run sees names the locked rebuild entry, never a bare tsc", () => {
   // A run that fails without saying how to fix it wastes the same cycle it just spent. The command
   // must be the lock-holding public entry: a bare `tsc` bypasses the artifact lock and the test-only

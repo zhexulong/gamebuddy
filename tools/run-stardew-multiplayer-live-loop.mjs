@@ -21,7 +21,7 @@
  * It grants no capability, changes no action contract, and publishes no decision.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,7 +41,19 @@ const DEFAULT_RELEASE_DIR = join(REPOSITORY_ROOT, "integrations", "stardew", "bi
  * chat scenario the multiplayer gate already uses for this action.
  */
 const LOOP_ACTION = "send_multiplayer_chat";
-const LOOP_SCENARIO = "native_farmhand_chat_v1";
+/**
+ * NO experimental opt-in, and that is a fact about the actions rather than a preference: both actions a loop uses are
+ * PUBLISHED -- `send_multiplayer_chat` is `FarmhandActionLifecycle.LiveVerified` (`FarmhandActionDefinitions.cs`) and
+ * `move_to_tile` likewise -- so listing one under `ExperimentalActions` makes the AI profile's policy invalid, and the
+ * client logs "rejected Stardew Game Action policy ... ExperimentalActions may [only name experimental candidates]"
+ * and never advances a fixture tick. Measured on a real run.
+ */
+const LOOP_ACTION_IS_EXPERIMENTAL = false;
+// EMPTY is not a placeholder: HostAutomationConfig.IsValid (ModConfig.cs:347-353) accepts an empty
+// FixtureScenario or one of 25 hard-coded values, and a loop needs no world precondition beyond the farmhand’s
+// own cabin. The driver’s own $ACTION_SETUP uses scenario = "" for exactly that shape. A named scenario outside
+// that list makes the Host log "rejected the HostAutomation fixture configuration" and never load the world.
+const LOOP_SCENARIO = "";
 
 const REQUIRED_ARGUMENTS = Object.freeze(["--game-path", "--expected-farmhand-id", "--save-name"]);
 const OPTIONAL_ARGUMENTS = Object.freeze([
@@ -107,6 +119,30 @@ export function parseLoopArgs(argv = process.argv.slice(2)) {
   });
 }
 
+/**
+ * Arm the native save that an attachment needs, in both copies of the Host config.
+ *
+ * Why this is required rather than optional: attaching (even to an EXISTING binding) leaves the provisioner awaiting a
+ * native save to persist the issued manifest and the consumed request id, and the Mod only opens that SaveGameMenu when
+ * `HostAutomation.TriggerNativeSaveAfterAttachment` is set (`ModEntry.Fixtures.cs:5319-5334`). Without it the client
+ * waits 60 seconds and then reports `stardew_attachment_rejected_save_persistence_timeout` (`HostFarmhandProvisioner.cs:110-126`).
+ * Measured: a run with the previous default failed exactly that way.
+ *
+ * The Host profile carries two copies of the config (the Mod reads the one under `Mods/GameBuddy`), so both are patched.
+ */
+function armAttachmentSavePersistence(hostRoot) {
+  const paths = [join(hostRoot, "GameBuddy", "config.json"), join(hostRoot, "Mods", "GameBuddy", "config.json")];
+  let patched = 0;
+  for (const path of paths) {
+    if (!existsSync(path)) continue;
+    const raw = JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/u, ""));
+    raw.HostAutomation = { ...(raw.HostAutomation ?? {}), TriggerNativeSaveAfterAttachment: true };
+    writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`, "utf8");
+    patched += 1;
+  }
+  if (patched === 0) throw new Error("multiplayer_loop_host_config_missing");
+  return patched;
+}
 /** Resolve PowerShell 7 first, then Windows PowerShell. */
 function resolvePowerShell() {
   const probe = spawnSync("where.exe", ["pwsh"], { encoding: "utf8", windowsHide: true });
@@ -122,7 +158,7 @@ function killTree(pid) {
  * Runs the driver with a bounded wall clock. The bound is never a success path: on
  * timeout the whole tree is killed and the outcome is `blocked`.
  */
-function runDriver({ powerShell, args, timeoutSeconds, cwd, env }) {
+function runDriver({ powerShell, args, timeoutSeconds, sessionSeconds, cwd, env }) {
   return new Promise((resolvePromise) => {
     const child = spawn(powerShell, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", DRIVER, ...args], {
       cwd,
@@ -144,7 +180,9 @@ function runDriver({ powerShell, args, timeoutSeconds, cwd, env }) {
         killTree(child.pid);
         finish(null, true);
       },
-      (timeoutSeconds + 60) * 1_000,
+      // The session itself runs for `sessionSeconds`, so the driver must be allowed to outlive it: a bound of
+      // `timeoutSeconds + 60` killed a 600-second session at roughly 360 seconds.
+      (timeoutSeconds + sessionSeconds + 60) * 1_000,
     );
     child.stdout.on("data", (chunk) => stdout.push(String(chunk)));
     child.stderr.on("data", (chunk) => stderr.push(String(chunk)));
@@ -174,8 +212,14 @@ export async function main(argv) {
 
   await mkdir(runRoot, { recursive: true });
   await mkdir(traceRoot, { recursive: true });
-  const plan = { action: LOOP_ACTION, scenario: request.scenario, experimental: true, runner: request.runner };
+  const plan = {
+    action: LOOP_ACTION,
+    scenario: request.scenario,
+    experimental: LOOP_ACTION_IS_EXPERIMENTAL,
+    runner: request.runner,
+  };
   const armed = await armGateProfiles({ fixtureRoots, runRoot, plan, expectedFarmhandId: request.expectedFarmhandId });
+  armAttachmentSavePersistence(armed.hostRoot);
 
   const childEnv = {
     ...process.env,
@@ -217,9 +261,15 @@ export async function main(argv) {
     powerShell: resolvePowerShell(),
     args: driverArgs,
     timeoutSeconds: request.timeoutSeconds,
+    sessionSeconds: request.durationSeconds,
     cwd: REPOSITORY_ROOT,
     env: childEnv,
   });
+  // The driver output is PERSISTED, not just parsed: on a blocked run the reason exists only on its stdout (its catch
+  // prints {state, phase, reason} and rethrows without writing the result file), so a run that discards it is
+  // undiagnosable after the fact.
+  writeFileSync(join(runRoot, "driver.stdout.txt"), run.stdout, "utf8");
+  writeFileSync(join(runRoot, "driver.stderr.txt"), run.stderr, "utf8");
   const driverResult = parseDriverResult(run.stdout);
   const loopResult = parseLoopResult(run.stdout);
   const state =
@@ -254,6 +304,8 @@ export async function main(argv) {
     ],
     driverExitCode: run.exitCode,
     driverState: driverResult?.state ?? null,
+    driverPhase: driverResult?.phase ?? null,
+    driverReason: driverResult?.reason ?? null,
     loop: loopResult,
     // The audit段 is filled by the reviewing action, not by this tool: a loop run is
     // not finished until a fresh-context auditing-runs reviewer has read the trace

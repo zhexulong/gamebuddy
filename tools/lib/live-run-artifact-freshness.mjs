@@ -25,6 +25,19 @@ export const REBUILD_COMMAND = "cd host && pnpm build:test";
 
 const IGNORED_DIRECTORIES = new Set(["node_modules", ".git", "dist", "dist-test", "coverage"]);
 
+/**
+ * A source file that exists only to test production code; a change to one cannot alter what a live run executes.
+ */
+function isTestSource(path) {
+  const normalised = path.split("\\").join("/");
+  return (
+    normalised.endsWith(".test.ts") ||
+    normalised.includes("/__tests__/") ||
+    normalised.endsWith(".fixture.ts") ||
+    normalised.includes("/fixtures/")
+  );
+}
+
 async function newestModificationTime(root, { match, ignore = IGNORED_DIRECTORIES } = {}) {
   let newest = { path: undefined, mtimeMs: Number.NEGATIVE_INFINITY };
   const walk = async (directory) => {
@@ -58,7 +71,12 @@ export async function assessLiveRunArtifactFreshness({ repositoryRoot }) {
   const outputRoot = join(hostRoot, "dist-test");
   if (!existsSync(sourceRoot)) return { stale: false, reason: "no_source_root" };
   if (!existsSync(outputRoot)) return { stale: true, reason: "artifact_missing" };
-  const inputs = await newestModificationTime(sourceRoot, { match: (path) => path.endsWith(".ts") });
+  const inputs = await newestModificationTime(sourceRoot, {
+    // TEST sources are deliberately excluded: the harm this gate prevents is that the run executes a module whose
+    // source has changed, and a test file cannot change any production module a live run imports. Production
+    // sources, the tsconfig and package.json stay inputs; a stale TEST suite is the suite's own business.
+    match: (path) => path.endsWith(".ts") && !isTestSource(path),
+  });
   const outputs = await newestModificationTime(outputRoot, {
     // The configuration and the tsconfig are inputs too: changing either changes what the artifact must be.
     match: (path) => path.endsWith(".js"),
@@ -67,9 +85,16 @@ export async function assessLiveRunArtifactFreshness({ repositoryRoot }) {
     match: (path) => /\/(?:tsconfig\.test\.json|package\.json)$/u.test(path),
     ignore: new Set(["node_modules", "dist", "dist-test", "src", "coverage"]),
   });
-  const newestInput = [inputs, configurationInputs].reduce((left, right) => (right.mtimeMs > left.mtimeMs ? right : left));
+  const newestInput = [inputs, configurationInputs].reduce((left, right) =>
+    right.mtimeMs > left.mtimeMs ? right : left,
+  );
   if (newestInput.path === undefined || outputs.path === undefined)
-    return { stale: true, reason: outputs.path === undefined ? "artifact_empty" : "no_inputs", inputs: newestInput, outputs };
+    return {
+      stale: true,
+      reason: outputs.path === undefined ? "artifact_empty" : "no_inputs",
+      inputs: newestInput,
+      outputs,
+    };
   const stale = newestInput.mtimeMs > outputs.mtimeMs;
   return { stale, reason: stale ? "artifact_older_than_inputs" : undefined, inputs: newestInput, outputs };
 }
@@ -98,9 +123,10 @@ if (isDirectRun) {
     process.exit(0);
   }
   console.error(`live-run artifact is STALE (${verdict.reason})`);
-  if (verdict.inputs?.path !== undefined) console.error(`  newest input : ${verdict.inputs.path} @${new Date(verdict.inputs.mtimeMs).toISOString()}`);
-  if (verdict.outputs?.path !== undefined) console.error(`  newest output: ${verdict.outputs.path} @${new Date(verdict.outputs.mtimeMs).toISOString()}`);
+  if (verdict.inputs?.path !== undefined)
+    console.error(`  newest input : ${verdict.inputs.path} @${new Date(verdict.inputs.mtimeMs).toISOString()}`);
+  if (verdict.outputs?.path !== undefined)
+    console.error(`  newest output: ${verdict.outputs.path} @${new Date(verdict.outputs.mtimeMs).toISOString()}`);
   console.error(`  rebuild with : ${REBUILD_COMMAND}`);
   process.exit(1);
 }
-
