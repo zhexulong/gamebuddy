@@ -2713,10 +2713,15 @@
     border-color: var(--border-strong);
   }
 
+  /* The composer's own field is deliberately not in this list: the control the
+     player sees is the container, and `.composer-container:focus-within` draws
+     its ring. With the field in this list too, typing inside it painted two
+     concentric rings - the container's accent ring and this gold one 1px inside
+     it. The focus-visibility gate's parent case verifies which container holds
+     which control, so the replacement stays where the gate looks for it. */
   .form-input:focus,
   .form-textarea:focus,
   .form-select:focus,
-  .composer-textarea:focus,
   .surface-model-field input:focus,
   .surface-model-field select:focus,
   .game-create-form input:focus {

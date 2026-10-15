@@ -250,3 +250,56 @@ test("item 1: the import review's own sentences are left-aligned prose", async (
   console.log(`[item-1 result] ${JSON.stringify(resultAnchors)}`);
   expect(resultAnchors!.textAlign, "the result sentence reads from the left like the review").toBe("left");
 });
+
+// --- item 3: one focus ring, drawn by the composer container ---
+
+/**
+ * The composer drew two concentric rings while the player typed: the container's
+ * `:focus-within` border + shadow, and the field's own `:focus` shadow 1px inside
+ * it. Measured before the fix, with the field focused: the container painted
+ * `rgb(200,120,125) 0px 0px 0px 1px` (the accent) and the field painted
+ * `rgb(214,168,91) 0px 0px 0px 1px` (the gold keyboard ring) inside it.
+ *
+ * The container owns the highlight - it is the control the player sees, and the
+ * focus-visibility gate already verifies (against the JSX) that this container
+ * really holds the field whose outline it replaces.
+ */
+test("item 3: the focused composer draws the container's ring and no inner duplicate", async ({ page }) => {
+  await stubShell(page);
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+
+  const read = async () =>
+    await page.evaluate(() => {
+      const container = document.querySelector<HTMLElement>(".composer-container")!;
+      const textarea = document.querySelector<HTMLElement>(".composer-textarea")!;
+      const boxOf = (element: HTMLElement) => {
+        const style = getComputedStyle(element);
+        return { boxShadow: style.boxShadow };
+      };
+      return {
+        focused: document.activeElement === textarea,
+        container: boxOf(container),
+        textarea: boxOf(textarea),
+      };
+    });
+
+  const blurred = await read();
+  await surface.locator(".composer-textarea").focus();
+  const focused = await read();
+  console.log(`[item-3] blurred ${JSON.stringify(blurred)} focused ${JSON.stringify(focused)}`);
+
+  expect(focused.focused, "the field really holds focus").toBe(true);
+  // The container is the focused composer's visible state: it draws the ring that
+  // replaces the field's own outline.
+  expect(focused.container.boxShadow, "the container draws the ring").not.toBe(blurred.container.boxShadow);
+  expect(focused.container.boxShadow, "and the ring is drawn, not none").not.toBe("none");
+  // The duplicate: the field drew a second ring inside the container's. The
+  // container above still carries focus, so the inner one is not what makes the
+  // keyboard position visible.
+  expect(focused.textarea.boxShadow, "the field draws no second ring inside the container's").toBe(
+    blurred.textarea.boxShadow,
+  );
+  expect(focused.textarea.boxShadow, "no ring at all on the field").toBe("none");
+});

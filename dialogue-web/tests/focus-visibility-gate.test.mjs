@@ -56,7 +56,7 @@ const REPORTED_FOCUS_SITES = [
     selector: ".surface-advanced-editor",
     declarations: [["outline", "none"]],
     reason:
-      "the advanced Pi JSON editor removes its outline and its only focus rule sets border-color, so keyboard focus reads as a 1px colour change; it is also the one control missing from the stylesheet's unified ring list (`.form-input:focus, .form-textarea:focus, .form-select:focus, .composer-textarea:focus, ...` + `box-shadow`)",
+      "the advanced Pi JSON editor removes its outline and its only focus rule sets border-color, so keyboard focus reads as a 1px colour change; it is also the one control missing from the stylesheet's unified ring list (`.form-input:focus, .form-textarea:focus, .form-select:focus, ...` + `box-shadow`)",
   },
 ];
 
