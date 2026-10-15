@@ -273,12 +273,18 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
           });
           continue;
         }
-        const result = await dispatch(client, receipts, { action: step.action, args: step.args ?? {}, snapshot });
+        const result = await dispatch(client, receipts, {
+          action: step.action,
+          args: step.args ?? {},
+          snapshot,
+          sequence: nextStep,
+        });
         dispatches.push(result);
         planLog({
           atMs: now() - startedAtMs,
           kind: "action",
           action: step.action,
+          requestId: result.requestId,
           executed: true,
           state: result.state,
           reason: result.reason,
@@ -309,15 +315,28 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   });
 }
 
-async function dispatch(client, receipts, { action, args, snapshot }) {
+async function dispatch(client, receipts, { action, args, snapshot, sequence }) {
+  // The harness binds every request to an EXPLICIT identity: `executeFresh` validates both the request id and the
+  // idempotency key (`stardew-native-smoke-harness-v1.mjs:108-109`) and refuses the request without them. The first
+  // real loop run dispatched three actions and the Mod answered `invalid_native_request_id` for each -- that code comes
+  // from the harness, not the game, because this call site omitted them. Names follow the per-action runners
+  // (`native_local_<action>_<sequence>_<nonce>`), so the trace can be read the same way everywhere.
+  const nonce = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  const requestId = `native_local_${action}_loop_${sequence}_${nonce}`.slice(0, 200);
   try {
-    const accepted = await executeFreshAfterReobserve(client, { action, args, snapshot });
+    const accepted = await executeFreshAfterReobserve(client, {
+      action,
+      args,
+      snapshot,
+      requestId,
+      idempotencyKey: `${requestId}_idem`,
+    });
     if (accepted?.state !== "accepted")
-      return { action, state: accepted?.state ?? "unknown", reason: accepted?.reasonCode ?? "not_accepted" };
+      return { action, requestId, state: accepted?.state ?? "unknown", reason: accepted?.reasonCode ?? "not_accepted" };
     const terminal = await waitForTerminal(receipts, accepted, 15_000);
-    return { action, state: terminal?.state ?? "unknown", reason: terminal?.receipt?.reasonCode ?? null };
+    return { action, requestId, state: terminal?.state ?? "unknown", reason: terminal?.receipt?.reasonCode ?? null };
   } catch (error) {
-    return { action, state: "failed", reason: String(error?.message ?? error) };
+    return { action, requestId, state: "failed", reason: String(error?.message ?? error) };
   }
 }
 
