@@ -75,8 +75,12 @@ process.env.XDG_DATA_HOME = dataRoot;
 const db = plugin.openRuntimeDatabase();
 if (db === null) blocked("store_unavailable", `openDatabase() returned null for ${dataRoot}`);
 
+// The identity this store's sessions actually ran under: `compartments` carries no project column (it is scoped
+// by session), so the meta row is the authority - and `memories` is empty by configuration here.
 const storedIdentities = db
-  .prepare("SELECT project_path, COUNT(*) AS n FROM memories GROUP BY project_path ORDER BY n DESC")
+  .prepare(
+    "SELECT cached_m0_project_identity AS project_path, COUNT(*) AS n FROM session_meta WHERE cached_m0_project_identity IS NOT NULL AND cached_m0_project_identity <> '' GROUP BY cached_m0_project_identity ORDER BY n DESC",
+  )
   .all();
 const explicitIdentity = flag("--project-identity", undefined);
 const projectIdentity =
@@ -84,7 +88,7 @@ const projectIdentity =
 if (projectIdentity === undefined) {
   blocked(
     "identity_ambiguous",
-    `stored memories span ${storedIdentities.length} partitions; pass --project-identity <value>`,
+    `stored rows span ${storedIdentities.length} partitions; pass --project-identity <value>`,
   );
 }
 process.stderr.write(
@@ -133,6 +137,10 @@ dreamer.registerPiDreamerProject({
   harness: "pi",
   embeddingConfig: { provider: "off" },
   memoryEnabled: true,
+  // The domain decides both the prompt's category menu and which categories are accepted. Omitting it fell back
+  // to the coding taxonomy, so a reflection on a companion's history came back as `PROJECT_RULES` about build
+  // reports - measured, not assumed.
+  memoryDomain: "ongoing-interaction",
   gitCommitIndexing: { enabled: false, since_days: 30, max_commits: 200 },
   config: dreamerConfig,
 });
