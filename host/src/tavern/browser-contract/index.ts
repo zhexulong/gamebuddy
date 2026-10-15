@@ -127,6 +127,10 @@ const ProblemCode = Type.Union([
   Type.Literal("character_voice_conflict"),
 ]);
 
+/**
+ * `label` is the plain position (`1/2`) the browser prints between its own arrow icons; the Host
+ * publishes no arrows of its own.
+ */
 export const BrowserSwipeInfoV1Schema = strictObject({
   currentIndex: Revision,
   totalSwipes: PositiveGeneration,

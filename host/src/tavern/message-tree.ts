@@ -72,9 +72,7 @@ export function createChildBranchNode(
  * Groups sibling entries by parentId to generate swipe variants for each branch point.
  * Preserves entry order for each parent group.
  */
-export function groupSwipesByParent(
-  entries: readonly MessageTreeNode[],
-): Map<string | null, MessageTreeNode[]> {
+export function groupSwipesByParent(entries: readonly MessageTreeNode[]): Map<string | null, MessageTreeNode[]> {
   const map = new Map<string | null, MessageTreeNode[]>();
   for (const entry of entries) {
     const parentId = entry.parentId ?? null;
@@ -89,21 +87,20 @@ export function groupSwipesByParent(
 }
 
 /**
- * Formats the standard SillyTavern / Pi swipe navigation label: "◀ 1/3 ▶".
+ * Formats the swipe position as the plain `1/3` the browser prints between its
+ * own arrow icons. The arrows belong to the control that draws them, so a
+ * published position never carries a second pair.
  */
 export function formatSwipeLabel(currentIndex: number, totalSwipes: number): string {
   const safeTotal = Math.max(1, totalSwipes);
   const safeCurrent = Math.max(0, Math.min(currentIndex, safeTotal - 1));
-  return `◀ ${safeCurrent + 1}/${safeTotal} ▶`;
+  return `${safeCurrent + 1}/${safeTotal}`;
 }
 
 /**
  * Retrieves swipe navigation metadata for a specific message node among its siblings.
  */
-export function getSwipeInfo(
-  entries: readonly MessageTreeNode[],
-  nodeId: string,
-): SwipeInfo | null {
+export function getSwipeInfo(entries: readonly MessageTreeNode[], nodeId: string): SwipeInfo | null {
   const target = entries.find((e) => e.id === nodeId);
   if (!target) return null;
 
@@ -111,7 +108,10 @@ export function getSwipeInfo(
   const swipesMap = groupSwipesByParent(entries);
   const siblings = swipesMap.get(parentId) ?? [target];
   const siblingIds = Object.freeze(siblings.map((s) => s.id));
-  const currentIndex = Math.max(0, siblings.findIndex((s) => s.id === nodeId));
+  const currentIndex = Math.max(
+    0,
+    siblings.findIndex((s) => s.id === nodeId),
+  );
   const totalSwipes = siblings.length;
 
   return Object.freeze({
@@ -221,10 +221,7 @@ export function projectActiveBranch(
 /**
  * Reconstructs the exact ancestor path from root to a specific target node.
  */
-export function getBranchToNode(
-  entries: readonly MessageTreeNode[],
-  targetNodeId: string,
-): readonly MessageTreeNode[] {
+export function getBranchToNode(entries: readonly MessageTreeNode[], targetNodeId: string): readonly MessageTreeNode[] {
   const byId = new Map<string, MessageTreeNode>();
   for (const entry of entries) {
     byId.set(entry.id, entry);

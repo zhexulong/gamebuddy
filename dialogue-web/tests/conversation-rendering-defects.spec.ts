@@ -35,7 +35,7 @@ type Message = Readonly<{
   role: "player" | "companion";
   text: string;
   opening?: boolean;
-  /** The position the Host publishes for a swipe set, in its own `◀ 1/3 ▶` spelling. */
+  /** The swipe position the fixture serves. Kept in the older `◀ 1/3 ▶` spelling on purpose: it is the shape this journey's own root serves, and the client's read-back of the arrows stays exercised. */
   swipes?: Readonly<{ index: number; total: number }>;
 }>;
 
@@ -579,19 +579,20 @@ test("the opening switcher translates the Host's variant label into the UI langu
 /**
  * The swipe switcher drew the Host's arrows inside its own.
  *
- * The Host publishes the swipe position in the standard SillyTavern / Pi
- * spelling, `◀ 1/3 ▶` (`formatSwipeLabel`, `host/src/tavern/message-tree.ts:94-98`;
- * the swipe route writes the same shape inline at
- * `host/src/tavern/chat-pipeline-service.ts:471-479`), and `MessageBubble`
- * printed that string verbatim between its own `ChevronLeft` / `ChevronRight`
- * buttons - so a message that has more than one swipe read as arrows inside
- * arrows. The pinned screenshot run (`shots-final10`) never showed it because no
- * message in that transcript carried more than one swipe, so the route's own
- * shape is what this journey serves.
+ * The Host used to publish the swipe position in the standard SillyTavern / Pi
+ * spelling, `◀ 1/3 ▶` (`formatSwipeLabel`, `host/src/tavern/message-tree.ts`; the
+ * swipe route wrote the same shape inline at
+ * `host/src/tavern/chat-pipeline-service.ts`), and `MessageBubble` printed that
+ * string verbatim between its own `ChevronLeft` / `ChevronRight` buttons - so a
+ * message that has more than one swipe read as arrows inside arrows. The pinned
+ * screenshot run (`shots-final10`) never showed it because no message in that
+ * transcript carried more than one swipe. The Host now publishes the plain
+ * position, and this journey keeps serving the older spelling so the client's own
+ * read-back of that decoration is what the assertions still cover.
  *
  * The assertions, and the failure each one catches:
- *  - the indicator is the Host's position alone: catches the label's `◀`/`▶`
- *    decoration printed beside the real pair;
+ *  - the indicator is the Host's position alone: catches the arrows of that older
+ *    spelling printed beside the real pair;
  *  - the switcher still owns exactly the two named buttons: catches the fix that
  *    drops the buttons instead of the decoration, which would leave the position
  *    as text with nothing to press.

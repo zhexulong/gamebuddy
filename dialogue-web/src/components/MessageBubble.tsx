@@ -49,15 +49,12 @@ function openingVariantLabel(
 }
 
 /**
- * The swipe switcher's own words. The Host publishes the swipe position in the
- * standard SillyTavern / Pi spelling, `◀ 1/3 ▶` (`formatSwipeLabel`,
- * `host/src/tavern/message-tree.ts:94-98`; the swipe route writes the same shape
- * inline at `chat-pipeline-service.ts:476`). The arrows in that spelling are its
- * decoration of the position, and this control draws the real pair - printing
- * them too is arrows inside arrows. The position itself is shown exactly as the
- * Host published it, with only that decoration read back out: a label the Host
- * sends without arrows (a browser journey's own fixture, or a future spelling)
- * passes through untouched.
+ * The swipe switcher's own words. The Host publishes the position as the plain `1/3`
+ * (`formatSwipeLabel`, `host/src/tavern/message-tree.ts:94-101`, used by both the swipe route and
+ * the state projection). The pair of arrows around it belongs to this control, which draws real
+ * ones - so a label that still arrives in the older `◀ 1/3 ▶` spelling (a browser journey's own
+ * fixture) has only that decoration read back out, and the position itself is shown exactly as
+ * the Host published it.
  */
 function swipePosition(label: string): string {
   return label.replace(/^[\s◀]+/u, "").replace(/[\s▶]+$/u, "");

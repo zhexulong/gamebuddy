@@ -52,6 +52,7 @@ import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import { createPlayerTurnAcceptor } from "./player-turn-acceptance.js";
 import { createProviderAttemptClaimer } from "./provider-attempt-claim.js";
 import { startMountedChatProvider } from "./chat-provider-start.js";
+import { formatSwipeLabel } from "./message-tree.js";
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{22}$/u;
 
@@ -473,7 +474,7 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
           ? Object.freeze({
               currentIndex,
               totalSwipes,
-              label: `◀ ${currentIndex + 1}/${totalSwipes} ▶`,
+              label: formatSwipeLabel(currentIndex, totalSwipes),
               hasPrevious: currentIndex > 0,
               hasNext: currentIndex < totalSwipes - 1,
             })
