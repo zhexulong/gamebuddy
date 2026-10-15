@@ -7,10 +7,10 @@ import {
   type AgentSession,
   createAgentSession,
   type CreateAgentSessionOptions,
- 	DefaultResourceLoader,
-	defineTool,
-	ModelRegistry,
-	ModelRuntime,
+  DefaultResourceLoader,
+  defineTool,
+  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type ToolDefinition,
@@ -44,11 +44,8 @@ import {
 } from "./game-integration-adapter.js";
 import type { GameConnection } from "./game-connection.js";
 import type { PresentationRuntime } from "./presentation.js";
-import type { ExecutionReceipt } from "./protocol.js";
-import {
-  actionRegistryRevision,
-  writeOrVerifyRunManifest,
-} from "./run-manifest.js";
+import type { ExecutionReceipt, Snapshot } from "./protocol.js";
+import { actionRegistryRevision, writeOrVerifyRunManifest } from "./run-manifest.js";
 import {
   type ExactReceiptRecoveryPort,
   type ReceiptRecoveryOutcome,
@@ -222,8 +219,7 @@ export function formatGameClock(timeOfDay: number): string {
 }
 
 export function formatGameDate(day: number, seasonIndex: number, year: number, zh: boolean): string {
-  const season =
-    (zh ? SEASON_NAMES_ZH[seasonIndex] : SEASON_NAMES_EN[seasonIndex]) ?? seasonIndex;
+  const season = (zh ? SEASON_NAMES_ZH[seasonIndex] : SEASON_NAMES_EN[seasonIndex]) ?? seasonIndex;
   if (zh) return `${year}年第${day}天 ${season}`;
   return `Year ${year}, Day ${day} of ${season}`;
 }
@@ -232,6 +228,46 @@ export function formatGameWeather(token: string, zh: boolean): string {
   const map = zh ? WEATHER_NAMES_ZH : WEATHER_NAMES_EN;
   const name = map[token] ?? token;
   return zh ? `天气：${name}` : `weather: ${name}`;
+}
+
+/**
+ * The actor's OWN stamina: the exact current value the native game publishes,
+ * never a derived percentage, an invented maximum, or a "you are fine" default.
+ * While the native persistent-fatigue flag is set the same fact carries that
+ * flag, because the next morning's restore is halved by it. Absent a finite
+ * reading the WHOLE fact is omitted - a silent "fine" is worse than silence.
+ */
+export function formatGameStamina(stamina: number | undefined, exhausted: boolean | undefined, zh: boolean): string {
+  if (stamina === undefined || !Number.isFinite(stamina)) return "";
+  const value = zh ? `体力: ${stamina}` : `stamina: ${stamina}`;
+  if (exhausted !== true) return value;
+  return zh ? `${value}（已疲惫）` : `${value} (exhausted)`;
+}
+
+/**
+ * The macro world context the companion sees each turn, as the one fact line
+ * Magic Context injects: the native clock, date, weather and location plus the
+ * actor's own stamina. Same rule as every sibling fact - a plain native read,
+ * no interpretation - and every fact whose source is absent is dropped rather
+ * than defaulted. `stamina` is required on today's wire, so the optional type
+ * only documents the omit path a frame without a finite reading takes.
+ */
+export type GameEnvironmentFactsSource = Pick<
+  Snapshot,
+  "timeOfDay" | "dayOfMonth" | "seasonIndex" | "year" | "weather" | "location"
+> &
+  Readonly<{ stamina?: number; exhausted?: boolean }>;
+
+export function formatGameEnvironmentFacts(source: GameEnvironmentFactsSource, zh: boolean): string {
+  const facts = [
+    formatGameClock(source.timeOfDay),
+    formatGameDate(source.dayOfMonth, source.seasonIndex, source.year, zh),
+    formatGameWeather(source.weather, zh),
+    `${zh ? "位置" : "location"}: ${source.location}`,
+  ];
+  const stamina = formatGameStamina(source.stamina, source.exhausted, zh);
+  if (stamina !== "") facts.push(stamina);
+  return facts.join("；");
 }
 /**
  * Magic Context's native trigger may now run the embedded-SDK, no-tool
@@ -300,14 +336,10 @@ export function createCompanionStatusTool(integration?: GameConnection) {
   return defineTool({
     name: "companion_status",
     label: "Companion Status",
-    description:
-      "Report the local Companion Host and mounted game integration status.",
+    description: "Report the local Companion Host and mounted game integration status.",
     parameters: Type.Object({}),
     execute: async () => {
-      const details =
-        integration === undefined
-          ? undefined
-          : integration.module.status(integration);
+      const details = integration === undefined ? undefined : integration.module.status(integration);
       const fullDetails = {
         host: "ready",
         integrationId: integration?.scope.integrationId ?? null,
@@ -348,12 +380,11 @@ export type GameCompanionIdentity = CompanionIdentity &
  * whenever no player connection is active, which keeps a root without player
  * connections byte-for-byte on the previous behaviour and provider store shape.
  */
-export const DEFAULT_COMPANION_MODEL_CONFIG: CompanionModelConfig =
-  Object.freeze({
-    provider: "cpa-oai",
-    modelId: "deepseek-v4-flash",
-    thinkingLevel: "high",
-  });
+export const DEFAULT_COMPANION_MODEL_CONFIG: CompanionModelConfig = Object.freeze({
+  provider: "cpa-oai",
+  modelId: "deepseek-v4-flash",
+  thinkingLevel: "high",
+});
 
 /**
  * The one boundary where a player-typed thinking level meets the embedded
@@ -389,12 +420,11 @@ type MagicContextFeatureTestOverride = Readonly<{
 }>;
 
 /** Private composition constant; Preview JSON and every external Host protocol are unable to select it. */
-const PREVIEW_MAGIC_CONTEXT_DISABLED: MagicContextFeatureTestOverride =
-  Object.freeze({
-    loadExtension: false,
-    memoryEnabled: false,
-    historianEnabled: false,
-  });
+const PREVIEW_MAGIC_CONTEXT_DISABLED: MagicContextFeatureTestOverride = Object.freeze({
+  loadExtension: false,
+  memoryEnabled: false,
+  historianEnabled: false,
+});
 
 export type RuntimeSession = Readonly<{
   session: AgentSession;
@@ -422,9 +452,7 @@ export type RuntimeSession = Readonly<{
    * port and admits receipts into the private coordinator. This is never
    * invoked by a disconnect and never reissues an action request.
    */
-  recoverStardewExecutionReceipts?: (
-    port: ExactReceiptRecoveryPort,
-  ) => Promise<readonly ReceiptRecoveryOutcome[]>;
+  recoverStardewExecutionReceipts?: (port: ExactReceiptRecoveryPort) => Promise<readonly ReceiptRecoveryOutcome[]>;
   /** Removes the one-shot Tavern provider marker binding before Pi disposal. */
   clearTavernNarrativeGateMarker?: () => void;
   /**
@@ -474,19 +502,13 @@ function createRuntimeDispatchController(
   return createActionExecutionCoordinator(connection, options);
 }
 
-function gateIntegrationTool(
-  tool: ToolDefinition,
-  connection: GameConnection,
-): ToolDefinition {
+function gateIntegrationTool(tool: ToolDefinition, connection: GameConnection): ToolDefinition {
   return {
     ...tool,
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
       // Only action tools are executable operations. Their tool surface is
       // mounted only with a live launcher gate, then rechecked at invocation.
-      if (
-        connection.module.actionIdForToolName(tool.name) !== null &&
-        connection.executionGate?.executable !== true
-      )
+      if (connection.module.actionIdForToolName(tool.name) !== null && connection.executionGate?.executable !== true)
         throw new Error("integration_not_ready");
       return tool.execute(toolCallId, params, signal, onUpdate, ctx);
     },
@@ -507,7 +529,9 @@ export type GameHostBindingFactory = (
 export type ChatRuntimeConstructionProduct = Readonly<{
   runtime: RuntimeSession;
   authoredContextCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability;
-  refreshAuthoredContext: (currentCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability) => Promise<import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability>;
+  refreshAuthoredContext: (
+    currentCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability,
+  ) => Promise<import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability>;
   /** Releases the construction's own store; consumed by the materializer's reverse disposal. */
   closeChatThreadStore: () => void;
   clearTavernNarrativeGateMarker?: () => void;
@@ -537,14 +561,15 @@ export async function createChatRuntimeConstructionInternal(
   );
   try {
     const piSessionId = runtime.sessionManager.getSessionId();
-    if (typeof piSessionId !== "string" || piSessionId.length === 0)
-      throw new Error("pi_session_binding_unavailable");
+    if (typeof piSessionId !== "string" || piSessionId.length === 0) throw new Error("pi_session_binding_unavailable");
     const catalog: TavernAuthoredContextCatalog = await construction.materializeStableContextForPiSession(piSessionId);
     const { publishGameBuddyAuthoredStableCatalog, replaceGameBuddyAuthoredStableCatalog } = await import(
       "@cortexkit/pi-magic-context/tavern"
     );
     const authoredContextCapability = publishGameBuddyAuthoredStableCatalog(catalog.scope, catalog);
-    const refreshAuthoredContext = async (currentCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability) => {
+    const refreshAuthoredContext = async (
+      currentCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability,
+    ) => {
       const freshCatalog = await construction.materializeDesiredStableContextForPiSession(piSessionId);
       return replaceGameBuddyAuthoredStableCatalog(currentCapability, freshCatalog.scope, freshCatalog);
     };
@@ -657,11 +682,9 @@ export async function createGameCompanionRuntime(
     gameSessionId,
     undefined,
     "game",
-    attachment?.disableMagicContextMemory === true
-      ? PREVIEW_MAGIC_CONTEXT_DISABLED
-      : undefined,
-       undefined,
-       gameOperationalGate,
+    attachment?.disableMagicContextMemory === true ? PREVIEW_MAGIC_CONTEXT_DISABLED : undefined,
+    undefined,
+    gameOperationalGate,
     attachment?.hostBindingFactory ?? gameHostBindingFactory,
     attachment?.recoveryJournal === undefined
       ? {}
@@ -695,7 +718,7 @@ export async function createRuntimeWithFixedToolsCore(
   tavernNarrativeGateNonceSha256?: string,
   gameOperationalGate?: GameOperationalGateConfig,
   gameHostBindingFactory?: GameHostBindingFactory,
-    actionExecutionOptions: import("./action-execution-coordinator.internal.js").ActionExecutionCoordinatorOptions = {},
+  actionExecutionOptions: import("./action-execution-coordinator.internal.js").ActionExecutionCoordinatorOptions = {},
   fixedTools: readonly ToolDefinition[] = Object.freeze([]),
   /** Construction-private resolved policy supplied only by the fixed-tool composer. */
   resolvedPolicy?: IntegrationActionPolicy,
@@ -703,38 +726,25 @@ export async function createRuntimeWithFixedToolsCore(
   // A surface session ID identifies a persistent session; it must never be
   // used to infer the product surface because both Chat and Game have them.
   const runtimeSurface = surface ?? presentation?.surface ?? "game";
-  if (
-    tavernNarrativeGateNonceSha256 !== undefined &&
-    !/^[a-f0-9]{64}$/.test(tavernNarrativeGateNonceSha256)
-  ) {
+  if (tavernNarrativeGateNonceSha256 !== undefined && !/^[a-f0-9]{64}$/.test(tavernNarrativeGateNonceSha256)) {
     throw new Error("invalid_tavern_marker_config");
   }
   if (gameOperationalGate !== undefined && runtimeSurface !== "game") {
     throw new Error("game_operational_marker_requires_game_surface");
   }
-  if (
-    gameOperationalGate !== undefined &&
-    !/^[a-f0-9]{64}$/.test(gameOperationalGate.nonceSha256)
-  ) {
+  if (gameOperationalGate !== undefined && !/^[a-f0-9]{64}$/.test(gameOperationalGate.nonceSha256)) {
     throw new Error("invalid_game_operational_marker_config");
   }
-  const loadMagicContextExtension =
-    internalMagicContextFeatureTestOverride?.loadExtension !== false;
+  const loadMagicContextExtension = internalMagicContextFeatureTestOverride?.loadExtension !== false;
   if (!loadMagicContextExtension && gameOperationalGate !== undefined) {
     throw new Error("game_operational_marker_requires_magic_context");
   }
-  const integrationModule: GameIntegrationAdapter | undefined =
-    integration?.module;
-  if (integration !== undefined && integrationModule === undefined)
-    throw new Error("integration_module_required");
+  const integrationModule: GameIntegrationAdapter | undefined = integration?.module;
+  if (integration !== undefined && integrationModule === undefined) throw new Error("integration_module_required");
   if (integration !== undefined) {
-    assertIntegrationAdapter(
-      integration.module,
-      integration.scope.integrationId,
-    );
+    assertIntegrationAdapter(integration.module, integration.scope.integrationId);
     const actorId = integration.module.actorId(integration);
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(actorId))
-      throw new Error("integration_actor_required");
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(actorId)) throw new Error("integration_actor_required");
     integration.module.assertIdentityBinding(integration, identity);
   }
   const mountedPolicy =
@@ -745,55 +755,35 @@ export async function createRuntimeWithFixedToolsCore(
         ? actionPolicy
         : integrationModule.parsePolicy(actionPolicy));
   const paths = resolveRuntimePaths(identity, root, surfaceSessionId);
-  const identityProfileAlreadyExists = await pathExists(
-    paths.identityProfilePath,
-  );
+  const identityProfileAlreadyExists = await pathExists(paths.identityProfilePath);
   await Promise.all([
     mkdir(paths.runtimeCwd, { recursive: true }),
     mkdir(paths.agentDir, { recursive: true }),
     mkdir(paths.sessionDir, { recursive: true }),
     mkdir(dirname(paths.identityProfileBindingPath), { recursive: true }),
-    ...(loadMagicContextExtension
-      ? [mkdir(join(paths.runtimeCwd, ".cortexkit"), { recursive: true })]
-      : []),
+    ...(loadMagicContextExtension ? [mkdir(join(paths.runtimeCwd, ".cortexkit"), { recursive: true })] : []),
   ]);
 
   const profile =
     initialProfile !== undefined && !identityProfileAlreadyExists
-      ? (await writeIdentityProfile(paths.identityProfilePath, initialProfile),
-        initialProfile)
+      ? (await writeIdentityProfile(paths.identityProfilePath, initialProfile), initialProfile)
       : await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE);
   const profileMetadata = identityProfileMetadata(profile);
-  const existingBinding = await readIdentityProfileBinding(
-    paths.identityProfileBindingPath,
-  );
+  const existingBinding = await readIdentityProfileBinding(paths.identityProfileBindingPath);
   const existingSessionFiles = await listSessionFiles(paths.sessionDir);
   if (existingBinding === null) {
     // A continuity owns one profile, while every explicit user-visible surface
     // session owns its own session binding. A new surface may therefore see an
     // existing profile but must never adopt pre-existing Pi JSONL without its
     // own binding.
-    if (
-      existingSessionFiles.length > 0 ||
-      (surfaceSessionId === undefined && identityProfileAlreadyExists)
-    )
+    if (existingSessionFiles.length > 0 || (surfaceSessionId === undefined && identityProfileAlreadyExists))
       throw new Error("identity_profile_mismatch");
   } else {
-    assertProfileMatchesBinding(
-      identityKey(identity),
-      profile,
-      existingBinding,
-    );
-    if (
-      existingBinding.sessionFile !== null &&
-      !existingSessionFiles.includes(existingBinding.sessionFile)
-    ) {
+    assertProfileMatchesBinding(identityKey(identity), profile, existingBinding);
+    if (existingBinding.sessionFile !== null && !existingSessionFiles.includes(existingBinding.sessionFile)) {
       throw new Error("identity_profile_mismatch");
     }
-    if (
-      existingBinding.sessionFile === null &&
-      existingSessionFiles.length > 1
-    ) {
+    if (existingBinding.sessionFile === null && existingSessionFiles.length > 1) {
       throw new Error("identity_profile_mismatch");
     }
   }
@@ -805,11 +795,9 @@ export async function createRuntimeWithFixedToolsCore(
   // to this Host-owned opaque continuity runtime; auto_search remains off and
   // Host never gains project-memory/SQLite authority.
   const magicContextMemoryEnabled =
-    internalMagicContextFeatureTestOverride?.memoryEnabled ??
-    MAGIC_CONTEXT_MEMORY_ENABLED;
+    internalMagicContextFeatureTestOverride?.memoryEnabled ?? MAGIC_CONTEXT_MEMORY_ENABLED;
   const magicContextHistorianEnabled =
-    internalMagicContextFeatureTestOverride?.historianEnabled ??
-    MAGIC_CONTEXT_HISTORIAN_ENABLED;
+    internalMagicContextFeatureTestOverride?.historianEnabled ?? MAGIC_CONTEXT_HISTORIAN_ENABLED;
   // Read once: the channel writes a diagnostic line when it is used, so calling it per key would repeat it.
   const protectedToolsChannel = readInternalHistorianTestChannel();
   if (loadMagicContextExtension)
@@ -828,20 +816,16 @@ export async function createRuntimeWithFixedToolsCore(
             ? { disable: true }
             : {
                 model: `${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).provider}/${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).modelId}`,
-                thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG)
-                  .thinkingLevel,
+                thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).thinkingLevel,
               },
-          ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens ===
-          undefined
+          ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens === undefined
             ? {}
             : {
                 execute_threshold_tokens: {
-                  default:
-                    internalMagicContextFeatureTestOverride.historianExecuteThresholdTokens,
+                  default: internalMagicContextFeatureTestOverride.historianExecuteThresholdTokens,
                 },
               }),
-          ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdPercentage ===
-          undefined
+          ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdPercentage === undefined
             ? {}
             : {
                 execute_threshold_percentage:
@@ -865,8 +849,7 @@ export async function createRuntimeWithFixedToolsCore(
             model: `${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).provider}/${
               (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).modelId
             }`,
-            thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG)
-              .thinkingLevel,
+            thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).thinkingLevel,
             tasks: {
               "classify-memories": { schedule: "0 6 * * *" },
               curate: { schedule: "0 4 * * 0" },
@@ -918,36 +901,35 @@ export async function createRuntimeWithFixedToolsCore(
       "utf8",
     );
 
- 	// Magic Context treats a few keys as USER-scope trust decisions, not project ones - by its own
-	// security rule, "a repository may only RAISE execute_threshold_tokens …" and "historian model
-	// selection is user-level only". The Host writes only the project file above, so those keys would
-	// otherwise be read from the PLAYER's own profile (`~/.config/cortexkit/magic-context.jsonc`) or
-	// from a user Pi installation's, and our historian would resolve to whatever that machine happens
-	// to configure - or to nothing at all on a player's PC. The runtime therefore owns its user-scope
-	// config too, inside the runtime root, and the extension bootstrap below points XDG_CONFIG_HOME at
-	// it. One rule: this runtime reads and writes nothing outside its own root.
-	const magicContextUserConfigDir = join(paths.runtimeCwd, "config");
-	if (loadMagicContextExtension) {
-		await mkdir(join(magicContextUserConfigDir, "cortexkit"), { recursive: true });
-		await writeFile(
-			join(magicContextUserConfigDir, "cortexkit", "magic-context.jsonc"),
-			JSON.stringify(
-				{
-					...(magicContextHistorianEnabled
-						? {
-								historian: {
-									pi: {
-										model: `${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).provider}/${
-											(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).modelId
-										}`,
-										thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG)
-											.thinkingLevel,
-									},
-								},
-							}
-						: {}),
+  // Magic Context treats a few keys as USER-scope trust decisions, not project ones - by its own
+  // security rule, "a repository may only RAISE execute_threshold_tokens …" and "historian model
+  // selection is user-level only". The Host writes only the project file above, so those keys would
+  // otherwise be read from the PLAYER's own profile (`~/.config/cortexkit/magic-context.jsonc`) or
+  // from a user Pi installation's, and our historian would resolve to whatever that machine happens
+  // to configure - or to nothing at all on a player's PC. The runtime therefore owns its user-scope
+  // config too, inside the runtime root, and the extension bootstrap below points XDG_CONFIG_HOME at
+  // it. One rule: this runtime reads and writes nothing outside its own root.
+  const magicContextUserConfigDir = join(paths.runtimeCwd, "config");
+  if (loadMagicContextExtension) {
+    await mkdir(join(magicContextUserConfigDir, "cortexkit"), { recursive: true });
+    await writeFile(
+      join(magicContextUserConfigDir, "cortexkit", "magic-context.jsonc"),
+      JSON.stringify(
+        {
+          ...(magicContextHistorianEnabled
+            ? {
+                historian: {
+                  pi: {
+                    model: `${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).provider}/${
+                      (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).modelId
+                    }`,
+                    thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).thinkingLevel,
+                  },
+                },
+              }
+            : {}),
           ...((internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens ??
-          readInternalHistorianTestChannel().executeThresholdTokens) === undefined
+            readInternalHistorianTestChannel().executeThresholdTokens) === undefined
             ? {}
             : {
                 execute_threshold_tokens: {
@@ -957,7 +939,7 @@ export async function createRuntimeWithFixedToolsCore(
                 },
               }),
           ...((internalMagicContextFeatureTestOverride?.historianProtectedTokens ??
-          readInternalHistorianTestChannel().protectedTokens) === undefined
+            readInternalHistorianTestChannel().protectedTokens) === undefined
             ? {}
             : {
                 protected_tokens:
@@ -969,18 +951,17 @@ export async function createRuntimeWithFixedToolsCore(
           ...(readInternalHistorianTestChannel().executeThresholdPercentage === undefined
             ? {}
             : {
-                execute_threshold_percentage:
-                  readInternalHistorianTestChannel().executeThresholdPercentage,
+                execute_threshold_percentage: readInternalHistorianTestChannel().executeThresholdPercentage,
               }),
-				},
-				null,
-				2,
-			),
-			"utf8",
-		);
-	}
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+  }
 
-	const settings = SettingsManager.inMemory({ compaction: { enabled: false } });
+  const settings = SettingsManager.inMemory({ compaction: { enabled: false } });
 
   // Render/management partition agreement. Magic Context resolves a project
   // identity by walking up from the session cwd looking for a git root; for a
@@ -997,10 +978,7 @@ export async function createRuntimeWithFixedToolsCore(
     const renderPartition =
       identity.continuityId === undefined
         ? undefined
-        : memoryHooks.resolveGameBuddyMemoryProjectPath(
-            paths.runtimeCwd,
-            identity.continuityId,
-          );
+        : memoryHooks.resolveGameBuddyMemoryProjectPath(paths.runtimeCwd, identity.continuityId);
     if (renderPartition !== undefined) {
       memoryHooks.setDeclaredProjectIdentity(renderPartition);
     }
@@ -1031,12 +1009,7 @@ export async function createRuntimeWithFixedToolsCore(
         if (snapshot === null || snapshot === undefined) return "";
         const locale = snapshot.presentationLocale?.toLowerCase() ?? "";
         const zh = locale.startsWith("zh");
-        return [
-          formatGameClock(snapshot.timeOfDay),
-          formatGameDate(snapshot.dayOfMonth, snapshot.seasonIndex, snapshot.year, zh),
-          formatGameWeather(snapshot.weather, zh),
-          `${zh ? "位置" : "location"}: ${snapshot.location}`,
-        ].join("；");
+        return formatGameEnvironmentFacts(snapshot, zh);
       });
     }
   }
@@ -1053,9 +1026,7 @@ export async function createRuntimeWithFixedToolsCore(
     agentDir: paths.agentDir,
     settingsManager: settings,
     noExtensions: true,
-    additionalExtensionPaths: loadMagicContextExtension
-      ? [magicContextEntry]
-      : [],
+    additionalExtensionPaths: loadMagicContextExtension ? [magicContextEntry] : [],
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
@@ -1069,9 +1040,7 @@ export async function createRuntimeWithFixedToolsCore(
   // The fork must never spawn the external `pi` CLI from a GameBuddy runtime.
   // Preview has no approved Magic Context capability, so it does not mount or
   // bootstrap the extension at all.
-  const previousEmbeddedRuntimeMarker = loadMagicContextExtension
-    ? process.env.GAMEBUDDY_EMBEDDED_RUNTIME
-    : undefined;
+  const previousEmbeddedRuntimeMarker = loadMagicContextExtension ? process.env.GAMEBUDDY_EMBEDDED_RUNTIME : undefined;
   if (loadMagicContextExtension) {
     process.env.GAMEBUDDY_EMBEDDED_RUNTIME = "1";
     try {
@@ -1089,57 +1058,39 @@ export async function createRuntimeWithFixedToolsCore(
         );
       }
     } catch (error) {
-      if (previousEmbeddedRuntimeMarker === undefined)
-        delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
-      else
-        process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
+      if (previousEmbeddedRuntimeMarker === undefined) delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
+      else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
       throw error;
     }
   } else {
     await loader.reload();
   }
 
-  const sessionManager = SessionManager.continueRecent(
-    paths.runtimeCwd,
-    paths.sessionDir,
-  );
+  const sessionManager = SessionManager.continueRecent(paths.runtimeCwd, paths.sessionDir);
   const modelRuntime = await createCompanionModelRuntime(paths, modelConfig);
   const model =
-    modelConfig === undefined
-      ? undefined
-      : modelRuntime.getModel(modelConfig.provider, modelConfig.modelId);
-  if (modelConfig !== undefined && model === undefined)
-    throw new Error("companion_model_not_available");
+    modelConfig === undefined ? undefined : modelRuntime.getModel(modelConfig.provider, modelConfig.modelId);
+  if (modelConfig !== undefined && model === undefined) throw new Error("companion_model_not_available");
 
   assertFrozenFixedTools(fixedTools);
   const fixedToolNames = fixedTools.map((tool) => tool.name);
-  if (fixedTools.length > 0 && runtimeSurface !== "game")
-    throw new Error("fixed_runtime_tools_require_game_surface");
+  if (fixedTools.length > 0 && runtimeSurface !== "game") throw new Error("fixed_runtime_tools_require_game_surface");
   const companionStatus = createCompanionStatusTool(integration);
   const dispatchController =
-    integration === undefined
-      ? undefined
-      : createRuntimeDispatchController(integration, actionExecutionOptions);
+    integration === undefined ? undefined : createRuntimeDispatchController(integration, actionExecutionOptions);
   // One private supervisor per game runtime. It is retained by closure so an
   // explicit relaunch can run exactly one bounded pass over the same
   // coordinator without ever exporting the coordinator itself.
   const receiptRecoverySupervisor =
-    dispatchController === undefined
-      ? undefined
-      : new StardewExecutionRecoverySupervisor(dispatchController);
+    dispatchController === undefined ? undefined : new StardewExecutionRecoverySupervisor(dispatchController);
   if (actionExecutionOptions.recoveryJournal !== undefined && actionExecutionOptions.recoveryBinding === undefined)
     throw new Error("stardew_recovery_composition_unavailable");
-  if (
-    gameHostBindingFactory !== undefined &&
-    (runtimeSurface !== "game" || dispatchController === undefined)
-  )
+  if (gameHostBindingFactory !== undefined && (runtimeSurface !== "game" || dispatchController === undefined))
     throw new Error("invalid_game_host_binding_factory");
   const boundPresentation =
     gameHostBindingFactory === undefined
       ? presentation
-      : gameHostBindingFactory(
-          Object.freeze({ interruption: dispatchController!.interruption }),
-        );
+      : gameHostBindingFactory(Object.freeze({ interruption: dispatchController!.interruption }));
   const integrationToolSet =
     integration !== undefined && integrationModule !== undefined
       ? integrationModule.createToolSet({
@@ -1155,11 +1106,7 @@ export async function createRuntimeWithFixedToolsCore(
   const rawIntegrationTools =
     integrationToolSet === undefined
       ? []
-      : [
-          ...integrationToolSet.observation,
-          ...integrationToolSet.actions,
-          ...integrationToolSet.knowledge,
-        ];
+      : [...integrationToolSet.observation, ...integrationToolSet.actions, ...integrationToolSet.knowledge];
   // Tool definitions remain mounted for the lifetime of a Pi session. Every
   // adapter tool therefore receives a Host-owned execution fence so a later
   // lifecycle loss revokes stale closures rather than trusting the adapter to
@@ -1167,35 +1114,23 @@ export async function createRuntimeWithFixedToolsCore(
   const integrationTools =
     integration === undefined
       ? rawIntegrationTools
-      : rawIntegrationTools.map((tool) =>
-          gateIntegrationTool(tool, integration),
-        );
-  const worldBookScope =
-    integration === undefined
-      ? null
-      : integration.module.worldScope(integration);
+      : rawIntegrationTools.map((tool) => gateIntegrationTool(tool, integration));
+  const worldBookScope = integration === undefined ? null : integration.module.worldScope(integration);
   const worldBookTools =
     worldBook === undefined
       ? []
       : createWorldBookTools(worldBook, worldBookScope ?? undefined, { char: profile.identity.name });
-  const gameplaySubagent = gameplaySubagentEnabled && runtimeSurface === "game"
-    ? integration !== undefined && modelConfig !== undefined
-      ? new GameplayTaskSubagent(
-          paths,
-          integration,
-          mountedPolicy,
-          undefined,
-          undefined,
-          () => dispatchController!.createAdmission(),
-        )
-      : (() => {
-          throw new Error("gameplay_subagent_requires_model_and_integration");
-        })()
-    : undefined;
-  const rawGameplayTools =
-    gameplaySubagent === undefined
-      ? []
-      : [gameplaySubagent.createDelegateTool()];
+  const gameplaySubagent =
+    gameplaySubagentEnabled && runtimeSurface === "game"
+      ? integration !== undefined && modelConfig !== undefined
+        ? new GameplayTaskSubagent(paths, integration, mountedPolicy, undefined, undefined, () =>
+            dispatchController!.createAdmission(),
+          )
+        : (() => {
+            throw new Error("gameplay_subagent_requires_model_and_integration");
+          })()
+      : undefined;
+  const rawGameplayTools = gameplaySubagent === undefined ? [] : [gameplaySubagent.createDelegateTool()];
   // The delegate itself is an execution entry point. Fence it as well as the
   // module-owned action tools so a terminal adapter lifecycle cannot start a
   // new worker task through an already-mounted Pi session.
@@ -1213,23 +1148,16 @@ export async function createRuntimeWithFixedToolsCore(
           ...PHASE_0B_ALLOWED_TOOL_NAMES,
           ...(loadMagicContextExtension ? ["todowrite"] : []),
           ...fixedToolNames,
-           ...integrationTools.map((tool) => tool.name),
+          ...integrationTools.map((tool) => tool.name),
           ...worldBookTools.map((tool) => tool.name),
           ...gameplayTools.map((tool) => tool.name),
         ].sort();
   const customTools =
     runtimeSurface === "chat"
       ? []
-      : [
-           companionStatus,
-           ...fixedTools,
-           ...integrationTools,
-          ...worldBookTools,
-          ...gameplayTools,
-        ];
-   if (new Set(allowedToolNames).size !== allowedToolNames.length)
-     throw new Error("runtime_tool_name_collision");
-   let session: Awaited<ReturnType<typeof createAgentSession>>["session"];
+      : [companionStatus, ...fixedTools, ...integrationTools, ...worldBookTools, ...gameplayTools];
+  if (new Set(allowedToolNames).size !== allowedToolNames.length) throw new Error("runtime_tool_name_collision");
+  let session: Awaited<ReturnType<typeof createAgentSession>>["session"];
   try {
     ({ session } = await createAgentSession({
       cwd: paths.runtimeCwd,
@@ -1247,19 +1175,16 @@ export async function createRuntimeWithFixedToolsCore(
       // this Host narrowing a value the player typed (design/28 §2.3.1, §2.3.5).
       thinkingLevel: piThinkingLevel(modelConfig?.thinkingLevel ?? "off"),
     }));
- 	} finally {
-		if (loadMagicContextExtension) {
-			if (previousEmbeddedRuntimeMarker === undefined)
-				delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
-			else
-				process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
-		}
-	}
+  } finally {
+    if (loadMagicContextExtension) {
+      if (previousEmbeddedRuntimeMarker === undefined) delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
+      else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
+    }
+  }
 
-	// After session construction, and only for a runtime that mounted Magic Context: the embedded
-	// historian spawns per trigger with this registry, and without it every attempt fails closed.
-	if (loadMagicContextExtension)
-		await bindEmbeddedHistorianModelRegistry(modelRuntime);
+  // After session construction, and only for a runtime that mounted Magic Context: the embedded
+  // historian spawns per trigger with this registry, and without it every attempt fails closed.
+  if (loadMagicContextExtension) await bindEmbeddedHistorianModelRegistry(modelRuntime);
 
   // Once Pi has returned a session, every subsequent initialization step owns
   // one deterministic reverse path. In particular, publication is cleared
@@ -1278,9 +1203,7 @@ export async function createRuntimeWithFixedToolsCore(
       ) => () => void)
     | undefined;
   try {
-    const activeTools = session.agent.state.tools
-      .map((tool) => tool.name)
-      .sort();
+    const activeTools = session.agent.state.tools.map((tool) => tool.name).sort();
     const expectedTools = allowedToolNames;
     if (JSON.stringify(activeTools) !== JSON.stringify(expectedTools)) {
       throw new Error(
@@ -1289,18 +1212,12 @@ export async function createRuntimeWithFixedToolsCore(
     }
 
     const sessionFile =
-      session.sessionFile === undefined ||
-      !(await pathExists(session.sessionFile))
+      session.sessionFile === undefined || !(await pathExists(session.sessionFile))
         ? null
         : basename(session.sessionFile);
     const expectedSessionFile =
-      existingBinding?.sessionFile ??
-      (existingSessionFiles.length === 1 ? existingSessionFiles[0] : null);
-    if (
-      existingBinding !== null &&
-      expectedSessionFile !== null &&
-      expectedSessionFile !== sessionFile
-    ) {
+      existingBinding?.sessionFile ?? (existingSessionFiles.length === 1 ? existingSessionFiles[0] : null);
+    if (existingBinding !== null && expectedSessionFile !== null && expectedSessionFile !== sessionFile) {
       throw new Error("identity_profile_mismatch");
     }
     await writeIdentityProfileBinding(
@@ -1313,8 +1230,7 @@ export async function createRuntimeWithFixedToolsCore(
     }
     if (tavernNarrativeGateNonceSha256 !== undefined) {
       reportTavernNarrativeGateRuntime = () => {
-        if (typeof process.send !== "function" || process.connected !== true)
-          return;
+        if (typeof process.send !== "function" || process.connected !== true) return;
         try {
           process.send(
             Object.freeze({
@@ -1327,16 +1243,12 @@ export async function createRuntimeWithFixedToolsCore(
         }
       };
       const bridge = (await import("@cortexkit/pi-magic-context/tavern")) as {
-        registerTavernNarrativeGateMarker: (
-          value: Readonly<{ sessionId: string; nonceSha256: string }>,
-        ) => () => void;
+        registerTavernNarrativeGateMarker: (value: Readonly<{ sessionId: string; nonceSha256: string }>) => () => void;
       };
-      clearTavernNarrativeGateMarker = bridge.registerTavernNarrativeGateMarker(
-        {
-          sessionId: piSessionId,
-          nonceSha256: tavernNarrativeGateNonceSha256,
-        },
-      );
+      clearTavernNarrativeGateMarker = bridge.registerTavernNarrativeGateMarker({
+        sessionId: piSessionId,
+        nonceSha256: tavernNarrativeGateNonceSha256,
+      });
     }
     if (gameOperationalGate !== undefined) {
       const bridge = (await import("@cortexkit/pi-magic-context/tavern")) as {
@@ -1348,13 +1260,11 @@ export async function createRuntimeWithFixedToolsCore(
           }>,
         ) => () => void;
       };
-      clearGameOperationalGateMarker = bridge.registerGameOperationalGateMarker(
-        {
-          sessionId: piSessionId,
-          nonceSha256: gameOperationalGate.nonceSha256,
-          surface: "game",
-        },
-      );
+      clearGameOperationalGateMarker = bridge.registerGameOperationalGateMarker({
+        sessionId: piSessionId,
+        nonceSha256: gameOperationalGate.nonceSha256,
+        surface: "game",
+      });
     }
     if (loadMagicContextExtension) {
       const bridge = (await import("@cortexkit/pi-magic-context/tavern")) as {
@@ -1382,8 +1292,7 @@ export async function createRuntimeWithFixedToolsCore(
         modelId: modelConfig?.modelId ?? null,
         thinkingLevel: modelConfig?.thinkingLevel ?? null,
       },
-      gameplaySubagentModel:
-        gameplaySubagent === undefined ? null : gameplaySubagent.modelConfig,
+      gameplaySubagentModel: gameplaySubagent === undefined ? null : gameplaySubagent.modelConfig,
       actionRegistryRevision: actionRegistryRevision(
         integration === undefined || integrationModule === undefined
           ? []
@@ -1401,9 +1310,7 @@ export async function createRuntimeWithFixedToolsCore(
           : integrationModule.knowledgeMetadata({
               ...(integration === undefined ? {} : { connection: integration }),
               knowledge: integration?.knowledge,
-              ...(integration?.gameVersion === undefined
-                ? {}
-                : { gameVersion: integration?.gameVersion }),
+              ...(integration?.gameVersion === undefined ? {} : { gameVersion: integration?.gameVersion }),
             }),
       identityProfile: profileMetadata,
       worldBook: worldBook === undefined ? null : worldBook.metadata,
@@ -1425,12 +1332,8 @@ export async function createRuntimeWithFixedToolsCore(
       identityKey: identityKey(identity),
       identityProfile: profileMetadata,
       profile,
-      extensions: loader
-        .getExtensions()
-        .extensions.map((extension) => extension.path),
-      ...(boundPresentation === undefined
-        ? {}
-        : { presentation: boundPresentation }),
+      extensions: loader.getExtensions().extensions.map((extension) => extension.path),
+      ...(boundPresentation === undefined ? {} : { presentation: boundPresentation }),
       ...(gameplaySubagent === undefined ? {} : { gameplaySubagent }),
       ...(dispatchController === undefined
         ? {}
@@ -1438,25 +1341,14 @@ export async function createRuntimeWithFixedToolsCore(
             interruption: dispatchController.interruption,
             cancelIntegrationEpoch: (epoch: number, reasonCode: string) =>
               dispatchController.cancelEpoch(epoch, reasonCode),
-            interruptIntegrationExecutions: (reasonCode: string) =>
-              dispatchController.interrupt(reasonCode),
-            bindIntegrationReceipt: (receipt: ExecutionReceipt) =>
-              dispatchController.receiveReceipt(receipt),
-            recoverStardewExecutionReceipts: (port) =>
-              receiptRecoverySupervisor!.recoverFromFreshBinding(port),
+            interruptIntegrationExecutions: (reasonCode: string) => dispatchController.interrupt(reasonCode),
+            bindIntegrationReceipt: (receipt: ExecutionReceipt) => dispatchController.receiveReceipt(receipt),
+            recoverStardewExecutionReceipts: (port) => receiptRecoverySupervisor!.recoverFromFreshBinding(port),
           }),
-      ...(clearTavernNarrativeGateMarker === undefined
-        ? {}
-        : { clearTavernNarrativeGateMarker }),
-      ...(reportTavernNarrativeGateRuntime === undefined
-        ? {}
-        : { reportTavernNarrativeGateRuntime }),
-      ...(clearGameOperationalGateMarker === undefined
-        ? {}
-        : { clearGameOperationalGateMarker }),
-      ...(installTavernProviderStartObserver === undefined
-        ? {}
-        : { installTavernProviderStartObserver }),
+      ...(clearTavernNarrativeGateMarker === undefined ? {} : { clearTavernNarrativeGateMarker }),
+      ...(reportTavernNarrativeGateRuntime === undefined ? {} : { reportTavernNarrativeGateRuntime }),
+      ...(clearGameOperationalGateMarker === undefined ? {} : { clearGameOperationalGateMarker }),
+      ...(installTavernProviderStartObserver === undefined ? {} : { installTavernProviderStartObserver }),
     };
   } catch (error) {
     throw await cleanupRuntimeInitializationFailure(
@@ -1480,9 +1372,7 @@ export function resolveMagicContextExtensionEntry(): string {
     // Node therefore walks only Host's declared dependency ancestry. Resolve
     // using ESM conditions: this extension deliberately exports only `import`,
     // so `createRequire(...).resolve()` would incorrectly reject it.
-    const entry = fileURLToPath(
-      import.meta.resolve("@cortexkit/pi-magic-context"),
-    );
+    const entry = fileURLToPath(import.meta.resolve("@cortexkit/pi-magic-context"));
     if (!existsSync(entry)) throw new Error("missing");
     return entry;
   } catch {
@@ -1528,13 +1418,10 @@ async function bindEmbeddedHistorianModelRegistry(modelRuntime: ModelRuntime): P
   // `find()`, so the catalog has to be loaded before the registry is handed over.
   const registry = new ModelRegistry(modelRuntime);
   await registry.refresh();
-  if (!binding.bind(registry))
-    process.stderr.write("[historian] embedded historian refused the model registry\n");
+  if (!binding.bind(registry)) process.stderr.write("[historian] embedded historian refused the model registry\n");
 }
 
-type RuntimeSessionResource = Awaited<
-  ReturnType<typeof createAgentSession>
->["session"];
+type RuntimeSessionResource = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
 async function cleanupRuntimeInitializationFailure(
   session: RuntimeSessionResource,
@@ -1562,11 +1449,7 @@ async function cleanupRuntimeInitializationFailure(
   } catch (error) {
     cleanupErrors.push(error);
   }
-  if (cleanupErrors.length > 0)
-    throw new AggregateError(
-      [primary, ...cleanupErrors],
-      "runtime_initialization_failed",
-    );
+  if (cleanupErrors.length > 0) throw new AggregateError([primary, ...cleanupErrors], "runtime_initialization_failed");
   throw primary;
 }
 
@@ -1575,20 +1458,13 @@ async function pathExists(path: string): Promise<boolean> {
     await access(path);
     return true;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    )
-      return false;
+    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
 }
 
 async function listSessionFiles(sessionDir: string): Promise<string[]> {
-  return (await readdir(sessionDir))
-    .filter((entry) => /^[A-Za-z0-9._-]{1,256}\.jsonl$/.test(entry))
-    .sort();
+  return (await readdir(sessionDir)).filter((entry) => /^[A-Za-z0-9._-]{1,256}\.jsonl$/.test(entry)).sort();
 }
 
 /**
@@ -1602,7 +1478,6 @@ async function listSessionFiles(sessionDir: string): Promise<string[]> {
  * root with no other entry the merged document is the previous single-provider
  * document, byte for byte.
  */
-
 
 async function createCompanionModelRuntime(
   paths: RuntimePaths,

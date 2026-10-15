@@ -7,6 +7,8 @@ import type { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import {
   formatGameClock,
   formatGameDate,
+  formatGameEnvironmentFacts,
+  formatGameStamina,
   formatGameWeather,
   reloadMagicContextInRuntimeRoot,
 } from "./runtime-core.internal.js";
@@ -135,4 +137,72 @@ test("formatGameWeather maps stable token to localized human phrase", () => {
 test("formatGameWeather passes through unknown tokens rather than guessing", () => {
   assert.equal(formatGameWeather("blizzard", true), "天气：blizzard");
   assert.equal(formatGameWeather("blizzard", false), "weather: blizzard");
+});
+
+test("formatGameEnvironmentFacts carries the actor's current stamina, verbatim", () => {
+  const facts = formatGameEnvironmentFacts(
+    {
+      timeOfDay: 1700,
+      dayOfMonth: 19,
+      seasonIndex: 0,
+      year: 1,
+      weather: "sunny",
+      location: "Farm",
+      stamina: 270,
+      exhausted: false,
+    },
+    false,
+  );
+  assert.equal(facts, "5:00 PM；Year 1, Day 19 of Spring；weather: sunny；location: Farm；stamina: 270");
+});
+
+test("formatGameEnvironmentFacts localizes stamina and marks persistent fatigue", () => {
+  const facts = formatGameEnvironmentFacts(
+    {
+      timeOfDay: 600,
+      dayOfMonth: 1,
+      seasonIndex: 0,
+      year: 1,
+      weather: "rain",
+      location: "Farm",
+      stamina: 12,
+      exhausted: true,
+    },
+    true,
+  );
+  assert.equal(facts, "6:00 AM；1年第1天 春季；天气：雨天；位置: Farm；体力: 12（已疲惫）");
+});
+
+test("formatGameEnvironmentFacts omits stamina when the snapshot does not carry it", () => {
+  const facts = formatGameEnvironmentFacts(
+    { timeOfDay: 1700, dayOfMonth: 19, seasonIndex: 0, year: 1, weather: "sunny", location: "Farm" },
+    false,
+  );
+  assert.equal(facts, "5:00 PM；Year 1, Day 19 of Spring；weather: sunny；location: Farm");
+  assert.ok(!facts.includes("stamina"));
+});
+
+test("formatGameEnvironmentFacts omits stamina rather than defaulting a non-finite reading", () => {
+  const facts = formatGameEnvironmentFacts(
+    {
+      timeOfDay: 1700,
+      dayOfMonth: 19,
+      seasonIndex: 0,
+      year: 1,
+      weather: "sunny",
+      location: "Farm",
+      stamina: Number.NaN,
+      exhausted: false,
+    },
+    false,
+  );
+  assert.equal(facts, "5:00 PM；Year 1, Day 19 of Spring；weather: sunny；location: Farm");
+  assert.ok(!facts.includes("stamina"));
+});
+
+test("formatGameStamina publishes the native value, including a drained negative or fractional one", () => {
+  assert.equal(formatGameStamina(-15, false, false), "stamina: -15");
+  assert.equal(formatGameStamina(270.5, false, false), "stamina: 270.5");
+  assert.equal(formatGameStamina(undefined, false, false), "");
+  assert.equal(formatGameStamina(Number.NaN, true, false), "");
 });
