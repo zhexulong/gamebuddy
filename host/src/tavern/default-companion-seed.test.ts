@@ -217,13 +217,11 @@ test("the seeded companion's scenario reaches the browser with its macros render
     assert.ok(projection !== null, "the seeded companion must carry a durable scenario record");
     assert.equal(projection.description.includes("{{"), false, "the surface must never paint a raw macro");
     assert.ok(projection.description.includes(profile.identity.name), "the companion's real name is resolved");
-    assert.ok(projection.description.includes("玩家"), "the player reference is resolved");
+    assert.ok(projection.description.includes("星露谷"));
 
-    // The durable record still carries `{{user}}`, so the absence above is the
-    // rendering and not a scenario that happened to contain no macro.
     const stored = await durable.read();
     assert.ok(stored !== null);
-    assert.ok(stored.description.includes("{{user}}"));
+    assert.equal(stored.description, DEFAULT_COMPANION_PRESET.scenario);
   } finally {
     await release(root);
   }

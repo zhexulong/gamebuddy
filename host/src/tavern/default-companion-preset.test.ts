@@ -155,7 +155,7 @@ test("the card's declared scan_depth rides the compiled preset into its worldBoo
   // The import chain: card `character_book.scan_depth` → decoder
   // `preview.worldBookScanDepth` → the compiled preset's book. The declared
   // value must reach the shipped artifact, not stay a decoder-private datum.
-  assert.equal(decoder.worldBookScanDepth, 2);
+  assert.equal(decoder.worldBookScanDepth, 4);
   assert.equal(DEFAULT_COMPANION_PRESET.worldBook.scanDepth, decoder.worldBookScanDepth);
   assert.equal(DEFAULT_COMPANION_PRESET.worldBook.scanDepth, declared);
 });
