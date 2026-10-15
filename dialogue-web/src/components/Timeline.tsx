@@ -58,6 +58,19 @@ export function Timeline({
   // already carries the companion's monogram and name on every surface, and a
   // third printing of the same name is not an anchor.
   const anchorName = companionName.trim() || labels.companion;
+  /**
+   * The conversation's own name, or null when there is nothing to name it with.
+   *
+   * The Host publishes a `title` only once a conversation has been named, so an
+   * unnamed one is the catalogue's own word for it (`untitledChat`) - that word
+   * IS the conversation's name, not a placeholder to suppress. The band is shown
+   * once the conversation has either a title or content, so a player who switched
+   * conversations can see which one is open. It stays absent on the zero-message
+   * first screen, where the surface heading and the invitation already name the
+   * screen and a second title would only stack (gate 7 pins that).
+   */
+  const conversationName =
+    chatTitle !== null || transcript.length > 0 || preview !== null ? (chatTitle ?? labels.untitledChat) : null;
   const sectionRef = useRef<HTMLElement>(null);
   /**
    * Whether the reader is parked at the newest content. A streaming reply
@@ -143,14 +156,13 @@ export function Timeline({
     // serious). tabIndex makes the region itself the scroll target; the label is
     // already the region's accessible name, so focus announces where it landed.
     <section ref={sectionRef} className="timeline" aria-label={labels.chatTranscript} tabIndex={0}>
-      {/* The title band is the conversation's own title, so it exists only once
-          the Host has published one. The catalogue's untitled placeholder is not
-          a title: printed above the transcript it repeated the surface heading's
-          own word ("新对话" under "聊天") and added a heading the screen did not have.
-          A first screen is named by its surface and by its invitation. */}
-      {chatTitle !== null && (
+      {/* The title band names the conversation the player is reading: the Host's
+          own title when it published one, otherwise the catalogue's word for an
+          untitled conversation. It is the one place the surface says which
+          conversation is open after a switch. */}
+      {conversationName !== null && (
         <div className="timeline-heading">
-          <h1>{chatTitle}</h1>
+          <h1>{conversationName}</h1>
         </div>
       )}
       {transcript.length === 0 && preview === null ? (

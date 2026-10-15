@@ -21,9 +21,9 @@ import { expect, test, type Page } from "@playwright/test";
  *      scrollbar (the field grows to `scrollHeight`), but the compact band paid
  *      two lines of dead hint height and advised a key a phone does not have.
  *   4. **Refuted.** The audit's "three stacked headings" is not on this tree: an
- *      untitled conversation renders exactly one heading, and the app bar's brand
- *      *word* is retired below 640 px. The gates below pin the refutation so it
- *      cannot come back.
+ *      untitled conversation renders the surface's word and its own name - two
+ *      headings, not three - and the app bar's brand *word* is retired below
+ *      640 px. The gates below pin the refutation so it cannot come back.
  *   5. Two recommended models can share a model id from different providers, and
  *      the chip printed the id alone - two chips reading one identical word.
  *   6. **Refuted.** The composer is in flow, so it cannot cover the transcript:
@@ -474,7 +474,7 @@ test("defect 3: the wide composer keeps the Enter hint the compact one drops", a
 
 // --- defect 4 (refuted) ------------------------------------------------------
 
-test("defect 4 (refuted): the first screen stacks one heading and no repeat of the surface's name", async ({ page }) => {
+test("defect 4 (refuted): the first screen names the surface and the conversation, not a repeated name", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 800 });
   await mountShell(page, { transcript: [{ role: "companion", text: "The morning light comes over the ridge." }] });
 
@@ -499,9 +499,15 @@ test("defect 4 (refuted): the first screen stacks one heading and no repeat of t
   console.log(`[defect-4 narrow] ${JSON.stringify(measured)}`);
 
   const rendered = measured.headings.filter((heading) => heading.rendered);
-  expect(rendered.length, `one heading names the first screen, found ${JSON.stringify(rendered)}`).toBe(1);
-  expect(rendered[0]!.text, "and it is the surface's own word").toBe("聊天");
-  expect(measured.placeholderBand, "an untitled conversation prints no placeholder title band").toBe(false);
+  const texts = rendered.map((heading) => heading.text);
+  expect(
+    rendered.length,
+    `the surface's word and the conversation's own name, found ${JSON.stringify(rendered)}`,
+  ).toBe(2);
+  expect(texts, "the surface keeps its own word").toContain("聊天");
+  expect(texts, "the untitled conversation carries the catalogue's own name").toContain("新对话");
+  expect(new Set(texts).size, "no two headings print the same word").toBe(texts.length);
+  expect(measured.placeholderBand, "the conversation's name is a real band, not suppressed").toBe(true);
   expect(
     measured.brandWord!.height,
     "the app bar's brand *word* is retired at the compact width, so it is not a stacked title",
