@@ -19,6 +19,18 @@ import { pathToFileURL } from "node:url";
 // The package lives under the host's node_modules, and a tool in `tools/` cannot resolve a bare specifier for
 // it. Its exports map is import-only, so the CJS resolver refuses it; loading the very files that map names, by
 // absolute URL, is what makes this harness runnable from the repository root.
+// Magic Context opens its store from the ambient data layout, and the vendor's own override for pointing it
+// elsewhere is MAGIC_CONTEXT_TEST_DATA_DIR. It has to be set BEFORE the package is imported, because the store
+// resolves when its module loads - which is why passing --root alone kept reading the machine's default store.
+const argvForRoot = process.argv.slice(2);
+const rootFlagAt = argvForRoot.indexOf("--root");
+const rootForStore = rootFlagAt < 0 ? process.cwd() : argvForRoot[rootFlagAt + 1];
+const contextsForStore = join(resolve(rootForStore), "contexts");
+if (existsSync(contextsForStore)) {
+  const keys = readdirSync(contextsForStore);
+  if (keys.length === 1) process.env.MAGIC_CONTEXT_TEST_DATA_DIR = join(contextsForStore, keys[0], "data");
+}
+
 const hostDir = resolve(new URL("../host", import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/u, ""));
 const packageDir = join(hostDir, "node_modules", "@cortexkit", "pi-magic-context");
 const memory = await import(pathToFileURL(join(packageDir, "dist", "memory", "index.js")).href);
