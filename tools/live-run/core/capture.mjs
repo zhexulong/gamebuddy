@@ -76,11 +76,19 @@ function runDirectoryName(kind, label) {
  * Open one run directory. Returns a handle whose every method is
  * failure-tolerant and budget-charged.
  */
-export async function openLiveRunCapture({ kind, label, root, budget } = {}) {
+export async function openLiveRunCapture({ kind, label, root, budget, dirName } = {}) {
   if (typeof kind !== "string" || kind.length === 0) throw new Error("capture_kind_required");
   const base = root ?? resolveLiveRunRoot({ repoRoot: process.cwd() });
   const limits = Object.freeze({ ...DEFAULT_BUDGET, ...(budget ?? {}) });
-  const dir = join(base, kind, runDirectoryName(kind, label));
+  // `dirName` lets a surface whose runs are identified by their own opaque run id
+  // address the run directory directly (`.live-runs/<run-id>/`), so one directory
+  // can hold everything about that run: the trace, the content sidecar, the
+  // browser shots and the captured runtime-root evidence. Without it the shared
+  // `<kind>/<timestamp>-<label>` layout is used, unchanged.
+  const dir =
+    typeof dirName === "string" && dirName.length > 0
+      ? join(base, dirName.replace(/[^\w.-]+/gu, "_"))
+      : join(base, kind, runDirectoryName(kind, label));
 
   const failures = [];
   const skipped = [];

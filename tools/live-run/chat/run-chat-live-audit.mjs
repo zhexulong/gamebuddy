@@ -64,6 +64,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
+import { openLiveRunCapture } from "../core/capture.mjs";
+import { buildCompanionExperience, evaluateCompanionReply } from "../core/companion-experience.mjs";
 
 const HOST_ROOT = resolve(fileURLToPath(new URL("../../../host/", import.meta.url)));
 // The audited generation root. Production consumes the canonical `host/dist`
@@ -156,9 +158,28 @@ export const AUDIT_VOCABULARY = Object.freeze({
   "probe.isolation.breach": "harness",
   "probe.observability_gap": "harness",
 });
-export const AUDIT_KINDS = Object.freeze(["lifecycle", "sse", "http", "provider", "presentation", "memory", "recovery", "probe"]);
+export const AUDIT_KINDS = Object.freeze([
+  "lifecycle",
+  "sse",
+  "http",
+  "provider",
+  "presentation",
+  "memory",
+  "recovery",
+  "probe",
+]);
 const AUDIT_EVENT_KEYS = Object.freeze(["at", "kind", "actor", "code", "meta"]);
-const AUDIT_CATEGORY_KEYS = Object.freeze(["schema", "runId", "startedAt", "completedAt", "surface", "artifact", "provider", "originMs", "events"]);
+const AUDIT_CATEGORY_KEYS = Object.freeze([
+  "schema",
+  "runId",
+  "startedAt",
+  "completedAt",
+  "surface",
+  "artifact",
+  "provider",
+  "originMs",
+  "events",
+]);
 const AUDIT_ARTIFACT_KEYS = Object.freeze(["generation", "inventoryDigest"]);
 const AUDIT_PROVIDER_KEYS = Object.freeze(["embedded", "observed"]);
 /** The only `meta` keys the frozen interface permits. */
@@ -220,7 +241,12 @@ function sha256(value) {
 }
 
 function isPlainObject(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
 }
 
 function hasExactKeys(value, keys) {
@@ -236,9 +262,13 @@ function delay(ms) {
 export function parseArguments(argv) {
   if (argv.length === 0) return Object.freeze({ reportPath: undefined });
   if ((argv.length !== 2 && argv.length !== 4) || argv[0] !== "--report")
-    throw new Error("usage: node tools/live-run/chat/run-chat-live-audit.mjs [--report <path>] [--probe-manifest <path>]");
+    throw new Error(
+      "usage: node tools/live-run/chat/run-chat-live-audit.mjs [--report <path>] [--probe-manifest <path>]",
+    );
   if (argv[1].length === 0 || (argv.length === 4 && (argv[2] !== "--probe-manifest" || argv[3].length === 0)))
-    throw new Error("usage: node tools/live-run/chat/run-chat-live-audit.mjs [--report <path>] [--probe-manifest <path>]");
+    throw new Error(
+      "usage: node tools/live-run/chat/run-chat-live-audit.mjs [--report <path>] [--probe-manifest <path>]",
+    );
   return argv.length === 2
     ? Object.freeze({ reportPath: resolve(argv[1]) })
     : Object.freeze({ reportPath: resolve(argv[1]), probeManifestPath: resolve(argv[3]) });
@@ -286,25 +316,42 @@ const PROBE_ROLE = /^(companion|player)$/;
 function validateProbeStepShape(step) {
   const kind = step?.kind;
   if (!PROBE_STEP_KIND.has(kind)) return "probe_step_kind_invalid";
-  if (kind !== "probe" && kind !== "seed" && (typeof step.role !== "string" || !PROBE_ROLE.test(step.role))) return "probe_step_role_invalid";
+  if (kind !== "probe" && kind !== "seed" && (typeof step.role !== "string" || !PROBE_ROLE.test(step.role)))
+    return "probe_step_role_invalid";
   if (typeof step.text !== "string" || step.text.length === 0) return "probe_step_text_invalid";
   if (kind === "probe") {
-    if (!Array.isArray(step.requiredKeywords) || step.requiredKeywords.some((keyword) => typeof keyword !== "string")) return "probe_step_keywords_invalid";
-    if (step.forbiddenKeywords !== undefined && (!Array.isArray(step.forbiddenKeywords) || step.forbiddenKeywords.some((keyword) => typeof keyword !== "string"))) return "probe_step_keywords_invalid";
+    if (!Array.isArray(step.requiredKeywords) || step.requiredKeywords.some((keyword) => typeof keyword !== "string"))
+      return "probe_step_keywords_invalid";
+    if (
+      step.forbiddenKeywords !== undefined &&
+      (!Array.isArray(step.forbiddenKeywords) || step.forbiddenKeywords.some((keyword) => typeof keyword !== "string"))
+    )
+      return "probe_step_keywords_invalid";
   }
-  if (kind === "seed" && (typeof step.persistVia !== "string" || !["memory_route", "conversation"].includes(step.persistVia))) return "probe_step_persistvia_invalid";
+  if (
+    kind === "seed" &&
+    (typeof step.persistVia !== "string" || !["memory_route", "conversation"].includes(step.persistVia))
+  )
+    return "probe_step_persistvia_invalid";
   return undefined;
 }
 
 function validateProbeShape(probe, index) {
-  if (probe === null || typeof probe !== "object" || Array.isArray(probe)) throw new Error(`probe_manifest_probe_invalid:${index}`);
+  if (probe === null || typeof probe !== "object" || Array.isArray(probe))
+    throw new Error(`probe_manifest_probe_invalid:${index}`);
   const probeKeys = new Set(["probeId", "distance", "dimension", "seedClass", "steps"]);
-  for (const key of Object.keys(probe)) if (!probeKeys.has(key)) throw new Error(`probe_manifest_probe_field_unknown:${index}:${key}`);
-  if (typeof probe.probeId !== "string" || !PROBE_ID.test(probe.probeId)) throw new Error(`probe_manifest_probe_id_invalid:${index}`);
-  if (!PROBE_DISTANCES.has(probe.distance)) throw new Error(`probe_manifest_probe_distance_invalid:${index}:${probe.distance}`);
-  if (!PROBE_DIMENSIONS.has(probe.dimension)) throw new Error(`probe_manifest_probe_dimension_invalid:${index}:${probe.dimension}`);
-  if (probe.seedClass !== "explicit" && probe.seedClass !== "conversational") throw new Error(`probe_manifest_probe_seedclass_invalid:${index}:${probe.seedClass}`);
-  if (!Array.isArray(probe.steps) || probe.steps.length === 0) throw new Error(`probe_manifest_probe_steps_missing:${index}`);
+  for (const key of Object.keys(probe))
+    if (!probeKeys.has(key)) throw new Error(`probe_manifest_probe_field_unknown:${index}:${key}`);
+  if (typeof probe.probeId !== "string" || !PROBE_ID.test(probe.probeId))
+    throw new Error(`probe_manifest_probe_id_invalid:${index}`);
+  if (!PROBE_DISTANCES.has(probe.distance))
+    throw new Error(`probe_manifest_probe_distance_invalid:${index}:${probe.distance}`);
+  if (!PROBE_DIMENSIONS.has(probe.dimension))
+    throw new Error(`probe_manifest_probe_dimension_invalid:${index}:${probe.dimension}`);
+  if (probe.seedClass !== "explicit" && probe.seedClass !== "conversational")
+    throw new Error(`probe_manifest_probe_seedclass_invalid:${index}:${probe.seedClass}`);
+  if (!Array.isArray(probe.steps) || probe.steps.length === 0)
+    throw new Error(`probe_manifest_probe_steps_missing:${index}`);
   const steps = probe.steps.map((step, stepIndex) => {
     const issue = validateProbeStepShape(step);
     if (issue !== undefined) throw new Error(`probe_manifest_${issue}:${index}:${stepIndex}`);
@@ -320,18 +367,38 @@ export function loadProbeManifest(text) {
   } catch {
     throw new Error("probe_manifest_invalid_json");
   }
-  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) throw new Error("probe_manifest_invalid");
+  if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest))
+    throw new Error("probe_manifest_invalid");
   const allowedKeys = new Set(["schema", "manifestId", "manifestDigest", "continuityTopology", "probes"]);
-  for (const key of Object.keys(manifest)) if (!allowedKeys.has(key)) throw new Error(`probe_manifest_unknown_field:${key}`);
+  for (const key of Object.keys(manifest))
+    if (!allowedKeys.has(key)) throw new Error(`probe_manifest_unknown_field:${key}`);
   if (manifest.schema !== PROBE_MANIFEST_SCHEMA) throw new Error(`probe_manifest_schema_mismatch:${manifest.schema}`);
-  if (typeof manifest.manifestId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/.test(manifest.manifestId)) throw new Error("probe_manifest_id_invalid");
-  if (typeof manifest.manifestDigest !== "string" || !SHA256_HEX.test(manifest.manifestDigest)) throw new Error("probe_manifest_digest_invalid");
-  if (manifest.continuityTopology !== "single" && manifest.continuityTopology !== "dual") throw new Error("probe_manifest_topology_invalid");
+  if (typeof manifest.manifestId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/.test(manifest.manifestId))
+    throw new Error("probe_manifest_id_invalid");
+  if (typeof manifest.manifestDigest !== "string" || !SHA256_HEX.test(manifest.manifestDigest))
+    throw new Error("probe_manifest_digest_invalid");
+  if (manifest.continuityTopology !== "single" && manifest.continuityTopology !== "dual")
+    throw new Error("probe_manifest_topology_invalid");
   if (!Array.isArray(manifest.probes) || manifest.probes.length === 0) throw new Error("probe_manifest_probes_missing");
   const probes = manifest.probes.map((probe, index) => validateProbeShape(probe, index));
-  const digest = sha256(JSON.stringify(Object.freeze({ schema: PROBE_MANIFEST_SCHEMA, manifestId: manifest.manifestId, continuityTopology: manifest.continuityTopology, probes })));
+  const digest = sha256(
+    JSON.stringify(
+      Object.freeze({
+        schema: PROBE_MANIFEST_SCHEMA,
+        manifestId: manifest.manifestId,
+        continuityTopology: manifest.continuityTopology,
+        probes,
+      }),
+    ),
+  );
   if (digest !== manifest.manifestDigest) throw new Error("probe_manifest_digest_mismatch");
-  return Object.freeze({ schema: PROBE_MANIFEST_SCHEMA, manifestId: manifest.manifestId, manifestDigest: manifest.manifestDigest, continuityTopology: manifest.continuityTopology, probes });
+  return Object.freeze({
+    schema: PROBE_MANIFEST_SCHEMA,
+    manifestId: manifest.manifestId,
+    manifestDigest: manifest.manifestDigest,
+    continuityTopology: manifest.continuityTopology,
+    probes,
+  });
 }
 
 function boundedReason(value, fallback) {
@@ -354,7 +421,8 @@ export function evaluateProbeReply({ transcriptText, step }) {
   const normalized = normalizeKeywordText(transcriptText);
   const hitCount = required.filter((kw) => normalized.includes(normalizeKeywordText(kw))).length;
   const forbiddenCount = forbidden.filter((kw) => normalized.includes(normalizeKeywordText(kw))).length;
-  const threshold = step.minHitRate !== undefined && Number.isFinite(step.minHitRate) ? Math.min(1, Math.max(0, step.minHitRate)) : 0.5;
+  const threshold =
+    step.minHitRate !== undefined && Number.isFinite(step.minHitRate) ? Math.min(1, Math.max(0, step.minHitRate)) : 0.5;
   return Object.freeze({ hit: hitCount >= Math.ceil(required.length * threshold), forbiddenCount });
 }
 
@@ -463,8 +531,10 @@ function probeEventReason(meta) {
   if (typeof meta.probeId !== "string" || !PROBE_ID.test(meta.probeId)) return "event_probe_id_invalid";
   if (typeof meta.manifestDigest !== "string" || !SHA256_HEX.test(meta.manifestDigest))
     return "event_probe_manifest_digest_invalid";
-  if (meta.distance !== undefined && !AUDIT_PROBE_DISTANCES.includes(meta.distance)) return "event_probe_distance_invalid";
-  if (meta.dimension !== undefined && !AUDIT_PROBE_DIMENSIONS.includes(meta.dimension)) return "event_probe_dimension_invalid";
+  if (meta.distance !== undefined && !AUDIT_PROBE_DISTANCES.includes(meta.distance))
+    return "event_probe_distance_invalid";
+  if (meta.dimension !== undefined && !AUDIT_PROBE_DIMENSIONS.includes(meta.dimension))
+    return "event_probe_dimension_invalid";
   return undefined;
 }
 
@@ -495,7 +565,8 @@ export function validateAuditEvent(event) {
   if (event.meta === undefined) {
     // Per-code obligations still apply with no meta at all: `turn.terminal`,
     // `run.finished` and every `probe` event require one.
-    if (event.code === "turn.terminal") return Object.freeze({ ok: false, reasonCode: "event_turn_terminal_state_missing" });
+    if (event.code === "turn.terminal")
+      return Object.freeze({ ok: false, reasonCode: "event_turn_terminal_state_missing" });
     if (event.code === "run.finished")
       return Object.freeze({ ok: false, reasonCode: "event_provider_observability_missing" });
     if (event.kind === PROBE_KIND) return Object.freeze({ ok: false, reasonCode: "event_probe_metadata_missing" });
@@ -537,7 +608,8 @@ export function validateAuditEvent(event) {
  * never continues past an invalid emit.
  */
 export function validateAuditTrace(trace) {
-  if (!hasExactKeys(trace, AUDIT_CATEGORY_KEYS)) return Object.freeze({ ok: false, reasonCode: "trace_category_invalid" });
+  if (!hasExactKeys(trace, AUDIT_CATEGORY_KEYS))
+    return Object.freeze({ ok: false, reasonCode: "trace_category_invalid" });
   if (trace.schema !== AUDIT_SCHEMA) return Object.freeze({ ok: false, reasonCode: "trace_schema_invalid" });
   if (typeof trace.runId !== "string" || !OPAQUE_RUN_ID.test(trace.runId))
     return Object.freeze({ ok: false, reasonCode: "trace_run_id_invalid" });
@@ -547,12 +619,14 @@ export function validateAuditTrace(trace) {
     return Object.freeze({ ok: false, reasonCode: "trace_timestamp_invalid" });
   if (completedAtMs < startedAtMs) return Object.freeze({ ok: false, reasonCode: "trace_timestamp_order_invalid" });
   if (trace.surface !== AUDIT_SURFACE) return Object.freeze({ ok: false, reasonCode: "trace_surface_invalid" });
-  if (!hasExactKeys(trace.artifact, AUDIT_ARTIFACT_KEYS)) return Object.freeze({ ok: false, reasonCode: "trace_artifact_invalid" });
+  if (!hasExactKeys(trace.artifact, AUDIT_ARTIFACT_KEYS))
+    return Object.freeze({ ok: false, reasonCode: "trace_artifact_invalid" });
   if (typeof trace.artifact.generation !== "string" || !GENERATION.test(trace.artifact.generation))
     return Object.freeze({ ok: false, reasonCode: "trace_artifact_invalid" });
   if (typeof trace.artifact.inventoryDigest !== "string" || !SHA256_HEX.test(trace.artifact.inventoryDigest))
     return Object.freeze({ ok: false, reasonCode: "trace_artifact_invalid" });
-  if (!hasExactKeys(trace.provider, AUDIT_PROVIDER_KEYS)) return Object.freeze({ ok: false, reasonCode: "trace_provider_invalid" });
+  if (!hasExactKeys(trace.provider, AUDIT_PROVIDER_KEYS))
+    return Object.freeze({ ok: false, reasonCode: "trace_provider_invalid" });
   if (trace.provider.embedded !== true || typeof trace.provider.observed !== "boolean")
     return Object.freeze({ ok: false, reasonCode: "trace_provider_invalid" });
   if (trace.originMs !== 0) return Object.freeze({ ok: false, reasonCode: "trace_origin_invalid" });
@@ -684,7 +758,8 @@ export function createAuditRecorder({ startedAtMs, now = Date.now }) {
       const elapsed = Math.floor(now() - startedAtMs);
       const at = elapsed > cursor ? elapsed : cursor;
       cursor = at;
-      const event = meta === undefined ? { at, kind, actor, code } : { at, kind, actor, code, meta: Object.freeze({ ...meta }) };
+      const event =
+        meta === undefined ? { at, kind, actor, code } : { at, kind, actor, code, meta: Object.freeze({ ...meta }) };
       const validation = validateAuditEvent(event);
       if (!validation.ok) throw new Error(`audit_event_emitted_invalid:${validation.reasonCode}`);
       events.push(Object.freeze(event));
@@ -744,7 +819,11 @@ export function classifyStartupFailure(error, stderr) {
  * session identity reported by the separate runtime frame.
  */
 export function evaluateProviderRuntimeMarker(value) {
-  if (value?.schema !== "gamebuddy-tavern-narrative-gate-runtime/v1" || typeof value.piSessionId !== "string" || !PI_SESSION_ID.test(value.piSessionId))
+  if (
+    value?.schema !== "gamebuddy-tavern-narrative-gate-runtime/v1" ||
+    typeof value.piSessionId !== "string" ||
+    !PI_SESSION_ID.test(value.piSessionId)
+  )
     return Object.freeze({ observed: false, reasonCode: "provider_runtime_session_unavailable" });
   return Object.freeze({ observed: true, piSessionId: value.piSessionId });
 }
@@ -769,7 +848,8 @@ export function evaluateProviderPreSendMarker(value, expectedDigest, expectedSes
  * `commit_done` marker is intentionally absent because the authoritative
  * presentation fact may only come from `/state`.
  */
-const PRESENTATION_MARKER = /\[DEBUG-chat-live-p4c\] (admission_ok|commit_rejected|commit_error|native_rejected_[a-z_]+)/g;
+const PRESENTATION_MARKER =
+  /\[DEBUG-chat-live-p4c\] (admission_ok|commit_rejected|commit_error|native_rejected_[a-z_]+)/g;
 
 /**
  * Class B probe materialization markers emitted by Magic Context on vendor
@@ -864,9 +944,12 @@ export function projectStateSnapshot(snapshot) {
  * companion message is a durable-continuity mismatch, never a rendering detail.
  */
 export function compareReloadSnapshot(previous, reloaded) {
-  if (previous.turnHandle !== reloaded.turnHandle) return Object.freeze({ consistent: false, reason: "turn_handle_changed" });
-  if (previous.turnState !== reloaded.turnState) return Object.freeze({ consistent: false, reason: "turn_state_changed" });
-  if (previous.transcriptLength > reloaded.transcriptLength) return Object.freeze({ consistent: false, reason: "transcript_truncated" });
+  if (previous.turnHandle !== reloaded.turnHandle)
+    return Object.freeze({ consistent: false, reason: "turn_handle_changed" });
+  if (previous.turnState !== reloaded.turnState)
+    return Object.freeze({ consistent: false, reason: "turn_state_changed" });
+  if (previous.transcriptLength > reloaded.transcriptLength)
+    return Object.freeze({ consistent: false, reason: "transcript_truncated" });
   if (previous.committedCompanionMessages > reloaded.committedCompanionMessages)
     return Object.freeze({ consistent: false, reason: "committed_presentation_lost" });
   if (previous.selectionGeneration !== reloaded.selectionGeneration)
@@ -893,7 +976,15 @@ async function bootstrap(origin, token, sessionEntry) {
   const body = await response.json().catch(() => undefined);
   const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
   if (!response.ok || typeof cookie !== "string" || typeof (body?.csrfToken ?? body?.chat?.csrfToken) !== "string") {
-      process.stderr.write(`[bootstrap-diag] ${response.status} ${response.url ?? ""} body=${(() => { try { return JSON.stringify(body ?? null); } catch { return "unavailable"; } })().slice(0, 300)}\n`);
+    process.stderr.write(
+      `[bootstrap-diag] ${response.status} ${response.url ?? ""} body=${(() => {
+        try {
+          return JSON.stringify(body ?? null);
+        } catch {
+          return "unavailable";
+        }
+      })().slice(0, 300)}\n`,
+    );
     throw new Error(`bootstrap_failed:${response.status}`);
   }
   return Object.freeze({ cookie, csrf: body.csrfToken ?? body.chat.csrfToken });
@@ -902,7 +993,9 @@ async function bootstrap(origin, token, sessionEntry) {
 async function readStateSnapshot({ origin, client, recorder }) {
   let response;
   try {
-    response = await deadlineFetch(`${origin}/api/tavern/v1/state`, { headers: { Cookie: client.cookie, Origin: origin } });
+    response = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
+      headers: { Cookie: client.cookie, Origin: origin },
+    });
   } catch {
     return Object.freeze({ ok: false, reasonCode: "state_unreachable" });
   }
@@ -914,7 +1007,10 @@ async function readStateSnapshot({ origin, client, recorder }) {
   recorder.record("http", "harness", "state.read");
   const projection = projectStateSnapshot(body);
   if (projection === undefined) {
-    recorder.record("http", "harness", "state.conflict", { status: response.status, reason: "state_snapshot_unusable" });
+    recorder.record("http", "harness", "state.conflict", {
+      status: response.status,
+      reason: "state_snapshot_unusable",
+    });
     return Object.freeze({ ok: false, reasonCode: "state_snapshot_unusable" });
   }
   return Object.freeze({ ok: true, projection });
@@ -940,7 +1036,8 @@ async function submitTurn({ origin, client, projection, recorder, message = SUBM
   });
   if (response.status !== 202) throw new Error(`message_failed:${response.status}`);
   const body = await response.json().catch(() => undefined);
-  const disposition = body?.disposition === "accepted" || body?.disposition === "duplicate" ? body.disposition : undefined;
+  const disposition =
+    body?.disposition === "accepted" || body?.disposition === "duplicate" ? body.disposition : undefined;
   recorder.record("lifecycle", "harness", "turn.submitted", disposition === undefined ? undefined : { disposition });
   return Object.freeze({ disposition });
 }
@@ -969,7 +1066,9 @@ async function cancelTurn({ origin, client, projection, turnHandle }) {
   if (!response.ok) return Object.freeze({ ok: false, reasonCode: `cancel_failed:${response.status}` });
   const body = await response.json().catch(() => undefined);
   const disposition =
-    body?.disposition === "cancelled" || body?.disposition === "completion_won" || body?.disposition === "already_terminal"
+    body?.disposition === "cancelled" ||
+    body?.disposition === "completion_won" ||
+    body?.disposition === "already_terminal"
       ? body.disposition
       : undefined;
   const state = typeof body?.turn?.state === "string" ? body.turn.state : undefined;
@@ -1041,7 +1140,9 @@ export async function openEventStream({ origin, client, recorder, cursor = undef
           // recording it the next connection would start from zero again.
           if (typeof frame.cursor === "string" && frame.cursor.length > 0) latestCursor = frame.cursor;
           if (frame.eventType === "stream.resync_required") {
-            recorder.record("sse", "host", "stream.resync", { reason: boundedReason(frame.payload.payload?.reason, "unknown") });
+            recorder.record("sse", "host", "stream.resync", {
+              reason: boundedReason(frame.payload.payload?.reason, "unknown"),
+            });
             // The host closes a resync response, so the observable truth for this
             // turn comes from the durable `/state` read-back. Resolving the
             // terminal wait here is what keeps an observer-side stream close from
@@ -1063,8 +1164,7 @@ export async function openEventStream({ origin, client, recorder, cursor = undef
     ok: true,
     /** Last event id seen on this connection: the next connection resumes here. */
     cursor: () => latestCursor,
-    waitForTerminal: (timeoutMs) =>
-      Promise.race([terminal, delay(timeoutMs).then(() => "timeout")]),
+    waitForTerminal: (timeoutMs) => Promise.race([terminal, delay(timeoutMs).then(() => "timeout")]),
     async close() {
       controller.abort();
       await reader.cancel().catch(() => undefined);
@@ -1086,7 +1186,7 @@ export async function openEventStream({ origin, client, recorder, cursor = undef
  * turn's submission, and only when that read is confirmed to describe a
  * different turn than the pre-submit snapshot.
  */
-async function awaitTerminal({ origin, client, recorder, stream, projectionBefore, cancel }) {
+async function awaitTerminal({ origin, client, recorder, stream, projectionBefore, cancel, experience }) {
   if (stream !== undefined) await stream.waitForTerminal(TURN_TIMEOUT_MS);
   let projection;
   for (let attempt = 0; attempt < POST_SUBMIT_STATE_POLLS; attempt += 1) {
@@ -1132,8 +1232,23 @@ async function awaitTerminal({ origin, client, recorder, stream, projectionBefor
       count: projection.committedCompanionMessages - projectionBefore.committedCompanionMessages,
     });
     // The committed reply, in the side-file transcript only. The trace keeps its content-free shape.
-    if (typeof projection.committedCompanionText === "string" && projection.committedCompanionText.length > 0)
+    if (typeof projection.committedCompanionText === "string" && projection.committedCompanionText.length > 0) {
       capturedTranscriptEntries.push("companion", projection.committedCompanionText);
+      // The content gates run HERE, at the moment the reply lands, so a defect is
+      // attributed to the turn that produced it instead of being reconstructed
+      // from a file afterwards. The verdicts travel in the content sidecar; the
+      // trace stays exactly as content-free as it was.
+      experience?.record({
+        turnIndex: experience.turnIndex,
+        playerText: experience.playerText,
+        companionText: projection.committedCompanionText,
+        evaluation: evaluateCompanionReply({
+          playerText: experience.playerText,
+          companionText: projection.committedCompanionText,
+          companionNames: experience.companionNames,
+        }),
+      });
+    }
   }
   // The durable committed-presentation delta is returned so a caller that needs
   // "was there a durable reply for THIS turn" can use the transcript authority
@@ -1175,6 +1290,9 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   await mkdir(personaCwd, { recursive: true });
   environment.personaCwd = personaCwd;
   environment.persona = await provisionLiveRunPersona(personaCwd, { identity: AUDIT_IDENTITY, root });
+  // The name the companion must anchor to. Without it the first-person gate reports
+  // `skipped` rather than inventing a pass - see core/companion-experience.mjs.
+  environment.companionNames = environment.persona?.identity?.name ? [environment.persona.identity.name] : [];
   environment.personaMounted = await assertLiveRunPersonaMounted(personaCwd, { identity: AUDIT_IDENTITY, root });
   if (!environment.personaMounted.ok)
     throw new Error(`live_run_persona_not_mounted:${environment.personaMounted.problems.join(",")}`);
@@ -1182,11 +1300,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   await writeFile(
     configPath,
     JSON.stringify(
-      createAuditDeploymentManifest(
-        root,
-        AUDIT_IDENTITY,
-        `chat_audit_bootstrap_${randomBytes(12).toString("hex")}`,
-      ),
+      createAuditDeploymentManifest(root, AUDIT_IDENTITY, `chat_audit_bootstrap_${randomBytes(12).toString("hex")}`),
     ),
     "utf8",
   );
@@ -1255,7 +1369,11 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
       }
       return;
     }
-    if (value?.schema === "gamebuddy-tavern-narrative-gate-marker/v1" && !preSendSettled && pendingPreSend === undefined) {
+    if (
+      value?.schema === "gamebuddy-tavern-narrative-gate-marker/v1" &&
+      !preSendSettled &&
+      pendingPreSend === undefined
+    ) {
       pendingPreSend = value;
       flushPreSend();
     }
@@ -1371,7 +1489,12 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
         }
         if (armed === undefined) environment.collectionReason ??= "cancel_window_missed";
         else {
-          cancelResult = await cancelTurn({ origin, client, projection: opened.projection, turnHandle: armed.turnHandle });
+          cancelResult = await cancelTurn({
+            origin,
+            client,
+            projection: opened.projection,
+            turnHandle: armed.turnHandle,
+          });
           if (!cancelResult.ok) {
             environment.boundaryReason ??= cancelResult.reasonCode;
             cancelResult = undefined;
@@ -1385,6 +1508,12 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
         stream,
         projectionBefore: opened.projection,
         cancel: cancelResult,
+        experience: {
+          turnIndex,
+          playerText: typeof message === "string" ? message : SUBMIT_PROMPT_TEXT,
+          companionNames: environment.companionNames,
+          record: (reply) => environment.experienceReplies.push(reply),
+        },
       });
       if (!outcome.terminal) {
         unsettled += 1;
@@ -1461,9 +1590,10 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
     // how often it was asked. Now: `CONVERSATION_TURNS` completed turns (default 2), then the cancel
     // probe, which stays because the cancel route settling durably is a product fact of its own.
     for (let index = 0; index < CONVERSATION_TURNS; index += 1) {
-      const message = CONVERSATION_PROMPTS.length === 0
-        ? SUBMIT_PROMPT_TEXT
-        : CONVERSATION_PROMPTS[Math.min(index, CONVERSATION_PROMPTS.length - 1)];
+      const message =
+        CONVERSATION_PROMPTS.length === 0
+          ? SUBMIT_PROMPT_TEXT
+          : CONVERSATION_PROMPTS[Math.min(index, CONVERSATION_PROMPTS.length - 1)];
       const turn = await runTurn({ cancel: false, message });
       const boundary = conversationTurnBoundaryReason(turn);
       if (boundary !== undefined) environment.boundaryReason ??= boundary;
@@ -1513,7 +1643,10 @@ function finishRun({ recorder, environment }) {
   if (environment.providerObservability !== "observed")
     recorder.record("provider", "harness", "observability_gap", { status: "unobserved", reason: "no_pre_send_marker" });
   if (environment.presentationMarkers === 0)
-    recorder.record("presentation", "harness", "observability_gap", { status: "unobserved", reason: "no_presentation_marker" });
+    recorder.record("presentation", "harness", "observability_gap", {
+      status: "unobserved",
+      reason: "no_presentation_marker",
+    });
   if (environment.unsettledProviderTurns > 0 && environment.providerObservability === "observed")
     // §3.2 rule 3 requires the conjunction to hold for THE TURN: it observed
     // `provider.request.sent` and never reached a terminal. The pre-send marker
@@ -1537,7 +1670,8 @@ async function productionArtifactIdentity() {
   try {
     const pointer = JSON.parse(await readFile(join(AUDIT_OUTPUT_ROOT, "current.json"), "utf8"));
     if (typeof pointer.generation !== "string" || !GENERATION.test(pointer.generation)) throw new Error("invalid");
-    if (typeof pointer.inventoryDigest !== "string" || !SHA256_HEX.test(pointer.inventoryDigest)) throw new Error("invalid");
+    if (typeof pointer.inventoryDigest !== "string" || !SHA256_HEX.test(pointer.inventoryDigest))
+      throw new Error("invalid");
     return Object.freeze({ generation: pointer.generation, inventoryDigest: pointer.inventoryDigest });
   } catch {
     throw new Error("production_artifact_identity_unavailable");
@@ -1572,7 +1706,9 @@ export async function main(argv = process.argv.slice(2)) {
     try {
       probeManifest = loadProbeManifest(await readFile(parsed.probeManifestPath, "utf8"));
     } catch (error) {
-      console.error(JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", reasonCode: safeReasonCode(error) }));
+      console.error(
+        JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", reasonCode: safeReasonCode(error) }),
+      );
       return 2;
     }
   }
@@ -1580,6 +1716,11 @@ export async function main(argv = process.argv.slice(2)) {
   const startedAtMs = Date.now();
   const startedAt = new Date(startedAtMs).toISOString();
   const runId = randomBytes(12).toString("hex");
+  // One directory per run, addressed by the run's own opaque id, so protocol (the
+  // trace), content (the companion-experience sidecar), rendering (shots/) and the
+  // captured runtime root all live in ONE place a reviewer can open. The shared
+  // capture core keeps it git-ignored, byte-budgeted and failure-tolerant.
+  const capture = await openLiveRunCapture({ kind: "chat-audit", dirName: runId });
   const recorder = createAuditRecorder({ startedAtMs });
   const environment = {
     artifact: undefined,
@@ -1593,6 +1734,16 @@ export async function main(argv = process.argv.slice(2)) {
     unsettledTurns: 0,
     unsettledProviderTurns: 0,
     started: false,
+    persona: undefined,
+    personaCwd: undefined,
+    personaMounted: undefined,
+    // The name(s) the companion must anchor to, and the per-turn content verdicts.
+    companionNames: [],
+    experienceReplies: [],
+    // Phases that could not run here, each with the reason, so "not observed" is
+    // never read as "observed clean".
+    skippedPhases: [],
+    captureDir: capture.dir,
   };
   // `launchDesktopCompositionGateChild` builds its ready waiter before it can
   // fail, so a launch that dies before returning leaves that waiter's rejection
@@ -1631,17 +1782,16 @@ export async function main(argv = process.argv.slice(2)) {
     if (environment.artifact === undefined) {
       // Without the immutable artifact identity no schema-valid trace is
       // expressible, so the harness refuses to write one.
-      console.log(
-        JSON.stringify(
-          Object.freeze({
-            schema: HARNESS_OUTCOME_SCHEMA,
-            state: "blocked",
-            runId,
-            startedAt,
-            reasonCode: environment.boundaryReason ?? "chat_audit_harness_blocked",
-          }),
-        ),
-      );
+      const outcome = Object.freeze({
+        schema: HARNESS_OUTCOME_SCHEMA,
+        state: "blocked",
+        runId,
+        startedAt,
+        reasonCode: environment.boundaryReason ?? "chat_audit_harness_blocked",
+      });
+      await capture.record("harness-outcome.json", outcome);
+      await capture.close();
+      console.log(JSON.stringify(outcome));
       return 2;
     }
     // A trace is evidence about a run that actually collected something. If the
@@ -1650,17 +1800,16 @@ export async function main(argv = process.argv.slice(2)) {
     // on it, so it would audit as a clean, passed run. Refuse to write it and
     // report the boundary failure instead.
     if (environment.started !== true) {
-      console.log(
-        JSON.stringify(
-          Object.freeze({
-            schema: HARNESS_OUTCOME_SCHEMA,
-            state: "blocked",
-            runId,
-            startedAt,
-            reasonCode: environment.boundaryReason ?? "chat_audit_harness_never_started",
-          }),
-        ),
-      );
+      const outcome = Object.freeze({
+        schema: HARNESS_OUTCOME_SCHEMA,
+        state: "blocked",
+        runId,
+        startedAt,
+        reasonCode: environment.boundaryReason ?? "chat_audit_harness_never_started",
+      });
+      await capture.record("harness-outcome.json", outcome);
+      await capture.close();
+      console.log(JSON.stringify(outcome));
       return 2;
     }
     finishRun({ recorder, environment });
@@ -1677,16 +1826,68 @@ export async function main(argv = process.argv.slice(2)) {
     const transcriptPath = transcriptSideFilePath(reportTarget);
     if (transcriptPath !== undefined) {
       const side = Object.freeze({
-      ...buildTranscriptSideFile({ runId, entries: capturedTranscriptEntries.entries() }),
-      persona: environment.persona?.identity ?? null,
-      personaCwd: environment.personaCwd ?? null,
-      personaMounted: environment.personaMounted?.ok === true,
-      // Where the agent conversation's input/output lives, when the caller asked to keep it.
-      runtimeRoot: KEEP_RUNTIME_ROOT ? root : null,
-    });
+        ...buildTranscriptSideFile({ runId, entries: capturedTranscriptEntries.entries() }),
+        persona: environment.persona?.identity ?? null,
+        personaCwd: environment.personaCwd ?? null,
+        personaMounted: environment.personaMounted?.ok === true,
+        // Where the agent conversation's input/output lives, when the caller asked to keep it.
+        runtimeRoot: KEEP_RUNTIME_ROOT ? root : null,
+      });
       await writeFile(transcriptPath, `${JSON.stringify(side, null, 2)}\n`, "utf8");
       console.log(JSON.stringify({ transcriptPath, entryCount: side.entryCount }));
     }
+    // The content half. Kept OUT of the trace (which stays content-free by
+    // construction) and written into the run directory that also holds the trace
+    // copy, the runtime-root evidence and the browser shots.
+    const experience = buildCompanionExperience({
+      runId,
+      artifact: environment.artifact,
+      persona:
+        environment.persona?.identity === undefined
+          ? null
+          : Object.freeze({
+              name: environment.persona.identity.name ?? null,
+              profileId: environment.persona.profile?.profileId ?? null,
+              canonicalHash: environment.persona.profile?.canonicalHash ?? null,
+              cardPath: environment.persona.cardPath ?? null,
+              personaMounted: environment.personaMounted?.ok === true,
+            }),
+      replies: environment.experienceReplies,
+      browser: environment.browserEvidence ?? {
+        state: "skipped",
+        reason: environment.skippedPhases.find((phase) => phase.phase === "browser")?.reason ?? "browser_phase_not_run",
+      },
+      skipped: environment.skippedPhases,
+      transcriptSideFilePath: transcriptPath ?? null,
+      captureDir: capture.dir,
+    });
+    await capture.record("companion-experience.json", experience);
+    await capture.record("chat-run-audit.json", trace);
+    await capture.record("capture-inputs.json", {
+      schema: "chat_run_audit/capture-inputs/v1",
+      runId,
+      surface: AUDIT_SURFACE,
+      reportTarget: reportTarget ?? null,
+      transcriptSideFilePath: transcriptPath ?? null,
+      runtimeRoot: root,
+      keepRuntimeRoot: KEEP_RUNTIME_ROOT,
+      companionNames: environment.companionNames,
+      skippedPhases: environment.skippedPhases,
+    });
+    // The runtime root's own evidence (profile, world book, Magic Context db+log,
+    // run manifest, session logs) travels into the same directory before the
+    // throwaway root is deleted.
+    await capture.captureRuntimeRoot(root);
+    const captureSummary = await capture.close();
+    console.log(
+      JSON.stringify({
+        runDirectory: captureSummary.dir,
+        contentVerdict: experience.summary,
+        browser: experience.browser?.state ?? "skipped",
+        captureFailures: captureSummary.failures.length,
+        captureSkipped: captureSummary.skipped.length,
+      }),
+    );
     if (reportTarget === undefined) console.log(serialized.trimEnd());
     else console.log(JSON.stringify(trace));
     return 0;
@@ -1702,7 +1903,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.exitCode = code;
     })
     .catch((error) => {
-      console.error(JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", reasonCode: safeReasonCode(error) }));
+      console.error(
+        JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", reasonCode: safeReasonCode(error) }),
+      );
       process.exitCode = 2;
     });
 }
