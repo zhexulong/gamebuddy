@@ -69,6 +69,17 @@ const preview = previewStCard(card, "gamebuddy.companion.default");
 const profile = validateIdentityProfile(candidateToIdentityProfile(preview, 1));
 const book = validateWorldBook(rawBook);
 const candidate = preview.profileCandidate;
+// The card's `scenario` is deliberately NOT profile text (the decoder keeps it
+// candidate-only: `st-card-import.ts`), so the profile half of the preset cannot
+// carry it. But the preset is ALSO what a fresh runtime root is seeded from, and
+// the companion's own scenario lives as a durable player-scenario record — the
+// same one `new-companion-service.ts` writes at card-import provisioning and
+// every reader (`resolveCompanionOwnScenario`, the character panel's
+// `scenario.read`) resolves by `companionScenarioId`. Carry the decoder's own
+// text on the preset so `default-companion-seed.ts` can install that record
+// instead of a fresh player meeting "还没有保存场景" for a card that has one.
+const scenario =
+  typeof preview.scenario === "string" && preview.scenario.trim() !== "" ? preview.scenario : undefined;
 const greetings = [];
 if (typeof candidate.firstGreeting === "string" && candidate.firstGreeting.trim() !== "")
   greetings.push({ label: "Default", text: candidate.firstGreeting });
@@ -105,6 +116,15 @@ export type DefaultCompanionPreset = Readonly<{
   schemaVersion: 1;
   profile: IdentityProfile;
   worldBook: WorldBook;
+  /**
+   * The reviewed card's own \`scenario\` field, verbatim as the decoder read it.
+   *
+   * It is not profile text — the decoder keeps a card's scenario candidate-only
+   * — but a fresh root's companion owns a durable scenario record, and this is
+   * the value \`default-companion-seed.ts\` installs through
+   * \`createScenarioManagementService\`. Absent when the card wrote none.
+   */
+  scenario?: string;
   greetings: readonly Readonly<{ label: string; text: string }>[];
 }>;
 
@@ -112,10 +132,10 @@ export const DEFAULT_COMPANION_PRESET: DefaultCompanionPreset = Object.freeze({
   schemaVersion: 1,
   profile: ${json(profile)} as IdentityProfile,
   worldBook: ${json(book)} as WorldBook,
-  greetings: ${json(greetings)} as readonly Readonly<{ label: string; text: string }>[],
+${scenario === undefined ? "" : `  scenario: ${json(scenario)},\n`}  greetings: ${json(greetings)} as readonly Readonly<{ label: string; text: string }>[],
 });
 `;
 await writeFile(join(repositoryRoot, "host", "src", "tavern", "default-companion-preset.ts"), source, "utf8");
 console.log(
-  `wrote default-companion-preset.ts from ${sourceDescription}: name=${profile.identity.name} profileId=${profile.profileId} greetings=${greetings.length} worldbookEntries=${book.entries.length} characterVoice=${profile.characterVoice === undefined ? "none" : "present"}`,
+  `wrote default-companion-preset.ts from ${sourceDescription}: name=${profile.identity.name} profileId=${profile.profileId} greetings=${greetings.length} worldbookEntries=${book.entries.length} characterVoice=${profile.characterVoice === undefined ? "none" : "present"} scenario=${scenario === undefined ? "none" : `present(${scenario.length})`}`,
 );
