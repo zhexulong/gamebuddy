@@ -1134,6 +1134,82 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
+    public void ReopenRejectsRejectedNodeWithoutAllowlistedRejectionCode()
+    {
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        authority.TryRejectAdmission(challenge, "policy_denied").IsSuccess.Should().BeTrue();
+        string valid = store.Value!;
+        Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+
+        store.Set(MutatePersistedNode(valid, node => node["rejectionCode"] = null));
+        Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+
+        store.Set(MutatePersistedNode(valid, node => node["rejectionCode"] = "policy_denied_extra"));
+        Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+    }
+
+    [Fact]
+    public void ReopenRejectsSkippedDependencyWithoutRejectedOrRecoveryRequiredAncestor()
+    {
+        BodyProgramActionCatalog catalog = DisjointClaimsCatalog();
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store, catalog: catalog);
+        authority.Submit(DependentProgram("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        authority.TryRejectAdmission(challenge, "policy_denied").IsSuccess.Should().BeTrue();
+        string valid = store.Value!;
+        Open(store, catalog: catalog).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+
+        JsonObject root = JsonNode.Parse(valid)!.AsObject();
+        root["programs"]!.AsArray()[0]!.AsObject()["program"]!.AsObject()["nodes"]!.AsArray()[1]!.AsObject()["dependsOn"] = new JsonArray();
+        store.Set(root.ToJsonString());
+
+        Open(store, catalog: catalog).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+    }
+
+    [Fact]
+    public void ReopenRejectsRejectedNodeWhoseDescendantStillCarriesExecutableContinuation()
+    {
+        BodyProgramActionCatalog catalog = DisjointClaimsCatalog();
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store, catalog: catalog);
+        authority.Submit(IndependentProgram("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        authority.TryRejectAdmission(challenge, "deadline_expired").IsSuccess.Should().BeTrue();
+
+        JsonObject root = JsonNode.Parse(store.Value!)!.AsObject();
+        JsonObject program = root["programs"]!.AsArray()[0]!.AsObject();
+        program["state"] = (int)BodyProgramState.Failed;
+        program["program"]!.AsObject()["nodes"]!.AsArray()[1]!.AsObject()["dependsOn"] = new JsonArray("first");
+        store.Set(root.ToJsonString());
+
+        Open(store, catalog: catalog).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+    }
+
+    [Fact]
+    public void ReopenKeepsRejectedAndSkippedDependencyTerminalWithoutRevivingExecutableContinuation()
+    {
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store);
+        authority.Submit(Program("program", twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        authority.TryRejectAdmission(challenge, "scope_mismatch").IsSuccess.Should().BeTrue();
+
+        OpenBodyProgramJournalAuthority reopened = Open(store);
+
+        reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+        BodyProgramJournalProgram program = reopened.Snapshot.Programs.Single();
+        program.State.Should().Be(BodyProgramState.Failed);
+        program.Nodes.Single(node => node.NodeId == "first").State.Should().Be(BodyProgramNodeState.Rejected);
+        program.Nodes.Single(node => node.NodeId == "first").RejectionCode.Should().Be("scope_mismatch");
+        program.Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.SkippedDependency);
+        reopened.TryCreateAdmissionChallenge("program").Code.Should().Be(BodyProgramControllerResultCode.NotFound);
+    }
+
+    [Fact]
      public void SuccessorGrantMustEchoMaterializedArgumentsBeforeConsumeDispatchAndComplete()
     {
         OpenBodyProgramJournalAuthority authority = Open();
@@ -1281,6 +1357,23 @@ public sealed class BodyProgramAuthorityTests
     private static ActionProgramCandidate NoOutputFactProgram(string programId) => new(programId, new[]
     {
         new ActionProgramCandidateNode("first", "till_soil", RuntimeMap("tile", 8), Array.Empty<string>(), Bindings()),
+    });
+
+    /// <summary>Claim-disjoint actions so a program can hold a rejected node beside a still-live independent node.</summary>
+    private static BodyProgramActionCatalog DisjointClaimsCatalog() => new(7, new[]
+    {
+        new BodyProgramActionDescriptor("move_to_tile", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, new[] { new BodyProgramFactDescriptor("arrival", BodyProgramArgumentKind.Integer) }, new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer) }),
+        new BodyProgramActionDescriptor("till_soil", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, Array.Empty<BodyProgramFactDescriptor>(), Array.Empty<BodyProgramResourceTemplateClaim>()),
+    });
+    private static ActionProgramCandidate IndependentProgram(string programId) => new(programId, new[]
+    {
+        new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings()),
+        new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), Array.Empty<string>(), Bindings()),
+    });
+    private static ActionProgramCandidate DependentProgram(string programId) => new(programId, new[]
+    {
+        new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings()),
+        new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), new[] { "first" }, Bindings()),
     });
     private static HostAdmissionGrant Grant(NodeAdmissionChallenge challenge) => new(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt, challenge.StopEpoch, challenge.CatalogRevision, challenge.PolicyIdentity, challenge.ActionId, challenge.CanonicalArguments, challenge.DerivedResourceClaims, challenge.DeadlineMs, "grant", "attachment_01", "host-policy_01");
     private static RuntimeFact Fact(HostAdmissionGrant grant) => new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "arrival", CanonicalMap("arrival", 7));

@@ -111,6 +111,7 @@ public static class BodyProgramJournalPersistence
         foreach (BodyProgramJournalNode node in program.Nodes)
             if (node is null || !nodes.TryAdd(node.NodeId, node)) return false;
         if (!program.Program.Nodes.All(descriptor => nodes.TryGetValue(descriptor.NodeId, out BodyProgramJournalNode? node) && ValidateNode(program, descriptor, node, journalPolicy))) return false;
+        if (HasRejectionInconsistency(program.Program.Nodes, nodes)) return false;
 
         HashSet<string> factKeys = new(StringComparer.Ordinal);
         foreach (RuntimeFact fact in program.Facts)
@@ -229,6 +230,48 @@ public static class BodyProgramJournalPersistence
           Dictionary<string, BodyProgramJournalNode> nodes = program.Nodes.ToDictionary(node => node.NodeId, StringComparer.Ordinal);
           return program.Program.Nodes.Any(descriptor => nodes[descriptor.NodeId].State == BodyProgramNodeState.Pending
               && descriptor.DependsOn.All(dependency => nodes[dependency].State == BodyProgramNodeState.Succeeded));
+      }
+
+      /// <summary>
+      /// Rejection consistency for the durable admission-outcome contract. A
+      /// `Rejected` node is a deterministic terminal veto: it can never succeed,
+      /// so no node depending on it can ever be attempted. Every such descendant
+      /// must therefore already be `SkippedDependency`, and a `SkippedDependency`
+      /// node must itself trace to a `Rejected` or `RecoveryRequired` ancestor. A
+      /// rejected node whose descendant is still pending, awaiting admission, or
+      /// dispatched would look runnable, so it fails closed on reopen instead of
+      /// letting a reader see a rejected node with runnable-looking descendants.
+      /// </summary>
+      private static bool HasRejectionInconsistency(IReadOnlyList<VerifiedBodyProgramNode> descriptors, Dictionary<string, BodyProgramJournalNode> nodes)
+      {
+          Dictionary<string, VerifiedBodyProgramNode> byId = descriptors.ToDictionary(descriptor => descriptor.NodeId, StringComparer.Ordinal);
+          Dictionary<string, bool> rejectedAncestor = new(StringComparer.Ordinal);
+          Dictionary<string, bool> rejectedOrRecoveryAncestor = new(StringComparer.Ordinal);
+          foreach (VerifiedBodyProgramNode descriptor in descriptors)
+          {
+              BodyProgramJournalNode node = nodes[descriptor.NodeId];
+              if (node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running
+                  && HasAncestorIn(descriptor.NodeId, byId, nodes, rejectedAncestor, state => state == BodyProgramNodeState.Rejected)) return true;
+              if (node.State == BodyProgramNodeState.SkippedDependency
+                  && !HasAncestorIn(descriptor.NodeId, byId, nodes, rejectedOrRecoveryAncestor, state => state is BodyProgramNodeState.Rejected or BodyProgramNodeState.RecoveryRequired)) return true;
+          }
+          return false;
+      }
+
+      private static bool HasAncestorIn(string nodeId, IReadOnlyDictionary<string, VerifiedBodyProgramNode> byId, Dictionary<string, BodyProgramJournalNode> nodes,
+          Dictionary<string, bool> cache, Func<BodyProgramNodeState, bool> predicate)
+      {
+          if (cache.TryGetValue(nodeId, out bool cached)) return cached;
+          // Provisional negative entry: a dependency cycle must not recurse forever
+          // while this node's own answer is still being computed.
+          cache[nodeId] = false;
+          bool found = false;
+          foreach (string dependency in byId[nodeId].DependsOn)
+              if (nodes.TryGetValue(dependency, out BodyProgramJournalNode? dependencyNode)
+                  && (predicate(dependencyNode.State) || (byId.ContainsKey(dependency) && HasAncestorIn(dependency, byId, nodes, cache, predicate))))
+              { found = true; break; }
+          cache[nodeId] = found;
+          return found;
       }
 
       /// <summary>
