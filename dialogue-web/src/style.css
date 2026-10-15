@@ -547,6 +547,13 @@
 
   /* ==========================================================================
    Main Content Layout & Reading Axis
+
+   The region is the width the viewport gives it. It used to be capped at the
+   transcript's reading measure, which is a property of a transcript and not of
+   the region: at 1440 px every other surface inherited the cap, so the Chats,
+   Characters and Settings lists were read through 320 px of empty canvas on
+   each side and laid their cards out in one column. The measure now lives on
+   the conversation surface, which is the one surface that reads as a column.
    ========================================================================== */
 
   .app-main-content,
@@ -557,7 +564,6 @@
     flex-direction: column;
     overflow: hidden;
     width: 100%;
-    max-width: var(--timeline-reading-measure);
     margin: 0 auto;
     padding: 0 16px;
   }
@@ -3061,6 +3067,16 @@
     scrollbar-color: var(--border-subtle) transparent;
   }
 
+  /* One line of prose is read as one column, so the conversation keeps the
+   reading measure the shell used to give every surface (`--timeline-reading-
+   measure`); its transcript and its composer band both sit on it. The measure
+   is the conversation's own, and a list or a form is free to take the region. */
+  .surface-conversation {
+    width: 100%;
+    max-width: var(--timeline-reading-measure);
+    margin: 0 auto;
+  }
+
   /* The conversation is a surface like the others, but its transcript scrolls
    above a composer that stays at the bottom, so it manages its own scrolling. */
   .surface-conversation .surface-content {
@@ -4300,6 +4316,16 @@
      need (a kept field can be a long single word). It belongs to the highest
      layer, with the other rules authored after `theme.polish` was named.
      ========================================================================== */
+
+  /* The character domain's own cards use the region they are given. Six stacked
+   cards are three screens of one column once the region is wider than a
+   transcript, and the grid is the surface's own: it packs the cards the surface
+   already had and falls back to one column the moment the room is gone. */
+  [data-characters-panel] {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
+    align-items: start;
+  }
 
   .card-import-report {
     display: grid;
