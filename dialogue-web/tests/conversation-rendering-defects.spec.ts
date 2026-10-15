@@ -35,7 +35,7 @@ type Message = Readonly<{
   role: "player" | "companion";
   text: string;
   opening?: boolean;
-  /** The swipe position the fixture serves. Kept in the older `◀ 1/3 ▶` spelling on purpose: it is the shape this journey's own root serves, and the client's read-back of the arrows stays exercised. */
+  /** The swipe position the fixture serves. Kept in the older `◀ 1/3 ▶` spelling on purpose: it is the shape this journey's own root serves, and the withdrawn switcher must render nothing for it. */
   swipes?: Readonly<{ index: number; total: number }>;
 }>;
 
@@ -76,9 +76,9 @@ function composedRoot(options: Readonly<{ transcript?: readonly Message[]; title
                 swipeInfo: {
                   currentIndex: message.swipes.index,
                   totalSwipes: message.swipes.total,
-                  // The Host's exact shape: `formatSwipeLabel`
-                  // (`host/src/tavern/message-tree.ts:97`) and the swipe route's
-                  // own inline template both wrap the position in the arrows.
+                  // The Host's own shape for a message it labels with a variant position.
+                  // The older `◀ 1/3 ▶` spelling is kept here on purpose: the withdrawn
+                  // switcher must render nothing for it at either spelling.
                   label: `\u25c0 ${message.swipes.index + 1}/${message.swipes.total} \u25b6`,
                   hasPrevious: message.swipes.index > 0,
                   hasNext: message.swipes.index < message.swipes.total - 1,
@@ -574,30 +574,20 @@ test("the opening switcher translates the Host's variant label into the UI langu
   expect(measured, "the Host's English literal never reaches a zh-CN surface").not.toContain("Default");
 });
 
-// --- the swipe switcher's own arrows ------------------------------------------
+// --- the withdrawn swipe switcher --------------------------------------------
 
 /**
- * The swipe switcher drew the Host's arrows inside its own.
+ * The swipe switcher is withdrawn.
  *
- * The Host used to publish the swipe position in the standard SillyTavern / Pi
- * spelling, `◀ 1/3 ▶` (`formatSwipeLabel`, `host/src/tavern/message-tree.ts`; the
- * swipe route wrote the same shape inline at
- * `host/src/tavern/chat-pipeline-service.ts`), and `MessageBubble` printed that
- * string verbatim between its own `ChevronLeft` / `ChevronRight` buttons - so a
- * message that has more than one swipe read as arrows inside arrows. The pinned
- * screenshot run (`shots-final10`) never showed it because no message in that
- * transcript carried more than one swipe. The Host now publishes the plain
- * position, and this journey keeps serving the older spelling so the client's own
- * read-back of that decoration is what the assertions still cover.
- *
- * The assertions, and the failure each one catches:
- *  - the indicator is the Host's position alone: catches the arrows of that older
- *    spelling printed beside the real pair;
- *  - the switcher still owns exactly the two named buttons: catches the fix that
- *    drops the buttons instead of the decoration, which would leave the position
- *    as text with nothing to press.
+ * The design freezes its UI and API until the prepared-response transaction and the branch
+ * binding exist (`design/archive/legacy-sources/24_TAVERN_COMPATIBILITY_IMPLEMENTATION_PLAN.md:341`),
+ * and the surface it used to occupy appended a new tail turn on every click. The Host still
+ * publishes the message's variant position - this fixture serves it in the older `◀ 1/3 ▶` spelling
+ * on purpose - so the assertion is that the position alone renders nothing, at any spelling: a
+ * switcher that comes back through the state field rather than through a route is the withdrawn
+ * affordance, and the arrows of the old spelling never reach the surface either.
  */
-test("the swipe switcher draws one pair of arrows, not the Host's arrows inside its own", async ({ page }) => {
+test("a message carrying swipe variants renders no switcher", async ({ page }) => {
   await mountShell(page, {
     root: composedRoot({
       transcript: [
@@ -607,17 +597,14 @@ test("the swipe switcher draws one pair of arrows, not the Host's arrows inside 
     }),
   });
 
-  const controls = page.locator(".swipe-controls");
-  await expect(controls).toBeVisible();
-  const measured = await controls.evaluate((node) => ({
-    indicator: (node.querySelector(".swipe-indicator")?.textContent ?? "").trim(),
-    text: (node.textContent ?? "").trim(),
-    buttons: [...node.querySelectorAll("button")].map((button) => (button.getAttribute("aria-label") ?? "").trim()),
-  }));
-  console.log(`[swipe-switcher] measured: ${JSON.stringify(measured)}`);
-
-  expect(measured.indicator, "the indicator is the Host's position, undecorated").toBe("2/3");
-  expect(measured.text, "the left arrow belongs to the button, not to the label").not.toContain("◀");
-  expect(measured.text, "the right arrow belongs to the button, not to the label").not.toContain("▶");
-  expect(measured.buttons, "the switcher is still the two real buttons").toEqual(["上一个变体", "下一个变体"]);
+  await expect(page.locator(".message-list > li"), "the transcript is still the two rows it served").toHaveCount(2);
+  await expect(page.locator(".message-list")).toContainText("雨下得真透");
+  expect(await page.locator(".swipe-controls").count(), "no variant switcher is offered").toBe(0);
+  expect(await page.locator(".swipe-indicator").count(), "and no position is printed").toBe(0);
+  expect(await page.getByRole("button", { name: "上一个变体" }).count()).toBe(0);
+  expect(await page.getByRole("button", { name: "下一个变体" }).count()).toBe(0);
+  expect(await page.locator(".regenerate-btn").count(), "and no regenerate control exists").toBe(0);
+  const painted = await page.locator("body").innerText();
+  expect(painted, "the Host's arrow spelling never reaches the surface").not.toContain("\u25c0");
+  expect(painted).not.toContain("\u25b6");
 });

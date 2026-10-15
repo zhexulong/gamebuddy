@@ -32,7 +32,10 @@ const MANAGEMENT_PROFILE_ID = "gamebuddy.tavern-management.chat-list-title" as c
 // --- Frozen v1 DTO shapes (structural mirrors of host/src/tavern/browser-contract). ---
 
 /**
- * Additive v1 fact: the swipe/regenerate set a message belongs to.
+ * Additive v1 fact: the variant set a message belongs to. The Host still publishes it for a message
+ * it drew from a set of variants; the surface offers no switcher for it (the regenerate/swipe
+ * capability is un-registered until its prepared-response transaction exists), so this mirror only
+ * keeps a read that carries the fact legal.
  * Mirrors `BrowserSwipeInfoV1Schema`.
  */
 type BrowserSwipeInfoV1 = Readonly<{

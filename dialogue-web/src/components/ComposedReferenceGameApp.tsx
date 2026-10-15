@@ -94,12 +94,11 @@ export function ComposedReferenceGameApp() {
     setInputText(text);
   };
   const [preview, setPreview] = useState<Readonly<{ turnHandle: string; text: string }> | null>(null);
-  // The chat mutation currently in flight. The submit button already has its own
-  // gate; swipe and regenerate had none, so a double click issued two admitted
-  // commands (regenerate mints a fresh idempotency key per click). The ref is the
-  // synchronous single-flight guard, the state is the projection the surface shows.
+  // The chat mutation currently in flight. The opening choice had no gate, so a
+  // double click issued two admitted commands. The ref is the synchronous
+  // single-flight guard, the state is the projection the surface shows.
   const [chatMutation, setChatMutation] = useState<Readonly<{
-    kind: "swipe" | "regenerate" | "opening";
+    kind: "opening";
     handle: string;
   }> | null>(null);
   const chatMutationRef = useRef(false);
@@ -570,9 +569,8 @@ export function ComposedReferenceGameApp() {
    * session with nothing pending, which is what keeps every idle session from
    * polling, and that fallback poll is the only thing that settles a turn when
    * no event stream is delivering it. Publishing in this one place is what keeps
-   * the next turn-starting mutation (send and regenerate are the two) from
-   * starting a poll that is dead on its first tick; a mutation that starts no
-   * turn (swipe) publishes nothing and polls nothing.
+   * the turn-starting mutation (`submit` is the only one) from starting a poll
+   * that is dead on its first tick.
    *
    * Returns null - having committed the rejected projection, or having found no
    * available `chat.submit` - and the caller must then send nothing.
@@ -755,42 +753,8 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
-   * Swipe selection and regenerate are Chat-owned mutations the reference
-   * surface offered and the composed shell did not: with the reference entry
-   * gone they live here. Both take their own idempotency key and never append a
-   * response locally; the authoritative reread owns what the transcript shows,
-   * and a failed attempt resolves through that same reread rather than a local
-   * guess.
-   */
-  const handleSwipe = async (messageHandle: string, direction: "prev" | "next"): Promise<void> => {
-    const current = viewRef.current;
-    if (current.kind !== "ready") return;
-    // Single-flight: a second click while the first is in flight is dropped, not
-    // sent. Only this attempt's own resolution clears the latch.
-    if (chatMutationRef.current) return;
-    const selection = current.session.snapshot.selection;
-    if (selection === null) return;
-    chatMutationRef.current = true;
-    setChatMutation(Object.freeze({ kind: "swipe" as const, handle: messageHandle }));
-    try {
-      await tavernApiRef.current.selectSwipe(
-        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, direction },
-        { csrfToken: current.session.snapshot.csrfToken },
-      );
-      await rereadChat();
-    } catch (error) {
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
-    } finally {
-      chatMutationRef.current = false;
-      setChatMutation(null);
-    }
-  };
-
-  /**
-   * The new-chat opening choice. It has the same shape as swipe - single-flight, no local variant
-   * held - but it records the choice through the Host's `chat.opening` route and then rereads the
+   * The new-chat opening choice. It is single-flight, holds no local variant, and records
+   * the choice through the Host's `chat.opening` route and then rereads the
    * authoritative snapshot, because the committed variant and the sealed-opening fact are the
    * Host's, never React state's.
    */
@@ -808,41 +772,6 @@ export function ComposedReferenceGameApp() {
         current.session.snapshot.csrfToken,
       );
       await rereadChat();
-    } catch (error) {
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
-    } finally {
-      chatMutationRef.current = false;
-      setChatMutation(null);
-    }
-  };
-
-  const handleRegenerate = async (messageHandle: string): Promise<void> => {
-    const current = viewRef.current;
-    if (current.kind !== "ready") return;
-    // Single-flight, exactly as swipe: without it a double click mints two fresh
-    // idempotency keys and the Host admits two regenerations.
-    if (chatMutationRef.current) return;
-    const selection = current.session.snapshot.selection;
-    if (selection === null) return;
-    // Regeneration starts a real turn, so it begins the way a send does: only
-    // while the profile offers an available `chat.submit` (one turn at a time)
-    // and under a published pending record. That record is what makes the
-    // fallback poll live; without it the poll this handler starts dies on its
-    // first tick (nothing is pending), and on a dropped event stream the
-    // transcript never leaves the pre-regenerate variant.
-    const idempotencyKey = newIdempotencyKey();
-    if (beginTurnMutation(idempotencyKey, current) === null) return;
-    chatMutationRef.current = true;
-    setChatMutation(Object.freeze({ kind: "regenerate" as const, handle: messageHandle }));
-    try {
-      await tavernApiRef.current.regenerate(
-        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle },
-        { csrfToken: current.session.snapshot.csrfToken, idempotencyKey },
-      );
-      await rereadChat();
-      startPolling();
     } catch (error) {
       await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
@@ -1160,8 +1089,6 @@ export function ComposedReferenceGameApp() {
                 pending={chatMutation}
                 pendingPlayerMessage={pendingOptimisticMessage}
                 notice={pollFailure ? labels().chatFailed : terminalTurnNotice}
-                onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
-                onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
                 onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
                 value={inputText}
                 onChange={writeInput}

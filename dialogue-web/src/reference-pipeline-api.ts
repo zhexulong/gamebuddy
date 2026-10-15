@@ -46,6 +46,15 @@ export const REFERENCE_PIPELINE_OPERATION_IDS = ["chat.submit", "chat.cancel"] a
 
 // --- Frozen v1 DTO shapes (structural mirrors of host/src/tavern/browser-contract). ---
 
+/**
+ * Additive v1 fact: the variant set a message belongs to, as the Host publishes it. The surface
+ * renders no switcher from it: the regenerate/swipe capability is un-registered until its
+ * prepared-response transaction exists, so this mirror only keeps a read that carries the fact
+ * legal.
+ *
+ * The `label` is the Host's own spelling for the position; a message the Host labelled in an older
+ * `◀ 1/3 ▶` spelling is still validated exactly as published.
+ */
 type BrowserSwipeInfoV1 = Readonly<{
   currentIndex: number;
   totalSwipes: number;

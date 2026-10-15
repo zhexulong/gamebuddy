@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ChevronLeft, ChevronRight, LoaderCircle, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -15,7 +15,7 @@ import { MarkdownMessage } from "./MarkdownMessage";
 const CARET_MARKUP = '<span class="message-caret" aria-hidden="true"></span>';
 
 /**
- * The switcher's own words. The Host publishes the committed variant's position in
+ * The opening switcher's own words. The Host publishes the committed variant's position in
  * the greeting set and, whenever the set carried one, the variant's own label -
  * the greeting set's entry name, `Default` or `Alternate N` (the card's own 1-based
  * order, `new-companion-service.ts` `buildGreetingVariants`). That label is the
@@ -49,18 +49,6 @@ function openingVariantLabel(
 }
 
 /**
- * The swipe switcher's own words. The Host publishes the position as the plain `1/3`
- * (`formatSwipeLabel`, `host/src/tavern/message-tree.ts:94-101`, used by both the swipe route and
- * the state projection). The pair of arrows around it belongs to this control, which draws real
- * ones - so a label that still arrives in the older `◀ 1/3 ▶` spelling (a browser journey's own
- * fixture) has only that decoration read back out, and the position itself is shown exactly as
- * the Host published it.
- */
-function swipePosition(label: string): string {
-  return label.replace(/^[\s◀]+/u, "").replace(/[\s▶]+$/u, "");
-}
-
-/**
  * Memoised so a streaming delta - which re-renders the conversation with a new
  * preview - cannot re-render a settled message and re-parse its Markdown. The
  * transcript's message objects are immutable and keep their identity across a
@@ -71,8 +59,6 @@ export const MessageBubble = memo(function MessageBubble({
   message,
   companionName,
   playerLabel,
-  onSwipe,
-  onRegenerate,
   onOpeningVariant,
   pending = null,
   streaming = false,
@@ -81,8 +67,6 @@ export const MessageBubble = memo(function MessageBubble({
   message: BrowserMessageV1;
   companionName: string;
   playerLabel: string;
-  onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
-  onRegenerate?: (messageHandle: string) => void;
   /**
    * The new-chat opening choice: it is offered only where the Host published an unlocked
    * `openingVariant`, and it calls the Host's own route rather than holding the choice here.
@@ -94,7 +78,7 @@ export const MessageBubble = memo(function MessageBubble({
    * command with its single-flight ref, and the control saying so is what keeps a
    * double click from looking like it did nothing.
    */
-  pending?: "swipe" | "regenerate" | "opening" | null;
+  pending?: "opening" | null;
   /**
    * True only for the live streaming preview: the bubble then carries the
    * reading caret. The caret is inserted into the bubble's last block on every
@@ -106,7 +90,6 @@ export const MessageBubble = memo(function MessageBubble({
     swipeNavigation: string;
     swipePrevious: string;
     swipeNext: string;
-    regenerateVariant: string;
     openingVariantDefault: string;
     openingVariantAlternate: string;
   }>;
@@ -114,7 +97,6 @@ export const MessageBubble = memo(function MessageBubble({
   const isPlayer = message.role === "player";
   const authorName = isPlayer ? playerLabel : companionName;
   const initial = (Array.from(authorName)[0] ?? "").toUpperCase();
-  const swipeInfo = message.swipeInfo;
   const openingVariant = message.openingVariant;
   const busy = pending !== null;
   // The Host published this only while the opening is still unlocked and the greeting set still
@@ -124,7 +106,7 @@ export const MessageBubble = memo(function MessageBubble({
       ? openingVariant
       : undefined;
   // The Host's per-message language, painted on the text only: the author line
-  // and the swipe/regenerate controls are player-facing UI words and must keep
+  // and the opening switcher are player-facing UI words and must keep
   // the surface's own language. `und` paints nothing (browserMessageLanguageTag),
   // so the document's language still styles a CJK beat through `:lang(zh)`.
   const languageTag = browserMessageLanguageTag(message.locale);
@@ -178,31 +160,6 @@ export const MessageBubble = memo(function MessageBubble({
                 </button>
               </div>
             )}
-            {swipeInfo && swipeInfo.totalSwipes > 1 && (
-              <div className="swipe-controls" aria-label={labels.swipeNavigation}>
-                <button
-                  type="button"
-                  className="swipe-btn"
-                  disabled={busy || !swipeInfo.hasPrevious}
-                  onClick={() => onSwipe?.(message.handle, "prev")}
-                  aria-label={labels.swipePrevious}
-                  title={labels.swipePrevious}
-                >
-                  <ChevronLeft size={14} aria-hidden="true" />
-                </button>
-                <span className="swipe-indicator">{swipePosition(swipeInfo.label)}</span>
-                <button
-                  type="button"
-                  className="swipe-btn"
-                  disabled={busy || !swipeInfo.hasNext}
-                  onClick={() => onSwipe?.(message.handle, "next")}
-                  aria-label={labels.swipeNext}
-                  title={labels.swipeNext}
-                >
-                  <ChevronRight size={14} aria-hidden="true" />
-                </button>
-              </div>
-            )}
           </div>
         )}
         {/* Both sides author text, and a `*beat*` is the same format on both:
@@ -214,26 +171,6 @@ export const MessageBubble = memo(function MessageBubble({
           trailingHtml={CARET_MARKUP}
           lang={languageTag}
         />
-        {!isPlayer && onRegenerate && (
-          <div className="message-actions">
-            <button
-              type="button"
-              className="action-btn regenerate-btn"
-              disabled={busy}
-              {...(pending === "regenerate" ? { "data-busy": "true" as const } : {})}
-              onClick={() => onRegenerate(message.handle)}
-              title={labels.regenerateVariant}
-              aria-label={labels.regenerateVariant}
-            >
-              {pending === "regenerate" ? (
-                <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-              ) : (
-                <RefreshCw size={14} aria-hidden="true" />
-              )}
-              {labels.regenerateVariant}
-            </button>
-          </div>
-        )}
       </div>
     </li>
   );

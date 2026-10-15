@@ -152,9 +152,9 @@
      amount, and a press reads as the product's gesture rather than a
      component's. */
   --press-shift: 1px;
-  /* The monospaced stack every code-shaped value reads: the swipe indicator, a
-     code block, an id. Written once here so a `code` element and the chrome
-     around it never drift apart. */
+  /* The monospaced stack every code-shaped value reads: the opening switcher's
+   position, a code block, an id. Written once here so a `code` element and the
+   chrome around it never drift apart. */
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   /* The 4/8 px spacing system the plan and design/26 §6.4 mandate. */
   --space-1: 4px;
@@ -709,11 +709,9 @@
     gap: 8px;
   }
 
-  /* The message's own control group: the swipe pair and regenerate are the same
-   kind of target - one 44 px floor (`--touch-target-min`), one card tone, one
-   hairline - so the two read as one group rather than a control sitting beside
-   a caption. Regenerate was a transparent 11 px text row here, the smallest
-   target and the smallest type anywhere in the product. */
+  /* The message's own control group - the opening switcher's variant pair - is one
+   44 px target (`--touch-target-min`), one card tone and one hairline, so it reads
+   as one control rather than a pair sitting beside a caption. */
   .swipe-controls {
     display: inline-flex;
     align-items: center;
@@ -760,44 +758,6 @@
     color: var(--text-secondary);
     user-select: none;
     padding: 0 2px;
-  }
-
-  .message-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 4px;
-  }
-
-  .regenerate-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    min-height: var(--touch-target-min);
-    padding: 0 var(--space-3);
-    font-family: inherit;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-secondary);
-    background-color: var(--surface-raised);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition:
-      background-color var(--motion-duration-fast) var(--motion-ease-out),
-      border-color var(--motion-duration-fast) var(--motion-ease-out),
-      color var(--motion-duration-fast) var(--motion-ease-out);
-  }
-
-  .regenerate-btn:hover:not(:disabled) {
-    color: var(--text-primary);
-    background-color: var(--surface-hover);
-    border-color: var(--border-strong);
-  }
-
-  .regenerate-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
 
   /* ==========================================================================
@@ -3286,7 +3246,7 @@
    Busy feedback for a message's own mutation
 
    The row already carries `aria-busy` and `data-pending`; without a visible
-   treatment a swipe or a regenerate reads as a dead click. Three carriers, none
+   treatment the opening choice reads as a dead click. Three carriers, none
    of them colour alone: the bubble breathes, a shimmer sweeps it, and the
    control that was clicked swaps its glyph for a spinner. The entrance/transition
    is the 150 ms token; the loop is long enough to read as breathing rather than

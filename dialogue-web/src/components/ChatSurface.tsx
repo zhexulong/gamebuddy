@@ -12,8 +12,8 @@ import { Timeline } from "./Timeline";
  * It is the region's reading flow and writing flow together, so it takes the
  * transcript projection plus the authoring facts its one composer renders -
  * never the shell's view object. The shell keeps the session wiring (the send,
- * stop, swipe, regenerate, opening and draft commands and the state they move);
- * this module names only what the region shows and what it calls to change it.
+ * stop, opening and draft commands and the state they move); this module names
+ * only what the region shows and what it calls to change it.
  */
 export function ChatSurface({
   transcript,
@@ -24,8 +24,6 @@ export function ChatSurface({
   pending,
   pendingPlayerMessage,
   notice,
-  onSwipe,
-  onRegenerate,
   onOpeningVariant,
   value,
   onChange,
@@ -44,7 +42,7 @@ export function ChatSurface({
   chatTitle: string | null;
   labels: Messages;
   /** The chat mutation in flight and the message it belongs to, if any. */
-  pending: Readonly<{ kind: "swipe" | "regenerate" | "opening"; handle: string }> | null;
+  pending: Readonly<{ kind: "opening"; handle: string }> | null;
   /**
    * The optimistic player message: the text just sent, shown until the authoritative one lands.
    * It is rendered here rather than inside the transcript because the transcript list and its
@@ -55,8 +53,6 @@ export function ChatSurface({
   pendingPlayerMessage?: Readonly<{ idempotencyKey: string; text: string }> | null;
   /** The one turn-failure line the surface reports, or null for none. */
   notice: string | null;
-  onSwipe: (messageHandle: string, direction: "prev" | "next") => void;
-  onRegenerate: (messageHandle: string) => void;
   onOpeningVariant: (messageHandle: string, direction: "prev" | "next") => void;
   value: string;
   onChange: (text: string) => void;
@@ -82,8 +78,6 @@ export function ChatSurface({
         chatTitle={chatTitle}
         labels={labels}
         pending={pending}
-        onSwipe={onSwipe}
-        onRegenerate={onRegenerate}
         onOpeningVariant={onOpeningVariant}
       />
       {/* The optimistic player message. It is the newest line in the reading flow, but its

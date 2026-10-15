@@ -3448,29 +3448,32 @@ test("the 400px strip folds its trailing peers behind one More and gives the com
 });
 
 /**
- * Regeneration's own polling fallback, with the event stream genuinely absent.
+ * `chat.submit`'s own polling fallback, with the event stream genuinely absent.
  *
- * `regenerate` starts a real turn, so it is the same kind of mutation as
- * `submit` and must take the same path: publish the pending submission record
+ * A submission starts a real turn, so it must publish the pending submission record
  * before the wire call. `startPolling`'s first tick returns for a session with
  * nothing pending - the guard that keeps every idle session from polling - so
  * without that record the fallback poll is dead on its first tick. With a
- * healthy event stream nobody notices; with no stream at all the transcript
- * never leaves the pre-regenerate variant and the turn never settles.
+ * healthy event stream nobody notices; with no stream at all the reply never
+ * reaches the transcript and the turn never settles.
  *
  * The route-mocked setup is the spec's own, with one fact made explicit:
  * `eventStream: null` opens no stream, so the authoritative rereads the poll
  * makes are the only reader of the turn's terminal state. The `/state` route
- * keeps returning the turn-running projection until the poll's second read, so
- * the settled variant exists only after polling has advanced.
+ * keeps returning the turn-running projection until the read the journey names,
+ * so the reply exists only after that read has advanced.
  */
-const regenerationPlayerHandle = `${"P".repeat(42)}A`;
-const regenerationCompanionHandle = `${"D".repeat(42)}A`;
-const regenerationTurnHandle = `${"T".repeat(42)}A`;
-const regenerationOldVariant = "The game projection is read-only.";
-const regenerationNewVariant = "The projection is a reading, not the valley itself.";
+const pollingPlayerHandle = `${"P".repeat(42)}A`;
+const pollingSentHandle = `${"S".repeat(42)}A`;
+const pollingCompanionHandle = `${"D".repeat(42)}A`;
+const pollingReplyHandle = `${"R".repeat(42)}A`;
+const pollingTurnHandle = `${"T".repeat(42)}A`;
+const pollingPlayerLine = "Where are we?";
+const pollingSentLine = "And the valley?";
+const pollingOldReply = "The game projection is read-only.";
+const pollingNewReply = "The projection is a reading, not the valley itself.";
 
-function regenerationProjections(): {
+function turnProjections(): {
   idleRoot: typeof root;
   runningRoot: typeof root;
   settledRoot: typeof root;
@@ -3484,8 +3487,8 @@ function regenerationProjections(): {
     chat: {
       ...chat.chat,
       transcript: [
-        { handle: regenerationPlayerHandle, role: "player", text: "Where are we?", locale: "und", order: 0, revision: 1 },
-        { handle: regenerationCompanionHandle, role: "companion", text: regenerationOldVariant, locale: "und", order: 1, revision: 1 },
+        { handle: pollingPlayerHandle, role: "player", text: pollingPlayerLine, locale: "und", order: 0, revision: 1 },
+        { handle: pollingCompanionHandle, role: "companion", text: pollingOldReply, locale: "und", order: 1, revision: 1 },
       ],
       turn: null,
     },
@@ -3501,12 +3504,12 @@ function regenerationProjections(): {
         operations: [{ ...idleOperations[0], availability: "busy" }],
         chat: {
           ...idleChat.chat,
-          turn: { handle: regenerationTurnHandle, state: "running", projectionRevision: 1, canCancel: false },
+          turn: { handle: pollingTurnHandle, state: "running", projectionRevision: 1, canCancel: false },
         },
       },
     },
-    // The terminal projection: the same companion message now carries the
-    // regenerated variant, and the turn has settled.
+    // The terminal projection: the player's own line and the companion's answer
+    // have both landed, and the turn has settled.
     settledRoot: {
       ...root,
       chat: {
@@ -3515,20 +3518,22 @@ function regenerationProjections(): {
           ...idleChat.chat,
           transcript: [
             idleChat.chat.transcript[0],
-            { ...idleChat.chat.transcript[1], text: regenerationNewVariant },
+            idleChat.chat.transcript[1],
+            { handle: pollingSentHandle, role: "player", text: pollingSentLine, locale: "und", order: 2, revision: 1 },
+            { handle: pollingReplyHandle, role: "companion", text: pollingNewReply, locale: "und", order: 3, revision: 1 },
           ],
-          turn: { handle: regenerationTurnHandle, state: "completed", projectionRevision: 2, canCancel: false },
+          turn: { handle: pollingTurnHandle, state: "completed", projectionRevision: 2, canCancel: false },
         },
       },
     },
   };
 }
 
-test("regeneration settles through the polling fallback with no event stream", async ({ page }) => {
-  const { idleRoot, runningRoot, settledRoot } = regenerationProjections();
+test("a submitted turn settles through the polling fallback with no event stream", async ({ page }) => {
+  const { idleRoot, runningRoot, settledRoot } = turnProjections();
   let stateReads = 0;
   let statusReads = 0;
-  let regenerateRequests = 0;
+  let sendRequests = 0;
   const statusKeys: string[] = [];
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
@@ -3537,15 +3542,17 @@ test("regeneration settles through the polling fallback with no event stream", a
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
   );
-  await page.route("**/api/tavern/v1/messages/regenerate", async (route) => {
-    regenerateRequests += 1;
+  await page.route("**/api/tavern/v1/messages", async (route) => {
+    sendRequests += 1;
     expect(route.request().method()).toBe("POST");
     expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
     expect(route.request().headers()["idempotency-key"]).toMatch(/^[A-Za-z0-9_-]{22}$/);
     expect(route.request().postDataJSON()).toEqual({
       apiVersion: 1,
       selectionGeneration: 1,
-      messageHandle: regenerationCompanionHandle,
+      text: pollingSentLine,
+      locale: "en",
+      expectedDraftRevision: 4,
     });
     // A real acceptance takes a moment; the busy presentation must be visible
     // across it, exactly as it is for a real round trip.
@@ -3556,15 +3563,22 @@ test("regeneration settles through the polling fallback with no event stream", a
       body: JSON.stringify({
         apiVersion: 1,
         disposition: "accepted",
-        message: runningRoot.chat.chat.transcript[1],
+        message: {
+          handle: pollingPlayerHandle,
+          role: "player",
+          text: pollingSentLine,
+          locale: "und",
+          order: 2,
+          revision: 1,
+        },
         turn: runningRoot.chat.chat.turn,
       }),
     });
   });
   await page.route("**/api/composed-reference-game/v1/state", (route) => {
     stateReads += 1;
-    // The reread that immediately follows acceptance still sees the running
-    // turn and the old variant; only the poll's later read sees the settled one.
+    // The poll's first hop still sees the running turn and no reply; only its
+    // later read sees the settled projection.
     return route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -3579,7 +3593,10 @@ test("regeneration settles through the polling fallback with no event stream", a
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ apiVersion: 1, disposition: "terminal" }),
+      // The Host reports a disposition, not an outcome: while the projection it
+      // serves still marks the turn running the submission stays non-terminal, so
+      // only the poll's hop that reads the settled projection can end it.
+      body: JSON.stringify({ apiVersion: 1, disposition: stateReads >= 2 ? "terminal" : "pending" }),
     });
   });
   await page.route("**/api/tavern/v1/draft", (route) =>
@@ -3589,26 +3606,31 @@ test("regeneration settles through the polling fallback with no event stream", a
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   const chatSurface = page.getByTestId("chat-surface");
   await expect(chatSurface).toBeVisible();
-  const bubble = page.locator(`li[data-handle='${regenerationCompanionHandle}']`);
-  await expect(bubble).toContainText(regenerationOldVariant);
+  const bubble = page.locator(`li[data-handle='${pollingCompanionHandle}']`);
+  await expect(bubble).toContainText(pollingOldReply);
   const composer = chatSurface.locator(".composer-textarea");
   await expect(composer).toBeEnabled();
 
-  await bubble.getByRole("button", { name: "Regenerate" }).click();
-  // The mutation's own busy presentation lands on the exact bubble...
-  await expect(bubble).toHaveAttribute("data-pending", "regenerate");
-  await expect(bubble).not.toHaveAttribute("data-pending", "regenerate");
-  // ...and the regenerated variant reaches the transcript on the polling
-  // fallback alone: no stream is open, and the projection only carries it once
-  // the poll has advanced past the accepted, still-running read.
-  await expect(bubble).toContainText(regenerationNewVariant);
+  await composer.fill(pollingSentLine);
+  await chatSurface.getByRole("button", { name: "Send", exact: true }).click();
+  // The mutation's own busy presentation lands on the sent line at once...
+  const optimistic = chatSurface.getByTestId("optimistic-player-message");
+  await expect(optimistic).toBeVisible();
+  await expect(optimistic).toHaveAttribute("data-pending", "true");
+  await expect(optimistic).toContainText(pollingSentLine);
+  // ...and the reply reaches the transcript on the polling fallback alone: no
+  // stream is open, and the projection only carries it once the poll has
+  // advanced past the accepted, still-running read.
+  const reply = page.locator(`li[data-handle='${pollingReplyHandle}']`);
+  await expect(reply).toContainText(pollingNewReply);
+  await expect(optimistic).toHaveCount(0);
   // The turn-level busy presentation resolves with the same poll: `chat.submit`
   // comes back available and the composer re-enables.
   await expect(composer).toBeEnabled();
-  expect(regenerateRequests).toBe(1);
+  expect(sendRequests).toBe(1);
   expect(stateReads).toBeGreaterThanOrEqual(2);
   expect(statusReads).toBeGreaterThanOrEqual(1);
-  // Every status read is correlated by the one key the regenerate was sent
+  // Every status read is correlated by the one key the submission was sent
   // under - the pending record, not a second identity.
   expect(new Set(statusKeys).size).toBe(1);
 });
@@ -3622,7 +3644,7 @@ test("regeneration settles through the polling fallback with no event stream", a
  * plus one interval and asserts that neither route was touched at all.
  */
 test("an idle conversation with nothing pending never starts polling", async ({ page }) => {
-  const { idleRoot } = regenerationProjections();
+  const { idleRoot } = turnProjections();
   let stateReads = 0;
   let statusReads = 0;
 
@@ -3657,7 +3679,7 @@ test("an idle conversation with nothing pending never starts polling", async ({ 
  *
  * The measured defect: one turn opened two overlapping channels - the SSE stream
  * and the 250 ms/1000 ms poll - and every poll hop read `/draft` as well, so a
- * single regeneration cost a full authoritative `/state` read, a submission-status
+ * single submitted turn cost a full authoritative `/state` read, a submission-status
  * read and a draft read per second for as long as the turn ran, on top of the
  * frames the stream was already delivering. The failure each direction catches:
  *
@@ -3669,16 +3691,16 @@ test("an idle conversation with nothing pending never starts polling", async ({ 
  *    fallback exists for.
  *
  * A submission-status read is the poll's exclusive signature: nothing else in
- * this shell performs one (`handleEvent` rereads `/state` and the draft; the chat
- * mutations reread the same pair). So `statusReads` is what tells a poll hop
- * apart from the stream's own work.
+ * this shell performs one (`handleEvent` rereads `/state` and the draft; a
+ * submission's own wire call reads nothing). So `statusReads` is what tells a poll
+ * hop apart from the stream's own work.
  */
 test("a healthy event stream suspends the fallback poll, and a stream that fails resumes it", async ({ page }) => {
   test.setTimeout(90_000);
   const streamEpoch = `${"E".repeat(42)}A`;
   const cursor = `${"F".repeat(42)}A`;
   const frameId = `${"H".repeat(42)}A`;
-  const { idleRoot, runningRoot, settledRoot } = regenerationProjections();
+  const { idleRoot, runningRoot, settledRoot } = turnProjections();
   const streamed = (value: typeof idleRoot) => ({
     ...value,
     chat: { ...value.chat, eventStream: { epoch: streamEpoch, cursor } },
@@ -3686,7 +3708,7 @@ test("a healthy event stream suspends the fallback poll, and a stream that fails
   let stateReads = 0;
   let draftReads = 0;
   let statusReads = 0;
-  let regenerateRequests = 0;
+  let sendRequests = 0;
   // The authoritative read that first answers with the settled turn. Direction 1
   // settles on the stream's own reread; direction 2 settles on the recovery read
   // and then on the poll's hop, so the hop is the read that carries it.
@@ -3749,15 +3771,22 @@ test("a healthy event stream suspends the fallback poll, and a stream that fails
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );
-  await page.route("**/api/tavern/v1/messages/regenerate", async (route) => {
-    regenerateRequests += 1;
+  await page.route("**/api/tavern/v1/messages", async (route) => {
+    sendRequests += 1;
     await route.fulfill({
       status: 202,
       contentType: "application/json",
       body: JSON.stringify({
         apiVersion: 1,
         disposition: "accepted",
-        message: runningRoot.chat.chat.transcript[1],
+        message: {
+          handle: pollingPlayerHandle,
+          role: "player",
+          text: pollingSentLine,
+          locale: "und",
+          order: 2,
+          revision: 1,
+        },
         turn: runningRoot.chat.chat.turn,
       }),
     });
@@ -3767,23 +3796,24 @@ test("a healthy event stream suspends the fallback poll, and a stream that fails
   const chatSurface = page.getByTestId("chat-surface");
   await expect(chatSurface).toBeVisible();
   const composer = chatSurface.locator(".composer-textarea");
-  const bubble = page.locator(`li[data-handle='${regenerationCompanionHandle}']`);
+  const reply = page.locator(`li[data-handle='${pollingReplyHandle}']`);
   await expect.poll(() => page.evaluate(() => (window as unknown as { __instances: unknown[] }).__instances.length)).toBe(1);
 
-  // Direction 1: a live stream suspends the poll. The click's own reread is the
-  // only authoritative read there is; the poll's first tick and a full interval
-  // after it add nothing at all.
-  settledFromRead = stateReads + 2;
-  await bubble.getByRole("button", { name: "Regenerate" }).click();
-  await expect.poll(() => regenerateRequests).toBe(1);
-  await expect.poll(() => stateReads).toBeGreaterThan(0);
+  // Direction 1: a live stream suspends the poll. The send's own wire call is the
+  // only request this turn makes; the poll's first tick and a full interval after
+  // it add nothing at all.
+  settledFromRead = stateReads + 1;
+  await composer.fill(pollingSentLine);
+  await chatSurface.getByRole("button", { name: "Send", exact: true }).click();
+  await expect.poll(() => sendRequests).toBe(1);
   await expect(composer).toBeDisabled();
   await page.waitForTimeout(2_500);
-  // The measurement: every HTTP request this turn made under a live stream.
+  // The measurement: every HTTP request this turn made under a live stream. The
+  // one `/draft` is the mount's own seed read.
   console.log(
     `poll-measure: live stream, one turn -> state=${stateReads} draft=${draftReads} status=${statusReads}`,
   );
-  expect({ stateReads, draftReads, statusReads }).toEqual({ stateReads: 1, draftReads: 2, statusReads: 0 });
+  expect({ stateReads, draftReads, statusReads }).toEqual({ stateReads: 0, draftReads: 1, statusReads: 0 });
 
   // The stream settles the turn itself: one frame, one authoritative reread, and
   // still no status read - so the settle came from the stream, not from a poll.
@@ -3808,21 +3838,25 @@ test("a healthy event stream suspends the fallback poll, and a stream that fails
       id: frameId,
     },
   );
-  await expect(bubble).toContainText(regenerationNewVariant);
+  await expect(reply).toContainText(pollingNewReply);
   await expect(composer).toBeEnabled();
   expect(statusReads).toBe(0);
-  expect(stateReads).toBe(2);
+  expect(stateReads).toBe(1);
 
   // Direction 2: the stream fails. The next turn is admitted under the same
   // suspension, and once the stream is gone it is the poll that has to settle the
   // turn - the recovery read still sees the running projection, and only the
   // poll's own hop sees the settled one.
-  settledFromRead = stateReads + 3;
-  await bubble.getByRole("button", { name: "Regenerate" }).click();
-  await expect.poll(() => regenerateRequests).toBe(2);
-  await expect.poll(() => stateReads).toBe(3);
+  settledFromRead = stateReads + 2;
+  const readsBeforeSecond = stateReads;
+  await composer.fill(pollingSentLine);
+  await chatSurface.getByRole("button", { name: "Send", exact: true }).click();
+  await expect.poll(() => sendRequests).toBe(2);
   await expect(composer).toBeDisabled();
   await page.waitForTimeout(1_500);
+  // Still suspended: the second turn's own wire call made no authoritative read,
+  // and the poll added none either.
+  expect(stateReads).toBe(readsBeforeSecond);
   expect(statusReads).toBe(0);
 
   const draftsBeforeFailure = draftReads;
@@ -3866,17 +3900,26 @@ test("a turn that never settles ends the poll with the composer usable and the f
       chat: {
         ...chat.chat,
         transcript: [
-          { handle: regenerationPlayerHandle, role: "player", text: "Where are we?", locale: "und", order: 0, revision: 1 },
-          { handle: regenerationCompanionHandle, role: "companion", text: regenerationOldVariant, locale: "und", order: 1, revision: 1 },
+          { handle: pollingPlayerHandle, role: "player", text: pollingPlayerLine, locale: "und", order: 0, revision: 1 },
+          { handle: pollingCompanionHandle, role: "companion", text: pollingOldReply, locale: "und", order: 1, revision: 1 },
         ],
-        turn: { handle: regenerationTurnHandle, state: "running", projectionRevision: 1, canCancel: false },
+        turn: { handle: pollingTurnHandle, state: "running", projectionRevision: 1, canCancel: false },
       },
+    },
+  };
+  // The conversation the moment before the player sends: same projection, no turn in flight yet,
+  // so the composer offers its Send control. The turn that never settles begins with this send.
+  const idleRoot = {
+    ...neverSettlingRoot,
+    chat: {
+      ...neverSettlingRoot.chat,
+      chat: { ...neverSettlingRoot.chat.chat, turn: null },
     },
   };
   let statusReads = 0;
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(neverSettlingRoot) }),
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(idleRoot) }),
   );
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
@@ -3884,14 +3927,21 @@ test("a turn that never settles ends the poll with the composer usable and the f
   await page.route("**/api/composed-reference-game/v1/state", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(neverSettlingRoot) }),
   );
-  await page.route("**/api/tavern/v1/messages/regenerate", (route) =>
+  await page.route("**/api/tavern/v1/messages", (route) =>
     route.fulfill({
       status: 202,
       contentType: "application/json",
       body: JSON.stringify({
         apiVersion: 1,
         disposition: "accepted",
-        message: neverSettlingRoot.chat.chat.transcript[1],
+        message: {
+          handle: pollingPlayerHandle,
+          role: "player",
+          text: pollingSentLine,
+          locale: "und",
+          order: 2,
+          revision: 1,
+        },
         turn: neverSettlingRoot.chat.chat.turn,
       }),
     }),
@@ -3915,10 +3965,10 @@ test("a turn that never settles ends the poll with the composer usable and the f
   const chatSurface = page.getByTestId("chat-surface");
   await expect(chatSurface).toBeVisible();
   const composer = chatSurface.locator(".composer-textarea");
-  const bubble = page.locator(`li[data-handle='${regenerationCompanionHandle}']`);
   await expect(composer).toBeEnabled();
 
-  await bubble.getByRole("button", { name: "Regenerate" }).click();
+  await composer.fill(pollingSentLine);
+  await chatSurface.getByRole("button", { name: "Send", exact: true }).click();
   // The pending record is published before the wire call, so the input locks
   // immediately - and stays locked while the poll still has budget.
   await expect(composer).toBeDisabled();
