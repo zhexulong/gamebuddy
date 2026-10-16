@@ -293,3 +293,69 @@ test("a profile that declares either settings group without the one record fails
     /tavern_management_composition_unavailable/u,
   );
 });
+test("a persona selection round-trips through the SAME consent operation and a stale revision is a conflict", async () => {
+  await withServer(async (origin) => {
+    const session = await bootstrap(origin);
+    const path = "/api/tavern/v1/settings/voice-preference";
+
+    // The never-configured record has no persona.
+    const initial = (await (await read(origin, path, session)).json()) as { revision: number; persona: string | null };
+    assert.equal(initial.revision, 0);
+    assert.equal(initial.persona, null);
+
+    // Selecting a persona rides the existing consent operation: no new route,
+    // one revision-checked mutation of the same one record.
+    const chosen = await write(origin, path, session, {
+      expectedRevision: 0,
+      action: "setPersona",
+      persona: "soft_maid",
+    });
+    assert.equal(chosen.status, 200);
+    const afterChoice = (await chosen.json()) as { revision: number; persona: string | null; consent: string };
+    assert.equal(afterChoice.revision, 1);
+    assert.equal(afterChoice.persona, "soft_maid");
+    // Picking a persona is not a consent decision.
+    assert.equal(afterChoice.consent, "undecided");
+
+    // The authoritative read-back carries it, and the shared record's revision
+    // moved for the language surface too.
+    const reread = (await (await read(origin, path, session)).json()) as { revision: number; persona: string | null };
+    assert.equal(reread.persona, "soft_maid");
+    const language = (await (await read(origin, "/api/tavern/v1/settings/language", session)).json()) as {
+      revision: number;
+      locale: string | null;
+    };
+    assert.equal(language.revision, reread.revision);
+
+    // A stale revision is a conflict, not a silent overwrite, and it mutates nothing.
+    const stale = await write(origin, path, session, {
+      expectedRevision: 0,
+      action: "setPersona",
+      persona: "gentle_maid",
+    });
+    assert.equal(stale.status, 409);
+    assert.equal(((await stale.json()) as { code: string }).code, "settings_revision_conflict");
+    const unchanged = (await (await read(origin, path, session)).json()) as { persona: string | null };
+    assert.equal(unchanged.persona, "soft_maid");
+
+    // A persona outside the bounded shape fails closed at the wire.
+    const invalid = await write(origin, path, session, {
+      expectedRevision: 1,
+      action: "setPersona",
+      persona: "SoftMaid",
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(((await invalid.json()) as { code: string }).code, "invalid_request");
+
+    // Clearing the selection is the null form of the same action.
+    const cleared = await write(origin, path, session, {
+      expectedRevision: 1,
+      action: "setPersona",
+      persona: null,
+    });
+    assert.equal(cleared.status, 200);
+    const afterClear = (await cleared.json()) as { revision: number; persona: string | null };
+    assert.equal(afterClear.revision, 2);
+    assert.equal(afterClear.persona, null);
+  });
+});
