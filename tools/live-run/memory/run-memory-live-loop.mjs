@@ -142,6 +142,7 @@ function parseArguments(argv) {
   const booleanFlags = new Set(["--require-chapter", "--require-historian-rubric", "--reflect"]);
   const flags = new Map([
     ["--report", undefined],
+    ["--root", undefined],
     ["--seed", undefined],
     ["--question", undefined],
     ["--manifest", undefined],
@@ -1000,11 +1001,16 @@ async function stopChildGracefully(child, timeoutMs = 30_000) {
  * every run left two generation copies rotting in %TEMP%.
  */
 async function withMemoryLoopRoot(run) {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-memory-loop-"));
+  // An explicit root reuses history that already exists (the ladder's own store, for instance), so a probe
+  // can ask about a world the run did not create. Without it the loop always starts empty and every
+  // measurement of long-term memory asks about a fact this same run just seeded.
+  const providedRoot = flags.get("--root");
+  const root =
+    providedRoot === undefined ? await mkdtemp(join(tmpdir(), "gamebuddy-memory-loop-")) : resolve(providedRoot);
   // Diagnosis escape hatch: keep the root so the authority DB can be inspected after
   // a failure (which is how the storage-identity claims get checked). Unset means the
   // normal path, where the root is removed.
-  const keepRoot = process.env.GAMEBUDDY_MEMORY_LOOP_KEEP_ROOT === "1";
+  const keepRoot = process.env.GAMEBUDDY_MEMORY_LOOP_KEEP_ROOT === "1" || providedRoot !== undefined;
   try {
     return await run(root);
   } finally {
