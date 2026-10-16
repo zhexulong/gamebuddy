@@ -76,8 +76,10 @@ async function main() {
   );
 
   let failed = 0;
+  const doneDir = join(paths.stateDir, "capture-done");
+  await mkdir(doneDir, { recursive: true });
   for (const driver of selected) {
-    const doneMarker = join(paths.outRoot, `${driver.out}.driver-done`);
+    const doneMarker = join(doneDir, `${driver.out}.driver-done`);
     if (!force && (await exists(doneMarker))) {
       log(`SKIP ${driver.key} (done marker ${doneMarker} exists)`);
       continue;
