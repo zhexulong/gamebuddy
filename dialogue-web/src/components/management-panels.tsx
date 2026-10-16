@@ -49,6 +49,25 @@ export type VoiceView =
  */
 export const MIMO_PERSONA_IDS = ["soft_maid", "gentle_maid", "energetic_youth", "steady_mature"] as const;
 
+/**
+ * The persona "System default" resolves to, declared once beside the ids it must
+ * be one of.
+ *
+ * The label promises a default, so the product has to name the one it means: a
+ * null persona reaches the Voice child as neither a voice nor a persona, and the
+ * extension then has nothing to speak with (vendor/pi-koe/src/main.ts:105), which
+ * is silence rather than a default. `soft_maid` is the catalogue's own companion
+ * entry - the 深度求索娘 card persona, the character the product ships and the one
+ * every vendor live-run script already falls back to (`GAMEBUDDY_MIMO_PERSONA ??
+ * "soft_maid"`, e.g. vendor/pi-koe/scripts/run-player-release-gate.mjs:39) - so the
+ * player who accepted voice hears the companion instead of nothing.
+ *
+ * The type pins it to the mirrored set (a non-member is a compile error) and
+ * `tests/persona-catalogue-gate.test.mjs` pins that set to the vendored
+ * extension's own catalogue, which is the part the type system cannot see.
+ */
+export const DEFAULT_MIMO_PERSONA_ID: (typeof MIMO_PERSONA_IDS)[number] = "soft_maid";
+
 type MimoPersonaId = (typeof MIMO_PERSONA_IDS)[number];
 
 /**
