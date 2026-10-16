@@ -44,7 +44,7 @@
  * Usage:
  *   node tools/live-run/game/resolve-stardew-live-run-environment.mjs [--print-env]
  *     [--runtime-root <abs>] [--host-production-root <abs>] [--game-dir <abs Windows path>]
- *     [--ladder <n>]
+ *     [--scenario <name>]
  */
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -62,6 +62,8 @@ export const HOST_PRODUCTION_ROOT_ENV = "GAMEBUDDY_HOST_PRODUCTION_ROOT";
 export const GAME_DIR_ENV = "GAMEBUDDY_STARDEW_GAME_DIR";
 export const MODS_DIR_ENV = "GAMEBUDDY_STARDEW_MODS_DIR";
 export const MOD_CONFIG_ENV = "GAMEBUDDY_STARDEW_CONFIG";
+export const AGENT_SCENARIO_ENV = "GAMEBUDDY_AGENT_SCENARIO";
+/** The retired rung selector, still honoured for an operator whose environment already sets it. */
 export const AGENT_LADDER_ENV = "GAMEBUDDY_AGENT_LADDER";
 export const MOD_DIRECTORY_NAME = "GameBuddy.Stardew";
 export const MOD_CONFIG_LEAF = "config.json";
@@ -601,7 +603,7 @@ function buildEnvironment({
   runtimeRoot,
   fixtureRoots,
   environment,
-  ladder,
+  scenario,
   modsDirectoryPresent,
   modDirectoryPresent,
   modConfigPresent,
@@ -627,12 +629,12 @@ function buildEnvironment({
       provenance: fixtureRoots.fixturesRootOverridden ? "env" : "default",
     }),
   ];
-  if (isNonEmptyString(ladder)) {
+  if (isNonEmptyString(scenario)) {
     values.push(
       Object.freeze({
-        name: AGENT_LADDER_ENV,
-        value: ladder,
-        provenance: isNonEmptyString(environment[AGENT_LADDER_ENV]) ? "env" : "operator",
+        name: AGENT_SCENARIO_ENV,
+        value: scenario,
+        provenance: isNonEmptyString(environment[AGENT_SCENARIO_ENV]) ? "env" : "operator",
       }),
     );
   }
@@ -717,7 +719,19 @@ export async function resolveStardewLiveRunEnvironment(options = {}) {
   const resolveModule = overrides.resolveModule ?? resolveProductionModule;
   const now = overrides.now ?? (() => new Date().toISOString());
   const gameDirectory = options.gameDirectory ?? null;
-  const ladder = options.ladder ?? null;
+  // The scenario is the run's identity. A legacy digit is translated here so nothing downstream reads it.
+  const LEGACY_SCENARIO_BY_LADDER = Object.freeze({
+    0: "morning_routine",
+    1: "morning_routine",
+    2: "morning_routine",
+    3: "morning_routine",
+    4: "npc_social_and_presence",
+    5: "memory_covenant",
+    6: "morning_routine",
+  });
+  const requestedScenario =
+    options.scenario ?? (options.ladder == null ? null : LEGACY_SCENARIO_BY_LADDER[options.ladder]);
+  const scenario = requestedScenario ?? null;
 
   if (platform !== "win32") {
     throw blocked("stardew_live_run_environment_requires_windows", { platform });
@@ -771,7 +785,7 @@ export async function resolveStardewLiveRunEnvironment(options = {}) {
     runtimeRoot,
     fixtureRoots: resolution,
     environment,
-    ladder,
+    scenario,
     modsDirectoryPresent: (await fileSystem.kind(modsDir)) === "directory",
     modDirectoryPresent: (await fileSystem.kind(modDirectory)) === "directory",
     modConfigPresent: (await fileSystem.kind(win32.join(modDirectory, MOD_CONFIG_LEAF))) === "file",
@@ -873,6 +887,7 @@ export function parseArguments(argv) {
     runtimeRoot: option("runtime-root"),
     hostGenerationOutputRoot: option("host-production-root"),
     gameDirectory: option("game-dir"),
+    scenario: option("scenario"),
     ladder: option("ladder"),
   });
 }
@@ -885,6 +900,7 @@ async function main(argv) {
     env: environment,
     hostGenerationOutputRoot: parsed.hostGenerationOutputRoot,
     gameDirectory: parsed.gameDirectory,
+    scenario: parsed.scenario,
     ladder: parsed.ladder,
   });
   process.stderr.write(`${formatStardewLiveRunEnvironmentSummary(facts)}\n`);

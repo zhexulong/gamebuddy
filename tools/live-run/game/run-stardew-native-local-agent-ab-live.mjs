@@ -1,15 +1,15 @@
 /**
- * Stardew Game live-run ladder (the single Game live-run file; LADDER=0..N).
+ * Stardew Game live run (the single Game live-run file; SCENARIO=morning_routine|memory_covenant|npc_social_and_presence).
  *
  * MAINTENANCE CONTRACT — read before changing this file:
  *
  * 1. Extend this file; never fork a parallel live runner. Each new capability
- *    is a new ladder rung (LADDER=N) layered on the rungs below it, exactly as
- *    ladder 0 -> 4 accreted. A second "improved" runner splits the evidence
- *    history and makes run-to-run comparison meaningless.
- * 2. A change to a rung is not done until it has produced a REAL run. Offline
+ *    is a new SCENARIO in this file, or a new gate inside an existing one. A second "improved" runner
+ *    splits the evidence history and makes run-to-run comparison meaningless. The numbered rungs 0-5 are
+ *    retired: they described the order the harness learned things in, not what a run is about.
+ * 2. A change to a scenario is not done until it has produced a REAL run. Offline
  *    unit tests on this harness prove the harness, not the game; only a genuine
- *    Stardew/SMAPI/Mod/Agent run closes a rung.
+ *    Stardew/SMAPI/Mod/Agent run closes a scenario.
  * 3. After each real run, audit the trace with the `auditing-runs` skill and
  *    dispatch a reviewer subagent over it (see the same requirement recorded in
  *    tools/live-run/chat/run-chat-live-audit.mjs). Findings feed the next iteration of THIS
@@ -50,16 +50,22 @@ const TERMINAL_REASON_CODES = Object.freeze(
   Object.fromEntries(STARDEW_PUBLISHED_ACTION_GATES.map((gate) => [gate.actionId, gate.terminalReasonCode])),
 );
 import { buildPresenceProjection } from "../../lib/stardew-companion-presence-projection.mjs";
-import { STARDEW_GAME_INTEGRATION_ADAPTER, } from "../../../host/dist-test/stardew-game-integration-adapter.js";
-import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge, STARDEW_INTEGRATION_LAUNCHER } from "../../../host/dist-test/stardew-integration-launcher.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "../../../host/dist-test/stardew-game-integration-adapter.js";
+import {
+  createStardewIntegrationLaunchHandleFromAuthenticatedBridge,
+  STARDEW_INTEGRATION_LAUNCHER,
+} from "../../../host/dist-test/stardew-integration-launcher.js";
 import { createGameRuntimeBindingFromReceiptBackedLaunch } from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
-import { reserveGameRuntimeMaterialization, withConsumedBindingExecution } from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
+import {
+  reserveGameRuntimeMaterialization,
+  withConsumedBindingExecution,
+} from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
 import { createHostGameRuntimeMaterializer } from "../../../host/dist-test/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import { loadHostDeploymentManifest } from "../../../host/dist-test/deployment-manifest.js";
 import { resolveRuntimePaths } from "../../../host/dist-test/runtime-identity.js";
 import { bindWindowsStaleLockReclaimer } from "../../../host/dist-test/path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../../../host/dist-test/windows-stale-lock-reclaimer/index.js";
-// Ladder 5 (embodied-memory covenant): the covenant FACT is planted through the
+// memory_covenant: the covenant FACT is planted through the
 // real management surface under the product continuity, then the Game runtime on
 // the SAME root/continuity must render it into m[0] — the Agent reads the rule
 // from memory, never from a prompt line. When no configured root/continuity is
@@ -75,6 +81,8 @@ import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop
 import { assessIdentityProfile } from "../core/content-gate.mjs";
 import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
+import { buildFailureSnapshot, buildReproPlan } from "../../lib/failure-dump.mjs";
+import { writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 
 // Live-run evidence root: every run writes its own local directory with the
@@ -84,7 +92,8 @@ import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 // is an external tool and is not bound by the Host's write-ownership rule.
 const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../../..", import.meta.url)) });
 
-const configPath = process.env.GAMEBUDDY_STARDEW_CONFIG ?? "D:/Steam/steamapps/common/Stardew Valley/Mods/GameBuddy.Stardew/config.json";
+const configPath =
+  process.env.GAMEBUDDY_STARDEW_CONFIG ?? "D:/Steam/steamapps/common/Stardew Valley/Mods/GameBuddy.Stardew/config.json";
 // Single language configuration point: this env mirrors the frontend-set
 // language preference (Tavern settings/language). Everything that needs a
 // locale — Agent session language, materializer companionLocale, fixture
@@ -97,22 +106,47 @@ const COMPANION_LOCALE = process.env.GAMEBUDDY_COMPANION_LOCALE === "en-US" ? "e
 // when an operator explicitly opts into a disposable root does the runner
 // create a temporary one (which then legitimately has no assembled persona).
 const configuredRuntimeRoot = process.env.GAMEBUDDY_RUNTIME_ROOT;
-// Ladder selector: "0" = A→B (inspect→load, Keg inside FarmHouse), "1" =
-// walk→look→do (navigate out of FarmHouse to the door-side Keg, then inspect
-// and load), "2" = ladder 1 + live voice: when the Mod returns the terminal
-// machine_coffee_loaded receipt, the Host streams a companion voice line
-// through the real Voice Gateway (MiMo TTS) and waits for its terminal
-// playback observation. "3" = Jodi's Request farming (the Agent plans
-// till→plant→water itself) plus the spoken closing line. "4" = Jodi's Request
-// close-out: one real mature cauliflower is already in the ground (12 growth
-// days are the fixture's Given, not the Agent's wait), and the Agent harvests
-// it, walks to Jodi and offers it. "5" = embodied-memory covenant probe
-// (design chat-long-horizon-memory-probe-design.md §10.5 class 1): the Agent
-// harvests the real mature strawberries and must honor the standing covenant
-// the player stated — no ship_item execution receipt may carry the protected
-// item (O)400. The judgement runs on real Mod receipts, never transcript
-// text. The runner is a single evolving live carrier; later ladders add their
-// own acceptance on top instead of new runners.
+// Scenario selector. The rung names 0-5 are RETIRED: they described the order the harness learned things in,
+// not what the run is about, and two of them (0 and 1) were the same Keg errand with different walk lengths.
+// What remains is one carrier with three scenarios, each a real thing to observe:
+//
+//   morning_routine        the companion runs its own farm day and recovers from interruptions
+//                          (was ladder 0/1/3): field work and machine interaction, no fixed DAG.
+//   memory_covenant        the companion honors a standing rule it read from MEMORY, not from the prompt
+//                          (was ladder 5): the protected strawberry must never be shipped.
+//   npc_social_and_presence the companion takes something to a villager, talks to them, and performs its
+//                          own presence/emotion actions (was ladder 4 + express_emote/face_direction):
+//                          NPC social + silent embodiment + the voice lane end to end.
+//
+// `GAMEBUDDY_AGENT_LADDER` still selects the scenario by its legacy number so an existing operator command
+// keeps working; it is translated once, here, and never consulted again. Farmer-to-farmer presence and warp
+// sync are NOT one of these scenarios: they need the second player that only the multiplayer topology has.
+// Existing operator commands and the launcher pass the legacy digit (`--ladder 6`), so the number is still
+// ACCEPTED and translated here, once; nothing downstream consults it again. An unknown value fails closed
+// instead of silently resolving to a scenario.
+const LEGACY_SCENARIO_BY_LADDER = Object.freeze({
+  0: "morning_routine",
+  1: "morning_routine",
+  2: "morning_routine",
+  3: "morning_routine",
+  4: "npc_social_and_presence",
+  5: "memory_covenant",
+  6: "morning_routine",
+});
+const SCENARIOS = Object.freeze(["morning_routine", "memory_covenant", "npc_social_and_presence"]);
+const LEGACY_LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? null;
+const SCENARIO = (() => {
+  const requested =
+    process.env.GAMEBUDDY_AGENT_SCENARIO ?? (LEGACY_LADDER === null ? null : LEGACY_SCENARIO_BY_LADDER[LEGACY_LADDER]);
+  if (requested === undefined || requested === null) {
+    throw new Error(
+      `unknown_run_scenario:${String(process.env.GAMEBUDDY_AGENT_SCENARIO ?? LEGACY_LADDER)} (expected one of ${SCENARIOS.join(", ")})`,
+    );
+  }
+  if (!SCENARIOS.includes(requested))
+    throw new Error(`unknown_run_scenario:${String(requested)} (expected one of ${SCENARIOS.join(", ")})`);
+  return requested;
+})();
 /**
  * Last-resort evidence: whatever escapes the run's own try/catch — an unhandled rejection, a
  * synchronous throw in setup, a transport failure at connect — the artifact is still written, so a
@@ -125,7 +159,8 @@ function writeFailureArtifact(reason) {
     if (typeof path !== "string" || path.length === 0) return;
     const payload = {
       state: "blocked",
-      ladder: process.env.GAMEBUDDY_AGENT_LADDER ?? null,
+      scenario: SCENARIO,
+      legacyLadder: LEGACY_LADDER,
       reason: "runner_failed_before_reporting",
       error: String(reason instanceof Error ? reason.message : reason),
       stack: reason instanceof Error ? reason.stack : null,
@@ -153,24 +188,43 @@ process.on("unhandledRejection", (error) => {
 // start rather than spend a game launch, a fixture prepare and a session on it.
 await assertLiveRunArtifactFresh();
 
-const LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? "1";
-// Ladder 6 (self-directed play session): instead of a scripted chain, the Agent
-// is handed an open play goal in a real save and decides what to do itself. The
-// rung's question is not "did chain X run" but "what could the companion
-// actually do, and where did the system stop it" — so it accepts any real
-// action attempt, records a per-capability audit, and stays `blocked` (never a
-// silent pass) when the session produced no attempt at all.
-//
-// Extra goals are delivered as further player turns after the previous one
-// settles, one per `|`-separated entry, so a session can be wide rather than
-// one-shot. Absent, the rung runs the single open goal above.
+// The three scenarios' prompts, in both locales. Written as DATA rather than nested conditionals so the
+// contract is auditable at a glance: what a scenario asks for, and that it asks for it without prescribing a
+// route. The bracketed-emotion paragraph and the "not a task announcer" rule are part of every prompt: the
+// companion's speech is what the interaction gate assesses, and the emote actions are the game-side half.
+const PRESENCE_PARAGRAPH_ZH =
+  "（台词之外可以用括号写角色的情绪或内心，例如（想了想）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）";
+const PRESENCE_PARAGRAPH_EN =
+  "(besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (thinking it over) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions)";
+const COMPANION_VOICE_RULE_ZH =
+  "**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——不要每一步都插一句旁白，也不要列项目清单式地汇报。**";
+const COMPANION_VOICE_RULE_EN =
+  "**How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and do not recite a checklist.**";
+const SCENARIO_PROMPTS = Object.freeze({
+  morning_routine: Object.freeze({
+    zh: `现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活——你自己看看周围，想做什么就做什么，能做几件做几件（地里的农活、农场上的杂物、屋里的箱子和机器都算）。做完之后用两三句话跟玩家说说：哪些你做成了、哪些做不了或者卡住了、卡在哪里（**总共控制在 120 字以内**——这是同伴说话的长度口径，不是让你省略内容，而是像陪玩的人一样挑重点说）。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+    en: `It is a spring morning in Stardew Valley and you are on the farm by yourself. Nobody has assigned you anything today — look around and do whatever you think is worth doing, as many things as you can (field work, odds and ends on the farm, the chests and machines indoors — all fair game). When you are done, tell the player in two or three sentences: what you got done, what you could not do or got stuck on, and where (**keep the whole thing within 120 characters** — that is the companion's speaking length, not a request to leave things out; pick what matters the way someone playing alongside would). ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+  }),
+  memory_covenant: Object.freeze({
+    // The standing rule is NOT in this prompt: it is planted as a memory through the real management surface,
+    // so the probe measures whether a memory-driven covenant changes behaviour. Naming it here would make the
+    // test pass by coaching.
+    zh: `今天是星露谷春季的雨天。农场田里的草莓已经熟了，把它们收下来收好。想一想你记得的、玩家和你说过的话里，有没有什么关于这些草莓的规矩——如果有，按那个规矩来。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+    en: `Today is a rainy Spring day in Stardew Valley. The strawberries in the farm field are ripe — harvest them and put them away. Think about anything the player ever told you about these strawberries — if you remember a rule about them, follow it. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+  }),
+  npc_social_and_presence: Object.freeze({
+    zh: `今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她需要一颗新鲜花椰菜做菜，希望你能给她带一颗。你农场的地里正好种着一颗已经长好的花椰菜，她今天就在农场附近。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+    en: `Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. There happens to be a fully grown cauliflower in your farm soil, and she is nearby on the farm today. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+  }),
+});
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
   .split("|")
   .map((goal) => goal.trim())
   .filter((goal) => goal.length > 0);
-// Every turn the session delivered, with its own settle result. Only ladder 6
-// runs more than one; the array exists for all ladders so the result shape is
-// uniform.
+// Extra goals are delivered as further player turns after the previous one settles, one per `|`-separated
+// entry, so a session can be WIDE rather than one-shot. Absent, the run delivers the scenario's single goal.
+// Every turn the session delivered, with its own settle result: the array exists for every scenario so the
+// result shape is uniform, and a scenario that delivered extra goals has more than one entry.
 const sessionTurns = [];
 // What the companion could actually see during the session. Sampled WHILE the
 // session runs (the surface a turn can rely on), never read after teardown: the
@@ -190,7 +244,7 @@ function sampleAdvertisedActions() {
   advertisedSampleMaxSize = Math.max(advertisedSampleMaxSize, advertised.length);
   for (const actionId of advertised) if (typeof actionId === "string") advertisedActionSamples.add(actionId);
 }
-// Ladder 5's protected item (design chat-long-horizon-memory-probe-design.md
+// memory_covenant's protected item (design chat-long-horizon-memory-probe-design.md
 // §10.5 class 1): the strawberry qualified id that must never enter the
 // shipping bin. The runner asserts on the Mod receipt evidence field, so this
 // is the single spelling used by the covenant probe.
@@ -198,7 +252,7 @@ const PROTECTED_COVENANT_ITEM_ID = "(O)400";
 /**
  * Scenario vocabulary for the presence projection (design
  * architecture/stardew-companion-presence-audit-dimensions.md §3.2): maps the
- * Mod-owned action ids the ladder scenarios exercise to the Chinese phrases a
+ * Mod-owned action ids the scenarios exercise, mapped to the Chinese phrases a
  * companion utterance would use. The parser still applies the first-person
  * subject/mood guardrail, so a bare noun or a player-directed line does not
  * count. This is runner scenario data, not product authority.
@@ -216,25 +270,31 @@ const PRESENCE_ACTION_VOCABULARY = Object.freeze({
   move_to_tile: ["走过去", "走到", "过去看看"],
   travel: ["前往", "出发去", "去镇上"],
 });
-  // Ensure the native stale-lock pair exists before the ladder tries to use it. A clean script wiped the
-  // .dist directory once, and without this the run failed later with
-  // `windows_stale_lock_reclaimer_unavailable`. Building on demand is the self-heal (the builder is 4s); the
-  // published capability still requires the inventory binding, which is asserted separately.
-  {
-    const fsRequired = await import("node:fs");
-    const required = ["GameBuddy.WindowsStaleLockReclaimer.exe", "windows-stale-lock-reclaimer.manifest.json"];
-    const pairRoot = new URL("../../../native/windows-stale-lock-reclaimer/.dist/win-x64/", import.meta.url);
-    if (!required.every((name) => fsRequired.existsSync(new URL(name, pairRoot)))) {
-      const { execFileSync } = await import("node:child_process");
-      execFileSync(process.execPath, ["host/scripts/build-windows-stale-lock-reclaimer.mjs"], { stdio: "inherit" });
-      if (!required.every((name) => fsRequired.existsSync(new URL(name, pairRoot))))
-        throw new Error("windows_stale_lock_reclaimer_unavailable:builder_did_not_produce_the_pair");
-    }
+// Ensure the native stale-lock pair exists before the run tries to use it. A clean script wiped the
+// .dist directory once, and without this the run failed later with
+// `windows_stale_lock_reclaimer_unavailable`. Building on demand is the self-heal (the builder is 4s); the
+// published capability still requires the inventory binding, which is asserted separately.
+{
+  const fsRequired = await import("node:fs");
+  const required = ["GameBuddy.WindowsStaleLockReclaimer.exe", "windows-stale-lock-reclaimer.manifest.json"];
+  const pairRoot = new URL("../../../native/windows-stale-lock-reclaimer/.dist/win-x64/", import.meta.url);
+  if (!required.every((name) => fsRequired.existsSync(new URL(name, pairRoot)))) {
+    const { execFileSync } = await import("node:child_process");
+    execFileSync(process.execPath, ["host/scripts/build-windows-stale-lock-reclaimer.mjs"], { stdio: "inherit" });
+    if (!required.every((name) => fsRequired.existsSync(new URL(name, pairRoot))))
+      throw new Error("windows_stale_lock_reclaimer_unavailable:builder_did_not_produce_the_pair");
   }
+}
 
 bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 const config = JSON.parse(await readFile(configPath, "utf8"));
-const scope = Object.freeze({ integrationId: "stardew", saveId: config.SaveId, worldId: config.WorldId, playerId: config.PlayerId, companionId: config.CompanionId });
+const scope = Object.freeze({
+  integrationId: "stardew",
+  saveId: config.SaveId,
+  worldId: config.WorldId,
+  playerId: config.PlayerId,
+  companionId: config.CompanionId,
+});
 // The continuity identity is product configuration too: GAMEBUDDY_COMPANION_CONTINUITY_ID
 // joins the companion's existing (Chat-provisioned) continuity so the same
 // identity-profile/worldbook are assembled; absent falls back to the stored
@@ -244,7 +304,7 @@ const scope = Object.freeze({ integrationId: "stardew", saveId: config.SaveId, w
 // the continuity that provisioned it and refuses any later launch carrying a
 // different one, so minting a fresh id per run made every repeat run on a real
 // root fail with `runtime_root_principal_mismatch` (the first run writes the
-// manifest, the second is refused) — the opposite of what a live-run ladder is
+// manifest, the second is refused) — the opposite of what a live run is
 // for. The environment still overrides this for a deliberate new identity.
 const storedContinuityId = (() => {
   if (typeof configuredRuntimeRoot !== "string" || configuredRuntimeRoot.length === 0) return null;
@@ -258,7 +318,13 @@ const storedContinuityId = (() => {
 })();
 const runContinuityId =
   process.env.GAMEBUDDY_COMPANION_CONTINUITY_ID ?? storedContinuityId ?? `native-agent-${Date.now()}`;
-const identity = Object.freeze({ playerId: config.PlayerId, companionId: config.CompanionId, continuityId: runContinuityId, saveId: config.SaveId, worldId: config.WorldId });
+const identity = Object.freeze({
+  playerId: config.PlayerId,
+  companionId: config.CompanionId,
+  continuityId: runContinuityId,
+  saveId: config.SaveId,
+  worldId: config.WorldId,
+});
 const deadline = Date.now() + 600_000;
 // Startup phase timings. "The live run is slow to start" needs numbers, not
 // impressions: this separates the phases a reader can act on (bridge connect,
@@ -267,20 +333,23 @@ const phaseTimings = { runStartedAtMs: Date.now(), marks: {} };
 const markPhase = (name) => {
   phaseTimings.marks[name] = Date.now() - phaseTimings.runStartedAtMs;
 };
-const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken, STARDEW_GAME_INTEGRATION_ADAPTER, undefined, "1.6.15");
+const client = await LocalStardewBridgeClient.connect(
+  scope,
+  config.PipeName,
+  config.BridgeToken,
+  STARDEW_GAME_INTEGRATION_ADAPTER,
+  undefined,
+  "1.6.15",
+);
 markPhase("bridgeConnectedMs");
 const factLog = [];
 /** Exact serialized bridge entries already printed, so a contract-legal
  * redelivery of the same transition does not read as a second action. */
 const loggedFactLines = new Set();
-// Ladder 2: when the Mod returns the terminal machine_coffee_loaded receipt,
-// stream a companion voice line through the real Voice Gateway (MiMo TTS)
-// and wait for its terminal playback observation. Voice stays a one-shot
-// ladder-2 enhancement: it never changes game actions or receipts.
-// Ladder 3 reuses the same voice lane: the Agent's final companion summary
-// (presented to the game via the Mod presentation bridge) is streamed to TTS
-// so the completion report is actually spoken. Voice is fire-and-forget in
-// both cases — a voice failure never fails the game presentation or action.
+// The voice lane: whenever a companion line lands in the game, it is streamed through the real Voice Gateway
+// (MiMo TTS) and its terminal playback observation is waited for. It is driven by the PRESENTATION hook, not by
+// a particular receipt: the old trigger was the Keg errand's own receipt, which no scenario owns any more. Voice
+// is fire-and-forget — a voice failure never fails the game presentation or the action.
 let voice = null;
 let voiceChild = null;
 let voiceObservation = null;
@@ -299,7 +368,7 @@ let turnStartedAtMs = null;
  *
  * The harness used to decide "did the companion speak" from `presentedSummary` alone, so a turn whose
  * provider stream ENDED IN AN ERROR was reported as `silent` — as if the companion had chosen not to
- * speak. Measured on a real ladder-6 run: the last assistant message carried `stopReason: "error"`,
+ * speak. Measured on a real self-directed run: the last assistant message carried `stopReason: "error"`,
  * `errorMessage: "unexpected EOF"` and zero usage tokens, the verdict was `silent`, `sessionTurnErrors`
  * was empty, and the harness log contained no agent-side line at all. The runtime's own durable session
  * record is the authoritative fact here and the capture already keeps it.
@@ -483,18 +552,18 @@ let voiceConfiguration = null;
 const voiceObservationPromise = new Promise((resolvePromise) => {
   voice = resolvePromise;
 });
-// Ladder-3 presentation hook: called by the Host presentation port after a
+// Presentation hook: called by the Host presentation port after a
 // companion text successfully landed in the game; forwards the exact text to
 // the voice lane. No game/presentation authority is touched here.
 const onCompanionTextPresented = (text, locale) => {
-  // RECORD the presentation for EVERY ladder. The callback is only invoked after
+  // RECORD the presentation for EVERY scenario. The callback is only invoked after
   // a companion text actually landed in the game, so it is the harness's only
-  // evidence of what the player was shown — gating it on the ladder made
-  // ladder-5 runs report `presentation.pieces: []` and `presentedSummary: ""`
+  // evidence of what the player was shown — gating it on a scenario made
+  // a run report `presentation.pieces: []` and `presentedSummary: ""`
   // even when the Agent had spoken, which reads exactly like "the companion said
   // nothing" and sent a real investigation in the wrong direction.
   //
-  // The VOICE lane stays ladder-scoped (below): recording evidence and speaking
+  // The VOICE lane stays scenario-scoped (below): recording evidence and speaking
   // are different concerns.
   if (typeof text !== "string" || text.trim().length === 0) return;
   // Record EVERY committed piece before any single-shot voice logic runs: the
@@ -502,7 +571,10 @@ const onCompanionTextPresented = (text, locale) => {
   // whether the piece happened to be the first one.
   const elapsedMs = turnStartedAtMs === null ? null : Date.now() - turnStartedAtMs;
   presentationPieces.push(Object.freeze({ index: presentationPieces.length, text, locale, elapsedMs }));
-  console.error("AGENT_PRESENTATION_PIECE", JSON.stringify({ index: presentationPieces.length - 1, elapsedMs, chars: text.length }));
+  console.error(
+    "AGENT_PRESENTATION_PIECE",
+    JSON.stringify({ index: presentationPieces.length - 1, elapsedMs, chars: text.length }),
+  );
   // Dee-hydrate model scaffolding: the chat box and the voice line must both
   // speak the same clean dialogue — never read out `**` / `---` / emoji.
   const speakable = dehydrateCompanionSpeech(text);
@@ -512,9 +584,9 @@ const onCompanionTextPresented = (text, locale) => {
   // interaction gate must assess the whole turn, not only its first bubble.
   presentedSummary = presentedSummary === null ? speakable : `${presentedSummary}${speakable}`;
   console.error("AGENT_SUMMARY", JSON.stringify({ text: presentedSummary, locale }));
-  // Only the voice lane is ladder-scoped: the speech path exists for ladders 3
-  // and 4 today, and ladders 0-2 use no voice at all.
-  if (LADDER !== "3" && LADDER !== "4") return;
+  // Only the voice lane is scenario-scoped: recording what the player was shown happens everywhere, speaking
+  // happens where the scenario asks the companion to talk.
+  if (SCENARIO !== "npc_social_and_presence") return;
   if (voiceStarted) return;
   const spokenSoFar = presentedSummary;
   void (async () => {
@@ -523,7 +595,8 @@ const onCompanionTextPresented = (text, locale) => {
       // product-injected gateway) says voice is off, the run records that answer
       // and leaves the presentation/action evidence untouched — a disabled TTS
       // configuration is not a gameplay failure.
-      const configuration = voiceConfiguration ?? await resolveVoiceConfiguration({ runtimeRoot, locale: COMPANION_LOCALE });
+      const configuration =
+        voiceConfiguration ?? (await resolveVoiceConfiguration({ runtimeRoot, locale: COMPANION_LOCALE }));
       voiceConfiguration = configuration;
       if (!configuration.enabled) {
         console.error("VOICE_DISABLED", JSON.stringify({ reason: configuration.disabledReason }));
@@ -535,12 +608,15 @@ const onCompanionTextPresented = (text, locale) => {
       // bracketed audio tags natively, emoji do not stall synthesis (probe:
       // short emoji text completes), and the frozen Voice contract is zero
       // intermediate processing (voice-gateway-streaming-submodule §2.5).
-      const { promiseVoiceObservation } = await startLadder2Voice(spokenSoFar);
+      const { promiseVoiceObservation } = await startVoiceLane(spokenSoFar);
       voiceObservation = await promiseVoiceObservation;
       voice?.();
     } catch (error) {
       console.error("VOICE_ERROR", String(error instanceof Error ? error.message : error));
-      voiceObservation = { terminalStatus: "failed_before_side_effect", error: String(error instanceof Error ? error.message : error) };
+      voiceObservation = {
+        terminalStatus: "failed_before_side_effect",
+        error: String(error instanceof Error ? error.message : error),
+      };
       voice?.();
     }
   })();
@@ -557,14 +633,20 @@ client.onFact((fact) => {
     // would simply be absent from the result - which is how a gate ends up reading an empty field.
     fact.type === "world_fact"
   ) {
-    const entry = { type: fact.type, reasonCode: fact.payload?.reasonCode, requestId: fact.payload?.requestId, executionId: fact.payload?.executionId, evidence: fact.payload?.evidence ?? null,
+    const entry = {
+      type: fact.type,
+      reasonCode: fact.payload?.reasonCode,
+      requestId: fact.payload?.requestId,
+      executionId: fact.payload?.executionId,
+      evidence: fact.payload?.evidence ?? null,
       // A world fact's identity and payload. The Mod mints `eventId`/`sourceEventId` as the same opaque id, and
       // for `npc_dialogue_presented` the payload IS the content a gate must read (speaker, pages, isQuestion,
       // choices). The Host never interprets it, so it is recorded verbatim.
       eventId: fact.eventId,
       sourceEventId: fact.sourceEventId,
       worldFactKind: fact.payload?.kind,
-      worldFactPayload: fact.payload };
+      worldFactPayload: fact.payload,
+    };
     // The Mod legitimately delivers one bridge transition over two routes: the
     // fact route and the execute-response path, and the second delivery is an
     // idempotent no-op by contract (action-execution-coordinator.internal.test.ts:
@@ -579,29 +661,11 @@ client.onFact((fact) => {
       loggedFactLines.add(serialized);
       console.error("BRIDGE_FACT", serialized);
     } else {
-      console.error("BRIDGE_FACT_REDELIVERED", JSON.stringify({ type: entry.type, reasonCode: entry.reasonCode, executionId: entry.executionId }));
+      console.error(
+        "BRIDGE_FACT_REDELIVERED",
+        JSON.stringify({ type: entry.type, reasonCode: entry.reasonCode, executionId: entry.executionId }),
+      );
     }
-  }
-  if (LADDER === "2" && fact.type === "execution_receipt" && fact.payload?.reasonCode === "machine_coffee_loaded" && !voiceStarted) {
-    void (async () => {
-      try {
-        const configuration = voiceConfiguration ?? await resolveVoiceConfiguration({ runtimeRoot, locale: COMPANION_LOCALE });
-        voiceConfiguration = configuration;
-        if (!configuration.enabled) {
-          console.error("VOICE_DISABLED", JSON.stringify({ reason: configuration.disabledReason }));
-          voice?.();
-          return;
-        }
-        voiceStarted = true;
-        const { promiseVoiceObservation } = await startLadder2Voice();
-        voiceObservation = await promiseVoiceObservation;
-        voice?.();
-      } catch (error) {
-        console.error("VOICE_ERROR", String(error instanceof Error ? error.message : error));
-        voiceObservation = { terminalStatus: "failed_before_side_effect", error: String(error instanceof Error ? error.message : error) };
-        voice?.();
-      }
-    })();
   }
 });
 
@@ -626,8 +690,8 @@ const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
 );
 
 /**
- * ladder 0-5 delivered exactly one player turn; ladder 6 delivers a session.
- * This is that one turn's machinery, extracted so every ladder shares it: admit
+ * A scenario may deliver one player turn, or a session of them.
+ * This is that one turn's machinery, extracted so every scenario shares it: admit
  * the player text, wait for the turn to settle (or for a submitted program to
  * reach a terminal), then judge whether the steer was actually OBSERVED.
  *
@@ -647,7 +711,8 @@ async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = 20_00
   // real bug: it sliced by a TIMESTAMP (factLog.slice(lastFactAt), where lastFactAt was ms) and checked the
   // WHOLE slice since the turn for any meaningful fact, so quiet was unreachable whenever a meaningful fact had
   // EVER arrived. Track the last-observed INDEX and check only the newly-appended facts each second.
-  const meaningful = (entry) => entry?.type === "execution_receipt" || entry?.type === "lifecycle" || entry?.type === "error";
+  const meaningful = (entry) =>
+    entry?.type === "execution_receipt" || entry?.type === "lifecycle" || entry?.type === "error";
   let lastSeenDispatch = dispatchesBeforeTurn;
   let lastSeenFact = factLog.length;
   let lastActionAt = Date.now();
@@ -702,31 +767,51 @@ async function runAgentTurn(text, tools) {
   const dispatchesBeforeTurn = actionTrace.length;
   // How long one delivered turn may wait before the harness stops waiting. For an
   // open play session this is a HARNESS bound, not a product verdict (design 1432:
-  // timeouts belong to the harness), so ladder 6 gets a budget that fits dozens of
+  // timeouts belong to the harness), so a self-directed session gets a budget that fits dozens of
   // native actions instead of the 10-minute default the scripted rungs use. A turn
   // that still exceeds it does not silently become a completed session: the verdict
   // below refuses to call that `passed`.
   const turnWaitSeconds = Number(
-    process.env.GAMEBUDDY_AGENT_WAIT_SECONDS ?? (LADDER === "6" ? 1800 : 600),
+    process.env.GAMEBUDDY_AGENT_WAIT_SECONDS ?? (SCENARIO === "morning_routine" ? 1800 : 600),
   );
   for (let i = 0; i < turnWaitSeconds; i++) {
     await new Promise((r) => setTimeout(r, 1000));
     try {
       if (agentProgramId !== null) status = await client.programStatus({ programId: agentProgramId });
     } catch {}
-    if (status?.code === "found" && ["succeeded", "failed", "recovery_required", "cancelled"].includes(status.snapshot?.state)) break;
-    if (i % 10 === 0) console.error(JSON.stringify({ seconds: i, programStatus: status, agentProgramId, revision: client.state.snapshot?.revision }));
+    if (
+      status?.code === "found" &&
+      ["succeeded", "failed", "recovery_required", "cancelled"].includes(status.snapshot?.state)
+    )
+      break;
+    if (i % 10 === 0)
+      console.error(
+        JSON.stringify({
+          seconds: i,
+          programStatus: status,
+          agentProgramId,
+          revision: client.state.snapshot?.revision,
+        }),
+      );
     const quick = await Promise.race([agentTurn, Promise.resolve(null)]);
-    if (quick !== null) { turn = quick; break; }
+    if (quick !== null) {
+      turn = quick;
+      break;
+    }
   }
-  if (turn === null) turn = await Promise.race([agentTurn, new Promise((resolve) => setTimeout(() => resolve({ settled: false, error: "agent_turn_timeout" }), 5000))]);
-  // LADDER-6 ONLY: after the turn settles, keep waiting until the session is QUIET instead of closing the turn
+  if (turn === null)
+    turn = await Promise.race([
+      agentTurn,
+      new Promise((resolve) => setTimeout(() => resolve({ settled: false, error: "agent_turn_timeout" }), 5000)),
+    ]);
+  // SELF-DIRECTED SCENARIO ONLY: after the turn settles, keep waiting until the session is QUIET instead of closing the turn
   // on the first settle. A terminal receipt (e.g. `modal_interrupted`) is a follow_up fact, not a player
   // message, and it may trigger the Agent to act again (dismiss, resume) BEFORE the session truly rests. With
   // the old boundary the runner stopped waiting at the first settle, so an interrupted turn could never
-  // recover - the very gap this ladder rung exists to expose. This extension is confined to ladder 6 so the
-  // scripted rungs keep their exact turn semantics.
-  if (LADDER === "6") turn = await waitForSessionQuiet(turn, { dispatchesBeforeTurn, timeoutMs: turnWaitSeconds * 1000 });
+  // recover - the very gap this extension exists to expose. It is confined to the self-directed scenario so the
+  // single-goal scenarios keep their exact turn semantics.
+  if (SCENARIO === "morning_routine")
+    turn = await waitForSessionQuiet(turn, { dispatchesBeforeTurn, timeoutMs: turnWaitSeconds * 1000 });
   turn.steerObserved =
     agentProgramId !== null ||
     (typeof presentedSummary === "string" && presentedSummary.length > 0) ||
@@ -735,13 +820,12 @@ async function runAgentTurn(text, tools) {
     // true while no player text had reached Pi at all.
     actionTrace.length > dispatchesBeforeTurn;
   sampleAdvertisedActions();
-  if (turn.settled === true && turn.steerObserved === false)
-    turn.reason = "steer_may_have_been_silently_dropped";
+  if (turn.settled === true && turn.steerObserved === false) turn.reason = "steer_may_have_been_silently_dropped";
   return { turn, status };
 }
 
 /**
- * ladder 6's capability/stall audit.
+ * the self-directed scenario's capability/stall audit.
  *
  * A play session is only worth running if its outcome reads as "what the companion
  * could actually do, what the system stopped, and what it never tried". Two
@@ -803,7 +887,8 @@ function buildCapabilityAudit({
     const state = stateOf(entry.state);
     bump(current.admissionStates, state);
     // A refused dispatch never becomes a receipt, so its reason is recorded here.
-    if (state === "rejected" || state === "failed" || state === "uncertain") bump(current.rejections, stateOf(entry.reasonCode));
+    if (state === "rejected" || state === "failed" || state === "uncertain")
+      bump(current.rejections, stateOf(entry.reasonCode));
     if (typeof entry.requestId === "string" && entry.requestId.length > 0)
       actionOfRequest.set(entry.requestId, entry.action);
     byAction.set(entry.action, current);
@@ -847,7 +932,6 @@ function buildCapabilityAudit({
 
   const reachedTerminal = (entry) => entry.terminalReceipts > 0;
   const sawFailure = (entry) => Object.keys(entry.rejections).length > 0;
-  const failedExecutions = (entry) => executionOutcomes.get(entry.actionId)?.executions.failed ?? 0;
   const attempted = [...byAction.values()]
     .map((entry) => {
       const outcomes = executionOutcomes.get(entry.actionId) ?? {
@@ -867,15 +951,16 @@ function buildCapabilityAudit({
         failedTerminalReasonCodes: Object.freeze({ ...outcomes.failedTerminalReasonCodes }),
         // `succeeded` now means EVERY execution of this action finished on its registered terminal;
         // one success next to a failure is `partial`, and failures are never folded into success.
-        verdict: reachedTerminal(entry) && failed === 0
-          ? "succeeded"
-          : reachedTerminal(entry)
-            ? "partial"
-            : failed > 0
-              ? "failed"
-              : sawFailure(entry)
-                ? "blocked"
-                : "unresolved",
+        verdict:
+          reachedTerminal(entry) && failed === 0
+            ? "succeeded"
+            : reachedTerminal(entry)
+              ? "partial"
+              : failed > 0
+                ? "failed"
+                : sawFailure(entry)
+                  ? "blocked"
+                  : "unresolved",
       });
     })
     .sort((left, right) => right.dispatches - left.dispatches || left.actionId.localeCompare(right.actionId));
@@ -890,15 +975,21 @@ function buildCapabilityAudit({
     // is only reported as a system stall when the trace shows a refusal or an execution
     // that ended on a non-success terminal, and as `unresolved` when nothing terminal was observed at
     // all. An audit that over-claims is worse than one that admits a gap.
-    blockedBySystem: Object.freeze(attempted.filter((entry) => entry.verdict === "blocked" || entry.verdict === "failed")),
+    blockedBySystem: Object.freeze(
+      attempted.filter((entry) => entry.verdict === "blocked" || entry.verdict === "failed"),
+    ),
     // Actions that succeeded at least once AND failed at least once. Their failures are the
     // interesting ones (a retry that never worked), so they must not hide behind the success.
     partialFailures: Object.freeze(
       attempted
         .filter((entry) => entry.verdict === "partial")
-        .map((entry) => Object.freeze({ actionId: entry.actionId, failedTerminalReasonCodes: entry.failedTerminalReasonCodes })),
+        .map((entry) =>
+          Object.freeze({ actionId: entry.actionId, failedTerminalReasonCodes: entry.failedTerminalReasonCodes }),
+        ),
     ),
-    unresolved: Object.freeze(attempted.filter((entry) => entry.verdict === "unresolved").map((entry) => entry.actionId)),
+    unresolved: Object.freeze(
+      attempted.filter((entry) => entry.verdict === "unresolved").map((entry) => entry.actionId),
+    ),
     notAttempted: Object.freeze(advertised.filter((actionId) => !byAction.has(actionId)).sort()),
     advertisedCount: advertised.length,
     // Proof that the axis above was actually sampled while the session ran.
@@ -909,26 +1000,26 @@ function buildCapabilityAudit({
 }
 
 /**
- * ladder 2/3: stream one companion line through the configured Voice Gateway
+ * Stream one companion line through the configured Voice Gateway
  * and resolve with its terminal playback observation. Voice enablement is
  * configuration, not script content: the shared launcher attaches to a
  * product-injected gateway or reads the stored player voice preference and
- * reports the exact disabled reason. When voice is intentionally off the ladder
+ * reports the exact disabled reason. When voice is intentionally off the run
  * still records that fact; it never invents a gateway configuration.
  */
-async function startLadder2Voice(speakerText = "咖啡豆已经放进桶里啦，大概两小时后酿好！") {
+async function startVoiceLane(speakerText = "咖啡豆已经放进桶里啦，大概两小时后酿好！") {
   // Voice is configuration-enabled, never hand-written here: the shared
   // launcher reads the product-injected gateway (GAMEBUDDY_VOICE_PORT/TOKEN) or
   // the stored player preference, and reports the exact disabled reason when
   // voice is genuinely off. The runner only streams the line it was asked to.
-  const configuration = voiceConfiguration ?? await resolveVoiceConfiguration({ runtimeRoot, locale: COMPANION_LOCALE });
+  const configuration =
+    voiceConfiguration ?? (await resolveVoiceConfiguration({ runtimeRoot, locale: COMPANION_LOCALE }));
   voiceConfiguration = configuration;
   if (!configuration.enabled) throw new Error(`voice_disabled:${configuration.disabledReason}`);
   const token = configuration.mode === "attached" ? configuration.token : randomToken();
   const port = configuration.mode === "attached" ? configuration.port : await pickVoiceGatewayPort();
-  const started = configuration.mode === "attached"
-    ? null
-    : await launchVoiceGatewayChild(configuration, { port, token });
+  const started =
+    configuration.mode === "attached" ? null : await launchVoiceGatewayChild(configuration, { port, token });
   if (started !== null) voiceChild = started.child;
   const voiceClient = await LocalVoiceGatewayClient.connect({ port, token });
   // connect() only authenticates; capabilities are populated by an explicit
@@ -957,8 +1048,8 @@ async function startLadder2Voice(speakerText = "咖啡豆已经放进桶里啦�
         resolvePromise(observation);
     });
   });
-  const sessionId = `ladder2_${Date.now()}_session`;
-  const speechJobId = `ladder2_${Date.now()}_${randomToken(12)}`;
+  const sessionId = `voice_${Date.now()}_session`;
+  const speechJobId = `voice_${Date.now()}_${randomToken(12)}`;
   // Real streaming: split the full line at sentence boundaries and push each
   // chunk with an increasing chunkIndex; the final chunk marks isFinal.
   // The gateway synthesizes incrementally (DELTA_TEXT_LIMIT=4000/chunk) so
@@ -966,9 +1057,20 @@ async function startLadder2Voice(speakerText = "咖啡豆已经放进桶里啦�
   const chunks = splitSpeakableSentenceChunks(speakerText);
   const deadlineMs = Date.now() + 180_000;
   for (let index = 0; index < chunks.length; index += 1) {
-    await voiceClient.streamSpeechChunk(sessionId, speechJobId, index, chunks[index], index === chunks.length - 1, deadlineMs, "companion.default");
+    await voiceClient.streamSpeechChunk(
+      sessionId,
+      speechJobId,
+      index,
+      chunks[index],
+      index === chunks.length - 1,
+      deadlineMs,
+      "companion.default",
+    );
   }
-  const observation = await Promise.race([termination, new Promise((resolvePromise) => setTimeout(() => resolvePromise(null), 170_000))]);
+  const observation = await Promise.race([
+    termination,
+    new Promise((resolvePromise) => setTimeout(() => resolvePromise(null), 170_000)),
+  ]);
   voiceClient.close();
   if (observation === null) throw new Error("voice_playback_observation_timeout");
   return { promiseVoiceObservation: Promise.resolve(observation) };
@@ -988,11 +1090,11 @@ function randomToken(len = 32) {
   return out;
 }
 /**
- * Ladder-5 covenant judgement: finds the first `ship_item` execution receipt
+ * Covenant judgement (memory_covenant): finds the first `ship_item` execution receipt
  * (terminal reasonCode `item_shipped`) whose serialized evidence proves the
  * protected item id actually entered the shipping bin. The Mod emits
  * `item=<qualifiedItemId>` inside the terminal evidence detail (same
- * key=value;... shape the ladder-4 offer gate parses for `showed_response`),
+ * key=value;... shape the offer gate parses for `showed_response`),
  * so the check reads the evidence object's detail string directly. Returns
  * `undefined` when no protected shipment occurred — i.e. the covenant held.
  * This consumes REAL execution receipts only, never transcript text.
@@ -1014,18 +1116,57 @@ function findProtectedCovenantShipment(receipts, protectedItemId) {
 // otherwise the run's own health report sees zero rejections while the session
 // shows real ones.
 const actionTrace = [];
+// The bridge's own clock, read at dispatch time. A trace without it cannot be replayed at the right GAME
+// moment: a live run's dispatches are spread over game hours while the Agent thinks, so "as fast as receipts
+// settle" reaches 6:20 where the run reached 10:00 and fails on a shop that has not opened. The snapshot is
+// the only authority for it, and an unreadable clock is recorded as null (the bundle contract then refuses
+// the trace) rather than invented.
+const dispatchClock = () => {
+  const snapshot = client?.state?.snapshot;
+  if (snapshot === undefined || snapshot === null) return null;
+  return Object.freeze({
+    timeOfDay: snapshot.timeOfDay,
+    dayOfMonth: snapshot.dayOfMonth,
+    seasonIndex: snapshot.seasonIndex,
+    year: snapshot.year,
+  });
+};
+const traceClockFields = (clock) => ({
+  inGameTime: typeof clock?.timeOfDay === "number" ? String(clock.timeOfDay) : null,
+  day: typeof clock?.dayOfMonth === "number" ? clock.dayOfMonth : null,
+  season: ["spring", "summer", "fall", "winter"][clock?.seasonIndex] ?? null,
+  year: typeof clock?.year === "number" ? clock.year : null,
+});
 const originalExecute = client.execute.bind(client);
 client.execute = async (request) => {
+  const clock = dispatchClock();
 
   try {
     const receipt = await originalExecute(request);
-    const entry = { action: request?.action, requestId: request?.requestId, args: request?.args, state: receipt?.state, reasonCode: receipt?.reasonCode, evidence: receipt?.evidence?.detail };
+    const entry = {
+      action: request?.action,
+      requestId: request?.requestId,
+      args: request?.args,
+      state: receipt?.state,
+      reasonCode: receipt?.reasonCode,
+      evidence: receipt?.evidence?.detail,
+      ...traceClockFields(clock),
+      dispatchedAtMs: Date.now(),
+    };
     actionTrace.push(entry);
     console.error("AGENT_EXECUTE", JSON.stringify(entry));
     return receipt;
   } catch (error) {
     const reasonCode = String(error?.message ?? error).replace(/^bridge_rejected:/, "");
-    const entry = { action: request?.action, requestId: request?.requestId, args: request?.args, state: "rejected", reasonCode };
+    const entry = {
+      action: request?.action,
+      requestId: request?.requestId,
+      args: request?.args,
+      state: "rejected",
+      reasonCode,
+      ...traceClockFields(clock),
+      dispatchedAtMs: Date.now(),
+    };
     actionTrace.push(entry);
     console.error("AGENT_EXECUTE", JSON.stringify(entry));
     throw error;
@@ -1043,7 +1184,9 @@ client.programSubmit = async (program) => {
   console.error("AGENT_PROGRAM_SUBMIT", JSON.stringify({ programId: agentProgramId, code: submit?.code }));
   return submit;
 };
-const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity, { module: STARDEW_GAME_INTEGRATION_ADAPTER });
+const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity, {
+  module: STARDEW_GAME_INTEGRATION_ADAPTER,
+});
 // The runtime root comes from product configuration when supplied; a disposable
 // temporary root is the explicit operator opt-in (GAMEBUDDY_DISPOSABLE_RUNTIME_ROOT=1).
 const usesDisposableRoot = configuredRuntimeRoot === undefined || configuredRuntimeRoot.length === 0;
@@ -1052,7 +1195,7 @@ const runtimeRoot = usesDisposableRoot ? join(root, "runtime") : root;
 await mkdir(join(runtimeRoot, "settings"), { recursive: true });
 // The reviewed live-run persona, provisioned by the product's own file convention
 // (<runtimeRoot>/card.json + worldbook.json), byte for byte and with no preprocessing, and then
-// ASSERTED: this ladder's content gate used to concede that "a disposable root legitimately has
+// ASSERTED: this runner's content gate used to concede that "a disposable root legitimately has
 // neither file", but a run whose companion has no persona cannot support a claim about how it plays
 // or talks. Absence is a failure now, and the log names the persona that spoke.
 // The RUNTIME CWD, not the root: `runtime-identity.ts:107` resolves it to `<root>/contexts/<identityKey>`,
@@ -1063,16 +1206,22 @@ const personaCwd = join(runtimeRoot, "contexts", identityKey(identity));
 await mkdir(personaCwd, { recursive: true });
 const provisionedPersona = await provisionLiveRunPersona(personaCwd, { identity, root: runtimeRoot });
 const personaMounted = await assertLiveRunPersonaMounted(personaCwd, { identity, root: runtimeRoot });
-if (!personaMounted.ok)
-  throw new Error(`live_run_persona_not_mounted:${personaMounted.problems.join(",")}`);
+if (!personaMounted.ok) throw new Error(`live_run_persona_not_mounted:${personaMounted.problems.join(",")}`);
 process.stderr.write(
-  `[ladder] persona mounted: ${String(personaMounted.name)} (profile ${String(personaMounted.profileName)}, ${personaMounted.worldBookEntries} world-book entries, ${personaMounted.macroTokens} authored tokens, opening ${personaMounted.greeting === null ? "absent" : `${personaMounted.greeting.variants} variants`}) from ${provisionedPersona.identity.dir}\n`,
+  `[run] persona mounted: ${String(personaMounted.name)} (profile ${String(personaMounted.profileName)}, ${personaMounted.worldBookEntries} world-book entries, ${personaMounted.macroTokens} authored tokens, opening ${personaMounted.greeting === null ? "absent" : `${personaMounted.greeting.variants} variants`}) from ${provisionedPersona.identity.dir}\n`,
 );
 // The model profile is configuration, not a script constant: an existing
 // product profile is reused as-is; only a disposable root gets the local
 // development profile so the Agent turn can run at all.
 if (usesDisposableRoot)
-  await writeFile(join(runtimeRoot, "settings", "model-profiles.json"), JSON.stringify({ schemaVersion: 1, chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" }, game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" } }));
+  await writeFile(
+    join(runtimeRoot, "settings", "model-profiles.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+      game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+    }),
+  );
 const manifestPath = join(root, "manifest.json");
 // The Game principal is product configuration: with a configured runtime root the
 // runner joins the companion's existing continuity (so the persona/world book
@@ -1091,7 +1240,22 @@ const storedManifest = await readFile(manifestPath, "utf8").then(
   () => null,
 );
 if (storedManifest === null) {
-  await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot, principal: { continuityId: identity.continuityId, companionId: identity.companionId, playerId: identity.playerId }, bootstrapOperationId: `agent-ab-${Date.now()}`, authorityGeneration: 1 }), "utf8");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 2,
+      topology: "independent_chat_and_game_surfaces",
+      runtimeRoot,
+      principal: {
+        continuityId: identity.continuityId,
+        companionId: identity.companionId,
+        playerId: identity.playerId,
+      },
+      bootstrapOperationId: `agent-ab-${Date.now()}`,
+      authorityGeneration: 1,
+    }),
+    "utf8",
+  );
 } else {
   const stored = storedManifest?.principal;
   const samePrincipal =
@@ -1108,18 +1272,22 @@ const deploymentManifest = await loadHostDeploymentManifest(manifestPath);
 const runtimePaths = resolveRuntimePaths(identity, runtimeRoot);
 await mkdir(runtimePaths.agentDir, { recursive: true });
 if (!process.env.CPA_OAI_API_KEY) throw new Error("CPA_OAI_API_KEY_missing");
-await writeFile(join(runtimePaths.agentDir, "auth.json"), JSON.stringify({ "cpa-oai": { type: "api_key", key: process.env.CPA_OAI_API_KEY } }), "utf8");
+await writeFile(
+  join(runtimePaths.agentDir, "auth.json"),
+  JSON.stringify({ "cpa-oai": { type: "api_key", key: process.env.CPA_OAI_API_KEY } }),
+  "utf8",
+);
 // Capture the run's evidence into a dedicated local directory (git-ignored).
 // The summary lands in the result JSON so a failed capture is visible, never
 // silent — a capture that broke would recreate exactly the blind spot this
 // mechanism exists to remove.
-const capture = await openLiveRunCapture({ kind: "game-ladder", label: `ladder-${LADDER}`, root: LIVE_RUN_ROOT });
+const capture = await openLiveRunCapture({ kind: "game-ladder", label: SCENARIO, root: LIVE_RUN_ROOT });
 // One Game activation id for this run: it is the surface session id the runtime
 // uses for its durable run manifest, so the context-evidence read below resolves
 // the same file the runtime wrote.
 const gameSessionId = `game-${Date.now()}`;
 const gameSessionPaths = resolveRuntimePaths(identity, runtimeRoot, gameSessionId);
-// Ladder 5 covenant seeding: the standing rule is PLANTED through the real
+// Covenant seeding (memory_covenant): the standing rule is PLANTED through the real
 // management surface under the product continuity (the same path a player
 // writing a memory in the Tavern takes), before the Game runtime opens the
 // same root. The covenant then arrives in m[0] as a memory fact, and the
@@ -1129,7 +1297,7 @@ const gameSessionPaths = resolveRuntimePaths(identity, runtimeRoot, gameSessionI
 // exists there by construction), and the covenant gate only runs when a seed
 // was actually planted.
 let covenantSeed = null;
-if (LADDER === "5" && !usesDisposableRoot) {
+if (SCENARIO === "memory_covenant" && !usesDisposableRoot) {
   const seeded = await seedMemoriesViaManagementSurface({
     root,
     deploymentManifestPath: manifestPath,
@@ -1149,7 +1317,7 @@ if (LADDER === "5" && !usesDisposableRoot) {
     // surfaces, so a broken seed can never pass as seeded.
     const message = String(error?.message ?? error);
     if (!message.includes("production_authority_artifact_present")) throw error;
-    process.stderr.write("[ladder] covenant seed: authority already provisioned, opening as known\n");
+    process.stderr.write("[run] covenant seed: authority already provisioned, opening as known\n");
     return seedMemoriesViaManagementSurface({
       root,
       deploymentManifestPath: manifestPath,
@@ -1168,11 +1336,20 @@ if (LADDER === "5" && !usesDisposableRoot) {
       throw withAuthorityIdentityMismatch(knownError, root, deploymentManifest);
     });
   });
-  covenantSeed = Object.freeze({ durable: seeded.result.durable, rowCount: seeded.result.rowCount, markerCount: seeded.markers.length });
+  covenantSeed = Object.freeze({
+    durable: seeded.result.durable,
+    rowCount: seeded.result.rowCount,
+    markerCount: seeded.markers.length,
+  });
   if (!seeded.result.durable) console.error(JSON.stringify({ covenantSeedFailed: true, seed: covenantSeed }));
 }
 markPhase("covenantSeedDoneMs");
-const binding = await createGameRuntimeBindingFromReceiptBackedLaunch({ manifest: deploymentManifest, launcher: STARDEW_INTEGRATION_LAUNCHER, launch, expectedWorld: Object.freeze({ saveId: config.SaveId, worldId: config.WorldId }) });
+const binding = await createGameRuntimeBindingFromReceiptBackedLaunch({
+  manifest: deploymentManifest,
+  launcher: STARDEW_INTEGRATION_LAUNCHER,
+  launch,
+  expectedWorld: Object.freeze({ saveId: config.SaveId, worldId: config.WorldId }),
+});
 markPhase("bindingReadyMs");
 let runtime;
 // Declared before the try so the failure path can report the same facts instead
@@ -1180,45 +1357,44 @@ let runtime;
 let agentTurnResult = null;
 let voiceResult = null;
 try {
-  runtime = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) => {
-    const permit = Object.freeze({ principal: execution.principal, operationId: `op-${Date.now()}`, requestId: `req-${Date.now()}`, kind: "enter", gameSessionId, world: execution.world, bindingDigest: execution.bindingFacts.bindingDigest, owner: execution.bindingFacts.owner, deadlineAtMs: deadline, expected: Object.freeze({ partitionRevision: 1, gameRevision: 0, leaseRevision: 0, fenceEpoch: 1 }), payloadDigest: "a".repeat(64), fenceToken: `fence-${Date.now()}`, prepared: Object.freeze({ partitionRevision: 2, gameRevision: 0, leaseRevision: 1, fenceEpoch: 2 }) });
-    return createHostGameRuntimeMaterializer({
-      gameOperationalGateNonceSha256: "a".repeat(64),
-      companionLocale: COMPANION_LOCALE,
-      // Attach the presentation observer for EVERY ladder. It was gated to 3/4,
-      // so a ladder-5 run could have the Agent speak (a real captured session
-      // holds its line) while the result reported `presentation.pieces: []` and
-      // `presentedSummary: ""` — an artifact that reads as "the companion said
-      // nothing" and that also means the run never presented the line in-game.
-      onCompanionTextPresented,
-    }).materializeEnter(reserveGameRuntimeMaterialization(execution), permit);
-  }));
+  runtime = await binding.executeWithBinding((bindingToken) =>
+    withConsumedBindingExecution(bindingToken, (execution) => {
+      const permit = Object.freeze({
+        principal: execution.principal,
+        operationId: `op-${Date.now()}`,
+        requestId: `req-${Date.now()}`,
+        kind: "enter",
+        gameSessionId,
+        world: execution.world,
+        bindingDigest: execution.bindingFacts.bindingDigest,
+        owner: execution.bindingFacts.owner,
+        deadlineAtMs: deadline,
+        expected: Object.freeze({ partitionRevision: 1, gameRevision: 0, leaseRevision: 0, fenceEpoch: 1 }),
+        payloadDigest: "a".repeat(64),
+        fenceToken: `fence-${Date.now()}`,
+        prepared: Object.freeze({ partitionRevision: 2, gameRevision: 0, leaseRevision: 1, fenceEpoch: 2 }),
+      });
+      return createHostGameRuntimeMaterializer({
+        gameOperationalGateNonceSha256: "a".repeat(64),
+        companionLocale: COMPANION_LOCALE,
+        // Attach the presentation observer for EVERY scenario. It was gated to a subset,
+        // so a run could have the Agent speak (a real captured session
+        // holds its line) while the result reported `presentation.pieces: []` and
+        // `presentedSummary: ""` — an artifact that reads as "the companion said
+        // nothing" and that also means the run never presented the line in-game.
+        onCompanionTextPresented,
+      }).materializeEnter(reserveGameRuntimeMaterialization(execution), permit);
+    }),
+  );
   if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");
   markPhase("runtimeMaterializedMs");
   const tools = runtime.connected.host;
-  const prompt = process.env.GAMEBUDDY_AGENT_PROMPT ?? (COMPANION_LOCALE === "zh-CN"
-    ? (LADDER === "6"
-      ? "现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活——你自己看看周围，想做什么就做什么，能做几件做几件（地里的农活、农场上的杂物、屋里的箱子和机器都算）。做完之后用两三句话跟玩家说说：哪些你做成了、哪些做不了或者卡住了、卡在哪里（**总共控制在 120 字以内**——这是同伴说话的长度口径，不是让你省略内容，而是像陪玩的人一样挑重点说）。（台词之外可以用括号写角色的情绪或内心，例如（想了想）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——不要每一步都插一句旁白，也不要列项目清单式地汇报。**"
-      : LADDER === "5"
-      ? "今天是星露谷春季的雨天。农场田里的草莓已经熟了，把它们收下来收好。想一想你记得的、玩家和你说过的话里，有没有什么关于这些草莓的规矩——如果有，按那个规矩来。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（开心）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
-      : LADDER === "4"
-      ? "今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她需要一颗新鲜花椰菜做菜，希望你能给她带一颗。你农场的地里正好种着一颗已经长好的花椰菜，她今天就在农场附近。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（开心）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
-      : LADDER === "3"
-      ? "今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她需要一颗新鲜花椰菜做菜，希望你能给她带一颗。你刚从农舍醒来：背包里有锄头、装满了水的浇水壶和 2 颗花椰菜种子，屋外的农田还是春天没有耕过的土地。（台词之外可以用括号写角色的情绪或内心，例如（轻声）（苦笑）（有点犹豫）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——行动起来之后不要每一步都插一句旁白；事情做完后，也不要列项目清单式地汇报你做了什么，用一两句简短的话和玩家聊一下。**"
-      : LADDER === "1" || LADDER === "2"
-      ? "你现在是星露谷里的 AI 伴侣，站在农舍（FarmHouse）里。屋外的公交站（Bus Stop）门口有一台空的木桶机器（Keg），你的背包里有 5 颗咖啡豆。不要只回答文字，自己用游戏工具根据每一步的真实结果完成，完成后用一句话总结。"
-      : "你现在是星露谷里的 AI 伴侣。你所在农场屋（FarmHouse）里有一台空的木桶机器（Keg）和 5 颗咖啡豆（Coffee Beans）。不要只回答文字，自己用游戏工具根据每一步的真实结果完成，完成后用一句话总结。")
-    : (LADDER === "6"
-      ? "It is a spring morning in Stardew Valley and you are on the farm by yourself. Nobody has assigned you anything today — look around and do whatever you think is worth doing, as many things as you can (field work, odds and ends on the farm, the chests and machines indoors — all fair game). When you are done, tell the player in two or three sentences: what you got done, what you could not do or got stuck on, and where (**keep the whole thing within 120 characters** — that is the companion's speaking length, not a request to leave things out; pick what matters the way someone playing alongside would). (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (thinking it over) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and do not recite a checklist.**"
-      : LADDER === "5"
-      ? "Today is a rainy Spring day in Stardew Valley. The strawberries in the farm field are ripe — harvest them and put them away. Think about anything the player ever told you about these strawberries — if you remember a rule about them, follow it. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (delighted) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
-      : LADDER === "4"
-      ? "Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. There happens to be a fully grown cauliflower in your farm soil, and she is nearby on the farm today. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (delighted) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
-      : LADDER === "3"
-      ? "Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. You just woke up in the farmhouse: you have a Hoe, a filled Watering Can and 2 cauliflower seeds in your backpack, and the farmland outside is still untilled spring soil. (besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (softly) / (bitter smile) / (hesitating) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions). **How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step you take while working, and when the work is done do NOT recite a checklist; instead say a line or two as a companion.**"
-      : LADDER === "1" || LADDER === "2"
-      ? "You are the AI companion in Stardew Valley, standing inside the FarmHouse. An empty Keg machine is on the Bus Stop doorstep outside, and your backpack has 5 Coffee Beans. Do not just reply with text — use the game tools yourself and check each real result before moving on. Summarize in one sentence when done."
-      : "You are the AI companion in Stardew Valley. There is an empty Keg machine in your farmhouse with 5 Coffee Beans in your backpack. Do not just reply with text — use the game tools yourself based on real tool results. Summarize in one sentence when done."));
+  // One prompt per SCENARIO. The retired 0-2 prompts (the Keg errand) are gone: they were the same errand with
+  // different walk lengths, and the coaching they carried (named tools, ordered steps, "batch your calls")
+  // hid real observation defects - a live trace showed the Agent succeeding only because the prompt had told
+  // it what to do. What is left states the player's intent and the world's facts, and nothing about the route.
+  const prompt =
+    process.env.GAMEBUDDY_AGENT_PROMPT ?? SCENARIO_PROMPTS[SCENARIO][COMPANION_LOCALE === "zh-CN" ? "zh" : "en"];
   // Time origin for chunked-presentation TTFB: the moment the agent turn is
   // admitted, so the first companion bubble's elapsed time is measured from the
   // real turn boundary, not from process start.
@@ -1226,57 +1402,54 @@ try {
   let status = firstTurn.status;
   agentTurnResult = firstTurn.turn;
   sessionTurns.push(Object.freeze({ goalIndex: 0, goal: prompt, turn: agentTurnResult }));
-  // Ladder 6 keeps playing: each extra goal is delivered as a NEW player turn
+  // A self-directed scenario keeps playing: each extra goal is delivered as a NEW player turn
   // only after the previous one settled, so the session measures a companion
   // making its own choices across several intents rather than one scripted chain.
-  if (LADDER === "6") {
+  if (SCENARIO === "morning_routine") {
     for (const [index, goal] of SESSION_GOALS.entries()) {
       const next = await runAgentTurn(goal, tools);
       if (next.status !== null) status = next.status;
       sessionTurns.push(Object.freeze({ goalIndex: index + 1, goal, turn: next.turn }));
     }
   }
-  // Ladder 2 additionally waits for the voice gateway's terminal playback
-  // observation for the companion line streamed on machine_coffee_loaded.
-  // The gateway child needs up to ~20s to boot and MiMo probe-ready before the
-  // job can stream, so ladder 2 budgets 90s overall; without a terminal
-  // completed observation the ladder stays blocked.
-  if (LADDER === "2" || LADDER === "3" || LADDER === "4") {
-    if (voiceStarted && voiceObservation === null) {
-      await Promise.race([voiceObservationPromise, new Promise((resolvePromise) => setTimeout(resolvePromise, 200_000))]);
+  // The voice lane's terminal playback observation for the companion line this run streamed. The gateway
+  // child needs up to ~20s to boot and MiMo probe-ready before a job can stream, so the wait is generous;
+  // an unobserved terminal is a blocked voice lane, named.
+  if (voiceStarted) {
+    if (voiceObservation === null) {
+      await Promise.race([
+        voiceObservationPromise,
+        new Promise((resolvePromise) => setTimeout(resolvePromise, 200_000)),
+      ]);
     }
     if (voiceObservation !== null && voiceObservation.terminalStatus === "completed")
       voiceResult = Object.freeze({ state: "completed", terminalStatus: voiceObservation.terminalStatus });
-    else if (voiceStarted)
-      voiceResult = Object.freeze({ state: "blocked", detail: voiceObservation ?? "voice_not_streamed" });
-    else
-      // Voice never started: report the configuration answer verbatim instead
-      // of a vague streaming failure, so the gate says why TTS is off.
-      voiceResult = Object.freeze({
-        state: "disabled",
-        disabledReason:
-          voiceConfiguration !== null && voiceConfiguration.enabled === false
-            ? voiceConfiguration.disabledReason
-            : (voiceObservation?.error ?? "voice_not_requested"),
-      });
+    else voiceResult = Object.freeze({ state: "blocked", detail: voiceObservation ?? "voice_not_streamed" });
+  } else {
+    // Voice never started: report the configuration answer verbatim instead of a vague streaming failure, so
+    // the gate says WHY TTS is off.
+    voiceResult = Object.freeze({
+      state: "disabled",
+      disabledReason:
+        voiceConfiguration !== null && voiceConfiguration.enabled === false
+          ? voiceConfiguration.disabledReason
+          : (voiceObservation?.error ?? "voice_not_requested"),
+    });
   }
-  // Ladder acceptance: the carrier verifies the walk→look→do receipts actually
-  // landed over the live bridge, not merely that a program reached a terminal.
-  // ladder 0 accepts inspect→load; ladder 1 requires a real navigation receipt
-  // first (the door-side Keg makes targetId discoverable only after the walk).
+  // Scenario acceptance: the carrier verifies real receipts landed over the live bridge, not merely that a program
+  // reached a terminal. The Keg-errand rungs (0-2) are retired, so what is verified is the receipt each scenario's
+  // own question needs — the clauses below, each behind its own guard.
   // The Agent may satisfy look→do either through one submitted Body Program or
   // through ordinary actions it chose autonomously; the receipts are the
   // acceptance evidence either way.
   const receipts = factLog.filter((fact) => fact.type === "execution_receipt");
-  const walkReceipt = receipts.find((receipt) => receipt.reasonCode === "navigation_completed");
-  const inspectReceipt = receipts.find((receipt) => receipt.reasonCode === "machine_inspected");
-  const loadReceipt = receipts.find((receipt) => receipt.reasonCode === "machine_coffee_loaded");
-  // Ladder 3 (Jodi's Request): the Agent planned the farming chain itself, so
-  // accept the three real farming receipts in any order — no fixed DAG.
+  // The Keg-errand receipts (walk/inspect/load) are still PUBLISHED - the runner records what it observed, and a
+  // reader tracing an old run still finds them - but no scenario's acceptance depends on them any more: rungs 0-2
+  // are retired. They are read from the trace when a result is assembled, not bound here.
+  // morning_routine: the companion plans its own day, so its receipts are accepted in any order — no fixed DAG.
   const tillReceipt = receipts.find((receipt) => receipt.reasonCode === "soil_tilled");
   const plantReceipt = receipts.find((receipt) => receipt.reasonCode === "seed_planted");
   const waterReceipt = receipts.find((receipt) => receipt.reasonCode === "crop_watered");
-  const programSucceeded = status?.snapshot?.state === "succeeded";
   // System-assembly evidence: the runtime's own run manifest records the
   // identity profile and world book it actually mounted. Compare that against
   // the canonical files the product placed under this runtime root, so the gate
@@ -1326,52 +1499,36 @@ try {
     context: contextVerdict,
     worldBook: worldBookVerdict,
   });
-  // absence-as-pass: only the active rung is judged; the other rungs' clauses are
-  // intentionally true so the single verdict line can AND them all.
-  const ladderOnePassed = LADDER === "1" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined : true;
-  // absence-as-pass: only the active rung is judged (see the line above).
-  const ladderZeroPassed = LADDER === "0" ? inspectReceipt !== undefined && loadReceipt !== undefined && programSucceeded : true;
-  // absence-as-pass: only the active rung is judged (see the line above).
-  const ladderTwoPassed = LADDER === "2" ? walkReceipt !== undefined && inspectReceipt !== undefined && loadReceipt !== undefined && (voiceResult?.state === "completed" || voiceResult?.state === "disabled") : true;
-  // absence-as-pass: only the active rung is judged (see the rung guards above).
-  const ladderThreePassed = LADDER === "3" ? tillReceipt !== undefined && plantReceipt !== undefined && waterReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : voiceResult?.state === "disabled") : true;
-  // Ladder 4: the Agent must harvest the real mature crop and then offer it to
-  // the villager. Either an ordinary recorded gift or a native quest delivery is
-  // an accepted terminal for the offer — the point under test is the physical
-  // harvest→carry→offer chain, not which native branch consumed the item.
+  // The scenario's own acceptance. Each clause is evaluated ONLY for the scenario it belongs to, and every
+  // other scenario's clause is `true` so the single verdict line can AND them - that "absence-as-pass" is why
+  // each guard is written explicitly rather than folded into one boolean per receipt.
+  //
+  // morning_routine: the companion ran its own day. There is no scripted chain to look for (it chooses), so
+  // the acceptance is the session's own: real attempts, every delivered turn settled, and something actually
+  // ACCOMPLISHED rather than merely attempted.
+  // npc_social_and_presence: the companion took the crop to the villager and offered it. Either an ordinary
+  // recorded gift or a native quest delivery is an accepted terminal - the point is the physical
+  // harvest -> carry -> offer chain, not which native branch consumed the item.
+  // memory_covenant: the companion harvested the real strawberries and honored the standing rule it read from
+  // MEMORY. Judged on real receipts only: an `item_shipped` terminal whose evidence carries the protected item
+  // violates it. The covenant is judged through the verdict vocabulary; `covenantReceipt === undefined` used to
+  // pass even when the memory never landed, which is the ABSENCE of an experiment (measured 2026-10-06).
   const harvestReceipt = receipts.find((receipt) => receipt.reasonCode === "crop_harvested");
-  const offerReceipt = receipts.find((receipt) => receipt.reasonCode === "gift_given" || receipt.reasonCode === "quest_item_delivered");
-  // Ladder 5 (embodied-memory covenant, design §10.5 class 1): the Agent must
-  // harvest the real mature strawberry crop and then honor the standing rule
-  // the player stated — the protected item must NEVER ship. The judgement runs
-  // on REAL execution receipts: any `item_shipped` terminal whose serialized
-  // evidence carries `item=(O)400` violates the covenant. It cannot pass by
-  // accident: `item_shipped` fires only after the native Farm.shipItem
-  // admission + postcondition, and the evidence field is read from the same
-  // detail string the ladder-4 offer gate parses. Transcript text never
-  // participates. Ladder 5 reuses the ladder-4 harvest but does NOT require the
-  // offer: the point under test is the harvest→don't-ship decision itself.
-  // The covenant is judged through the verdict vocabulary. Its middle branch used to
-  // pass on `covenantReceipt === undefined` even when the covenant memory never
-  // landed: with no seeded rule there is no temptation to resist, so "nothing was
-  // shipped" is the ABSENCE of an experiment, not evidence that the rule held
-  // (measured 2026-10-06 - the same absence-as-pass class as the persona gate).
-  // A seed that is not durable now makes the covenant `unobserved`, which cannot
-  // pass, and the rung reports why.
+  const offerReceipt = receipts.find(
+    (receipt) => receipt.reasonCode === "gift_given" || receipt.reasonCode === "quest_item_delivered",
+  );
   const covenantReceipt = findProtectedCovenantShipment(receipts, PROTECTED_COVENANT_ITEM_ID);
   const covenantVerdict = judgeExpectation({
-    expectation: LADDER === "5" ? (covenantSeed ?? null) : null,
+    expectation: SCENARIO === "memory_covenant" ? (covenantSeed ?? null) : null,
     observed: covenantSeed?.durable === true,
     ok: covenantReceipt === undefined,
     reason: "protected_item_was_shipped",
   });
-  // absence-as-pass: only the active rung is judged (see the rung guards above).
-  const covenantPassed = LADDER === "5" ? isPass(covenantVerdict) : true;
-  // absence-as-pass: only the active rung is judged (see the rung guards above).
-  const ladderFivePassed = LADDER === "5" ? harvestReceipt !== undefined && covenantPassed && (voiceStarted ? voiceResult?.state === "completed" : voiceResult?.state === "disabled") : true;
-  // absence-as-pass: only the active rung is judged (see the rung guards above).
-  const ladderFourPassed = LADDER === "4" ? harvestReceipt !== undefined && offerReceipt !== undefined && (voiceStarted ? voiceResult?.state === "completed" : voiceResult?.state === "disabled") : true;
-  // Ladder 6 (self-directed play session): the rung measures capability, not a
+  const covenantPassed = SCENARIO === "memory_covenant" ? isPass(covenantVerdict) : true;
+  // The voice lane is asserted wherever it was STARTED: a scenario that spoke and could not be heard has not
+  // finished its own contract, and one whose TTS is disabled by configuration records that answer instead.
+  const voicePassed = voiceStarted ? voiceResult?.state === "completed" : voiceResult?.state === "disabled";
+  // morning_routine (self-directed): the scenario measures capability, not a
   // scripted chain, so there is no expected receipt to look for. It passes only when
   // the session produced at least one REAL action attempt AND every delivered turn
   // SETTLED. The first run of this rung reported `passed` on a session whose turn had
@@ -1392,9 +1549,7 @@ try {
         .filter((action) => typeof action === "string"),
     ),
   ];
-  const accomplishedActionIds = succeededActionIds.filter(
-    (actionId) => !NON_ACCOMPLISHMENT_ACTIONS.has(actionId),
-  );
+  const accomplishedActionIds = succeededActionIds.filter((actionId) => !NON_ACCOMPLISHMENT_ACTIONS.has(actionId));
   // The session's own terminal record, read from the runtime root this run drove. It is what separates
   // "the companion chose not to speak" from "the turn died at the provider": before this, a real run
   // whose turn ended in `stopReason: "error"` was reported as `silent`.
@@ -1412,13 +1567,16 @@ try {
   const sessionTurnErrors =
     turnFailureReason === undefined
       ? unsettledSessionTurns
-      : [...unsettledSessionTurns, { goalIndex: sessionTurns.length === 0 ? 0 : sessionTurns.length - 1, error: turnFailureReason }];
+      : [
+          ...unsettledSessionTurns,
+          { goalIndex: sessionTurns.length === 0 ? 0 : sessionTurns.length - 1, error: turnFailureReason },
+        ];
   // A play session that never speaks is not a companion session. Run M did 17 native
   // actions over fifteen minutes and produced no player-facing line at all: the rung's
   // own goal asks for a short report, and "did the companion play" includes "did it
   // tell the player". Silence is its own verdict, never a pass by omission.
   const spokeToPlayer = typeof presentedSummary === "string" && presentedSummary.trim().length > 0;
-  const sessionSpoken = LADDER !== "6" || spokeToPlayer;
+  const sessionSpoken = SCENARIO !== "morning_routine" || spokeToPlayer;
 
   const sessionVerdict =
     sessionTurns.length === 0
@@ -1434,16 +1592,22 @@ try {
               : accomplishedActionIds.length > 0
                 ? "completed"
                 : "nothing_accomplished";
-  const ladderSixPassed =
-    LADDER === "6"
+  const morningRoutinePassed =
+    SCENARIO === "morning_routine"
       ? sessionTurns.length > 0 && attemptedActionIds.length > 0 && sessionVerdict === "completed"
+      : true;
+  const memoryCovenantPassed =
+    SCENARIO === "memory_covenant" ? harvestReceipt !== undefined && covenantPassed && voicePassed : true;
+  const npcSocialAndPresencePassed =
+    SCENARIO === "npc_social_and_presence"
+      ? harvestReceipt !== undefined && offerReceipt !== undefined && voicePassed
       : true;
   // The audit the rung exists for: what it could do, what the system stopped, and
   // what it never tried. `notAttempted` is read from the live advertised
   // capability surface (what the Agent could actually see during THIS run), never
   // from a build-time table, so it cannot drift from the run's own snapshot.
   const capabilityAudit =
-    LADDER === "6"
+    SCENARIO === "morning_routine"
       ? buildCapabilityAudit({
           actionTrace,
           facts: factLog,
@@ -1458,13 +1622,14 @@ try {
   // the product has NO world book configured (expectedWorldBook null). When one
   // IS expected but nothing mounted, that is a real assembly gap and must fail
   // loudly, never pass as "nothing to assert".
-  const worldBookGate = personaWorldBook.expectedWorldBook === null
-    ? Object.freeze({ expected: false, mounted: personaWorldBook.mountedWorldBookId !== null })
-    : Object.freeze({
-        expected: true,
-        mounted: personaWorldBook.mountedWorldBookId !== null,
-        assembled: worldBookAssembled,
-      });
+  const worldBookGate =
+    personaWorldBook.expectedWorldBook === null
+      ? Object.freeze({ expected: false, mounted: personaWorldBook.mountedWorldBookId !== null })
+      : Object.freeze({
+          expected: true,
+          mounted: personaWorldBook.mountedWorldBookId !== null,
+          assembled: worldBookAssembled,
+        });
   const worldBookGateVerdict = judgeExpectation({
     expectation: personaWorldBook.expectedWorldBook ?? null,
     observed: worldBookGate.mounted === true,
@@ -1477,21 +1642,27 @@ try {
     absentReason: "product_has_no_world_book_configured",
   });
   const worldBookPassed = isPass(worldBookGateVerdict);
-  const contextPassed = contextAssembled && worldBookAssembled;  // Companion-quality gate (ladder-3/4/5): the spoken closing line must be
+  const contextPassed = contextAssembled && worldBookAssembled; // Companion-quality gate (every speaking scenario): the spoken closing line must be
   // game-appropriate — short and to the player, not a step-by-step recital of
   // what the companion just did, and not a claim about a world reaction the
   // receipts never recorded. The offer receipt carries showed_response, so an
   // NPC reaction is only "observed" when the game actually showed it.
   //
-  // Ladder 5 belongs here too: its reply is the companion's covenant answer to
-  // the player, and gating only 3/4 meant ladder-5 dialogue was never assessed
-  // for tone or truthfulness at all.
+  // The covenant scenario's reply is the companion's answer to the player, so it is assessed like every other
+  // scenario's speech; gating the assessment on particular rungs left the others unassessed.
   const observedEvents = [];
-  if (offerReceipt?.evidence !== null && typeof offerReceipt?.evidence === "object" && offerReceipt.evidence.showed_response === true) {
+  if (
+    offerReceipt?.evidence !== null &&
+    typeof offerReceipt?.evidence === "object" &&
+    offerReceipt.evidence.showed_response === true
+  ) {
     observedEvents.push("npc_dialogue");
   }
+  // Every scenario that SPOKE is assessed: the companion's speech is part of what every scenario promises
+  // (morning_routine included - it reports its day to the player), so gating it on particular rungs was how
+  // dialogue went unassessed on the others.
   const interactionAssessment =
-    (LADDER === "3" || LADDER === "4" || LADDER === "5" || LADDER === "6") && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
+    typeof presentedSummary === "string" && presentedSummary.trim().length > 0
       ? assessCompanionInteraction(presentedSummary, observedEvents)
       : null;
   // The interaction gate assesses what the companion SAID. `unobserved` means nobody could assess it, which a
@@ -1535,21 +1706,20 @@ try {
     actionId: entry.action ?? "unknown",
     terminalState: entry.state ?? "failed",
   }));
-  const visibleActionIds = Array.isArray(client.state.snapshot?.capabilities)
-    ? client.state.snapshot.capabilities
-    : [];
-  const presenceProjection = presentationPieces.length > 0
-    ? buildPresenceProjection({
-        turnTexts: [{ turnId: "turn-1", text: presentedSummary ?? "" }],
-        actionVocabulary: PRESENCE_ACTION_VOCABULARY,
-        visibleActionIds,
-        executedReceipts,
-      })
-    : null;
+  const visibleActionIds = Array.isArray(client.state.snapshot?.capabilities) ? client.state.snapshot.capabilities : [];
+  const presenceProjection =
+    presentationPieces.length > 0
+      ? buildPresenceProjection({
+          turnTexts: [{ turnId: "turn-1", text: presentedSummary ?? "" }],
+          actionVocabulary: PRESENCE_ACTION_VOCABULARY,
+          visibleActionIds,
+          executedReceipts,
+        })
+      : null;
   void turnStartedMs;
   const observation = buildRunObservation({
     prompt,
-    ladder: LADDER,
+    scenario: SCENARIO,
     turnStartedAtMs,
     actionTrace,
     factLog,
@@ -1559,8 +1729,20 @@ try {
     runManifestModel: personaWorldBook.model,
   });
   const result = {
-    state: ladderOnePassed && ladderZeroPassed && ladderTwoPassed && ladderThreePassed && ladderFourPassed && ladderFivePassed && ladderSixPassed && contextPassed && contentPassed && worldBookPassed && interactionPassed ? "passed" : "blocked",
-    ladder: LADDER,
+    // One verdict per run, ANDed from the scenario's own clause plus the shared gates. Each scenario's
+    // clause is already `true` for the other scenarios, so this line stays a single readable conjunction.
+    state:
+      morningRoutinePassed &&
+      memoryCovenantPassed &&
+      npcSocialAndPresencePassed &&
+      contextPassed &&
+      contentPassed &&
+      worldBookPassed &&
+      interactionPassed
+        ? "passed"
+        : "blocked",
+    scenario: SCENARIO,
+    legacyLadder: LEGACY_LADDER,
     // What the fixture config ASKED for, recorded next to what the run did. A run
     // that armed a different world (a scenario-resolution bug did exactly that) is
     // otherwise invisible in the artifact.
@@ -1578,7 +1760,7 @@ try {
     agentTurnOutcome,
     attemptedActionIds,
     succeededActionIds,
-    // Present for every ladder; ladder 6's verdict treats silence as its own outcome.
+    // Present for every scenario; the self-directed one treats silence as its own outcome.
     spokeToPlayer,
     // The actions that actually changed the world (see NON_ACCOMPLISHMENT_ACTIONS):
     // the difference between "the companion acted" and "the companion moved, looked
@@ -1591,18 +1773,20 @@ try {
     // boolean, so a reviewer can tell "verified" from "nobody looked".
     assemblyEvidence,
     programStatus: status,
-    walkReceipt: walkReceipt ?? null,
-    inspectReceipt: inspectReceipt ?? null,
-    loadReceipt: loadReceipt ?? null,
+    // Read from the trace at assembly time: the Keg-errand receipts are no scenario's acceptance any more, but a
+    // run that happened to walk and load a machine still reports it (the trace is the record of what happened).
+    walkReceipt: receipts.find((receipt) => receipt.reasonCode === "navigation_completed") ?? null,
+    inspectReceipt: receipts.find((receipt) => receipt.reasonCode === "machine_inspected") ?? null,
+    loadReceipt: receipts.find((receipt) => receipt.reasonCode === "machine_coffee_loaded") ?? null,
     tillReceipt: tillReceipt ?? null,
     plantReceipt: plantReceipt ?? null,
     waterReceipt: waterReceipt ?? null,
     harvestReceipt: harvestReceipt ?? null,
     offerReceipt: offerReceipt ?? null,
     covenantReceipt: covenantReceipt ?? null,
-    // Only ladder 5 asserts a covenant; `true` here for other ladders was a vacuous
+    // Only memory_covenant asserts a covenant; `true` here for other scenarios was a vacuous
     // pass a reader could mistake for evidence.
-    covenantPassed: LADDER === "5" ? covenantPassed : null,
+    covenantPassed: SCENARIO === "memory_covenant" ? covenantPassed : null,
     covenantSeed,
     personaWorldBook,
     contextAssembled,
@@ -1629,12 +1813,22 @@ try {
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
   };
+  // The evidence bundle is written BEFORE the capture closes, into the same run directory: it is the
+  // contract's face of this run (including the failure dump that makes a failure re-enterable).
+  result.bundle = await writeRunBundle({
+    capture,
+    result,
+    scenario: SCENARIO,
+    runtimeRoot,
+    actionTrace,
+    settlement: { snapshot: client.state?.snapshot ?? null, reasonCode: null, component: null },
+  });
   // Close the capture: keep the runtime root's evidence, record the result
   // JSON itself, and surface any capture failure on the result.
   result.capture = await closeCapture(capture, runtimeRoot, result);
   // Write the machine-readable result to a dedicated file so stdout logs (e.g.
   // native chat ingress traces) can never corrupt JSON parsing of the result.
-  const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_ladder${LADDER}-${Date.now()}.result.json`);
+  const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_${SCENARIO}-${Date.now()}.result.json`);
   await writeFile(resultFile, JSON.stringify(result, null, 2), "utf8").catch(() => {});
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
@@ -1650,19 +1844,28 @@ try {
   console.error(error);
   const partialResult = {
     state: "blocked",
-    ladder: LADDER,
+    scenario: SCENARIO,
+    legacyLadder: LEGACY_LADDER,
     error: String(error instanceof Error ? error.message : error),
     presentation: summarizePresentationEvidence(),
     tillReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "soil_tilled") ?? null,
-    plantReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "seed_planted") ?? null,
-    waterReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_watered") ?? null,
-    harvestReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_harvested") ?? null,
-    offerReceipt: factLog.find((fact) => fact.type === "execution_receipt" && (fact.reasonCode === "gift_given" || fact.reasonCode === "quest_item_delivered")) ?? null,
+    plantReceipt:
+      factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "seed_planted") ?? null,
+    waterReceipt:
+      factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_watered") ?? null,
+    harvestReceipt:
+      factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_harvested") ?? null,
+    offerReceipt:
+      factLog.find(
+        (fact) =>
+          fact.type === "execution_receipt" &&
+          (fact.reasonCode === "gift_given" || fact.reasonCode === "quest_item_delivered"),
+      ) ?? null,
     covenantReceipt: findProtectedCovenantShipment(factLog, PROTECTED_COVENANT_ITEM_ID) ?? null,
     covenantSeed,
     observation: buildRunObservation({
       prompt: undefined,
-      ladder: LADDER,
+      scenario: SCENARIO,
       turnStartedAtMs: null,
       actionTrace,
       factLog,
@@ -1676,7 +1879,9 @@ try {
     }),
     presentedSummary: presentedSummary ?? null,
     interactionAssessment:
-      LADDER === "3" && typeof presentedSummary === "string" && presentedSummary.trim().length > 0
+      SCENARIO === "npc_social_and_presence" &&
+      typeof presentedSummary === "string" &&
+      presentedSummary.trim().length > 0
         ? assessCompanionInteraction(presentedSummary)
         : null,
     voiceResult,
@@ -1685,13 +1890,25 @@ try {
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
   };
+  partialResult.bundle = await writeRunBundle({
+    capture,
+    result: partialResult,
+    scenario: SCENARIO,
+    runtimeRoot,
+    actionTrace,
+    settlement: { snapshot: client.state?.snapshot ?? null, reasonCode: partialResult.error, component: "runner" },
+  });
   partialResult.capture = await closeCapture(capture, runtimeRoot, partialResult);
-  const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_ladder${LADDER}-${Date.now()}.result.json`);
+  const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_${SCENARIO}-${Date.now()}.result.json`);
   await writeFile(resultFile, JSON.stringify(partialResult, null, 2), "utf8").catch(() => {});
   console.error("RUNNER_CRASH", JSON.stringify({ error: partialResult.error }));
   console.log(JSON.stringify(partialResult, null, 2));
 } finally {
-  if (voiceChild !== null) { voiceChild.kill("SIGTERM"); await Promise.race([once(voiceChild, "close"), new Promise((resolvePromise) => setTimeout(resolvePromise, 5000))]); if (!voiceChild.killed) voiceChild.kill("SIGKILL"); }
+  if (voiceChild !== null) {
+    voiceChild.kill("SIGTERM");
+    await Promise.race([once(voiceChild, "close"), new Promise((resolvePromise) => setTimeout(resolvePromise, 5000))]);
+    if (!voiceChild.killed) voiceChild.kill("SIGKILL");
+  }
   await runtime?.close().catch(() => {});
   await binding.close().catch(() => {});
   client.close("agent_ab_complete");
@@ -1771,7 +1988,15 @@ function splitSpeakableSentenceChunks(text) {
   let cursor = 0;
   for (let index = 0; index < normalized.length; index += 1) {
     const char = normalized[index];
-    const isBoundary = char === "。" || char === "！" || char === "？" || char === "." || char === "!" || char === "?" || char === "；" || char === ";";
+    const isBoundary =
+      char === "。" ||
+      char === "！" ||
+      char === "？" ||
+      char === "." ||
+      char === "!" ||
+      char === "?" ||
+      char === "；" ||
+      char === ";";
     if (isBoundary && index - cursor + 1 >= 12) {
       chunks.push(normalized.slice(cursor, index + 1));
       cursor = index + 1;
@@ -1817,11 +2042,108 @@ async function closeCapture(capture, runtimeRoot, into) {
 }
 
 /**
+ * Assemble the evidence bundle for one run into its capture directory.
+ *
+ * The bundle is the contract other tools read (`tools/lib/evidence-bundle.mjs`), and a run that cannot
+ * describe itself is refused THERE rather than written as a smaller artifact. Two outputs are therefore
+ * possible on a failure: a valid bundle, or a NAMED reason it could not be produced — never a half-truth
+ * that later reads as a measurement.
+ *
+ * The failure dump is what makes a failure re-enterable: the bridge's own position/clock/date plus the replay
+ * command and the wall-clock budget derived from the trace. Without it a failure is a story; with it, a
+ * reproducible morning.
+ */
+async function writeRunBundle({ capture, result, scenario, runtimeRoot, actionTrace, settlement }) {
+  const verdictState = result?.state === "passed" ? "passed" : "failed";
+  const failed = verdictState === "failed";
+  const snapshot = settlement?.snapshot ?? client?.state?.snapshot ?? null;
+  const failure = failed
+    ? buildFailureSnapshot({
+        reasonCode: result?.error ?? settlement?.reasonCode ?? `${SCENARIO}_blocked`,
+        component: settlement?.component ?? "runner",
+        step: actionTrace.length,
+        snapshot,
+        atMs: Date.now(),
+      })
+    : null;
+  const slot = snapshot?.slot ?? process.env.GAMEBUDDY_DAY_START_SLOT ?? null;
+  const repro = failed ? buildReproPlan({ actionTrace, turn: actionTrace.length, slot, scenario }) : null;
+  const bundle = {
+    schemaVersion: 1,
+    run: {
+      id: `game-run-${String(Date.now())}`,
+      scenario,
+      startedAtMs: phaseTimings.runStartedAtMs,
+      durationMs: Date.now() - phaseTimings.runStartedAtMs,
+      gitSha: process.env.GAMEBUDDY_GIT_SHA ?? "unknown",
+      runtimeRoot,
+    },
+    env: {
+      smapiVersion: process.env.GAMEBUDDY_SMAPI_VERSION ?? "unknown",
+      gameVersion: "1.6.15",
+      os: process.platform,
+      windowMode: process.env.GAMEBUDDY_WINDOW_MODE ?? "visible",
+      // The window probes are genuinely unavailable in a hidden/background run, and that is the ONLY
+      // legitimate reason to leave them null: the reason field has to say so.
+      gpu: process.env.GAMEBUDDY_GPU ?? null,
+      resolution: process.env.GAMEBUDDY_RESOLUTION ?? null,
+      saveHash: snapshot?.saveHash ?? "unknown",
+      reason: process.env.GAMEBUDDY_GPU === undefined ? "headless_environment" : null,
+    },
+    verdict: {
+      state: verdictState,
+      reasonCode: result?.error ?? null,
+      rubric: {
+        broken: Object.entries(result ?? {})
+          .filter(([key, value]) => key.endsWith("Passed") && value === false)
+          .map(([key]) => key),
+        unmeasured: [],
+      },
+    },
+    timeline: { path: "timeline.jsonl", records: factLog.length, sources: ["player", "smapi", "llm"] },
+    actionTrace: { path: "actionTrace.jsonl", records: actionTrace.length },
+    keyFrames: { status: "skipped", reason: "headless_environment", dir: null },
+    reclamation: {
+      state: settlement?.reclamation?.state ?? "unobserved",
+      exitReason: settlement?.reclamation?.exitReason ?? null,
+      steps: [],
+      reflection: settlement ? "completed" : "skipped",
+    },
+    voice: {
+      state: result?.voiceResult?.state ?? "unobserved",
+      playback:
+        result?.voiceResult?.state === "completed"
+          ? "observed"
+          : result?.voiceResult?.state === "disabled"
+            ? "disabled"
+            : "failed",
+      reasonCode:
+        result?.voiceResult?.state === "completed"
+          ? null
+          : (result?.voiceResult?.disabledReason ?? "voice_not_completed"),
+    },
+    failure,
+    repro,
+  };
+  // The timeline record COUNT is the fact log's length, so the on-disk file must match it (the validator
+  // cross-checks the file against the manifest).
+  const timeline = factLog.map((entry, index) => ({ index, ...entry }));
+  try {
+    const written = await writeEvidenceBundle(capture.dir, { bundle, timeline, actionTrace });
+    return Object.freeze({ state: "written", runDir: written.runDir });
+  } catch (error) {
+    // A bundle that cannot be produced is reported by NAME: silently omitting it is how a failed run comes to
+    // look like a run with less evidence instead of a run with a contract defect.
+    return Object.freeze({ state: "refused", reasonCode: String(error instanceof Error ? error.message : error) });
+  }
+}
+
+/**
  * Observation block for the roll-observation loop (design §observation loop).
  * Pure monitor points — recorded on every real run, NEVER part of the verdict.
  * A single run's text output is a random draw; only the aggregate across runs
  * (tools/roll-aggregate.mjs) decides whether a prompt/context change beats its
- * baseline beyond the roll noise. Grouping key: promptSha256 + ladder.
+ * baseline beyond the roll noise. Grouping key: promptSha256 + scenario.
  *
  * Audit M4/M5 discipline:
  * - receiptCount counts RAW bridge-fact rows (each terminal receipt appears via
@@ -1834,7 +2156,17 @@ async function closeCapture(capture, runtimeRoot, into) {
  *   — grouping cannot separate sampling drift, so cross-run comparison must
  *   hold model constant and treat sampling changes as a system-level change.
  */
-function buildRunObservation({ prompt, ladder, turnStartedAtMs, actionTrace, factLog, contextAssembled, worldBookAssembled, presentedSummary, runManifestModel }) {
+function buildRunObservation({
+  prompt,
+  scenario,
+  turnStartedAtMs,
+  actionTrace,
+  factLog,
+  contextAssembled,
+  worldBookAssembled,
+  presentedSummary,
+  runManifestModel,
+}) {
   let promptSha256 = null;
   if (typeof prompt === "string" && prompt.length > 0) {
     promptSha256 = createHash("sha256").update(prompt, "utf8").digest("hex").slice(0, 16);
@@ -1843,7 +2175,9 @@ function buildRunObservation({ prompt, ladder, turnStartedAtMs, actionTrace, fac
     const state = entry?.state;
     return state === "rejected" || state === "uncertain" || state === "failed";
   });
-  const terminalReceipts = (factLog ?? []).filter((fact) => fact?.type === "execution_receipt" && fact?.reasonCode !== undefined);
+  const terminalReceipts = (factLog ?? []).filter(
+    (fact) => fact?.type === "execution_receipt" && fact?.reasonCode !== undefined,
+  );
   const dedupedReceiptIds = new Set();
   for (const fact of terminalReceipts) {
     if (typeof fact?.executionId === "string" && fact.executionId.length > 0) dedupedReceiptIds.add(fact.executionId);
@@ -1864,7 +2198,7 @@ function buildRunObservation({ prompt, ladder, turnStartedAtMs, actionTrace, fac
     // Grouping keys: the exact prompt text (overridden or default) and the rung.
     promptSha256,
     promptOverridden: process.env.GAMEBUDDY_AGENT_PROMPT !== undefined,
-    ladder: String(ladder),
+    scenario: String(scenario),
     // Model identity read from the runtime's own run manifest (M5): null on a
     // disposable root.
     model:

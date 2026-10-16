@@ -1709,8 +1709,21 @@ and what it never tried (`capabilityAudit`,
 **Recipe (one command; the launcher owns order, fixture transaction and teardown):**
 
 ```powershell
-node tools/live-run/game/launch-ladder-live.mjs --ladder 6 --action play_session --label c
+node tools/live-run/game/launch-ladder-live.mjs --scenario morning_routine --action play_session --label c
 ```
+
+> **The rung numbers are retired** (`--ladder 0..6`). The carrier now runs three **scenarios** and a run is named
+> after the one it ran:
+>
+> | scenario | what it observes | old rung |
+> |---|---|---|
+> | `morning_routine` | the companion runs its own farm day (field work, machines, interruptions) and reports it | 0/1/3/6 |
+> | `memory_covenant` | it honors a standing rule it read from MEMORY: the protected strawberry is never shipped | 5 |
+> | `npc_social_and_presence` | it takes the cauliflower to Jodi, talks to her, and performs its own emotion actions, with the voice lane end to end | 4 |
+>
+> `--ladder <n>` is still accepted and translated once by the runner, so an existing command keeps working; new
+> commands should name the scenario. Farmer-to-farmer warp sync and accompaniment are **not** any of these: they
+> need the second player that only the multiplayer topology has.
 
 The launcher restores the native template as the disposable working save, prepares the
 `play_session` fixture into the REAL game `Mods` directory ladder runs attach to,
@@ -2492,7 +2505,7 @@ Command (the ladder runner drives the REAL Host tool layer, not the bridge direc
 ```
 GAMEBUDDY_AGENT_PROMPT=<player-level goal, no action id / no coordinates>
 GAMEBUDDY_WIA_PROMPT_SHA256=755043f5343f672b141c61e57ea681c92755097227f0a6434f57d35f2beede18
-node tools/live-run/game/launch-ladder-live.mjs --ladder 6 \
+node tools/live-run/game/launch-ladder-live.mjs --scenario morning_routine \
   --action wia_modal_dismiss_chain --label <label> --save <observed slot>
 ```
 

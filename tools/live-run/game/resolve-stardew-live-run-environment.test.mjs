@@ -646,28 +646,40 @@ test("arguments are parsed without inventing a value for what was not given", ()
     runtimeRoot: null,
     hostGenerationOutputRoot: null,
     gameDirectory: null,
+    scenario: null,
     ladder: null,
   });
-  assert.deepEqual(parseArguments(["--print-env", "--game-dir", INSTALLATION, "--ladder", "6"]), {
+  assert.deepEqual(parseArguments(["--print-env", "--game-dir", INSTALLATION, "--scenario", "morning_routine"]), {
     printEnvironment: true,
     runtimeRoot: null,
     hostGenerationOutputRoot: null,
     gameDirectory: INSTALLATION,
-    ladder: "6",
+    scenario: "morning_routine",
+    ladder: null,
   });
+  // The retired digit is still parsed, so an operator's environment keeps working; it is translated, not read.
+  assert.equal(parseArguments(["--ladder", "6"]).ladder, "6");
+  assert.equal(parseArguments(["--ladder", "6"]).scenario, null);
 });
 
-test("the assignment lines carry the derived environment and the ladder when one was given", async () => {
+test("the assignment lines carry the derived environment and the scenario when one was given", async () => {
   const { options } = baseOptions({ registration: readyRegistration() });
-  const facts = await resolveStardewLiveRunEnvironment({ ...options, ladder: "6" });
+  const facts = await resolveStardewLiveRunEnvironment({ ...options, scenario: "memory_covenant" });
   const lines = formatStardewLiveRunEnvironmentAssignmentLines(facts).split("\n");
 
   assert.ok(lines.includes(`${GAME_DIR_ENV}=${INSTALLATION}`));
-  assert.ok(lines.includes(`GAMEBUDDY_AGENT_LADDER=6`));
+  assert.ok(lines.includes(`GAMEBUDDY_AGENT_SCENARIO=memory_covenant`));
   assert.equal(
-    facts.environment.values.find((entry) => entry.name === "GAMEBUDDY_AGENT_LADDER").provenance,
+    facts.environment.values.find((entry) => entry.name === "GAMEBUDDY_AGENT_SCENARIO").provenance,
     "operator",
   );
+  // A legacy digit names the same run: the resolver translates it, so the derived environment never carries a
+  // retired rung number as if it were a scenario.
+  const legacy = await resolveStardewLiveRunEnvironment({ ...options, ladder: "5" });
+  assert.ok(
+    formatStardewLiveRunEnvironmentAssignmentLines(legacy).includes("GAMEBUDDY_AGENT_SCENARIO=memory_covenant"),
+  );
+  assert.ok(!formatStardewLiveRunEnvironmentAssignmentLines(legacy).includes("GAMEBUDDY_AGENT_LADDER="));
 });
 
 test("a run that would select the generation through host/dist is warned about the Host's own re-attestation", async () => {

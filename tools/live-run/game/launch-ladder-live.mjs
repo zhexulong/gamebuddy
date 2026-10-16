@@ -17,10 +17,14 @@
  * launcher's own leftover backup from an earlier attempt.
  *
  * Usage:
- *   node tools/live-run/game/launch-ladder-live.mjs --ladder 6 --action play_session [--label c]
+ *   node tools/live-run/game/launch-ladder-live.mjs --scenario morning_routine [--action till_soil] [--label c]
  *                                                    [--save <Slot>] [--backup <name>]
  *
- * Every run writes its own result/log pair (`tools/_ladder<ladder>[-<label>]…`), so a
+ * `--scenario` is the run's scenario (`morning_routine`, `memory_covenant`, `npc_social_and_presence`). The
+ * legacy `--ladder <n>` is still accepted and translated by the runner, so an operator's existing command keeps
+ * working; new commands should use the scenario name.
+ *
+ * Every run writes its own result/log pair (`tools/_<scenario>[-<label>]…`), so a
  * run somebody is already reading is never overwritten by the next attempt.
  */
 import { execFileSync, spawn } from "node:child_process";
@@ -35,7 +39,24 @@ const option = (name, fallback = null) => {
   return index >= 0 && args[index + 1] !== undefined ? args[index + 1] : fallback;
 };
 
-const ladder = option("ladder", "6");
+const LEGACY_LADDER = option("ladder", null);
+const LEGACY_SCENARIO_BY_LADDER = Object.freeze({
+  0: "morning_routine",
+  1: "morning_routine",
+  2: "morning_routine",
+  3: "morning_routine",
+  4: "npc_social_and_presence",
+  5: "memory_covenant",
+  6: "morning_routine",
+});
+const SCENARIOS = Object.freeze(["morning_routine", "memory_covenant", "npc_social_and_presence"]);
+const scenario = (() => {
+  const requested = option("scenario", LEGACY_LADDER === null ? null : LEGACY_SCENARIO_BY_LADDER[LEGACY_LADDER]);
+  if (!SCENARIOS.includes(requested)) {
+    throw new Error(`unknown_run_scenario:${String(requested)} (expected one of ${SCENARIOS.join(", ")})`);
+  }
+  return requested;
+})();
 const action = option("action", "play_session");
 const label = option("label", "");
 const gameDir = option("game", process.env.GAMEBUDDY_STARDEW_GAME_DIR ?? "D:/Steam/steamapps/common/Stardew Valley");
@@ -54,20 +75,30 @@ const saveName = option("save", "GameBuddyFixtureNavigation_447088730");
 const backupName = option("backup", `native-local-${action.replaceAll("_", "-")}-fixture-backup`);
 const templateName = option("template", saveName);
 const suffix = label.length > 0 ? `-${label}` : "";
-const resultPath = path.join(repo, "tools", `_ladder${ladder}${suffix}.result.json`);
-const logPath = path.join(repo, "tools", `_ladder${ladder}${suffix}-live-runner.log`);
+const resultPath = path.join(repo, "tools", `_${scenario}${suffix}.result.json`);
+const logPath = path.join(repo, "tools", `_${scenario}${suffix}-live-runner.log`);
 const lockDir = path.join(fixtureRoot, ".stardew-native-local-player-fixture.lock");
 
 const node = process.execPath;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const run = (argv, env) =>
-  execFileSync(node, argv, { cwd: repo, encoding: "utf8", env: { ...process.env, ...env }, timeout: 300_000, maxBuffer: 32 * 1024 * 1024 });
+  execFileSync(node, argv, {
+    cwd: repo,
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+    timeout: 300_000,
+    maxBuffer: 32 * 1024 * 1024,
+  });
 
 function liveGameProcesses() {
   try {
     return execFileSync(
       "powershell",
-      ["-NoProfile", "-Command", "Get-Process -Name 'StardewModdingAPI','Stardew Valley' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"],
+      [
+        "-NoProfile",
+        "-Command",
+        "Get-Process -Name 'StardewModdingAPI','Stardew Valley' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id",
+      ],
       { encoding: "utf8", timeout: 60_000 },
     )
       .trim()
@@ -94,7 +125,9 @@ async function waitForFreeFixture(deadlineMs = Date.now() + 45 * 60 * 1000) {
       if (idleMs > 3 * 60 * 1000) {
         const aside = `${lockDir}.orphaned-${Date.now()}`;
         fs.renameSync(lockDir, aside);
-        console.log(`[recover] orphaned fixture transaction renamed aside: ${path.basename(aside)} (idle ${Math.round(idleMs / 1000)}s)`);
+        console.log(
+          `[recover] orphaned fixture transaction renamed aside: ${path.basename(aside)} (idle ${Math.round(idleMs / 1000)}s)`,
+        );
         return;
       }
     }
@@ -145,22 +178,40 @@ if (fs.existsSync(orphan)) {
 // Preparing is racy on a shared root: another lane can start a session in the gap between the
 // free-fixture check and the file operation, and the fixture refuses to touch a running game. That
 // refusal is contention, not a failure, so it re-enters the wait instead of ending the run.
-const CONTENTION = /Refusing fixture file operation while Stardew|native_local_fixture_transaction_locked|SMAPI is running/;
+const CONTENTION =
+  /Refusing fixture file operation while Stardew|native_local_fixture_transaction_locked|SMAPI is running/;
 const prepareAttempt = (attempt) => {
   execFileSync(
     "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
-    ["-NoProfile", "-File", path.join(repo, "tools", "prepare-stardew-action-fixture.ps1"), "-FixtureRoot", fixtureRoot, "-TemplateName", templateName, "-SaveName", saveName],
+    [
+      "-NoProfile",
+      "-File",
+      path.join(repo, "tools", "prepare-stardew-action-fixture.ps1"),
+      "-FixtureRoot",
+      fixtureRoot,
+      "-TemplateName",
+      templateName,
+      "-SaveName",
+      saveName,
+    ],
     { cwd: repo, encoding: "utf8", timeout: 300_000, maxBuffer: 32 * 1024 * 1024 },
   );
   run([
     "tools/prepare-stardew-native-local-player-fixture.mjs",
-    "--root", fixtureRoot,
-    "--mods-path", modsPath,
-    "--release-dir", releaseDir,
-    "--save-name", saveName,
-    "--backup-name", backupName,
-    "--binding-path", binding,
-    "--action", action,
+    "--root",
+    fixtureRoot,
+    "--mods-path",
+    modsPath,
+    "--release-dir",
+    releaseDir,
+    "--save-name",
+    saveName,
+    "--backup-name",
+    backupName,
+    "--binding-path",
+    binding,
+    "--action",
+    action,
   ]);
   console.log(`fixture prepared (action=${action}, attempt ${attempt})`);
 };
@@ -191,9 +242,13 @@ const takeoverWatch = setInterval(() => {
   const owner = currentOwnerId();
   if (owner === myOwnerId) return;
   takenOver = true;
-  console.error(`[abort] fixture transaction taken over by ${owner ?? "a run that removed the lock"} — this session is no longer valid`);
+  console.error(
+    `[abort] fixture transaction taken over by ${owner ?? "a run that removed the lock"} — this session is no longer valid`,
+  );
   for (const pid of liveGameProcesses()) {
-    try { execFileSync("taskkill", ["/PID", pid, "/T", "/F"], { encoding: "utf8", timeout: 60_000 }); } catch {}
+    try {
+      execFileSync("taskkill", ["/PID", pid, "/T", "/F"], { encoding: "utf8", timeout: 60_000 });
+    } catch {}
   }
 }, 5_000);
 await new Promise((resolve) => {
@@ -205,7 +260,8 @@ await new Promise((resolve) => {
       GAMEBUDDY_STARDEW_GAME_DIR: gameDir,
       GAMEBUDDY_STARDEW_MODS_DIR: modsPath,
       GAMEBUDDY_STARDEW_CONFIG: path.join(modsPath, "GameBuddy.Stardew", "config.json"),
-      GAMEBUDDY_AGENT_LADDER: ladder,
+      GAMEBUDDY_AGENT_SCENARIO: scenario,
+      ...(LEGACY_LADDER === null ? {} : { GAMEBUDDY_AGENT_LADDER: LEGACY_LADDER }),
       GAMEBUDDY_RUNTIME_ROOT: process.env.GAMEBUDDY_RUNTIME_ROOT ?? path.join(process.env.LOCALAPPDATA, "GameBuddy"),
       GAMEBUDDY_RESULT_FILE: resultPath,
       GAMEBUDDY_LADDER_LIVE_LOG: logPath,
@@ -213,20 +269,26 @@ await new Promise((resolve) => {
     },
   });
   let stdout = "";
-  child.stdout.on("data", (chunk) => { stdout += chunk; });
-  child.stderr.on("data", (chunk) => { process.stderr.write(chunk); });
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on("data", (chunk) => {
+    process.stderr.write(chunk);
+  });
   child.on("close", (code) => {
     exitCode = code;
     clearInterval(takeoverWatch);
-    fs.writeFileSync(path.join(repo, "tools", `_ladder${ladder}${suffix}-stdout.json`), stdout);
+    fs.writeFileSync(path.join(repo, "tools", `_${scenario}${suffix}-stdout.json`), stdout);
     if (takenOver) {
-      fs.writeFileSync(path.join(repo, "tools", `_ladder${ladder}${suffix}-INVALID.txt`),
-        "Another lane took over the fixture transaction mid-run; this run's result must not be used.\n");
+      fs.writeFileSync(
+        path.join(repo, "tools", `_${scenario}${suffix}-INVALID.txt`),
+        "Another lane took over the fixture transaction mid-run; this run's result must not be used.\n",
+      );
     }
     resolve();
   });
 });
-console.log("ladder runner exit:", exitCode, takenOver ? "(INVALID: fixture taken over)" : "");
+console.log("live runner exit:", exitCode, takenOver ? "(INVALID: fixture taken over)" : "");
 if (takenOver) {
   console.log("result file (if any) is marked invalid next to it; not restoring someone else's transaction");
   process.exitCode = 1;
@@ -235,10 +297,14 @@ if (takenOver) {
 
 run([
   "tools/restore-stardew-native-local-player-fixture.mjs",
-  "--root", fixtureRoot,
-  "--mods-path", modsPath,
-  "--release-dir", releaseDir,
-  "--backup-name", backupName,
+  "--root",
+  fixtureRoot,
+  "--mods-path",
+  modsPath,
+  "--release-dir",
+  releaseDir,
+  "--backup-name",
+  backupName,
 ]);
 console.log("fixture transaction restored");
 
@@ -247,23 +313,26 @@ if (!fs.existsSync(resultPath)) {
   process.exitCode = 1;
 } else {
   const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
-  console.log("RESULT", JSON.stringify({
-    state: result.state,
-    ladder: result.ladder,
-    configuredFixtureScenario: result.configuredFixtureScenario ?? null,
-    attempted: result.attemptedActionIds,
-    succeeded: result.succeededActionIds,
-    audit: result.capabilityAudit
-      ? {
-          attemptedCount: result.capabilityAudit.attemptedCount,
-          succeededCount: result.capabilityAudit.succeededCount,
-          advertisedCount: result.capabilityAudit.advertisedCount,
-          advertisedAxisUsable: result.capabilityAudit.advertisedAxisUsable,
-          blocked: (result.capabilityAudit.blockedBySystem ?? []).map((entry) => entry.actionId),
-          unresolved: result.capabilityAudit.unresolved,
-        }
-      : null,
-  }));
+  console.log(
+    "RESULT",
+    JSON.stringify({
+      state: result.state,
+      scenario: result.scenario ?? scenario,
+      configuredFixtureScenario: result.configuredFixtureScenario ?? null,
+      attempted: result.attemptedActionIds,
+      succeeded: result.succeededActionIds,
+      audit: result.capabilityAudit
+        ? {
+            attemptedCount: result.capabilityAudit.attemptedCount,
+            succeededCount: result.capabilityAudit.succeededCount,
+            advertisedCount: result.capabilityAudit.advertisedCount,
+            advertisedAxisUsable: result.capabilityAudit.advertisedAxisUsable,
+            blocked: (result.capabilityAudit.blockedBySystem ?? []).map((entry) => entry.actionId),
+            unresolved: result.capabilityAudit.unresolved,
+          }
+        : null,
+    }),
+  );
   console.log("result:", resultPath);
 }
 
