@@ -193,13 +193,14 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   // Trace cost is measured, not assumed: which records the bytes went to is what a performance obligation needs, and
   // a reviewer cannot recover it from the finished trace without guessing. `snapshot` is separated because every
   // `*Targets` field repeats in every frame (audit of run loop-1792028924954: 189 frames, ~12.4 KB each, 96.7%).
-  const traceBytes = { total: 0, snapshot: 0, byRecord: new Map() };
+  const traceBytes = { total: 0, snapshot: 0, byRecord: new Map(), countByRecord: new Map() };
   const timelineCounted = (record) => {
     const line = `${JSON.stringify(record)}\n`;
     const size = Buffer.byteLength(line, "utf8");
     traceBytes.total += size;
     if (record.type === "snapshot") traceBytes.snapshot += size;
     traceBytes.byRecord.set(line, (traceBytes.byRecord.get(line) ?? 0) + size);
+    traceBytes.countByRecord.set(line, (traceBytes.countByRecord.get(line) ?? 0) + 1);
     return line;
   };
   const timeline = jsonlWriter(join(traceDir, "timeline.jsonl"), timelineCounted);
@@ -344,13 +345,22 @@ export async function runMultiplayerLiveLoop(client, receipts, config, options) 
   }
 
   const agentTurns = readAgentTurnsFromSession(agentSessionJsonl);
-  const largestIdenticalRecordBytes = [...traceBytes.byRecord.values()].reduce((max, value) => Math.max(max, value), 0);
+  const repeatedRecords = [...traceBytes.byRecord.entries()].filter(
+    ([line]) => (traceBytes.countByRecord.get(line) ?? 0) > 1,
+  );
+  const largestRepeatedRecordBytes = repeatedRecords.reduce((max, [, bytes]) => Math.max(max, bytes), 0);
+  const largestRecordBytes = [...traceBytes.byRecord.values()].reduce((max, value) => Math.max(max, value), 0);
   const runReport = Object.freeze({
     durationSeconds: (now() - startedAtMs) / 1_000,
     observationCycles,
     observationFailures,
     unobservedTailMs,
-    traceBytes: Object.freeze({ total: traceBytes.total, snapshot: traceBytes.snapshot, largestIdenticalRecordBytes }),
+    traceBytes: Object.freeze({
+      total: traceBytes.total,
+      snapshot: traceBytes.snapshot,
+      largestRepeatedRecordBytes,
+      largestRecordBytes,
+    }),
   });
   // Performance obligations read the RUN's own measurements; speech obligations read the Agent's turns. The rubric
   // names which is which, so a plan-driven run is judged on the run without pretending it judged the companion.
@@ -488,8 +498,18 @@ if (import.meta.main) {
       },
     };
     const rubric = assessCompanionBehaviourRubric({ turns: result.agentTurns, runReport });
+    // THE TAIL BELONGS AT THE TOP LEVEL, WHERE THE ENTRY READS IT.
+    //
+    // Reported nested under `runReport`, the entry's own gate could not find it: `Number.isFinite(undefined)` fell back to
+    // 0, so a 36 s unobserved tail still produced `state=passed`. An independent audit caught that, and it is the exact
+    // "missing measurement defaults to pass" shape this gate exists to prevent. The measurement is now published where it
+    // is read, in a shape the plan path already used.
+    const observedGapMs = runReport.unobservedTailMs > 30_000 ? runReport.unobservedTailMs : 0;
+    const spokeNothing = result.agentTurns.length === 0;
+    const notAdmitted = result.admitted !== true;
     const report = Object.freeze({
       durationSeconds: runReport.durationSeconds,
+      unobservedTailMs: runReport.unobservedTailMs,
       allocation,
       agentTurns: result.agentTurns.length,
       // The Agent words themselves, so a reviewer reads them in the report instead of re-deriving them from a
@@ -498,11 +518,26 @@ if (import.meta.main) {
       persona: result.personaMounted,
       admitted: result.admitted,
       settled: result.settled,
-      runReport: { unobservedTailMs: runReport.unobservedTailMs, traceBytes: runReport.traceBytes },
+      runReport: { traceBytes: runReport.traceBytes },
       rubric,
     });
     writeFileSync(join(traceDir, "loop-report.json"), JSON.stringify(report, null, 2));
-    console.log(`LOOP_RESULT ${JSON.stringify({ state: "passed", ...report })}`);
+    // The record's OWN verdict, not a constant: a runner that always prints `passed` makes its child exit code and the
+    // driver's `actionResult` carry no information at all. The entry still decides the run's state; this field only has to
+    // be true.
+    console.log(
+      `LOOP_RESULT ${JSON.stringify({
+        state: notAdmitted || spokeNothing || observedGapMs > 0 ? "degraded" : "passed",
+        reasonCode: notAdmitted
+          ? "agent_turn_not_admitted"
+          : spokeNothing
+            ? "agent_spoke_nothing"
+            : observedGapMs > 0
+              ? `observed_gap:${Math.round(observedGapMs / 1000)}s`
+              : "agent_turn_completed",
+        ...report,
+      })}`,
+    );
     // EXIT EXPLICITLY. The product runtime keeps handles open (bridge socket, timers), so setting `exitCode` and
     // returning left the process alive: measured, the game stayed up and the driver waited on a child that had already
     // finished its work -- the last session sat for minutes after its final fact. Every piece of evidence is on disk by

@@ -223,6 +223,43 @@ async function ensureFreshArtifact() {
   return { rebuilt: true, verdict: after, tscExit: rebuild.status };
 }
 
+/**
+ * The run's verdict, as a pure function so the gate itself can be tested.
+ *
+ * WHY IT IS EXTRACTED: the audit that found `state=passed` on a 36 s-gapped session found it by DERIVING the gate's
+ * behaviour from the numbers -- which is exactly what a test should have done. A gate that can only be exercised by
+ * launching a game is a gate nobody re-derives, and this one had drifted into reading a key the agent path had moved.
+ *
+ * The tail is accepted from BOTH shapes the two modes publish (top level, or nested under `runReport`), and a report that
+ * published NEITHER is `blocked`: a missing measurement must never read as "no gap".
+ */
+export function deriveLoopVerdict({ timedOut, exitCode, driverState, loopResult }) {
+  const reportedTailMs = [loopResult?.unobservedTailMs, loopResult?.runReport?.unobservedTailMs].find((value) =>
+    Number.isFinite(value),
+  );
+  const measuredTail = reportedTailMs !== undefined;
+  const unobservedTailMs = measuredTail ? reportedTailMs : 0;
+  if (timedOut === true)
+    return { state: "blocked", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_timeout" };
+  if (driverState !== "action_passed" || exitCode !== 0)
+    return {
+      state: "failed",
+      unobservedTailMs,
+      measuredTail,
+      reasonCode: `multiplayer_loop_failed:${driverState ?? "no_driver_result"}`,
+    };
+  if (!measuredTail)
+    return { state: "blocked", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_observation_unmeasured" };
+  if (unobservedTailMs > 30_000)
+    return {
+      state: "degraded",
+      unobservedTailMs,
+      measuredTail,
+      reasonCode: `multiplayer_loop_observed_gap:${Math.round(unobservedTailMs / 1000)}s`,
+    };
+  return { state: "passed", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_completed" };
+}
+
 export async function main(argv) {
   const request = parseLoopArgs(argv);
   if (process.platform !== "win32") throw new Error("multiplayer_loop_windows_only");
@@ -340,44 +377,34 @@ export async function main(argv) {
   // The driver wraps the runner's stdout into its own JSON (`actionResult`), so the loop's record is ESCAPED inside a
   // string field rather than a line of its own -- which is why this was null on a run that produced a full report.
   const loopResult = parseLoopResult(run.stdout) ?? parseLoopResult(driverResult?.actionResult ?? "");
-  // A verdict that ignores a third of the session is not a verdict. `passed` additionally requires that the loop
-  // observed throughout: measured on a real run, 107 consecutive observation failures covered the last 216 s of a
-  // 600 s session and it still reported a clean pass.
-  const unobservedTailMs = Number.isFinite(loopResult?.unobservedTailMs) ? loopResult.unobservedTailMs : 0;
-  const observedGap = unobservedTailMs > 30_000;
-  const state =
-    run.timedOut === true
-      ? "blocked"
-      : driverResult?.state === "action_passed" && run.exitCode === 0
-        ? observedGap
-          ? "degraded"
-          : "passed"
-        : "failed";
+  // A verdict that ignores a third of the session is not a verdict, and a MISSING measurement is not "no gap": both
+  // rules live in `deriveLoopVerdict` so they are testable without a game.
+  const verdict = deriveLoopVerdict({
+    timedOut: run.timedOut,
+    exitCode: run.exitCode,
+    driverState: driverResult?.state,
+    loopResult,
+  });
+  const { state, unobservedTailMs, measuredTail } = verdict;
 
   const report = {
     schemaVersion: 1,
     state,
-    reasonCode:
-      run.timedOut === true
-        ? "multiplayer_loop_timeout"
-        : state === "passed"
-          ? "multiplayer_loop_completed"
-          : state === "degraded"
-            ? `multiplayer_loop_observed_gap:${Math.round(unobservedTailMs / 1000)}s`
-            : `multiplayer_loop_failed:${driverResult?.state ?? "no_driver_result"}`,
+    reasonCode: verdict.reasonCode,
     scenario: request.scenario,
     runner: request.runner,
     saveName: request.saveName,
     durationSeconds: request.durationSeconds,
     runRoot,
     traceRoot,
+    // The files that EXIST, not a fixed wish-list: an audit found this naming six while four (positions.jsonl,
+    // plan.jsonl, smapi/*) were absent in agent mode, which reads as "recorded but lost" instead of "not produced here".
     traceFiles: [
-      "timeline.jsonl",
-      "positions.jsonl",
-      "plan.jsonl",
       "loop-report.json",
-      "smapi/host.log",
-      "smapi/ai-client.log",
+      "timeline.jsonl",
+      ...(existsSync(join(traceRoot, "positions.jsonl")) ? ["positions.jsonl"] : []),
+      ...(existsSync(join(traceRoot, "plan.jsonl")) ? ["plan.jsonl"] : []),
+      ...(existsSync(join(traceRoot, "smapi")) ? ["smapi/host.log", "smapi/ai-client.log"] : []),
     ],
     artifact,
     driverExitCode: run.exitCode,

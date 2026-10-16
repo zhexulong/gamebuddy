@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseLoopArgs, parseLoopResult } from "./run-stardew-multiplayer-live-loop.mjs";
+import { deriveLoopVerdict, parseLoopArgs, parseLoopResult } from "./run-stardew-multiplayer-live-loop.mjs";
 
 const GAME = "D:\\Steam\\steamapps\\common\\Stardew Valley";
 const BASE = [
@@ -68,4 +68,38 @@ test("the loop's own JSON line is found even behind other output, and a foreign 
   // A driver record has `state` but no rubric: it must not be mistaken for the loop's.
   assert.equal(parseLoopResult('{"state":"action_passed","actionExitCode":0}'), null);
   assert.equal(parseLoopResult(""), null);
+});
+
+test("a gapped session cannot be reported as passed, in either report shape", () => {
+  // The audit that found this derived the gate by hand: the agent path published the tail under the nested runReport key,
+  // the gate read a top-level one, the value fell back to 0, and a 36 s gap produced `passed`. Both shapes must work, and
+  // neither may be assumed gap-free.
+  const base = { timedOut: false, exitCode: 0, driverState: "action_passed" };
+  const topLevel = deriveLoopVerdict({ ...base, loopResult: { unobservedTailMs: 36_058 } });
+  assert.equal(topLevel.state, "degraded");
+  assert.equal(topLevel.reasonCode, "multiplayer_loop_observed_gap:36s");
+  const nested = deriveLoopVerdict({ ...base, loopResult: { runReport: { unobservedTailMs: 36_058 } } });
+  assert.equal(nested.state, "degraded");
+  const clean = deriveLoopVerdict({ ...base, loopResult: { unobservedTailMs: 2_000 } });
+  assert.equal(clean.state, "passed");
+  assert.equal(clean.reasonCode, "multiplayer_loop_completed");
+});
+
+test("a report that measured nothing is blocked, never passed", () => {
+  const verdict = deriveLoopVerdict({
+    timedOut: false,
+    exitCode: 0,
+    driverState: "action_passed",
+    loopResult: { agentTurns: 4 },
+  });
+  assert.equal(verdict.state, "blocked");
+  assert.equal(verdict.reasonCode, "multiplayer_loop_observation_unmeasured");
+  assert.equal(verdict.measuredTail, false);
+  // A driver failure is still a failure, not a blocked-for-measurement.
+  const failed = deriveLoopVerdict({ timedOut: false, exitCode: 1, driverState: "action_failed", loopResult: {} });
+  assert.equal(failed.state, "failed");
+  assert.match(failed.reasonCode, /^multiplayer_loop_failed:action_failed$/u);
+  const timedOut = deriveLoopVerdict({ timedOut: true, exitCode: null, driverState: null, loopResult: null });
+  assert.equal(timedOut.state, "blocked");
+  assert.equal(timedOut.reasonCode, "multiplayer_loop_timeout");
 });

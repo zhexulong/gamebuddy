@@ -119,11 +119,13 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
   }),
   Object.freeze({
     id: "claim_fulfillable",
-    class: "Invariant",
+    class: "Unjudged",
     statement:
       "Every first-person action commitment resolves inside the visible capability face and is receipted in the same turn.",
     provenance: "stardew-companion-presence-audit-dimensions.md:39-43 (§3 承诺可兑现性)",
     source: "stardew-companion-presence-projection.mjs:buildPresenceProjection",
+    // Unjudged until a runner passes the projection: the loop has no caller for it, and an Invariant that can never be
+    // decided is worse than an honest Unjudged (an audit caught it advertised as Invariant while permanently unmeasured).
   }),
   Object.freeze({
     id: "addresses_the_player",
@@ -131,6 +133,14 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
     statement: "A turn usually addresses the player or invites them, rather than closing on itself.",
     provenance: "identity-profile.ts:389 (ask or invite when it fits)",
     source: "companion-interaction-gate.mjs:hasPlayerAddress",
+  }),
+  Object.freeze({
+    id: "not_a_narrator",
+    class: "Preference",
+    statement: "The companion does not spend its turns announcing what it is about to look at.",
+    provenance:
+      "a real session: 2 of 4 turns were `I'll take a look around first.` / `Let me step outside and see the farm.`",
+    evidence: "intent-announcement pattern over the run's turns",
   }),
   Object.freeze({
     id: "native_stage_direction",
@@ -359,6 +369,10 @@ export function assessCompanionBehaviourRubric({ turns, presence = null, runRepo
   const spokenTurns = utterances.filter((utterance) => utterance.text.length > 0);
   const addressed = spokenTurns.filter((utterance) => utterance.gate.metrics.hasPlayerAddress === true).length;
   const stageDirections = utterances.filter((utterance) => utterance.textStageDirection.length > 0);
+  // An intent announcement is a line whose whole content is "I am about to do X": the reviewer of a real session found
+  // half its turns were exactly that, and the recital-template detector cannot see them.
+  const INTENT_ANNOUNCEMENT = /^\s*(i'?ll|i will|let me|i'?m going to|我先|我去|我这就|我来)/iu;
+  const announcements = spokenTurns.filter((utterance) => INTENT_ANNOUNCEMENT.test(utterance.text));
 
   // Language: measured as the ABSENCE of the expected script rather than as a ratio, so a turn like
   // "南边那一片割了十来丛草" with a few English tool names is not called a breach while "I'll take a look around" is.
@@ -387,7 +401,13 @@ export function assessCompanionBehaviourRubric({ turns, presence = null, runRepo
       if (!Number.isFinite(tail)) return { verdict: "unmeasured", detail: "no_observation_measurement" };
       return {
         verdict: tail > 30_000 ? "broken" : "green",
-        detail: `unobserved tail ${Math.round(tail / 1000)}s of ${Math.round(Number(runReport.durationSeconds ?? 0))}s; failures ${runReport.observationFailures ?? 0}/${runReport.observationCycles ?? 0}`,
+        detail:
+          `unobserved tail ${Math.round(tail / 1000)}s of ${Math.round(Number(runReport.durationSeconds ?? 0))}s` +
+          (Number.isFinite(Number(runReport.observationFailures)) &&
+          Number.isFinite(Number(runReport.observationCycles))
+            ? "; failures " + String(runReport.observationFailures) + "/" + String(runReport.observationCycles)
+            : "; failures not_measured") +
+          "; tail spans model generation and the harness quiet window",
       };
     }
     const bytes = runReport.traceBytes ?? null;
@@ -410,7 +430,17 @@ export function assessCompanionBehaviourRubric({ turns, presence = null, runRepo
     };
   };
   const obligations = COMPANION_BEHAVIOUR_OBLIGATIONS.map((obligation) => {
-    if (obligation.class === "Unjudged") return Object.freeze({ ...obligation, verdict: "unmeasured", detail: null });
+    if (obligation.class === "Unjudged") {
+      // `claim_fulfillable` is Unjudged because no run passes a presence projection -- but when one IS supplied, the
+      // projection decided something and the obligation is judged from it. Honest today, usable tomorrow.
+      if (obligation.id === "claim_fulfillable" && presence !== null)
+        return Object.freeze({
+          ...obligation,
+          verdict: presenceFindings.length > 0 ? "broken" : "green",
+          detail: `${presenceFindings.length} finding(s)`,
+        });
+      return Object.freeze({ ...obligation, verdict: "unmeasured", detail: "no_presence_projection" });
+    }
     if (obligation.class === "Performance") return Object.freeze({ ...obligation, ...performanceVerdict(obligation) });
     if (obligation.source === null) return Object.freeze({ ...obligation, verdict: "unmeasured", detail: null });
     // An Invariant/Preference with no evidence to judge is unmeasured, never green:
@@ -426,6 +456,12 @@ export function assessCompanionBehaviourRubric({ turns, presence = null, runRepo
     // The Preference is a preference about the RUN, not a per-utterance pattern, so
     // it breaks when NO recorded turn addresses the player; a single finding cannot
     // express that, which is why this one is decided from the count.
+    if (obligation.id === "not_a_narrator")
+      return Object.freeze({
+        ...obligation,
+        verdict: announcements.length * 2 >= spokenTurns.length ? "broken" : "green",
+        detail: `${announcements.length}/${spokenTurns.length} turns only announce intent`,
+      });
     if (obligation.id === "addresses_the_player")
       return Object.freeze({
         ...obligation,

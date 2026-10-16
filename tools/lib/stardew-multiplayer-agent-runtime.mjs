@@ -169,8 +169,12 @@ export function allocationPrompt(allocation) {
   const tasks = Array.isArray(allocation)
     ? allocation.filter((task) => typeof task === "string" && task.trim() !== "")
     : [];
+  // The footer must not contradict the character card. It used to say brackets are for feelings and to avoid ASTERISK
+  // actions, while the card says a parenthesised BODY ACTION is never performed -- and a real session produced
+  // `（甩了甩发酸的手腕）` right after a successful emote, reasoning from exactly that wording. Brackets are for tone;
+  // movement goes through the action, in any notation.
   const footer =
-    "你是陪玩家一起玩的伙伴，不是任务播报员——不要每一步都插旁白，也不要用清单式汇报。说话的台词之外可以用括号写情绪（同伴会演成语气而非念出来）；身体动作请调用 express_emote / face_direction 等游戏内动作，不要写星号动作。";
+    "你是陪玩家一起玩的伙伴，不是任务播报员——不要每一步都插旁白，也不要用清单式汇报。括号里只写语气或情绪（同伴会把它演成语气，不会念出来）；所有身体动作都要调用 express_emote / face_direction 等游戏内动作，不要写进括号，也不要用星号。";
   if (tasks.length === 0)
     return `现在是星露谷的一天，你独自在农场里。今天没有人给你派活——你自己看看周围，想做什么就做什么，能做几件做几件（地里的农活、农场上的杂物、屋里的箱子和机器都算）。做完之后用两三句话跟玩家说说：哪些做成了、哪些做不了或者卡住了、卡在哪里（总共控制在 120 字以内）。${footer}`;
   return `现在是星露谷的一天。玩家交给你的任务是：\n- ${tasks.join("\n- ")}\n用游戏工具一步步按真实结果完成；做完后用两三句话跟玩家说说结果与卡住的地方（总共控制在 120 字以内）。${footer}`;
@@ -212,10 +216,13 @@ export async function runAgentDrivenLoop({
   // bridge mid-run (`bridge_not_authenticated` for the rest of the run) and the Agent itself reported "农场这边就断线
   // 了" -- but nothing in the trace named WHY, because this loop subscribed only to facts. The reason code is the
   // cheapest decisive measurement for that drop.
-  const unsubscribeConnection =
-    typeof onFact === "function" && typeof client.onConnectionFact === "function"
-      ? client.onConnectionFact((fact) => onFact({ type: "bridge_connection", payload: fact }))
-      : () => {};
+  const connectionSubscribed = typeof onFact === "function" && typeof client.onConnectionFact === "function";
+  const unsubscribeConnection = connectionSubscribed
+    ? client.onConnectionFact((fact) => onFact({ type: "bridge_connection", payload: fact }))
+    : () => {};
+  if (!connectionSubscribed && typeof onFact === "function")
+    // Recorded, so a trace with zero connection facts still distinguishes "the pipe stayed up" from "nobody listened".
+    onFact({ type: "bridge_connection_unavailable", payload: { reason: "onConnectionFact_missing" } });
   try {
     const disposable = typeof configuredRuntimeRoot !== "string" || configuredRuntimeRoot.length === 0;
     const root = disposable ? await mkdtemp(join(tmpdir(), "gamebuddy-multiplayer-agent-")) : configuredRuntimeRoot;
