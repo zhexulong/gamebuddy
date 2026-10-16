@@ -152,11 +152,7 @@ const ConnectionStatus = Type.Union([
   Type.Literal("disconnected"),
 ]);
 
-const ActionAuthority = Type.Union([
-  Type.Literal("unavailable"),
-  Type.Literal("active"),
-  Type.Literal("paused"),
-]);
+const ActionAuthority = Type.Union([Type.Literal("unavailable"), Type.Literal("active"), Type.Literal("paused")]);
 
 const Role = Type.Union([Type.Literal("player"), Type.Literal("companion"), Type.Null()]);
 
@@ -175,6 +171,23 @@ const CompatibilityMessage = Type.Union([Type.String({ minLength: 1, maxLength: 
 const MissingItemLabel = Type.String({ minLength: 1, maxLength: 256 });
 const GameTitleLabel = Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]);
 
+/**
+ * The prerequisite projection `game.state.read` publishes.
+ *
+ * Reserved members: `missingItems` is DECLARED BUT UNPRODUCED, and the
+ * `unmet` / `checking` / `failed` statuses are declared with no producer. The one
+ * shipped producer (`game-browser/game-browser-state-provider.ts:88-90`) writes
+ * only `met` or `unknown` and always an empty `missingItems`, because the Host's
+ * own readiness facts are binary - an `registered`/`absent` installation view plus
+ * a launch-readiness status - and no shipped reader enumerates individual missing
+ * prerequisites. The only per-item prerequisite strings in the tree ride the
+ * installation-discovery route (`GET .../installation/discovery`), the sole place
+ * they are honestly scoped. Rendering an always-empty list is not a fix;
+ * producing entries would first take a reader that enumerates missing
+ * prerequisites, which does not exist. The client keeps the full vocabulary
+ * (`dialogue-web/src/composed-reference-game-browser-api.ts`), so a future
+ * producer needs no contract change.
+ */
 const GamePrerequisiteStateV1Schema = strictObject({
   status: PrerequisiteStatus,
   detectedGame: DetectedGameLabel,
@@ -324,12 +337,15 @@ export type GameDiscoveryMutationResultV1 = Static<typeof GameDiscoveryMutationR
 
 export const StardewCabinChoicesV1Schema = strictObject({
   apiVersion: ApiVersion,
-  choices: Type.Array(strictObject({
-    displayLabel: Type.String({ minLength: 1, maxLength: 128 }),
-    availability: Type.Literal("available"),
-    choiceHandle: Type.String({ minLength: 43, maxLength: 43, format: "game-browser-canonical-base64url-v1" }),
-    expiresAtMs: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
-  }), { maxItems: 64 }),
+  choices: Type.Array(
+    strictObject({
+      displayLabel: Type.String({ minLength: 1, maxLength: 128 }),
+      availability: Type.Literal("available"),
+      choiceHandle: Type.String({ minLength: 43, maxLength: 43, format: "game-browser-canonical-base64url-v1" }),
+      expiresAtMs: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+    }),
+    { maxItems: 64 },
+  ),
 });
 
 // ─── Mutation commands ──────────────────────────────────────────────────────
@@ -393,10 +409,7 @@ export const GameCreateCommandV1Schema = strictObject({
 export const GameCreateResultV1Schema = Type.Union([
   strictObject({
     apiVersion: ApiVersion,
-    status: Type.Union([
-      Type.Literal("accepted"),
-      Type.Literal("attached"),
-    ]),
+    status: Type.Union([Type.Literal("accepted"), Type.Literal("attached")]),
     gameSessionId: SAFE_ID,
   }),
   strictObject({
@@ -437,11 +450,7 @@ export const GameResumeCancelResultV1Schema = strictObject({
  */
 export const GameResumeResultV1Schema = strictObject({
   apiVersion: ApiVersion,
-  status: Type.Union([
-    Type.Literal("accepted"),
-    Type.Literal("attached"),
-    Type.Literal("unavailable"),
-  ]),
+  status: Type.Union([Type.Literal("accepted"), Type.Literal("attached"), Type.Literal("unavailable")]),
 });
 
 export const GameReopenActionAuthorityCommandV1Schema = strictObject({
@@ -490,10 +499,7 @@ export const GameEndgameCommandV1Schema = strictObject({
  */
 export const GameEndgameResultV1Schema = strictObject({
   apiVersion: ApiVersion,
-  status: Type.Union([
-    Type.Literal("gameended"),
-    Type.Literal("unavailable"),
-  ]),
+  status: Type.Union([Type.Literal("gameended"), Type.Literal("unavailable")]),
 });
 
 export const StardewCabinConfirmCommandV1Schema = strictObject({
@@ -614,7 +620,6 @@ export const GAME_BROWSER_CONTRACT_RESERVATIONS_V1: readonly GameBrowserContract
 
 const contractDeclaredOperationIds = new Set<string>(GAME_BROWSER_OPERATION_IDS_V1);
 const contractDeclaredNavigationItemIds = new Set<string>(["game"]);
-
 
 type GameBrowserNavigationItemIdV1 = "game";
 type GameReleaseTierV1 = "game_preview";
@@ -770,9 +775,10 @@ export type GameResumeCancelResultV1 = Static<typeof GameResumeCancelResultV1Sch
  * type-only extension carries the gameSessionId the coordinator needs to
  * resolve the session's registered world binding. It is not a wire schema.
  */
-export type GameSessionResumeCommandV1 = GameResumeCommandV1 & Readonly<{
-  gameSessionId: string;
-}>;
+export type GameSessionResumeCommandV1 = GameResumeCommandV1 &
+  Readonly<{
+    gameSessionId: string;
+  }>;
 export type GameResumeResultV1 = Static<typeof GameResumeResultV1Schema>;
 export type GameReopenActionAuthorityCommandV1 = Static<typeof GameReopenActionAuthorityCommandV1Schema>;
 export type GameReopenActionAuthorityResultV1 = Static<typeof GameReopenActionAuthorityResultV1Schema>;
