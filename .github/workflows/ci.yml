@@ -32,6 +32,16 @@ jobs:
       # Host production build hashes the packaged artifact against this output.
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
       - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
+      # pi-koe is the Voice repository mounted as vendor/pi-koe (git submodule)
+      # and is a pnpm workspace of its own, so the root install does not install
+      # it. Its protocol package must exist BEFORE the root install: the root
+      # `pnpm install` snapshots the `file:` dependency into the pnpm store AT
+      # RESOLUTION TIME, and `dist/` is gitignored in the submodule, so a fresh
+      # checkout snapshots a store copy with no dist. The same ordering is what
+      # release-windows.yml already needed for the identical reason.
+      - run: pnpm --dir vendor/pi-koe install --frozen-lockfile
+      - run: pnpm run build
+        working-directory: vendor/pi-koe/packages/voice-protocol
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:host-windows-test-preflight
       - run: pnpm test:host-windows-test-preflight
