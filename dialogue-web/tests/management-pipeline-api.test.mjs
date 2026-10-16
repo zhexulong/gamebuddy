@@ -185,9 +185,18 @@ test("management World Info validators reject incomplete, noncanonical, and non-
 });
 
 test("management Voice preference validators and client use exact session and CSRF-bound routes", async () => {
-  const preference = { revision: 0, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null };
-  const accepted = { revision: 1, disclosureVersion: "mimo-cloud-tts-v1", consent: "accepted", decidedAtMs: 10, outputDevice: null };
+  const preference = { revision: 0, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null };
+  const accepted = { revision: 1, disclosureVersion: "mimo-cloud-tts-v1", consent: "accepted", decidedAtMs: 10, outputDevice: null, persona: null };
   assert.deepEqual(validateVoicePreference(preference), preference);
+  // The persona is a required member of the frozen read shape, and only the
+  // bounded lowercase-snake id shape (or null) is accepted.
+  assert.deepEqual(validateVoicePreference({ ...preference, persona: "soft_maid" }), { ...preference, persona: "soft_maid" });
+  assert.throws(() => validateVoicePreference({ ...preference, persona: "SoftMaid" }), TavernProtocolError);
+  assert.throws(() => validateVoicePreference({ ...preference, persona: "a".repeat(33) }), TavernProtocolError);
+  assert.throws(
+    () => validateVoicePreference({ revision: 0, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+    TavernProtocolError,
+  );
   assert.throws(() => validateVoicePreference({ ...preference, extra: true }), TavernProtocolError);
   const command = { expectedRevision: 0, action: "accept", disclosureVersion: "mimo-cloud-tts-v1" };
   const calls = [];
@@ -239,7 +248,7 @@ test("management Voice device enumeration and output-device selection use exact 
   assert.throws(() => validateVoiceDevices({ ...devices, defaultSelectable: false }), TavernProtocolError);
   assert.throws(() => validateVoiceDevices({ ...devices, devices: Array.from({ length: 33 }, () => ({ id: "waveout:0", name: "x" })) }), TavernProtocolError);
 
-  const selected = { revision: 4, disclosureVersion: "mimo-cloud-tts-v1", consent: "accepted", decidedAtMs: 10, outputDevice: "waveout:1" };
+  const selected = { revision: 4, disclosureVersion: "mimo-cloud-tts-v1", consent: "accepted", decidedAtMs: 10, outputDevice: "waveout:1", persona: null };
   const calls = [];
   const api = createManagementPipelineApi(async (path, init) => {
     calls.push({ path, init });
@@ -261,6 +270,34 @@ test("management Voice device enumeration and output-device selection use exact 
   // A non-endpoint device id and an unknown action both fail closed.
   await assert.rejects(api.updateVoicePreference({ ...command, outputDevice: "speakers" }, HANDLE), TavernProtocolError);
   await assert.rejects(api.updateVoicePreference({ ...command, action: "setOutputDeviceX" }, HANDLE), TavernProtocolError);
+});
+
+test("management Voice persona selection rides the existing consent command", async () => {
+  // A persona selection is the fourth variant of the SAME consent operation:
+  // no new route, one CSRF-bound PUT, and only the bounded persona shape (or
+  // null) is accepted.
+  const selected = { revision: 5, disclosureVersion: "mimo-cloud-tts-v1", consent: "accepted", decidedAtMs: 10, outputDevice: null, persona: "soft_maid" };
+  const calls = [];
+  const api = createManagementPipelineApi(async (path, init) => {
+    calls.push({ path, init });
+    return response(init.method === "PUT" ? selected : { ...selected, persona: null });
+  });
+  const command = { expectedRevision: 4, action: "setPersona", persona: "soft_maid" };
+  assert.deepEqual(await api.updateVoicePreference(command, HANDLE), selected);
+  assert.equal(calls[0].path, "/api/tavern/v1/settings/voice-preference");
+  assert.equal(calls[0].init.method, "PUT");
+  assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json", "x-csrf-token": HANDLE });
+  assert.equal(calls[0].init.body, JSON.stringify(command));
+
+  // Clearing back to no persona is the null form of the same action.
+  const clear = { expectedRevision: 5, action: "setPersona", persona: null };
+  assert.deepEqual(await api.updateVoicePreference(clear, HANDLE), selected);
+  assert.equal(calls[1].init.body, JSON.stringify(clear));
+
+  // The shape is bounded: an uppercase/gapped id and an extra key fail closed.
+  await assert.rejects(api.updateVoicePreference({ ...command, persona: "SoftMaid" }, HANDLE), TavernProtocolError);
+  await assert.rejects(api.updateVoicePreference({ ...command, persona: 7 }, HANDLE), TavernProtocolError);
+  await assert.rejects(api.updateVoicePreference({ ...command, extra: true }, HANDLE), TavernProtocolError);
 });
 
 test("management import history validator and client use the exact session-read route", async () => {

@@ -354,6 +354,8 @@ export type TavernVoicePreferenceV1 = Readonly<{
   decidedAtMs: number | null;
   /** `null` = Windows default output; `waveout:N` pins one enumerated endpoint. */
   outputDevice: string | null;
+  /** `null` = no persona; otherwise the bounded lowercase-snake persona id. */
+  persona: string | null;
 }>;
 
 export type TavernVoiceDevicesV1 = Readonly<{
@@ -368,6 +370,11 @@ export type TavernVoicePreferenceConsentCommandV1 =
       expectedRevision: number;
       action: "setOutputDevice";
       outputDevice: string | null;
+    }>
+  | Readonly<{
+      expectedRevision: number;
+      action: "setPersona";
+      persona: string | null;
     }>;
 
 /** Mirrors the Host's TavernLanguagePreferenceV1. */
@@ -859,6 +866,9 @@ const NAVIGATION_AVAILABILITY = ["available", "unavailable"] as const;
 const WORLD_INFO_STATES = ["none", "selected", "pending", "unavailable"] as const;
 const VOICE_DISCLOSURE_VERSIONS = ["mimo-cloud-tts-v1"] as const;
 const VOICE_CONSENTS = ["undecided", "accepted", "revoked"] as const;
+// The MIMO voice persona id shape, mirroring the Host store's VOICE_PERSONA_PATTERN.
+const VOICE_PERSONA_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
+const VOICE_PERSONA_MAX_LENGTH = 32;
 const PROBLEM_CODES = [
   "unauthorized",
   "csrf_failed",
@@ -1022,10 +1032,18 @@ const OPENING_DIRECTIONS = ["prev", "next"] as const;
 const PROBLEM_KEYS = ["type", "title", "status", "code", "requestId", "retryable"] as const;
 const LANGUAGE_PREFERENCE_KEYS = ["revision", "locale"] as const;
 const LANGUAGE_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "locale"] as const;
-const VOICE_PREFERENCE_KEYS = ["revision", "disclosureVersion", "consent", "decidedAtMs", "outputDevice"] as const;
+const VOICE_PREFERENCE_KEYS = [
+  "revision",
+  "disclosureVersion",
+  "consent",
+  "decidedAtMs",
+  "outputDevice",
+  "persona",
+] as const;
 const VOICE_PREFERENCE_ACCEPT_KEYS = ["expectedRevision", "action", "disclosureVersion"] as const;
 const VOICE_PREFERENCE_REVOKE_KEYS = ["expectedRevision", "action"] as const;
 const VOICE_PREFERENCE_DEVICE_KEYS = ["expectedRevision", "action", "outputDevice"] as const;
+const VOICE_PREFERENCE_PERSONA_KEYS = ["expectedRevision", "action", "persona"] as const;
 const VOICE_DEVICES_KEYS = ["devices", "defaultSelectable"] as const;
 const VOICE_DEVICE_KEYS = ["id", "name"] as const;
 const CONNECTION_STATE_KEYS = ["apiVersion", "revision", "active", "connections", "providers"] as const;
@@ -1871,9 +1889,17 @@ function isVoicePreference(value: unknown): value is TavernVoicePreferenceV1 {
     (value.decidedAtMs === null || isNonNegativeSafeInteger(value.decidedAtMs)) &&
     (value.outputDevice === null ||
       (typeof value.outputDevice === "string" && /^waveout:[0-9]{1,4}$/.test(value.outputDevice))) &&
+    isVoicePersona(value.persona) &&
     (value.consent === "undecided"
       ? value.disclosureVersion === null && value.decidedAtMs === null
       : value.decidedAtMs !== null && (value.consent !== "accepted" || value.disclosureVersion === "mimo-cloud-tts-v1"))
+  );
+}
+
+function isVoicePersona(value: unknown): value is string | null {
+  return (
+    value === null ||
+    (typeof value === "string" && value.length <= VOICE_PERSONA_MAX_LENGTH && VOICE_PERSONA_PATTERN.test(value))
   );
 }
 
@@ -1915,6 +1941,8 @@ function isVoicePreferenceConsentCommand(value: unknown): value is TavernVoicePr
       (value.outputDevice === null ||
         (typeof value.outputDevice === "string" && /^waveout:[0-9]{1,4}$/.test(value.outputDevice)))
     );
+  if (value.action === "setPersona")
+    return hasExactKeys(value, VOICE_PREFERENCE_PERSONA_KEYS) && isVoicePersona(value.persona);
   return value.action === "revoke" && hasExactKeys(value, VOICE_PREFERENCE_REVOKE_KEYS);
 }
 
