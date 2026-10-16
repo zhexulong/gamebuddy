@@ -411,7 +411,7 @@ export async function main(argv) {
     driverState: driverResult?.state,
     loopResult,
   });
-  const { state, unobservedTailMs, measuredTail } = verdict;
+  const { state } = verdict;
 
   const report = {
     schemaVersion: 1,

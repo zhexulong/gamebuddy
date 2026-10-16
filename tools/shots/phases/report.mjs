@@ -5,7 +5,7 @@
 // reading. When a lane could not run, the driver writes a named skip and this generator repeats it.
 import { readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { runPaths, loadRunConfig, REPO_ROOT } from "../lib/config.mjs";
+import { runPaths, loadRunConfig } from "../lib/config.mjs";
 
 const DRIVER_OUTS = [
   "a-surfaces",

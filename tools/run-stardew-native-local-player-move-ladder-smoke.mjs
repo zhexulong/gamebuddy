@@ -33,7 +33,6 @@ const DEFAULT_RESULT_PATH = resolve(
  * actor's own post-warp tile instead.
  */
 const LAST_IN_MAP_COLUMN = 79;
-const LAST_IN_MAP_ROW = 64;
 const OFF_MAP_COLUMN = 80;
 const OFF_MAP_ROW = 65;
 
