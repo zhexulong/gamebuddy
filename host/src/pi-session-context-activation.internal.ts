@@ -43,7 +43,7 @@ export type PiContextActivationTarget = Readonly<{
  * that is present and on the branch but carries no editable model content is a
  * caller defect and propagates Pi's own error instead of being folded in here.
  */
-export type PiContextActivationRefusal = "unknown_target" | "target_off_active_branch";
+type PiContextActivationRefusal = "unknown_target" | "target_off_active_branch";
 
 export type PiContextActivationResult =
   | Readonly<{ status: "activated"; contextEditEntryId: string }>
@@ -95,7 +95,7 @@ export type PiVariantPosition = Readonly<{ variantTexts: readonly string[] }>;
  * expected and did not find, so the caller can refuse the visible variant
  * instead of activating an entry it cannot prove belongs to the position.
  */
-export type PiVariantActivationRefusal =
+type PiVariantActivationRefusal =
   | "variant_position_has_no_variant"
   | "variant_reply_tail_unavailable"
   | "variant_reply_tail_text_mismatch"
@@ -118,7 +118,7 @@ export type PiVariantActivationResult =
     }>
   | Readonly<{ status: "refused"; reason: PiVariantActivationRefusal | PiContextActivationRefusal }>;
 
-export type PiVariantRevertResult =
+type PiVariantRevertResult =
   | Readonly<{ status: "reverted" }>
   | Readonly<{ status: "refused"; reason: "variant_revert_content_unavailable" }>;
 
