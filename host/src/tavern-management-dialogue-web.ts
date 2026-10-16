@@ -119,10 +119,7 @@ const MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY = [
  * routes mount the Tavern language read/update API; other profiles keep the
  * exact legacy surface. A profile advertising them without the Host store
  * fails closed at composition. */
-const MANAGEMENT_LANGUAGE_ROUTES = [
-  "settings.language.read",
-  "settings.language.update",
-] as const;
+const MANAGEMENT_LANGUAGE_ROUTES = ["settings.language.read", "settings.language.update"] as const;
 const MANAGEMENT_OPERATION_IDS_WITH_MEMORY = [
   "draft.save",
   "draft.discard",
@@ -339,7 +336,9 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    * other handle is reported 404 rather than projected as a different identity.
    */
   companionVoiceService?: Readonly<{
-    read(handle: string): Promise<Readonly<{ profileRevision: number; characterVoice: CompanionCharacterVoiceV1 | null }> | null>;
+    read(
+      handle: string,
+    ): Promise<Readonly<{ profileRevision: number; characterVoice: CompanionCharacterVoiceV1 | null }> | null>;
     update(
       handle: string,
       command: Readonly<{ expectedProfileRevision: number; text?: string; clear?: true }>,
@@ -395,10 +394,11 @@ export type TavernManagementDialogueWebOptions = Readonly<{
     ): Promise<Readonly<{ revision: number; name: string; description: string; preview: string }>>;
   }>;
   greetingService?: Readonly<{
-    read(): Promise<
-      | Readonly<{ revision: number; label?: string; variants: readonly Readonly<{ label?: string; text: string }>[] }>
-      | null
-    >;
+    read(): Promise<Readonly<{
+      revision: number;
+      label?: string;
+      variants: readonly Readonly<{ label?: string; text: string }>[];
+    }> | null>;
     update(
       request: Readonly<{
         expectedRevision: number;
@@ -419,52 +419,56 @@ export type TavernManagementDialogueWebOptions = Readonly<{
     import(
       importId: string,
       input: string | Uint8Array,
-    ): Promise<Readonly<{
-      candidate: Readonly<{
-        artifact: Readonly<{
-          name: string;
-          revision: number;
-          fields: readonly Readonly<{
-            field: string;
-            text: string;
-            eligibility: "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
-          }>[];
+    ): Promise<
+      Readonly<{
+        candidate: Readonly<{
+          artifact: Readonly<{
+            name: string;
+            revision: number;
+            fields: readonly Readonly<{
+              field: string;
+              text: string;
+              eligibility: "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
+            }>[];
+          }>;
         }>;
-      }>;
-      report: Readonly<{
-        artifact: Readonly<{
-          dispositions: readonly Readonly<{
-            field: string;
-            classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
-            reason: string;
-          }>[];
-          losses?: readonly Readonly<{ field: string; reason: string; count: number }>[];
+        report: Readonly<{
+          artifact: Readonly<{
+            dispositions: readonly Readonly<{
+              field: string;
+              classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
+              reason: string;
+            }>[];
+            losses?: readonly Readonly<{ field: string; reason: string; count: number }>[];
+          }>;
         }>;
-      }>;
-    }>>;
-    read(importId: string): Promise<Readonly<{
-      candidate: Readonly<{
-        artifact: Readonly<{
-          name: string;
-          revision: number;
-          fields: readonly Readonly<{
-            field: string;
-            text: string;
-            eligibility: "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
-          }>[];
+      }>
+    >;
+    read(importId: string): Promise<
+      Readonly<{
+        candidate: Readonly<{
+          artifact: Readonly<{
+            name: string;
+            revision: number;
+            fields: readonly Readonly<{
+              field: string;
+              text: string;
+              eligibility: "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
+            }>[];
+          }>;
         }>;
-      }>;
-      report: Readonly<{
-        artifact: Readonly<{
-          dispositions: readonly Readonly<{
-            field: string;
-            classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
-            reason: string;
-          }>[];
-          losses?: readonly Readonly<{ field: string; reason: string; count: number }>[];
+        report: Readonly<{
+          artifact: Readonly<{
+            dispositions: readonly Readonly<{
+              field: string;
+              classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
+              reason: string;
+            }>[];
+            losses?: readonly Readonly<{ field: string; reason: string; count: number }>[];
+          }>;
         }>;
-      }>;
-    }>>;
+      }>
+    >;
     recordReview(
       importId: string,
       input: Readonly<{ reviewedFields: readonly string[]; approvedAtMs: number }>,
@@ -691,7 +695,9 @@ export function createTavernManagementDialogueWebRequestHandler(
   for (const routeId of MANAGEMENT_IMPORT_ROUTES) {
     if (
       profile.routeIds.includes(routeId) &&
-      (stCardImportService === undefined || confirmStCardImport === undefined || stCardImportHistoryService === undefined)
+      (stCardImportService === undefined ||
+        confirmStCardImport === undefined ||
+        stCardImportHistoryService === undefined)
     )
       throw new Error("tavern_management_composition_unavailable");
     if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
@@ -722,10 +728,7 @@ export function createTavernManagementDialogueWebRequestHandler(
    * broker's own CSRF token for the exact admitted session. Either way every
    * route below checks the one CSRF fact of whichever root admitted it.
    */
-  const admitRequest = (
-    request: IncomingMessage,
-    origin: string,
-  ): AdmissionSession | null => {
+  const admitRequest = (request: IncomingMessage, origin: string): AdmissionSession | null => {
     if (delegatedAdmission === undefined) return authenticate(request, browser, origin);
     const context = verifyComposedReferenceGameBrowserAuth(delegatedAdmission.capability, request, origin);
     if (context === null) return null;
@@ -853,7 +856,10 @@ export function createTavernManagementDialogueWebRequestHandler(
               device.name.length <= 128,
           )
           .slice(0, 32);
-        const result: TavernVoiceDevicesV1 = Object.freeze({ devices: bounded.map((device) => Object.freeze({ id: device.id, name: device.name })), defaultSelectable: true });
+        const result: TavernVoiceDevicesV1 = Object.freeze({
+          devices: bounded.map((device) => Object.freeze({ id: device.id, name: device.name })),
+          defaultSelectable: true,
+        });
         if (!TavernBrowserValidatorsV1.TavernVoiceDevicesV1Schema.Check(result))
           throw new Error("voice_devices_unavailable");
         return sendJson(response, 200, result);
@@ -1047,10 +1053,7 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (session === null) return sendProblem(response, 401, "unauthorized");
         if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
           return sendProblem(response, 403, "csrf_failed");
-        if (
-          !profile.routeIds.includes("chat.opening") ||
-          !profile.operationIds.includes("chat.opening")
-        )
+        if (!profile.routeIds.includes("chat.opening") || !profile.operationIds.includes("chat.opening"))
           return sendProblem(response, 404, "profile_operation_unavailable");
         const body = await readJsonBody(request, MAX_BODY_BYTES);
         if (!chatOpeningValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
@@ -1127,7 +1130,11 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (connectionRoute.operationId === "settings.connection.activate") {
           if (!connectionRevisionValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
           const command = body as TavernConnectionRevisionCommandV1;
-          return sendJson(response, 200, await connection.activate(connectionRoute.connectionId, command.expectedRevision));
+          return sendJson(
+            response,
+            200,
+            await connection.activate(connectionRoute.connectionId, command.expectedRevision),
+          );
         }
         if (connectionRoute.operationId === "settings.connection.model") {
           if (!connectionModelValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
@@ -1150,10 +1157,7 @@ export function createTavernManagementDialogueWebRequestHandler(
           modelProfileStore === undefined
         )
           return sendProblem(response, 404, "profile_operation_unavailable");
-        const [chat, game] = await Promise.all([
-          modelProfileStore.read("chat"),
-          modelProfileStore.read("game"),
-        ]);
+        const [chat, game] = await Promise.all([modelProfileStore.read("chat"), modelProfileStore.read("game")]);
         const profiles = projectModelProfiles(chat, game);
         if (!TavernBrowserValidatorsV1.TavernModelProfilesV1Schema.Check(profiles))
           throw new Error("model_profile_store_unavailable");
@@ -1203,7 +1207,8 @@ export function createTavernManagementDialogueWebRequestHandler(
             }),
           ),
         });
-        if (!TavernBrowserValidatorsV1.CompanionListV1Schema.Check(list)) throw new Error("companion_list_service_unavailable");
+        if (!TavernBrowserValidatorsV1.CompanionListV1Schema.Check(list))
+          throw new Error("companion_list_service_unavailable");
         return sendJson(response, 200, list);
       }
       {
@@ -1243,10 +1248,7 @@ export function createTavernManagementDialogueWebRequestHandler(
           if (url.search !== "" || (await hasRequestBody(request)))
             return sendProblem(response, 400, "invalid_request");
           if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
-          if (
-            !profile.routeIds.includes("companion.worldbook.read") ||
-            companionWorldBookService === undefined
-          )
+          if (!profile.routeIds.includes("companion.worldbook.read") || companionWorldBookService === undefined)
             return sendProblem(response, 404, "profile_operation_unavailable");
           const worldBook = await companionWorldBookService.read(worldBookHandle);
           if (worldBook === null) return sendProblem(response, 404, "companion_not_found");
@@ -1267,10 +1269,7 @@ export function createTavernManagementDialogueWebRequestHandler(
             if (url.search !== "" || (await hasRequestBody(request)))
               return sendProblem(response, 400, "invalid_request");
             if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
-            if (
-              !profile.routeIds.includes("character.voice.read") ||
-              companionVoiceService === undefined
-            )
+            if (!profile.routeIds.includes("character.voice.read") || companionVoiceService === undefined)
               return sendProblem(response, 404, "profile_operation_unavailable");
             const voice = await companionVoiceService.read(voiceHandle);
             if (voice === null) return sendProblem(response, 404, "companion_not_found");
@@ -1920,8 +1919,16 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
   // that predate the Characters surface keep the old navigation shape.
   const withMemory = profile.routeIds.includes("memory.read");
   const navigationMatches =
-    sameOrderedValues(profile.navigationItemIds, withMemory ? MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY : MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY) ||
-    sameOrderedValues(profile.navigationItemIds, withMemory ? MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITH_MEMORY : MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITHOUT_MEMORY);
+    sameOrderedValues(
+      profile.navigationItemIds,
+      withMemory ? MANAGEMENT_NAVIGATION_ITEM_IDS_WITH_MEMORY : MANAGEMENT_NAVIGATION_ITEM_IDS_WITHOUT_MEMORY,
+    ) ||
+    sameOrderedValues(
+      profile.navigationItemIds,
+      withMemory
+        ? MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITH_MEMORY
+        : MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITHOUT_MEMORY,
+    );
   if (!navigationMatches) return false;
   // The core surface and the extension groups are declared per profile
   // revision. A profile may declare any subset of the optional groups, and only
@@ -1972,7 +1979,8 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
 }
 
 function assertManagementProfile(profile: ComposedTavernProfile): void {
-  if (!managementProfileFitsCanonicalGroups(profile)) throw new Error("tavern_management_profile_operation_unavailable");
+  if (!managementProfileFitsCanonicalGroups(profile))
+    throw new Error("tavern_management_profile_operation_unavailable");
 }
 
 /**
@@ -2003,8 +2011,10 @@ function sameOrderedValues(values: readonly string[], expected: readonly string[
 
 /**
  * One connection sub-route: `/settings/connections/:connectionId/<operation>`.
- * The handle is matched exactly as one 43-character opaque segment so no path
- * can address a record the player's session never received.
+ * The handle is matched as exactly one opaque path segment in the shape the
+ * contract declares for it (`ConnectionPath`), so a handle the contract calls
+ * legal reaches the handler, which fails closed on any record the player's
+ * session never received.
  */
 const CONNECTION_SUBROUTES = Object.freeze([
   Object.freeze({ operationId: "settings.connection.test", suffix: "test" as const, method: "POST" as const }),
@@ -2017,7 +2027,7 @@ function matchConnectionRoute(
   method: string | undefined,
   pathname: string,
 ): Readonly<{ operationId: string; connectionId: string }> | null {
-  const match = /^\/api\/tavern\/v1\/settings\/connections\/([A-Za-z0-9_-]{43})(?:\/([a-z]+))?$/.exec(pathname);
+  const match = /^\/api\/tavern\/v1\/settings\/connections\/([A-Za-z0-9_-]{22,128})(?:\/([a-z]+))?$/.exec(pathname);
   if (match === null) return null;
   const connectionId = match[1]!;
   const suffix = match[2] ?? "";
@@ -2035,12 +2045,14 @@ const RETENTION_SUBROUTES = [
 function matchRetentionRoute(
   method: string | undefined,
   pathname: string,
-): Readonly<{ operationId: "chat.archive" | "chat.restore" | "chat.trash"; chatHandle: string; operation: "archive" | "restore" | "trash" }> | null {
-  const match = /^\/api\/tavern\/v1\/chats\/([A-Za-z0-9_-]{43})\/(archive|restore|trash)$/.exec(pathname);
+): Readonly<{
+  operationId: "chat.archive" | "chat.restore" | "chat.trash";
+  chatHandle: string;
+  operation: "archive" | "restore" | "trash";
+}> | null {
+  const match = /^\/api\/tavern\/v1\/chats\/([A-Za-z0-9_-]{22,128})\/(archive|restore|trash)$/.exec(pathname);
   if (match === null) return null;
-  const route = RETENTION_SUBROUTES.find(
-    (entry) => entry.suffix === match[2] && entry.method === method,
-  );
+  const route = RETENTION_SUBROUTES.find((entry) => entry.suffix === match[2] && entry.method === method);
   return route === undefined
     ? null
     : Object.freeze({
@@ -2052,21 +2064,21 @@ function matchRetentionRoute(
 
 function matchCompanionDetailRoute(method: string | undefined, pathname: string): string | null {
   if (method !== "GET") return null;
-  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{43})$/.exec(pathname);
+  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})$/.exec(pathname);
   return match === null ? null : match[1]!;
 }
 
 /** character.voice.read / character.voice.update: the mounted companion's directive. */
 function matchCompanionVoiceRoute(method: string | undefined, pathname: string): string | null {
   if (method !== "GET" && method !== "PUT") return null;
-  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{43})\/voice$/.exec(pathname);
+  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})\/voice$/.exec(pathname);
   return match === null ? null : match[1]!;
 }
 
 /** companion.worldbook.read: the mounted companion's OWN world book (not the World Info library). */
 function matchCompanionWorldBookRoute(method: string | undefined, pathname: string): string | null {
   if (method !== "GET") return null;
-  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{43})\/worldbook$/.exec(pathname);
+  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})\/worldbook$/.exec(pathname);
   return match === null ? null : match[1]!;
 }
 
@@ -2167,8 +2179,7 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "chat_opening_locked" || message === "chat_thread_opening_locked")
     return { status: 409, code: "chat_opening_locked" };
   if (message === "chat_opening_not_greeting") return { status: 409, code: "chat_opening_not_greeting" };
-  if (message === "chat_opening_variant_not_found")
-    return { status: 404, code: "chat_opening_variant_not_found" };
+  if (message === "chat_opening_variant_not_found") return { status: 404, code: "chat_opening_variant_not_found" };
   if (message === "chat_management_lifecycle_invalid") return { status: 409, code: "state_reconciliation_required" };
   if (message === "world_info_binding_conflict" || message === "world_info_binding_locked")
     return { status: 409, code: "state_reconciliation_required" };
@@ -2375,7 +2386,7 @@ function randomToken(): string {
   return randomBytes(32).toString("base64url");
 }
 function isOpaqueHandle(value: string): boolean {
-  return /^[A-Za-z0-9_-]{43}$/.test(value);
+  return /^[A-Za-z0-9_-]{22,128}$/.test(value);
 }
 function tokensEqual(left: string, right: string): boolean {
   const a = Buffer.from(left);

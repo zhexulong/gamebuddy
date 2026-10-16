@@ -645,7 +645,7 @@ function randomToken(): string {
   return randomBytes(32).toString("base64url");
 }
 function isOpaqueHandle(value: string): boolean {
-  return /^[A-Za-z0-9_-]{43}$/.test(value);
+  return /^[A-Za-z0-9_-]{22,128}$/.test(value);
 }
 function tokensEqual(left: string, right: string): boolean {
   const a = Buffer.from(left);
