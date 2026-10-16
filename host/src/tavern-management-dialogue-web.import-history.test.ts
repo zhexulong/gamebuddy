@@ -10,8 +10,8 @@ import { startTavernManagementDialogueWebServer } from "./tavern-management-dial
 const token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const handle = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 /** Two distinct canonical base64url handles, the shape the Host mints for an import. */
-const newerImportId = `${'I'.repeat(42)}A`;
-const olderImportId = `${'I'.repeat(42)}E`;
+const newerImportId = `${"I".repeat(42)}A`;
+const olderImportId = `${"I".repeat(42)}E`;
 
 /**
  * The reviewed ST-card import extension, including its history read. A profile
@@ -111,6 +111,7 @@ const playerPreferenceStore = Object.freeze({
       consent: "undecided" as const,
       decidedAtMs: null,
       outputDevice: null,
+      persona: null,
     };
   },
   async update(_expectedRevision: number, _update: PlayerPreferenceUpdate) {
@@ -121,6 +122,7 @@ const playerPreferenceStore = Object.freeze({
       consent: "revoked" as const,
       decidedAtMs: 1,
       outputDevice: null,
+      persona: _update.action === "setPersona" ? _update.persona : null,
     };
   },
 });
@@ -244,9 +246,11 @@ test("management history route serves the durable loss report to the exact brows
     // The route is strict about its request shape: a query string is refused
     // rather than silently ignored.
     assert.equal(
-      (await fetch(`${origin}/api/tavern/v1/import-history?apiVersion=1`, {
-        headers: { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
-      })).status,
+      (
+        await fetch(`${origin}/api/tavern/v1/import-history?apiVersion=1`, {
+          headers: { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+        })
+      ).status,
       400,
     );
   } finally {

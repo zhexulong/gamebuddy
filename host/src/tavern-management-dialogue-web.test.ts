@@ -226,6 +226,7 @@ const voicePreferenceStore = Object.freeze({
       consent: "undecided" as const,
       decidedAtMs: null,
       outputDevice: null,
+      persona: null,
     };
   },
   async update(expectedRevision: number, update: PlayerPreferenceUpdate) {
@@ -237,6 +238,7 @@ const voicePreferenceStore = Object.freeze({
       consent: update.action === "accept" ? ("accepted" as const) : ("revoked" as const),
       decidedAtMs: 1,
       outputDevice: update.action === "setOutputDevice" ? update.outputDevice : null,
+      persona: update.action === "setPersona" ? update.persona : null,
     };
   },
 });
@@ -1720,6 +1722,7 @@ test("management handler exposes the Host-owned language preference read and upd
     consent: "undecided",
     decidedAtMs: null,
     outputDevice: null,
+    persona: null,
   };
   // One Host-owned record carries both settings field groups (the companion
   // language and the Voice consent/output), so this language surface writes the
@@ -1870,6 +1873,7 @@ test("management handler maps Voice preference revision conflicts to the safe se
           consent: "undecided" as const,
           decidedAtMs: null,
           outputDevice: null,
+          persona: null,
         };
       },
       async update() {
@@ -1940,6 +1944,7 @@ test("every CSRF-protected management mutation answers 403 csrf_failed for a mis
           consent: "undecided" as const,
           decidedAtMs: null,
           outputDevice: null,
+          persona: null,
         };
       },
       async update() {
@@ -1950,6 +1955,7 @@ test("every CSRF-protected management mutation answers 403 csrf_failed for a mis
           consent: "accepted" as const,
           decidedAtMs: 1,
           outputDevice: null,
+          persona: null,
         };
       },
     }),

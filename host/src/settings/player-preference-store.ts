@@ -46,6 +46,23 @@ export const VOICE_CLOUD_TTS_DISCLOSURE_VERSION = "mimo-cloud-tts-v1" as const;
  */
 export type VoiceOutputDevice = string | null;
 
+/**
+ * Bounded shape for a MIMO voice persona id (`GAMEBUDDY_MIMO_PERSONA`).
+ *
+ * The set of personas is the extension's (`MIMO_TTS_PERSONAS`, vendored and
+ * frozen at the Voice layer), never this store's: the store binds the shape a
+ * persona id is - lowercase snake - and lets the catalogue grow without a Host
+ * edit. `null` means "no persona selected" and leaves the gateway variable
+ * unset, which the extension distinguishes from an empty string.
+ */
+export const VOICE_PERSONA_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
+
+/** The longest persona id the pattern admits: 1 + 31 further lowercase/underscore chars. */
+export const VOICE_PERSONA_MAX_LENGTH = 32;
+
+/** A named MIMO voice persona the player selected, or null for none. */
+export type VoicePersona = string | null;
+
 export type VoiceCloudTtsConsent = "undecided" | "accepted" | "revoked";
 
 /**
@@ -67,6 +84,8 @@ export type PlayerPreference = Readonly<{
   decidedAtMs: number | null;
   /** Player-chosen output endpoint; null selects the Windows default. */
   outputDevice: VoiceOutputDevice;
+  /** Named voice persona, or null for the extension's own default resolution. */
+  persona: VoicePersona;
 }>;
 
 /**
@@ -78,7 +97,8 @@ export type PlayerPreferenceUpdate =
   | Readonly<{ action: "setLocale"; locale: CompanionLocale }>
   | Readonly<{ action: "accept"; disclosureVersion: typeof VOICE_CLOUD_TTS_DISCLOSURE_VERSION }>
   | Readonly<{ action: "revoke" }>
-  | Readonly<{ action: "setOutputDevice"; outputDevice: VoiceOutputDevice }>;
+  | Readonly<{ action: "setOutputDevice"; outputDevice: VoiceOutputDevice }>
+  | Readonly<{ action: "setPersona"; persona: VoicePersona }>;
 
 type StoredPlayerPreference = Readonly<{
   schemaVersion: typeof PLAYER_PREFERENCE_SCHEMA_VERSION;
@@ -88,6 +108,7 @@ type StoredPlayerPreference = Readonly<{
   consent: VoiceCloudTtsConsent;
   decidedAtMs: number | null;
   outputDevice: VoiceOutputDevice;
+  persona: VoicePersona;
 }>;
 
 export class PlayerPreferenceRevisionConflict extends Error {
@@ -114,12 +135,11 @@ export class PlayerPreferenceStore {
         schemaVersion: PLAYER_PREFERENCE_SCHEMA_VERSION,
         revision: current.revision + 1,
         locale: update.action === "setLocale" ? update.locale : current.locale,
-        disclosureVersion:
-          update.action === "accept" ? update.disclosureVersion : current.disclosureVersion,
-        consent:
-          update.action === "accept" ? "accepted" : update.action === "revoke" ? "revoked" : current.consent,
+        disclosureVersion: update.action === "accept" ? update.disclosureVersion : current.disclosureVersion,
+        consent: update.action === "accept" ? "accepted" : update.action === "revoke" ? "revoked" : current.consent,
         decidedAtMs: decidedThisUpdate ? Date.now() : current.decidedAtMs,
         outputDevice: update.action === "setOutputDevice" ? update.outputDevice : current.outputDevice,
+        persona: update.action === "setPersona" ? update.persona : current.persona,
       });
       await writeAtomically(this.path, next);
       const readBack = await this.load();
@@ -146,9 +166,7 @@ export class PlayerPreferenceStore {
  * default. An unreadable or corrupt record throws rather than silently speaking
  * a language the player did not choose.
  */
-export async function readStoredCompanionLocale(
-  runtimeRoot: string,
-): Promise<CompanionLocale | undefined> {
+export async function readStoredCompanionLocale(runtimeRoot: string): Promise<CompanionLocale | undefined> {
   const preference = await new PlayerPreferenceStore(playerPreferencePath(runtimeRoot)).read();
   return preference.locale ?? undefined;
 }
@@ -166,6 +184,7 @@ const DEFAULT_PLAYER_PREFERENCE: StoredPlayerPreference = Object.freeze({
   consent: "undecided",
   decidedAtMs: null,
   outputDevice: null,
+  persona: null,
 });
 
 function project(value: StoredPlayerPreference): PlayerPreference {
@@ -176,6 +195,7 @@ function project(value: StoredPlayerPreference): PlayerPreference {
     consent: value.consent,
     decidedAtMs: value.decidedAtMs,
     outputDevice: value.outputDevice,
+    persona: value.persona,
   });
 }
 
@@ -189,6 +209,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     !isConsent(value.consent) ||
     !isDecisionTimeOrNull(value.decidedAtMs) ||
     !isOutputDevice(value.outputDevice) ||
+    !isVoicePersona(value.persona) ||
     !hasExactKeys(value, [
       "schemaVersion",
       "revision",
@@ -197,6 +218,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
       "consent",
       "decidedAtMs",
       "outputDevice",
+      "persona",
     ])
   )
     throw new Error("invalid_player_preference_store");
@@ -210,8 +232,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     throw new Error("invalid_player_preference_store");
   if (consent === "accepted" && disclosureVersion !== VOICE_CLOUD_TTS_DISCLOSURE_VERSION)
     throw new Error("invalid_player_preference_store");
-  if (consent !== "undecided" && value.decidedAtMs === null)
-    throw new Error("invalid_player_preference_store");
+  if (consent !== "undecided" && value.decidedAtMs === null) throw new Error("invalid_player_preference_store");
 
   return Object.freeze({
     schemaVersion: PLAYER_PREFERENCE_SCHEMA_VERSION,
@@ -221,6 +242,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     consent,
     decidedAtMs: value.decidedAtMs as number | null,
     outputDevice: value.outputDevice as VoiceOutputDevice,
+    persona: value.persona as VoicePersona,
   });
 }
 
@@ -238,14 +260,15 @@ function isUpdate(value: unknown): value is PlayerPreferenceUpdate {
   if (value.action === "setOutputDevice") {
     return hasExactKeys(value, ["action", "outputDevice"]) && isOutputDevice(value.outputDevice);
   }
+  if (value.action === "setPersona") {
+    return hasExactKeys(value, ["action", "persona"]) && isVoicePersona(value.persona);
+  }
   return value.action === "revoke" && hasExactKeys(value, ["action"]);
 }
 
 function isLocale(value: unknown): value is CompanionLocale {
   return (
-    typeof value === "string" &&
-    value.length <= COMPANION_LOCALE_MAX_LENGTH &&
-    COMPANION_LOCALE_PATTERN.test(value)
+    typeof value === "string" && value.length <= COMPANION_LOCALE_MAX_LENGTH && COMPANION_LOCALE_PATTERN.test(value)
   );
 }
 
@@ -260,6 +283,17 @@ function isLocaleOrNull(value: unknown): value is CompanionLocale | null {
  */
 function isOutputDevice(value: unknown): value is VoiceOutputDevice {
   return value === null || (typeof value === "string" && /^waveout:\d{1,4}$/.test(value));
+}
+
+/**
+ * `null` = no persona (the gateway variable stays unset); a pinned value is the
+ * frozen lowercase-snake persona shape only - never free text or a display name.
+ */
+function isVoicePersona(value: unknown): value is VoicePersona {
+  return (
+    value === null ||
+    (typeof value === "string" && value.length <= VOICE_PERSONA_MAX_LENGTH && VOICE_PERSONA_PATTERN.test(value))
+  );
 }
 
 function isConsent(value: unknown): value is VoiceCloudTtsConsent {
@@ -278,10 +312,7 @@ function isRevision(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-function hasExactKeys(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): boolean {
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const actual = Object.keys(value);
   return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }

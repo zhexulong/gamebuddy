@@ -288,6 +288,7 @@ async function fixture(withCreate: boolean, options: Readonly<{ withCompanionArt
           consent: "undecided" as const,
           decidedAtMs: null,
           outputDevice: null,
+          persona: null,
         };
       },
       async update() {

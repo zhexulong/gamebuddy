@@ -1256,6 +1256,7 @@ function managementBundle(): ManagementBundle {
           consent: "undecided" as const,
           decidedAtMs: null,
           outputDevice: null,
+          persona: null,
         }),
       update: async () => {
         throw new Error("unused_preference_update");

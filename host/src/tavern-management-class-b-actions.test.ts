@@ -349,7 +349,8 @@ function appliedPreference(
   if (update.action === "accept")
     return { ...next, disclosureVersion: update.disclosureVersion, consent: "accepted", decidedAtMs: 1 };
   if (update.action === "revoke") return { ...next, consent: "revoked" };
-  return { ...next, outputDevice: update.outputDevice };
+  if (update.action === "setOutputDevice") return { ...next, outputDevice: update.outputDevice };
+  return { ...next, persona: update.persona };
 }
 
 test.before(async () => {
@@ -413,6 +414,7 @@ test("ADR-0010 Class B: every action the ADR names succeeds with a turn in fligh
     consent: "undecided",
     decidedAtMs: null,
     outputDevice: null,
+    persona: null,
   };
   const modelProfiles: Record<"chat" | "game", TavernModelProfileProjection> = {
     chat: { surface: "chat", revision: 0, modelId: "initial-model", thinkingLevel: "low" },

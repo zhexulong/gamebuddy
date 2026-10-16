@@ -45,6 +45,7 @@ test("player preference defaults to unconfigured and projects one record with ex
       consent: "undecided",
       decidedAtMs: null,
       outputDevice: null,
+      persona: null,
     } satisfies PlayerPreference);
 
     const updated = await store.update(0, { action: "setLocale", locale: "zh-CN" });
@@ -56,6 +57,7 @@ test("player preference defaults to unconfigured and projects one record with ex
       "disclosureVersion",
       "locale",
       "outputDevice",
+      "persona",
       "revision",
     ]);
     assert.deepEqual(await store.read(), updated);
@@ -104,10 +106,7 @@ test("a stale expectedRevision is rejected across both surfaces without mutation
     const language = await store.update(0, { action: "setLocale", locale: "en-US" });
     // The voice surface still holds the revision it read before the language
     // write: the record refuses it rather than silently overwriting the choice.
-    await assert.rejects(
-      store.update(0, { action: "revoke" }),
-      PlayerPreferenceRevisionConflict,
-    );
+    await assert.rejects(store.update(0, { action: "revoke" }), PlayerPreferenceRevisionConflict);
     assert.equal((await store.read()).revision, language.revision);
 
     const voice = await store.update(language.revision, { action: "revoke" });
@@ -180,11 +179,96 @@ test("unapproved disclosure versions, unknown fields and malformed locales are r
     // The shape is what is bounded here, not the language: `ja-JP` is the player's own
     // choice and saves (see the locale test below), while a string that is not a tag at
     // all is refused.
-    await assert.rejects(store.update(0, { action: "setLocale", locale: "not a locale" } as never), /invalid_player_preference_update/u);
-    await assert.rejects(store.update(0, { action: "setLocale", locale: null } as never), /invalid_player_preference_update/u);
+    await assert.rejects(
+      store.update(0, { action: "setLocale", locale: "not a locale" } as never),
+      /invalid_player_preference_update/u,
+    );
+    await assert.rejects(
+      store.update(0, { action: "setLocale", locale: null } as never),
+      /invalid_player_preference_update/u,
+    );
     await assert.rejects(store.update(0, { action: "setLocale" } as never), /invalid_player_preference_update/u);
     await assert.rejects(store.update(0, {} as never), /invalid_player_preference_update/u);
-    await assert.rejects(store.update(0, { action: "setOutputDeviceX", outputDevice: null } as never), /invalid_player_preference_update/u);
+    await assert.rejects(
+      store.update(0, { action: "setOutputDeviceX", outputDevice: null } as never),
+      /invalid_player_preference_update/u,
+    );
+  });
+});
+
+test("persona selection round-trips and rejects ids outside the bounded shape", async () => {
+  await withStore(async (path, store) => {
+    assert.equal((await store.read()).persona, null);
+
+    const chosen = await store.update(0, { action: "setPersona", persona: "soft_maid" });
+    assert.equal(chosen.persona, "soft_maid");
+    // Picking a persona is not a consent decision: the voice field group moves
+    // independently of consent/device and the record's one revision advances.
+    assert.equal(chosen.consent, "undecided");
+    assert.equal(chosen.outputDevice, null);
+    assert.equal(chosen.revision, 1);
+
+    const reopened = await new PlayerPreferenceStore(path).read();
+    assert.equal(reopened.persona, "soft_maid");
+
+    // Clearing back to no persona is an explicit selection too (the gateway
+    // variable must be left UNSET, never an empty string).
+    const cleared = await store.update(reopened.revision, { action: "setPersona", persona: null });
+    assert.equal(cleared.persona, null);
+    assert.equal(cleared.revision, 2);
+
+    // Only the frozen lowercase-snake id shape is ever stored; a display name,
+    // an uppercase id, or free text fails closed so nothing but a real persona
+    // id can reach the gateway.
+    for (const persona of ["SoftMaid", "", "soft maid", "soft-maid", "soft_maid!", "a".repeat(33)]) {
+      await assert.rejects(
+        store.update(cleared.revision, { action: "setPersona", persona } as never),
+        /invalid_player_preference_update/u,
+        `expected ${JSON.stringify(persona)} to be refused`,
+      );
+    }
+  });
+});
+
+test("persona writes use the SAME revision CAS and cannot clobber the other groups", async () => {
+  await withStore(async (path, store) => {
+    const language = await store.update(0, { action: "setLocale", locale: "en-US" });
+    const device = await store.update(language.revision, { action: "setOutputDevice", outputDevice: "waveout:3" });
+
+    // A stale revision from before the other groups wrote is refused.
+    await assert.rejects(
+      store.update(0, { action: "setPersona", persona: "gentle_maid" }),
+      PlayerPreferenceRevisionConflict,
+    );
+    assert.equal((await store.read()).revision, device.revision);
+    assert.equal((await store.read()).persona, null);
+
+    const persona = await store.update(device.revision, { action: "setPersona", persona: "gentle_maid" });
+    assert.equal(persona.revision, 3);
+    assert.equal(persona.locale, "en-US");
+    assert.equal(persona.outputDevice, "waveout:3");
+    assert.equal(persona.persona, "gentle_maid");
+
+    const reopened = await new PlayerPreferenceStore(path).read();
+    assert.deepEqual(reopened, persona);
+  });
+});
+
+test("unapproved personas, unknown keys and extra fields are refused", async () => {
+  await withStore(async (_path, store) => {
+    await assert.rejects(store.update(0, { action: "setPersona" } as never), /invalid_player_preference_update/u);
+    await assert.rejects(
+      store.update(0, { action: "setPersona", persona: 7 } as never),
+      /invalid_player_preference_update/u,
+    );
+    await assert.rejects(
+      store.update(0, { action: "setPersona", persona: null, extra: true } as never),
+      /invalid_player_preference_update/u,
+    );
+    await assert.rejects(
+      store.update(0, { action: "setPersonaX", persona: null } as never),
+      /invalid_player_preference_update/u,
+    );
   });
 });
 
@@ -199,13 +283,18 @@ test("the persisted record requires the exact schema and rejects malformed files
       consent: "undecided",
       decidedAtMs: null,
       outputDevice: null,
+      persona: null,
     };
 
-    // An unknown key, a malformed locale and an unapproved disclosure all fail.
-  await writeFile(path, JSON.stringify({ ...valid, extra: true }));
-  await assert.rejects(store.read(), /invalid_player_preference_store/u);
-  await writeFile(path, JSON.stringify({ ...valid, locale: "not a locale" }));
-  await assert.rejects(store.read(), /invalid_player_preference_store/u);
+    // An unknown key, a malformed locale, a missing persona and an unapproved
+    // disclosure all fail: a record without the exact key set (e.g. written
+    // before `persona` existed) is refused rather than half-read.
+    await writeFile(path, JSON.stringify({ ...valid, extra: true }));
+    await assert.rejects(store.read(), /invalid_player_preference_store/u);
+    await writeFile(path, JSON.stringify({ ...valid, locale: "not a locale" }));
+    await assert.rejects(store.read(), /invalid_player_preference_store/u);
+    await writeFile(path, JSON.stringify({ ...valid, persona: undefined }));
+    await assert.rejects(store.read(), /invalid_player_preference_store/u);
     await writeFile(path, JSON.stringify({ ...valid, disclosureVersion: "not-approved" }));
     await assert.rejects(store.read(), /invalid_player_preference_store/u);
     // A consent state and its evidence may never disagree.
@@ -218,7 +307,7 @@ test("the persisted record requires the exact schema and rejects malformed files
 
     // A corrupt file is never overwritten with defaults, and an update refuses
     // rather than repairing it.
-    await writeFile(path, "{\"schemaVersion\":1,\"revision\":0,\"locale\":\"zh-CN\" , garbage");
+    await writeFile(path, '{"schemaVersion":1,"revision":0,"locale":"zh-CN" , garbage');
     await assert.rejects(store.read(), /invalid_player_preference_store/u);
     assert.match(await readFile(path, "utf8"), /garbage/u);
     await assert.rejects(store.update(0, { action: "setLocale", locale: "en-US" }), /invalid_player_preference_store/u);
@@ -249,7 +338,7 @@ test("the runtime-facing reader resolves the player's choice from the one root p
   // than speak a language the player did not choose. The tag itself is malformed here
   // (a valid tag outside the two the panel suggests is legal, so it must not be what
   // this refuses).
-  await writeFile(playerPreferencePath(root), "{\"schemaVersion\":1,\"revision\":0,\"locale\":\"not a locale\"}");
+  await writeFile(playerPreferencePath(root), '{"schemaVersion":1,"revision":0,"locale":"not a locale"}');
   await assert.rejects(readStoredCompanionLocale(root), /invalid_player_preference_store/u);
   await rm(root, { recursive: true, force: true });
 });
@@ -279,7 +368,16 @@ test("the companion language is the player's own bounded tag, not a closed pair"
   // A malformed record on disk is still refused, and still leaves the write path closed.
   await writeFile(
     playerPreferencePath(root),
-    JSON.stringify({ schemaVersion: 1, revision: 0, locale: "!!", disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+    JSON.stringify({
+      schemaVersion: 1,
+      revision: 0,
+      locale: "!!",
+      disclosureVersion: null,
+      consent: "undecided",
+      decidedAtMs: null,
+      outputDevice: null,
+      persona: null,
+    }),
   );
   await assert.rejects(readStoredCompanionLocale(root), /invalid_player_preference_store/u);
   await rm(root, { recursive: true, force: true });

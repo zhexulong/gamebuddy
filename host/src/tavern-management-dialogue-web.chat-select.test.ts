@@ -210,6 +210,7 @@ async function fixture() {
           consent: "undecided" as const,
           decidedAtMs: null,
           outputDevice: null,
+          persona: null,
         };
       },
       async update() {

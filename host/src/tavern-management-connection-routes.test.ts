@@ -150,13 +150,13 @@ function stubEndpoint(
   handler: (url: string, headers: Record<string, string>) => Readonly<{ status: number; body: string }>,
 ): TavernConnectionProbe {
   return async (input) =>
-    (await import("./tavern/connection-probe.js")).probeTavernConnection(
-      input,
-      (async (url: string, init?: RequestInit) => {
-        const response = handler(String(url), (init?.headers ?? {}) as Record<string, string>);
-        return new Response(response.body, { status: response.status });
-      }) as unknown as typeof fetch,
-    );
+    (await import("./tavern/connection-probe.js")).probeTavernConnection(input, (async (
+      url: string,
+      init?: RequestInit,
+    ) => {
+      const response = handler(String(url), (init?.headers ?? {}) as Record<string, string>);
+      return new Response(response.body, { status: response.status });
+    }) as unknown as typeof fetch);
 }
 
 function listModels(...ids: string[]): string {
@@ -192,10 +192,26 @@ async function withHandler(
     worldInfoService,
     playerPreferenceStore: Object.freeze({
       async read() {
-        return { revision: 0, locale: null, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
+        return {
+          revision: 0,
+          locale: null,
+          disclosureVersion: null,
+          consent: "undecided" as const,
+          decidedAtMs: null,
+          outputDevice: null,
+          persona: null,
+        };
       },
       async update() {
-        return { revision: 1, locale: null, disclosureVersion: null, consent: "accepted" as const, decidedAtMs: 1, outputDevice: null };
+        return {
+          revision: 1,
+          locale: null,
+          disclosureVersion: null,
+          consent: "accepted" as const,
+          decidedAtMs: 1,
+          outputDevice: null,
+          persona: null,
+        };
       },
     }),
     profile: options.profile ?? connectionProfile,
@@ -332,10 +348,16 @@ test("the connection read projects the catalog, and selectable models are the ca
     const byId = new Map(body.providers.map((provider) => [provider.providerId, provider]));
     // The curated catalog: the environment connection, two Host-owned providers
     // and exactly one escape hatch.
-    assert.deepEqual([...byId.keys()].sort(), ["cpa-oai", TAVERN_ESCAPE_HATCH_PROVIDER_ID, "deepseek", "openai"].sort());
+    assert.deepEqual(
+      [...byId.keys()].sort(),
+      ["cpa-oai", TAVERN_ESCAPE_HATCH_PROVIDER_ID, "deepseek", "openai"].sort(),
+    );
     assert.equal(byId.get("cpa-oai")!.environmentManaged, true);
     assert.deepEqual(byId.get("cpa-oai")!.setupFields, []);
-    assert.deepEqual(byId.get("cpa-oai")!.allowedPlayerModels.map((model) => model.modelId), ["deepseek-v4-flash"]);
+    assert.deepEqual(
+      byId.get("cpa-oai")!.allowedPlayerModels.map((model) => model.modelId),
+      ["deepseek-v4-flash"],
+    );
     assert.deepEqual(
       byId.get("deepseek")!.allowedPlayerModels.map((model) => model.modelId),
       ["deepseek-v4-flash", "deepseek-v4-pro"],
@@ -345,21 +367,28 @@ test("the connection read projects the catalog, and selectable models are the ca
     assert.equal(escapeHatches[0]!.providerId, TAVERN_ESCAPE_HATCH_PROVIDER_ID);
     assert.deepEqual([...escapeHatches[0]!.setupFields].sort(), ["apiKey", "apiShape", "baseUrl", "modelId"]);
     // No provider payload, script or arbitrary-URL field exists anywhere.
-    assert.deepEqual(
-      [...new Set(body.providers.flatMap((provider) => provider.setupFields))].sort(),
-      ["apiKey", "apiShape", "baseUrl", "modelId"],
-    );
+    assert.deepEqual([...new Set(body.providers.flatMap((provider) => provider.setupFields))].sort(), [
+      "apiKey",
+      "apiShape",
+      "baseUrl",
+      "modelId",
+    ]);
   });
 });
 
 test("a catalog key is written to the Pi provider store and never read back to the browser", async () => {
   await withHandler({}, async (root, request, bootstrap) => {
     await bootstrap();
-    const created = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: "deepseek",
-      apiKey: "sk-synthetic-credential",
-    });
+    const created = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: "deepseek",
+        apiKey: "sk-synthetic-credential",
+      },
+    );
     assert.equal(created.status, 200);
     // The credential is durable on disk in Pi's own store, under Pi's own id.
     const credentials = JSON.parse(await readFile(connectionAuthPath(root), "utf8"));
@@ -382,43 +411,68 @@ test("a catalog key is written to the Pi provider store and never read back to t
 test("a rejected credential submission is an ordinary request error, not a leak", async () => {
   await withHandler({}, async (_root, request, bootstrap) => {
     await bootstrap();
-    const noKey = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: "deepseek",
-    });
+    const noKey = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: "deepseek",
+      },
+    );
     assert.equal(noKey.status, 400);
     assert.doesNotMatch(noKey.raw, /api_key_required|deepseek/);
     // A player-supplied endpoint on a catalog provider is refused.
-    const arbitraryEndpoint = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: "openai",
-      apiKey: "sk-synthetic",
-      baseUrl: "http://127.0.0.1:9/v1",
-    });
+    const arbitraryEndpoint = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: "openai",
+        apiKey: "sk-synthetic",
+        baseUrl: "http://127.0.0.1:9/v1",
+      },
+    );
     assert.equal(arbitraryEndpoint.status, 400);
     // An invented provider is refused.
-    const unknown = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: "invented",
-      apiKey: "sk-synthetic",
-    });
+    const unknown = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: "invented",
+        apiKey: "sk-synthetic",
+      },
+    );
     assert.equal(unknown.status, 400);
     // A setup value the selected entry does not declare is refused, not stored.
-    const garbageShape = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
-      apiKey: "sk-synthetic",
-      baseUrl: "http://127.0.0.1:11434/v1",
-      apiShape: "invented-messages",
-      modelId: "m",
-    });
+    const garbageShape = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+        apiKey: "sk-synthetic",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        apiShape: "invented-messages",
+        modelId: "m",
+      },
+    );
     assert.equal(garbageShape.status, 400);
     // The environment connection refuses a submitted key outright.
-    const environment = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: "cpa-oai",
-      apiKey: "sk-synthetic",
-    });
+    const environment = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: "cpa-oai",
+        apiKey: "sk-synthetic",
+      },
+    );
     assert.equal(environment.status, 400);
   });
 });
@@ -434,14 +488,19 @@ test("the escape hatch is a catalog entry whose base URL round-trips and whose p
     },
     async (_root, request, bootstrap) => {
       await bootstrap();
-      const created = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-        apiVersion: 1,
-        providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
-        apiKey: "sk-synthetic-hatch-key",
-        baseUrl: "http://127.0.0.1:11434/v1",
-        apiShape: "openai-completions",
-        modelId: "qwen2.5-coder:7b",
-      });
+      const created = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+          apiKey: "sk-synthetic-hatch-key",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          apiShape: "openai-completions",
+          modelId: "qwen2.5-coder:7b",
+        },
+      );
       assert.equal(created.status, 200);
       const body = created.body as {
         revision: number;
@@ -513,14 +572,19 @@ test("the escape hatch round-trips a player-chosen API shape and a query-string 
   await withHandler({}, async (root, request, bootstrap) => {
     await bootstrap();
     const baseUrl = "https://gateway.example.com/openai/deployments/coder?api-version=2024-02-01";
-    const created = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
-      apiKey: "sk-synthetic-shape-key",
-      baseUrl,
-      apiShape: "anthropic-messages",
-      modelId: "claude-3-5-sonnet",
-    });
+    const created = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+        apiKey: "sk-synthetic-shape-key",
+        baseUrl,
+        apiShape: "anthropic-messages",
+        modelId: "claude-3-5-sonnet",
+      },
+    );
     assert.equal(created.status, 200);
     const connection = (created.body as { connections: readonly { baseUrl: string; readiness: string }[] })
       .connections[0]!;
@@ -534,14 +598,19 @@ test("the escape hatch round-trips a player-chosen API shape and a query-string 
     assert.doesNotMatch(created.raw, /sk-synthetic-shape-key/);
 
     // A shape Pi cannot speak is refused before it can reach the runtime.
-    const garbage = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
-      apiKey: "sk-synthetic-shape-key",
-      baseUrl: "https://gateway.example.com/v1",
-      apiShape: "invented-messages",
-      modelId: "claude-3-5-sonnet",
-    });
+    const garbage = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+        apiKey: "sk-synthetic-shape-key",
+        baseUrl: "https://gateway.example.com/v1",
+        apiShape: "invented-messages",
+        modelId: "claude-3-5-sonnet",
+      },
+    );
     assert.equal(garbage.status, 400);
     assert.equal((garbage.body as { code: string }).code, "invalid_request");
 
@@ -551,19 +620,29 @@ test("the escape hatch round-trips a player-chosen API shape and a query-string 
       { providerId: "openai", apiKey: "sk-synthetic", baseUrl: "https://api.openai.com/v1?api-version=2024-02-01" },
       { providerId: "openai", apiKey: "sk-synthetic", apiShape: "openai-responses" },
     ] as const) {
-      const refused = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-        apiVersion: 1,
-        ...override,
-      });
+      const refused = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          ...override,
+        },
+      );
       assert.equal(refused.status, 400, `expected ${JSON.stringify(override)} to be refused`);
     }
     // The operator-credentialed environment connection owns its URL too: a
     // player-supplied endpoint there would send the operator's secret elsewhere.
-    const environmentRedirect = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: "cpa-oai",
-      baseUrl: "https://attacker.example.com/v1",
-    });
+    const environmentRedirect = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: "cpa-oai",
+        baseUrl: "https://attacker.example.com/v1",
+      },
+    );
     assert.equal(environmentRedirect.status, 400);
   });
 });
@@ -577,34 +656,39 @@ test("probe failures are reported as closed categories with no provider text", a
     { status: 200, body: listModels("some-other-model"), failure: "not_found" },
   ] as const;
   for (const { status, body, failure } of cases) {
-    await withHandler(
-      { probe: stubEndpoint(() => ({ status, body })) },
-      async (_root, request, bootstrap) => {
-        await bootstrap();
-        const created = await request("POST", "/api/tavern/v1/settings/connections", {}, {
+    await withHandler({ probe: stubEndpoint(() => ({ status, body })) }, async (_root, request, bootstrap) => {
+      await bootstrap();
+      const created = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
           apiVersion: 1,
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
-        });
-        const connection = (
-          created.body as { revision: number; connections: readonly { connectionId: string }[] }
-        ).connections[0]!;
-        const probe = await request(
-          "POST",
-          `/api/tavern/v1/settings/connections/${connection.connectionId}/test`,
-          {},
-          { apiVersion: 1, expectedRevision: (created.body as { revision: number }).revision },
-        );
-        assert.equal(probe.status, 200);
-        const probeBody = probe.body as { outcome: string; failure: string; state: { connections: readonly { readiness: string; failure: string }[] } };
-        assert.equal(probeBody.outcome, "failed");
-        assert.equal(probeBody.failure, failure, `status ${status} body ${body}`);
-        assert.equal(probeBody.state.connections[0]!.readiness, "failed");
-        assert.equal(probeBody.state.connections[0]!.failure, failure);
-        // The raw provider text never becomes a player notice or a record.
-        assert.doesNotMatch(probe.raw, /sk-live-abc|10\.0\.0\.5|exploded|not json|some-other-model/);
-      },
-    );
+        },
+      );
+      const connection = (created.body as { revision: number; connections: readonly { connectionId: string }[] })
+        .connections[0]!;
+      const probe = await request(
+        "POST",
+        `/api/tavern/v1/settings/connections/${connection.connectionId}/test`,
+        {},
+        { apiVersion: 1, expectedRevision: (created.body as { revision: number }).revision },
+      );
+      assert.equal(probe.status, 200);
+      const probeBody = probe.body as {
+        outcome: string;
+        failure: string;
+        state: { connections: readonly { readiness: string; failure: string }[] };
+      };
+      assert.equal(probeBody.outcome, "failed");
+      assert.equal(probeBody.failure, failure, `status ${status} body ${body}`);
+      assert.equal(probeBody.state.connections[0]!.readiness, "failed");
+      assert.equal(probeBody.state.connections[0]!.failure, failure);
+      // The raw provider text never becomes a player notice or a record.
+      assert.doesNotMatch(probe.raw, /sk-live-abc|10\.0\.0\.5|exploded|not json|some-other-model/);
+    });
   }
 });
 
@@ -612,23 +696,24 @@ test("a transport failure is classified as unreachable, and a hang as timeout", 
   await withHandler(
     {
       probe: async (input) =>
-        await (await import("./tavern/connection-probe.js")).probeTavernConnection(
-          input,
-          (async () => {
-            throw new TypeError("fetch failed: ECONNREFUSED");
-          }) as unknown as typeof fetch,
-        ),
+        await (await import("./tavern/connection-probe.js")).probeTavernConnection(input, (async () => {
+          throw new TypeError("fetch failed: ECONNREFUSED");
+        }) as unknown as typeof fetch),
     },
     async (_root, request, bootstrap) => {
       await bootstrap();
-      const created = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-        apiVersion: 1,
-        providerId: "deepseek",
-        apiKey: "sk-synthetic-credential",
-      });
-      const connection = (
-        created.body as { revision: number; connections: readonly { connectionId: string }[] }
-      ).connections[0]!;
+      const created = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          providerId: "deepseek",
+          apiKey: "sk-synthetic-credential",
+        },
+      );
+      const connection = (created.body as { revision: number; connections: readonly { connectionId: string }[] })
+        .connections[0]!;
       const probe = await request(
         "POST",
         `/api/tavern/v1/settings/connections/${connection.connectionId}/test`,
@@ -644,11 +729,16 @@ test("a transport failure is classified as unreachable, and a hang as timeout", 
 test("model selection is restricted to the catalog and to the model's own thinking levels", async () => {
   await withHandler({}, async (_root, request, bootstrap) => {
     await bootstrap();
-    const created = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: "deepseek",
-      apiKey: "sk-synthetic-credential",
-    });
+    const created = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: "deepseek",
+        apiKey: "sk-synthetic-credential",
+      },
+    );
     const revision = (created.body as { revision: number }).revision;
     const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!
       .connectionId;
@@ -672,14 +762,19 @@ test("model selection is restricted to the catalog and to the model's own thinki
     );
 
     // The escape hatch accepts the model id its endpoint serves, bounded.
-    const hatch = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
-      apiKey: "ollama",
-      baseUrl: "http://127.0.0.1:11434/v1",
-      apiShape: "openai-completions",
-      modelId: "qwen2.5-coder:7b",
-    });
+    const hatch = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+        apiKey: "ollama",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        apiShape: "openai-completions",
+        modelId: "qwen2.5-coder:7b",
+      },
+    );
     const hatchId = (hatch.body as { connections: readonly { connectionId: string }[] }).connections[1]!.connectionId;
     const hatchRevision = (hatch.body as { revision: number }).revision;
     const unbounded = await request(
@@ -698,11 +793,16 @@ test("a connection activation during a running turn is Class B: it succeeds and 
     async (_root, request, bootstrap) => {
       await bootstrap();
       const before = await request("GET", "/api/tavern/v1/state");
-      const created = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-        apiVersion: 1,
-        providerId: "deepseek",
-        apiKey: "sk-synthetic-credential",
-      });
+      const created = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          providerId: "deepseek",
+          apiKey: "sk-synthetic-credential",
+        },
+      );
       const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!
         .connectionId;
       const probed = await request(
@@ -740,11 +840,16 @@ test("removal needs the exact revision, cannot drop the active connection, and d
     { probe: stubEndpoint(() => ({ status: 200, body: listModels("deepseek-v4-flash") })) },
     async (root, request, bootstrap) => {
       await bootstrap();
-      const created = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-        apiVersion: 1,
-        providerId: "deepseek",
-        apiKey: "sk-synthetic-credential",
-      });
+      const created = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          providerId: "deepseek",
+          apiKey: "sk-synthetic-credential",
+        },
+      );
       const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!
         .connectionId;
       const activated = await request(
@@ -897,11 +1002,16 @@ test("the profile gates connection routes: absent from the profile, absent from 
   await withHandler({ profile: withoutConnections }, async (_root, request, bootstrap) => {
     await bootstrap();
     assert.equal((await request("GET", "/api/tavern/v1/settings/connection")).status, 404);
-    const create = await request("POST", "/api/tavern/v1/settings/connections", {}, {
-      apiVersion: 1,
-      providerId: "deepseek",
-      apiKey: "sk-synthetic",
-    });
+    const create = await request(
+      "POST",
+      "/api/tavern/v1/settings/connections",
+      {},
+      {
+        apiVersion: 1,
+        providerId: "deepseek",
+        apiKey: "sk-synthetic",
+      },
+    );
     assert.equal(create.status, 404);
     assert.equal((create.body as { code: string }).code, "profile_operation_unavailable");
   });
@@ -916,10 +1026,26 @@ test("a profile that advertises connection routes without the Host service fails
         worldInfoService,
         playerPreferenceStore: Object.freeze({
           async read() {
-            return { revision: 0, locale: null, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
+            return {
+              revision: 0,
+              locale: null,
+              disclosureVersion: null,
+              consent: "undecided" as const,
+              decidedAtMs: null,
+              outputDevice: null,
+              persona: null,
+            };
           },
           async update() {
-            return { revision: 1, locale: null, disclosureVersion: null, consent: "accepted" as const, decidedAtMs: 1, outputDevice: null };
+            return {
+              revision: 1,
+              locale: null,
+              disclosureVersion: null,
+              consent: "accepted" as const,
+              decidedAtMs: 1,
+              outputDevice: null,
+              persona: null,
+            };
           },
         }),
         profile: connectionProfile,
