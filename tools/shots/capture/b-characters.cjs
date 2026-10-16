@@ -1,7 +1,7 @@
 // Driver B: the Characters surface — grid column count, per-row card heights, each row's largest
 // residual gap, the panel height, and the persona card label at both widths.
 const path = require("node:path");
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
 
 (async () => {
   const { browser, page } = await connect();

@@ -67,10 +67,13 @@ async function main() {
     appendFileSync(paths.captureLog, `${line}\n`);
     console.log(line);
   };
-  await writeFile(paths.captureLog, "", "utf8");
   await mkdir(paths.outRoot, { recursive: true });
 
   const selected = DRIVERS.filter((driver) => (onlyKeys.length === 0 ? true : onlyKeys.includes(driver.key)));
+  appendFileSync(
+    paths.captureLog,
+    `\n===== capture invocation ${new Date().toISOString()} drivers=[${selected.map((d) => d.key).join(",")}] force=${force} =====\n`,
+  );
 
   let failed = 0;
   for (const driver of selected) {
