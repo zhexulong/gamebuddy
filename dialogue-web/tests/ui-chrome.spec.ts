@@ -493,7 +493,7 @@ test("the warning banner carries the warning tone, not the bare-prose one", asyn
   );
   await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
     route.fulfill(
-      jsonOk({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+      jsonOk({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null }),
     ),
   );
   await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>

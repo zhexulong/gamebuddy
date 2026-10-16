@@ -214,7 +214,7 @@ async function mountShell(page: Page, options: MountOptions = {}): Promise<void>
   await page.route("**/api/tavern/v1/world-info", delayed(undefined, { state: "none", revision: worldBookRevision, items: [] }));
   await page.route(
     "**/api/tavern/v1/settings/voice-preference",
-    delayed(undefined, { revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+    delayed(undefined, { revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null }),
   );
   await page.route("**/api/tavern/v1/settings/voice-devices", delayed(undefined, { devices: [], defaultSelectable: true }));
   await page.route("**/api/tavern/v1/settings/language", delayed(undefined, { revision: 1, locale: "en-US" }));

@@ -2443,7 +2443,7 @@ test("the product Settings surface creates, tests and activates a connection who
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+      body: JSON.stringify({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null }),
     }),
   );
   await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>

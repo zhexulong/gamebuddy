@@ -146,7 +146,7 @@ async function mountShell(page: Page, options: MountOptions = {}): Promise<void>
     route.fulfill(jsonOk({ state: "none", revision: worldBookRevision, items: [] })),
   );
   await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
-    route.fulfill(jsonOk({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null })),
+    route.fulfill(jsonOk({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null })),
   );
   await page.route("**/api/tavern/v1/settings/voice-devices", (route) => route.fulfill(jsonOk({ devices: [], defaultSelectable: true })));
   await page.route("**/api/tavern/v1/settings/language", (route) => route.fulfill(jsonOk({ revision: 1, locale: "zh-CN" })));

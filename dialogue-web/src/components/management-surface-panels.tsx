@@ -912,7 +912,10 @@ export function SettingsSurfacePanel({
     }
   };
 
-  const mutateVoice = (action: "accept" | "revoke" | "setOutputDevice", outputDevice: string | null = null): void => {
+  const mutateVoice = (
+    action: "accept" | "revoke" | "setOutputDevice" | "setPersona",
+    value: string | null = null,
+  ): void => {
     if (voiceView.kind !== "ready" || voiceView.pending) return;
     const voice = voiceView;
     // The record's one revision, shared with the language group: a stale value
@@ -923,8 +926,10 @@ export function SettingsSurfacePanel({
       action === "accept"
         ? { action, expectedRevision, disclosureVersion: "mimo-cloud-tts-v1" as const }
         : action === "setOutputDevice"
-          ? { action, expectedRevision, outputDevice }
-          : { action, expectedRevision };
+          ? { action, expectedRevision, outputDevice: value }
+          : action === "setPersona"
+            ? { action, expectedRevision, persona: value }
+            : { action, expectedRevision };
     // One in-flight mutation at a time: a second identical action would reuse the
     // same expectedRevision and turn an ordinary double click into a durable
     // revision conflict.
@@ -1081,6 +1086,7 @@ export function SettingsSurfacePanel({
         onAccept={() => mutateVoice("accept")}
         onRevoke={() => mutateVoice("revoke")}
         onSelectDevice={(deviceId) => mutateVoice("setOutputDevice", deviceId)}
+        onSelectPersona={(persona) => mutateVoice("setPersona", persona)}
       />
       {connectionView.kind === "ready" && (
         // Rendered only when the mounted profile actually published the

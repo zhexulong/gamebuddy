@@ -38,6 +38,44 @@ export type VoiceView =
     }>;
 
 /**
+ * The MIMO voice personas the picker offers, in the extension's own ids.
+ *
+ * The set is the vendored Voice extension's `MIMO_TTS_PERSONAS`
+ * (vendor/pi-koe/src/mimo.ts:50): dialogue-web cannot import across that
+ * submodule boundary at runtime, so this is the display-time mirror of it and
+ * `tests/persona-catalogue-gate.test.mjs` pins the two identical - the list
+ * can never drift silently. A persona the extension grows but this UI does not
+ * know is still shown as its own id rather than lost (see the panel).
+ */
+export const MIMO_PERSONA_IDS = ["soft_maid", "gentle_maid", "energetic_youth", "steady_mature"] as const;
+
+type MimoPersonaId = (typeof MIMO_PERSONA_IDS)[number];
+
+/**
+ * The catalogue's label per persona id. Each branch reads its key through
+ * `labels.<key>` so the i18n parity gate can see the read; the union return type
+ * makes a persona added without a label a compile error, the same way the `zh`
+ * catalogue is pinned to the `en` keys.
+ */
+function personaLabel(personaId: MimoPersonaId, labels: ReturnType<typeof messages>): string {
+  switch (personaId) {
+    case "soft_maid":
+      return labels.voicePersonaSoftMaid;
+    case "gentle_maid":
+      return labels.voicePersonaGentleMaid;
+    case "energetic_youth":
+      return labels.voicePersonaEnergeticYouth;
+    case "steady_mature":
+      return labels.voicePersonaSteadyMature;
+  }
+}
+
+/** True when the id is one this picker knows, used only to keep an unknown id visible. */
+function isKnownPersona(id: string): boolean {
+  return (MIMO_PERSONA_IDS as readonly string[]).includes(id);
+}
+
+/**
  * Companion language state. The Host preference is the authority: the panel
  * adopts whatever it holds (so two browsers agree) and writes through it, never
  * keeping a local selection the durable store did not accept. The revision it
@@ -810,12 +848,14 @@ export function VoiceSettingsPanel({
   onAccept,
   onRevoke,
   onSelectDevice,
+  onSelectPersona,
 }: Readonly<{
   voiceView: VoiceView;
   labels: ReturnType<typeof messages>;
   onAccept: () => void;
   onRevoke: () => void;
   onSelectDevice: (deviceId: string | null) => void;
+  onSelectPersona: (persona: string | null) => void;
 }>): ReactElement {
   return (
     <section className="management-settings-section" aria-label={labels.voiceSettings} data-voice-settings>
@@ -895,6 +935,34 @@ export function VoiceSettingsPanel({
                   </option>
                 )}
             </select>
+          </div>
+          <div className="voice-device-selector">
+            <label htmlFor="voice-persona">{labels.voicePersona}</label>
+            <select
+              id="voice-persona"
+              className="form-select"
+              disabled={voiceView.pending}
+              value={voiceView.preference.persona ?? ""}
+              onChange={(event) => onSelectPersona(event.target.value === "" ? null : event.target.value)}
+            >
+              {/* No persona leaves the gateway variable unset, which the
+                  extension distinguishes from an empty string. */}
+              <option value="">{labels.voicePersonaDefault}</option>
+              {MIMO_PERSONA_IDS.map((personaId) => (
+                <option key={personaId} value={personaId}>
+                  {personaLabel(personaId, labels)}
+                </option>
+              ))}
+              {voiceView.preference.persona !== null && !isKnownPersona(voiceView.preference.persona) && (
+                // The extension can grow a persona this UI does not know: the
+                // persisted selection stays visible as its own id instead of
+                // rendering an empty select. Shown, not re-offered.
+                <option key={voiceView.preference.persona} value={voiceView.preference.persona}>
+                  {voiceView.preference.persona}
+                </option>
+              )}
+            </select>
+            <p className="management-settings-hint">{labels.voicePersonaHint}</p>
           </div>
         </>
       )}

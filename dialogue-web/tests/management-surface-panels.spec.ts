@@ -276,7 +276,7 @@ test("the product Settings surface shows the real settings panels and moves both
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+      body: JSON.stringify({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null }),
     }),
   );
   await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
@@ -1036,7 +1036,7 @@ test("the Settings field groups keep a form measure and the app's own select tre
   await page.route("**/api/tavern/v1/settings/language", (route) => route.fulfill(json200({ revision: 1, locale: "en-US" })));
   await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
     route.fulfill(
-      json200({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+      json200({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null }),
     ),
   );
   await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
@@ -1515,4 +1515,86 @@ test("the row's own meta line reads the product's secondary tone, not its fainte
     measured.ratio,
     `the row's meta line reads ${measured.ratio.toFixed(2)}:1 where the faintest tone reads ${measured.disabledRatio.toFixed(2)}:1`,
   ).toBeGreaterThan(measured.disabledRatio);
+});
+
+/**
+ * The Settings surface's companion voice persona: the picker offers the
+ * extension's own personas, a selection rides the existing consent operation
+ * (there is no separate route), and a conflicting write surfaces as a conflict
+ * with the authoritative value shown - never the local choice silently kept.
+ */
+test("the Settings surface moves the companion voice persona through the consent operation and surfaces a conflict", async ({ page }) => {
+  const writes: unknown[] = [];
+  let revision = 1;
+  let persona: string | null = null;
+  let conflict = false;
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/settings/language", (route) =>
+    route.fulfill(json200({ revision: 1, locale: "en-US" })),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-preference", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill(json200({ revision, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona }));
+      return;
+    }
+    writes.push(route.request().postDataJSON());
+    if (conflict) {
+      // Another tab wrote first: the server refuses the stale revision and its
+      // durable value is what the panel must re-read and show.
+      revision = 2;
+      persona = "gentle_maid";
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          type: "about:blank",
+          title: "Settings revision conflict",
+          status: 409,
+          code: "settings_revision_conflict",
+          requestId: chatHandle,
+          retryable: false,
+        }),
+      });
+      return;
+    }
+    revision += 1;
+    persona = (route.request().postDataJSON() as { persona: string | null }).persona;
+    await route.fulfill(json200({ revision, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona }));
+  });
+  await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
+    route.fulfill(json200({ devices: [], defaultSelectable: true })),
+  );
+  for (const absent of ["settings/connection", "settings/profiles"]) {
+    await page.route(`**/api/tavern/v1/${absent}`, (route) =>
+      route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "unavailable" }) }),
+    );
+  }
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const surface = page.getByTestId("settings-surface");
+  await expect(surface).toBeVisible();
+  const select = surface.locator("#voice-persona");
+  await expect(select).toBeVisible();
+  // The Windows-default style option first, then the extension's four personas.
+  await expect(select.locator("option")).toHaveCount(5);
+
+  // Selecting a persona rides the existing consent operation and re-reads the
+  // durable value; there is no separate persona route.
+  await select.selectOption("soft_maid");
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toEqual({ expectedRevision: 1, action: "setPersona", persona: "soft_maid" });
+  await expect(select).toHaveValue("soft_maid");
+  await expect(surface.getByRole("status")).toContainText("Saved successfully.");
+
+  // A conflicting write is refused, reported, and the authoritative value is
+  // shown - the local choice is never kept as if it had been saved.
+  conflict = true;
+  await select.selectOption("energetic_youth");
+  await expect.poll(() => writes.length).toBe(2);
+  expect(writes[1]).toEqual({ expectedRevision: 2, action: "setPersona", persona: "energetic_youth" });
+  await expect(select).toHaveValue("gentle_maid");
+  await expect(surface.getByRole("status")).toContainText("settings_revision_conflict");
 });

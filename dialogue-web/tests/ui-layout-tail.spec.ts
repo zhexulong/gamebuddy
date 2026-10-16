@@ -302,7 +302,7 @@ async function stubSettings(page: Page): Promise<void> {
   );
   await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
     route.fulfill(
-      jsonOk({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+      jsonOk({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null }),
     ),
   );
   await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
