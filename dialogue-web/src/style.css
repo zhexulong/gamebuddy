@@ -3061,6 +3061,12 @@
   .model-profile-editor {
     max-width: var(--management-form-measure);
   }
+  /* The Chats surface's list and its newly created card read one measure: the
+     card is a row of the list, so the rule is shared rather than restated. */
+  .chat-list,
+  .chat-item-card:not([data-testid]) {
+    max-width: var(--management-form-measure);
+  }
 
   /* The stacks that are not a card carry a card's own inset, so a field in a card
    and a field in the stack beside it are the same box. */
@@ -4538,12 +4544,21 @@
 
      The selector is the one `.chat-item-main` that is preview text. Every list row
      carries `data-testid="chat-item"` and lays its own title and controls out as a
-     horizontal row, which a `-webkit-box` clamp would break. */
+     horizontal row, which a `-webkit-box` clamp would break.
+
+     The opening is rendered Markdown (`MarkdownMessage`), so the text lives in a
+     paragraph inside the wrapper: the wrapper keeps the clamp the list row's own
+     main never had - the row's main is a horizontal flex row and a
+     `-webkit-box` would break it - and the paragraph's default margin is reset
+     because the card has no bubble rule to do it. */
   .chat-item-card:not([data-testid]) > .chat-item-main {
     overflow: hidden;
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
+  }
+  .chat-item-card:not([data-testid]) > .chat-item-main > :is(p, blockquote, pre, ul, ol, hr) {
+    margin: 0;
   }
   /* A Chats *list row* carried its whole preview too. The row's own meta line - the
      stamp and the last message's opening - measured 42,293 px² of text at 1440x900

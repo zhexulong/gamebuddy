@@ -419,11 +419,15 @@ test("item 7: the choose-file trigger is the width of its label, not the panel's
 
 /**
  * The text a newly created Chat's card shows is the durable opening the Host
- * minted, rendered as plain text with nothing bounding it. A companion's first
- * message is a paragraph, so at 400x800 the card measured 217px with 168px of
- * that being the opening alone - the first screen belonged to the greeting rather
- * than to the Chats surface. The card is the acknowledgement; the conversation
- * itself is one selection away.
+ * minted, rendered through the companion's own Markdown renderer and clamped to
+ * a few lines. A companion's first message is a paragraph, so at 400x800 the
+ * card measured 217px with 168px of that being the opening alone - the first
+ * screen belonged to the greeting rather than to the Chats surface. The card is
+ * the acknowledgement; the conversation itself is one selection away.
+ *
+ * The renderer is the transcript's (`MarkdownMessage`), so the opening's `*beat*`
+ * delimiters are consumed by the parse instead of printed: the card must carry
+ * the opening's words with no asterisk left in front of the player.
  */
 const LONG_OPENING = [
   "*The porch lantern is still lit when she comes out, and the morning has that",
@@ -432,6 +436,9 @@ const LONG_OPENING = [
   "the edge of the tilled ground to look at what the two of you did yesterday.*",
   '"The parsnips took. All of them, by the look of it. Come and see."',
 ].join(" ");
+
+/** The opening as the renderer reads it: the beat's own delimiters are markup. */
+const RENDERED_OPENING = LONG_OPENING.replace(/\*/gu, "");
 
 test("item 8: one long opening does not fill the whole Chats card", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 800 });
@@ -465,14 +472,19 @@ test("item 8: one long opening does not fill the whole Chats card", async ({ pag
     return {
       cardHeight: Math.round(node.getBoundingClientRect().height),
       previewHeight: Math.round(preview.getBoundingClientRect().height),
-      textLength: (preview.textContent ?? "").length,
+      text: (preview.textContent ?? "").trim(),
+      beatCount: preview.querySelectorAll("em").length,
       clamp: style.getPropertyValue("-webkit-line-clamp"),
       viewportHeight: window.innerHeight,
     };
   });
-  console.log(`[item-8] ${JSON.stringify(measured)}`);
+  console.log(`[item-8] ${JSON.stringify({ ...measured, textLength: measured.text.length })}`);
 
-  expect(measured.textLength, "the card really carries the whole opening").toBe(LONG_OPENING.length);
+  // The card carries the whole opening, read through the renderer: every word
+  // survived the parse and the beat's delimiters did not.
+  expect(measured.text, "the card carries the opening's own words, with no markup left in them").toBe(RENDERED_OPENING);
+  expect(measured.text, "the player never sees the beat's asterisks").not.toContain("*");
+  expect(measured.beatCount, "and the beat is the narration `<em>` the transcript renders").toBe(1);
   expect(
     measured.previewHeight,
     `the opening preview is clamped to a few lines, not the ${measured.previewHeight}px of prose it carries`,
