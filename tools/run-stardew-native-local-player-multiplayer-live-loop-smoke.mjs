@@ -442,18 +442,21 @@ if (import.meta.main) {
       .filter((line) => line.length > 0);
     const traceBytes = { total: 0, snapshot: 0, byRecord: new Map() };
     const startedAtMs = Date.now();
-    let lastSnapshotAtMs = startedAtMs;
-    // The agent path measures its own run too, for the same reason the plan path does: a Performance obligation cannot
-    // be judged from a run that reported nothing about itself.
+    // AGENT MODE LIVENESS IS THE FACT STREAM, NOT THE SNAPSHOT CADENCE.
+    //
+    // The plan path samples a snapshot every couple of seconds, so "no snapshot for a while" means it could not see the
+    // world. In agent mode the runtime observes ON DEMAND -- measured: 6 snapshots alongside 59 receipts -- so snapshot
+    // cadence says nothing about whether the session is alive, and using it would report a healthy session as
+    // `observation_continuity: broken`. What DOES mean "we stopped hearing from the world" here is the absence of any
+    // fact, so that is what this measures.
+    let lastFactAtMs = startedAtMs;
     const timeline = (record) => {
       const line = `${JSON.stringify(record)}\n`;
       const size = Buffer.byteLength(line, "utf8");
       traceBytes.total += size;
-      if (record.type === "snapshot") {
-        traceBytes.snapshot += size;
-        lastSnapshotAtMs = Date.now();
-      }
+      if (record.type === "snapshot") traceBytes.snapshot += size;
       traceBytes.byRecord.set(line, (traceBytes.byRecord.get(line) ?? 0) + size);
+      lastFactAtMs = Date.now();
       appendFileSync(join(traceDir, "timeline.jsonl"), line);
     };
     const result = await runAgentDrivenLoop({
@@ -464,7 +467,7 @@ if (import.meta.main) {
     });
     const runReport = {
       durationSeconds: (Date.now() - startedAtMs) / 1_000,
-      unobservedTailMs: Date.now() - lastSnapshotAtMs,
+      unobservedTailMs: Date.now() - lastFactAtMs,
       traceBytes: {
         total: traceBytes.total,
         snapshot: traceBytes.snapshot,
