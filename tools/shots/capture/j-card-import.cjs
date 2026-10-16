@@ -29,7 +29,7 @@ const beforeFacts = () => {
   };
 };
 
-const stageCard = () => {
+const stageCard = (card) => {
   const section = document.querySelector("[data-card-import]");
   if (section === null) return "no_import_section";
   const details = section.querySelector("details.custom-disclosure");
@@ -42,7 +42,7 @@ const stageCard = () => {
   const textarea = section.querySelector("textarea");
   if (textarea === null) return "no_paste_textarea";
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-  setter.call(textarea, CARD);
+  setter.call(textarea, card);
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
   const submit = [...section.querySelectorAll("button")].find((button) => (button.textContent ?? "").trim() === "导入角色卡");
   if (submit === undefined) return "no_submit";
@@ -105,7 +105,7 @@ const cancelReview = () => {
     process.exit(0);
   }
 
-  const staged = await page.evaluate(stageCard);
+  const staged = await page.evaluate(stageCard, CARD);
   say("staging:", staged);
   if (staged !== "staged") {
     say("review verdict: SKIPPED:staging_failed:" + staged);

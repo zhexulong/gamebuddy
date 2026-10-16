@@ -1,7 +1,12 @@
 // Driver K: chat-select switches surface + title. From the Chats list, choosing a NON-selected
-// conversation (data-testid="chat-select" inside a `chat-item` row) commits a chat switch: the
-// surface moves to 聊天, the Timeline's title band (the one place the surface names which
-// conversation is open) shows the chosen conversation's own name, and the row's selected state flips.
+// conversation (data-testid="chat-select" inside a `chat-item` row) commits a chat switch:
+//   * the surface moves to 聊天 (the Chats surface unmounts);
+//   * the Timeline's title band — the one place the surface names which conversation is open — shows
+//     the chosen conversation's own name. That band DROPS the row's list number: an unnamed row reads
+//     "新对话 1" in the list but the band the open conversation reads is "新对话". So the expected
+//     band value is the row's title with a trailing list number stripped.
+//   * the chosen row is the selected one the next time the Chats list is read (the list is re-opened
+//     to observe the flip, because the surface that carries the rows is unmounted while Chat is shown).
 const { connect, reporter, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
 
 const rowsFact = () => {
@@ -32,21 +37,18 @@ const clickChatSelect = ({ index }) => {
   return "clicked";
 };
 
-const afterFacts = () => {
-  const chatSurface = document.querySelector('[data-testid="chat-surface"]');
-  const chatsSurface = document.querySelector('[data-testid="chats-surface"]');
-  const heading = document.querySelector(".timeline .timeline-heading h1");
-  const selectedRow = [...document.querySelectorAll('[data-testid="chat-item"]')]
-    .map((row, index) => ({ index, text: (row.querySelector(".chat-item-title")?.textContent ?? "").trim(), selected: (row.getAttribute("data-selected") ?? "") === "true" }))
-    .find((row) => row.selected) ?? null;
-  return {
-    chatSurfacePresent: chatSurface !== null,
-    chatsSurfacePresent: chatsSurface !== null,
-    timelineTitleBand: heading === null ? null : (heading.textContent ?? "").trim(),
-    documentTitle: document.title,
-    selectedRow,
-  };
-};
+const surfaceFacts = () => ({
+  chatSurfacePresent: document.querySelector('[data-testid="chat-surface"]') !== null,
+  chatsSurfacePresent: document.querySelector('[data-testid="chats-surface"]') !== null,
+  timelineTitleBand: (() => {
+    const heading = document.querySelector(".timeline .timeline-heading h1");
+    return heading === null ? null : (heading.textContent ?? "").trim();
+  })(),
+  documentTitle: document.title,
+});
+
+// The list names an unnamed row with a 1-based number; the open-conversation band drops it.
+const bandExpectedFromRow = (titleText) => titleText.replace(/\s*\d+$/u, "").trim();
 
 (async () => {
   const { browser, page } = await connect();
@@ -69,27 +71,35 @@ const afterFacts = () => {
     process.exit(0);
   }
 
-  say(`surface before: ${(await page.evaluate(() => document.querySelector('[data-testid="chats-surface"]') !== null)) ? "chats-surface" : "?"}`);
-  say(`choosing row index=${unselected.index} title=${JSON.stringify(unselected.titleText)} (hasChatSelect=${unselected.hasChatSelect})`);
+  const expectedBand = bandExpectedFromRow(unselected.titleText);
+  say(`surface before: ${JSON.stringify(await page.evaluate(() => document.querySelector('[data-testid="chats-surface"]') !== null))} (chats-surface present)`);
+  say(`choosing row index=${unselected.index} title=${JSON.stringify(unselected.titleText)} expected band=${JSON.stringify(expectedBand)} hasChatSelect=${unselected.hasChatSelect}`);
   const clicked = await page.evaluate(clickChatSelect, { index: unselected.index });
   say("click:", clicked);
 
   let after = null;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     await page.waitForTimeout(1500);
-    after = await page.evaluate(afterFacts);
+    after = await page.evaluate(surfaceFacts);
     if (after.chatSurfacePresent && !after.chatsSurfacePresent) break;
   }
-  say("=== ITEM: after choosing the other conversation ===");
+  say("=== ITEM: after choosing the other conversation (surface) ===");
   say(JSON.stringify(after, null, 1));
   say(`surface after: ${after.chatSurfacePresent ? "chat-surface" : after.chatsSurfacePresent ? "chats-surface (did not move)" : "?"}`);
   say(`timeline title band after: ${JSON.stringify(after.timelineTitleBand)}`);
-  say(`title equals row title (${JSON.stringify(unselected.titleText)}): ${after.timelineTitleBand === unselected.titleText}`);
-  say(`selected row flips: ${after.selectedRow !== null ? JSON.stringify(after.selectedRow) : "none"}`);
-  const switches = after.selectedRow !== null && after.selectedRow.index === unselected.index;
-  say(`the clicked row is now the selected one: ${switches}`);
-
+  say(`title matches the chosen conversation's own name (${JSON.stringify(expectedBand)}): ${after.timelineTitleBand === expectedBand}`);
   await shot(page, "55-chat-select-switched.png");
+
+  // Reopen the list to observe the selection flip (the Chats surface was unmounted while Chat showed).
+  await activateSurface(page, "会话");
+  await page.waitForTimeout(1500);
+  const reopened = await page.evaluate(rowsFact);
+  say("=== ITEM: the list reopened — the chosen row is now the selected one ===");
+  say(JSON.stringify(reopened, null, 1));
+  const chosenNow = reopened.rows.find((row) => row.titleText === unselected.titleText) ?? null;
+  say(`chosen row found again: ${chosenNow !== null}`);
+  say(`selected row flips: ${chosenNow !== null ? JSON.stringify({ index: chosenNow.index, titleText: chosenNow.titleText, selected: chosenNow.selected }) : "none"}`);
+  say(`the clicked row is now the selected one: ${chosenNow !== null && chosenNow.selected === true}`);
 
   flush();
   await browser.close().catch(() => undefined);
