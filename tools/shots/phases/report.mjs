@@ -23,7 +23,9 @@ const DRIVER_OUTS = [
 
 /* ---------- tiny JSON-block parser for the driver fact files ---------- */
 
-const collectJson = (text) => {
+const collectJson = (text) => collectJsonLines(text).map((entry) => entry.obj);
+
+const collectJsonLines = (text) => {
   const out = [];
   const lines = text.split("\n");
   let idx = 0;
@@ -262,24 +264,21 @@ function buildReadme({ paths, run, launch, rootLayout, pinLog, buildLog, cleanup
 
   if (cleanup !== null) {
     section(L, "CLEANUP");
-    for (const keyline of [
-      "guardian / \\?\\ processes remaining",
-      "cdp port",
-      "product port",
-      "run root total files",
-      "entry count",
-      "tracked-changed count",
-    ]) {
-      const hit = lineMatching(
-        cleanup,
-        new RegExp(
-          keyline
-            .split("\\?")
-            .join("\\?")
-            .replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-        ),
-      );
-      if (hit !== null) L.push(`  ${hit}`);
+    const cleanupLines = cleanup.split("\n").map((l) => l.trim());
+    const wanted = [
+      /^guardian \/ .* processes remaining:/,
+      /^cdp port \d+ listening =/,
+      /^product port \d+ listening =/,
+      /^run root total files =/,
+      /^entry count = .* tracked-changed count =/,
+    ];
+    const seen = new Set();
+    for (const re of wanted) {
+      const hit = cleanupLines.find((l) => re.test(l)) ?? null;
+      if (hit !== null && !seen.has(hit)) {
+        seen.add(hit);
+        L.push(`  ${hit}`);
+      }
     }
     L.push(`  run root KEPT at ${paths.runRoot}`);
   }
@@ -331,7 +330,7 @@ function measurementsFor(L, driverTexts, run) {
       );
     if (grid400 !== null)
       L.push(
-        `ITEM 2 — Characters grid @400x800: columns=${grid400.columnCount} panel=${grid400.panelWidth}x${grid400.panelHeight} cards=${grid400.cardCount}`,
+        `ITEM 2 — Characters grid @400x800: columns=${grid400.columnCount ?? "n/a"} panel=${grid400.panelWidth}x${grid400.panelHeight} cards=${grid400.cardCount}`,
       );
     if (persona1440 !== null)
       L.push(`ITEM 2 — persona label: first lines ${JSON.stringify(persona1440.cardFirstLines ?? [])}`);
@@ -379,8 +378,8 @@ function measurementsFor(L, driverTexts, run) {
       if (/^the remaining unnamed row/.test(t)) L.push(`  ${t}`);
       if (/--- @1440x900: meta colour\/contrast/.test(t)) L.push(`  ${t}`);
       if (/--- @400x800: meta colour\/contrast/.test(t)) L.push(`  ${t}`);
-      // clamp lines
-      if (/^  row \d+: rowHeight=/.test(t)) L.push(`  ${t}`);
+      if (/^row \d+: rowHeight=/.test(t)) L.push(`  ${t}`);
+      if (/^row \d+: color=/.test(t)) L.push(`  ${t}`);
       if (/--- @\d+x\d+: forced 160-char/.test(t)) L.push(`  ${t}`);
     }
   }
@@ -455,7 +454,14 @@ function measurementsFor(L, driverTexts, run) {
     L.push("ITEM 8 — card-import review field names");
     for (const line of j.split("\n")) {
       const t = line.trim();
-      if (/snake_case|kept field|review field|人类|human words|DONE-J/.test(t)) L.push(`  ${t}`);
+      if (
+        /^staging:/.test(t) ||
+        /^review verdict:/.test(t) ||
+        /^review text snake_case count:/.test(t) ||
+        /^human field words in the review:/.test(t) ||
+        /^companion list unchanged:/.test(t)
+      )
+        L.push(`  ${t}`);
     }
   }
   const k = driverTexts["k-chat-select"];
@@ -464,11 +470,12 @@ function measurementsFor(L, driverTexts, run) {
     for (const line of k.split("\n")) {
       const t = line.trim();
       if (
-        /^surface before=/ ||
-        /^surface after=/ ||
-        /^title after=/ ||
-        /^selected row flips=/ ||
-        /^title equals row title:/
+        /^surface before=/.test(t) ||
+        /^surface after=/.test(t) ||
+        /^timeline title band after:/.test(t) ||
+        /^title matches the chosen/.test(t) ||
+        /^selected row flips:/.test(t) ||
+        /^the clicked row is now the selected one:/.test(t)
       )
         L.push(`  ${t}`);
     }
@@ -529,11 +536,11 @@ function buildReport({ paths, run, launch, rootLayout, cleanupLogText }) {
   const g = driver(paths, "g-defects") ?? "";
   const sweepBlocks = [];
   const lines = g.split("\n");
-  let currentTag = null;
-  for (const blk of collectJson(g)) {
+  for (const entry of collectJsonLines(g)) {
+    const blk = entry.obj;
     if (blk === null || typeof blk !== "object" || blk.testid === undefined) continue;
     // find the nearest preceding DEFECT SWEEP header to learn the size
-    const header = [...lines.slice(0, blk.line)].reverse().find((l) => l.includes("DEFECT SWEEP"));
+    const header = [...lines.slice(0, entry.line)].reverse().find((l) => l.includes("DEFECT SWEEP"));
     const size = /@ (\d+x\d+)/.exec(header ?? "")?.[1] ?? "unknown";
     sweepBlocks.push({ testid: blk.testid, size, blk });
   }

@@ -98,6 +98,7 @@ const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot } = requir
     const content = document.querySelector('[data-testid="characters-surface"] .surface-content');
     return {
       gridTemplateColumns: grid.gridTemplateColumns,
+      columnCount: grid.gridTemplateColumns.split(" ").filter((part) => part.length > 0).length,
       panelWidth: Math.round(panel.getBoundingClientRect().width),
       panelHeight: Math.round(panel.getBoundingClientRect().height),
       cardCount: panel.children.length,

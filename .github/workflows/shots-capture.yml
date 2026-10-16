@@ -1,0 +1,83 @@
+# Manual screenshot capture (workflow_dispatch ONLY — never on push).
+#
+# This workflow exists so a maintainer can ask GitHub for a screenshots set from a pushed HEAD without
+# a developer workstation. It is deliberately HONEST about what a GitHub-hosted Windows runner can and
+# cannot do:
+#
+#   * The composed launch drives the product through `tools/desktop-composition-launch.mjs`, which
+#     spawns the installed Host generation and opens the product URL in a private Edge over CDP. A
+#     hosted runner is a non-interactive session with no interactive desktop; whether Edge can render
+#     and commit frames there is not guaranteed. The kit is written to FAIL LOUDLY with the exact
+#     reason (launch phase exits non-zero and prints the launch log tail) instead of faking a pass.
+#   * The Mod build needs a Stardew Valley install (`-p:GamePath=`). A hosted runner has none, so the
+#     build phase will fail naming `stardew-game-dir`. The job therefore fails at the first missing
+#     prerequisite rather than producing an empty "pass" artifact.
+#   * The pinned runtime must be the exact Node v24.20.0 win-x64 distribution (the admission sidecar
+#     pins `runtimeVersion: v24.20.0`). The step below downloads that distribution and passes
+#     --runtime at the directory that directly contains node.exe.
+#
+# I could not validate this workflow on the authoring machine (it targets GitHub-hosted runners); the
+# risk is stated above. A green local `--check` does not prove this workflow runs.
+name: shots-capture
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Commit to pin (sha or HEAD)
+        required: false
+        default: HEAD
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # The provider credential is optional: absent, the conversation/variant lanes record a NAMED
+      # skip. It is never printed and never placed on a command line.
+      CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
+    steps:
+      - name: Checkout (full history + worktree support)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node + pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install workspace dependencies (populates node_modules for pin's materialization)
+        shell: pwsh
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+        working-directory: ${{ github.workspace }}
+
+      - name: Download the pinned Node runtime fixture (v24.20.0 win-x64)
+        shell: pwsh
+        run: |
+          $url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip"
+          $zip = Join-Path $env:RUNNER_TEMP "node-runtime.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $dest = Join-Path $env:RUNNER_TEMP "node-runtime"
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          $runtime = Join-Path $dest "node-v24.20.0-win-x64"
+          if (-not (Test-Path (Join-Path $runtime "node.exe"))) { throw "runtime extraction failed: node.exe missing directly inside $runtime" }
+          "GB_SHOTS_RUNTIME=$runtime" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Kit prerequisite check (names exactly what is missing)
+        shell: pwsh
+        run: node tools/shots/run.mjs --check --commit ${{ inputs.commit }} --out shots-final
+
+      - name: Capture (full run; fails named if the runner cannot launch the product)
+        shell: pwsh
+        run: node tools/shots/run.mjs --commit ${{ inputs.commit }} --out shots-final
+
+      - name: Upload the set
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shots-final
+          path: shots-final
+          if-no-files-found: warn
+          retention-days: 14
