@@ -164,6 +164,14 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
     evidence: "runReport.traceBytes.largestRepeatedRecordBytes / runReport.traceBytes.total",
   }),
   Object.freeze({
+    id: "player_language_consistency",
+    class: "Invariant",
+    statement: "The companion speaks the player's language, as the character card requires.",
+    provenance:
+      "the card's own system prompt: 'Consistently converse in the player's language' (read from a live session transcript). Two of four turns in a real session were English for a Chinese-speaking player.",
+    evidence: "turn text vs the run's declared locale (default zh-CN)",
+  }),
+  Object.freeze({
     id: "proactive_authenticity",
     class: "Unjudged",
     statement:
@@ -228,9 +236,16 @@ const OOC_META_REFERENCE = [
   "in this game",
 ];
 
-/** A gesture described inside parentheses, where the Game surface has an action. */
+/**
+ * A physical gesture described inside parentheses, where the Game surface has an action.
+ *
+ * The list is deliberately PHYSICAL so that a tone tag stays legitimate: （轻声）（开心）（有点得意） are delivery
+ * instructions the voice layer performs, while （甩了甩发酸的手腕）（抬手遮了下日头） are body actions the card tells
+ * the companion to perform through `stardew_express_emote`. The last two were missing from the first version and a
+ * real session passed the obligation while containing both.
+ */
 const BODY_ACTION =
-  /(点头|摇头|挥手|招手|鞠躬|耸肩|叹气|皱眉|微笑|笑|拍了|拍拍|拥抱|眨眼|叉腰|摊手|挠头|竖起|竖起拇指|伸手|转身|蹲下|站起|点头示意|wave|nod|shrug|sigh|smile|bow|hug)/i;
+  /(点头|摇头|挥手|招手|抬手|鞠躬|耸肩|叹气|皱眉|微笑|笑|拍|拥抱|眨眼|叉腰|摊手|挠|抓|握|竖起|伸手|甩|揉|摸|擦|捶|扶|拽|推|踢|转身|低头|抬头|转头|侧头|瞪|眯|蹲下|站起|wave|nod|shrug|sigh|smile|bow|hug|reach|rub|wipe)/i;
 
 /**
  * One spoken turn, measured. Returns the delegated gate outcome verbatim plus the
@@ -278,7 +293,7 @@ function matchesTextStageDirection(text) {
  * `unmeasured` — the historian rubric's rule that unjudged things are NAMED, not
  * approximated (`historian-prompt-rubric.md:46-54`).
  */
-export function assessCompanionBehaviourRubric({ turns, presence = null, runReport = null } = {}) {
+export function assessCompanionBehaviourRubric({ turns, presence = null, runReport = null, locale = "zh-CN" } = {}) {
   if (!Array.isArray(turns)) fail("companion_behaviour_turns_invalid");
   if (presence !== null && (typeof presence !== "object" || Array.isArray(presence)))
     fail("companion_behaviour_presence_invalid");
@@ -344,6 +359,23 @@ export function assessCompanionBehaviourRubric({ turns, presence = null, runRepo
   const spokenTurns = utterances.filter((utterance) => utterance.text.length > 0);
   const addressed = spokenTurns.filter((utterance) => utterance.gate.metrics.hasPlayerAddress === true).length;
   const stageDirections = utterances.filter((utterance) => utterance.textStageDirection.length > 0);
+
+  // Language: measured as the ABSENCE of the expected script rather than as a ratio, so a turn like
+  // "南边那一片割了十来丛草" with a few English tool names is not called a breach while "I'll take a look around" is.
+  // The locale is the run's declared one (the loop runs zh-CN by default). The findings must land in `allFindings`,
+  // which is what the obligation verdicts read -- pushing them into the earlier array after it was spread produced a
+  // green verdict for turns with no CJK at all.
+  const expectedCjk = String(locale ?? "zh-CN")
+    .toLowerCase()
+    .startsWith("zh");
+  if (expectedCjk)
+    for (const utterance of spokenTurns)
+      if (!/[\u3400-\u9fff]/u.test(utterance.text))
+        allFindings.push({
+          turnId: utterance.turnId,
+          obligation: "player_language_consistency",
+          detail: "no CJK in a zh-CN run",
+        });
 
   const brokenFor = (id) => allFindings.filter((finding) => finding.obligation === id).length;
   // Performance obligations are decided from the run report, and the thresholds are named rather than scored: a

@@ -202,3 +202,36 @@ test("performance obligations are decided by the run report, and unmeasured with
   assert.equal(obligation(healthy, "trace_snapshot_share").verdict, "green");
   assert.equal(obligation(healthy, "trace_duplicate_payload_bounded").verdict, "green");
 });
+
+test("a real session's own lines: body actions in brackets, and speech in the wrong language", () => {
+  // Copied verbatim from a completed agent-driven session (the Agent's own turns). Both obligations were GREEN before,
+  // and both were wrong: （甩了甩发酸的手腕）/（抬手遮了下正午的日头） are body actions the card says to perform through
+  // express_emote, and two of the four turns were English for a Chinese-speaking player.
+  const turns = [
+    { turnId: "agent_1", text: "I will take a look around first." },
+    { turnId: "agent_2", text: "Let me step outside and see the farm." },
+    {
+      turnId: "agent_3",
+      text: "南边那一片割了十来丛杂草，顺手敲掉三块石头，纤维和石头都进兜里了。（甩了甩发酸的手腕）翻地没种子，白搭。",
+    },
+    { turnId: "agent_4", text: "（抬手遮了下正午的日头）这边看着清爽多了。西头那片石头还堆着。" },
+  ];
+  const verdict = assessCompanionBehaviourRubric({ turns, locale: "zh-CN" });
+  const obligation = (id) => verdict.obligations.find((entry) => entry.id === id);
+  assert.equal(obligation("native_stage_direction").verdict, "broken");
+  assert.match(obligation("native_stage_direction").detail, /^2\/4 /u);
+  assert.equal(obligation("player_language_consistency").verdict, "broken");
+  assert.equal(obligation("player_language_consistency").detail, "2 finding(s)");
+  // A tone tag is still NOT a body action: that distinction is why the vocabulary is physical rather than any bracket.
+  const toneOnly = assessCompanionBehaviourRubric({
+    turns: [{ turnId: "t1", text: "（轻声）我这就去。" }],
+    locale: "zh-CN",
+  });
+  assert.equal(toneOnly.obligations.find((entry) => entry.id === "native_stage_direction").verdict, "green");
+  // And a properly Chinese turn is not a language breach merely because it carries an English action id.
+  const mixed = assessCompanionBehaviourRubric({
+    turns: [{ turnId: "t1", text: "我用 move_to_tile 走过去看看。" }],
+    locale: "zh-CN",
+  });
+  assert.equal(mixed.obligations.find((entry) => entry.id === "player_language_consistency").verdict, "green");
+});
