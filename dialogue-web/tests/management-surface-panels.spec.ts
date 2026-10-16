@@ -1580,6 +1580,10 @@ test("the Settings surface moves the companion voice persona through the consent
   await expect(select).toBeVisible();
   // The Windows-default style option first, then the extension's four personas.
   await expect(select.locator("option")).toHaveCount(5);
+  // "System default" names the persona it resolves to - the product's own default
+  // voice from the catalogue - so the player is not surprised by who speaks when
+  // they leave the choice alone.
+  await expect(select.locator("option").first()).toHaveText("System default — Soft-spoken girl");
 
   // Selecting a persona rides the existing consent operation and re-reads the
   // durable value; there is no separate persona route.
@@ -1597,4 +1601,11 @@ test("the Settings surface moves the companion voice persona through the consent
   expect(writes[1]).toEqual({ expectedRevision: 2, action: "setPersona", persona: "energetic_youth" });
   await expect(select).toHaveValue("gentle_maid");
   await expect(surface.getByRole("status")).toContainText("settings_revision_conflict");
+
+  // The resolved default is named in the interface's own language too, and moving
+  // the interface language does not touch the picked persona: the option label is
+  // about the unset choice, not about the selection.
+  await surface.locator("#ui-language").selectOption("zh-CN");
+  await expect(select.locator("option").first()).toHaveText("系统默认 — 软糯少女音");
+  await expect(select).toHaveValue("gentle_maid");
 });
