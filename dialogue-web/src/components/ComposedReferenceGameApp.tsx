@@ -34,6 +34,7 @@ import { ProblemView } from "./ProblemView";
 import { SkipLink } from "./SkipLink";
 import { SurfaceModelSettings } from "./SurfaceModelSettings";
 import { CharactersSurface } from "./CharactersSurface";
+import { turnFailureText } from "./turn-failure-text";
 import { createManagementPipelineApi, type WorldInfoSurfaceSource } from "./management-surface-panels";
 import { ChatsSurface } from "./ChatsSurface";
 import { MemorySurface } from "./MemorySurface";
@@ -1048,7 +1049,7 @@ export function ComposedReferenceGameApp() {
     view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "cancelled"
       ? labels().chatStopped
       : view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "failed"
-        ? labels().chatFailed
+        ? turnFailureText(view.session.snapshot.chat.turn.problemCode, labels())
         : null;
   // The app-bar indicator is the Chat surface's own connection/turn fact: a turn
   // is in flight from the moment a submission is admitted until the authoritative

@@ -164,6 +164,17 @@ const en = {
   stop: "Stop",
   chatStopped: "Reply stopped. You can send another message.",
   chatFailed: "The reply failed. You can try again.",
+  // The four ways a turn can fail, in the player's own words. The Host publishes
+  // one of these codes on the failed turn (`BrowserTurnV1Schema.problemCode`,
+  // `tavern_browser_api/v1`), and they mean four different things to the player:
+  // the connection dropped mid-reply, the model answered but nothing was shown,
+  // the runtime was not up, or the write did not land. `chatFailed` is the
+  // fallback for a code a later Host version adds, so an unknown code renders a
+  // sentence rather than its own enum member.
+  chatFailedInterrupted: "The connection dropped before the reply arrived. You can try again.",
+  chatFailedNoVisiblePresentation: "She finished, but nothing came through. You can try again.",
+  chatFailedRuntimeUnavailable: "The reply runtime is not available right now. Try again in a moment.",
+  chatFailedStorageUnavailable: "The reply could not be saved. You can try again.",
 
   // Settings & System
   language: "Language",
@@ -698,6 +709,11 @@ const zh: Messages = {
   stop: "停止生成",
   chatStopped: "回复已停止。你可以发送另一条消息。",
   chatFailed: "回复失败。你可以重试。",
+  // 回合失败的四种情况，见英文目录同名字段的说明。未知代码回退到 chatFailed。
+  chatFailedInterrupted: "连接中断了，回复没有送达。你可以重试。",
+  chatFailedNoVisiblePresentation: "她没能开口，回复没有显示出来。你可以重试。",
+  chatFailedRuntimeUnavailable: "回复运行时暂不可用，请稍后再试。",
+  chatFailedStorageUnavailable: "回复没能保存下来。你可以重试。",
 
   // Settings & System
   language: "语言",

@@ -25,7 +25,7 @@ const CHARS_PANEL = "characters";
 
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 
-type TurnFixture = Readonly<{ state: string; canCancel: boolean }>;
+type TurnFixture = Readonly<{ state: string; canCancel: boolean; problemCode?: string }>;
 
 type RootOptions = Readonly<{
   /** The mounted Chat's authoritative turn, or null for an idle conversation. */
@@ -87,7 +87,13 @@ function composedRoot(options: RootOptions = {}) {
         turn:
           turn === null
             ? null
-            : { handle: turnHandle, state: turn.state, projectionRevision: 1, canCancel: turn.canCancel },
+            : {
+                handle: turnHandle,
+                state: turn.state,
+                projectionRevision: 1,
+                canCancel: turn.canCancel,
+                ...(turn.problemCode === undefined ? {} : { problemCode: turn.problemCode }),
+              },
         worldInfo: null,
       },
       memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null },
@@ -579,4 +585,82 @@ test("item 10: a variant the Host published no label for keeps the plain positio
   console.log(`[item-10 unlabelled] ${JSON.stringify(measured)}`);
 
   expect(measured, "an unpublished label invents no name").toBe("1/2");
+});
+
+// --- item 11: a failed turn says which failure it was -------------------------
+
+/**
+ * The Host publishes *why* a turn failed as a closed `problemCode` on the turn
+ * (`BrowserTurnV1Schema.problemCode`, `tavern_browser_api/v1`): `interrupted`,
+ * `no_visible_presentation`, `runtime_unavailable` or `storage_unavailable`. The
+ * surface collapsed all four into one "The reply failed. You can try again.",
+ * which is a sentence about nothing the player can act on - the four outcomes
+ * differ (the connection dropped, the model answered but nothing was shown, the
+ * runtime was not up, the reply could not be written).
+ *
+ * Each code must render its own player-words sentence, and none may render the
+ * raw member. The last case is the forward-compatibility one the collapse was
+ * really protecting: a code this build does not know falls back to the generic
+ * failure line rather than putting an enum member in front of the player.
+ */
+const FOUR_TURN_PROBLEM_CODES = [
+  "interrupted",
+  "no_visible_presentation",
+  "runtime_unavailable",
+  "storage_unavailable",
+] as const;
+
+test("item 11: each failed-turn problem code renders its own player sentence, never the raw member", async ({ page }) => {
+  // The URL is one document with a fragment, so a second `goto` is a same-document
+  // navigation and would leave the previous turn on screen. One projection is
+  // served instead, its problem code read from this variable, and the page is
+  // reloaded between codes.
+  let problemCode: string = FOUR_TURN_PROBLEM_CODES[0];
+  await stubShell(page, { turn: { state: "failed", canCancel: false } });
+  // Registered after `stubShell` so these are the routes Playwright matches: it
+  // resolves in reverse registration order, and the projection's own problem code
+  // is the one thing this test varies.
+  const projected = () => {
+    const root = composedRoot({ turn: { state: "failed", canCancel: false } });
+    return jsonOk({
+      ...root,
+      chat: {
+        ...root.chat,
+        chat: { ...root.chat.chat, turn: { ...root.chat.chat.turn!, problemCode } },
+      },
+    });
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(projected()));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(projected()));
+
+  const readings: Record<string, string> = {};
+  for (const [index, code] of FOUR_TURN_PROBLEM_CODES.entries()) {
+    problemCode = code;
+    if (index === 0) await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    else await page.reload();
+    const notice = page.locator(".reference-turn-notice");
+    await expect(notice).toContainText(/\S/u);
+    readings[code] = (await notice.textContent())?.trim() ?? "";
+  }
+  console.log(`[item-11] ${JSON.stringify(readings)}`);
+
+  // One distinct sentence per code - not one sentence four times.
+  const known = FOUR_TURN_PROBLEM_CODES.map((code) => readings[code]);
+  expect(new Set(known).size, `the four codes render four different sentences: ${JSON.stringify(readings)}`).toBe(4);
+  for (const code of FOUR_TURN_PROBLEM_CODES) {
+    expect(readings[code], `${code} renders a sentence`).toBeTruthy();
+    expect(readings[code], `${code} never renders the raw enum member`).not.toBe(code);
+    expect(readings[code], `${code}'s sentence carries no machine vocabulary`).not.toContain("_");
+  }
+
+  // A code this build's contract mirror does not know is *rejected at the
+  // boundary* rather than rendered: the projection validator refuses the whole
+  // turn rather than putting an unknown member in front of the player. That is the
+  // stronger half of the same rule, so it is pinned here - the code reaches no
+  // surface at all.
+  problemCode = "a_code_from_a_newer_host";
+  await page.reload();
+  const body = (await page.locator("body").textContent()) ?? "";
+  expect(body, "an unknown problem code is refused, not printed").not.toContain("a_code_from_a_newer_host");
+  await expect(page.locator("[role=alert]"), "and the refusal is the surface's own problem view").toBeVisible();
 });
