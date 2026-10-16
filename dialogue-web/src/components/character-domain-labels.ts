@@ -372,7 +372,7 @@ const zh: CharacterLabels = Object.freeze({
   voiceSaveFailed: "无法保存指令。内容已在其他位置更改；请重新加载后再试。",
   voiceCleared: "已清除。",
 
-  personaTitle: "用户设定 (Persona)",
+  personaTitle: "用户设定",
   personaHint: "你希望伙伴如何认识你。",
   personaName: "你的显示名称",
   personaDescription: "用户设定描述",
