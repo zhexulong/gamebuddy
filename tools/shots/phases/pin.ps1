@@ -49,8 +49,15 @@ if ((git -C $Worktree rev-parse HEAD) -ne $resolved) { Log "  HEAD MISMATCH"; Lo
 
 function LinkDir($target, $link) {
   if (Test-Path $link) { return }
-  $out = cmd /c mklink /J "$link" "$target" 2>&1
-  if ($LASTEXITCODE -ne 0) { Log ("  mklink FAILED: " + $link + " -> " + $target + " :: " + ($out -join ' ')) }
+  try {
+    New-Item -ItemType Junction -Path $link -Target $target -ErrorAction Stop | Out-Null
+  } catch {
+    # Never shell out to cmd.exe: the inherited environment block can exceed cmd's limit and the
+    # junction then fails with "The input line is too long". Physical copy is the honest fallback.
+    Log ("  junction FAILED (" + $_.Exception.Message + ") - copying " + $link)
+    New-Item -ItemType Directory -Force $link | Out-Null
+    robocopy $target $link /E /NFL /NDL /NJH /NJS /NP | Out-Null
+  }
 }
 
 Log "=== 1. root node_modules junction ==="
@@ -65,9 +72,13 @@ foreach ($name in @('pi-koe','magic-context')) {
   $linkType = if ($entry) { $entry.LinkType } else { $null }
   $count = if ($entry -and -not $linkType) { @(Get-ChildItem $link -Force -ErrorAction SilentlyContinue).Count } else { -1 }
   if ($entry -and -not $linkType -and $count -le 1) {
-    cmd /c rmdir "$link" | Out-Null
-    $out = cmd /c mklink /J "$link" (Join-Path $Repo "vendor\$name") 2>&1
-    if ($LASTEXITCODE -ne 0) { Log ("  mklink FAILED: " + $name) } else { Log ("  junctioned " + $name) }
+    Remove-Item $link -Recurse -Force -ErrorAction SilentlyContinue
+    try {
+      New-Item -ItemType Junction -Path $link -Target (Join-Path $Repo "vendor\$name") -ErrorAction Stop | Out-Null
+      Log ("  junctioned " + $name)
+    } catch {
+      Log ("  junction FAILED for " + $name + ": " + $_.Exception.Message)
+    }
   }
 }
 Log ("  vendor/magic-context packages=" + ((Get-ChildItem (Join-Path $Worktree 'vendor\magic-context\packages') -Force -Name -ErrorAction SilentlyContinue | Select-Object -First 2) -join ','))
@@ -105,9 +116,12 @@ foreach ($p in @("rolldown","postcss","esbuild","picomatch","tinyglobby","jiti",
   $target = Join-Path $dwNm $p
   if (-not (Test-Path $source)) { Log ("  MISSING IN MAIN CHECKOUT: " + $p); continue }
   if (Test-Path $target) { Log ("  already present: " + $p); continue }
-  $out = cmd /c mklink /J "$target" "$source" 2>&1
-  if ($LASTEXITCODE -ne 0) { Log ("  FAILED " + $p + " -> " + $source + " :: " + ($out -join ' ')) }
-  else { Log ("  added " + $p + " -> " + $source) }
+  try {
+    New-Item -ItemType Junction -Path $target -Target $source -ErrorAction Stop | Out-Null
+    Log ("  added " + $p + " -> " + $source)
+  } catch {
+    Log ("  FAILED " + $p + " -> " + $source + " :: " + $_.Exception.Message)
+  }
 }
 
 Log "=== 4c. windows-stale-lock-reclaimer/.dist (copied; the build phase rebuilds it fresh) ==="

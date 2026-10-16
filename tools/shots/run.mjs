@@ -18,7 +18,7 @@
 // --edge, --cdp-port, --force (re-run finished capture drivers), --driver=a,b (capture subset).
 import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   runPaths,
   loadRunConfig,
@@ -109,6 +109,7 @@ function prepareRun(paths, values) {
     credentialPresent: typeof process.env.CPA_OAI_API_KEY === "string" && process.env.CPA_OAI_API_KEY.length > 0,
   };
   saveRunConfig(paths, run);
+  mkdirSync(paths.logsDir, { recursive: true });
   return run;
 }
 
@@ -128,6 +129,7 @@ async function runPhaseForever(childCommand, { logPath }) {
 }
 
 async function runPhase(childCommand, { logPath }) {
+  mkdirSync(dirname(logPath), { recursive: true });
   const stream = createWriteStream(logPath, { flags: "a" });
   const [cmd, ...args] = childCommand;
   return await new Promise((resolve) => {
