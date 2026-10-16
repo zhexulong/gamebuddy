@@ -460,11 +460,13 @@ if (import.meta.main) {
     // fact, so that is what this measures.
     const traceBytes = { total: 0, snapshot: 0, byRecord: new Map(), countByRecord: new Map() };
     let lastFactAtMs = startedAtMs;
+    let connectionDropped = false;
     const timeline = (record) => {
       const line = `${JSON.stringify(record)}\n`;
       const size = Buffer.byteLength(line, "utf8");
       traceBytes.total += size;
       if (record.type === "snapshot") traceBytes.snapshot += size;
+      if (record.type === "bridge_connection") connectionDropped = true;
       traceBytes.byRecord.set(line, (traceBytes.byRecord.get(line) ?? 0) + size);
       traceBytes.countByRecord.set(line, (traceBytes.countByRecord.get(line) ?? 0) + 1);
       lastFactAtMs = Date.now();
@@ -504,12 +506,17 @@ if (import.meta.main) {
     // 0, so a 36 s unobserved tail still produced `state=passed`. An independent audit caught that, and it is the exact
     // "missing measurement defaults to pass" shape this gate exists to prevent. The measurement is now published where it
     // is read, in a shape the plan path already used.
-    const observedGapMs = runReport.unobservedTailMs > 30_000 ? runReport.unobservedTailMs : 0;
+    // Liveness signals that are NOT a latency proxy: the Agent spoke, and the pipe never dropped. The tail before the
+    // turn ended is still reported, but it is model generation plus the harness quiet window (an audit called that out),
+    // so it must not decide the verdict.
     const spokeNothing = result.agentTurns.length === 0;
     const notAdmitted = result.admitted !== true;
     const report = Object.freeze({
       durationSeconds: runReport.durationSeconds,
-      unobservedTailMs: runReport.unobservedTailMs,
+      // NOT a gap gate in this mode: see the comment above the verdict. Published so a reader sees it, labelled for what
+      // it is.
+      tailBeforeTurnEndMs: runReport.unobservedTailMs,
+      connectionDropped,
       allocation,
       agentTurns: result.agentTurns.length,
       // The Agent words themselves, so a reviewer reads them in the report instead of re-deriving them from a
@@ -527,13 +534,13 @@ if (import.meta.main) {
     // be true.
     console.log(
       `LOOP_RESULT ${JSON.stringify({
-        state: notAdmitted || spokeNothing || observedGapMs > 0 ? "degraded" : "passed",
+        state: notAdmitted || spokeNothing || connectionDropped ? "degraded" : "passed",
         reasonCode: notAdmitted
           ? "agent_turn_not_admitted"
           : spokeNothing
             ? "agent_spoke_nothing"
-            : observedGapMs > 0
-              ? `observed_gap:${Math.round(observedGapMs / 1000)}s`
+            : connectionDropped
+              ? "agent_bridge_dropped"
               : "agent_turn_completed",
         ...report,
       })}`,

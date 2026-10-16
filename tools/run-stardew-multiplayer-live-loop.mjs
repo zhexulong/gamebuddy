@@ -22,7 +22,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -239,6 +239,8 @@ export function deriveLoopVerdict({ timedOut, exitCode, driverState, loopResult 
   );
   const measuredTail = reportedTailMs !== undefined;
   const unobservedTailMs = measuredTail ? reportedTailMs : 0;
+  const agentTurns = Number.isFinite(loopResult?.agentTurns) ? loopResult.agentTurns : null;
+  const dropped = loopResult?.connectionDropped === true;
   if (timedOut === true)
     return { state: "blocked", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_timeout" };
   if (driverState !== "action_passed" || exitCode !== 0)
@@ -248,16 +250,25 @@ export function deriveLoopVerdict({ timedOut, exitCode, driverState, loopResult 
       measuredTail,
       reasonCode: `multiplayer_loop_failed:${driverState ?? "no_driver_result"}`,
     };
-  if (!measuredTail)
-    return { state: "blocked", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_observation_unmeasured" };
-  if (unobservedTailMs > 30_000)
-    return {
-      state: "degraded",
-      unobservedTailMs,
-      measuredTail,
-      reasonCode: `multiplayer_loop_observed_gap:${Math.round(unobservedTailMs / 1000)}s`,
-    };
-  return { state: "passed", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_completed" };
+  if (measuredTail)
+    return unobservedTailMs > 30_000
+      ? {
+          state: "degraded",
+          unobservedTailMs,
+          measuredTail,
+          reasonCode: `multiplayer_loop_observed_gap:${Math.round(unobservedTailMs / 1000)}s`,
+        }
+      : { state: "passed", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_completed" };
+  // AGENT MODE has no sampling to measure: its tail is model generation plus the harness quiet window, which an audit
+  // correctly called a latency proxy. Its liveness is proved by real signals instead -- the Agent spoke, and the pipe
+  // never dropped -- so a healthy agent session is not labelled "unobserved" for having thought.
+  if (agentTurns !== null)
+    return agentTurns === 0
+      ? { state: "blocked", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_agent_spoke_nothing" }
+      : dropped
+        ? { state: "degraded", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_bridge_dropped" }
+        : { state: "passed", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_agent_turn_completed" };
+  return { state: "blocked", unobservedTailMs, measuredTail, reasonCode: "multiplayer_loop_observation_unmeasured" };
 }
 
 export async function main(argv) {
@@ -374,9 +385,24 @@ export async function main(argv) {
   writeFileSync(join(runRoot, "driver.stdout.txt"), run.stdout, "utf8");
   writeFileSync(join(runRoot, "driver.stderr.txt"), run.stderr, "utf8");
   const driverResult = parseDriverResult(run.stdout);
-  // The driver wraps the runner's stdout into its own JSON (`actionResult`), so the loop's record is ESCAPED inside a
-  // string field rather than a line of its own -- which is why this was null on a run that produced a full report.
-  const loopResult = parseLoopResult(run.stdout) ?? parseLoopResult(driverResult?.actionResult ?? "");
+  // READ THE LOOP'S RECORD FROM ITS FILE FIRST, and only then from stdout.
+  //
+  // Measured: a real session's record could not be parsed out of the driver's stdout at all, because the child's Chinese
+  // text reached it as replacement characters (`�`) and `JSON.parse` refused the line. The entry therefore reported
+  // `loop: null` and `blocked/observation_unmeasured` for a session that had run fine -- and it would have done so for
+  // EVERY Chinese session, i.e. the ones that matter. Files do not go through the console's encoding, and the runner
+  // already writes this record beside its trace.
+  const loopReportPath = join(traceRoot, "loop-report.json");
+  const loopFromFile = existsSync(loopReportPath)
+    ? await readFile(loopReportPath, "utf8").then(
+        (text) => {
+          const parsed = JSON.parse(text);
+          return parsed !== null && typeof parsed === "object" ? parsed : null;
+        },
+        () => null,
+      )
+    : null;
+  const loopResult = loopFromFile ?? parseLoopResult(run.stdout) ?? parseLoopResult(driverResult?.actionResult ?? "");
   // A verdict that ignores a third of the session is not a verdict, and a MISSING measurement is not "no gap": both
   // rules live in `deriveLoopVerdict` so they are testable without a game.
   const verdict = deriveLoopVerdict({
@@ -409,6 +435,9 @@ export async function main(argv) {
     artifact,
     driverExitCode: run.exitCode,
     driverState: driverResult?.state ?? null,
+    // Which source the entry read the loop's record from, because "the report is missing" and "the report is unreadable"
+    // are different failures and this one has already been both.
+    loopReportSource: loopFromFile === null ? "stdout" : "file",
     driverPhase: driverResult?.phase ?? null,
     driverReason: driverResult?.reason ?? null,
     loop: loopResult,

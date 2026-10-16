@@ -85,12 +85,14 @@ test("a gapped session cannot be reported as passed, in either report shape", ()
   assert.equal(clean.reasonCode, "multiplayer_loop_completed");
 });
 
-test("a report that measured nothing is blocked, never passed", () => {
+test("a plan-mode report that measured nothing is blocked, never passed", () => {
   const verdict = deriveLoopVerdict({
     timedOut: false,
     exitCode: 0,
     driverState: "action_passed",
-    loopResult: { agentTurns: 4 },
+    // `agentTurns` absent: this is a plan-mode report, so there is no agent liveness signal to accept in place of a
+    // sampling measurement, and an unmeasured plan run must not read as gap-free.
+    loopResult: { steps: 5 },
   });
   assert.equal(verdict.state, "blocked");
   assert.equal(verdict.reasonCode, "multiplayer_loop_observation_unmeasured");
@@ -102,4 +104,22 @@ test("a report that measured nothing is blocked, never passed", () => {
   const timedOut = deriveLoopVerdict({ timedOut: true, exitCode: null, driverState: null, loopResult: null });
   assert.equal(timedOut.state, "blocked");
   assert.equal(timedOut.reasonCode, "multiplayer_loop_timeout");
+});
+
+test("agent mode proves liveness by its own signals, not by a latency tail", () => {
+  // The audit called the tail a latency proxy: it is model generation plus the harness quiet window, so it must not
+  // decide a healthy session's verdict. What decides it: the Agent spoke, and the pipe never dropped.
+  const base = { timedOut: false, exitCode: 0, driverState: "action_passed" };
+  const spoke = deriveLoopVerdict({ ...base, loopResult: { agentTurns: 4, connectionDropped: false } });
+  assert.equal(spoke.state, "passed");
+  assert.equal(spoke.reasonCode, "multiplayer_loop_agent_turn_completed");
+  const silent = deriveLoopVerdict({ ...base, loopResult: { agentTurns: 0, connectionDropped: false } });
+  assert.equal(silent.state, "blocked");
+  assert.equal(silent.reasonCode, "multiplayer_loop_agent_spoke_nothing");
+  const dropped = deriveLoopVerdict({ ...base, loopResult: { agentTurns: 4, connectionDropped: true } });
+  assert.equal(dropped.state, "degraded");
+  assert.equal(dropped.reasonCode, "multiplayer_loop_bridge_dropped");
+  // A plan-mode report still uses its own sampling measurement, because there it IS a measurement.
+  const planGap = deriveLoopVerdict({ ...base, loopResult: { unobservedTailMs: 36_058 } });
+  assert.equal(planGap.state, "degraded");
 });
