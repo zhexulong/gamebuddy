@@ -192,13 +192,19 @@ export function Timeline({
           <h1>{conversationName}</h1>
         </div>
       )}
-      {transcript.length === 0 && preview === null ? (
+      {transcript.length === 0 && preview === null && pendingPlayerMessage === null ? (
         // A conversation that has not started yet is the first thing a player
         // sees. The dry "no messages" line it used to carry reads as a surface
         // that failed to load; one warm invitation in the secondary grey says the
         // same fact as an invitation instead, and the app bar above already
         // carries the companion's monogram and name. It is the transcript's own
         // zero state, so the first message replaces it.
+        //
+        // The optimistic player message is that first message already: the
+        // moment the player sends, it is appended below this block, and leaving
+        // the invitation up as well showed the player a zero state and their own
+        // in-flight line at the same time. The invitation belongs to the empty
+        // conversation, so it yields to the message that ends the emptiness.
         <div className="empty-state empty-state-anchor" data-empty-anchor="">
           <p className="empty-state-opening">{labels.emptyChatOpening.replace("{{name}}", anchorName)}</p>
         </div>

@@ -5291,11 +5291,16 @@ test("sending shows the player's text immediately with a pending marker, then co
   await expect(optimistic).toHaveAttribute("data-pending", "true");
   await expect(optimistic).toContainText(playerText);
   await expect(surface.locator(".message-list > li", { hasText: playerText })).toHaveCount(0);
+  // The optimistic line IS the conversation's first message, so the zero state
+  // yields to it: the conversation the player just started is not still showing
+  // the invitation to start one.
+  await expect(surface.locator("[data-empty-anchor]")).toHaveCount(0);
 
   // The authoritative message lands: the pair collapses to exactly one message and the optimistic
   // entry is gone (never a duplicate).
   await expect(optimistic).toHaveCount(0);
   await expect(surface.locator(".message-list > li", { hasText: playerText })).toHaveCount(1);
+  await expect(surface.locator("[data-empty-anchor]")).toHaveCount(0);
 
   // A reload re-reads the authoritative transcript and leaves no optimistic ghost.
   await page.reload();
