@@ -398,6 +398,10 @@ export function assessCompanionBehaviourRubric({ turns, presence = null, runRepo
     if (runReport === null) return { verdict: "unmeasured", detail: "no_run_report" };
     const tail = Number(runReport.unobservedTailMs);
     if (obligation.id === "observation_continuity") {
+      // A mode that declares its tail meaningless must not be judged by it: the agent path observes on demand, so its
+      // tail is model generation plus the harness quiet window. Reported as unmeasured WITH the reason, never as green.
+      if (runReport.observationMeasurement === "not_applicable_agent_mode")
+        return { verdict: "unmeasured", detail: "agent_mode_observes_on_demand" };
       if (!Number.isFinite(tail)) return { verdict: "unmeasured", detail: "no_observation_measurement" };
       return {
         verdict: tail > 30_000 ? "broken" : "green",

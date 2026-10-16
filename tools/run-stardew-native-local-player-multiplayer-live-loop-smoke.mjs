@@ -499,7 +499,17 @@ if (import.meta.main) {
         largestRecordBytes,
       },
     };
-    const rubric = assessCompanionBehaviourRubric({ turns: result.agentTurns, runReport });
+    // The rubric is told what this mode can and cannot measure. Its continuity obligation was designed for the plan path,
+    // whose 2 s sampling makes a silent tail meaningful; here the tail is model generation (51 s of a 214 s turn in a real
+    // session), so the obligation reports `unmeasured` WITH that reason instead of calling a healthy session broken.
+    const rubric = assessCompanionBehaviourRubric({
+      turns: result.agentTurns,
+      runReport: {
+        durationSeconds: runReport.durationSeconds,
+        traceBytes: runReport.traceBytes,
+        observationMeasurement: "not_applicable_agent_mode",
+      },
+    });
     // THE TAIL BELONGS AT THE TOP LEVEL, WHERE THE ENTRY READS IT.
     //
     // Reported nested under `runReport`, the entry's own gate could not find it: `Number.isFinite(undefined)` fell back to
