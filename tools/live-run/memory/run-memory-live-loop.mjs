@@ -1671,6 +1671,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       cardPath: parsed.cardPath,
       reflect: parsed.reflect,
       root: parsed.root,
+      continuityId: parsed.continuityId,
     });
     if (parsed.requireChapter && (report.chapters?.renderedCount ?? 0) < 1) {
       process.stderr.write(
