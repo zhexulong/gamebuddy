@@ -2054,9 +2054,24 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 
+  /* The drawer's panes, and the one rule that decides how many of them sit side
+   by side. As a single column the four blocks - the capability board, the start
+   guide, the session controls and the connection facts - each ran the whole
+   1408 px panel width with their own content stopping about two thirds of the way
+   across, so the surface read as one narrow strip of text on a wide empty band.
+   Measured at 1440x900 before this: the drawer was 939 px tall in one column and
+   every group was 1408 px wide (one distinct left edge), against a 782 px scroller
+   - the player scrolled a wide, half-empty column.
+
+   560 px is the track floor, so a desktop panel takes two columns and leaves the
+   single column the moment the room is gone: measured after, the same drawer at
+   1440x900 is two columns of 694 px, and at 400x800 it is still one column of
+   368 px. This is the grid the Characters panel and the capability cards already
+   use, applied to the drawer's own panes. */
   .composed-game-drawer {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(560px, 100%), 1fr));
+    align-items: start;
     gap: 20px;
   }
 
@@ -3874,6 +3889,28 @@
    The board leads the panel and the machine facts are demoted last, so the
    surface reads as what the companion can do with the player. Nothing here owns
    behaviour: every card is derived from the published game projection. */
+
+  /* The Game surface's content is the same two-track grid as the drawer one level
+   up: the drawer keeps the whole width (it is two columns inside, see
+   `.composed-game-drawer`), and the installation panel, the Game Agent's model
+   settings and the diagnostics disclosure pair up on the rows below it instead of
+   each running the full 1408 px band. This rule has to live in this layer: the
+   shared `.surface-content` above is a flex column in the same layer, and a rule
+   in a lower layer would lose to it.
+
+   Measured at 1440x900: with the drawer's own grid and this one, the surface's
+   content is two columns below the drawer and scrolls 900 px, against 1294 px in
+   the single column it was. At 400x800 nothing pairs: one track, one column. */
+  .surface-game > .surface-content {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(560px, 100%), 1fr));
+    align-items: start;
+    gap: 12px;
+  }
+
+  .surface-game > .surface-content > .composed-game-drawer {
+    grid-column: 1 / -1;
+  }
 
   .game-capability-board {
     display: flex;

@@ -185,10 +185,7 @@ export function GameSurface({
       });
       setCabinView({ kind: "admitted" });
     } catch (error) {
-      if (
-        error instanceof ComposedReferenceGameProblemError &&
-        error.code === "stardew_cabin_choice_stale"
-      ) {
+      if (error instanceof ComposedReferenceGameProblemError && error.code === "stardew_cabin_choice_stale") {
         cabinConfirmationActiveRef.current = false;
         await readCabins();
         return;
@@ -208,8 +205,7 @@ export function GameSurface({
    * failure.
    */
   const isNotStagedRefusal = (error: unknown): boolean =>
-    error instanceof ComposedReferenceGameProblemError &&
-    error.code === "game_prerequisites_missing";
+    error instanceof ComposedReferenceGameProblemError && error.code === "game_prerequisites_missing";
 
   /**
    * First-run lifecycle activation. The composed Game projection carries no
@@ -237,12 +233,15 @@ export function GameSurface({
       try {
         await rereadGame();
         rereadSucceeded = true;
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       const fresh = readView();
       // A conflict only means something already activated this lifecycle: the
       // authoritative projection decides, so it is a failure only when staging
       // is still not visible after the reread.
-      const staged = rereadSucceeded &&
+      const staged =
+        rereadSucceeded &&
         fresh.kind === "ready" &&
         fresh.root.game !== null &&
         fresh.root.game.game.instance.generation >= 1;
@@ -293,7 +292,8 @@ export function GameSurface({
         latest.kind === "ready" &&
         latest.root.game?.game.prerequisites.status === "unknown" &&
         latest.root.game.game.instance.status === "none"
-      ) gameSetupKeyRef.current = undefined;
+      )
+        gameSetupKeyRef.current = undefined;
     } finally {
       gameSetupActiveRef.current = false;
       setGameSetupActive(false);
@@ -310,7 +310,8 @@ export function GameSurface({
       gameProjection.game.attachment.status !== "attached" ||
       gameProjection.game.attachment.generation < 1 ||
       gameProjection.game.connectionStatus !== "connected_idle"
-    ) return;
+    )
+      return;
     const generation = gameProjection.game.attachment.generation;
     const existingKey = gameStopKeysRef.current.get(generation);
     const idempotencyKey = existingKey ?? newIdempotencyKey();
@@ -330,7 +331,9 @@ export function GameSurface({
       try {
         await rereadGame();
         rereadSucceeded = true;
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       const fresh = readView();
       const staleGenerationReconciled =
         error instanceof ComposedReferenceGameProblemError &&
@@ -371,7 +374,9 @@ export function GameSurface({
       try {
         await rereadGame();
         rereadSucceeded = true;
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       const fresh = readView();
       if (
         !notStaged &&
@@ -380,8 +385,7 @@ export function GameSurface({
         rereadSucceeded &&
         fresh.kind === "ready" &&
         fresh.root.game !== null &&
-        (fresh.root.game.game.prerequisites.status !== "met" ||
-          fresh.root.game.game.instance.generation < 1)
+        (fresh.root.game.game.prerequisites.status !== "met" || fresh.root.game.game.instance.generation < 1)
       ) {
         gameLaunchKeysRef.current.delete(generation);
         gameSetupKeyRef.current = undefined;
@@ -404,7 +408,8 @@ export function GameSurface({
       gameProjection.game.attachment.status !== "attached" ||
       !current.root.game?.game ||
       gameProjection.game.attachment.generation < 1
-    ) return;
+    )
+      return;
     const generation = gameProjection.game.attachment.generation;
     const existingKey = disconnectKeysRef.current.get(generation);
     const idempotencyKey = existingKey ?? newIdempotencyKey();
@@ -424,7 +429,9 @@ export function GameSurface({
       try {
         await rereadGame();
         rereadSucceeded = true;
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       const fresh = readView();
       if (
         rereadSucceeded &&
@@ -432,7 +439,8 @@ export function GameSurface({
         fresh.root.game?.game.attachment.status === "attached" &&
         fresh.root.game.game.attachment.generation === generation &&
         fresh.root.game.game.connectionStatus === "failed"
-      ) disconnectKeysRef.current.delete(generation);
+      )
+        disconnectKeysRef.current.delete(generation);
       setDisconnectFailed(true);
     } finally {
       disconnectActiveRef.current = false;
@@ -469,7 +477,8 @@ export function GameSurface({
     if (
       projection.attachment.status === "attached" &&
       (projection.connectionStatus === "connected_idle" || projection.connectionStatus === "active")
-    ) return "connected";
+    )
+      return "connected";
     await delay(RESUME_REREAD_INTERVAL_MS);
     return resumeAwaitAuthoritative(generation, attempts + 1);
   };
@@ -484,7 +493,8 @@ export function GameSurface({
       gameProjection.game.attachment.status !== "attached" ||
       gameProjection.game.attachment.generation < 1 ||
       !RESUMABLE_CONNECTION_STATUSES.has(gameProjection.game.connectionStatus)
-    ) return;
+    )
+      return;
     const generation = gameProjection.game.attachment.generation;
     const existingKey = gameResumeKeysRef.current.get(generation);
     const idempotencyKey = existingKey ?? newIdempotencyKey();
@@ -505,7 +515,9 @@ export function GameSurface({
       try {
         await rereadGame();
         rereadSucceeded = true;
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       const fresh = readView();
       const staleGenerationReconciled =
         error instanceof ComposedReferenceGameProblemError &&
@@ -529,13 +541,16 @@ export function GameSurface({
       // player retry replays the same idempotent command.
       try {
         await rereadGame();
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       const fresh = readView();
       if (
         fresh.kind === "ready" &&
         fresh.root.game?.game.attachment.status === "attached" &&
         fresh.root.game.game.attachment.generation === generation
-      ) setGameResumeUnavailable(true);
+      )
+        setGameResumeUnavailable(true);
       gameResumeActiveRef.current = false;
       setGameResumeActive(false);
       return;
@@ -584,10 +599,7 @@ export function GameSurface({
     if (fresh.kind !== "ready" || fresh.root.game === null) return "superseded";
     const projection = fresh.root.game.game;
     if (projection.attachment.generation !== generation) return "superseded";
-    if (
-      projection.attachment.status === "attached" &&
-      projection.actionAuthority === "active"
-    ) return "active";
+    if (projection.attachment.status === "attached" && projection.actionAuthority === "active") return "active";
     await delay(RESUME_REREAD_INTERVAL_MS);
     return reopenAwaitAuthoritative(generation, attempts + 1);
   };
@@ -607,7 +619,8 @@ export function GameSurface({
       gameProjection.game.attachment.status !== "attached" ||
       gameProjection.game.attachment.generation < 1 ||
       gameProjection.game.connectionStatus !== "connected_idle"
-    ) return;
+    )
+      return;
     const generation = gameProjection.game.attachment.generation;
     const existingKey = gameReopenKeysRef.current.get(generation);
     const idempotencyKey = existingKey ?? newIdempotencyKey();
@@ -627,7 +640,9 @@ export function GameSurface({
       try {
         await rereadGame();
         rereadSucceeded = true;
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       const fresh = readView();
       const staleGenerationReconciled =
         error instanceof ComposedReferenceGameProblemError &&
@@ -677,7 +692,8 @@ export function GameSurface({
       gameProjection.game.attachment.generation < 1 ||
       !RESUMABLE_CONNECTION_STATUSES.has(gameProjection.game.connectionStatus) ||
       (!gameResumeFailed && !gameResumeUnavailable)
-    ) return;
+    )
+      return;
     const generation = gameProjection.game.attachment.generation;
     const existingKey = gameResumeCancelKeysRef.current.get(generation);
     const idempotencyKey = existingKey ?? newIdempotencyKey();
@@ -693,7 +709,9 @@ export function GameSurface({
       });
       try {
         await rereadGame();
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       setGameResumeFailed(false);
       setGameResumeUnavailable(false);
     } catch (error) {
@@ -701,7 +719,9 @@ export function GameSurface({
       try {
         await rereadGame();
         rereadSucceeded = true;
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       const fresh = readView();
       const staleGenerationReconciled =
         error instanceof ComposedReferenceGameProblemError &&
@@ -732,9 +752,7 @@ export function GameSurface({
    * surface can never produce), or the bounded budget expires (fail-closed
    * unavailable; the next form submit mints a fresh attempt identity).
    */
-  const createAwaitAuthoritative = async (
-    attempts: number,
-  ): Promise<"converged" | "unavailable"> => {
+  const createAwaitAuthoritative = async (attempts: number): Promise<"converged" | "unavailable"> => {
     if (isCancelled() || attempts > RESUME_REREAD_MAX_ATTEMPTS) return "unavailable";
     try {
       await rereadGame();
@@ -752,7 +770,8 @@ export function GameSurface({
       projection.attachment.status === "attached" &&
       projection.connectionStatus === "connected_idle" &&
       projection.actionAuthority === "paused"
-    ) return "converged";
+    )
+      return "converged";
     await delay(RESUME_REREAD_INTERVAL_MS);
     return createAwaitAuthoritative(attempts + 1);
   };
@@ -773,7 +792,8 @@ export function GameSurface({
       current.kind !== "ready" ||
       current.root.game === null ||
       (!gameResumeFailed && !gameResumeUnavailable)
-    ) return;
+    )
+      return;
     const continuityText = continuityIdentityInput.trim();
     const idempotencyKey = newIdempotencyKey();
     const request: GameCreateRequestV1 = {
@@ -792,7 +812,9 @@ export function GameSurface({
     } catch {
       try {
         await rereadGame();
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       setGameCreateFailed(true);
       gameCreateActiveRef.current = false;
       setGameCreateActive(false);
@@ -808,7 +830,9 @@ export function GameSurface({
       // a session or a ready surface from the null handle.
       try {
         await rereadGame();
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       setGameCreateUnavailable(true);
       gameCreateActiveRef.current = false;
       setGameCreateActive(false);
@@ -853,7 +877,8 @@ export function GameSurface({
       gameProjection === null ||
       gameProjection.game.attachment.status !== "attached" ||
       gameProjection.game.attachment.generation < 1
-    ) return;
+    )
+      return;
     const generation = gameProjection.game.attachment.generation;
     const existingKey = gameEndgameKeysRef.current.get(generation);
     const idempotencyKey = existingKey ?? newIdempotencyKey();
@@ -881,7 +906,9 @@ export function GameSurface({
       try {
         await rereadGame();
         rereadSucceeded = true;
-      } catch { /* retain the current authoritative projection */ }
+      } catch {
+        /* retain the current authoritative projection */
+      }
       const fresh = readView();
       const staleGenerationReconciled =
         error instanceof ComposedReferenceGameProblemError &&
@@ -904,15 +931,14 @@ export function GameSurface({
     ready,
     game,
   });
-  const gameStopAvailable = ready &&
+  const gameStopAvailable =
+    ready &&
     game !== null &&
     game.game.attachment.status === "attached" &&
     game.game.attachment.generation > 0 &&
     game.game.connectionStatus === "connected_idle";
-  const disconnectAvailable = ready &&
-    game !== null &&
-    game.game.attachment.status === "attached" &&
-    game.game.attachment.generation > 0;
+  const disconnectAvailable =
+    ready && game !== null && game.game.attachment.status === "attached" && game.game.attachment.generation > 0;
   // The terminal operation shares the live-attached precondition of disconnect:
   // a Player world is running and this browser holds its attachment. It does not
   // follow the routine controls' grouping in the panel, but its availability is
@@ -924,13 +950,12 @@ export function GameSurface({
   // changes, the UI confirm resets to unarmed and the ordinary click is needed
   // again. Only the confirm button ever sends the command.
   const endgameGeneration =
-    game !== null && game.game.attachment.status === "attached"
-      ? game.game.attachment.generation
-      : 0;
+    game !== null && game.game.attachment.status === "attached" ? game.game.attachment.generation : 0;
   useEffect(() => {
     setEndgameConfirmArmed(false);
   }, [endgameGeneration, gameEndgameAvailable]);
-  const resumeFailureSurface = ready &&
+  const resumeFailureSurface =
+    ready &&
     game !== null &&
     game.game.attachment.status === "attached" &&
     game.game.attachment.generation > 0 &&
@@ -943,21 +968,21 @@ export function GameSurface({
   // replay - which the preserved generation-bound idempotency key makes it), and
   // `Resume game` owns the degraded connection that no attempt has failed on.
   // Offering both at once was the surface naming its own command twice.
-  const gameResumeAvailable = ready &&
+  const gameResumeAvailable =
+    ready &&
     game !== null &&
     game.game.attachment.status === "attached" &&
     game.game.attachment.generation > 0 &&
     RESUMABLE_CONNECTION_STATUSES.has(game.game.connectionStatus) &&
     !resumeFailureSurface;
-  const gameReopenAvailable = ready &&
+  const gameReopenAvailable =
+    ready &&
     game !== null &&
     game.game.actionAuthority === "paused" &&
     game.game.attachment.status === "attached" &&
     game.game.attachment.generation > 0 &&
     game.game.connectionStatus === "connected_idle";
-  const gameSyncing = ready &&
-    game !== null &&
-    game.game.connectionStatus === "syncing";
+  const gameSyncing = ready && game !== null && game.game.connectionStatus === "syncing";
 
   if (!selected) return null;
 
@@ -966,6 +991,10 @@ export function GameSurface({
       title={labels.gamePanel}
       testId="game-surface"
       icon={Gamepad2}
+      // The Game surface lays its own content out (a two-column panel grid at a
+      // desktop width), so it names itself for the stylesheet the way the
+      // conversation does with `surface-conversation`.
+      className="surface-game"
       restoreFocusTo={restoreFocusTo}
     >
       {/* Installation discovery is a sibling of the Game state region,
@@ -1056,12 +1085,7 @@ export function GameSurface({
       {/* The Game Agent's own model settings, on the Game surface (design/
           architecture/product-surfaces.md); the Host stores this half of
           settings/profiles separately from Chat's. */}
-      <SurfaceModelSettings
-        surface="game"
-        api={managementApi}
-        csrfToken={csrfToken}
-        labels={labels}
-      />
+      <SurfaceModelSettings surface="game" api={managementApi} csrfToken={csrfToken} labels={labels} />
       {/* Read-only Host data at the bottom of the Game surface: the
           instance and session projection the composed state route
           publishes, and the honest fact that this Host mounts no

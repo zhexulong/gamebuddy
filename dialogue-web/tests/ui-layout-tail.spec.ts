@@ -386,3 +386,115 @@ test("item 2: every settings field quotes the one form measure, wide and narrow"
   expect(wide!.widest, "the widest settings field is inside the form measure").toBeLessThanOrEqual(640);
   expect(wide!.surfaceWidth, "the desktop settings surface itself is the wide panel").toBeGreaterThan(1200);
 });
+
+/**
+ * The Game surface's own groups: the drawer's rows (capability board, the start
+ * guide, the connection and installation groups, the diagnostics), each with the
+ * box it was painted in, plus the region that scrolls them.
+ */
+async function measureGameSurface(page: Page) {
+  return await page.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>('[data-testid="game-surface"]');
+    if (surface === null) return null;
+    const round = (value: number) => Math.round(value);
+    const boxOf = (node: HTMLElement) => {
+      const box = node.getBoundingClientRect();
+      return {
+        tag: node.tagName.toLowerCase(),
+        name:
+          node.getAttribute("data-testid") ??
+          node.getAttribute("aria-label") ??
+          node.className.toString().split(/\s+/u).filter((part) => part.length > 0).slice(0, 2).join("."),
+        top: round(box.top),
+        left: round(box.left),
+        width: round(box.width),
+        height: round(box.height),
+      };
+    };
+    const drawer = surface.querySelector<HTMLElement>(".composed-game-drawer");
+    const groups = drawer === null ? [] : [...drawer.children].map(boxOf);
+    const main = document.querySelector<HTMLElement>("#main-content");
+    const content = surface.querySelector<HTMLElement>(".surface-content");
+    const allLefts = [...new Set(groups.map((group) => group.left))].sort((left, right) => left - right);
+    return {
+      surface: boxOf(surface),
+      pageScrollHeight: document.documentElement.scrollHeight,
+      mainScrollHeight: main === null ? null : main.scrollHeight,
+      contentScrollHeight: content === null ? null : content.scrollHeight,
+      contentChildren: content === null ? [] : [...content.children].map(boxOf),
+      contentColumnCount:
+        content === null
+          ? 0
+          : new Set([...content.children].map((child) => round(child.getBoundingClientRect().left))).size,
+      surfaceScrollHeight: surface.scrollHeight,
+      drawerHeight: drawer === null ? null : round(drawer.getBoundingClientRect().height),
+      surfaceChildren: [...surface.children].map(boxOf),
+      groupCount: groups.length,
+      columnCount: allLefts.length,
+      lefts: allLefts,
+      groups,
+    };
+  });
+}
+
+test("item 3: the Game surface uses the width it is given, and stays one column at 400", async ({ page }) => {
+  await stubShell(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=game`);
+  const surface = page.getByTestId("game-surface");
+  await expect(surface).toBeVisible();
+  await expect(surface.locator(".composed-game-drawer")).toBeVisible();
+
+  const wide = await measureGameSurface(page);
+  console.log(`[item-3 game @1440] ${JSON.stringify(wide)}`);
+
+  // Sensitivity proof, measured through the same probe rather than quoted from a
+  // report: the drawer's pre-fix layout (one flex column) puts the surface back to
+  // one column and the taller drawer, so the assertions below are what catch the
+  // defect and not a coincidence of today's numbers. The injected rule is
+  // unlayered, which is exactly why it wins over the layered stylesheet.
+  await page.addStyleTag({
+    content:
+      ".composed-game-drawer { display: flex; flex-direction: column; align-items: stretch; }",
+  });
+  const reverted = await measureGameSurface(page);
+  console.log(`[item-3 game @1440, pre-fix layout injected] ${JSON.stringify(reverted)}`);
+  await page.reload();
+  await expect(surface.locator(".composed-game-drawer")).toBeVisible();
+
+  await page.setViewportSize({ width: 400, height: 800 });
+  const narrow = await measureGameSurface(page);
+  console.log(`[item-3 game @400] ${JSON.stringify(narrow)}`);
+
+  expect(wide, "the Game surface renders").not.toBeNull();
+  expect(reverted, "the Game surface renders with the pre-fix layout injected").not.toBeNull();
+  expect(narrow, "the Game surface renders at 400").not.toBeNull();
+
+  // The width is used: the drawer's groups occupy more than one column at 1440,
+  // and each group gives up the whole-panel width it used to run to.
+  expect(wide!.surface.width, "the desktop Game surface is the wide panel").toBeGreaterThan(1200);
+  expect(wide!.columnCount, "the drawer's groups are laid out in more than one column at 1440").toBeGreaterThan(1);
+  expect(
+    wide!.contentColumnCount,
+    `the blocks below the drawer also pair up (${JSON.stringify(wide!.contentChildren.map((child) => `${child.name}=${child.width}@${child.left}`))})`,
+  ).toBeGreaterThan(1);
+  expect(
+    Math.max(...wide!.groups.map((group) => group.width)),
+    "no group runs the whole panel width at 1440",
+  ).toBeLessThan(wide!.surface.width * 0.75);
+  // …and the surface is shorter for it.
+  expect(
+    wide!.drawerHeight!,
+    `the drawer is shorter in two columns (${wide!.drawerHeight} px against ${reverted!.drawerHeight} px in one column)`,
+  ).toBeLessThan(reverted!.drawerHeight!);
+  expect(
+    wide!.contentScrollHeight!,
+    `the surface's content scrolls ${wide!.contentScrollHeight} px against ${reverted!.contentScrollHeight} px before the fix`,
+  ).toBeLessThan(reverted!.contentScrollHeight!);
+  // The injected pre-fix layout is one column: the sensitivity proof.
+  expect(reverted!.columnCount, "the pre-fix layout measured one column").toBe(1);
+  // …and the narrow surface is still one readable column, at both levels.
+  expect(narrow!.columnCount, "the narrow surface is a single column").toBe(1);
+  expect(narrow!.contentColumnCount, "the narrow surface's content is a single column too").toBe(1);
+  expect(narrow!.surface.width, "400 leaves a single readable column").toBeLessThan(420);
+});
