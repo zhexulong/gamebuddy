@@ -1112,6 +1112,66 @@ test("the Settings field groups keep a form measure and the app's own select tre
 });
 
 /**
+ * The card a new Chat is acknowledged with is a row of the same list, so it takes
+ * the list's own measure.
+ *
+ * The measured defect: the card was a *sibling* of `.chat-list`, so it was laid
+ * out at the surface's whole content column - at 1440x900 the card measured
+ * 1408 px while the list of durable chats underneath it measured 640 px - and one
+ * card hung out of the column every other conversation row reads in. The two
+ * assertions pin the width against the list's own, from both sides: the card is
+ * the measure, and the surface is wider than it.
+ */
+test("the newly created Chat's card takes the list's own measure", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        chats: [
+          { handle: chatHandle, title: "A durable chat", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." },
+        ],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/chats", (route) =>
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        chat: { handle: `${'T'.repeat(42)}A`, title: null, status: "active", managementRevision: 1, isSelected: false, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." },
+        opening: "The parsnips took, and the frost has not lifted yet.",
+      }),
+    ),
+  );
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+  await surface.getByRole("button", { name: "New Chat", exact: true }).click();
+
+  const measured = await surface.evaluate((root) => {
+    // The created card is the one that is not a list row.
+    const card = root.querySelector<HTMLElement>(".chat-item-card")!;
+    const list = root.querySelector<HTMLElement>(".chat-list")!;
+    const content = root.querySelector<HTMLElement>(".surface-content")!;
+    return {
+      card: Math.round(card.getBoundingClientRect().width),
+      list: Math.round(list.getBoundingClientRect().width),
+      surfaceContent: Math.round(content.getBoundingClientRect().width),
+      cardMaxWidth: getComputedStyle(card).maxWidth,
+    };
+  });
+  console.log(`[new-chat-card-measure] measured: ${JSON.stringify(measured)}`);
+
+  expect(measured.surfaceContent, "the desktop panel is the wide surface").toBeGreaterThan(1200);
+  expect(measured.card, "the new Chat's card keeps the content measure, not the panel width").toBeLessThanOrEqual(640);
+  expect(measured.card, "and it is the same measure the list underneath it reads").toBe(measured.list);
+  expect(measured.cardMaxWidth, "the measure is a max-width, not a fixed width").toBe("640px");
+});
+
+/**
  * The Chats list rows take the management surface's own measure, not the whole
  * panel.
  *

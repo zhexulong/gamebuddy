@@ -13,9 +13,12 @@
  */
 
 import { expectedReplayWallClockMs } from "./replay-clock.mjs";
+import { POSE_SOURCES } from "./evidence-bundle.mjs";
 
 /** Season names in the engine's own index order (`seasonIndex` 0..3). */
 export const SEASON_NAMES = Object.freeze(["spring", "summer", "fall", "winter"]);
+/** Facing as the wire numbers it (`host/src/protocol.ts:2998-3000`: 0..3). */
+export const FACING_NAMES = Object.freeze(["up", "right", "down", "left"]);
 
 /** The single-step replay entry point, relative to the repository root. */
 export const SINGLE_STEP_ENTRY = "tools/live-run/game/run-single-step.mjs";
@@ -26,30 +29,52 @@ const isPlainObject = (value) => typeof value === "object" && value !== null && 
 /**
  * The failure moment, in the shape the bundle validates.
  *
- * `snapshot` is the bridge's own snapshot (`timeOfDay`, `dayOfMonth`, `seasonIndex`, `year`, `location`,
- * `tileX`, `tileY`, `facing`): the same fields the native code reads, published without interpretation.
- * Anything the snapshot cannot supply stays null and is reported as missing by the validator rather than
- * invented - a plausible default here is exactly how a replay ends up reproducing the wrong morning.
+ * `snapshot` is the bridge's own reading, in EITHER of the two shapes the wire actually carries, because both are
+ * real and they disagree about where the actor is (`host/src/protocol.ts:108-111`, `:896-904`):
+ *   - a `Snapshot` publishes `location` + `tile: { x, y }` and no facing;
+ *   - a `LocalObservation` (which rides an execution receipt) publishes `location` + `tileX` / `tileY` + `facing`.
+ * Reading only the second one turned a real failure dump into "no tile, no facing" and the contract refused it
+ * (measured 2026-10-16). Anything the bridge did not supply stays null and is reported as missing by the validator
+ * rather than invented - a plausible default here is exactly how a replay ends up reproducing the wrong morning.
  */
 export function buildFailureSnapshot({
   reasonCode,
   component,
   step,
   snapshot,
+  poseSource = null,
   atMs = Date.now(),
   blockingProperties = [],
   collisionLayers = [],
 } = {}) {
   const observed = isPlainObject(snapshot) ? snapshot : null;
+  const tile = (() => {
+    if (observed === null) return null;
+    if (isFiniteNumber(observed.tileX) && isFiniteNumber(observed.tileY)) {
+      return Object.freeze({ x: observed.tileX, y: observed.tileY });
+    }
+    if (isPlainObject(observed.tile) && isFiniteNumber(observed.tile.x) && isFiniteNumber(observed.tile.y)) {
+      return Object.freeze({ x: observed.tile.x, y: observed.tile.y });
+    }
+    return null;
+  })();
+  const facing = isFiniteNumber(observed?.facing)
+    ? (FACING_NAMES[observed.facing] ?? String(observed.facing))
+    : typeof observed?.facing === "string" && observed.facing.length > 0
+      ? observed.facing
+      : null;
   return Object.freeze({
     reasonCode: typeof reasonCode === "string" && reasonCode.length > 0 ? reasonCode : null,
     component: typeof component === "string" && component.length > 0 ? component : null,
     step: Number.isInteger(step) && step >= 0 ? step : null,
-    playerTile:
-      observed !== null && isFiniteNumber(observed.tileX) && isFiniteNumber(observed.tileY)
-        ? Object.freeze({ x: observed.tileX, y: observed.tileY })
-        : null,
-    playerFacing: typeof observed?.facing === "string" && observed.facing.length > 0 ? observed.facing : null,
+    playerTile: tile,
+    playerFacing: facing,
+    // Named, not inferred: a receipt's own observation carries the facing, a bare snapshot does not.
+    poseSource: POSE_SOURCES.includes(poseSource)
+      ? poseSource
+      : facing === null
+        ? "snapshot_only"
+        : "execution_receipt_observation",
     inGameTime: observed?.timeOfDay === undefined ? null : String(observed.timeOfDay),
     day: isFiniteNumber(observed?.dayOfMonth) ? observed.dayOfMonth : null,
     season: SEASON_NAMES[observed?.seasonIndex] ?? null,

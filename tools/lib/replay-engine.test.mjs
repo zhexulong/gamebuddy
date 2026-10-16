@@ -208,7 +208,7 @@ test("the failure snapshot is the bridge's own facts, with nothing invented", ()
       location: "Town",
       tileX: 12,
       tileY: 8,
-      facing: "up",
+      facing: 0,
     },
     atMs: 1_700_000_500_000,
     blockingProperties: ["NPCPassable"],
@@ -217,6 +217,24 @@ test("the failure snapshot is the bridge's own facts, with nothing invented", ()
   assert.equal(snapshot.inGameTime, "900");
   assert.equal(snapshot.season, SEASON_NAMES[0]);
   assert.deepEqual(snapshot.playerTile, { x: 12, y: 8 });
+  // The wire numbers facing (protocol.ts:2998-3000) and 0 is `up` in the engine's own mapping
+  // (StardewBodyController.cs:1120-1126). Reporting "0" would lose the direction, so it is named.
+  assert.equal(snapshot.playerFacing, "up");
+  assert.equal(snapshot.poseSource, "execution_receipt_observation");
+  // A `Snapshot` carries location + `tile: {x,y}` and NO facing (protocol.ts:108-111): the other real shape. Reading
+  // only the observation shape made a real dump all-null and the contract refused it (measured 2026-10-16).
+  const fromSnapshotShape = buildFailureSnapshot({
+    reasonCode: "native_door_locked",
+    component: "native-state",
+    step: 1,
+    snapshot: { timeOfDay: 900, dayOfMonth: 5, seasonIndex: 0, year: 1, location: "Farm", tile: { x: 40, y: 57 } },
+    atMs: 1_700_000_500_000,
+  });
+  assert.deepEqual(fromSnapshotShape.playerTile, { x: 40, y: 57 });
+  assert.equal(fromSnapshotShape.location, "Farm");
+  // The two shapes genuinely differ: a snapshot has no facing, and the absence is NAMED rather than a silent null.
+  assert.equal(fromSnapshotShape.playerFacing, null);
+  assert.equal(fromSnapshotShape.poseSource, "snapshot_only");
   // A snapshot the world did not have leaves null, which the bundle contract then reports as missing.
   const empty = buildFailureSnapshot({ reasonCode: "x", component: "y", step: 0, snapshot: null });
   assert.equal(empty.playerTile, null);

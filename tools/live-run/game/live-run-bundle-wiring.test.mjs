@@ -41,10 +41,10 @@ test("the runner writes its bundle through the shared validator, and names a ref
     /const written = await writeEvidenceBundle\(capture\.dir, \{ bundle, timeline, actionTrace \}\);/,
   );
   // A bundle that cannot be written is reported with its own reason code, never silently dropped.
-  assert.match(
-    SOURCE,
-    /return Object\.freeze\(\{ state: "refused", reasonCode: String\(error instanceof Error \? error\.message : error\) \}\);/,
-  );
+  assert.match(SOURCE, /return Object\.freeze\(\{ state: "refused", reasonCode \}\);/);
+  // The refusal also reports WHICH facts the dump had, so a reason code is not the only clue.
+  assert.match(SOURCE, /console\.error\(\s*"EVIDENCE_BUNDLE_REFUSED",\s*JSON\.stringify\(\{/);
+  assert.match(SOURCE, /snapshotFields: snapshot === null \? \[\] : Object\.keys\(snapshot\)\.sort\(\),/);
   // Both the success and the failure path publish it on the result.
   assert.match(SOURCE, /result\.bundle = await writeRunBundle\(\{/);
   assert.match(SOURCE, /partialResult\.bundle = await writeRunBundle\(\{/);
@@ -65,6 +65,74 @@ test("the failure dump is built from the bridge's own facts and the trace's own 
   );
   // The manifest may only omit the window probes for the headless window mode, and it has to say so.
   assert.match(SOURCE, /reason: process\.env\.GAMEBUDDY_GPU === undefined \? "headless_environment" : null,/);
+});
+
+test("the world snapshot and the capability face are sampled during the run, not re-read after teardown", () => {
+  // Measured live 2026-10-16: the bundle was assembled after the session ended, when the bridge had already
+  // cleared `#snapshot`, so the failure dump was all nulls (the contract refused it) and the presence projection
+  // saw zero visible actions. Sampling during the run is the only correct source.
+  assert.match(SOURCE, /let lastObservedSnapshot = null;/);
+  assert.match(SOURCE, /function rememberObservation\(\) \{/);
+  // The snapshot is taken at dispatch: the world as the actor saw it just before acting.
+  const execute = SOURCE.slice(
+    SOURCE.indexOf("client.execute = async (request) => {"),
+    SOURCE.indexOf("client.programSubmit"),
+  );
+  assert.match(execute, /rememberObservation\(\);/);
+  assert.match(SOURCE, /settlement: \{ snapshot: lastObservedSnapshot, reasonCode: null, component: null \},/);
+  assert.match(
+    SOURCE,
+    /settlement: \{ snapshot: lastObservedSnapshot, reasonCode: partialResult\.error, component: "runner" \},/,
+  );
+  assert.match(
+    SOURCE,
+    /const snapshot =\s*settlement\?\.snapshot \?\? lastObservedSnapshot \?\? lastObservedPose \?\? null;/,
+  );
+  // The pose comes from the execution receipt's own local observation (the snapshot carries no facing).
+  assert.match(SOURCE, /rememberPose\(receipt\?\.observation\);/);
+  // No bundle path may fall back to the post-teardown read.
+  assert.doesNotMatch(SOURCE, /settlement: \{ snapshot: client\.state\?\.snapshot/);
+  assert.match(SOURCE, /const visibleActionIds = \[\.\.\.advertisedActionSamples\];/);
+  assert.doesNotMatch(SOURCE, /const visibleActionIds = Array\.isArray\(client\.state\.snapshot/);
+});
+
+test("a transport that dies mid-run is recorded, and is its own verdict", () => {
+  // Measured live 2026-10-16: the pipe dropped while the Agent was still working. The Agent then wrote a
+  // truthful line about losing the connection, nothing presented it (the bridge was gone), and the run reported
+  // `silent` - "the companion said nothing" - for a transport fault. Both the record and the verdict are needed:
+  // the reason code alone would not say how far in it happened.
+  assert.match(SOURCE, /const bridgeDisconnections = \[\];/);
+  assert.match(SOURCE, /client\.onConnectionFact\(\(fact\) => \{/);
+  assert.match(SOURCE, /dispatchesSoFar: actionTrace\.length,/);
+  assert.match(SOURCE, /console\.error\("BRIDGE_DISCONNECTED", JSON\.stringify\(entry\)\);/);
+  // The verdict arm sits before `silent`: a dead pipe explains silence, so it must not be reported as silence.
+  const verdict = SOURCE.slice(SOURCE.indexOf("const sessionVerdict ="), SOURCE.indexOf("const morningRoutinePassed"));
+  const disconnectedAt = verdict.indexOf('"bridge_disconnected"');
+  const silentAt = verdict.indexOf('"silent"');
+  assert.ok(disconnectedAt >= 0 && silentAt > disconnectedAt, "bridge_disconnected must be decided before silent");
+  assert.match(SOURCE, /bridgeDisconnections,/);
+});
+
+test("the launcher and the runner agree about the window mode the bundle reports", () => {
+  // Measured live 2026-10-16: the launcher set only GAMEBUDDY_LADDER_WINDOW_MODE (which the ORCHESTRATOR reads
+  // for the game child), so the runner believed it was `visible`, left GPU/resolution null and still claimed
+  // `headless_environment`. The bundle contract refused the bundle - correctly - and the run's own evidence was
+  // missing. Both names must be set, from the one vocabulary.
+  const launcher = readFileSync(new URL("./launch-ladder-live.mjs", import.meta.url), "utf8");
+  assert.match(launcher, /import \{ normalizeLiveRunWindowMode \} from "\.\.\/\.\.\/lib\/stardew-live-run\.mjs";/);
+  assert.match(
+    launcher,
+    /const windowMode = normalizeLiveRunWindowMode\(process\.env\.GAMEBUDDY_LADDER_WINDOW_MODE \?\? "hidden"\);/,
+  );
+  assert.match(launcher, /GAMEBUDDY_LADDER_WINDOW_MODE: windowMode,\n\s+GAMEBUDDY_WINDOW_MODE: windowMode,/);
+  assert.doesNotMatch(launcher, /GAMEBUDDY_LADDER_WINDOW_MODE: process\.env\.GAMEBUDDY_LADDER_WINDOW_MODE/);
+});
+
+test("the launcher tells the runner which slot to return to", () => {
+  // Measured live 2026-10-16: no slot reached the runner, so a failed run could not publish a repro command and
+  // the bundle contract refused it. The slot is run identity, so the launcher passes it.
+  const launcher = readFileSync(new URL("./launch-ladder-live.mjs", import.meta.url), "utf8");
+  assert.match(launcher, /GAMEBUDDY_DAY_START_SLOT: saveName,/);
 });
 
 test("the runner imports the same failure-dump module the replay engine and the gate use", () => {

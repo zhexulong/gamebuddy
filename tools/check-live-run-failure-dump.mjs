@@ -69,6 +69,7 @@ const completeFailure = {
   step: 2,
   playerTile: { x: 12, y: 8 },
   playerFacing: "up",
+  poseSource: "execution_receipt_observation",
   inGameTime: "900",
   day: 5,
   season: "spring",
@@ -116,9 +117,11 @@ async function main() {
 
   // 2. Each field a replay needs is individually load-bearing: drop it and the gate must name it.
   await withFixture("missing-fields", null, async (root) => {
+    // `playerFacing` is checked separately: it is a NAMED absence, not a required field (a bare snapshot has no
+    // facing). Dropping it while the source says the observation carried it is a dropped fact, which is refused.
     for (const field of [
       "playerTile",
-      "playerFacing",
+      "poseSource",
       "inGameTime",
       "day",
       "season",
@@ -136,6 +139,21 @@ async function main() {
         (error) => String(error.message),
       );
       check(`failure_${field}_required`, String(result).includes("failure_field_missing"), String(result));
+    }
+    {
+      const failure = { ...completeFailure, playerFacing: null };
+      const result = await writeEvidenceBundle(root, {
+        bundle: failingBundle({ failure, repro: completeRepro }),
+        actionTrace: TRACE,
+      }).then(
+        () => "written",
+        (error) => String(error.message),
+      );
+      check(
+        "failure_playerFacing_required",
+        String(result).includes("failure_facing_missing_from_observation"),
+        String(result),
+      );
     }
   });
 

@@ -36,6 +36,7 @@
 import { Archive, Pencil, Trash2 } from "lucide-react";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { type Locale, type Messages } from "../i18n";
+import { MarkdownMessage } from "./MarkdownMessage";
 import {
   type ChatTitleV1,
   createManagementPipelineApi,
@@ -446,7 +447,11 @@ export function ChatsSurfacePanel({
       {created !== null && (
         <div className="chat-item-card">
           <div className="chat-item-title">{labels.newChat}</div>
-          <div className="chat-item-main">{created.opening}</div>
+          {/* The opening is companion prose, so it renders through the same
+              sanitised Markdown renderer the transcript uses: a `*beat*` is a
+              stage direction here exactly as it is in a bubble, and printing
+              the raw string showed the player its asterisks. */}
+          <MarkdownMessage className="chat-item-main" text={created.opening} />
         </div>
       )}
       <div className="chat-list" role="list">

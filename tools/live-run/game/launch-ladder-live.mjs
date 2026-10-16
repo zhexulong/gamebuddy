@@ -31,6 +31,7 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "../../lib/stardew-fixture-roots.mjs";
+import { normalizeLiveRunWindowMode } from "../../lib/stardew-live-run.mjs";
 
 const repo = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const args = process.argv.slice(2);
@@ -57,6 +58,10 @@ const scenario = (() => {
   }
   return requested;
 })();
+// The window mode is configuration with ONE vocabulary (`tools/lib/stardew-live-run.mjs`, mirroring the Host's
+// authority), and it is read once here: the game child and the runner's own evidence bundle must agree about
+// what mode this run was in, and an invalid value is refused rather than silently coerced.
+const windowMode = normalizeLiveRunWindowMode(process.env.GAMEBUDDY_LADDER_WINDOW_MODE ?? "hidden");
 const action = option("action", "play_session");
 const label = option("label", "");
 const gameDir = option("game", process.env.GAMEBUDDY_STARDEW_GAME_DIR ?? "D:/Steam/steamapps/common/Stardew Valley");
@@ -264,8 +269,15 @@ await new Promise((resolve) => {
       ...(LEGACY_LADDER === null ? {} : { GAMEBUDDY_AGENT_LADDER: LEGACY_LADDER }),
       GAMEBUDDY_RUNTIME_ROOT: process.env.GAMEBUDDY_RUNTIME_ROOT ?? path.join(process.env.LOCALAPPDATA, "GameBuddy"),
       GAMEBUDDY_RESULT_FILE: resultPath,
+      // The slot this run replayed from, published so a failure dump can say where to return to. Without it the
+      // repro plan has no slot to name and the bundle contract refuses it (measured 2026-10-16).
+      GAMEBUDDY_DAY_START_SLOT: saveName,
       GAMEBUDDY_LADDER_LIVE_LOG: logPath,
-      GAMEBUDDY_LADDER_WINDOW_MODE: process.env.GAMEBUDDY_LADDER_WINDOW_MODE ?? "hidden",
+      // Both names: the orchestrator uses LADDER_WINDOW_MODE for the game child, and the RUNNER records the
+      // window mode it ran under from GAMEBUDDY_WINDOW_MODE. Setting only the former made a hidden run describe
+      // itself as `visible` in its own evidence bundle (which the contract then refused, correctly).
+      GAMEBUDDY_LADDER_WINDOW_MODE: windowMode,
+      GAMEBUDDY_WINDOW_MODE: windowMode,
     },
   });
   let stdout = "";

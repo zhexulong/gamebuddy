@@ -47,15 +47,20 @@ const ACTION_TRACE_ENTRY_FIELDS = Object.freeze([
 ]);
 
 /**
- * The failure moment's own facts: position, facing, WHEN it was (game time + date, without which a replay
- * cannot be repositioned), where it was, and the tile facts that decide blocking.
+ * The failure moment's own facts: position, WHEN it was (game time + date, without which a replay cannot be
+ * repositioned), where it was, and the tile facts that decide blocking.
+ *
+ * `playerFacing` is deliberately NOT required. It is only published on the local observation that rides an
+ * execution receipt (`protocol.ts:896-904`), and a real run produced receipts with no observation at all
+ * (measured 2026-10-16: `poseFields: []`). Requiring it would make a perfectly re-enterable dump unwritable.
+ * What IS required is `poseSource`, so a null facing is a NAMED absence rather than a silent one.
  */
 const FAILURE_SNAPSHOT_FIELDS = Object.freeze([
   "reasonCode",
   "component",
   "step",
   "playerTile",
-  "playerFacing",
+  "poseSource",
   "inGameTime",
   "day",
   "season",
@@ -65,6 +70,9 @@ const FAILURE_SNAPSHOT_FIELDS = Object.freeze([
   "collisionLayers",
   "atMs",
 ]);
+
+/** Where the pose came from: the Mod's own observation, or only the snapshot (which has no facing). */
+export const POSE_SOURCES = Object.freeze(["execution_receipt_observation", "snapshot_only"]);
 
 const SEASONS = Object.freeze(["spring", "summer", "fall", "winter"]);
 
@@ -281,6 +289,14 @@ function validateFailureSnapshot(failure) {
   if (!SEASONS.includes(failure.season)) violations.push(violation("failure_date_invalid", "failure.season"));
   if (!Number.isInteger(failure.year) || failure.year < 1)
     violations.push(violation("failure_date_invalid", "failure.year"));
+  if (!POSE_SOURCES.includes(failure.poseSource)) {
+    violations.push(violation("failure_pose_source_unknown", "failure.poseSource"));
+  }
+  // Facing may be absent, but only when the source says the bridge did not publish it: a null with an observation
+  // source is a fact that was dropped, not a fact that did not exist.
+  if (failure.poseSource === "execution_receipt_observation" && typeof failure.playerFacing !== "string") {
+    violations.push(violation("failure_facing_missing_from_observation", "failure.playerFacing"));
+  }
   if (!isFiniteNumber(failure.atMs)) violations.push(violation("failure_at_ms_invalid", "failure.atMs"));
   return Object.freeze(violations);
 }
@@ -318,6 +334,8 @@ const CHECKED_OBLIGATIONS = Object.freeze([
   "failure_tile_facts_not_array",
   "failure_in_game_time_invalid",
   "failure_date_invalid",
+  "failure_pose_source_unknown",
+  "failure_facing_missing_from_observation",
   "failure_at_ms_invalid",
   "repro_command_missing",
   "repro_budget_missing",
