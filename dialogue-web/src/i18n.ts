@@ -3,7 +3,10 @@ export type Locale = "en" | "zh-CN";
 const STORAGE_KEY = "gamebuddy.tavern.ui-locale";
 
 const en = {
-  appName: "GameBuddy Tavern",
+  // The product's own name, and nothing more: the architecture noun behind it is
+  // internal vocabulary a player never needs, and printing it beside the brand
+  // made the app bar read as two products.
+  appName: "GameBuddy",
   skipToChat: "Skip to chat",
   readOnlyChat: "Read-only chat",
   online: "Online",
@@ -546,7 +549,7 @@ type MessageKey = keyof typeof en;
 export type Messages = Readonly<Record<MessageKey, string>>;
 
 const zh: Messages = {
-  appName: "GameBuddy 酒馆",
+  appName: "GameBuddy",
   skipToChat: "跳至聊天内容",
   readOnlyChat: "只读会话",
   online: "在线",

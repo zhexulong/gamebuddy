@@ -348,8 +348,8 @@ test("i18n.5 (mutation): a key added to one locale only fails with file and line
   // over real catalogue text with one key added to the English side only.
   const original = readFileSync(CATALOGUES[0].file, "utf8");
   const mutated = original.replace(
-    '  appName: "GameBuddy Tavern",',
-    '  appName: "GameBuddy Tavern",\n  gateMutationKey: "only in en",',
+    '  appName: "GameBuddy",',
+    '  appName: "GameBuddy",\n  gateMutationKey: "only in en",',
   );
   assert.notEqual(mutated, original, "the mutation anchor must exist");
   const [en, zh] = catalogues(mutated, CATALOGUES[0].file);
@@ -577,8 +577,8 @@ test("i18n.8 (mutation): a key nothing reads is reported at its file:line", (t) 
   // locales, so i18n.1's parity direction cannot be what fails.
   const original = readFileSync(CATALOGUES[0].file, "utf8");
   const mutated = original
-    .replace('  appName: "GameBuddy Tavern",', '  appName: "GameBuddy Tavern",\n  gateUnreadMutationKey: "nobody reads this",')
-    .replace('  appName: "GameBuddy 酒馆",', '  appName: "GameBuddy 酒馆",\n  gateUnreadMutationKey: "没有人读这个",');
+    .replace('  appName: "GameBuddy",', '  appName: "GameBuddy",\n  gateUnreadMutationKey: "nobody reads this",')
+    .replace('  appName: "GameBuddy",', '  appName: "GameBuddy",\n  gateUnreadMutationKey: "没有人读这个",');
   assert.notEqual(mutated, original, "the mutation anchor must exist");
   const en = catalogues(mutated, CATALOGUES[0].file).find((catalogue) => catalogue.name === "en");
   const injected = en.entries.find((entry) => entry.key === "gateUnreadMutationKey");

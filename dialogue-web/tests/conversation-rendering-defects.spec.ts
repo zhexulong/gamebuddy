@@ -417,7 +417,7 @@ test("defect 4: the first screen's title stack is collapsed and the void is guid
   expect(measured.stack.nameplate, "the companion's name is not printed a third time").toBeNull();
   // The levels that survive: the app bar's brand + companion, the surface
   // heading, and the zero state's invitation (which names the companion).
-  expect(measured.stack.appBarBrand?.text, "the app bar keeps the product mark").toBe("GameBuddy 酒馆");
+  expect(measured.stack.appBarBrand?.text, "the app bar keeps the product mark").toBe("GameBuddy");
   expect(measured.stack.appBarCompanion?.text, "the app bar keeps the companion identity").toBe("Mira");
   expect(measured.stack.surfaceHeading?.text, "the surface keeps its own heading").toBe("聊天");
   expect(measured.stack.openingLine?.text, "the invitation names the companion").toContain("Mira");
