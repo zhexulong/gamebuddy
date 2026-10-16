@@ -487,7 +487,11 @@ if (import.meta.main) {
     });
     writeFileSync(join(traceDir, "loop-report.json"), JSON.stringify(report, null, 2));
     console.log(`LOOP_RESULT ${JSON.stringify({ state: "passed", ...report })}`);
-    process.exitCode = 0;
+    // EXIT EXPLICITLY. The product runtime keeps handles open (bridge socket, timers), so setting `exitCode` and
+    // returning left the process alive: measured, the game stayed up and the driver waited on a child that had already
+    // finished its work -- the last session sat for minutes after its final fact. Every piece of evidence is on disk by
+    // this line, so this one-shot harness ends here rather than holding the world open.
+    process.exit(0);
   } else {
     const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
     try {
