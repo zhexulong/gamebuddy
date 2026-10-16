@@ -11,11 +11,15 @@ import { fileURLToPath } from "node:url";
 
 import {
   admitDesktopCompositionGeneration,
+  assertDesktopCompositionRunRoots,
   composeDesktopBootstrapFrame,
   composeDesktopChildEnvironment,
   createDesktopCompositionRootLayout,
+  desktopCompositionMutableRootPaths,
   installDesktopCompositionGeneration,
   launchDesktopCompositionGateChild,
+  measureDesktopCompositionRunRoots,
+  readDesktopCompositionRuntimeRoot,
   readProductionPointer,
   validateBootstrapAcknowledgement,
   validateCompositionNonceDigest,
@@ -63,6 +67,92 @@ test("composition launch derives the exact launcher-shaped root layout from the 
     () => createDesktopCompositionRootLayout("C:\\fresh", "bad generation"),
     /desktop_compose_generation_invalid/,
   );
+});
+
+test("the run-root measurement fails closed when the child wrote outside the declared layout", async () => {
+  // Today's measured shape: the manifest's runtimeRoot is the temp root itself, so the child's
+  // mutable roots land directly under it while the declared GameBuddy\{data,operational,presentation}
+  // stay empty. The three-directory check reported that run as "the temp root is empty".
+  await withRoot(async (root) => {
+    await mkdir(join(root, "GameBuddy", "data"), { recursive: true });
+    await mkdir(join(root, "GameBuddy", "operational"), { recursive: true });
+    await mkdir(join(root, "GameBuddy", "presentation"), { recursive: true });
+    await mkdir(join(root, "Programs", "GameBuddy", "g-1"), { recursive: true });
+    await writeFile(join(root, "Programs", "GameBuddy", "g-1", "runtime.js"), "x");
+    await mkdir(join(root, "contexts", "c1"), { recursive: true });
+    await writeFile(join(root, "contexts", "c1", "session.jsonl"), "{}\n");
+    const manifestPath = join(root, "deployment-manifest.json");
+    await writeFile(manifestPath, JSON.stringify({ runtimeRoot: root }));
+
+    const measurement = await measureDesktopCompositionRunRoots({
+      root,
+      runtimeRoot: await readDesktopCompositionRuntimeRoot({ manifestPath }),
+    });
+    assert.equal(measurement.declaredFileCount, 0, "the declared mutable roots stay empty");
+    // The manifest and the session write; the launcher's own installed generation under Programs is
+    // never counted (it would make this three).
+    assert.equal(measurement.resolved.fileCount, 2);
+    assert.throws(
+      () => assertDesktopCompositionRunRoots(measurement),
+      /desktop_compose_run_roots_declared_layout_unused/,
+    );
+  });
+});
+
+test("the run-root measurement passes a run whose manifest runtimeRoot is the declared data root", async () => {
+  await withRoot(async (root) => {
+    const dataRoot = join(root, "GameBuddy", "data");
+    await mkdir(join(dataRoot, "tavern"), { recursive: true });
+    await writeFile(join(dataRoot, "tavern", "tavern.sqlite"), "db");
+    await mkdir(join(root, "Programs", "GameBuddy", "g-1"), { recursive: true });
+    await writeFile(join(root, "Programs", "GameBuddy", "g-1", "runtime.js"), "x");
+    const manifestPath = join(root, "deployment-manifest.json");
+    await writeFile(manifestPath, JSON.stringify({ runtimeRoot: dataRoot }));
+
+    const measurement = await measureDesktopCompositionRunRoots({
+      root,
+      runtimeRoot: await readDesktopCompositionRuntimeRoot({ manifestPath }),
+    });
+    assert.equal(measurement.declaredFileCount, 1);
+    assert.equal(measurement.resolved.path, resolve(dataRoot));
+    assert.equal(measurement.resolved.fileCount, 1);
+    assert.equal(assertDesktopCompositionRunRoots(measurement), measurement);
+  });
+});
+
+test("the run-root measurement passes before a run has written anything", async () => {
+  await withRoot(async (root) => {
+    const measurement = await measureDesktopCompositionRunRoots({ root, runtimeRoot: root });
+    assert.equal(measurement.declaredFileCount, 0);
+    assert.equal(measurement.resolved.fileCount, 0);
+    assert.equal(assertDesktopCompositionRunRoots(measurement), measurement);
+  });
+});
+
+test("the mutable root paths and the runtime root reader reject malformed inputs", async () => {
+  assert.deepEqual(desktopCompositionMutableRootPaths("C:\\fresh"), {
+    data: "C:\\fresh\\GameBuddy\\data",
+    operational: "C:\\fresh\\GameBuddy\\operational",
+    presentation: "C:\\fresh\\GameBuddy\\presentation",
+  });
+  assert.throws(() => desktopCompositionMutableRootPaths(""), /desktop_compose_root_invalid/);
+  assert.throws(() => assertDesktopCompositionRunRoots(null), /desktop_compose_run_roots_invalid/);
+  await withRoot(async (root) => {
+    const manifestPath = join(root, "deployment-manifest.json");
+    await assert.rejects(
+      () => readDesktopCompositionRuntimeRoot({ manifestPath }),
+      /desktop_compose_manifest_unreadable/,
+    );
+    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2 }));
+    await assert.rejects(
+      () => readDesktopCompositionRuntimeRoot({ manifestPath }),
+      /desktop_compose_manifest_runtime_root_invalid/,
+    );
+    await assert.rejects(
+      () => readDesktopCompositionRuntimeRoot({ manifestPath: "" }),
+      /desktop_compose_manifest_invalid/,
+    );
+  });
 });
 
 test("composition launch composes the exact schema-v2 bootstrap frame", () => {
@@ -521,7 +611,10 @@ test("the launcher spawns the INSTALLED generation, never the artifact path", ()
     );
 
     try {
-      assert.ok(spawned !== undefined, `spawn must happen (launch settled as ${String(launch?.message ?? "resolved")})`);
+      assert.ok(
+        spawned !== undefined,
+        `spawn must happen (launch settled as ${String(launch?.message ?? "resolved")})`,
+      );
       assert.equal(spawned.cwd, layout.generationRoot);
       // The decisive assertion: both runtime and entry come from the installed
       // generation, never from the artifact tree.
@@ -531,6 +624,10 @@ test("the launcher spawns the INSTALLED generation, never the artifact path", ()
       ]);
       assert.equal(spawned.command.startsWith(artifactRoot), false);
       assert.equal(spawned.args[0].startsWith(artifactRoot), false);
+      // The honest isolation subject travels with the launch handle, and it reads the run's own
+      // manifest instead of re-deriving the declared directories.
+      assert.equal(typeof launched.measureRunRoots, "function");
+      await assert.rejects(() => launched.measureRunRoots(), /desktop_compose_manifest_unreadable/);
     } finally {
       // The launch opens a real guardian-session named-pipe server that the stub
       // answers over a real client socket. Both are live event-loop handles: an

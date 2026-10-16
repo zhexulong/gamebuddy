@@ -21,7 +21,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { cp, lstat, mkdir, readFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 const BOOTSTRAP_SCHEMA = "gamebuddy-desktop-host-bootstrap/v1";
@@ -78,22 +78,157 @@ export function validateCompositionNonceDigest(value) {
   return value === undefined || hex64(value);
 }
 
-export function createDesktopCompositionRootLayout(localAppDataRoot, generation) {
+export function desktopCompositionMutableRootPaths(localAppDataRoot) {
   if (typeof localAppDataRoot !== "string" || localAppDataRoot.length === 0)
     throw new Error("desktop_compose_root_invalid");
+  return Object.freeze({
+    data: join(localAppDataRoot, "GameBuddy", "data"),
+    operational: join(localAppDataRoot, "GameBuddy", "operational"),
+    presentation: join(localAppDataRoot, "GameBuddy", "presentation"),
+  });
+}
+
+export function createDesktopCompositionRootLayout(localAppDataRoot, generation) {
   if (typeof generation !== "string" || !/^[a-z0-9-]+$/i.test(generation))
     throw new Error("desktop_compose_generation_invalid");
+  const mutable = desktopCompositionMutableRootPaths(localAppDataRoot);
   return Object.freeze({
     programRoot: join(localAppDataRoot, "Programs", "GameBuddy"),
-    dataRoot: join(localAppDataRoot, "GameBuddy", "data"),
-    operationalRoot: join(localAppDataRoot, "GameBuddy", "operational"),
-    presentationRoot: join(localAppDataRoot, "GameBuddy", "presentation"),
+    dataRoot: mutable.data,
+    operationalRoot: mutable.operational,
+    presentationRoot: mutable.presentation,
     generationRoot: join(localAppDataRoot, "Programs", "GameBuddy", generation),
     moduleDirectory: join(localAppDataRoot, "Programs", "GameBuddy", generation, "bootstrap", "entry"),
   });
 }
 
-export function composeDesktopBootstrapFrame({ bootstrapId, generation, inventoryDigest, runtimeAdmissionSha256, rootLayout }) {
+/**
+ * The deployment manifest's `runtimeRoot` is the ISOLATION CLAIM'S SUBJECT: the Host resolves its
+ * mutable roots from it (`host/src/deployment-manifest.ts` -> `resolveRuntimePaths`), and
+ * production provisioning pins it to the declared data root
+ * (`desktop/GameBuddy.Desktop.Tests/DeploymentIdentityTests.cs` asserts
+ * `layout.DataRoot === manifest.runtimeRoot`). An assertion that looks only at the bootstrap frame's
+ * declared `GameBuddy\{data,operational,presentation}` can therefore report a run that wrote tens of
+ * thousands of files as "the temp root is empty" whenever `runtimeRoot` names a different directory
+ * (the harness authored `runtimeRoot` = the temp root itself). Read the subject from the run's own
+ * manifest instead of assuming it.
+ */
+export async function readDesktopCompositionRuntimeRoot({ manifestPath }) {
+  if (typeof manifestPath !== "string" || manifestPath.length === 0)
+    throw new Error("desktop_compose_manifest_invalid");
+  let value;
+  try {
+    value = JSON.parse(await readFile(manifestPath, "utf8"));
+  } catch {
+    throw new Error("desktop_compose_manifest_unreadable");
+  }
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    typeof value.runtimeRoot !== "string" ||
+    value.runtimeRoot.length === 0
+  )
+    throw new Error("desktop_compose_manifest_runtime_root_invalid");
+  return resolve(value.runtimeRoot);
+}
+
+async function filesUnder(directory, { excludeDirectories = [] } = {}) {
+  const excluded = new Set(excludeDirectories.map((path) => resolve(path)));
+  const files = [];
+  const visit = async (dir) => {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (excluded.has(resolve(full))) continue;
+        await visit(full);
+      } else if (entry.isFile()) {
+        files.push(full);
+      }
+    }
+  };
+  await visit(directory);
+  return files;
+}
+
+/**
+ * Measures the run's roots as they actually are: each declared mutable root, and the directory the
+ * manifest's `runtimeRoot` names (the child's real data root). The launcher's own installed
+ * generation under `Programs\GameBuddy` is excluded from the resolved measurement because the
+ * launcher - not the child - writes it.
+ */
+export async function measureDesktopCompositionRunRoots({ root, runtimeRoot }) {
+  if (typeof root !== "string" || root.length === 0) throw new Error("desktop_compose_root_invalid");
+  if (typeof runtimeRoot !== "string" || runtimeRoot.length === 0)
+    throw new Error("desktop_compose_runtime_root_invalid");
+  const declared = {};
+  let declaredFileCount = 0;
+  for (const [name, path] of Object.entries(desktopCompositionMutableRootPaths(root))) {
+    let entries = [];
+    let exists = false;
+    try {
+      entries = (await readdir(path)).sort();
+      exists = true;
+    } catch {
+      entries = [];
+    }
+    const fileCount = (await filesUnder(path)).length;
+    declaredFileCount += fileCount;
+    declared[name] = Object.freeze({
+      path,
+      exists,
+      entryCount: entries.length,
+      entries: Object.freeze(entries),
+      fileCount,
+    });
+  }
+  const programRoot = join(root, "Programs", "GameBuddy");
+  const resolvedFileCount = (await filesUnder(runtimeRoot, { excludeDirectories: [programRoot] })).length;
+  return Object.freeze({
+    root: resolve(root),
+    runtimeRoot: resolve(runtimeRoot),
+    programRoot,
+    declared: Object.freeze(declared),
+    declaredFileCount,
+    resolved: Object.freeze({ path: resolve(runtimeRoot), fileCount: resolvedFileCount }),
+  });
+}
+
+/**
+ * Fails closed when the run's content is not where the root layout declared it: content under the
+ * manifest's `runtimeRoot` while every declared mutable root is empty means the composed layout was
+ * not the layout the child used, which is exactly the state that reads as "the temp root is empty".
+ * Run this on the post-run measurement; nothing is written yet before a run, so a resolved count of
+ * zero passes.
+ */
+export function assertDesktopCompositionRunRoots(measurement) {
+  if (measurement === null || typeof measurement !== "object" || Array.isArray(measurement))
+    throw new Error("desktop_compose_run_roots_invalid");
+  const { declared, declaredFileCount, resolved, root } = measurement;
+  if (resolved?.fileCount > 0 && declaredFileCount === 0) {
+    const names = Object.values(declared ?? {}).map((entry) => entry.path);
+    throw new Error(
+      `desktop_compose_run_roots_declared_layout_unused: ${root} holds ${resolved.fileCount} file(s) ` +
+        `under its manifest runtimeRoot ${resolved.path} while the declared mutable roots ` +
+        `(${names.join(", ")}) are empty`,
+    );
+  }
+  return measurement;
+}
+
+export function composeDesktopBootstrapFrame({
+  bootstrapId,
+  generation,
+  inventoryDigest,
+  runtimeAdmissionSha256,
+  rootLayout,
+}) {
   if (!hex64(bootstrapId) || !hex64(inventoryDigest) || !hex64(runtimeAdmissionSha256))
     throw new Error("desktop_compose_frame_invalid");
   return Object.freeze({
@@ -158,7 +293,15 @@ function isSessionEntry(value) {
 
 export function validateGuardianHelloRequest(value, expected) {
   return (
-    exactKeysInOrder(value, ["schema", "protocolVersion", "operation", "bootstrapId", "generation", "inventoryDigest", "runtimeAdmissionSha256"]) &&
+    exactKeysInOrder(value, [
+      "schema",
+      "protocolVersion",
+      "operation",
+      "bootstrapId",
+      "generation",
+      "inventoryDigest",
+      "runtimeAdmissionSha256",
+    ]) &&
     value.schema === GUARDIAN_SESSION_SCHEMA &&
     value.protocolVersion === 1 &&
     value.operation === "hello" &&
@@ -179,9 +322,18 @@ export function validateCompositionReadyMessage(value) {
   );
 }
 
-export function composeDesktopChildEnvironment({ base, localAppDataRoot, manifestPath, surface = undefined, nonceSha256 = undefined, gameSessionMode = "fresh" }) {
-  if (typeof manifestPath !== "string" || manifestPath.length === 0) throw new Error("desktop_compose_manifest_invalid");
-  if (gameSessionMode !== "fresh" && gameSessionMode !== "known") throw new Error("desktop_compose_session_mode_invalid");
+export function composeDesktopChildEnvironment({
+  base,
+  localAppDataRoot,
+  manifestPath,
+  surface = undefined,
+  nonceSha256 = undefined,
+  gameSessionMode = "fresh",
+}) {
+  if (typeof manifestPath !== "string" || manifestPath.length === 0)
+    throw new Error("desktop_compose_manifest_invalid");
+  if (gameSessionMode !== "fresh" && gameSessionMode !== "known")
+    throw new Error("desktop_compose_session_mode_invalid");
   return Object.freeze({
     ...base,
     LOCALAPPDATA: localAppDataRoot,
@@ -275,7 +427,19 @@ export async function admitDesktopCompositionGeneration({ outputRoot, pointer })
     throw new Error("desktop_compose_runtime_admission_invalid");
   }
   if (
-    !exactKeysInOrder(admission, ["schema", "inventoryDigest", "generation", "runtimePath", "runtimeSha256", "bootstrapPath", "bootstrapSha256", "runtimeVersion", "runtimePlatform", "runtimeArch", "runtimeClosure"]) ||
+    !exactKeysInOrder(admission, [
+      "schema",
+      "inventoryDigest",
+      "generation",
+      "runtimePath",
+      "runtimeSha256",
+      "bootstrapPath",
+      "bootstrapSha256",
+      "runtimeVersion",
+      "runtimePlatform",
+      "runtimeArch",
+      "runtimeClosure",
+    ]) ||
     admission.schema !== RUNTIME_ADMISSION_SCHEMA ||
     admission.inventoryDigest !== pointer.inventoryDigest ||
     admission.generation !== pointer.generation ||
@@ -293,7 +457,10 @@ export async function admitDesktopCompositionGeneration({ outputRoot, pointer })
     !isRuntimeClosure(admission.runtimeClosure)
   )
     throw new Error("desktop_compose_runtime_admission_invalid");
-  if (sha256(await readFile(runtimePath)) !== admission.runtimeSha256 || sha256(await readFile(bootstrapPath)) !== admission.bootstrapSha256)
+  if (
+    sha256(await readFile(runtimePath)) !== admission.runtimeSha256 ||
+    sha256(await readFile(bootstrapPath)) !== admission.bootstrapSha256
+  )
     throw new Error("desktop_compose_runtime_admission_mismatch");
   return Object.freeze({ artifactRoot, runtimePath, bootstrapPath });
 }
@@ -334,11 +501,18 @@ function serveGuardianHello({ bootstrapId, generation, inventoryDigest, runtimeA
     const fail = (error) => {
       if (settled) return;
       settled = true;
-      try { session?.destroy(); } catch { /* already gone */ }
+      try {
+        session?.destroy();
+      } catch {
+        /* already gone */
+      }
       server.close(() => undefined);
       rejectHello(error);
     };
-    const timer = setTimeout(() => fail(new Error("desktop_compose_guardian_hello_timeout")), GUARDIAN_HELLO_TIMEOUT_MS);
+    const timer = setTimeout(
+      () => fail(new Error("desktop_compose_guardian_hello_timeout")),
+      GUARDIAN_HELLO_TIMEOUT_MS,
+    );
     server.once("error", () => {
       clearTimeout(timer);
       fail(new Error("desktop_compose_guardian_pipe_unavailable"));
@@ -371,7 +545,8 @@ function serveGuardianHello({ bootstrapId, generation, inventoryDigest, runtimeA
         } catch {
           return reject();
         }
-        if (!validateGuardianHelloRequest(value, { bootstrapId, generation, inventoryDigest, runtimeAdmissionSha256 })) return reject();
+        if (!validateGuardianHelloRequest(value, { bootstrapId, generation, inventoryDigest, runtimeAdmissionSha256 }))
+          return reject();
         clearTimeout(timer);
         settled = true;
         socket.write(
@@ -385,7 +560,9 @@ function serveGuardianHello({ bootstrapId, generation, inventoryDigest, runtimeA
           },
         );
       });
-      socket.on("error", () => { /* peer teardown is normal */ });
+      socket.on("error", () => {
+        /* peer teardown is normal */
+      });
       socket.on("close", () => {
         if (session === socket) session = undefined;
       });
@@ -409,7 +586,11 @@ function serveGuardianHello({ bootstrapId, generation, inventoryDigest, runtimeA
         server.close(() => undefined);
         return;
       }
-      try { session?.destroy(); } catch { /* already gone */ }
+      try {
+        session?.destroy();
+      } catch {
+        /* already gone */
+      }
       server.close(() => undefined);
     },
   });
@@ -428,33 +609,33 @@ function waitForBootstrapAck(child, timeoutMs, stderrTail = () => "", onStatus =
       child.off("exit", onExit);
       fn(value);
     };
-  		const onData = (chunk) => {
-			data += chunk.toString("utf8");
-			// Frames arrive one per line. Consume every complete line, skipping the status narration:
-			// the first line that is not a status frame is the acknowledgement.
-			for (;;) {
-				const newline = data.indexOf("\n");
-				if (newline < 0) return;
-				const line = data.slice(0, newline);
-				data = data.slice(newline + 1);
-				if (line.trim().length === 0) continue;
-				let parsed;
-				try {
-					parsed = JSON.parse(line);
-				} catch {
-					// Not JSON at all: hand it to the caller's validator, which will refuse it with the
-					// precise error rather than this launcher inventing one.
-					settle(resolveAck, line);
-					return;
-				}
-				if (parsed !== null && typeof parsed === "object" && parsed.schema === BOOTSTRAP_STATUS_SCHEMA) {
-					if (typeof onStatus === "function") onStatus(parsed);
-					continue;
-				}
-				settle(resolveAck, line);
-				return;
-			}
-		};
+    const onData = (chunk) => {
+      data += chunk.toString("utf8");
+      // Frames arrive one per line. Consume every complete line, skipping the status narration:
+      // the first line that is not a status frame is the acknowledgement.
+      for (;;) {
+        const newline = data.indexOf("\n");
+        if (newline < 0) return;
+        const line = data.slice(0, newline);
+        data = data.slice(newline + 1);
+        if (line.trim().length === 0) continue;
+        let parsed;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          // Not JSON at all: hand it to the caller's validator, which will refuse it with the
+          // precise error rather than this launcher inventing one.
+          settle(resolveAck, line);
+          return;
+        }
+        if (parsed !== null && typeof parsed === "object" && parsed.schema === BOOTSTRAP_STATUS_SCHEMA) {
+          if (typeof onStatus === "function") onStatus(parsed);
+          continue;
+        }
+        settle(resolveAck, line);
+        return;
+      }
+    };
     const onError = () => settle(rejectAck, new Error("desktop_compose_child_spawn_failed"));
     // The caller also captures a bounded stderr tail; use it so a pre-ack exit names
     // its product code here too, not just on the readiness waiter.
@@ -590,7 +771,12 @@ export async function launchDesktopCompositionGateChild({
     // and bootstrap are therefore resolved relative to the installed root; their
     // artifact-side digests were already verified above by the admission.
     const installedRuntimePath = join(rootLayout.generationRoot, "runtime", "node.exe");
-    const installedBootstrapPath = join(rootLayout.generationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js");
+    const installedBootstrapPath = join(
+      rootLayout.generationRoot,
+      "bootstrap",
+      "entry",
+      "desktop-host-entry.internal.js",
+    );
     await regularFile(installedRuntimePath, "installed_runtime");
     await regularFile(installedBootstrapPath, "installed_bootstrap");
     const child = spawnImpl(installedRuntimePath, [installedBootstrapPath], {
@@ -650,6 +836,15 @@ export async function launchDesktopCompositionGateChild({
       rootLayout,
       frame,
       ack,
+      // The honest isolation subject travels with the launch: the child's real data root is the
+      // deployment manifest's `runtimeRoot`, not the bootstrap frame's declared layout. A driver
+      // that re-derives the narrow `GameBuddy\{data,operational,presentation}` check can report a
+      // run that wrote tens of thousands of files as "the temp root is empty"; this measures both.
+      measureRunRoots: async () =>
+        measureDesktopCompositionRunRoots({
+          root,
+          runtimeRoot: await readDesktopCompositionRuntimeRoot({ manifestPath }),
+        }),
       onMessage: (listener) => messages.subscribe(listener),
       waitForReady: () => readyPromise,
       dispose: () => peer.dispose(),
