@@ -189,6 +189,8 @@ type ChatListEntryV1 = Readonly<{
   status: "active";
   managementRevision: number;
   isSelected: boolean;
+  updatedAtMs: number;
+  preview: string | null;
 }>;
 
 type ChatListV1 = Readonly<{
@@ -367,6 +369,10 @@ function createSession(state: SessionState): ManagementPipelineSession {
           status: entry.status,
           managementRevision: frozenResult.managementRevision,
           isSelected: entry.isSelected,
+          // A rename changes the title and its revision; the row's own facts are
+          // carried through rather than dropped by the re-projection.
+          updatedAtMs: entry.updatedAtMs,
+          preview: entry.preview,
         });
       });
       if (!matched) throw new ManagementPipelineSessionError("state_reconciliation_required");

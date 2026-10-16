@@ -425,6 +425,10 @@ type ChatListEntryV1 = Readonly<{
   status: "active";
   managementRevision: number;
   isSelected: boolean;
+  /** The Host's durable last-activity time for the thread. */
+  updatedAtMs: number;
+  /** Plain-text preview of the last message; `null` for a Chat with no message. */
+  preview: string | null;
 }>;
 
 type ChatListV1 = Readonly<{
@@ -990,7 +994,15 @@ const DRAFT_KEYS = ["apiVersion", "revision", "text"] as const;
 const SAVE_DRAFT_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "text"] as const;
 const DISCARD_DRAFT_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision"] as const;
 const _CHAT_LIST_QUERY_KEYS = ["apiVersion", "state"] as const;
-const CHAT_LIST_ENTRY_KEYS = ["handle", "title", "status", "managementRevision", "isSelected"] as const;
+const CHAT_LIST_ENTRY_KEYS = [
+  "handle",
+  "title",
+  "status",
+  "managementRevision",
+  "isSelected",
+  "updatedAtMs",
+  "preview",
+] as const;
 const CHAT_LIST_KEYS = ["apiVersion", "chats"] as const;
 const RENAME_COMMAND_KEYS = [
   "apiVersion",
@@ -1698,7 +1710,9 @@ function isChatListEntry(value: unknown): value is ChatListEntryV1 {
     (value.title === null || isLengthBoundedString(value.title, 0, 256)) &&
     value.status === "active" &&
     isNonNegativeSafeInteger(value.managementRevision) &&
-    typeof value.isSelected === "boolean"
+    typeof value.isSelected === "boolean" &&
+    isNonNegativeSafeInteger(value.updatedAtMs) &&
+    (value.preview === null || isLengthBoundedString(value.preview, 0, 160))
   );
 }
 

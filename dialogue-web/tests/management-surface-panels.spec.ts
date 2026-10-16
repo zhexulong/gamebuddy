@@ -114,7 +114,7 @@ test("the product Chats surface renames through chat/title and moves the convers
       contentType: "application/json",
       body: JSON.stringify({
         apiVersion: 1,
-        chats: [{ handle: chatHandle, title: rootTitle, status: "active", managementRevision: 1, isSelected: true }],
+        chats: [{ handle: chatHandle, title: rootTitle, status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." }],
       }),
     }),
   );
@@ -458,7 +458,7 @@ test("the Chats row's archive cannot fire without its confirmation step", async 
       contentType: "application/json",
       body: JSON.stringify({
         apiVersion: 1,
-        chats: [{ handle: chatHandle, title: null, status: "active", managementRevision: 1, isSelected: true }],
+        chats: [{ handle: chatHandle, title: null, status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." }],
       }),
     }),
   );
@@ -505,7 +505,7 @@ test("every control on the Chats surface clears the 44px touch floor", async ({ 
       contentType: "application/json",
       body: JSON.stringify({
         apiVersion: 1,
-        chats: [{ handle: chatHandle, title: "A durable chat", status: "active", managementRevision: 1, isSelected: true }],
+        chats: [{ handle: chatHandle, title: "A durable chat", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." }],
       }),
     }),
   );
@@ -572,8 +572,8 @@ test("a non-current Chats row is archived with its own handle and revision", asy
       body: JSON.stringify({
         apiVersion: 1,
         chats: [
-          { handle: chatHandle, title: "Mounted chat", status: "active", managementRevision: 4, isSelected: true },
-          { handle: otherHandle, title: "Older chat", status: "active", managementRevision: 9, isSelected: false },
+          { handle: chatHandle, title: "Mounted chat", status: "active", managementRevision: 4, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." },
+          { handle: otherHandle, title: "Older chat", status: "active", managementRevision: 9, isSelected: false, updatedAtMs: 1_759_913_600_000, preview: "A quieter morning than this one." },
         ],
       }),
     }),
@@ -663,7 +663,7 @@ test("the Memory panel shows the companion's chapters and opens one for correcti
       contentType: "application/json",
       body: JSON.stringify({
         apiVersion: 1,
-        chats: [{ handle: chatHandle, title: null, status: "active", managementRevision: 1, isSelected: true }],
+        chats: [{ handle: chatHandle, title: null, status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." }],
       }),
     }),
   );
@@ -739,7 +739,7 @@ test("the armed Chats row puts the confirmation on its own line and hides the ro
       contentType: "application/json",
       body: JSON.stringify({
         apiVersion: 1,
-        chats: [{ handle: chatHandle, title: longTitle, status: "active", managementRevision: 1, isSelected: true }],
+        chats: [{ handle: chatHandle, title: longTitle, status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." }],
       }),
     }),
   );
@@ -880,10 +880,10 @@ test("archiving the active chat moves the shell to the next chat and restarts th
       json200({
         apiVersion: 1,
         chats: archived
-          ? [{ handle: survivorHandle, title: "The survivor", status: "active", managementRevision: 3, isSelected: selected === survivorHandle }]
+          ? [{ handle: survivorHandle, title: "The survivor", status: "active", managementRevision: 3, isSelected: selected === survivorHandle, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." }]
           : [
-              { handle: deadHandle, title: "The mounted one", status: "active", managementRevision: 1, isSelected: true },
-              { handle: survivorHandle, title: "The survivor", status: "active", managementRevision: 3, isSelected: false },
+              { handle: deadHandle, title: "The mounted one", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." },
+              { handle: survivorHandle, title: "The survivor", status: "active", managementRevision: 3, isSelected: false, updatedAtMs: 1_759_913_600_000, preview: "A quieter morning than this one." },
             ],
       }),
     ),
@@ -973,7 +973,7 @@ test("archiving the last active chat stops the live stream instead of leaving it
         apiVersion: 1,
         chats: archived
           ? []
-          : [{ handle: chatHandle, title: "The only one", status: "active", managementRevision: 1, isSelected: true }],
+          : [{ handle: chatHandle, title: "The only one", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." }],
       }),
     ),
   );
@@ -1135,8 +1135,8 @@ test("the Chats list rows take the surface's own measure instead of the whole pa
       json200({
         apiVersion: 1,
         chats: [
-          { handle: chatHandle, title: "A durable chat", status: "active", managementRevision: 1, isSelected: true },
-          { handle: `${"E".repeat(42)}A`, title: "An older chat", status: "active", managementRevision: 2, isSelected: false },
+          { handle: chatHandle, title: "A durable chat", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." },
+          { handle: `${"E".repeat(42)}A`, title: "An older chat", status: "active", managementRevision: 2, isSelected: false, updatedAtMs: 1_759_913_600_000, preview: "A quieter morning than this one." },
         ],
       }),
     ),

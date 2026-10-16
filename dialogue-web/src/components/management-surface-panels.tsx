@@ -114,12 +114,33 @@ type ChatListEntry = Readonly<{
   title: string | null;
   managementRevision: number;
   isSelected: boolean;
+  /** The Host's durable last-activity time for the thread. */
+  updatedAtMs: number;
+  /** Plain-text last-message preview the Host already stripped and bounded. */
+  preview: string | null;
 }>;
 
 type ChatListView = readonly ChatListEntry[] | "loading" | "error";
 
 function chatListRows(view: ChatListView): readonly ChatListEntry[] {
   return view === "loading" || view === "error" ? [] : view;
+}
+
+/**
+ * The row's own last-activity stamp: the catalogue's two relative words for today
+ * and yesterday, and the platform's own short numeric date beyond them. Every Chat
+ * the player never renamed carries the same `New chat` title, so this line and the
+ * preview are what tell one row from another.
+ */
+function chatRowStamp(updatedAtMs: number, labels: Messages, nowMs: number): string {
+  const updated = new Date(updatedAtMs);
+  const now = new Date(nowMs);
+  const startedAt = (value: Date): Date => new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  const updatedDay = startedAt(updated).getTime();
+  const today = startedAt(now).getTime();
+  if (updatedDay === today) return labels.chatRowToday;
+  if (updatedDay === startedAt(new Date(today - 86_400_000)).getTime()) return labels.chatRowYesterday;
+  return updated.toLocaleDateString();
 }
 
 /**
@@ -511,6 +532,13 @@ export function ChatsSurfacePanel({
                           )}
                         </div>
                       )}
+                    </div>
+                    {/* The row's own last-activity facts, below its title line: the durable time
+                        the Host recorded and the plain-text opening of the last message. */}
+                    <div className="chat-item-meta" data-testid="chat-item-meta">
+                      <span data-testid="chat-item-when">{chatRowStamp(chat.updatedAtMs, labels, Date.now())}</span>
+                      {" · "}
+                      {chat.preview === null ? null : <span data-testid="chat-item-preview">{chat.preview}</span>}
                     </div>
                     {/* The confirmation is its own row of the card, below the title row: it never
                         shares a line with the title or with the row's controls. */}

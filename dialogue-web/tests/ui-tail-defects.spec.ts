@@ -438,14 +438,14 @@ test("item 8: one long opening does not fill the whole Chats card", async ({ pag
   await stubShell(page);
   const chatList = {
     apiVersion: 1,
-    chats: [{ handle: chatHandle, title: "Farm morning", status: "active", managementRevision: 1, isSelected: true }],
+    chats: [{ handle: chatHandle, title: "Farm morning", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." }],
   };
   await page.route("**/api/tavern/v1/chats?*", (route) => route.fulfill(jsonOk(chatList)));
   await page.route("**/api/tavern/v1/chats", (route) =>
     route.fulfill(
       jsonOk({
         apiVersion: 1,
-        chat: { handle: turnHandle, title: null, status: "active", managementRevision: 1, isSelected: false },
+        chat: { handle: turnHandle, title: null, status: "active", managementRevision: 1, isSelected: false, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." },
         opening: LONG_OPENING,
       }),
     ),

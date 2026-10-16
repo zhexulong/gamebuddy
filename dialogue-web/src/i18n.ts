@@ -16,6 +16,11 @@ const en = {
   chatTranscript: "Chat transcript",
   emptyChatOpening: "A new journey with {{name}} begins here…",
   untitledChat: "New chat",
+  // The Chat row's own last-activity stamp: two relative words and, beyond them,
+  // the locale's own numeric date. Nothing invented, and nothing that reads as a
+  // duration the Host never measured.
+  chatRowToday: "Today",
+  chatRowYesterday: "Yesterday",
   savedDraft: "Saved draft",
   unsavedDraft: "Unsaved draft",
   openingChat: "Opening chat…",
@@ -560,6 +565,8 @@ const zh: Messages = {
   chatTranscript: "聊天记录",
   emptyChatOpening: "与 {{name}} 开启一段新的旅程…",
   untitledChat: "新对话",
+  chatRowToday: "今天",
+  chatRowYesterday: "昨天",
   savedDraft: "已保存草稿",
   unsavedDraft: "未保存草稿",
   openingChat: "正在读取聊天…",

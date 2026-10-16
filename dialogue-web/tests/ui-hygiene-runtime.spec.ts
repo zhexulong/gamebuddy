@@ -204,7 +204,7 @@ async function mountPeerSurfaces(page: Page): Promise<void> {
     route.fulfill(
       jsonOk({
         apiVersion: 1,
-        chats: [{ handle, title: "A named conversation", status: "active", managementRevision: 1, isSelected: true }],
+        chats: [{ handle, title: "A named conversation", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." }],
       }),
     ),
   );
@@ -613,7 +613,7 @@ test("gate 3 (control surface): no control paints itself with the browser's own 
     route.fulfill(
       jsonOk({
         apiVersion: 1,
-        chats: [{ handle, title: null, status: "active", managementRevision: 1, isSelected: true }],
+        chats: [{ handle, title: null, status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." }],
       }),
     ),
   );
@@ -658,7 +658,7 @@ test("gate 3 (chat row reading): the Chats row select control stays legible at b
     route.fulfill(
       jsonOk({
         apiVersion: 1,
-        chats: [{ handle, title: "A named conversation", status: "active", managementRevision: 1, isSelected: true }],
+        chats: [{ handle, title: "A named conversation", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." }],
       }),
     ),
   );

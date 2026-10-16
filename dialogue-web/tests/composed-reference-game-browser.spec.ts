@@ -4420,9 +4420,9 @@ test("Chats surface switches the mounted conversation on click and refuses a sta
   const listOf = () => ({
     apiVersion: 1,
     chats: [
-      { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle },
-      { handle: secondHandle, title: "Second conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === secondHandle },
-      { handle: thirdHandle, title: "Third conversation", status: "active", managementRevision: 1, isSelected: false },
+      { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." },
+      { handle: secondHandle, title: "Second conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === secondHandle, updatedAtMs: 1_760_086_400_000, preview: "She is already on the porch with the lantern." },
+      { handle: thirdHandle, title: "Third conversation", status: "active", managementRevision: 1, isSelected: false, updatedAtMs: 1_759_913_600_000, preview: null },
     ],
   });
   const secondChat = {
@@ -4546,13 +4546,15 @@ test("selecting a chat from the Chats list shows that conversation", async ({ pa
   const listOf = () => ({
     apiVersion: 1,
     chats: [
-      { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle },
+      { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." },
       {
         handle: secondHandle,
         title: "Second conversation",
         status: "active",
         managementRevision: 1,
         isSelected: mountedHandle === secondHandle,
+        updatedAtMs: 1_760_086_400_000,
+        preview: "She is already on the porch with the lantern.",
       },
     ],
   });
@@ -4638,13 +4640,15 @@ test("a turn_in_flight selection answer leaves the player on the Chats list", as
   const listOf = () => ({
     apiVersion: 1,
     chats: [
-      { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: true },
+      { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." },
       {
         handle: secondHandle,
         title: "Second conversation",
         status: "active",
         managementRevision: 1,
         isSelected: false,
+        updatedAtMs: 1_760_086_400_000,
+        preview: "She is already on the porch with the lantern.",
       },
     ],
   });
@@ -4731,13 +4735,15 @@ test("switching chats reseeds the composer from the target chat's own durable dr
       jsonOk({
         apiVersion: 1,
         chats: [
-          { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle },
+          { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." },
           {
             handle: secondHandle,
             title: "Second conversation",
             status: "active",
             managementRevision: 1,
             isSelected: mountedHandle === secondHandle,
+            updatedAtMs: 1_760_086_400_000,
+            preview: "She is already on the porch with the lantern.",
           },
         ],
       }),
@@ -4880,8 +4886,8 @@ test("clicking another chat while a turn generates aborts that turn and switches
         jsonOk({
           apiVersion: 1,
           chats: [
-            { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle },
-            { handle: targetHandle, title: "Second conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === targetHandle },
+            { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." },
+            { handle: targetHandle, title: "Second conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === targetHandle, updatedAtMs: 1_760_086_400_000, preview: "She is already on the porch with the lantern." },
           ],
         }),
       );
@@ -5021,8 +5027,8 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
         jsonOk({
           apiVersion: 1,
           chats: [
-            { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: true },
-            { handle: targetHandle, title: targetTitle, status: "active", managementRevision: targetTitleRevision, isSelected: false },
+            { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." },
+            { handle: targetHandle, title: targetTitle, status: "active", managementRevision: targetTitleRevision, isSelected: false, updatedAtMs: 1_760_086_400_000, preview: "She is already on the porch with the lantern." },
           ],
         }),
       );
