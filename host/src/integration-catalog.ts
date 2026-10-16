@@ -36,7 +36,7 @@ export type ConfigurableIntegrationLauncher = IntegrationLauncher &
  * Narrow lifecycle contract a game integration provider returns so generic
  * composition layers never import game-specific coordinator types. The child
  * object itself never crosses the composition facade; only its close outcome
- * is observed by the owner (same contract as HostChildLifecycle).
+ * is observed by the owner.
  */
 export type GameLifecycleProviderCapability = Readonly<{
   close(): Promise<void>;
@@ -78,12 +78,14 @@ export type GameIntegrationProvider = Readonly<{
    * stay free of platform and game types while the composition root remains the
    * one place that wires them together.
    */
-  createLifecycleCoordinator(input: Readonly<{
-    manifest: HostDeploymentManifest;
-    game: SemanticGameProductionAuthority;
-    folderPicker: object;
-    runtimeCollaborator: object;
-  }>): Promise<GameLifecycleProviderCapability>;
+  createLifecycleCoordinator(
+    input: Readonly<{
+      manifest: HostDeploymentManifest;
+      game: SemanticGameProductionAuthority;
+      folderPicker: object;
+      runtimeCollaborator: object;
+    }>,
+  ): Promise<GameLifecycleProviderCapability>;
 }>;
 
 export type IntegrationCatalog = Readonly<{
@@ -119,7 +121,13 @@ export function createIntegrationCatalog(
   launchers: readonly ConfigurableIntegrationLauncher[],
   providers: readonly GameIntegrationProvider[] = [],
 ): IntegrationCatalog {
-  if (!Array.isArray(launchers) || !Array.isArray(providers) || launchers.length + providers.length === 0 || launchers.length > 32 || providers.length > 32) {
+  if (
+    !Array.isArray(launchers) ||
+    !Array.isArray(providers) ||
+    launchers.length + providers.length === 0 ||
+    launchers.length > 32 ||
+    providers.length > 32
+  ) {
     throw new Error("invalid_integration_catalog");
   }
   const byId = new Map<string, ConfigurableIntegrationLauncher>();
@@ -201,11 +209,7 @@ function isLauncher(value: unknown): value is ConfigurableIntegrationLauncher {
 }
 
 function isProvider(value: unknown): value is GameIntegrationProvider {
-  return (
-    isRecord(value) &&
-    typeof value.gameId === "string" &&
-    typeof value.createLifecycleCoordinator === "function"
-  );
+  return isRecord(value) && typeof value.gameId === "string" && typeof value.createLifecycleCoordinator === "function";
 }
 
 function isOpaque(value: unknown): value is string {

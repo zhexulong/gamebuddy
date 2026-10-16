@@ -48,6 +48,7 @@
         "src/tavern-management-dialogue-web.ts!",
         "src/tavern/static-artifact/index.ts!",
         "scripts/build-desktop-launcher-test-generation.mjs",
+        "scripts/run-stardew-mod-autodeploy-sandbox.mjs",
         "scripts/compiled-test-bootstrap.mjs",
         "scripts/production-artifact-esm-resolution-probe.mjs",
         "scripts/start-test-artifact.mjs",
