@@ -443,9 +443,25 @@ async function verifyPhysicalPath(path: string): Promise<void> {
 }
 
 function samePhysicalPath(left: string, right: string): boolean {
-  const a = resolve(left).replaceAll("\\", "/");
-  const b = resolve(right).replaceAll("\\", "/");
+  const a = comparablePhysicalSpelling(left);
+  const b = comparablePhysicalSpelling(right);
   return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+/**
+ * One comparable spelling for a path and the `realpath` of that same object. They
+ * differ in exactly one way worth erasing: how a runtime spells the Windows drive
+ * root. `resolve` yields `C:\`, while some runtimes' `realpath` yields `C:` for that
+ * same directory - a form `path.resolve` would reinterpret as the process's current
+ * directory on that drive, so it is pinned here instead. Every ancestor walk ends at
+ * that root, so without this an ordinary Host path under the real data root was
+ * refused as unsafe. The tolerance covers that spelling and nothing else: any other
+ * difference still compares unequal, so a junction resolving to a different path is
+ * still rejected.
+ */
+function comparablePhysicalSpelling(path: string): string {
+  const slashed = path.replaceAll("\\", "/");
+  return /^[A-Za-z]:\/?$/.test(slashed) ? `${slashed.slice(0, 2)}/` : resolve(path).replaceAll("\\", "/");
 }
 
 function assertContained(path: string, root: string | undefined): void {

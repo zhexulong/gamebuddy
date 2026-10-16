@@ -29,6 +29,30 @@ const packageRoot = findPackageRoot(sourceDirectory);
 const sourceRoot = resolve(packageRoot, "src");
 const compiledRoot = resolve(sourceDirectory, "..", "..");
 /**
+ * Resolve one member of the compiled artifact this fixture replays.
+ *
+ * `compiledRoot` is the directory this file was compiled INTO - the build target is
+ * `host/dist-test` and `tsconfig.json` is `noEmit` - so it is the sibling of `src`,
+ * never `src` itself. Run against the TypeScript source instead (`bun test src/...`)
+ * it names the tree the sources live in, which carries none of the `.js` modules the
+ * fixture copies and the wire child imports; the fixture would otherwise die on a
+ * bare ENOENT while copying its first module. Name the missing artifact instead.
+ */
+function compiledArtifact(...segments: readonly string[]): string {
+  const path = resolve(compiledRoot, ...segments);
+  if (!existsSync(path)) throw new Error(`wire_fixture_compiled_artifact_missing:${path}`);
+  return path;
+}
+/**
+ * The Node executable the wire child must run under. node:test's `mock.module()`, the
+ * `--experimental-test-module-mocks` flag and a realpath that spells the Windows drive
+ * root `C:\` are Node behaviors this fixture depends on, and under `bun test`
+ * `process.execPath` is bun. The Host suite's own coordinator (`host/scripts/run-tests.mjs`)
+ * publishes the Node it resolved as GAMEBUDDY_HOST_TEST_NODE; `process.execPath` stays the
+ * correct fallback whenever this suite itself runs under Node.
+ */
+const nodeExecutable = process.env.GAMEBUDDY_HOST_TEST_NODE ?? process.execPath;
+/**
  * How long a fixture child may take to CLOSE after a failure. The invariant is that it
  * closes at all - a failed boot must tear its composition down and let the process exit -
  * and this bound only exists so a genuine hang fails instead of hanging the suite. It was
@@ -362,34 +386,34 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
   try {
     await Promise.all([moduleDirectory, rootLayout.dataRoot, rootLayout.operationalRoot, rootLayout.presentationRoot].map((path) => mkdir(path, { recursive: true })));
     await mkdir(join(moduleDirectory, "bootstrap", "wire"), { recursive: true });
-    await writeFile(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js"), await readFile(resolve(compiledRoot, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js")));
-    await cp(resolve(compiledRoot, "windows-reparse-inspector"), join(moduleDirectory, "windows-reparse-inspector"), { recursive: true });
-    await cp(resolve(compiledRoot, "strict-json-reader.js"), join(moduleDirectory, "strict-json-reader.js"));
+    await writeFile(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js"), await readFile(compiledArtifact("bootstrap", "wire", "desktop-runtime-bootstrap.internal.js")));
+    await cp(compiledArtifact("windows-reparse-inspector"), join(moduleDirectory, "windows-reparse-inspector"), { recursive: true });
+    await cp(compiledArtifact("strict-json-reader.js"), join(moduleDirectory, "strict-json-reader.js"));
     await mkdir(join(moduleDirectory, "composition"), { recursive: true });
-    await cp(resolve(compiledRoot, "composition", "desktop-host-composition.js"), join(moduleDirectory, "composition", "desktop-host-composition.js"));
+    await cp(compiledArtifact("composition", "desktop-host-composition.js"), join(moduleDirectory, "composition", "desktop-host-composition.js"));
     // The bootstrap entry imports the named exit-reclamation contract (the composition's
     // close reports its steps through it) and the exit record it writes for an operator.
     // Both are production modules the copied entry resolves by relative URL, so the
     // fixture ships them exactly like the other seams above.
-    await cp(resolve(compiledRoot, "composition", "desktop-host-reclamation.js"), join(moduleDirectory, "composition", "desktop-host-reclamation.js"));
-    await cp(resolve(compiledRoot, "bootstrap", "wire", "desktop-host-exit-record.internal.js"), join(moduleDirectory, "bootstrap", "wire", "desktop-host-exit-record.internal.js"));
+    await cp(compiledArtifact("composition", "desktop-host-reclamation.js"), join(moduleDirectory, "composition", "desktop-host-reclamation.js"));
+    await cp(compiledArtifact("bootstrap", "wire", "desktop-host-exit-record.internal.js"), join(moduleDirectory, "bootstrap", "wire", "desktop-host-exit-record.internal.js"));
     // The wire worker drives the real contained runtime platform encoder so the
     // fixture asserts the actual arm frame (approvedExecutable) and the launch
     // frame consistency instead of an opaque placeholder. That module needs the
     // launch-plan encoder and the synchronized contained runtime core; the
     // composer-core import inside it is a Guardian-owner seam the fixture never
     // invokes, so a hermetic throwing stub keeps the fixture self-contained.
-    await cp(resolve(compiledRoot, "composition", "stardew", "stardew-guardian-platform.js"), join(moduleDirectory, "composition", "stardew", "stardew-guardian-platform.js"));
-    await cp(resolve(compiledRoot, "composition", "stardew", "stardew-native-role-launch-plan.private.js"), join(moduleDirectory, "composition", "stardew", "stardew-native-role-launch-plan.private.js"));
+    await cp(compiledArtifact("composition", "stardew", "stardew-guardian-platform.js"), join(moduleDirectory, "composition", "stardew", "stardew-guardian-platform.js"));
+    await cp(compiledArtifact("composition", "stardew", "stardew-native-role-launch-plan.private.js"), join(moduleDirectory, "composition", "stardew", "stardew-native-role-launch-plan.private.js"));
     const containmentCore = join(moduleDirectory, "containment", "runtime", "core", "contained-game-runtime.js");
     await mkdir(dirname(containmentCore), { recursive: true });
-    await cp(resolve(compiledRoot, "containment", "runtime", "core", "contained-game-runtime.js"), containmentCore);
+    await cp(compiledArtifact("containment", "runtime", "core", "contained-game-runtime.js"), containmentCore);
     // The recovery wire tolerates the durable engine's refusal by the identity the
     // platform contract exports, so the bootstrap module imports that contract at
     // runtime; the fixture copies it the same way it copies the runtime core.
     const containmentContract = join(moduleDirectory, "containment", "runtime", "contract", "game-runtime.js");
     await mkdir(dirname(containmentContract), { recursive: true });
-    await cp(resolve(compiledRoot, "containment", "runtime", "contract", "game-runtime.js"), containmentContract);
+    await cp(compiledArtifact("containment", "runtime", "contract", "game-runtime.js"), containmentContract);
     const composerCorePath = join(moduleDirectory, "games", "stardew", "lifecycle", "stardew-private-bootstrap-composer.core.js");
     await mkdir(dirname(composerCorePath), { recursive: true });
     await writeFile(composerCorePath, "// Hermetic wire-fixture stub: the contained runtime platform imports these seams but\n// never invokes them; the recovery finalization in particular is only reachable\n// through the launch collaborator factory this fixture never builds. The stub keeps\n// the module graph self-contained instead of dragging in the whole composer core\n// closure. Every seam throws instead of no-oping, so a fixture that ever did reach\n// one fails loudly rather than silently skipping a durable step.\nexport function createStardewBootstrapGuardianOwnerBinding() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function readStardewBootstrapGuardianNativeArmFrame() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function consumeStardewBootstrapGuardianOwnerBinding() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function settleOwnedPlayerHostContainedRuntimeAttempt() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\nexport function finalizeRecoveredPlayerHostContainedRuntimeAttempt() { throw new Error(\"wire_fixture_composer_core_stub_unused\"); }\n");
@@ -402,12 +426,12 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
     // fixture being updated, which left all 14 executable cases failing on a
     // clean tree with ERR_MODULE_NOT_FOUND for voice-bootstrap.js.
     await writeFile(join(moduleDirectory, "voice-bootstrap.js"), "// Hermetic wire-fixture stub: the bootstrap entry imports this seam but the\n// fixture configures no Voice surface, so it is never invoked.\nexport async function connectHealthyVoiceGateway() { throw new Error(\"wire_fixture_voice_stub_unused\"); }\nexport async function connectHealthyVoiceGatewayWith() { throw new Error(\"wire_fixture_voice_stub_unused\"); }\n");
-    await cp(resolve(compiledRoot, "deployment-manifest.js"), join(moduleDirectory, "deployment-manifest.js"));
+    await cp(compiledArtifact("deployment-manifest.js"), join(moduleDirectory, "deployment-manifest.js"));
     // The bootstrap entry imports the presentation-handoff publisher (introduced
     // with the private presentation pipe) . The fixture ships every module the
     // compiled entry actually imports; a missing one fails every wire scenario
     // with ERR_MODULE_NOT_FOUND before the first assertion.
-    await cp(resolve(compiledRoot, "desktop-presentation-handoff.internal.js"), join(moduleDirectory, "desktop-presentation-handoff.internal.js"));
+    await cp(compiledArtifact("desktop-presentation-handoff.internal.js"), join(moduleDirectory, "desktop-presentation-handoff.internal.js"));
     const manifestPath = join(fixtureRoot, "deployment-manifest.json");
     await writeFile(manifestPath, `${JSON.stringify({
       schemaVersion: 2,
@@ -459,7 +483,7 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
     const stdio: "pipe"[] | ["pipe", "pipe", "pipe", "ipc"] = fixturesWithIpc
       ? ["pipe", "pipe", "pipe", "ipc"]
       : ["pipe", "pipe", "pipe"];
-    worker = spawn(process.execPath, ["--experimental-test-module-mocks", workerPath], { stdio, env: { ...process.env, GAMEBUDDY_WIRE_FIXTURE: JSON.stringify(wireFixture), LOCALAPPDATA: fixtureRoot, GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath, GAMEBUDDY_HOST_GAME_SESSION_MODE: "known", ...(options.surface === undefined ? {} : { GAMEBUDDY_HOST_SURFACE: options.surface }), ...(options.nonceSha256 === undefined ? {} : { GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: options.nonceSha256 }) } });
+    worker = spawn(nodeExecutable, ["--experimental-test-module-mocks", workerPath], { stdio, env: { ...process.env, GAMEBUDDY_WIRE_FIXTURE: JSON.stringify(wireFixture), LOCALAPPDATA: fixtureRoot, GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath, GAMEBUDDY_HOST_GAME_SESSION_MODE: "known", ...(options.surface === undefined ? {} : { GAMEBUDDY_HOST_SURFACE: options.surface }), ...(options.nonceSha256 === undefined ? {} : { GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: options.nonceSha256 }) } });
     const workerClose = waitForClose(worker);
     const failureScenario = scenario === "composition-failure" || scenario === "ack-write-failure" || scenario === "termination-failure" || scenario === "invalid-surface" || scenario === "invalid-nonce";
     const output = failureScenario ? undefined : collectFrames(worker.stdout!, worker);
@@ -836,7 +860,12 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   assert.match(source, /export async function runDesktopHostBootstrap\(artifactRoot: string\)/);
   assert.doesNotMatch(source, /import.meta.main/);
   assert.doesNotMatch(source, /desktop-host-entry.internal.js/);
-   assert.match(source, /createDesktopProductCompositionForBootstrap\(rootAuthority, guardianAuthority, assemblyInput\)/);
+  // The private bootstrap factory is invoked once, positionally, through the three
+  // authorities it consumes. Pin the call and its argument order, not the line breaks
+  // the formatter chose between them (the source broke the call across lines in
+  // e891adee, which is what left this assertion reading a call that no longer exists).
+  const compositionCall = /createDesktopProductCompositionForBootstrap\(\s*rootAuthority,\s*guardianAuthority,\s*assemblyInput,\s*\)/;
+  assert.match(source, compositionCall);
   assert.match(source, /new WeakSet<object>\(\)/);
   assert.match(source, /new WeakMap<object, DesktopRootLayout>\(\)/);
   assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
@@ -862,7 +891,7 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   assert.doesNotMatch(source, /stardew-player-host-process-owner/);
   assert.doesNotMatch(source, /stardew-ai-client-process-owner/);
   assert.doesNotMatch(source, /node:child_process/);
-   const compositionCallIndex = source.indexOf("createDesktopProductCompositionForBootstrap(rootAuthority, guardianAuthority, assemblyInput)");
+  const compositionCallIndex = source.search(compositionCall);
   const acknowledgementIndex = source.indexOf("await writeAcknowledgement(frame)");
   assert.ok(compositionCallIndex >= 0);
   assert.ok(acknowledgementIndex >= 0);
@@ -874,7 +903,8 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   // the channel.
   assert.match(source, /const statusSchema = "gamebuddy-desktop-host-bootstrap-status\/v1"/);
   assert.match(source, /const statusToken = \/\^\[a-z\]\[a-z0-9-\]\{0,63\}\$\//);
-  assert.match(source, /process\.stdout\.write\(bytes, \(\) => \{ process\.stdout\.off\("error", onError\); resolveWrite\(\); \}\);/);
+  // Formatting-tolerant: the write callback is a block the formatter may break across lines.
+  assert.match(source, /process\.stdout\.write\(\s*bytes,\s*\(\) => \{\s*process\.stdout\.off\("error", onError\);\s*resolveWrite\(\);\s*\}\);/);
   assert.match(source, /process\.stdout\.end\(acknowledgement/);
   for (const stage of ["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest", "guardian-session", "provisioning"]) {
     assert.ok(source.includes(`await writeStatus("${stage}")`), `missing status stage ${stage}`);

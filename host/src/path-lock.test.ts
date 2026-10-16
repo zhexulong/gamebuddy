@@ -471,6 +471,43 @@ test("path lock rejects a parent replaced with a symlink before acquisition", as
   }
 });
 
+/**
+ * The boundary compares a path against its own `realpath`, and the two runtimes spell the
+ * Windows drive root differently: `resolve` yields `C:\`, while a `realpath` under bun yields
+ * `C:` for that same directory. Every ancestor walk ends at that root, so an ordinary Host
+ * data path must still verify. The tolerance is exactly that spelling - a junction whose
+ * target is a genuinely different path is still refused.
+ */
+test("physical boundary tolerates the drive-root spellings and still refuses a substituted path", async (t) => {
+  const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-physical-"));
+  const outside = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-physical-outside-"));
+  try {
+    // This walks every ancestor up to the drive root, which is the one component whose two
+    // spellings differ; before the tolerance the whole verification was refused as unsafe.
+    await verifySafePathBoundary(join(directory, "artifact.json"));
+
+    const linked = join(directory, "linked");
+    try {
+      await symlink(outside, linked, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      if (
+        process.platform === "win32" &&
+        error instanceof Error &&
+        "code" in error &&
+        ["EPERM", "EACCES", "ENOTSUP"].includes(String(error.code))
+      ) {
+        t.skip("Windows junction fixture creation is unsupported");
+        return;
+      }
+      throw error;
+    }
+    await assert.rejects(verifySafePathBoundary(join(linked, "artifact.json")), /unsafe_path_boundary/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
 test("path lock refuses a malformed existing cross-process owner instead of writing unlocked", async () => {
   bindSimulated();
   const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-"));

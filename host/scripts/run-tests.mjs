@@ -154,6 +154,11 @@ export async function discoverTestFiles(root = defaultTestRoot, extension = ".te
 
 export async function runDiscoveredTests(paths, { node = process.execPath, runChild = runBoundedChild, timeoutMs = undefined, onHeartbeat = undefined } = {}) {
   if (!Array.isArray(paths) || paths.length === 0) throw runnerError("test_files_missing", defaultTestRoot);
+  // The children run under `node`. A compiled test that must spawn its own Node child (node:test's
+  // module mocks, a Node-only realpath) cannot trust its own `process.execPath`, because under
+  // `bun test` that is bun. Children inherit this environment, so publish the exact command this
+  // coordinator runs them under; the resolution stays in one place instead of each test guessing.
+  process.env.GAMEBUDDY_HOST_TEST_NODE = node;
   const args = [
     "--import",
     pathToFileURL(resolve(hostRoot, "scripts", "compiled-test-bootstrap.mjs")).href,
