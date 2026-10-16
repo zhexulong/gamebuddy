@@ -436,14 +436,18 @@ export function assessCompanionBehaviourRubric({ turns, presence = null, runRepo
   const obligations = COMPANION_BEHAVIOUR_OBLIGATIONS.map((obligation) => {
     if (obligation.class === "Unjudged") {
       // `claim_fulfillable` is Unjudged because no run passes a presence projection -- but when one IS supplied, the
-      // projection decided something and the obligation is judged from it. Honest today, usable tomorrow.
-      if (obligation.id === "claim_fulfillable" && presence !== null)
-        return Object.freeze({
-          ...obligation,
-          verdict: presenceFindings.length > 0 ? "broken" : "green",
-          detail: `${presenceFindings.length} finding(s)`,
-        });
-      return Object.freeze({ ...obligation, verdict: "unmeasured", detail: "no_presence_projection" });
+      // projection decided something and the obligation is judged from it. The inherently Unjudged ones (they need a
+      // judge, not a projection) keep a null detail: labelling them `no_presence_projection` said the wrong thing about
+      // why they are unmeasured.
+      if (obligation.id === "claim_fulfillable")
+        return presence === null
+          ? Object.freeze({ ...obligation, verdict: "unmeasured", detail: "no_presence_projection" })
+          : Object.freeze({
+              ...obligation,
+              verdict: presenceFindings.length > 0 ? "broken" : "green",
+              detail: `${presenceFindings.length} finding(s)`,
+            });
+      return Object.freeze({ ...obligation, verdict: "unmeasured", detail: null });
     }
     if (obligation.class === "Performance") return Object.freeze({ ...obligation, ...performanceVerdict(obligation) });
     if (obligation.source === null) return Object.freeze({ ...obligation, verdict: "unmeasured", detail: null });
