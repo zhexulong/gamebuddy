@@ -3016,11 +3016,29 @@
 
   /* The settings field stacks are forms, not reading columns: they take the
    surface's own measure instead of the whole panel, so a label and the control
-   it names stay one column. */
+   it names stay one column. Every stack on the surface takes the same measure
+   AND the same inset - the inset a card gives its own fields - so the field boxes
+   line up down the surface whichever group they belong to.
+
+   Measured at 1440x900 before this, on the product Settings surface: the eight
+   fields of the language, voice and connection stacks were 640 px wide on a left
+   edge of 16, while the four model-config fields were 1382 px on a left edge of
+   29 - 2.2x apart, two left edges, two scales on one surface; at 400x800 the same
+   two stacks were 368 px and 342 px. The model editors are cards, so their fields
+   are the measure minus their own padding and their two 1 px hairlines; that 2 px
+   is the only difference left. */
   .connection-form,
   [data-connection-list],
-  .voice-device-selector {
+  .voice-device-selector,
+  .model-profile-editor {
     max-width: var(--management-form-measure);
+  }
+
+  /* The stacks that are not a card carry a card's own inset, so a field in a card
+   and a field in the stack beside it are the same box. */
+  .connection-form,
+  .voice-device-selector {
+    padding: var(--space-3);
   }
 
   .management-settings-details dd {

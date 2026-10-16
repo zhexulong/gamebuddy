@@ -268,3 +268,121 @@ test("item 1: one row's cards end on one line, and the trigger list is folded by
     grid!.rowGap,
   );
 });
+
+/**
+ * The Settings surface's own reads: the language, voice, connection and
+ * model-profile groups all mount only once their read resolves, so every one of
+ * them is served here. The connection list is empty, which is the state the audit
+ * measured: the field stacks under test are the creation form, the three
+ * selectors (interface language, companion language, output device) and the two
+ * model editors.
+ */
+const connectionEscapeHatch = {
+  providerId: "openai-compatible",
+  label: "OpenAI-compatible",
+  setupFields: ["apiKey", "baseUrl", "apiShape", "modelId"],
+  allowedPlayerModels: [],
+  escapeHatch: true,
+  environmentManaged: false,
+};
+
+async function stubSettings(page: Page): Promise<void> {
+  await stubShell(page);
+  await page.route("**/api/tavern/v1/settings/language", (route) =>
+    route.fulfill(jsonOk({ revision: 1, locale: "en-US" })),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
+    route.fulfill(
+      jsonOk({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
+    route.fulfill(jsonOk({ devices: [], defaultSelectable: true })),
+  );
+  await page.route("**/api/tavern/v1/settings/connection", (route) =>
+    route.fulfill(
+      jsonOk({ apiVersion: 1, revision: 1, active: null, connections: [], providers: [connectionEscapeHatch] }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/settings/profiles", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        chat: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "high" },
+        game: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "high" },
+        recommendedModels: [],
+      }),
+    ),
+  );
+}
+
+/** Every field control on the Settings surface, with its width and left edge. */
+async function measureSettingsFields(page: Page) {
+  return await page.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>('[data-testid="settings-surface"]');
+    if (surface === null) return null;
+    const fields = [...surface.querySelectorAll<HTMLElement>("input:not([type=hidden]), select, textarea")].map(
+      (node) => {
+        const box = node.getBoundingClientRect();
+        return {
+          id: node.id === "" ? node.tagName.toLowerCase() : node.id,
+          width: Math.round(box.width),
+          left: Math.round(box.left),
+        };
+      },
+    );
+    const widths = fields.map((field) => field.width);
+    const lefts = [...new Set(fields.map((field) => field.left))].sort((left, right) => left - right);
+    return {
+      count: fields.length,
+      fields,
+      widest: Math.max(...widths),
+      narrowest: Math.min(...widths),
+      lefts,
+      surfaceWidth: Math.round(surface.getBoundingClientRect().width),
+    };
+  });
+}
+
+test("item 2: every settings field quotes the one form measure, wide and narrow", async ({ page }) => {
+  await stubSettings(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=settings`);
+  const surface = page.getByTestId("settings-surface");
+  await expect(surface).toBeVisible();
+  // Every group under test is up: the connection form, the three selectors and
+  // both model editors.
+  await expect(surface.locator("#connection-provider")).toBeVisible();
+  await expect(surface.locator("#model-profile-model-chat")).toBeVisible();
+
+  const wide = await measureSettingsFields(page);
+  console.log(`[item-2 settings @1440] ${JSON.stringify(wide)}`);
+  await page.setViewportSize({ width: 400, height: 800 });
+  await expect(surface.locator("#connection-provider")).toBeVisible();
+  const narrow = await measureSettingsFields(page);
+  console.log(`[item-2 settings @400] ${JSON.stringify(narrow)}`);
+
+  for (const [name, measured] of [
+    ["1440x900", wide],
+    ["400x800", narrow],
+  ] as const) {
+    expect(measured, `the settings surface renders at ${name}`).not.toBeNull();
+    const quoted = measured!.fields.map((field) => `${field.id}=${field.width}`).join(", ");
+    // One measure: every field on the surface is the same width and starts on the
+    // same left edge, whichever group it belongs to. The 2 px allowance is the
+    // card's own hairline (the model editors are cards, and a card's border is not
+    // part of the field column) - not a second scale.
+    expect(
+      measured!.widest - measured!.narrowest,
+      `at ${name} every settings field is one width: ${quoted}`,
+    ).toBeLessThanOrEqual(2);
+    expect(
+      measured!.lefts[measured!.lefts.length - 1]! - measured!.lefts[0]!,
+      `at ${name} every settings field starts on one left edge: ${JSON.stringify(measured!.lefts)}`,
+    ).toBeLessThanOrEqual(2);
+  }
+
+  // The measure is a cap on the fields, not on the surface.
+  expect(wide!.widest, "the widest settings field is inside the form measure").toBeLessThanOrEqual(640);
+  expect(wide!.surfaceWidth, "the desktop settings surface itself is the wide panel").toBeGreaterThan(1200);
+});
