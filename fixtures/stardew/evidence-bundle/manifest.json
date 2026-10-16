@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "run": {
+    "id": "example-headless-morning-routine",
+    "scenario": "morning_routine",
+    "startedAtMs": 1700000000000,
+    "durationMs": 900000,
+    "gitSha": "e8e86c3",
+    "runtimeRoot": "D:\\GameBuddy\\runtimes\\lane-a"
+  },
+  "env": {
+    "smapiVersion": "4.5.2",
+    "gameVersion": "1.6.15",
+    "os": "windows",
+    "windowMode": "hidden",
+    "gpu": null,
+    "resolution": null,
+    "saveHash": "example",
+    "reason": "headless_environment"
+  },
+  "verdict": {
+    "state": "passed",
+    "reasonCode": "multiplayer_loop_agent_turn_completed",
+    "rubric": { "broken": [], "unmeasured": [] }
+  },
+  "timeline": { "path": "timeline.jsonl", "records": 0, "sources": ["player", "smapi", "llm"] },
+  "actionTrace": { "path": "actionTrace.jsonl", "records": 1 },
+  "keyFrames": { "status": "skipped", "reason": "headless_environment", "dir": null },
+  "reclamation": { "state": "clean", "exitReason": "completed", "steps": [], "reflection": "completed" },
+  "voice": { "state": "disabled", "playback": "disabled", "reasonCode": "voice_preference_absent" },
+  "failure": null,
+  "repro": { "command": null, "expectedWallClockMs": null }
+}
