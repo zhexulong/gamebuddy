@@ -3042,3 +3042,72 @@ YOUR pipe's write end ended - i.e. the runner process went away.
 **And the driver's own failure must be readable.** The gate entry used to report a driver failure as a bare
 `driverStderrPresent: true`; it now carries a bounded `driverStderrTail`, which is what named the operator error
 `--timeout-seconds 900` against the driver's `ValidateRange(30, 300)` - the driver had died at parameter binding.
+
+## 43. Agent-driven multiplayer live loop: the operator SOP (2026-10-16)
+
+The loop in section 42 has TWO driving modes. Only one of them can say anything about the companion, and the difference
+is not cosmetic:
+
+| mode | who decides the actions | what a green run supports |
+| --- | --- | --- |
+| plan | the harness, per second | the world, the pipe and the recording -- and **nothing about the companion** |
+| agent | the Agent, through the product's own tools | the companion's behaviour, its persona, and the tool chain |
+
+An audit caught the plan-driven mode reporting `passed` while no word in the session was the model's (`agentTurns: 0`): a
+verdict from a run that never touched the thing under test. So an agent-driven session is the only form that can support
+a behaviour claim.
+
+### Running one
+
+```sh
+# 1. the armed profiles are self-healed by the entry; the bridge is the run's own single consumer
+node .tmp/run-loop.mjs        # wrapper used here; it sets GB_AGENT=1 and forwards the allocation
+```
+
+Underneath: `node tools/run-stardew-multiplayer-live-loop.mjs --game-path "D:\Steam\steamapps\common\Stardew Valley"
+--expected-farmhand-id <id> --save-name GameBuddyFixture_451055244`, with `GAMEBUDDY_LOOP_AGENT=1` exported to the
+runner. In agent mode the runner connects its own bridge client (the launch handle needs the integration adapter, which
+the shared smoke harness does not pass), materializes the product's Game runtime on that one consumer, sends ONE prompt
+through `tools.acceptPlayerText`, and then records.
+
+The allocation is free text and optional:
+
+```sh
+export GAMEBUDDY_LOOP_ALLOCATION="把东边的杂草清了"      # one line per task; empty = "do whatever you think is worth doing"
+```
+
+An empty allocation is the default posture and the one used to validate this mode: the Agent looked around, chose its own
+work, recovered from its own refusals, and reported honestly.
+
+### What the report now means
+
+* `state` / `reasonCode` come from `deriveLoopVerdict` (a pure, tested function): `passed` requires the driver to have
+  succeeded AND the run to have published an observation measurement. A run that measured NOTHING is `blocked` with
+  `multiplayer_loop_observation_unmeasured` -- a missing measurement is not "no gap". A 36 s unobserved tail is
+  `degraded` with `multiplayer_loop_observed_gap:36s`.
+* agent mode adds two gates of its own: `agent_turn_not_admitted` and `agent_spoke_nothing` both degrade the run, so a
+  silent session can no longer read as a healthy one.
+* `rubric` is the behaviour judgement, reported as `verdict.broken` and `verdict.unmeasured` lists. It is NOT folded into
+  `state`: a run can be operationally healthy while the companion breached an obligation, and conflating the two would
+  hide which one failed. Read both.
+* `bridge_connection` facts exist because connection state is a separate channel from the facts; when the subscription is
+  unavailable the trace says `bridge_connection_unavailable`, so "the pipe stayed up" is never confused with "nobody was
+  listening".
+
+### What it produces
+
+`trace/timeline.jsonl` (every bridge fact with a wall clock, including the Agent's 100+ executions),
+`trace/loop-report.json` (agent turn count, admitted/settled, the persona that mounted, the byte report, the rubric **and
+the Agent's own lines**), `entry-report.json`, and `driver.stdout.txt` / `driver.stderr.txt`. The Agent's full transcript
+lives under the run's disposable runtime root (`%TEMP%/gamebuddy-multiplayer-agent-*/runtime/contexts/<identityKey>/
+surface-sessions/**`), and its `system` entry is the mounted character card -- the best evidence that the persona really
+mounted.
+
+### Mandatory review
+
+As in section 42: an `auditing-runs` reviewer must read the trace before the run counts as finished. The reviewer for
+the first agent-driven session found a vacuous gate (the entry read a key this mode never wrote, so a gapped run still
+reported `passed`), an unconditional `state:"passed"` from the runner, a plan-path byte key the rubric had stopped
+reading, a silently-absent connection subscription, a trace file list naming files that did not exist, a permanently
+unmeasured Invariant advertised as decidable, and two obligations blind to the Agent's actual words. All are fixed and
+pinned; the amendments it proposed that are NOT yet done are recorded in the design doc's evidence table.
