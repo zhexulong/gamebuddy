@@ -91,6 +91,27 @@ public sealed class VoiceLaunchCoordinatorTests
     }
 
     [Fact]
+    public void Resolve_carries_the_players_stored_persona_and_defaults_it_to_null()
+    {
+        using var root = TemporaryRoot.Create();
+        WriteSidecar(root);
+        const string generation = "g-voice-1-00000000000000000000000000000000";
+
+        // No stored persona: the launch carries null, which the composition leaves
+        // unset in the child's environment.
+        WriteAcceptedPreference(root);
+        var withoutPersona = VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
+        Assert.NotNull(withoutPersona);
+        Assert.Null(withoutPersona.Persona);
+
+        // A stored persona is projected verbatim.
+        WritePreference(root, "accepted", "mimo-cloud-tts-v1", 4, outputDevice: null, persona: "soft_maid");
+        var withPersona = VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
+        Assert.NotNull(withPersona);
+        Assert.Equal("soft_maid", withPersona.Persona);
+    }
+
+    [Fact]
     public void Resolve_returns_null_when_the_preference_file_is_corrupt()
     {
         using var root = TemporaryRoot.Create();
@@ -127,7 +148,7 @@ public sealed class VoiceLaunchCoordinatorTests
 
     private static void WriteAcceptedPreference(TemporaryRoot root) => WritePreference(root, "accepted", "mimo-cloud-tts-v1", 3);
 
-    private static void WritePreference(TemporaryRoot root, string consent, string? disclosureVersion, long revision, string? outputDevice = null)
+    private static void WritePreference(TemporaryRoot root, string consent, string? disclosureVersion, long revision, string? outputDevice = null, string? persona = null)
     {
         var preference = new
         {
@@ -142,6 +163,7 @@ public sealed class VoiceLaunchCoordinatorTests
             consent,
             decidedAtMs = consent == "undecided" ? (long?)null : 1_700_000_000_000L,
             outputDevice,
+            persona,
         };
         File.WriteAllText(root.PreferencePath, System.Text.Json.JsonSerializer.Serialize(preference));
     }

@@ -97,6 +97,7 @@ public sealed class VoiceLaunchCoordinatorPackedGenerationTests
             consent,
             decidedAtMs = consent == "undecided" ? (long?)null : 1_700_000_000_000L,
             outputDevice = (string?)null,
+            persona = (string?)null,
         };
         File.WriteAllText(path, JsonSerializer.Serialize(preference));
     }

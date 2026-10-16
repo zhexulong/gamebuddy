@@ -6,7 +6,7 @@ namespace GameBuddy.Desktop;
 /// Cloud TTS consent projected from the one Host-owned player preference record.
 /// Narrow and immutable: only the fields the desktop launch gate consumes.
 /// </summary>
-internal sealed record VoicePreference(VoiceCloudTtsConsent Consent, string? DisclosureVersion, long Revision, string? OutputDevice)
+internal sealed record VoicePreference(VoiceCloudTtsConsent Consent, string? DisclosureVersion, long Revision, string? OutputDevice, string? Persona)
 {
     /// <summary>Server TTS is admitted only while the preference is exactly "accepted".</summary>
     internal bool CloudTtsAdmitted => Consent == VoiceCloudTtsConsent.Accepted;
@@ -69,7 +69,7 @@ internal sealed class VoicePreferenceFileReader
         // The record's exact key set IS the frozen shape, and it now carries the
         // companion language, so a record written before that field existed is
         // refused rather than half-read.
-        var properties = new[] { "schemaVersion", "revision", "locale", "disclosureVersion", "consent", "decidedAtMs", "outputDevice" };
+        var properties = new[] { "schemaVersion", "revision", "locale", "disclosureVersion", "consent", "decidedAtMs", "outputDevice", "persona" };
         if (!InstalledGenerationPaths.ExactProperties(value, properties) ||
             !value.GetProperty("schemaVersion").TryGetInt32(out var schemaVersion) || schemaVersion != SchemaVersion ||
             !value.GetProperty("revision").TryGetInt64(out var revision) || revision < 0)
@@ -128,7 +128,18 @@ internal sealed class VoicePreferenceFileReader
             _ => throw new InvalidVoicePreferenceException(),
         };
 
-        return new VoicePreference(consent, disclosureVersion, revision, outputDevice);
+        // Voice persona: null leaves the gateway variable unset (which the
+        // extension distinguishes from an empty string); a pinned value is the
+        // frozen lowercase-snake id shape only.
+        var personaElement = value.GetProperty("persona");
+        string? persona = personaElement.ValueKind switch
+        {
+            JsonValueKind.Null => null,
+            JsonValueKind.String when VoicePersonaRegex.IsMatch(personaElement.GetString() ?? string.Empty) => personaElement.GetString(),
+            _ => throw new InvalidVoicePreferenceException(),
+        };
+
+        return new VoicePreference(consent, disclosureVersion, revision, outputDevice, persona);
     }
 
     // The preference file only ever stores the frozen `waveout:N` endpoint shape
@@ -136,7 +147,11 @@ internal sealed class VoicePreferenceFileReader
     private static readonly System.Text.RegularExpressions.Regex OutputDeviceRegex =
         new("^waveout:[0-9]{1,4}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
-    private static VoicePreference Undecided() => new(VoiceCloudTtsConsent.Undecided, null, 0, null);
+    // Similarly, only the frozen lowercase-snake persona id shape is stored.
+    private static readonly System.Text.RegularExpressions.Regex VoicePersonaRegex =
+        new("^[a-z][a-z0-9_]{0,31}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static VoicePreference Undecided() => new(VoiceCloudTtsConsent.Undecided, null, 0, null, null);
 }
 
 internal sealed class InvalidVoicePreferenceException : Exception

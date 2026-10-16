@@ -12,13 +12,16 @@ internal sealed record VoiceGatewayLaunchPlan(string NodePath, string EntryPath,
     /// variables below. The endpoint is the player's stored selection
     /// (`waveout:N`) or `default` for the Windows default multimedia output.
     /// </summary>
-    internal IReadOnlyDictionary<string, string> Environment => BuildEnvironment(Port, Token, CloudTtsAdmitted, OutputDevice);
-    internal string Arguments => $"{Quote(EntryPath)}" + (Persona is null ? string.Empty : $" --persona {Quote(Persona)}");
+    internal IReadOnlyDictionary<string, string> Environment => BuildEnvironment(Port, Token, CloudTtsAdmitted, Persona, OutputDevice);
+    // The bundled entry never parses argv (vendor/pi-koe/src/main.ts reads its
+    // per-launch facts, including the persona, exclusively from the environment),
+    // so the child's command line is only the entry path.
+    internal string Arguments => $"{Quote(EntryPath)}";
 
     // The token is launch-only and never appears in any string representation.
     public override string ToString() => $"VoiceGatewayLaunchPlan(NodePath={NodePath}, EntryPath={EntryPath}, Port={Port}, CloudTtsAdmitted={CloudTtsAdmitted}, Persona={Persona}, OutputDevice={OutputDevice})";
 
-    private static IReadOnlyDictionary<string, string> BuildEnvironment(int port, string token, bool cloudTtsAdmitted, string outputDevice)
+    private static IReadOnlyDictionary<string, string> BuildEnvironment(int port, string token, bool cloudTtsAdmitted, string? persona, string outputDevice)
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -31,6 +34,9 @@ internal sealed record VoiceGatewayLaunchPlan(string NodePath, string EntryPath,
             ["GAMEBUDDY_WINDOWS_OUTPUT_DEVICE"] = outputDevice,
         };
         if (cloudTtsAdmitted) values.Add("GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION", "desktop-consent-v1");
+        // No persona leaves the variable unset rather than empty: the extension
+        // distinguishes the two (an unset persona resolves the profile default).
+        if (persona is not null) values.Add("GAMEBUDDY_MIMO_PERSONA", persona);
         return values;
     }
 

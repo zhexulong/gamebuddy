@@ -18,7 +18,7 @@ internal static class VoiceLaunchCoordinator
     internal const int MaxPort = 65_535;
 
     /// <summary>One per-launch Voice decision; port and token are always paired and the artifact is already admitted.</summary>
-    internal sealed record VoiceLaunch(AdmittedVoiceGateway Gateway, int Port, string Token, string OutputDevice);
+    internal sealed record VoiceLaunch(AdmittedVoiceGateway Gateway, int Port, string Token, string OutputDevice, string? Persona);
 
     /// <summary>
     /// Pure decision: admits the Voice artifact in the selected generation,
@@ -72,9 +72,9 @@ internal static class VoiceLaunchCoordinator
         return Compose(gateway, port, preference);
     }
 
-    /// <param name="preference">The strict reader already proved consent; its stored endpoint is projected verbatim, with null meaning the platform default.</param>
+    /// <param name="preference">The strict reader already proved consent; its stored endpoint and persona are projected verbatim, with null meaning the platform default / no persona.</param>
     private static VoiceLaunch Compose(AdmittedVoiceGateway gateway, int port, VoicePreference preference) =>
-        new(gateway, port, GenerateToken(), preference.SelectedOutputDevice);
+        new(gateway, port, GenerateToken(), preference.SelectedOutputDevice, preference.Persona);
 
     /// <summary>Reserves a free loopback port and releases it for the Voice child to bind.</summary>
     internal static int PickFreeLoopbackPort()

@@ -126,7 +126,7 @@ public sealed class VoiceGatewaySupervisorTests
     }
 
     [Fact]
-    public void BuildLaunchPlan_arguments_carry_only_the_entry_and_optional_persona()
+    public void BuildLaunchPlan_arguments_carry_only_the_entry()
     {
         using var root = TemporaryRoot.Create();
         var entry = root.Gateway("voice/entry.js").EntryPath;
@@ -134,11 +134,30 @@ public sealed class VoiceGatewaySupervisorTests
         var noPersona = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), new AdmittedVoiceGateway(entry, System.IO.Path.Combine(root.Path, "protocol.js")), 49731, ValidToken, cloudTtsAdmitted: false);
         Assert.Equal($"\"{entry}\"", noPersona.Arguments);
         Assert.DoesNotContain(ValidToken, noPersona.Arguments, StringComparison.Ordinal);
+        Assert.DoesNotContain(" --persona", noPersona.Arguments, StringComparison.Ordinal);
         Assert.DoesNotContain(" --port", noPersona.Arguments, StringComparison.Ordinal);
 
-        var withPersona = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), new AdmittedVoiceGateway(entry, System.IO.Path.Combine(root.Path, "protocol.js")), 49731, ValidToken, cloudTtsAdmitted: false, persona: "companion.default");
-        Assert.Equal($"\"{entry}\" --persona \"companion.default\"", withPersona.Arguments);
-        Assert.DoesNotContain(ValidToken, withPersona.Arguments, StringComparison.Ordinal);
+        // The persona is never an argv token: the bundled entry parses no argv
+        // and reads the persona from the environment instead.
+        var withPersona = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), new AdmittedVoiceGateway(entry, System.IO.Path.Combine(root.Path, "protocol.js")), 49731, ValidToken, cloudTtsAdmitted: false, persona: "companion.default", outputDevice: "default");
+        Assert.Equal($"\"{entry}\"", withPersona.Arguments);
+        Assert.DoesNotContain("companion.default", withPersona.Arguments, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildLaunchPlan_injects_the_persona_when_present_and_leaves_it_unset_when_absent()
+    {
+        using var root = TemporaryRoot.Create();
+        var gateway = root.Gateway("voice/entry.js");
+
+        // No persona leaves the variable unset, which the extension distinguishes
+        // from an empty string (an empty value is not a resolvable persona).
+        var none = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true);
+        Assert.False(none.Environment.ContainsKey("GAMEBUDDY_MIMO_PERSONA"), "no persona must leave GAMEBUDDY_MIMO_PERSONA unset");
+
+        var chosen = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true, persona: "soft_maid", outputDevice: "default");
+        Assert.Equal("soft_maid", chosen.Environment["GAMEBUDDY_MIMO_PERSONA"]);
+        Assert.NotEqual(string.Empty, chosen.Environment["GAMEBUDDY_MIMO_PERSONA"]);
     }
 
     [Fact]

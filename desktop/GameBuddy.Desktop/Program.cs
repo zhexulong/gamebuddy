@@ -286,7 +286,7 @@ internal static class Program
                         voiceLaunch.Port,
                         voiceLaunch.Token,
                         cloudTtsAdmitted: true,
-                        persona: null,
+                        persona: voiceLaunch.Persona,
                         outputDevice: voiceLaunch.OutputDevice);
                     voiceLease = await voiceSupervisor.StartAsync(plan, cancellationToken).ConfigureAwait(false);
                 }
