@@ -123,12 +123,16 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const START_TIMEOUT_MS = 60_000;
 
 /** Unique per run so each loop gets its own Memory partition, never a stale one. */
-function createIdentity() {
+/**
+ * Unique per run so each loop gets its own Memory partition, never a stale one - unless the caller names a
+ * continuity, which is how a run is pointed at history that already exists under a known partition.
+ */
+function createIdentity(requestedContinuityId) {
   const suffix = randomBytes(6).toString("hex");
   return Object.freeze({
     playerId: `memory_loop_player_${suffix}`,
     companionId: `memory_loop_companion_${suffix}`,
-    continuityId: `memory_loop_continuity_${suffix}`,
+    continuityId: requestedContinuityId ?? `memory_loop_continuity_${suffix}`,
   });
 }
 
@@ -143,6 +147,7 @@ function parseArguments(argv) {
   const flags = new Map([
     ["--report", undefined],
     ["--root", undefined],
+    ["--continuity", undefined],
     ["--seed", undefined],
     ["--question", undefined],
     ["--manifest", undefined],
@@ -203,6 +208,8 @@ function parseArguments(argv) {
     requireChapter: requireChapter === "true",
     requireHistorianRubric: requireHistorianRubric === "true",
     reflect: reflect === "true",
+    root: flags.get("--root"),
+    continuityId: flags.get("--continuity"),
     seed: flags.get("--seed"),
     question: flags.get("--question"),
   });
@@ -1000,7 +1007,7 @@ async function stopChildGracefully(child, timeoutMs = 30_000) {
  * The root is also removed here, not leaked: the old code never cleaned it, so
  * every run left two generation copies rotting in %TEMP%.
  */
-async function withMemoryLoopRoot(run) {
+async function withMemoryLoopRoot(run, flags) {
   // An explicit root reuses history that already exists (the ladder's own store, for instance), so a probe
   // can ask about a world the run did not create. Without it the loop always starts empty and every
   // measurement of long-term memory asks about a fact this same run just seeded.
@@ -1258,10 +1265,20 @@ async function runReflectionOnce({ root, continuityId, reportPath, timeoutMs = 6
   });
 }
 
-export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, question, cardPath, reflect } = {}) {
+export async function runMemoryLiveLoop({
+  reportPath,
+  manifestPath,
+  seed,
+  question,
+  cardPath,
+  reflect,
+  root: providedRootFlag,
+  continuityId: providedContinuityId,
+} = {}) {
+  const flags = new Map([["--root", providedRootFlag]]);
   if (typeof reportPath !== "string" || reportPath.length === 0) throw new Error("report_path_required");
   const scenario = await resolveScenario({ manifestPath, seed, question });
-  const identity = createIdentity();
+  const identity = createIdentity(providedContinuityId);
 
   // One root for BOTH phases. A reviewer of the first runs proved this is the fatal
   // invariant: with a fresh root per phase, the management write and the chat read
@@ -1628,7 +1645,7 @@ export async function runMemoryLiveLoop({ reportPath, manifestPath, seed, questi
     const finalReport = Object.freeze({ ...report, capture: await closeIntoReport(capture, root, report) });
     await writeFile(reportPath, `${JSON.stringify(finalReport, null, 2)}\n`, "utf8");
     return finalReport;
-  });
+  }, flags);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -1653,6 +1670,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       question: parsed.question,
       cardPath: parsed.cardPath,
       reflect: parsed.reflect,
+      root: parsed.root,
     });
     if (parsed.requireChapter && (report.chapters?.renderedCount ?? 0) < 1) {
       process.stderr.write(
