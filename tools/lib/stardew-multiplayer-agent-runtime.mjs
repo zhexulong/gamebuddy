@@ -98,7 +98,7 @@ async function loadHostBuild() {
  * and a stored manifest for a different principal is refused by name rather than silently re-provisioned
  * (the ladder learned both at `:1082-1106`).
  */
-export async function prepareRuntimeRoot({ root, runtimeRoot, identity }) {
+async function prepareRuntimeRoot({ root, runtimeRoot, identity }) {
   await mkdir(join(runtimeRoot, "settings"), { recursive: true });
   const manifestPath = join(root, "manifest.json");
   const stored = await readFile(manifestPath, "utf8").then(
@@ -137,7 +137,7 @@ export async function prepareRuntimeRoot({ root, runtimeRoot, identity }) {
 }
 
 /** The model profile a DISPOSABLE root needs before an Agent turn can run at all. */
-export async function writeDisposableModelProfile(runtimeRoot) {
+async function writeDisposableModelProfile(runtimeRoot) {
   const path = join(runtimeRoot, "settings", "model-profiles.json");
   if (existsSync(path)) return false;
   await writeFile(
@@ -153,7 +153,7 @@ export async function writeDisposableModelProfile(runtimeRoot) {
 }
 
 /** The provider credential the runtime reads from its agent dir; absent is a named refusal, never a silent degrade. */
-export async function writeAgentCredential(runtimePaths) {
+async function writeAgentCredential(runtimePaths) {
   const key = process.env.CPA_OAI_API_KEY;
   if (typeof key !== "string" || key.length === 0) throw new Error("CPA_OAI_API_KEY_missing");
   await mkdir(runtimePaths.agentDir, { recursive: true });
@@ -165,7 +165,7 @@ export async function writeAgentCredential(runtimePaths) {
 }
 
 /** A prompt built from the free allocation; an empty allocation means "do whatever you think is worth doing". */
-export function allocationPrompt(allocation) {
+function allocationPrompt(allocation) {
   const tasks = Array.isArray(allocation)
     ? allocation.filter((task) => typeof task === "string" && task.trim() !== "")
     : [];
@@ -281,23 +281,7 @@ export async function runAgentDrivenLoop({
   }
 }
 
-/** The Agent's own spoken lines, in the rubric's shape. Only assistant text counts; tool calls are not speech. */
-export function turnsFromAgentMessages(messages) {
-  const turns = [];
-  for (const message of Array.isArray(messages) ? messages : []) {
-    if (message?.role !== "assistant") continue;
-    const parts = Array.isArray(message.content) ? message.content : [];
-    const spoken = parts
-      .filter((part) => part?.type === "text" && typeof part.text === "string")
-      .map((part) => part.text.trim())
-      .filter((part) => part.length > 0)
-      .join(" ");
-    if (spoken === "") continue;
-    turns.push({ turnId: `agent_${turns.length + 1}`, text: spoken });
-  }
-  return turns;
-}
-export async function materializeGameRuntime({
+async function materializeGameRuntime({
   client,
   identity,
   config,
@@ -379,7 +363,7 @@ export async function materializeGameRuntime({
  * connected, teardownClose, close` (memory #4325). The transcript is read from the Pi session file the runtime
  * wrote, so what the rubric grades is what the Agent actually said.
  */
-export async function runAgentTurnWithTools(
+async function runAgentTurnWithTools(
   runtime,
   prompt,
   { runtimeRoot, identity, locale = "zh-CN", timeoutMs = 900_000, quietMs = 20_000 } = {},
@@ -418,7 +402,7 @@ export async function runAgentTurnWithTools(
  * The Agent's own spoken lines, read from the Pi session files under the runtime cwd
  * (recursive .jsonl files under surface-sessions; the ladder's `findAgentSessionJsonl` does the same lookup).
  */
-export function readAgentTurns({ runtimeRoot, identity, piSessionId }) {
+function readAgentTurns({ runtimeRoot, identity, piSessionId }) {
   const candidates = [];
   const collect = (directory) => {
     let entries;

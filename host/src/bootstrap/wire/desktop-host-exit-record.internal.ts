@@ -26,7 +26,7 @@ export const DESKTOP_HOST_EXIT_RECORD_DIRECTORY = "host-exit";
 
 export type DesktopHostExitKind = "incomplete_exit" | "crash";
 
-export type DesktopHostExitRecordStep = Readonly<{
+type DesktopHostExitRecordStep = Readonly<{
   step: string;
   status: string;
   failure: string | null;
@@ -93,10 +93,7 @@ export function desktopHostExitRecordFileName(record: DesktopHostExitRecord): st
  * A diagnostic that cannot be written is never allowed to become a second
  * failure of the exit it describes, so this never throws.
  */
-export async function writeDesktopHostExitRecord(
-  directory: string,
-  record: DesktopHostExitRecord,
-): Promise<string | null> {
+async function writeDesktopHostExitRecord(directory: string, record: DesktopHostExitRecord): Promise<string | null> {
   const path = win32.join(directory, desktopHostExitRecordFileName(record));
   try {
     await mkdir(directory, { recursive: true });

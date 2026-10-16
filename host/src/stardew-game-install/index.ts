@@ -16,14 +16,8 @@ export {
   decideStardewCompanionModDeployment,
   deployStardewCompanionMod,
   isCanonicalWindowsDirectory,
-  readStardewCompanionModPackage,
   type StardewCompanionModDeploymentFailure,
   type StardewCompanionModDeploymentResult,
   type StardewCompanionModPackage,
   type StardewCompanionModTargetState,
 } from "./deployment.js";
-export {
-  ensureCompanionGameModDeployed,
-  type CompanionGameModDeploymentOutcome,
-  type CompanionGameModDeploymentSeams,
-} from "./desktop-entry-mod-deployment.js";

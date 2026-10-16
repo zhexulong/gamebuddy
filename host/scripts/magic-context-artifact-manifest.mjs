@@ -17,7 +17,7 @@ import { resolve } from "node:path";
  * build machine's absolute paths neutralised first.
  */
 
-export const MAGIC_CONTEXT_ARTIFACT_MANIFEST_SCHEMA = "gamebuddy-magic-context-artifact-manifest/v1";
+const MAGIC_CONTEXT_ARTIFACT_MANIFEST_SCHEMA = "gamebuddy-magic-context-artifact-manifest/v1";
 
 // The same declaration shape the fork's post-process rewrites; it targets the
 // emitted `.js` chunks whose value is a build machine's `node_modules` path.

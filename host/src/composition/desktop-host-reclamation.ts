@@ -97,7 +97,7 @@ export const DESKTOP_HOST_RECLAMATION_STEP_KIND: Readonly<
  * `not_applicable` is a DECLARED absence - this launch never had that resource -
  * and is therefore never reported as a silent skip or as a success.
  */
-export type DesktopHostReclamationStatus = "completed" | "failed" | "not_applicable";
+type DesktopHostReclamationStatus = "completed" | "failed" | "not_applicable";
 
 /**
  * The named ways a reclamation step can fail, each a stable snake_case reason
