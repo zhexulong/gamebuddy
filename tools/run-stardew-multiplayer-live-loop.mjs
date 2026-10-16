@@ -191,6 +191,38 @@ function runDriver({ powerShell, args, timeoutSeconds, sessionSeconds, cwd, env 
   });
 }
 
+/**
+ * Rebuild the test artifact when it is stale, then re-verify — bounded, and it fails with the gate's own message.
+ *
+ * Why the ENTRY does this: `host/dist-test` is what the run executes, and in this repository other lanes edit
+ * `host/src` continuously. Measured: a rebuild at 02:58:55 followed by a production-source edit at 03:03:45 killed the
+ * run inside the driver's attachment step (`live_run_artifact_stale`), which is a real refusal but leaves a live run
+ * impossible to start by hand. The gate's stated remedy is `cd host && pnpm build:test`, so the entry takes it once and
+ * re-verifies; if the artifact is STILL stale the run fails with the gate's message rather than racing again.
+ */
+async function ensureFreshArtifact() {
+  const { assessLiveRunArtifactFreshness } = await import("./lib/live-run-artifact-freshness.mjs");
+  const before = await assessLiveRunArtifactFreshness({ repositoryRoot: REPOSITORY_ROOT });
+  if (before.stale === false) return { rebuilt: false, verdict: before };
+  const rebuild = spawnSync(
+    process.execPath,
+    [
+      join(REPOSITORY_ROOT, "host", "node_modules", "typescript", "bin", "tsc"),
+      "--project",
+      "tsconfig.test.json",
+      "--noEmitOnError",
+      "false",
+    ],
+    { cwd: join(REPOSITORY_ROOT, "host"), encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 },
+  );
+  const after = await assessLiveRunArtifactFreshness({ repositoryRoot: REPOSITORY_ROOT });
+  if (after.stale === true)
+    throw new Error(
+      `live_run_artifact_stale_after_rebuild:${after.reason ?? "unknown"}:${JSON.stringify(after.inputs?.path ?? null)}`,
+    );
+  return { rebuilt: true, verdict: after, tscExit: rebuild.status };
+}
+
 export async function main(argv) {
   const request = parseLoopArgs(argv);
   if (process.platform !== "win32") throw new Error("multiplayer_loop_windows_only");
@@ -200,6 +232,36 @@ export async function main(argv) {
     throw new Error("multiplayer_loop_release_missing");
 
   const fixtureRoots = resolveStardewFixtureRoots({ profileRoot: request.profileRoot ?? undefined });
+  const artifact = await ensureFreshArtifact();
+  // Self-heal the armed profiles. `armGateProfiles` reads them from `fixtureRoots.profilesDir`
+  // (`<profileRoot>/stardew-profiles`), and that directory has been emptied by unrelated cleanup more than once — each
+  // time surfacing as `multiplayer_gate_profile_missing:A-host` AFTER the driver had started, i.e. the run died for an
+  // environmental reason with a one-command remedy this entry already knows. The provisioner writes `A-host` and
+  // `A-ai-client` directly inside the root it is handed and requires that root to exist (`:253`, `:268-269`), so the
+  // argument is `profilesDir`, not its parent. Idempotent, and named when it fails rather than retried blindly.
+  if (
+    !existsSync(join(fixtureRoots.profilesDir, "A-host")) ||
+    !existsSync(join(fixtureRoots.profilesDir, "A-ai-client"))
+  ) {
+    await mkdir(fixtureRoots.profilesDir, { recursive: true });
+    const provision = spawnSync(
+      process.execPath,
+      [
+        join(REPOSITORY_ROOT, "tools", "provision-stardew-multiplayer-profiles.mjs"),
+        "--profile-root",
+        fixtureRoots.profilesDir,
+      ],
+      { cwd: REPOSITORY_ROOT, encoding: "utf8", windowsHide: true },
+    );
+    if (provision.status !== 0)
+      throw new Error(
+        `multiplayer_loop_profile_provision_failed:${String(provision.stdout ?? provision.stderr ?? "")
+          .trim()
+          .slice(0, 200)}`,
+      );
+    if (!existsSync(join(fixtureRoots.profilesDir, "A-host")))
+      throw new Error("multiplayer_loop_profile_provision_incomplete:A-host");
+  }
   const runRoot = request.runRoot ?? join(fixtureRoots.profileRoot, `multiplayer-loop-${randomUUID()}`);
   const traceRoot = request.traceRoot ?? join(runRoot, "trace");
   const sessionDirectory = join(runRoot, "session");
@@ -317,6 +379,7 @@ export async function main(argv) {
       "smapi/host.log",
       "smapi/ai-client.log",
     ],
+    artifact,
     driverExitCode: run.exitCode,
     driverState: driverResult?.state ?? null,
     driverPhase: driverResult?.phase ?? null,

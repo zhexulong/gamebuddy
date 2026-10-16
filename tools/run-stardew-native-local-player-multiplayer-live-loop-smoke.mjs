@@ -12,6 +12,7 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 import { assessCompanionBehaviourRubric } from "./lib/companion-behaviour-rubric.mjs";
+import { runAgentDrivenLoop } from "./lib/stardew-multiplayer-agent-runtime.mjs";
 
 /**
  * The multiplayer live-run loop: one long-lived session in the two-process shared world, driven by an allocation and
@@ -426,21 +427,59 @@ if (import.meta.main) {
   const plan = readLoopPlan(process.env.GAMEBUDDY_LOOP_PLAN ?? null);
   const traceDir = process.env.GAMEBUDDY_LOOP_TRACE_DIR;
   if (typeof traceDir !== "string" || traceDir.length === 0) throw new Error("loop_trace_dir_required");
-  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
-  try {
-    const result = await runMultiplayerLiveLoop(session.client, session.receipts, config, {
-      plan,
+
+  // AGENT MODE. The Agent drives the farmhand and the harness only records.
+  //
+  // It is a separate path rather than a flag inside the loop because the two modes differ in who owns the bridge: the
+  // agent path connects its own client (the launch handle needs the integration adapter, which the smoke harness does
+  // not pass) and builds the product's Game runtime on top of it -- materializer included, so the card's authored
+  // catalog is really published into Magic Context and a failure there fails this run. The plan-driven path keeps the
+  // harness client and dispatches the allocation itself, and it can never make a claim about the companion.
+  if (process.env.GAMEBUDDY_LOOP_AGENT === "1") {
+    const allocation = String(process.env.GAMEBUDDY_LOOP_ALLOCATION ?? "")
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    const timeline = (record) => appendFileSync(join(traceDir, "timeline.jsonl"), `${JSON.stringify(record)}\n`);
+    const startedAtMs = Date.now();
+    const result = await runAgentDrivenLoop({
+      config,
+      allocation,
       traceDir,
-      durationSeconds: Number(process.env.GAMEBUDDY_LOOP_DURATION_SECONDS ?? plan.durationSeconds ?? 0),
-      stopFile: process.env.GAMEBUDDY_LOOP_STOP_FILE ?? null,
-      hostLogPath: process.env.GAMEBUDDY_LOOP_HOST_LOG ?? null,
-      aiLogPath: process.env.GAMEBUDDY_LOOP_AI_LOG ?? null,
-      agentSessionJsonl: process.env.GAMEBUDDY_LOOP_AGENT_SESSION ?? null,
+      onFact: (fact) => timeline({ atMs: Date.now() - startedAtMs, type: fact.type, payload: fact.payload }),
     });
-    writeFileSync(join(traceDir, "loop-report.json"), JSON.stringify(result, null, 2));
-    console.log(`LOOP_RESULT ${JSON.stringify({ state: "passed", ...result })}`);
+    const rubric = assessCompanionBehaviourRubric({
+      turns: result.agentTurns,
+      runReport: { durationSeconds: (Date.now() - startedAtMs) / 1_000 },
+    });
+    const report = Object.freeze({
+      durationSeconds: (Date.now() - startedAtMs) / 1_000,
+      allocation,
+      agentTurns: result.agentTurns.length,
+      persona: result.personaMounted,
+      settled: result.settled,
+      rubric,
+    });
+    writeFileSync(join(traceDir, "loop-report.json"), JSON.stringify(report, null, 2));
+    console.log(`LOOP_RESULT ${JSON.stringify({ state: "passed", ...report })}`);
     process.exitCode = 0;
-  } finally {
-    await session.close();
+  } else {
+    const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
+    try {
+      const result = await runMultiplayerLiveLoop(session.client, session.receipts, config, {
+        plan,
+        traceDir,
+        durationSeconds: Number(process.env.GAMEBUDDY_LOOP_DURATION_SECONDS ?? plan.durationSeconds ?? 0),
+        stopFile: process.env.GAMEBUDDY_LOOP_STOP_FILE ?? null,
+        hostLogPath: process.env.GAMEBUDDY_LOOP_HOST_LOG ?? null,
+        aiLogPath: process.env.GAMEBUDDY_LOOP_AI_LOG ?? null,
+        agentSessionJsonl: process.env.GAMEBUDDY_LOOP_AGENT_SESSION ?? null,
+      });
+      writeFileSync(join(traceDir, "loop-report.json"), JSON.stringify(result, null, 2));
+      console.log(`LOOP_RESULT ${JSON.stringify({ state: "passed", ...result })}`);
+      process.exitCode = 0;
+    } finally {
+      await session.close();
+    }
   }
 }
