@@ -19,23 +19,19 @@ import { TavernArtifactStore } from "./tavern/artifact-store.js";
 import {
   type ChatCreateResultV1,
   type ChatListV1,
+  chatListPreviewText,
   composeTavernProfile,
   type CreateChatCommandV1,
   TAVERN_BROWSER_API_VERSION,
 } from "./tavern/browser-contract/index.js";
-import {
-  createChatThreadStore,
-  createProfileAwareChatThreadCreationCapability,
-} from "./tavern/chat-thread-store.js";
+import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "./tavern/chat-thread-store.js";
 import { createGreetingManagementService } from "./tavern/greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./tavern/library-service.js";
 import { resolveTavernPaths } from "./tavern/tavern-paths.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
 import type { TavernManagementState, TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
 import type { WorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
-import {
-  startTavernManagementDialogueWebServer,
-} from "./tavern-management-dialogue-web.js";
+import { startTavernManagementDialogueWebServer } from "./tavern-management-dialogue-web.js";
 
 test.before(async () => {
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
@@ -195,6 +191,8 @@ async function fixture(withCreate: boolean, options: Readonly<{ withCompanionArt
           status: "active" as const,
           managementRevision: state.thread.managementRevision ?? 1,
           isSelected: false,
+          updatedAtMs: state.thread.updatedAtMs,
+          preview: chatListPreviewText(opening === undefined ? null : opening.text),
         }),
         opening: opening === undefined ? null : opening.text,
       });
@@ -225,6 +223,11 @@ async function fixture(withCreate: boolean, options: Readonly<{ withCompanionArt
     async listChats(): Promise<ChatListV1> {
       listReads += 1;
       const durable = await threads.listThreads!();
+      // The same batched read the production projection uses: one query for every
+      // thread's last message, then the row's own durable facts.
+      const lastMessages = new Map(
+        (await threads.listThreadLastMessages!()).map((last) => [last.chatThreadId, last.text]),
+      );
       return Object.freeze({
         apiVersion: TAVERN_BROWSER_API_VERSION,
         chats: durable
@@ -236,6 +239,8 @@ async function fixture(withCreate: boolean, options: Readonly<{ withCompanionArt
               status: "active" as const,
               managementRevision: thread.managementRevision ?? 1,
               isSelected: thread.chatThreadId === firstChatThreadId,
+              updatedAtMs: thread.updatedAtMs,
+              preview: chatListPreviewText(lastMessages.get(thread.chatThreadId) ?? null),
             }),
           ),
       });
@@ -299,6 +304,7 @@ async function fixture(withCreate: boolean, options: Readonly<{ withCompanionArt
     created,
     paths,
     greetingRecord,
+    firstChat: { chatThreadId: firstChatThreadId, chatSurfaceSessionId: firstChatSurfaceSessionId },
     listReads: () => listReads,
   };
 }
@@ -348,10 +354,7 @@ test("New Chat creates a durable second Chat that opens on the companion's own g
     assert.equal(after.status, 200);
     const listed = (await after.json()) as ChatListV1;
     assert.equal(listed.chats.length, 2);
-    assert.equal(
-      listed.chats.filter((chat) => chat.handle === result.chat.handle).length,
-      1,
-    );
+    assert.equal(listed.chats.filter((chat) => chat.handle === result.chat.handle).length, 1);
     assert.equal(listed.chats.filter((chat) => chat.isSelected).length, 1);
 
     // The durable thread itself carries the greeting opening, from the exact
@@ -367,6 +370,20 @@ test("New Chat creates a durable second Chat that opens on the companion's own g
     assert.equal(durable.thread.openingSelection.kind, "greeting");
     // The opening is not yet sealed, so the variant choice is still legal on it.
     assert.equal(durable.thread.openingLockedAtEventId, null);
+
+    // The two rows a player sees after one New Chat: both carry the durable thread
+    // time, and the Chat that opened on the greeting does not read like the blank
+    // one. Before this contract change both rows were the single word `New chat`.
+    const createdEntry = listed.chats.find((chat) => chat.handle === result.chat.handle)!;
+    const blankEntry = listed.chats.find((chat) => chat.handle !== result.chat.handle)!;
+    assert.equal(createdEntry.updatedAtMs, durable.thread.updatedAtMs);
+    assert.equal(createdEntry.preview, GREETING_TEXT);
+    assert.equal(
+      blankEntry.updatedAtMs,
+      (await f.threads.resumeThread(f.firstChat.chatThreadId, f.firstChat.chatSurfaceSessionId)).thread.updatedAtMs,
+    );
+    assert.equal(blankEntry.preview, null, "a genuinely blank Chat has no message to preview");
+    assert.notEqual(blankEntry.preview, createdEntry.preview);
   } finally {
     await f.page.close();
   }

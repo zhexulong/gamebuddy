@@ -1216,6 +1216,8 @@ function managementBundle(): ManagementBundle {
               status: "active" as const,
               managementRevision: 1,
               isSelected: true,
+              updatedAtMs: 1_760_000_000_000,
+              preview: "The parsnips took.",
             }),
           ],
         }),

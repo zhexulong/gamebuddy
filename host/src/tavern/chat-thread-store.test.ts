@@ -1148,3 +1148,47 @@ test("a swipe variant is the same reply position: one player row, and the active
     await rm(root, { recursive: true, force: true });
   }
 });
+
+/**
+ * The list projection reads one row per thread, so the last message must arrive
+ * from ONE batched statement rather than one transcript open per thread: this
+ * pins the shape the projection depends on (`tavern_messages.text` is the active
+ * swipe, so the last row's text needs no swipe join).
+ */
+test("listThreadLastMessages returns each thread's last appended message in one batched read", async () => {
+  const { root, store: s, creation } = await store();
+  try {
+    await creation.createExplicit(request());
+    await creation.createExplicit({
+      ...request(),
+      chatThreadId: "thread_02",
+      chatSurfaceSessionId: "surface_02",
+      opening: { ...opening, messageId: "opening_02", text: "A second opening." },
+    });
+    await s.appendPlayer("thread_01", {
+      messageId: "player_01",
+      text: "What did you do yesterday?",
+      occurredAtMs: 40,
+    });
+    const read = [...(await s.listThreadLastMessages!())].sort((left, right) =>
+      left.chatThreadId.localeCompare(right.chatThreadId),
+    );
+    assert.deepEqual(read, [
+      { chatThreadId: "thread_01", text: "What did you do yesterday?" },
+      { chatThreadId: "thread_02", text: "A second opening." },
+    ]);
+    // A thread with no message at all is absent from the read rather than present
+    // empty: the projection turns an absence into `preview: null`.
+    await creation.createExplicit({
+      ...request(),
+      chatThreadId: "thread_03",
+      chatSurfaceSessionId: "surface_03",
+      opening: "blank",
+    });
+    const afterBlank = await s.listThreadLastMessages!();
+    assert.deepEqual(afterBlank.map((last) => last.chatThreadId).includes("thread_03"), false);
+  } finally {
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});

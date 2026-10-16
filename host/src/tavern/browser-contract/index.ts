@@ -1105,6 +1105,32 @@ export const ChatListQueryV1Schema = strictObject({
   apiVersion: ApiVersion,
   state: Type.Optional(Type.Literal("active")),
 });
+/**
+ * The exact ceiling the contract puts on `ChatListEntryV1.preview`. Exported so a
+ * producer cannot pick its own bound and so this module's own truncation is the
+ * length the schema accepts.
+ */
+export const CHAT_LIST_PREVIEW_MAX_LENGTH = 160;
+
+/**
+ * Turns a durable message text into the list row's plain-text preview: an action
+ * marker (`*...*`) loses its delimiter, a `{{macro}}` run is removed, runs of
+ * whitespace collapse, and the result is truncated to the contract's own ceiling
+ * with an ellipsis. `null` in, `null` out; a message that is nothing but markup
+ * previews as `null` rather than as an empty string.
+ */
+export function chatListPreviewText(text: string | null): string | null {
+  if (text === null) return null;
+  const plain = text
+    .replace(/\{\{[^}]*\}\}/g, "")
+    .replace(/[{}*]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.!?;:])/g, "$1")
+    .trim();
+  if (plain.length === 0) return null;
+  if (plain.length <= CHAT_LIST_PREVIEW_MAX_LENGTH) return plain;
+  return `${plain.slice(0, CHAT_LIST_PREVIEW_MAX_LENGTH - 1)}…`;
+}
 /** Metadata-only Chat list entry: no durable identifier ever appears. */
 export const ChatListEntryV1Schema = strictObject({
   handle: OpaqueHandle,
@@ -1112,6 +1138,18 @@ export const ChatListEntryV1Schema = strictObject({
   status: Type.Literal("active"),
   managementRevision: Revision,
   isSelected: Type.Boolean(),
+  /**
+   * The thread's own durable last-activity time. It is what makes two rows that
+   * share a title (`null` for every Chat the player never renamed) distinguishable
+   * without a rename: no new durable state, the store has carried it all along.
+   */
+  updatedAtMs: Revision,
+  /**
+   * Plain-text preview of the last message, already stripped of action markers and
+   * macro residue and bounded by `CHAT_LIST_PREVIEW_MAX_LENGTH`; `null` for a Chat
+   * with no message at all (a genuinely blank opening), never "absent".
+   */
+  preview: Type.Union([Type.String({ maxLength: CHAT_LIST_PREVIEW_MAX_LENGTH }), Type.Null()]),
 });
 export const ChatListV1Schema = strictObject({
   apiVersion: ApiVersion,

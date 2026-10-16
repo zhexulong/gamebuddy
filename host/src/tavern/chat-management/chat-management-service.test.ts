@@ -177,8 +177,12 @@ test("mounted management service lists durable metadata only and renames the exa
     const listValue = list;
      const secondStore = store();
      const secondCreation = createProfileAwareChatThreadCreationCapability(secondStore, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
-     const second = await secondCreation.createExplicit({ chatThreadId: "thread_02", companionId: "companion_01", continuityId: "continuity_01", chatSurfaceSessionId: "surface_02", profileId: "profile_01", profileRevision: 1, profileCanonicalHash: "a".repeat(64), opening: "blank" });
+     // A marker-bearing opening (an action beat and a macro that was never resolved):
+     // the row's preview must be plain text, not the transcript's own markup.
+     const second = await secondCreation.createExplicit({ chatThreadId: "thread_02", companionId: "companion_01", continuityId: "continuity_01", chatSurfaceSessionId: "surface_02", profileId: "profile_01", profileRevision: 1, profileCanonicalHash: "a".repeat(64), opening: { messageId: "opening_02", text: "*The lantern is still lit.* {{user}}, the parsnips took.", source: { greetingSetId: "greetings_01", sourceRevision: 2, canonicalHash: "a".repeat(64), variantId: "alternate_01", profileRevision: 3, scenarioRevision: null } } });
     const two = await service.listChats({ apiVersion: 1 });
+    const durableMounted = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    const durableSecond = await store().resumeThread("thread_02", "surface_02");
     const rename = await service.renameChatTitle({ apiVersion: 1, selectionGeneration: generation, chatHandle: handle, expectedManagementRevision: 1, title: "Renamed Farm Chat" });
     const readBack = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
     const wrongGeneration = await code(() => service.renameChatTitle({ apiVersion: 1, selectionGeneration: generation + 1, chatHandle: handle, expectedManagementRevision: 1, title: "X" }));
@@ -201,6 +205,10 @@ test("mounted management service lists durable metadata only and renames the exa
       facadeState,
       rawIds: [lease.chatThreadId, lease.chatSurfaceSessionId, "thread_02", "surface_02", "companion_01", "continuity_01"],
       secondThreadId: second.thread.chatThreadId,
+      durableMountedTime: durableMounted.thread.updatedAtMs,
+      durableSecondTime: durableSecond.thread.updatedAtMs,
+      mountedLastMessage: durableMounted.messages.at(-1) === undefined ? null : durableMounted.messages.at(-1).text,
+      secondMessageCount: durableSecond.messages.length,
       mounted: { chatThreadId: lease.chatThreadId, chatSurfaceSessionId: lease.chatSurfaceSessionId },
     }));
     await service.close();
@@ -216,6 +224,22 @@ test("mounted management service lists durable metadata only and renames the exa
   )!;
   assert.equal(secondEntry.status, "active");
   assert.equal(secondEntry.handle !== (listValue.chats[0] as Readonly<Record<string, unknown>>).handle, true);
+  // The row's two identity facts, read from the durable thread the projection just
+  // listed: the store's own `updated_at_ms`, and the last message as plain text.
+  assert.equal(secondEntry.updatedAtMs, results.durableSecondTime);
+  assert.equal((listValue.chats[0] as Readonly<Record<string, unknown>>).updatedAtMs, results.durableMountedTime);
+  assert.equal(results.secondMessageCount, 1);
+  assert.equal(secondEntry.preview, "The lantern is still lit., the parsnips took.");
+  assert.equal(
+    String(secondEntry.preview).includes("*") || String(secondEntry.preview).includes("{{"),
+    false,
+    "the row preview carried transcript markup",
+  );
+  assert.notEqual(
+    secondEntry.preview,
+    (listValue.chats[0] as Readonly<Record<string, unknown>>).preview,
+    "two Chats opened differently must not read as the same row",
+  );
   const rename = results.rename as { title: string; managementRevision: number };
   assert.equal(rename.title, "Renamed Farm Chat");
   assert.equal(rename.managementRevision, 2);

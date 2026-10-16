@@ -31,6 +31,7 @@ import {
   type CreateChatCommandV1,
   type SelectChatCommandV1,
   TAVERN_BROWSER_API_VERSION,
+  chatListPreviewText,
 } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import { macroTable } from "../tavern/macro-engine.js";
@@ -416,6 +417,11 @@ function createTavernManagementDomains(
           status: "active" as const,
           managementRevision: state.thread.managementRevision ?? 1,
           isSelected: false,
+          // The created Chat has exactly one message when it has one at all, so the
+          // message-zero text IS its preview. The row carries the same two facts a
+          // list row carries, projected the same way.
+          updatedAtMs: state.thread.updatedAtMs,
+          preview: chatListPreviewText(opening === undefined ? null : opening.text),
         }),
         opening: opening === undefined ? null : opening.text,
       });

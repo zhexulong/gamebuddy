@@ -3,6 +3,8 @@ import test from "node:test";
 import { Compile } from "typebox/compile";
 import {
   BrowserEventV1Schema,
+  CHAT_LIST_PREVIEW_MAX_LENGTH,
+  chatListPreviewText,
   composeTavernProfile,
   isComposedTavernProfile,
   SubmitMessageCommandV1Schema,
@@ -256,6 +258,8 @@ test("chat list is metadata-only with opaque handles and an exact active status"
         status: "active",
         managementRevision: 3,
         isSelected: true,
+        updatedAtMs: 1_760_000_000_000,
+        preview: "The parsnips took. All of them, by the look of it.",
       },
     ],
   };
@@ -291,6 +295,64 @@ test("chat list is metadata-only with opaque handles and an exact active status"
   assert.equal(TavernBrowserValidatorsV1.ChatListQueryV1Schema.Check({ apiVersion: 1, state: "active" }), true);
   assert.equal(TavernBrowserValidatorsV1.ChatListQueryV1Schema.Check({ apiVersion: 1, state: "trashed" }), false);
   assert.equal(TavernBrowserValidatorsV1.ChatListQueryV1Schema.Check({ apiVersion: 1 }), true);
+});
+
+/**
+ * The row's two identity facts are required, not decoration: a Host that omitted
+ * either would put the list back where it was - every row reading `New chat` with
+ * nothing to tell one from another. The bounds are the contract's own.
+ */
+test("chat list row requires its durable time and a bounded preview", () => {
+  const row = {
+    handle,
+    title: null,
+    status: "active",
+    managementRevision: 1,
+    isSelected: false,
+    updatedAtMs: 1_760_000_000_000,
+    preview: null,
+  };
+  assert.equal(TavernBrowserValidatorsV1.ChatListEntryV1Schema.Check(row), true);
+  const { updatedAtMs: _time, ...withoutTime } = row;
+  assert.equal(TavernBrowserValidatorsV1.ChatListEntryV1Schema.Check(withoutTime), false);
+  const { preview: _preview, ...withoutPreview } = row;
+  assert.equal(TavernBrowserValidatorsV1.ChatListEntryV1Schema.Check(withoutPreview), false);
+  assert.equal(TavernBrowserValidatorsV1.ChatListEntryV1Schema.Check({ ...row, updatedAtMs: -1 }), false);
+  assert.equal(
+    TavernBrowserValidatorsV1.ChatListEntryV1Schema.Check({
+      ...row,
+      preview: "x".repeat(CHAT_LIST_PREVIEW_MAX_LENGTH + 1),
+    }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.ChatListEntryV1Schema.Check({
+      ...row,
+      preview: "x".repeat(CHAT_LIST_PREVIEW_MAX_LENGTH),
+    }),
+    true,
+  );
+});
+
+/**
+ * The preview is prose the player reads on a list row, so it is plain text: an
+ * action beat loses its `*` delimiter, a `{{macro}}` run is residue the row must
+ * not print, whitespace collapses, and the text is bounded at the contract's own
+ * ceiling rather than at the message's.
+ */
+test("a row preview is plain, collapsed and bounded text", () => {
+  assert.equal(
+    chatListPreviewText("*The porch lantern is still lit when she comes out.*\n\n{{user}}, the parsnips took."),
+    "The porch lantern is still lit when she comes out., the parsnips took.",
+  );
+  assert.equal(chatListPreviewText("  \n\t  "), null, "markup-only text previews as nothing, not as an empty row");
+  assert.equal(chatListPreviewText(null), null);
+  const long = "parsnip ".repeat(40).trim();
+  const bounded = chatListPreviewText(long)!;
+  assert.equal(bounded.length, CHAT_LIST_PREVIEW_MAX_LENGTH);
+  assert.equal(bounded.endsWith("…"), true);
+  assert.equal(bounded.includes("*"), false);
+  assert.equal(bounded.includes("{{"), false);
 });
 
 test("memory read projection contains only safe bounded rows and validates strict shape", () => {

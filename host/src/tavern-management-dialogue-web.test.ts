@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import test from "node:test";
-import { PlayerPreferenceRevisionConflict, type PlayerPreference, type PlayerPreferenceUpdate } from "./settings/player-preference-store.js";
+import {
+  PlayerPreferenceRevisionConflict,
+  type PlayerPreference,
+  type PlayerPreferenceUpdate,
+} from "./settings/player-preference-store.js";
 import {
   composeTavernProfile,
   type MemoryMutationCommandV1,
@@ -98,6 +102,8 @@ const list: import("./tavern/browser-contract/index.js").ChatListV1 = {
       status: "active",
       managementRevision: 1,
       isSelected: true,
+      updatedAtMs: 1_760_000_000_000,
+      preview: "The parsnips took. All of them, by the look of it.",
     },
   ],
 };
@@ -213,7 +219,14 @@ function worldInfoService(recorder?: {
 
 const voicePreferenceStore = Object.freeze({
   async read() {
-    return { revision: 0, locale: null, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
+    return {
+      revision: 0,
+      locale: null,
+      disclosureVersion: null,
+      consent: "undecided" as const,
+      decidedAtMs: null,
+      outputDevice: null,
+    };
   },
   async update(expectedRevision: number, update: PlayerPreferenceUpdate) {
     assert.equal(expectedRevision, 0);
@@ -1850,7 +1863,14 @@ test("management handler maps Voice preference revision conflicts to the safe se
     worldInfoService: worldInfoService(),
     playerPreferenceStore: Object.freeze({
       async read() {
-        return { revision: 0, locale: null, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
+        return {
+          revision: 0,
+          locale: null,
+          disclosureVersion: null,
+          consent: "undecided" as const,
+          decidedAtMs: null,
+          outputDevice: null,
+        };
       },
       async update() {
         throw new PlayerPreferenceRevisionConflict();
@@ -1913,10 +1933,24 @@ test("every CSRF-protected management mutation answers 403 csrf_failed for a mis
     worldInfoService: worldInfoService(),
     playerPreferenceStore: Object.freeze({
       async read() {
-        return { revision: 0, locale: null, disclosureVersion: null, consent: "undecided" as const, decidedAtMs: null, outputDevice: null };
+        return {
+          revision: 0,
+          locale: null,
+          disclosureVersion: null,
+          consent: "undecided" as const,
+          decidedAtMs: null,
+          outputDevice: null,
+        };
       },
       async update() {
-        return { revision: 1, locale: null, disclosureVersion: null, consent: "accepted" as const, decidedAtMs: 1, outputDevice: null };
+        return {
+          revision: 1,
+          locale: null,
+          disclosureVersion: null,
+          consent: "accepted" as const,
+          decidedAtMs: 1,
+          outputDevice: null,
+        };
       },
     }),
     profile,

@@ -88,6 +88,8 @@ const fakeChatList = Object.freeze({
       status: "active" as const,
       managementRevision: 1,
       isSelected: true,
+      updatedAtMs: 1_760_000_000_000,
+      preview: "The parsnips took.",
     }),
   ],
 });
@@ -172,11 +174,7 @@ async function artifactFixture(withManifest = true): Promise<{ hostArtifactRoot:
   await mkdir(join(root, "assets"), { recursive: true });
   if (withManifest) {
     const script = Buffer.from("console.log('shell');\n", "utf8");
-    await writeFile(
-      join(root, "index.html"),
-      '<!doctype html><script src="/assets/app-abcdef12.js"></script>',
-      "utf8",
-    );
+    await writeFile(join(root, "index.html"), '<!doctype html><script src="/assets/app-abcdef12.js"></script>', "utf8");
     await writeFile(join(root, "assets", "app-abcdef12.js"), script);
     await writeFile(
       join(root, "tavern-browser-artifact-manifest.json"),
@@ -290,54 +288,48 @@ const chatSelectionStub = Object.freeze({
 
 async function main(): Promise<void> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  await mock.module(
-    pathToFileURL(join(moduleDirectory, "..", "tavern", "reference-pipeline-state.js")).href,
-    {
-      namedExports: {
-        createReferencePipelineStateFacade: async (
-          _manifest: unknown,
-          _lease: unknown,
-          profile: { readonly profileId?: string } | undefined,
-          stream: unknown,
-        ) => {
-          if (scenario === "facade-failure") throw constructionFailure;
-          counts.facadeCreated += 1;
-          tavernProfileIdObservedByFacade = profile?.profileId ?? null;
-          facadeSawSharedStream = stream === eventStream;
-          return fakeFacade;
-        },
+  await mock.module(pathToFileURL(join(moduleDirectory, "..", "tavern", "reference-pipeline-state.js")).href, {
+    namedExports: {
+      createReferencePipelineStateFacade: async (
+        _manifest: unknown,
+        _lease: unknown,
+        profile: { readonly profileId?: string } | undefined,
+        stream: unknown,
+      ) => {
+        if (scenario === "facade-failure") throw constructionFailure;
+        counts.facadeCreated += 1;
+        tavernProfileIdObservedByFacade = profile?.profileId ?? null;
+        facadeSawSharedStream = stream === eventStream;
+        return fakeFacade;
       },
     },
-  );
-  await mock.module(
-    pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-pipeline-service.js")).href,
-    {
-      namedExports: {
-        createChatPipelineService: (options: {
-          readonly profile?: { readonly profileId?: string };
-          readonly eventStream?: unknown;
-        }) => {
-          counts.serviceCreated += 1;
-          tavernProfileIdObservedByService = options?.profile?.profileId ?? null;
-          serviceSawSharedStream = options?.eventStream === eventStream;
-          return Object.freeze({
-            submitAfterResponseCommit: async () => {
-              throw new Error("unused_submit");
-            },
-            readSubmissionStatus: async () => {
-              throw new Error("unused_status");
-            },
-            cancel: async () => {
-              throw new Error("unused_cancel");
-            },
-            close: async () => {
-              counts.serviceClosed += 1;
-            },
-          });
-        },
+  });
+  await mock.module(pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-pipeline-service.js")).href, {
+    namedExports: {
+      createChatPipelineService: (options: {
+        readonly profile?: { readonly profileId?: string };
+        readonly eventStream?: unknown;
+      }) => {
+        counts.serviceCreated += 1;
+        tavernProfileIdObservedByService = options?.profile?.profileId ?? null;
+        serviceSawSharedStream = options?.eventStream === eventStream;
+        return Object.freeze({
+          submitAfterResponseCommit: async () => {
+            throw new Error("unused_submit");
+          },
+          readSubmissionStatus: async () => {
+            throw new Error("unused_status");
+          },
+          cancel: async () => {
+            throw new Error("unused_cancel");
+          },
+          close: async () => {
+            counts.serviceClosed += 1;
+          },
+        });
       },
     },
-  );
+  });
 
   await mock.module(
     pathToFileURL(join(moduleDirectory, "..", "tavern", "world-info-management", "world-info-management.js")).href,
@@ -351,12 +343,12 @@ async function main(): Promise<void> {
     },
   );
   await mock.module(
-    pathToFileURL(join(moduleDirectory, "..", "tavern", "world-info-binding", "world-info-binding-management-service.js")).href,
+    pathToFileURL(
+      join(moduleDirectory, "..", "tavern", "world-info-binding", "world-info-binding-management-service.js"),
+    ).href,
     {
       namedExports: {
-        createWorldInfoBindingManagementService: (options: {
-          readonly profile?: { readonly profileId?: string };
-        }) => {
+        createWorldInfoBindingManagementService: (options: { readonly profile?: { readonly profileId?: string } }) => {
           counts.worldInfoCreated += 1;
           observedProfileIds.worldInfo = options?.profile?.profileId ?? null;
           return fakeWorldInfoService;
@@ -388,17 +380,14 @@ async function main(): Promise<void> {
       },
     },
   );
-  await mock.module(
-    pathToFileURL(join(moduleDirectory, "..", "tavern", "connection-service.js")).href,
-    {
-      namedExports: {
-        createTavernConnectionService: () => {
-          counts.connectionCreated += 1;
-          return fakeConnectionService;
-        },
+  await mock.module(pathToFileURL(join(moduleDirectory, "..", "tavern", "connection-service.js")).href, {
+    namedExports: {
+      createTavernConnectionService: () => {
+        counts.connectionCreated += 1;
+        return fakeConnectionService;
       },
     },
-  );
+  });
 
   const { startDesktopPresentationAdmission } = await import(
     pathToFileURL(join(moduleDirectory, "..", "composition", "desktop-presentation-admission-owner.js")).href

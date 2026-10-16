@@ -19,6 +19,7 @@ import {
   type SaveDraftCommandV1,
   TAVERN_BROWSER_API_VERSION,
   TavernBrowserValidatorsV1,
+  chatListPreviewText,
 } from "../browser-contract/index.js";
 
 /**
@@ -110,11 +111,13 @@ export function createChatManagementService(options: ChatManagementServiceOption
   );
   const renameThreadTitle = store.renameThreadTitle;
   const listThreads = store.listThreads;
+  const listThreadLastMessages = store.listThreadLastMessages;
   const saveDraftMutation = store.saveDraft;
   const discardDraftMutation = store.discardDraft;
   if (
     renameThreadTitle === undefined ||
     listThreads === undefined ||
+    listThreadLastMessages === undefined ||
     saveDraftMutation === undefined ||
     discardDraftMutation === undefined
   )
@@ -147,7 +150,12 @@ export function createChatManagementService(options: ChatManagementServiceOption
     if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
     try {
       const threads = await listThreads();
+      // The last message of every thread in one batched read, before the lease is
+      // re-checked with the thread list: a row per `resumeThread` would make this
+      // projection N+1 durable transcript reads.
+      const lastMessages = await listThreadLastMessages();
       assertLeaseAfterDurableRead();
+      const previews = new Map(lastMessages.map((last) => [last.chatThreadId, last.text]));
       const chats = threads
         .filter(
           (thread) =>
@@ -155,7 +163,7 @@ export function createChatManagementService(options: ChatManagementServiceOption
             thread.continuityId === manifest.principal.continuityId &&
             (thread.lifecycleStatus ?? "active") === "active",
         )
-        .map((thread) => projectListEntry(thread));
+        .map((thread) => projectListEntry(thread, previews.get(thread.chatThreadId) ?? null));
       const list: ChatListV1 = Object.freeze({
         apiVersion: TAVERN_BROWSER_API_VERSION,
         chats,
@@ -280,10 +288,7 @@ export function createChatManagementService(options: ChatManagementServiceOption
     if ((command.direction === undefined) === (command.targetIndex === undefined)) throw invalidRequest();
     if (command.direction !== undefined && command.direction !== "prev" && command.direction !== "next")
       throw invalidRequest();
-    if (
-      command.targetIndex !== undefined &&
-      (!Number.isSafeInteger(command.targetIndex) || command.targetIndex < 0)
-    )
+    if (command.targetIndex !== undefined && (!Number.isSafeInteger(command.targetIndex) || command.targetIndex < 0))
       throw invalidRequest();
     if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
     try {
@@ -324,7 +329,7 @@ export function createChatManagementService(options: ChatManagementServiceOption
     },
   });
 
-  function projectListEntry(thread: ChatThread): ChatListEntryV1 {
+  function projectListEntry(thread: ChatThread, lastMessageText: string | null): ChatListEntryV1 {
     if (thread.chatThreadId === undefined || thread.chatSurfaceSessionId === undefined) throw unavailable();
     const entry = Object.freeze({
       handle: lease.browserProjection.projectChatHandle(thread.chatThreadId, thread.chatSurfaceSessionId),
@@ -333,6 +338,8 @@ export function createChatManagementService(options: ChatManagementServiceOption
       managementRevision: thread.managementRevision ?? 1,
       isSelected:
         thread.chatThreadId === lease.chatThreadId && thread.chatSurfaceSessionId === lease.chatSurfaceSessionId,
+      updatedAtMs: thread.updatedAtMs,
+      preview: chatListPreviewText(lastMessageText),
     });
     if (!TavernBrowserValidatorsV1.ChatListEntryV1Schema.Check(entry)) throw unavailable();
     return entry;
@@ -360,7 +367,6 @@ function validateListQuery(query: ChatListQueryV1): void {
   if (query.apiVersion !== TAVERN_BROWSER_API_VERSION) throw unavailable();
   if (query.state !== undefined && query.state !== "active") throw unavailable();
 }
-
 
 function validateDraftCommand(
   command: SaveDraftCommandV1 | DiscardDraftCommandV1,
@@ -412,10 +418,12 @@ function validateRetentionCommand(command: ChatRetentionServiceCommand, lease: M
 
 function rethrowRetentionError(error: unknown): Error {
   if (!(error instanceof Error)) return unavailable();
-  if (error.message === "chat_thread_management_revision_conflict") return new Error("chat_management_revision_conflict");
+  if (error.message === "chat_thread_management_revision_conflict")
+    return new Error("chat_management_revision_conflict");
   if (error instanceof ExactThreadSurfaceMismatchError) return selectionConflict();
   if (error.message === "chat_thread_lifecycle_not_active") return new Error("chat_management_service_unavailable");
-  if (error.message === "chat_thread_lifecycle_transition_invalid") return new Error("chat_management_lifecycle_invalid");
+  if (error.message === "chat_thread_lifecycle_transition_invalid")
+    return new Error("chat_management_lifecycle_invalid");
   if (isStorageError(error)) return storageUnavailable();
   return unavailable();
 }

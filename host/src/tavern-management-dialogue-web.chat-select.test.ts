@@ -17,6 +17,7 @@ import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-recla
 import {
   type ChatListV1,
   type ChatSelectResultV1,
+  chatListPreviewText,
   composeTavernProfile,
   type SelectChatCommandV1,
   TAVERN_BROWSER_API_VERSION,
@@ -120,10 +121,8 @@ async function fixture() {
         active !== null &&
         active.chatThreadId === target.chatThreadId &&
         active.chatSurfaceSessionId === target.chatSurfaceSessionId;
-      if (alreadySelected)
-        return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "switched" });
-      if (!startedAttempt)
-        return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "turn_in_flight" });
+      if (alreadySelected) return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "switched" });
+      if (!startedAttempt) return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "turn_in_flight" });
       selectionCalls += 1;
       await threads.selectActiveThread(target.chatThreadId, target.chatSurfaceSessionId);
       return Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, status: "switched" });
@@ -147,6 +146,9 @@ async function fixture() {
     async listChats(): Promise<ChatListV1> {
       const active = await threads.readActiveThreadSelection();
       const durable = await threads.listThreads!();
+      const lastMessages = new Map(
+        (await threads.listThreadLastMessages!()).map((last) => [last.chatThreadId, last.text]),
+      );
       return Object.freeze({
         apiVersion: TAVERN_BROWSER_API_VERSION,
         chats: durable.map((thread) =>
@@ -159,6 +161,8 @@ async function fixture() {
               active !== null &&
               active.chatThreadId === thread.chatThreadId &&
               active.chatSurfaceSessionId === thread.chatSurfaceSessionId,
+            updatedAtMs: thread.updatedAtMs,
+            preview: chatListPreviewText(lastMessages.get(thread.chatThreadId) ?? null),
           }),
         ),
       });
@@ -215,7 +219,17 @@ async function fixture() {
     profile: profile(),
     bootstrapToken,
   });
-  return { page, threads, first, second, handleOf, selectionCalls: () => selectionCalls, setStartedAttempt: (value: boolean) => { startedAttempt = value; } };
+  return {
+    page,
+    threads,
+    first,
+    second,
+    handleOf,
+    selectionCalls: () => selectionCalls,
+    setStartedAttempt: (value: boolean) => {
+      startedAttempt = value;
+    },
+  };
 }
 
 async function openSession(origin: string): Promise<{ cookie: string; csrf: string }> {

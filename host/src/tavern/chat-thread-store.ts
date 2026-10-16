@@ -115,6 +115,12 @@ export type TurnVariantTarget = Readonly<{
   targetMessageId: string;
   anchorMessageId: string;
 }>;
+/**
+ * The last message appended to one thread, for the metadata list's own row. A
+ * thread with no messages at all is absent from the read rather than present
+ * with an empty text.
+ */
+export type ChatThreadLastMessage = Readonly<{ chatThreadId: string; text: string }>;
 export type ChatDraft = Readonly<{ revision: number; text: string | null }>;
 export type AcceptedQueuedTurn = Readonly<{
   turnId: string;
@@ -620,6 +626,12 @@ export type ProfileAwareChatThreadCreationCapability = Readonly<{
 export type ChatThreadStore = Readonly<{
   /** Lists durable thread metadata only; transcript data remains explicitly opened. */
   listThreads?(): Promise<readonly ChatThread[]>;
+  /**
+   * Opens every thread's last-appended message in ONE batched read. The list
+   * projection is a row per thread, so a per-thread `resumeThread` would make it
+   * N+1 durable transcript reads; this read exists so that never happens.
+   */
+  listThreadLastMessages?(): Promise<readonly ChatThreadLastMessage[]>;
   /** Returns no selection rather than guessing from a latest thread. */
   readActiveThreadSelection(): Promise<ActiveChatThreadSelection | null>;
   /**
@@ -1677,6 +1689,25 @@ export function createChatThreadStore(
       return withDb((db) => {
         const rows = db.prepare("SELECT * FROM tavern_threads ORDER BY thread_id ASC").all() as any[];
         return Object.freeze(rows.map((row) => rowToThread(db, row)));
+      });
+    },
+
+    async listThreadLastMessages(): Promise<readonly ChatThreadLastMessage[]> {
+      return withDb((db) => {
+        const rows = db
+          .prepare(
+            `SELECT messages.thread_id AS thread_id, messages.text AS text
+             FROM tavern_messages AS messages
+             JOIN (
+               SELECT thread_id, MAX(append_ordinal) AS last_ordinal
+               FROM tavern_messages GROUP BY thread_id
+             ) AS last
+               ON last.thread_id = messages.thread_id AND last.last_ordinal = messages.append_ordinal`,
+          )
+          .all() as any[];
+        return Object.freeze(
+          rows.map((row) => Object.freeze({ chatThreadId: row.thread_id, text: row.text }) as ChatThreadLastMessage),
+        );
       });
     },
 
