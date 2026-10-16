@@ -32,14 +32,12 @@ test("the deployment decision names every target state", () => {
   assert.deepEqual(decision({ kind: "unreadable" }), { kind: "target_unreadable" });
   // Already correct is version AND bytes: the installed manifest reading as our
   // version is not enough to skip the write.
-  assert.deepEqual(
-    decision({ kind: "installed", uniqueId: UNIQUE_ID, version: "0.1.0", contentMatches: true }),
-    { kind: "current" },
-  );
-  assert.deepEqual(
-    decision({ kind: "installed", uniqueId: UNIQUE_ID, version: "0.1.0", contentMatches: false }),
-    { kind: "update" },
-  );
+  assert.deepEqual(decision({ kind: "installed", uniqueId: UNIQUE_ID, version: "0.1.0", contentMatches: true }), {
+    kind: "current",
+  });
+  assert.deepEqual(decision({ kind: "installed", uniqueId: UNIQUE_ID, version: "0.1.0", contentMatches: false }), {
+    kind: "update",
+  });
   assert.deepEqual(decision({ kind: "installed", uniqueId: UNIQUE_ID, version: "0.0.9", contentMatches: false }), {
     kind: "replace_requires_consent",
     installedVersion: "0.0.9",

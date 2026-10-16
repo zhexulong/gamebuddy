@@ -54,18 +54,19 @@ const FAILURES: readonly StardewCompanionModDeploymentFailure[] = Object.freeze(
 ]);
 
 /** The exact token an operator reads back for each named failure. */
-const EXPECTED_FAILURE_TOKENS: Readonly<Record<StardewCompanionModDeploymentFailure, CompanionGameModDeploymentOutcome>> =
-  Object.freeze({
-    game_installation_not_found: "companion-mod-game-installation-not-found",
-    smapi_not_installed: "companion-mod-smapi-not-installed",
-    mods_directory_missing: "companion-mod-mods-directory-missing",
-    mods_directory_not_writable: "companion-mod-mods-directory-not-writable",
-    existing_mod_version_requires_consent: "companion-mod-existing-mod-version-requires-consent",
-    foreign_mod_present: "companion-mod-foreign-mod-present",
-    installed_mod_manifest_unreadable: "companion-mod-installed-mod-manifest-unreadable",
-    mod_package_invalid: "companion-mod-package-invalid",
-    mod_deployment_incomplete: "companion-mod-deployment-incomplete",
-  });
+const EXPECTED_FAILURE_TOKENS: Readonly<
+  Record<StardewCompanionModDeploymentFailure, CompanionGameModDeploymentOutcome>
+> = Object.freeze({
+  game_installation_not_found: "companion-mod-game-installation-not-found",
+  smapi_not_installed: "companion-mod-smapi-not-installed",
+  mods_directory_missing: "companion-mod-mods-directory-missing",
+  mods_directory_not_writable: "companion-mod-mods-directory-not-writable",
+  existing_mod_version_requires_consent: "companion-mod-existing-mod-version-requires-consent",
+  foreign_mod_present: "companion-mod-foreign-mod-present",
+  installed_mod_manifest_unreadable: "companion-mod-installed-mod-manifest-unreadable",
+  mod_package_invalid: "companion-mod-package-invalid",
+  mod_deployment_incomplete: "companion-mod-deployment-incomplete",
+});
 
 const LAUNCHER_STATUS_TOKEN = /^[a-z][a-z0-9-]{0,63}$/;
 

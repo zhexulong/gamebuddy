@@ -197,7 +197,12 @@ async function installedContentMatches(modDirectory: string, mod: StardewCompani
       const path = win32.join(modDirectory, entry);
       const state = await lstat(path);
       if (!state.isFile() || state.isSymbolicLink()) return false;
-      if (createHash("sha256").update(await readFile(path)).digest("hex") !== expected) return false;
+      if (
+        createHash("sha256")
+          .update(await readFile(path))
+          .digest("hex") !== expected
+      )
+        return false;
     } catch {
       return false;
     }
@@ -344,7 +349,9 @@ export async function readStardewCompanionModPackage(artifactRoot: string): Prom
   const entries = Object.freeze([...contract.entries]);
   const digests: Record<string, string> = {};
   for (const entry of entries) {
-    digests[entry] = createHash("sha256").update(await readFile(resolve(root, entry))).digest("hex");
+    digests[entry] = createHash("sha256")
+      .update(await readFile(resolve(root, entry)))
+      .digest("hex");
   }
   return Object.freeze({
     root,
