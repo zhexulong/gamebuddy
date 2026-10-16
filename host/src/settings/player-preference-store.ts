@@ -52,8 +52,10 @@ export type VoiceOutputDevice = string | null;
  * The set of personas is the extension's (`MIMO_TTS_PERSONAS`, vendored and
  * frozen at the Voice layer), never this store's: the store binds the shape a
  * persona id is - lowercase snake - and lets the catalogue grow without a Host
- * edit. `null` means "no persona selected" and leaves the gateway variable
- * unset, which the extension distinguishes from an empty string.
+ * edit. `null` means "no persona selected"; the desktop entry then resolves
+ * the product's default persona (`VoicePersonaCatalogue.Resolve`, which also
+ * clamps an unlisted id) instead of leaving the gateway variable unset - so a
+ * consented player hears the companion by default.
  */
 export const VOICE_PERSONA_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
 

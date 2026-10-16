@@ -984,9 +984,10 @@ export const TavernVoicePreferenceV1Schema = strictObject({
   decidedAtMs: Type.Union([Revision, Type.Null()]),
   /** `null` = Windows default output; `waveout:N` pins one enumerated endpoint. */
   outputDevice: Type.Union([Type.Null(), Type.String({ pattern: "^waveout:[0-9]{1,4}$", maxLength: 16 })]),
-  // The selected MIMO voice persona (`GAMEBUDDY_MIMO_PERSONA`): null leaves the
-  // gateway variable unset, which the extension distinguishes from an empty
-  // string. Same bounded lowercase-snake shape the store enforces.
+  // The selected MIMO voice persona (`GAMEBUDDY_MIMO_PERSONA`): null means no
+  // persona chosen; the desktop entry then resolves the product's default persona
+  // (and clamps an unlisted id) so a consented player hears the companion by
+  // default. Same bounded lowercase-snake shape the store enforces.
   persona: TavernVoicePersonaV1Schema,
 });
 export const TavernVoicePreferenceConsentCommandV1Schema = Type.Union([
