@@ -92,6 +92,11 @@ const failing = (failureOverrides = {}, reproOverrides = {}) =>
       step: 30,
       playerTile: { x: 12, y: 8 },
       playerFacing: "up",
+      inGameTime: "900",
+      day: 5,
+      season: "spring",
+      year: 1,
+      location: "Town",
       blockingProperties: ["NPCPassable"],
       collisionLayers: ["Buildings"],
       atMs: 1_700_000_500_000,
@@ -125,6 +130,11 @@ test("a failed run without its snapshot or its replay is not evidence", () => {
   const incomplete = failing({ playerFacing: undefined });
   assert.ok(codesFor(incomplete).includes("failure_field_missing"));
   assert.ok(codesFor(failing({ playerTile: { x: 1 } })).includes("failure_player_tile_invalid"));
+  // The replay is repositioned by TIME as well as place: a dump with no game moment cannot be re-entered.
+  assert.ok(codesFor(failing({ inGameTime: null })).includes("failure_in_game_time_invalid"));
+  assert.ok(codesFor(failing({ day: 30 })).includes("failure_date_invalid"));
+  assert.ok(codesFor(failing({ season: "monsoon" })).includes("failure_date_invalid"));
+  assert.ok(codesFor(failing({ location: null })).includes("failure_field_missing"));
 });
 
 test("an unmeasured field must say so instead of taking a plausible default", () => {

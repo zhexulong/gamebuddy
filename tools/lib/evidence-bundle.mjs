@@ -46,13 +46,21 @@ const ACTION_TRACE_ENTRY_FIELDS = Object.freeze([
   "dispatchedAtMs",
 ]);
 
-/** The failure moment's own facts, from W0.3: position, facing, tile blocking, collision layers. */
+/**
+ * The failure moment's own facts: position, facing, WHEN it was (game time + date, without which a replay
+ * cannot be repositioned), where it was, and the tile facts that decide blocking.
+ */
 const FAILURE_SNAPSHOT_FIELDS = Object.freeze([
   "reasonCode",
   "component",
   "step",
   "playerTile",
   "playerFacing",
+  "inGameTime",
+  "day",
+  "season",
+  "year",
+  "location",
   "blockingProperties",
   "collisionLayers",
   "atMs",
@@ -264,6 +272,15 @@ function validateFailureSnapshot(failure) {
   for (const field of ["blockingProperties", "collisionLayers"]) {
     if (!Array.isArray(failure[field])) violations.push(violation("failure_tile_facts_not_array", `failure.${field}`));
   }
+  if (parseInGameTime(failure.inGameTime) === null) {
+    violations.push(violation("failure_in_game_time_invalid", "failure.inGameTime"));
+  }
+  if (!Number.isInteger(failure.day) || failure.day < 1 || failure.day > 28) {
+    violations.push(violation("failure_date_invalid", "failure.day"));
+  }
+  if (!SEASONS.includes(failure.season)) violations.push(violation("failure_date_invalid", "failure.season"));
+  if (!Number.isInteger(failure.year) || failure.year < 1)
+    violations.push(violation("failure_date_invalid", "failure.year"));
   if (!isFiniteNumber(failure.atMs)) violations.push(violation("failure_at_ms_invalid", "failure.atMs"));
   return Object.freeze(violations);
 }
@@ -299,6 +316,8 @@ const CHECKED_OBLIGATIONS = Object.freeze([
   "failure_field_missing",
   "failure_player_tile_invalid",
   "failure_tile_facts_not_array",
+  "failure_in_game_time_invalid",
+  "failure_date_invalid",
   "failure_at_ms_invalid",
   "repro_command_missing",
   "repro_budget_missing",

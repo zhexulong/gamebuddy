@@ -15,8 +15,8 @@
 export const REAL_MILLISECONDS_PER_GAME_MINUTE = 700;
 
 /** The day starts at 6:00 and the player passes out at 2:00 AM. */
-export const FIRST_GAME_TIME = 600;
-export const PASS_OUT_GAME_TIME = 2600;
+const FIRST_GAME_TIME = 600;
+const PASS_OUT_GAME_TIME = 2600;
 
 const HHMM = /^([0-9]{3,4})$/u;
 
