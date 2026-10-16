@@ -1,0 +1,216 @@
+{
+  "schema": "chat_memory_probe_manifest/v1",
+  "manifestId": "man-embodied-preference-01-long",
+  "manifestDigest": "f5826c6f12be5ff2e53d38e5fc48e1200109c4964c1e6b41565839fd8be20427",
+  "continuityTopology": "single",
+  "probes": [
+    {
+      "probeId": "p-embodied-preference-long",
+      "distance": "turn",
+      "dimension": "retention",
+      "seedClass": "explicit",
+      "steps": [
+        {
+          "kind": "seed",
+          "role": "player",
+          "text": "Standing rule for rainy days: leave the greenhouse strawberries alone. I press those into wine, so they never go in the shipping bin.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The greenhouse stays warm even when the fog rolls in.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I finally saved up for the second row of casks.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "Rain like this makes the whole farm smell like wet grass.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The cat refused to leave the porch all afternoon.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The fog came in thick off the water this morning and did not lift until noon.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I spent the afternoon reorganising the chest by the front door.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The creek is higher than it was last week after all that rain.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "One of the fence posts by the lower field is starting to lean.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I keep meaning to fix the gate latch and keep forgetting.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The chickens have decided the porch is theirs now.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I traded a stack of stone for some hardwood this afternoon.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The lamp in the back room flickers and I have not worked out why.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "There is a heron that stands in the shallows every evening now.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I moved the preserves to the lower shelf so I can reach them.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The wheelbarrow tyre went soft again and I pumped it up.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I found an old receipt in the pocket of my work coat.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The path down to the beach is muddy but passable.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I have been leaving the porch light on later than usual.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The mill was quiet today, which was a relief.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I sorted the seed packets by the month I planted them.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "A stray cat has been sleeping under the cart.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The kitchen window sticks when it is cold like this.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I sharpened the axe and hung it back where it belongs.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The mailbox door was bent and I straightened it.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I wrote a list of what needs doing before the season turns.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "Rain again, so I stayed in and mended the nets.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The firewood is stacked higher than I thought it would be.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I have been sleeping better since the nights got warm.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "The dog followed me the whole way to the far fence and back.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "filler",
+          "role": "player",
+          "text": "I put a new handle on the bucket.",
+          "persistVia": "conversation"
+        },
+        {
+          "kind": "probe",
+          "role": "player",
+          "text": "It is going to rain tomorrow. What should happen with the crop in the greenhouse?",
+          "requiredKeywords": [
+            "strawberr",
+            "wine"
+          ],
+          "forbiddenKeywords": [
+            "bin",
+            "sell"
+          ],
+          "minHitRate": 0.5
+        }
+      ]
+    }
+  ]
+}
