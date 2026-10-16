@@ -13,7 +13,7 @@ async function withRuntimeRoot(name) {
 }
 
 async function writePreference(root, value) {
-  await writeFile(join(root, "settings", "voice-preference.json"), JSON.stringify(value), "utf8");
+  await writeFile(join(root, "settings", "player-preference.json"), JSON.stringify(value), "utf8");
 }
 
 /** Clears any product-injected gateway so the stored preference decides. */
@@ -43,21 +43,52 @@ test("an absent preference disables voice with a reported reason instead of a ha
 test("revoked and undecided preferences stay disabled; a malformed file fails closed", async () => {
   await withInjectedGatewayCleared(async () => {
     const root = await withRuntimeRoot("states");
-    await writePreference(root, { schemaVersion: 1, revision: 1, disclosureVersion: "mimo-cloud-tts-v1", consent: "revoked", decidedAtMs: 5, outputDevice: null });
+    await writePreference(root, {
+      schemaVersion: 1,
+      revision: 1,
+      disclosureVersion: "mimo-cloud-tts-v1",
+      consent: "revoked",
+      decidedAtMs: 5,
+      outputDevice: null,
+    });
     assert.equal((await resolveVoiceConfiguration({ runtimeRoot: root })).disabledReason, "voice_preference_revoked");
 
-    await writePreference(root, { schemaVersion: 1, revision: 2, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null });
+    await writePreference(root, {
+      schemaVersion: 1,
+      revision: 2,
+      disclosureVersion: null,
+      consent: "undecided",
+      decidedAtMs: null,
+      outputDevice: null,
+    });
     assert.equal((await resolveVoiceConfiguration({ runtimeRoot: root })).disabledReason, "voice_preference_undecided");
 
-    await writePreference(root, { schemaVersion: 1, revision: 3, disclosureVersion: "mimo-cloud-tts-v1", consent: "accepted", decidedAtMs: 6, outputDevice: "not-a-device" });
-    assert.equal((await resolveVoiceConfiguration({ runtimeRoot: root })).disabledReason, "voice_preference_unreadable");
+    await writePreference(root, {
+      schemaVersion: 1,
+      revision: 3,
+      disclosureVersion: "mimo-cloud-tts-v1",
+      consent: "accepted",
+      decidedAtMs: 6,
+      outputDevice: "not-a-device",
+    });
+    assert.equal(
+      (await resolveVoiceConfiguration({ runtimeRoot: root })).disabledReason,
+      "voice_preference_unreadable",
+    );
   });
 });
 
 test("an accepted preference enables voice and carries the stored endpoint verbatim", async () => {
   await withInjectedGatewayCleared(async () => {
     const root = await withRuntimeRoot("accepted");
-    await writePreference(root, { schemaVersion: 1, revision: 1, disclosureVersion: "mimo-cloud-tts-v1", consent: "accepted", decidedAtMs: 5, outputDevice: "waveout:2" });
+    await writePreference(root, {
+      schemaVersion: 1,
+      revision: 1,
+      disclosureVersion: "mimo-cloud-tts-v1",
+      consent: "accepted",
+      decidedAtMs: 5,
+      outputDevice: "waveout:2",
+    });
     const previousKey = process.env.MIMO_API_KEY;
     process.env.MIMO_API_KEY = "test_key_with_enough_length";
     try {

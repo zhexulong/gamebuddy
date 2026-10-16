@@ -16,11 +16,16 @@ import { fileURLToPath } from "node:url";
  *      injected by the owning product surface) is attached to as-is; the runner
  *      never spawns a second child.
  *   2. Otherwise the stored player preference
- *      (<runtimeRoot>/settings/voice-preference.json, written by the frontend
- *      settings surface) decides: `consent: "accepted"` enables cloud TTS and
- *      its `outputDevice` pins the endpoint. A missing/undecided/revoked
- *      preference means voice is genuinely disabled and the caller reports that
- *      instead of inventing a configuration.
+ *      (<runtimeRoot>/settings/player-preference.json, written by the settings
+ *      surface's player-preference store) decides: `consent: "accepted"` enables
+ *      cloud TTS and its `outputDevice` pins the endpoint. A
+ *      missing/undecided/revoked preference means voice is genuinely disabled
+ *      and the caller reports that instead of inventing a configuration.
+ *
+ *      The file also carries the surfaced revision/locale/disclosureVersion;
+ *      only `consent` and `outputDevice` are consumed here, and the store keeps
+ *      one revision per two field groups, so a consent and its evidence can
+ *      never disagree.
  *
  * Nothing here writes the preference file, and no credential ever leaves the
  * child environment.
@@ -50,9 +55,7 @@ async function readStoredVoicePreference(runtimeRoot) {
   }
   let parsed;
   try {
-    parsed = JSON.parse(
-      await readFile(join(runtimeRoot, "settings", "voice-preference.json"), "utf8"),
-    );
+    parsed = JSON.parse(await readFile(join(runtimeRoot, "settings", "player-preference.json"), "utf8"));
   } catch {
     return Object.freeze({ consent: "absent", outputDevice: null });
   }
@@ -65,8 +68,7 @@ async function readStoredVoicePreference(runtimeRoot) {
     return Object.freeze({ consent: "unreadable", outputDevice: null });
   }
   const deviceIsValid =
-    outputDevice === null ||
-    (typeof outputDevice === "string" && /^waveout:[0-9]{1,4}$/.test(outputDevice));
+    outputDevice === null || (typeof outputDevice === "string" && /^waveout:[0-9]{1,4}$/.test(outputDevice));
   if (!deviceIsValid) return Object.freeze({ consent: "unreadable", outputDevice: null });
   return Object.freeze({ consent, outputDevice: outputDevice ?? null });
 }
@@ -130,8 +132,7 @@ export async function resolveVoiceConfiguration({ runtimeRoot, locale = "zh-CN" 
   } catch {
     entryPresent = false;
   }
-  if (!entryPresent)
-    return Object.freeze({ enabled: false, disabledReason: "voice_gateway_entry_missing" });
+  if (!entryPresent) return Object.freeze({ enabled: false, disabledReason: "voice_gateway_entry_missing" });
 
   return Object.freeze({
     enabled: true,
@@ -159,8 +160,7 @@ function probeFreePort(port) {
  * for diagnostics only (node emits benign warnings there).
  */
 export async function launchVoiceGatewayChild(configuration, { port, token }) {
-  if (typeof configuration?.apiKey !== "string")
-    throw new Error("voice_gateway_configuration_not_spawnable");
+  if (typeof configuration?.apiKey !== "string") throw new Error("voice_gateway_configuration_not_spawnable");
   const env = {
     ...process.env,
     MIMO_API_KEY: configuration.apiKey,
@@ -175,8 +175,7 @@ export async function launchVoiceGatewayChild(configuration, { port, token }) {
   // is passed through verbatim so the gateway never falls back to another device.
   if (typeof configuration.outputDevice === "string" && configuration.outputDevice.length > 0)
     env.GAMEBUDDY_WINDOWS_OUTPUT_DEVICE = configuration.outputDevice;
-  else if (env.GAMEBUDDY_WINDOWS_OUTPUT_DEVICE === undefined)
-    env.GAMEBUDDY_WINDOWS_OUTPUT_DEVICE = "default";
+  else if (env.GAMEBUDDY_WINDOWS_OUTPUT_DEVICE === undefined) env.GAMEBUDDY_WINDOWS_OUTPUT_DEVICE = "default";
 
   const child = spawn(process.execPath, ["--use-env-proxy", GATEWAY_ENTRY], {
     cwd: REPOSITORY_ROOT,
@@ -218,9 +217,7 @@ export async function launchVoiceGatewayChild(configuration, { port, token }) {
  */
 export async function pickVoiceGatewayPort(candidates = null) {
   const list =
-    Array.isArray(candidates) && candidates.length > 0
-      ? candidates
-      : [49_731, 49_732, 49_733, 49_734, 49_735];
+    Array.isArray(candidates) && candidates.length > 0 ? candidates : [49_731, 49_732, 49_733, 49_734, 49_735];
   for (const port of list) {
     try {
       await probeFreePort(port);
