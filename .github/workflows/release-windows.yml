@@ -44,6 +44,17 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
       - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
+      # pi-koe is the Voice repository mounted as vendor/pi-koe (git submodule).
+      # Its protocol package must be BUILT BEFORE the root install: the root
+      # `pnpm install` snapshots the `file:` dependency into the pnpm store AT
+      # RESOLUTION TIME, and `dist/` is gitignored in the submodule, so a fresh
+      # checkout snapshots a store copy with no dist. Building later (inside
+      # `typecheck:all`) only writes into the source tree, never the store copy,
+      # which is why host typecheck failed with TS2307 on @gamebuddy/voice-protocol
+      # (measured on tag v0.1.0-rc.70).
+      - run: pnpm --dir vendor/pi-koe install --frozen-lockfile
+      - run: pnpm run build
+        working-directory: vendor/pi-koe/packages/voice-protocol
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:host-windows-test-preflight
       - run: pnpm test:host-windows-test-preflight
@@ -53,11 +64,6 @@ jobs:
       # Chat/Game surface decoupling guard: fails while the documented drift
       # ledger is non-empty; Loop 2 must cut the last edges to go green.
       - run: pnpm check:dialogue-web-boundaries
-      # Build the split-out pi-koe protocol before Host typecheck so a clean
-      # checkout never depends on stale generated protocol declarations.
-      # pi-koe is the Voice repository mounted as vendor/pi-koe (git submodule).
-      - run: pnpm run build
-        working-directory: vendor/pi-koe/packages/voice-protocol
       - run: pnpm typecheck
       # The artifact gate zone, named explicitly. dialogue-web's own `test` is only
       # its static zone, so this zone runs nowhere unless a caller names it - and
