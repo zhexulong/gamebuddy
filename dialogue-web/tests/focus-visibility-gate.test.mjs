@@ -18,6 +18,16 @@
  * the container's class to actually contain an element carrying the control's
  * class, so a `:focus-within` rule for some unrelated panel cannot excuse it.
  *
+ * The subject is the CONTROLS, derived from the JSX rather than hand-listed: the
+ * elements a browser makes focusable and a player operates (button, input other
+ * than a hidden one, select, textarea, summary, a[href], and anything carrying a
+ * `tabIndex` that is not `-1`). WCAG 2.4.11 is about those components. A heading
+ * with `tabindex="-1"` is a programme-focus target the player cannot press: the
+ * owner's ruling is that it wears no ring (a ring on something unpressable reads
+ * as an unclicked button, `conversation-rendering-defects.spec.ts` defect 3), so
+ * an `outline: none` on it is outside this gate - reported in the diagnostic with
+ * its selector, so a scoped-out site is visible rather than silent.
+ *
  * The one finding below is a real inconsistency reported to the owner rather than
  * fixed here (`dialogue-web/src/style.css` is another lane's file): the advanced Pi
  * JSON editor is the only control missing from the stylesheet's own list of
@@ -205,11 +215,11 @@ export function tsxFiles(directory = SRC) {
   return out;
 }
 
-/** Every `outline: none` site with no ring-restoring focus rule. */
-export function unringedOutlineSites(css, files = tsxFiles()) {
+/** Every `outline: none` site with no ring-restoring focus rule, among the CONTROLS. */
+export function unringedOutlineSites(css, files = tsxFiles(), sites = undefined) {
   const rings = ringRules(css);
   const failures = [];
-  for (const site of outlineSites(css)) {
+  for (const site of sites ?? interactiveOutlineSites(css, files).interactive) {
     const direct = rings.some((rule) => {
       if (rule.selector.includes(":focus-within")) return false;
       for (const name of rule.classes) if (site.classes.has(name)) return true;
@@ -231,18 +241,107 @@ export function unringedOutlineSites(css, files = tsxFiles()) {
   return failures;
 }
 
-test("focus.1: every outline:none is replaced by a ring on focus", (t) => {
+/**
+ * The elements a browser makes focusable, and so the components WCAG 2.4.11 asks
+ * about. `h2` with `tabindex="-1"` is deliberately not one of them: the shell
+ * focuses it, the player cannot press it.
+ */
+const INTERACTIVE_TAGS = new Set(["button", "input", "select", "textarea", "summary", "a"]);
+
+/** True when one JSX element is a control a player can operate. */
+function isInteractiveElement(tag, attributes) {
+  const name = tag.toLowerCase();
+  const tabIndex = attributes.get("tabIndex");
+  if (!INTERACTIVE_TAGS.has(name)) return tabIndex !== undefined && tabIndex !== "-1";
+  if (name === "a") return attributes.get("href") !== undefined;
+  if (name === "input") return attributes.get("type") !== "hidden";
+  return true;
+}
+
+/**
+ * The gate's subject, derived from the JSX: the tags the shell renders as controls,
+ * and every class it puts on one. A `className` that is not a plain string literal
+ * (a computed list) contributes nothing rather than a guessed name.
+ */
+export function interactiveSubject(files = tsxFiles()) {
+  const classes = new Set();
+  const tags = new Set();
+  const visit = (node) => {
+    if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const opening = ts.isJsxElement(node) ? node.openingElement : node;
+      const tag = opening.tagName.getText();
+      const attributes = new Map();
+      for (const property of opening.attributes.properties) {
+        if (!ts.isJsxAttribute(property)) continue;
+        const initializer = property.initializer;
+        if (initializer === undefined) {
+          attributes.set(property.name.getText(), "");
+          continue;
+        }
+        if (ts.isStringLiteral(initializer)) {
+          attributes.set(property.name.getText(), initializer.text);
+          continue;
+        }
+        if (ts.isJsxExpression(initializer)) {
+          attributes.set(property.name.getText(), initializer.expression?.getText() ?? "");
+        }
+      }
+      if (isInteractiveElement(tag, attributes)) {
+        tags.add(tag.toLowerCase());
+        const className = attributes.get("className");
+        if (typeof className === "string") {
+          for (const name of className.split(/\s+/u)) if (name.length > 0) classes.add(name);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const file of files) {
+    visit(
+      ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX),
+    );
+  }
+  return { classes, tags };
+}
+
+/** True when a stylesheet selector addresses one of those controls. */
+export function isInteractiveSelector(selector, subject) {
+  const text = selector.toLowerCase();
+  if (/(^|[\s>+~,(])(button|input|select|textarea|summary)(?![-\w])/u.test(text)) return true;
+  if (/(^|[\s>+~,(])a(?![-\w])[^\s{,]*(?:\[href\])/u.test(text)) return true;
+  for (const name of classNames(selector)) if (subject.classes.has(name.slice(1))) return true;
+  return false;
+}
+
+/**
+ * Every `outline: none` site, split into the controls the gate is about and the
+ * sites that are out of its subject (a heading the shell focuses, for instance).
+ */
+export function interactiveOutlineSites(css, files = tsxFiles()) {
+  const subject = interactiveSubject(files);
+  const all = outlineSites(css);
+  return {
+    subject,
+    interactive: all.filter((site) => isInteractiveSelector(site.selector, subject)),
+    scopedOut: all.filter((site) => !isInteractiveSelector(site.selector, subject)),
+  };
+}
+
+test("focus.1: every outline:none on a CONTROL is replaced by a ring on focus", (t) => {
   const css = readFileSync(STYLESHEET, "utf8");
+  const { interactive, scopedOut } = interactiveOutlineSites(css);
   const failures = [];
-  for (const failure of unringedOutlineSites(css)) {
+  for (const failure of unringedOutlineSites(css, undefined, interactive)) {
     if (REPORTED_FOCUS_SITES.some((entry) => entry.selector === failure.selector)) continue;
     failures.push(`src/style.css:${failure.line} ${failure.selector} removes the outline with no focus ring`);
   }
-  const reported = unringedOutlineSites(css).filter((failure) =>
+  const reported = unringedOutlineSites(css, undefined, interactive).filter((failure) =>
     REPORTED_FOCUS_SITES.some((entry) => entry.selector === failure.selector),
   ).length;
   t.diagnostic(
-    `focus.1: ${outlineSites(css).length} outline:none site(s), ${ringRules(css).length} ring rule(s), ${reported} reported finding(s), ${failures.length} unreported`,
+    `focus.1: ${outlineSites(css).length} outline:none site(s), ${interactive.length} on controls, ` +
+      `${scopedOut.length} outside the subject (${scopedOut.map((site) => site.selector).join(", ") || "none"}), ` +
+      `${ringRules(css).length} ring rule(s), ${reported} reported finding(s), ${failures.length} unreported`,
   );
   assert.deepEqual(failures, [], "a control whose outline is removed must draw a ring when it is focused");
 });
@@ -284,38 +383,77 @@ test("focus.4: the composer's parent ring is verified against the JSX, not assum
   t.diagnostic("focus.4: composer-container holds composer-textarea in the JSX; an unrelated container does not");
 });
 
-test("focus.5 (mutation): outline:none alone, and with only a colour change, both fail", (t) => {
-  const bare = ".gate-probe-input {\n  outline: none;\n}\n";
-  assert.deepEqual(unringedOutlineSites(bare, []), [
-    { line: 2, selector: ".gate-probe-input", classes: [".gate-probe-input"], declarations: [["outline", "none"]] },
-  ]);
+test("focus.5 (mutation): a control with no ring fails, and a programme-focus target is out of scope", (t) => {
+  const bare = "button.gate-probe-button {\n  outline: none;\n}\n";
+  assert.deepEqual(unringedOutlineSites(bare, []).map((failure) => failure.selector), ["button.gate-probe-button"]);
 
   const colourOnly = [
-    ".gate-probe-input {",
+    "button.gate-probe-button {",
     "  outline: none;",
     "}",
     "",
-    ".gate-probe-input:focus {",
+    "button.gate-probe-button:focus {",
     "  border-color: var(--focus-ring);",
     "}",
     "",
   ].join("\n");
   assert.deepEqual(
     unringedOutlineSites(colourOnly, []).map((failure) => failure.selector),
-    [".gate-probe-input"],
+    ["button.gate-probe-button"],
     "a border colour is not a ring",
   );
 
   const ringed = [
-    ".gate-probe-input {",
+    "button.gate-probe-button {",
     "  outline: none;",
     "}",
     "",
-    ".gate-probe-input:focus {",
+    "button.gate-probe-button:focus {",
     "  box-shadow: 0 0 0 1px var(--focus-ring);",
     "}",
     "",
   ].join("\n");
   assert.deepEqual(unringedOutlineSites(ringed, []), []);
-  t.diagnostic("focus.5: bare and colour-only sites reported; a box-shadow ring is accepted");
+
+  // The narrowing: the same removal on a heading the shell focuses for its own
+  // reading context is not this gate's subject, and is reported as scoped out.
+  const heading = "h2.gate-probe-heading {\n  outline: none;\n}\n";
+  assert.deepEqual(unringedOutlineSites(heading, []), []);
+  assert.deepEqual(
+    interactiveOutlineSites(heading, []).scopedOut.map((site) => site.selector),
+    ["h2.gate-probe-heading"],
+    "a scoped-out site is reported, not silently dropped",
+  );
+  t.diagnostic("focus.5: bare and colour-only controls reported; a box-shadow ring accepted; a heading scoped out");
+});
+
+/**
+ * The narrowing must not be able to swallow a real finding. The subject set is
+ * derived from the JSX, so this pins the derivation itself: every class the
+ * stylesheet removes an outline for really is a control in the JSX, and the
+ * heading (a programme-focus target) really is not.
+ */
+test("focus.6: the subject set is derived from the JSX, and the heading is outside it", (t) => {
+  const css = readFileSync(STYLESHEET, "utf8");
+  const { subject, interactive, scopedOut } = interactiveOutlineSites(css);
+  for (const name of ["composer-textarea", "form-input", "form-textarea", "form-select", "surface-advanced-editor"]) {
+    assert.ok(
+      subject.classes.has(name),
+      `the JSX renders .${name} on a control, so the derived subject set must carry it`,
+    );
+  }
+  for (const site of interactive) {
+    assert.ok(
+      /(^|[\s>+~,(])(button|input|select|textarea|summary)(?![-\w])/u.test(site.selector.toLowerCase()) ||
+        [...site.classes].some((name) => subject.classes.has(name.slice(1))),
+      `${site.selector} is a finding, so it must be a control (by element or by a class the JSX puts on one)`,
+    );
+  }
+  const heading = scopedOut.filter((site) => site.selector.includes(".surface-header h2"));
+  assert.equal(heading.length, 1, "the heading's outline:none is the one site this gate scopes out of its subject");
+  assert.ok(!subject.classes.has("surface-header"), "the surface header is not a control");
+  t.diagnostic(
+    `focus.6: ${subject.tags.size} control tag(s), ${subject.classes.size} control class(es); ` +
+      `${interactive.length} site(s) on controls, ${scopedOut.length} scoped out`,
+  );
 });

@@ -114,14 +114,6 @@
   --accent-solid-hover: #8a4349;
   --selection: #533137;
   --focus-ring: var(--palette-gold-base);
-  /* The quiet member of the same pair, for the one focused thing the product does
-     not want painted like a control: the surface heading `SurfaceView` focuses
-     whenever its surface is selected. It is colourless on purpose - a gold or
-     accent ring around a static one-word heading reads as an unclicked badge - but
-     it is still a real indicator: `#7d736a` measures 4.24:1 on `--surface-canvas`,
-     clear of the 3:1 floor a focus indicator has to meet. */
-  --focus-ring-quiet: var(--palette-gray-500);
-
   --success: var(--palette-teal-base);
   --warning: var(--palette-gold-base);
   --danger: var(--palette-crimson-base);
@@ -3131,12 +3123,6 @@
     letter-spacing: 0.01em;
   }
 
-  .surface-header h2:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-    border-radius: var(--radius-sm);
-  }
-
   .surface-content {
     flex: 1 1 0%;
     min-height: 0;
@@ -4157,46 +4143,31 @@
   }
 
   /* ==========================================================================
-   The surface heading's focus indicator (conversation-rendering lane block)
+   The surface heading carries NO focus ring (conversation-rendering lane block)
 
    `SurfaceView` focuses its heading whenever its surface is selected, so a static
-   one-word heading (游戏 / 角色 / 记忆) is focused for most of its life. The ring
-   this sheet drew for it is the accent at a 2px outline with a corner radius,
-   which reads as an unclicked pink badge - a control the player is invited to
-   press. The heading is not a control, so its indicator is a colourless hairline:
-   still drawn, still visible, and no longer competing with the accent the
-   surface's own icon already owns. The keyboard path keeps the product's gold
-   ring: every *control* reached with the keyboard still draws `--focus-ring`
-   through the sheet's own `:focus-visible` rule above, because that rule is
-   class-less and this one names the heading.
+   one-word heading (游戏 / 角色 / 记忆) is focused for most of the life of the
+   surface. The heading is not a control: it carries `tabindex="-1"` for that one
+   programme focus, and WCAG 2.4.11 is about the components a player operates. A
+   ring on something the player cannot press is a misleading affordance - it reads
+   as an unclicked button - so the heading draws none, on any path.
 
-   Measured on the mounted shell, all three ways the heading is reached:
+   This has to be said here rather than left to a rule's absence, because the
+   sheet's own class-less `:focus-visible` ring above applies to every focused
+   element and would otherwise paint the heading the product's gold ring on both
+   paths Chromium reports `:focus-visible` for (a surface entered with the pointer,
+   and one a page with no input yet). The quiet 1 px hairline this block used to
+   draw is gone with it, and `--focus-ring-quiet` with that: an unused token is the
+   same litter as an unused export.
 
-     path              :focus-visible   outline                          contrast
-     mount             true            1px rgba(255,255,255,0.15)          1.48:1
-     pointer switch    false           none (no indicator at all)             -
-     keyboard switch   true            1px rgba(255,255,255,0.15)          1.48:1
-
-   Two things follow, and both are why the rule below is written on `:focus`:
-   the hairline `--border-strong` drew was under the 3:1 floor a focus indicator
-   needs (the audit's 1.3:1), *and* the layer this block lives in is what made
-   the keyboard path wear that same hairline instead of the product's ring - one
-   `:focus-visible` selector cannot tell "a surface entered with the keyboard"
-   from "a page that has had no input yet", and Chromium matches it for both.
-   Giving the heading the gold ring back would therefore paint it gold for the
-   whole pre-interaction life of the surface, which is the badge this block
-   exists to remove. So the heading keeps one quiet, colourless indicator on
-   every path it can be focused by, now at a contrast the eye can find; the
-   distinction that survives is the one the lane drew: a grey hairline for the
-   heading, the product's ring for the controls.
-
-   Appended block; the rules above are untouched.
+   The distinction that survives is the right one: no indicator on the heading, the
+   product's ring on the controls a player operates. The focus-visibility gate
+   derives that subject set from the JSX (controls only) and checks the controls.
    ========================================================================== */
 
-  .surface-header h2:focus {
-    outline: 1px solid var(--focus-ring-quiet);
-    outline-offset: 2px;
-    border-radius: var(--radius-sm);
+  .surface-header h2:focus,
+  .surface-header h2:focus-visible {
+    outline: none;
   }
 
   /* ==========================================================================
