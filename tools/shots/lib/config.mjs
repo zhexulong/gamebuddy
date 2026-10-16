@@ -8,9 +8,6 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
 
 export const KIT_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const REPO_ROOT = dirname(dirname(KIT_ROOT));
@@ -64,20 +61,4 @@ export function saveRunConfig(paths, run) {
   mkdirSync(paths.stateDir, { recursive: true });
   writeFileSync(paths.runConfigFile, JSON.stringify(run, null, 1), "utf8");
   return run;
-}
-
-export function git(args, { repo = REPO_ROOT } = {}) {
-  const { spawnSync } = require("node:child_process");
-  const result = spawnSync("git", args, {
-    cwd: repo,
-    encoding: "utf8",
-    windowsHide: true,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-  });
-  return {
-    status: result.status,
-    stdout: (result.stdout ?? "").trim(),
-    stderr: (result.stderr ?? "").trim(),
-    error: result.error ?? null,
-  };
 }

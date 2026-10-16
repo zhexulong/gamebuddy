@@ -70,7 +70,10 @@ jobs:
       # this lane is the one that ships the browser artifact whose manifest, hash
       # and symlink boundaries it verifies (built here from this same tree, into
       # its own private staging directory). The static zone stays ordinary
-      # contributor CI's, and the mounted zone is named below.
+      # contributor CI's, and the mounted zone is named below. The zone's manifest
+      # test reads the emitted dist/, so this lane must build it first, exactly as
+      # ordinary contributor CI does before naming the same zone.
+      - run: pnpm --filter @gamebuddy/dialogue-web build
       - run: pnpm --filter @gamebuddy/dialogue-web test:artifact
       # Host tests mint only repository-built, fixed Windows helper pairs; they
       # never use an unverified production generation.

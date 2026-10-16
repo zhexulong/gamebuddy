@@ -49,7 +49,15 @@ test("release workflow supplies only bounded identity facts and keeps acquisitio
   assert.match(workflow, /GAMEBUDDY_RELEASE_ENVIRONMENT: gamebuddy-production-release/);
   assert.match(workflow, /GAMEBUDDY_RELEASE_REF: \$\{\{ github\.ref \}\}/);
   assert.match(workflow, /pnpm --dir host build:release/);
-  assert.doesNotMatch(workflow, /(?:runtime-url|runtime-path|archiveSha256|sourceUrl|sign(?:tool|ing)|upload-artifact)/i);
+  assert.doesNotMatch(workflow, /(?:runtime-url|runtime-path|archiveSha256|sourceUrl|sign(?:tool|ing))/i);
+  // The lane may upload only its own named evidence: the acquired runtime and the
+  // built distribution are never published from this workflow.
+  assert.deepEqual(
+    [...workflow.matchAll(/uses: actions\/upload-artifact@v4\n\s+with:\n\s+name: ([a-z0-9-]+)/g)]
+      .map((match) => match[1])
+      .sort(),
+    ["tavern-browser-journey-failures", "tavern-release-live-evidence"],
+  );
   assert.doesNotMatch(ordinaryCi, /build:release|node-runtime-release-acquisition|gamebuddy-production-release/i);
   assert.doesNotMatch(ordinaryCi, /^\s*- run: pnpm build\s*$/m);
   assert.match(ordinaryCi, /pnpm --filter @gamebuddy\/dialogue-web build/);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -108,7 +108,7 @@ test("direct Vite production build fails closed without a Host-generated inspect
   }
 });
 test("private Vite output rejects roots outside its browser-owned staging parent", async () => {
-  const externalParent = await mkdtemp(join(tmpdir(), "gamebuddy-browser-build-invalid-"));
+  const externalParent = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-browser-build-invalid-"));
   const externalLeaf = join(externalParent, opaqueStagingLeaf());
   const invalidLeaf = resolve(privateStagingParent, "not-an-opaque-leaf");
   const missingLeaf = resolve(privateStagingParent, opaqueStagingLeaf());

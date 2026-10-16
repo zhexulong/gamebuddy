@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -16,7 +16,7 @@ import {
 const nodeDefensePolicy = Object.freeze({ inspect: async () => {} });
 
 async function createArtifactFixture() {
-  const artifactRoot = await mkdtemp(join(tmpdir(), "gamebuddy-game-browser-manifest-"));
+  const artifactRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-game-browser-manifest-"));
   await mkdir(join(artifactRoot, "assets"));
   await writeFile(join(artifactRoot, "index.html"), "<!doctype html>", "utf8");
   await writeFile(join(artifactRoot, "assets", "index-abcdefgh.js"), "console.log(1)", "utf8");

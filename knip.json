@@ -11,7 +11,12 @@
         "tools/lib/stardew-native-smoke-harness-v1.mjs!",
         "tools/lib/stardew-shared-world-navigation.mjs!",
         "tools/lib/tavern-mounted-operation-vocabulary.mjs!",
-        "tools/lib/voice-gateway-launch.mjs!"
+        "tools/lib/voice-gateway-launch.mjs!",
+        "tools/shots/phases/capture.mjs!",
+        "tools/shots/phases/launch.mjs!",
+        "tools/shots/phases/report.mjs!",
+        "tools/shots/probes/prerequisite-check.mjs!",
+        "tools/shots/probes/runtime-discover.mjs!"
       ],
       "project": [
         "tools/**/*.mjs"
