@@ -3081,10 +3081,21 @@ work, recovered from its own refusals, and reported honestly.
 
 ### What the report now means
 
-* `state` / `reasonCode` come from `deriveLoopVerdict` (a pure, tested function): `passed` requires the driver to have
-  succeeded AND the run to have published an observation measurement. A run that measured NOTHING is `blocked` with
-  `multiplayer_loop_observation_unmeasured` -- a missing measurement is not "no gap". A 36 s unobserved tail is
-  `degraded` with `multiplayer_loop_observed_gap:36s`.
+* `state` / `reasonCode` come from `deriveLoopVerdict` (a pure, tested function) with THREE arms, because the two modes
+  can prove different things:
+  1. **plan mode**, which samples every 2 s: a tail over 30 s is `degraded` (`multiplayer_loop_observed_gap:36s`);
+  2. **agent mode**, which observes on demand: liveness is the Agent having spoken and the pipe not having dropped --
+     the tail there is model generation plus the quiet window, so it must NOT decide the verdict. The runner reports it
+     as `tailBeforeTurnEndMs` and tells the rubric the measurement is not applicable, which makes
+     `observation_continuity` `unmeasured` (`agent_mode_observes_on_demand`) rather than a false red;
+  3. **neither signal present** (a plan-mode report that published no measurement) is `blocked` with
+     `multiplayer_loop_observation_unmeasured`: a missing measurement is not "no gap".
+
+* The entry reads the loop's record from `<trace>/loop-report.json` FIRST and only then from the driver's stdout, because
+  a real Chinese session had its record destroyed by console encoding and the entry silently reported `loop: null`,
+  losing the rubric and the Agent's words. `loopReportSource` names which source it used.
+* Zero `bridge_connection` facts mean the pipe stayed up **only if** the subscription existed; when it does not, the trace
+  says `bridge_connection_unavailable` instead of leaving the reader to guess.
 * agent mode adds two gates of its own: `agent_turn_not_admitted` and `agent_spoke_nothing` both degrade the run, so a
   silent session can no longer read as a healthy one.
 * `rubric` is the behaviour judgement, reported as `verdict.broken` and `verdict.unmeasured` lists. It is NOT folded into
