@@ -452,7 +452,7 @@ const UNREAD_RECORDED_DEBT = [
     ],
   },
   {
-    reason: "the converged World Info surface binds whole revisions (`WorldInfoBindingPanel`); the entry editor these named is gone",
+    reason: "the converged World Info surface binds whole revisions (`CharacterWorldBookPanel`); the entry editor these named is gone",
     keys: ["addEntry", "attachToChat", "entryContent", "entryKey", "entryTitle", "worldInfoEntries", "worldInfoLocked"],
   },
   {

@@ -111,13 +111,7 @@ const en = {
   entryTitle: "Title",
   entryContent: "Content",
   attachToChat: "Attach to Chat",
-  worldInfoBindingTitle: "World Info Binding",
-  worldInfoBind: "Bind",
-  worldInfoUnbind: "Unbind",
-  worldInfoEmpty: "No World Info revisions are available to bind.",
   worldInfoLocked: "World Info binding is locked after this chat has messages.",
-  worldInfoPending: "This binding is saved and will fully apply on the next turn.",
-  worldInfoUnavailable: "World Info binding is temporarily unavailable.",
 
   // Persona
   userPersona: "User Persona",
@@ -651,13 +645,7 @@ const zh: Messages = {
   entryTitle: "词条标题",
   entryContent: "词条内容",
   attachToChat: "关联至当前对话",
-  worldInfoBindingTitle: "世界书绑定",
-  worldInfoBind: "绑定",
-  worldInfoUnbind: "解除绑定",
-  worldInfoEmpty: "没有可绑定的世界书版本。",
   worldInfoLocked: "当前对话已有消息，世界书绑定已锁定。",
-  worldInfoPending: "绑定已保存，将在下一次对话回合完全生效。",
-  worldInfoUnavailable: "世界书绑定暂时不可用。",
 
   // Persona
   userPersona: "用户设定 (Persona)",

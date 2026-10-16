@@ -14,7 +14,6 @@ import {
   type TavernModelProfileV1,
   type TavernModelProfilesV1,
   type TavernRecommendedModelV1,
-  type TavernStateSnapshotV1,
   type TavernVoiceDevicesV1,
   type TavernVoicePreferenceV1,
 } from "../management-pipeline-api";
@@ -903,62 +902,6 @@ export function VoiceSettingsPanel({
   );
 }
 
-export function WorldInfoBindingPanel({
-  worldInfo,
-  labels,
-  onBind,
-}: Readonly<{
-  worldInfo: NonNullable<TavernStateSnapshotV1["chat"]>["worldInfo"] & {};
-  labels: ReturnType<typeof messages>;
-  onBind: (sourceHandle: string | null) => void;
-}>): ReactElement | null {
-  if (worldInfo === null) return null;
-  const controlsLocked = worldInfo.state === "unavailable";
-  const hasItems = worldInfo.items.length > 0;
-  return (
-    <section className="reference-draft-section" aria-label={labels.worldInfoBindingTitle} data-world-info-binding>
-      <h2>{labels.worldInfoBindingTitle}</h2>
-      {worldInfo.state === "unavailable" ? (
-        <p>{labels.worldInfoUnavailable}</p>
-      ) : !hasItems ? (
-        <p>{labels.worldInfoEmpty}</p>
-      ) : (
-        <div role="list">
-          {worldInfo.items.map((item) => (
-            <div key={item.handle} role="listitem">
-              <strong>{item.title}</strong>
-              {item.summary !== null && <p>{item.summary}</p>}
-              <div className="composer-actions">
-                {item.selected || item.pending ? (
-                  <button
-                    type="button"
-                    className="small-button"
-                    disabled={controlsLocked}
-                    onClick={() => onBind(null)}
-                    aria-label={`${labels.worldInfoUnbind}: ${item.title}`}
-                  >
-                    {labels.worldInfoUnbind}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="small-button"
-                    disabled={controlsLocked}
-                    onClick={() => onBind(item.handle)}
-                    aria-label={`${labels.worldInfoBind}: ${item.title}`}
-                  >
-                    {labels.worldInfoBind}
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {worldInfo.state === "pending" && <p>{labels.worldInfoPending}</p>}
-    </section>
-  );
-}
 export const MEMORY_STATUS_LABELS: Readonly<Record<string, { en: string; zh: string }>> = {
   active: { en: "Active", zh: "活跃" },
   permanent: { en: "Permanent", zh: "长期" },
