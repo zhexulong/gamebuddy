@@ -130,11 +130,10 @@ async function main() {
   else pass("credential:CPA_OAI_API_KEY", "absent (conversation/variant lanes will record a NAMED SKIP)");
 
   console.log(
-    JSON.stringify(
-      { rows, requiredMissing: rows.filter((row) => !row.ok && !row.name.startsWith("credential")).length },
-      null,
-      1,
-    ),
+    JSON.stringify({
+      rows,
+      requiredMissing: rows.filter((row) => !row.ok && !row.name.startsWith("credential")).length,
+    }),
   );
   return rows.some((row) => !row.ok && !row.name.startsWith("credential")) ? 1 : 0;
 }

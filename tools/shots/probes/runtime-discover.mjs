@@ -35,27 +35,41 @@ async function isValidRuntime(dir) {
 async function findNewest(roots) {
   let best = null;
   let bestAge = -1;
-  for (const root of roots) {
-    let generations;
+  // A bounded walk: a `generations\*\runtime` may sit anywhere under a search root
+  // (e.g. D:\gb-art\diag1\generations\<id>\runtime). Depths past 6 are not plausibly
+  // a fixture root and only cost time.
+  const MAX_DEPTH = 6;
+  const consider = async (candidate) => {
+    if (!(await isValidRuntime(candidate))) return;
     try {
-      generations = await readdir(join(root, "generations"), { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of generations) {
-      if (!entry.isDirectory()) continue;
-      const candidate = join(root, "generations", entry.name, "runtime");
-      if (!(await isValidRuntime(candidate))) continue;
-      try {
-        const info = await stat(join(candidate, "node.exe"));
-        if (info.mtimeMs > bestAge) {
-          bestAge = info.mtimeMs;
-          best = candidate;
-        }
-      } catch {
-        /* keep scanning */
+      const info = await stat(join(candidate, "node.exe"));
+      if (info.mtimeMs > bestAge) {
+        bestAge = info.mtimeMs;
+        best = candidate;
       }
+    } catch {
+      /* keep scanning */
     }
+  };
+  const walk = async (dir, depth) => {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const childDirs = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const full = join(dir, entry.name);
+      if (entry.name === "runtime") await consider(full);
+      else if (depth < MAX_DEPTH) childDirs.push(full);
+    }
+    for (const child of childDirs) await walk(child, depth + 1);
+  };
+  for (const root of roots) {
+    await consider(root);
+    await walk(root, 1);
   }
   return best;
 }
