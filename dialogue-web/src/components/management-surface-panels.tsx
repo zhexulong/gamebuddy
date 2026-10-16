@@ -128,9 +128,10 @@ function chatListRows(view: ChatListView): readonly ChatListEntry[] {
 
 /**
  * The row's own last-activity stamp: the catalogue's two relative words for today
- * and yesterday, and the platform's own short numeric date beyond them. Every Chat
- * the player never renamed carries the same `New chat` title, so this line and the
- * preview are what tell one row from another.
+ * and yesterday, and the platform's own short numeric date beyond them. The
+ * granularity is a calendar day, which is the truth the Host records but cannot
+ * separate two Chats opened the same day; the row's own name is what tells those
+ * two apart, and this line and the preview are the row's facts about itself.
  */
 function chatRowStamp(updatedAtMs: number, labels: Messages, nowMs: number): string {
   const updated = new Date(updatedAtMs);
@@ -412,6 +413,26 @@ export function ChatsSurfacePanel({
     );
   }
 
+  /**
+   * The rows as displayed, each with the name it shows.
+   *
+   * A Chat the player never renamed has no title of its own to read: its preview
+   * is the card's own opening line and its stamp is a calendar day, so two Chats
+   * opened the same day rendered as the same row twice. The catalogue's fallback
+   * word therefore carries a number - 1-based, in the order this list displays its
+   * unnamed rows - which distinguishes them without a wire field, a contract
+   * change or a clock: the number is counted here, from the list, and a row that
+   * has a title shows its title and is never numbered. Renaming a row, or a
+   * removal from the list, renumbers the ones below it, because the number is a
+   * reading of the list rather than a fact about the Chat.
+   */
+  let unnamedRows = 0;
+  const rows = chatListRows(list).map((chat) => {
+    if (chat.title !== null) return { chat, name: chat.title };
+    unnamedRows += 1;
+    return { chat, name: labels.untitledChat.replace("{{index}}", String(unnamedRows)) };
+  });
+
   return (
     <>
       <SurfaceNotice notice={inline} />
@@ -432,7 +453,7 @@ export function ChatsSurfacePanel({
         {list.length === 0 ? (
           <p className="empty-subtle">{labels.noChats}</p>
         ) : (
-          list.map((chat) => {
+          rows.map(({ chat, name }) => {
             const isSelected = chat.handle === currentChatHandle;
             const isSelecting = chat.handle === selecting;
             // The confirmation belongs to exactly one row, and while it is armed that row's
@@ -485,7 +506,7 @@ export function ChatsSurfacePanel({
                         disabled={selectAvailable === false || selecting !== null}
                         onClick={() => selectChat(chat.handle)}
                       >
-                        {chat.title ?? labels.untitledChat}
+                        {name}
                       </button>
                       {/* The transient acknowledgement: the switch request is out, so the click is
                           not ignored. Never a refusal - the row stays enabled while a turn runs. */}

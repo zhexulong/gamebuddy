@@ -18,7 +18,13 @@ const en = {
   companion: "Companion",
   chatTranscript: "Chat transcript",
   emptyChatOpening: "A new journey with {{name}} begins here…",
-  untitledChat: "New chat",
+  // The row's own name for a Chat the player never renamed. The Chats list numbers
+  // those rows in the order it displays them, because a new Chat's preview is the
+  // card's own opening and its stamp is a calendar day: without the number, two
+  // Chats opened the same day render as one row twice. `{{index}}` is the row's
+  // 1-based position among the list's unnamed rows - a fact of the list alone,
+  // counted for display, never stored and never sent on the wire.
+  untitledChat: "New chat {{index}}",
   // The Chat row's own last-activity stamp: two relative words and, beyond them,
   // the locale's own numeric date. Nothing invented, and nothing that reads as a
   // duration the Host never measured.
@@ -561,7 +567,7 @@ const zh: Messages = {
   companion: "角色",
   chatTranscript: "聊天记录",
   emptyChatOpening: "与 {{name}} 开启一段新的旅程…",
-  untitledChat: "新对话",
+  untitledChat: "新对话 {{index}}",
   chatRowToday: "今天",
   chatRowYesterday: "昨天",
   savedDraft: "已保存草稿",

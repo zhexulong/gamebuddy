@@ -132,7 +132,9 @@ test("the product Chats surface renames through chat/title and moves the convers
   await page.getByRole("button", { name: "Chats", exact: true }).click();
   const surface = page.getByTestId("chats-surface");
   await expect(surface).toBeVisible();
-  await expect(surface.getByText("New chat", { exact: true })).toBeVisible();
+  // The unnamed row's fallback name is numbered: it is the first unnamed row the
+  // list displays, and the catalogue's word carries that number.
+  await expect(surface.getByText("New chat 1", { exact: true })).toBeVisible();
   // The mount cannot see the management profile's operation projection, so the
   // served list is the capability: the rename and the selected chat's retention
   // controls are shown rather than silently hidden.
@@ -152,6 +154,9 @@ test("the product Chats surface renames through chat/title and moves the convers
     title: "A renamed product chat",
   });
   await expect(surface.getByText("A renamed product chat", { exact: true })).toBeVisible();
+  // A row that has a title shows its title and nothing else: the number belongs
+  // to the unnamed fallback, never to the row's own name.
+  await expect(surface.getByTestId("chat-select")).toHaveText("A renamed product chat");
   await expect(surface.getByRole("status")).toContainText("Saved successfully.");
   // The rename reaches this shell's Chat projection through the composed state.
   await expect.poll(() => composedStateReads.count).toBe(1);
@@ -1198,7 +1203,10 @@ test("the Chats list rows take the surface's own measure instead of the whole pa
  * twice and picking one was a guess. The Host now projects each thread's own
  * durable `updatedAtMs` and its last message as plain-text `preview`; this asserts
  * the rows a player actually reads are different, and that the row's new meta line
- * fits the narrowest layout this panel ships in.
+ * fits the narrowest layout this panel ships in. Those two facts cannot separate
+ * two Chats opened on the same day (the stamp's granularity is a calendar day, and
+ * a new Chat's preview is the card's own opening), so the row's fallback name is
+ * numbered in the list's own order and this pins that numbering too.
  */
 test("two Chats that were opened differently read differently in their rows", async ({ page }) => {
   // The stamp is the browser's own calendar day, so take that day from the browser
@@ -1243,7 +1251,19 @@ test("two Chats that were opened differently read differently in their rows", as
   await expect(rows).toHaveCount(2);
 
   const rowText = await rows.allTextContents();
-  // Before this change both of these were the single word `New chat`.
+  // Two Chats the player never named are told apart by the list's own numbering,
+  // in the order the list displays them: before this change both were the single
+  // word `New chat`.
+  await expect(rows.nth(0).getByTestId("chat-select")).toHaveText("New chat 1");
+  await expect(rows.nth(1).getByTestId("chat-select")).toHaveText("New chat 2");
+  const rowNames = await rows.evaluateAll((nodes: HTMLElement[]) =>
+    nodes.map((node) => node.querySelector<HTMLElement>("[data-testid='chat-select']")?.textContent ?? null),
+  );
+  console.log(`[chats-row-names] measured: ${JSON.stringify(rowNames)}`);
+  expect(rowNames, "two unnamed rows are named by the list's own order").toEqual([
+    "New chat 1",
+    "New chat 2",
+  ]);
   expect(rowText[0], "two Chats the player never named read as the same row").not.toBe(rowText[1]);
   // The row carries the Host's own two facts verbatim: the thread's durable time as
   // the catalogue's own relative word, and the last message as plain text. Paired per

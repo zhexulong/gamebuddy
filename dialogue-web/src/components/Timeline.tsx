@@ -83,14 +83,20 @@ export function Timeline({
    *
    * The Host publishes a `title` only once a conversation has been named, so an
    * unnamed one is the catalogue's own word for it (`untitledChat`) - that word
-   * IS the conversation's name, not a placeholder to suppress. The band is shown
-   * once the conversation has either a title or content, so a player who switched
-   * conversations can see which one is open. It stays absent on the zero-message
-   * first screen, where the surface heading and the invitation already name the
-   * screen and a second title would only stack (gate 7 pins that).
+   * IS the conversation's name, not a placeholder to suppress. In the Chats list
+   * that word carries the row's own number (`{{index}}`), because two unnamed
+   * rows in one list are otherwise the same row twice; this band names the single
+   * conversation that is open, so it drops the row's number instead of printing
+   * one that refers to no row here. The band is shown once the conversation has
+   * either a title or content, so a player who switched conversations can see
+   * which one is open. It stays absent on the zero-message first screen, where the
+   * surface heading and the invitation already name the screen and a second title
+   * would only stack (gate 7 pins that).
    */
   const conversationName =
-    chatTitle !== null || transcript.length > 0 || preview !== null ? (chatTitle ?? labels.untitledChat) : null;
+    chatTitle !== null || transcript.length > 0 || preview !== null
+      ? (chatTitle ?? labels.untitledChat.replace("{{index}}", "").trim())
+      : null;
   const sectionRef = useRef<HTMLElement>(null);
   /**
    * Whether the reader is parked at the newest content. A streaming reply
