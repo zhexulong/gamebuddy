@@ -22,3 +22,8 @@ export {
   type StardewCompanionModPackage,
   type StardewCompanionModTargetState,
 } from "./deployment.js";
+export {
+  ensureCompanionGameModDeployed,
+  type CompanionGameModDeploymentOutcome,
+  type CompanionGameModDeploymentSeams,
+} from "./desktop-entry-mod-deployment.js";

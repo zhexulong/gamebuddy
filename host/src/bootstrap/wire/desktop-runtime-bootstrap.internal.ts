@@ -12,6 +12,7 @@ import type {
 } from "../../containment/auth/desktop-guardian-session.internal.js";
 import {
   createDesktopProductComposition,
+  deployCompanionGameMod,
   type DesktopHostAssemblyInput,
   type DesktopPrivateHostComposition,
   type DesktopRootLayoutCapability,
@@ -159,6 +160,14 @@ export async function runDesktopHostBootstrap(artifactRoot: string): Promise<voi
     voice?.speechSink,
     voice?.listOutputDevices,
   );
+  // The player's own game installation is brought to the Mod this generation ships
+  // before the Host composition starts. The step is the composition seam because
+  // this wire stays free of game modules, and it is announced as two bounded status
+  // frames - the step, then its named outcome - because a launch must still serve a
+  // player whose game is absent, locked or several, and the outcome is what an
+  // operator reads back from the last announced stage.
+  await writeStatus("companion-mod");
+  await writeStatus(await deployCompanionGameMod(artifactRoot));
   const rootAuthority = mintDesktopRootLayoutCapability(rootLayout);
   const guardianAuthority = mintDesktopGuardianSessionCapability(frame);
   const { composition, session } = await createDesktopProductCompositionForBootstrap(

@@ -34,6 +34,10 @@ import {
 } from "./desktop-presentation-admission-owner.js";
 import type { ChatVoiceSpeechPublisher } from "../voice.js";
 import { createCompanionSessionReflectionChild } from "./companion-session-reflection.js";
+import {
+  ensureCompanionGameModDeployed,
+  type CompanionGameModDeploymentOutcome,
+} from "../stardew-game-install/desktop-entry-mod-deployment.js";
 
 declare const desktopRootLayoutCapabilityBrand: unique symbol;
 /** Opaque capability minted only after bootstrap root/layout validation. */
@@ -105,6 +109,19 @@ export type DesktopHostAssemblyInput = Readonly<{
    */
   listVoiceOutputDevices?: () => Promise<readonly Readonly<{ id: string; name: string }>[]>;
 }>;
+
+/**
+ * The desktop entry's pre-launch Mod step, one hop from the bootstrap wire.
+ *
+ * `host/src/bootstrap/wire/README.md` keeps the wire free of game modules and game
+ * policy, so the game-facing step is reached through this composition seam; the
+ * module it delegates to owns discovery and the deployment decision and never
+ * rejects, so a player whose game is missing, locked or already current still gets
+ * the app. The returned token is the bounded outcome the wire announces.
+ */
+export async function deployCompanionGameMod(artifactRoot: string): Promise<CompanionGameModDeploymentOutcome> {
+  return await ensureCompanionGameModDeployed(artifactRoot);
+}
 
 /**
  * Builds the one long-lived Desktop Host product composition. The returned

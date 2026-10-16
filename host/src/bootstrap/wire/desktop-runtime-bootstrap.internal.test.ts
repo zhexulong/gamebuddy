@@ -102,6 +102,21 @@ test("desktop bootstrap helper announces its bounded status stages before exactl
   }
 });
 
+test("desktop bootstrap helper names a failed Mod step and still serves the player", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("success", { modOutcome: "companion-mod-smapi-not-installed" });
+
+  // A game without SMAPI is not a startup failure: the child still reaches its
+  // acknowledgement, and the named outcome is the step's own last announced stage.
+  assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
+  const stages: string[] = [...bootstrapStages];
+  stages[stages.indexOf("companion-mod-current")] = "companion-mod-smapi-not-installed";
+  assert.deepEqual(
+    result.statuses.map((line) => (JSON.parse(line) as { stage: string }).stage),
+    stages,
+  );
+});
+
 test("desktop bootstrap helper fails closed on an invalid composed surface or marker nonce without any guardian contact", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
   for (const [scenario, options] of [
@@ -312,7 +327,7 @@ test("desktop bootstrap helper fails the recovery session closed when the durabl
   assert.doesNotMatch(result.stderr, /recovery_outcome:/);
 });
 
-async function runWireFixture(scenario: "success" | "recovery-success" | "recovery-role-rejected" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce", options: Readonly<{ surface?: string; nonceSha256?: string }> = {}): Promise<{ requests: Record<string, unknown>[]; acknowledgement: string | undefined; lines: readonly string[]; statuses: readonly string[]; stderr: string; guardianClosed: boolean; armReceiptAt: number | undefined; workerClosedAt: number | undefined; workerExitCode: number | null; workerExitedNaturally: boolean }> {
+async function runWireFixture(scenario: "success" | "recovery-success" | "recovery-role-rejected" | "shutdown-request" | "shutdown-malformed" | "missing-arm-executable" | "malformed-arm" | "withheld-arm-ack" | "delayed-arm-ack" | "withheld-contain-ack" | "expired-launch" | "overhorizon-launch" | "peer-disconnect" | "composition-failure" | "ack-write-failure" | "termination-failure" | "invalid-surface" | "invalid-nonce", options: Readonly<{ surface?: string; nonceSha256?: string; modOutcome?: string }> = {}): Promise<{ requests: Record<string, unknown>[]; acknowledgement: string | undefined; lines: readonly string[]; statuses: readonly string[]; stderr: string; guardianClosed: boolean; armReceiptAt: number | undefined; workerClosedAt: number | undefined; workerExitCode: number | null; workerExitedNaturally: boolean }> {
   const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
   const bootstrapId = (scenario === "success" ? "d" : scenario === "recovery-success" ? "1" : scenario === "recovery-role-rejected" ? "4" : scenario === "missing-arm-executable" ? "5" : scenario === "malformed-arm" ? "c" : scenario === "withheld-arm-ack" ? "b" : scenario === "delayed-arm-ack" ? "7" : scenario === "withheld-contain-ack" ? "a" : scenario === "expired-launch" ? "9" : scenario === "overhorizon-launch" ? "6" : scenario === "invalid-surface" ? "2" : scenario === "invalid-nonce" ? "3" : "8").repeat(64);
@@ -475,6 +490,7 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
       },
       recoveryLeaseName: "Local\\GameBuddy-Lease-1",
       recoveryBindingRevision: "88888888-8888-4888-8888-888888888888",
+      modOutcome: options.modOutcome,
     };
     await writeFile(workerPath, wireFixtureWorkerSource);
     // The shutdown-request scenarios exercise the IPC channel: the parent asks
@@ -758,6 +774,10 @@ async function drive(session) {
   }
 }
 
+async function mockDeployCompanionGameMod() {
+  return fixture.modOutcome ?? "companion-mod-current";
+}
+
 function mockComposition(_rootLayoutCapability, session, assemblyInput) {
   if (scenario === "composition-failure") {
     throw new Error("composition_construction_failed");
@@ -778,7 +798,7 @@ function mockComposition(_rootLayoutCapability, session, assemblyInput) {
   return { async close() { await operationTask; await session.close(); return cleanExitReason; } };
 }
 
-await mock.module(fixture.compositionUrl, { namedExports: { createDesktopProductComposition: mockComposition } });
+await mock.module(fixture.compositionUrl, { namedExports: { createDesktopProductComposition: mockComposition, deployCompanionGameMod: mockDeployCompanionGameMod } });
 const { runDesktopHostBootstrap } = await import(fixture.bootstrapUrl);
 try {
   await runDesktopHostBootstrap(fixture.moduleDirectory);
@@ -799,7 +819,7 @@ const statusSchema = "gamebuddy-desktop-host-bootstrap-status/v1";
 // The stages the wire announces, in the order the child enters them. This list is the contract of
 // the status channel: every frame is emitted immediately before the call it names, none of them
 // is emitted from a loop, and the child's own writer can produce no other stage.
-const bootstrapStages = ["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest", "guardian-session", "provisioning"] as const;
+const bootstrapStages = ["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest", "companion-mod", "companion-mod-current", "guardian-session", "provisioning"] as const;
 
 function schemaOf(line: string): string | undefined {
   try {
@@ -866,6 +886,11 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   // e891adee, which is what left this assertion reading a call that no longer exists).
   const compositionCall = /createDesktopProductCompositionForBootstrap\(\s*rootAuthority,\s*guardianAuthority,\s*assemblyInput,\s*\)/;
   assert.match(source, compositionCall);
+  // The game-facing Mod step is reached through the composition seam and never
+  // through a game import of this wire: the step and its named outcome are
+  // announced as two bounded status frames before the Host composition starts.
+  assert.match(source, /await writeStatus\("companion-mod"\);/);
+  assert.match(source, /await writeStatus\(await deployCompanionGameMod\(artifactRoot\)\);/);
   assert.match(source, /new WeakSet<object>\(\)/);
   assert.match(source, /new WeakMap<object, DesktopRootLayout>\(\)/);
   assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
@@ -918,6 +943,7 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   for (const stage of ["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest"]) {
     assert.ok(source.indexOf(`await writeStatus("${stage}")`) < acknowledgementIndex, `stage ${stage} must precede the acknowledgement`);
   }
+  assert.ok(source.indexOf("deployCompanionGameMod(artifactRoot)") < acknowledgementIndex, "the Mod step must precede the acknowledgement");
   // No status frame is written from inside a loop, and none of them carries a wait statement: the
   // pre-acknowledgement path waits for no human decision.
   assert.doesNotMatch(source, /for \([^)]*\)\s*\{[^}]*writeStatus\(/s);

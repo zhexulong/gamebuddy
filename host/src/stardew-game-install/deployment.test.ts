@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -29,18 +30,24 @@ function decision(target: StardewCompanionModTargetState, version = "0.1.0") {
 test("the deployment decision names every target state", () => {
   assert.deepEqual(decision({ kind: "absent" }), { kind: "install" });
   assert.deepEqual(decision({ kind: "unreadable" }), { kind: "target_unreadable" });
-  assert.deepEqual(decision({ kind: "installed", uniqueId: UNIQUE_ID, version: "0.1.0" }), {
-    kind: "update",
-    installedVersion: "0.1.0",
-  });
-  assert.deepEqual(decision({ kind: "installed", uniqueId: UNIQUE_ID, version: "0.0.9" }), {
+  // Already correct is version AND bytes: the installed manifest reading as our
+  // version is not enough to skip the write.
+  assert.deepEqual(
+    decision({ kind: "installed", uniqueId: UNIQUE_ID, version: "0.1.0", contentMatches: true }),
+    { kind: "current" },
+  );
+  assert.deepEqual(
+    decision({ kind: "installed", uniqueId: UNIQUE_ID, version: "0.1.0", contentMatches: false }),
+    { kind: "update" },
+  );
+  assert.deepEqual(decision({ kind: "installed", uniqueId: UNIQUE_ID, version: "0.0.9", contentMatches: false }), {
     kind: "replace_requires_consent",
     installedVersion: "0.0.9",
   });
-  assert.deepEqual(decision({ kind: "installed", uniqueId: "someone.else.Mod", version: "0.1.0" }), {
-    kind: "foreign_mod_present",
-    uniqueId: "someone.else.Mod",
-  });
+  assert.deepEqual(
+    decision({ kind: "installed", uniqueId: "someone.else.Mod", version: "0.1.0", contentMatches: true }),
+    { kind: "foreign_mod_present", uniqueId: "someone.else.Mod" },
+  );
 });
 
 test("only canonical drive-rooted directories are acceptable game roots", () => {
@@ -56,11 +63,21 @@ test("only canonical drive-rooted directories are acceptable game roots", () => 
 });
 
 test("an invalid package is refused before any installation is touched", async () => {
+  // The package is caller-supplied and validated at the boundary, so a hand-built
+  // value is exactly the case under test.
+  const handBuilt = (value: unknown): StardewCompanionModPackage => value as StardewCompanionModPackage;
   const result = await deployStardewCompanionMod({
     installRoot: "C:\\Games\\Stardew Valley",
-    package: { root: "C:\\pkg", entries: [], uniqueId: UNIQUE_ID, version: "0.1.0" },
+    package: handBuilt({ root: "C:\\pkg", entries: [], uniqueId: UNIQUE_ID, version: "0.1.0" }),
   });
   assert.deepEqual(result, { kind: "failed", failure: "mod_package_invalid" });
+  // A package that names entries without the shipped bytes' digests cannot be
+  // compared with an installed directory, so it is refused rather than installed.
+  const undigested = await deployStardewCompanionMod({
+    installRoot: "C:\\Games\\Stardew Valley",
+    package: handBuilt({ root: "C:\\pkg", entries: MOD_ENTRIES, uniqueId: UNIQUE_ID, version: "0.1.0" }),
+  });
+  assert.deepEqual(undigested, { kind: "failed", failure: "mod_package_invalid" });
 });
 
 function isFailure(
@@ -80,18 +97,26 @@ async function writePackage(
   uniqueId = UNIQUE_ID,
 ): Promise<StardewCompanionModPackage> {
   await mkdir(directory, { recursive: true });
-  for (const entry of MOD_ENTRIES.slice(0, 3)) await writeFile(join(directory, entry), `${entry}:${version}`);
-  await writeFile(
-    join(directory, "manifest.json"),
-    JSON.stringify({
-      Name: "GameBuddy",
-      Author: "GameBuddy contributors",
-      UniqueID: uniqueId,
-      Version: version,
-      EntryDll: "GameBuddy.Stardew.dll",
-    }),
-  );
-  return Object.freeze({ root: directory, entries: MOD_ENTRIES, uniqueId, version });
+  const digests: Record<string, string> = {};
+  for (const entry of MOD_ENTRIES.slice(0, 3)) {
+    const bytes = `${entry}:${version}`;
+    await writeFile(join(directory, entry), bytes);
+    digests[entry] = sha256(bytes);
+  }
+  const manifest = JSON.stringify({
+    Name: "GameBuddy",
+    Author: "GameBuddy contributors",
+    UniqueID: uniqueId,
+    Version: version,
+    EntryDll: "GameBuddy.Stardew.dll",
+  });
+  await writeFile(join(directory, "manifest.json"), manifest);
+  digests["manifest.json"] = sha256(manifest);
+  return Object.freeze({ root: directory, entries: MOD_ENTRIES, digests: Object.freeze(digests), uniqueId, version });
+}
+
+function sha256(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function writeGameRoot(prefix: string, withSmapi = true, withMods = true): Promise<string> {
@@ -134,19 +159,55 @@ test("a first install copies the package and is not a link", { skip: process.pla
   }
 });
 
-test("re-deploying the same version is an idempotent update", { skip: process.platform !== "win32" }, async () => {
-  const gameRoot = await writeGameRoot("gamebuddy-mod-update-root-");
-  const packageRoot = await temporaryDirectory("gamebuddy-mod-update-package-");
-  try {
-    const mod = await writePackage(packageRoot, "0.1.0");
-    await deployStardewCompanionMod({ installRoot: gameRoot, package: mod });
-    const result = await deployStardewCompanionMod({ installRoot: gameRoot, package: mod });
-    assert.deepEqual(result, { kind: "updated", installedVersion: "0.1.0", version: "0.1.0" });
-  } finally {
-    await rm(gameRoot, { recursive: true, force: true });
-    await rm(packageRoot, { recursive: true, force: true });
-  }
-});
+test(
+  "re-deploying the same version and the same bytes writes nothing",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const gameRoot = await writeGameRoot("gamebuddy-mod-update-root-");
+    const packageRoot = await temporaryDirectory("gamebuddy-mod-update-package-");
+    try {
+      const mod = await writePackage(packageRoot, "0.1.0");
+      assert.deepEqual(await deployStardewCompanionMod({ installRoot: gameRoot, package: mod }), {
+        kind: "installed",
+        version: "0.1.0",
+      });
+      const installedDll = join(gameRoot, "Mods", "GameBuddy", "GameBuddy.Stardew.dll");
+      const installedAt = (await stat(installedDll)).mtimeMs;
+      const result = await deployStardewCompanionMod({ installRoot: gameRoot, package: mod });
+      assert.deepEqual(result, { kind: "current", version: "0.1.0" });
+      assert.equal(
+        (await stat(installedDll)).mtimeMs,
+        installedAt,
+        "an installed directory that already carries the shipped version and bytes must not be touched",
+      );
+    } finally {
+      await rm(gameRoot, { recursive: true, force: true });
+      await rm(packageRoot, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "the same version with different bytes is rewritten from the shipped package",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const gameRoot = await writeGameRoot("gamebuddy-mod-repair-root-");
+    const packageRoot = await temporaryDirectory("gamebuddy-mod-repair-package-");
+    try {
+      const mod = await writePackage(packageRoot, "0.1.0");
+      await deployStardewCompanionMod({ installRoot: gameRoot, package: mod });
+      const installedDll = join(gameRoot, "Mods", "GameBuddy", "GameBuddy.Stardew.dll");
+      // The manifest still reads as our version; the bytes are not ours.
+      await writeFile(installedDll, "replaced-by-something-else");
+      const result = await deployStardewCompanionMod({ installRoot: gameRoot, package: mod });
+      assert.deepEqual(result, { kind: "updated", installedVersion: "0.1.0", version: "0.1.0" });
+      assert.equal(await readFile(installedDll, "utf8"), "GameBuddy.Stardew.dll:0.1.0");
+    } finally {
+      await rm(gameRoot, { recursive: true, force: true });
+      await rm(packageRoot, { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   "a different installed version is never replaced without consent",
