@@ -4480,10 +4480,18 @@ test("Chats surface switches the mounted conversation on click and refuses a sta
   await expect(surface.getByTestId("chat-item").first()).toHaveAttribute("data-selected", "true");
   await expect(surface.getByTestId("chat-item").nth(1)).toHaveAttribute("data-selected", "false");
 
-  // Clicking the already-mounted chat is a no-op: no selection admission at all.
+  // Clicking the already-mounted chat is not a selection: no admission at all. It is still the
+  // player choosing the conversation in front of them, so it shows it and adds the list's own step
+  // back rather than swallowing the gesture.
   await surface.getByTestId("chat-item").first().getByTestId("chat-select").click();
   await page.waitForTimeout(50);
   expect(selectRequests, "selecting the mounted chat must not create a second admission").toBe(0);
+  await expect(page.getByTestId("chats-surface")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(
+    "The game projection is read-only.",
+  );
+  await page.goBack();
+  await expect(surface).toBeVisible();
 
   // A stale generation is a bounded refusal: the failure is reported and the list re-read.
   selectStatus = 409;
@@ -4513,10 +4521,90 @@ test("Chats surface switches the mounted conversation on click and refuses a sta
   await page.goBack();
   await expect(surface.getByTestId("chat-item").nth(1)).toHaveAttribute("data-selected", "true");
 
-  // The now-mounted chat is a no-op again: the switch did not leave a second admission behind.
+  // The now-mounted chat is chosen again: still no second admission, and the click is answered -
+  // the conversation it names is what the player is looking at.
   await surface.getByTestId("chat-item").nth(1).getByTestId("chat-select").click();
   await page.waitForTimeout(50);
   expect(selectRequests, "re-selecting the mounted chat must not create a second admission").toBe(2);
+  await expect(page.getByTestId("chats-surface")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(
+    "This is the second conversation.",
+  );
+});
+
+/**
+ * The row's own click, when the row IS the mounted Chat. The Host has nothing to switch to and no
+ * selection may be admitted - a second admission for the Chat the runtime already holds is exactly
+ * what the mounted-handle guard stops - but the gesture is still the player choosing the
+ * conversation in front of them.
+ *
+ * The defect this pins: `selectChat` returned early on the mounted handle, so the click did nothing
+ * at all. The list showed a title button, the player pressed it, and neither the surface moved nor
+ * was the gesture acknowledged, while every other row moved them to its conversation.
+ *
+ * The assertions, and the failure each one catches:
+ *  - no `chat/select` request is issued: catches the no-op turned into a request, admitting a
+ *    selection for a Chat the runtime already has mounted;
+ *  - the Chat surface is the shown one, carrying the mounted conversation's own heading and
+ *    transcript: catches the silent no-op this test exists for;
+ *  - Browser Back returns to the Chats list with that row still selected: catches a move that
+ *    replaced the list's own history entry instead of adding the conversation's.
+ */
+test("clicking the already-mounted Chat shows it and issues no selection", async ({ page }) => {
+  let selectRequests = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+  await page.route(/(\/api\/tavern\/v1\/chats)(\?|$)/, (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        chats: [
+          { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." },
+          { handle: `${'C'.repeat(42)}A`, title: "Second conversation", status: "active", managementRevision: 1, isSelected: false, updatedAtMs: 1_759_913_600_000, preview: "She is already on the porch with the lantern." },
+        ],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/chat/select", (route) => {
+    selectRequests += 1;
+    return route.fulfill(jsonOk({ apiVersion: 1, status: "switched" }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  // The journey starts where the player does: the conversation, not the list.
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const chats = page.getByTestId("chats-surface");
+  await expect(chats.getByTestId("chat-item")).toHaveCount(2);
+  const mountedRow = chats.getByTestId("chat-item").first();
+  await expect(mountedRow).toHaveAttribute("data-selected", "true");
+  await expect(mountedRow.getByTestId("chat-select")).toBeEnabled();
+
+  await mountedRow.getByTestId("chat-select").click();
+
+  // The click is a choice, not a selection request.
+  await page.waitForTimeout(50);
+  expect(selectRequests, "the already-mounted Chat must not create a selection admission").toBe(0);
+  // And the choice is answered: the conversation is what the player is looking at, and it is the
+  // one the row named.
+  const conversation = page.getByTestId("chat-surface");
+  await expect(conversation).toBeVisible();
+  await expect(chats).toHaveCount(0);
+  await expect(conversation.locator(".timeline-heading h1")).toHaveText("Reference Game Chat");
+  await expect(conversation.getByRole("region", { name: "Chat transcript" })).toContainText(
+    "The game projection is read-only.",
+  );
+
+  // The move added the conversation's own history entry, so the list is one step back.
+  await page.goBack();
+  await expect(page.getByTestId("chats-surface").getByTestId("chat-item").first()).toHaveAttribute(
+    "data-selected",
+    "true",
+  );
 });
 
 /**

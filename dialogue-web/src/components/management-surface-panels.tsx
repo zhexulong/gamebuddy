@@ -170,6 +170,7 @@ export function ChatsSurfacePanel({
   selectAvailable,
   onRenamedTitle,
   onChatSwitched,
+  onMountedChatChosen,
   onCurrentChatRemoved,
   onNotice,
 }: Readonly<{
@@ -196,6 +197,13 @@ export function ChatsSurfacePanel({
   onRenamedTitle?: (handle: string, result: ChatTitleV1) => void;
   /** Fires after the Host committed an in-process switch to another Chat. */
   onChatSwitched?: () => void;
+  /**
+   * Fires when the player chose the Chat that is already mounted. That is not a
+   * selection - there is nothing to switch to and no `chat/select` is issued - but
+   * it is the player asking for that conversation, so the mount shows the surface
+   * the conversation lives on.
+   */
+  onMountedChatChosen?: () => void;
   /**
    * Fires after a retention transition removed the mounted Chat from the active
    * list. The shell owns the selection, so the panel reports the removal instead
@@ -340,8 +348,13 @@ export function ChatsSurfacePanel({
    */
   const selectChat = (handle: string): void => {
     if (selectAvailable === false || selecting !== null) return;
-    // The mounted Chat is a no-op: there is nothing to switch to.
-    if (handle === currentChatHandle) return;
+    // The mounted Chat is not a switch: the Host has nothing to switch to and no selection may be
+    // admitted. The click is still the player choosing that conversation, so the mount is told to
+    // show it - a silent no-op would leave the one gesture the row's title offers unanswered.
+    if (handle === currentChatHandle) {
+      onMountedChatChosen?.();
+      return;
+    }
     setSelecting(handle);
     void (async () => {
       try {

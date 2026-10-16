@@ -27,6 +27,7 @@ export function ChatsSurface({
   selectAvailable,
   onRenamedTitle,
   onChatSwitched,
+  onMountedChatChosen,
   onCurrentChatRemoved,
   restoreFocusTo,
 }: {
@@ -40,6 +41,11 @@ export function ChatsSurface({
   onRenamedTitle: () => void;
   /** Fires after the Host committed an in-process switch to another Chat. */
   onChatSwitched?: () => void;
+  /**
+   * Fires when the player chose the already-mounted Chat: no selection is admitted,
+   * but the shell still shows the conversation the row names.
+   */
+  onMountedChatChosen?: () => void;
   /**
    * Fires after a retention transition removed the mounted Chat from the active
    * list: the shell owns the selection, so it replaces the dead mount itself.
@@ -58,6 +64,7 @@ export function ChatsSurface({
         {...(selectAvailable === undefined ? {} : { selectAvailable })}
         onRenamedTitle={onRenamedTitle}
         {...(onChatSwitched === undefined ? {} : { onChatSwitched })}
+        {...(onMountedChatChosen === undefined ? {} : { onMountedChatChosen })}
         {...(onCurrentChatRemoved === undefined ? {} : { onCurrentChatRemoved })}
       />
     </SurfaceView>

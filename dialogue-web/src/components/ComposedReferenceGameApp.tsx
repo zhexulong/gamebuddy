@@ -1214,6 +1214,7 @@ export function ComposedReferenceGameApp() {
                 currentChatHandle={view.session.snapshot.selection?.chatHandle ?? ""}
                 onRenamedTitle={handleRenamedTitle}
                 onChatSwitched={handleChatSwitched}
+                onMountedChatChosen={openChat}
                 onCurrentChatRemoved={handleCurrentChatRemoved}
                 restoreFocusTo={chatsEntryRef}
               />
