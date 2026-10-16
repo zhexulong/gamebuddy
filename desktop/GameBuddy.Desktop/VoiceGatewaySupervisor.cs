@@ -21,6 +21,17 @@ internal sealed record VoiceGatewayLaunchPlan(string NodePath, string EntryPath,
     // The token is launch-only and never appears in any string representation.
     public override string ToString() => $"VoiceGatewayLaunchPlan(NodePath={NodePath}, EntryPath={EntryPath}, Port={Port}, CloudTtsAdmitted={CloudTtsAdmitted}, Persona={Persona}, OutputDevice={OutputDevice})";
 
+    /// <summary>
+    /// The operator credentials the Voice child may receive, and only when the
+    /// operator's own environment actually carries them. They exist only inside the
+    /// child's environment: never in a log, an exception message, the plan's
+    /// ToString, a status frame, a JSON file, a browser payload or the preference
+    /// store. An absent value leaves the variable unset - the extension
+    /// distinguishes an unset key from an empty string - so an operator who set
+    /// nothing gets no key, and the child stays text-only rather than half-configured.
+    /// </summary>
+    private static readonly string[] OperatorCredentialKeys = { "MIMO_API_KEY", "GROQ_API_KEY" };
+
     private static IReadOnlyDictionary<string, string> BuildEnvironment(int port, string token, bool cloudTtsAdmitted, string? persona, string outputDevice)
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -37,6 +48,14 @@ internal sealed record VoiceGatewayLaunchPlan(string NodePath, string EntryPath,
         // No persona leaves the variable unset rather than empty: the extension
         // distinguishes the two (an unset persona resolves the profile default).
         if (persona is not null) values.Add("GAMEBUDDY_MIMO_PERSONA", persona);
+        // The operator's credentials are an explicit allowlist, never inherited
+        // wholesale: the child environment was cleared, and only these two keys are
+        // put back, and only when they are actually set.
+        foreach (var key in OperatorCredentialKeys)
+        {
+            var value = System.Environment.GetEnvironmentVariable(key);
+            if (!string.IsNullOrEmpty(value)) values.Add(key, value);
+        }
         return values;
     }
 

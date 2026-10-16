@@ -84,6 +84,9 @@ public sealed class VoiceGatewaySupervisorTests
     public void BuildLaunchPlan_without_cloud_admission_keeps_the_frozen_minimal_environment()
     {
         using var root = TemporaryRoot.Create();
+        // The operator's TTS credentials are keyed off this process's environment,
+        // so this exact-set assertion clears them rather than inheriting the machine's.
+        using var credentials = OperatorCredentials(null, null);
         var plan = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), root.Gateway("voice/entry.js"), 49731, ValidToken, cloudTtsAdmitted: false);
 
         Assert.Equal(
@@ -158,6 +161,62 @@ public sealed class VoiceGatewaySupervisorTests
         var chosen = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true, persona: "soft_maid", outputDevice: "default");
         Assert.Equal("soft_maid", chosen.Environment["GAMEBUDDY_MIMO_PERSONA"]);
         Assert.NotEqual(string.Empty, chosen.Environment["GAMEBUDDY_MIMO_PERSONA"]);
+    }
+
+    [Fact]
+    public void BuildLaunchPlan_passes_operator_tts_credentials_by_allowlist_when_present()
+    {
+        using var root = TemporaryRoot.Create();
+        var gateway = root.Gateway("voice/entry.js");
+        using var credentials = OperatorCredentials("mimo-synthetic-key-1", "groq-synthetic-key-2");
+
+        var plan = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true);
+
+        // Verbatim passthrough: the child is the only holder.
+        Assert.Equal("mimo-synthetic-key-1", plan.Environment["MIMO_API_KEY"]);
+        Assert.Equal("groq-synthetic-key-2", plan.Environment["GROQ_API_KEY"]);
+        // And the only string representation never carries them.
+        var text = plan.ToString();
+        Assert.DoesNotContain("mimo-synthetic-key-1", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("groq-synthetic-key-2", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildLaunchPlan_leaves_operator_credentials_unset_when_absent()
+    {
+        using var root = TemporaryRoot.Create();
+        var gateway = root.Gateway("voice/entry.js");
+        using var credentials = OperatorCredentials(null, null);
+
+        var plan = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true);
+
+        // Unset, not empty: the extension distinguishes the two, and an empty value
+        // is not a usable key.
+        Assert.False(plan.Environment.ContainsKey("MIMO_API_KEY"), "an absent MIMO_API_KEY must leave the variable unset");
+        Assert.False(plan.Environment.ContainsKey("GROQ_API_KEY"), "an absent GROQ_API_KEY must leave the variable unset");
+    }
+
+    [Fact]
+    public void BuildLaunchPlan_environment_is_exactly_the_declared_allowlist()
+    {
+        using var root = TemporaryRoot.Create();
+        var gateway = root.Gateway("voice/entry.js");
+        using var credentials = OperatorCredentials("mimo-synthetic-key-1", "groq-synthetic-key-2");
+        System.Environment.SetEnvironmentVariable("GAMEBUDDY_STRAY_OPERATOR_VAR", "must-not-leak");
+        try
+        {
+            var plan = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true, persona: "soft_maid", outputDevice: "waveout:1");
+
+            Assert.Equal(
+                new[] { "GAMEBUDDY_MIMO_PERSONA", "GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION", "GAMEBUDDY_VOICE_PORT", "GAMEBUDDY_VOICE_TOKEN", "GAMEBUDDY_WINDOWS_OUTPUT_DEVICE", "GROQ_API_KEY", "LOCALAPPDATA", "MIMO_API_KEY", "SystemRoot", "TEMP", "TMP" },
+                plan.Environment.Keys.OrderBy(key => key, StringComparer.Ordinal));
+            // The child environment was cleared: a stray operator variable is not inherited.
+            Assert.DoesNotContain(plan.Environment.Keys, key => key.Equals("GAMEBUDDY_STRAY_OPERATOR_VAR", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("GAMEBUDDY_STRAY_OPERATOR_VAR", null);
+        }
     }
 
     [Fact]
@@ -262,6 +321,36 @@ public sealed class VoiceGatewaySupervisorTests
     }
 
     private static string Source() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "VoiceGatewaySupervisor.cs"));
+
+    /// <summary>
+    /// Sets the operator credential keys for one test and restores them on dispose.
+    /// The environment is process-global, so this is scoped tightly and every test
+    /// in this class runs sequentially.
+    /// </summary>
+    private static IDisposable OperatorCredentials(string? mimoApiKey, string? groqApiKey)
+    {
+        var previousMimo = System.Environment.GetEnvironmentVariable("MIMO_API_KEY");
+        var previousGroq = System.Environment.GetEnvironmentVariable("GROQ_API_KEY");
+        System.Environment.SetEnvironmentVariable("MIMO_API_KEY", mimoApiKey);
+        System.Environment.SetEnvironmentVariable("GROQ_API_KEY", groqApiKey);
+        return new RestoreCredentialEnvironment(previousMimo, previousGroq);
+    }
+
+    private sealed class RestoreCredentialEnvironment : IDisposable
+    {
+        private readonly string? mimoApiKey;
+        private readonly string? groqApiKey;
+        internal RestoreCredentialEnvironment(string? mimoApiKey, string? groqApiKey)
+        {
+            this.mimoApiKey = mimoApiKey;
+            this.groqApiKey = groqApiKey;
+        }
+        public void Dispose()
+        {
+            System.Environment.SetEnvironmentVariable("MIMO_API_KEY", this.mimoApiKey);
+            System.Environment.SetEnvironmentVariable("GROQ_API_KEY", this.groqApiKey);
+        }
+    }
 
     private sealed class TemporaryRoot : IDisposable
     {
