@@ -84,6 +84,18 @@ function resolveCommit(commit) {
   return git(["rev-parse", commit]);
 }
 
+function discoverRuntime(explicit) {
+  const args = [join(KIT_ROOT, "probes", "runtime-discover.mjs")];
+  if (typeof explicit === "string" && explicit.length > 0) args.push(`--runtime=${explicit}`);
+  const result = spawnSync(process.execPath, args, { cwd: REPO_ROOT, encoding: "utf8", windowsHide: true });
+  if (result.status !== 0) return null;
+  try {
+    return JSON.parse(result.stdout.trim().split("\n").pop())?.found ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function prepareRun(paths, values) {
   const outRoot = values.out;
   if (typeof outRoot !== "string" || outRoot.length === 0) throw new Error("--out <root> is required");
@@ -94,13 +106,19 @@ function prepareRun(paths, values) {
       ? resolveCommit(values.commit)
       : (prior?.commit ?? null);
   if (commit === null) throw new Error("--commit is required (sha or HEAD) for a new run");
+  const explicitRuntime = values.runtime ?? process.env.GB_SHOTS_RUNTIME ?? prior?.runtimeFixture ?? "";
+  const runtimeFixture = explicitRuntime.length > 0 ? explicitRuntime : (discoverRuntime("") ?? "");
+  if (runtimeFixture.length === 0)
+    throw new Error(
+      "no runtime fixture: pass --runtime <dir-with-node.exe> or set GB_SHOTS_RUNTIME / GB_SHOTS_RUNTIME_SEARCH",
+    );
   const run = {
     tag: sanitizeTag(`shots-${basename(outRoot)}`) || sanitizeTag(commit.slice(0, 12)),
     commit,
     shortCommit: commit.slice(0, 12),
     outRoot,
     stageRoot,
-    runtimeFixture: values.runtime ?? process.env.GB_SHOTS_RUNTIME ?? prior?.runtimeFixture ?? "",
+    runtimeFixture,
     gameDir: values["game-dir"] ?? process.env.GB_SHOTS_GAME_DIR ?? "D:\\Steam\\steamapps\\common\\Stardew Valley",
     edgeExe:
       values.edge ?? process.env.GB_SHOTS_EDGE ?? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",

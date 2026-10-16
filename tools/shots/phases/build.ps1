@@ -15,6 +15,11 @@ $ErrorActionPreference = 'Continue'
 Remove-Item $Log -Force -ErrorAction SilentlyContinue
 function Log($t) { Write-Output $t; Add-Content -Path $Log -Value $t -Encoding utf8 }
 
+# Hashing must not depend on the Get-FileHash cmdlet (absent in some constrained hosts the kit is
+# invoked from): the probe hashes the file through .NET and prints one hex digest per line.
+$hashProbe = Join-Path (Split-Path $PSScriptRoot) "probes\hash-file.ps1"
+function Hash($p) { return (& powershell -NoProfile -ExecutionPolicy Bypass -File $hashProbe -Path $p | Select-Object -First 1) }
+
 Log "=== BUILD (pinned worktree, no overlays) ==="
 Log ("  worktree HEAD=" + (git -C $Worktree rev-parse HEAD))
 Log ("  worktree changed files before build=[" + (((git -C $Worktree diff --name-only HEAD --ignore-submodules=all) -join ',')) + "]")
@@ -46,12 +51,12 @@ $r | Select-Object -Last 6 | ForEach-Object { Log ("  | " + $_) }
 $modDll = Join-Path $Worktree "integrations\stardew\bin\Release\net6.0\GameBuddy.Stardew.dll"
 Log ("  Mod dll present=" + (Test-Path $modDll))
 if (-not (Test-Path $modDll)) { Log "DONE-BUILD-FAIL"; exit 1 }
-Log ("  Mod dll sha256=" + (Get-FileHash $modDll -Algorithm SHA256).Hash)
+Log ("  Mod dll sha256=" + (Hash $modDll))
 
 Log "=== 3. windows-stale-lock-reclaimer .dist ==="
 $rec = Join-Path $Worktree "host\native\windows-stale-lock-reclaimer\.dist\win-x64\GameBuddy.WindowsStaleLockReclaimer.exe"
 if (Test-Path $rec) {
-  Log ("  present, sha256=" + (Get-FileHash $rec -Algorithm SHA256).Hash)
+  Log ("  present, sha256=" + (Hash $rec))
 } else {
   Push-Location $Worktree
   try {
@@ -62,7 +67,7 @@ if (Test-Path $rec) {
     Pop-Location
   }
   if (-not (Test-Path $rec)) { Log "DONE-BUILD-FAIL"; exit 1 }
-  Log ("  reclaimer sha256=" + (Get-FileHash $rec -Algorithm SHA256).Hash)
+  Log ("  reclaimer sha256=" + (Hash $rec))
 }
 
 Log "=== 4. generation build (project's own builder, --full-runtime-tree) ==="
@@ -87,9 +92,9 @@ foreach ($gdir in $genDirs) {
   if (-not ($entryPresent -and $runtimePresent)) { $ok = $false }
   $gm = Join-Path $OutRoot "generations\$gdir\native\stardew-mod\GameBuddy\GameBuddy.Stardew.dll"
   if (Test-Path $gm) {
-    $gh = (Get-FileHash $gm -Algorithm SHA256).Hash
+    $gh = Hash $gm
     Log ("    staged Mod dll sha256=" + $gh)
-    if ($gh -ne (Get-FileHash $modDll -Algorithm SHA256).Hash) { Log "    STAGED MOD DLL MISMATCH vs worktree build"; $ok = $false }
+    if ($gh -ne (Hash $modDll)) { Log "    STAGED MOD DLL MISMATCH vs worktree build"; $ok = $false }
   } else {
     Log "    stage does not contain the Mod dll"; $ok = $false
   }
