@@ -890,7 +890,7 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   // through a game import of this wire: the step and its named outcome are
   // announced as two bounded status frames before the Host composition starts.
   assert.match(source, /await writeStatus\("companion-mod"\);/);
-  assert.match(source, /await writeStatus\(await deployCompanionGameMod\(artifactRoot\)\);/);
+  assert.match(source, /await writeStatus\(await deployCompanionGameMod\(artifactRoot, assemblyInput\.manifest\.runtimeRoot\)\);/);
   assert.match(source, /new WeakSet<object>\(\)/);
   assert.match(source, /new WeakMap<object, DesktopRootLayout>\(\)/);
   assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
@@ -943,7 +943,7 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   for (const stage of ["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest"]) {
     assert.ok(source.indexOf(`await writeStatus("${stage}")`) < acknowledgementIndex, `stage ${stage} must precede the acknowledgement`);
   }
-  assert.ok(source.indexOf("deployCompanionGameMod(artifactRoot)") < acknowledgementIndex, "the Mod step must precede the acknowledgement");
+  assert.ok(source.indexOf("deployCompanionGameMod(artifactRoot, assemblyInput.manifest.runtimeRoot)") < acknowledgementIndex, "the Mod step must precede the acknowledgement");
   // No status frame is written from inside a loop, and none of them carries a wait statement: the
   // pre-acknowledgement path waits for no human decision.
   assert.doesNotMatch(source, /for \([^)]*\)\s*\{[^}]*writeStatus\(/s);

@@ -118,9 +118,17 @@ export type DesktopHostAssemblyInput = Readonly<{
  * module it delegates to owns discovery and the deployment decision and never
  * rejects, so a player whose game is missing, locked or already current still gets
  * the app. The returned token is the bounded outcome the wire announces.
+ *
+ * `runtimeRoot` is the player's own Host root, and it is where the game lane keeps
+ * the installation the player already chose. Reading it here keeps the wire free of
+ * the registration module: the composition seam resolves the locator, and the step
+ * falls back to discovery when no choice exists.
  */
-export async function deployCompanionGameMod(artifactRoot: string): Promise<CompanionGameModDeploymentOutcome> {
-  return await ensureCompanionGameModDeployed(artifactRoot);
+export async function deployCompanionGameMod(
+  artifactRoot: string,
+  runtimeRoot: string,
+): Promise<CompanionGameModDeploymentOutcome> {
+  return await ensureCompanionGameModDeployed(artifactRoot, {}, runtimeRoot);
 }
 
 /**

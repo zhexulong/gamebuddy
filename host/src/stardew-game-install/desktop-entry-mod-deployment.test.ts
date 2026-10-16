@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 
+import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import { publishStardewInstallationRegistration } from "../stardew-installation-registration.internal.js";
+import { createTestWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.test-support.js";
 import {
   ensureCompanionGameModDeployed,
   type CompanionGameModDeploymentOutcome,
@@ -69,6 +78,48 @@ const EXPECTED_FAILURE_TOKENS: Readonly<
 });
 
 const LAUNCHER_STATUS_TOKEN = /^[a-z][a-z0-9-]{0,63}$/;
+
+/** The registration publisher takes its fixed path lock through this bound helper. */
+test.before(() => bindWindowsStaleLockReclaimer(lockHelper()));
+test.after(() => bindWindowsStaleLockReclaimer(undefined));
+
+function lockHelper() {
+  return createTestWindowsStaleLockReclaimer(() => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: () => true,
+    });
+    child.stdin.on("data", (input: Buffer) => {
+      const request = JSON.parse(input.toString("utf8")) as {
+        operation: "reclaim_stale_lock" | "release_owned_lock";
+        root: string;
+        segments: string[];
+        token?: string;
+      };
+      void (async () => {
+        let result = "indeterminate";
+        if (request.operation === "release_owned_lock") {
+          const path = resolve(request.root, ...request.segments);
+          try {
+            const owner = JSON.parse(await readFile(path, "utf8")) as { token?: unknown };
+            if (owner.token === request.token) {
+              await rm(path, { force: true });
+              result = "released";
+            } else result = "kept_token_mismatch";
+          } catch (error) {
+            result = (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "kept_not_regular";
+          }
+        }
+        child.stdout.end(`${JSON.stringify({ schemaVersion: 1, result })}\n`);
+        child.stderr.end();
+        queueMicrotask(() => child.emit("close", 0, null));
+      })();
+    });
+    return child as unknown as ChildProcess;
+  });
+}
 
 type DiscoverySeam = () => Promise<StardewGameInstallationResolution>;
 type DeploymentSeam = (input: StardewCompanionModDeploymentInput) => Promise<StardewCompanionModDeploymentResult>;
@@ -170,5 +221,50 @@ test("a deployment failure is named, never rejects, and never blocks startup", a
     // the launch: the player still gets the app.
     assert.equal(outcome, "companion-mod-unavailable", `${label} failure must be named, not thrown`);
     assert.match(outcome, LAUNCHER_STATUS_TOKEN);
+  }
+});
+
+test("the player's registered installation is checked even when discovery cannot propose it", async () => {
+  const runtimeRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-mod-deploy-registration-"));
+  const CHOSEN_ROOT = "D:\\Portable\\Stardew Valley";
+  await publishStardewInstallationRegistration(runtimeRoot, null, {
+    schema: "gamebuddy-stardew-installation-registration/v1",
+    binding: { rootLayoutVersion: 1 },
+    revision: 1,
+    state: "ready",
+    locator: CHOSEN_ROOT,
+    activeAttempt: null,
+  });
+  const discoveryInputs: Array<Readonly<{ chosenInstallRoot?: string }>> = [];
+  const deployInputs: StardewCompanionModDeploymentInput[] = [];
+  try {
+    // The chosen portable root is not what Steam/GOG discovery would propose, so
+    // it can only reach deployment if the registered locator is passed through.
+    const outcome = await ensureCompanionGameModDeployed(
+      ARTIFACT_ROOT,
+      {
+        discover: async (input) => {
+          discoveryInputs.push(input);
+          const chosen = input.chosenInstallRoot;
+          if (chosen === undefined) return { kind: "not_found", diagnostics: Object.freeze([]) };
+          return {
+            kind: "resolved",
+            installation: Object.freeze({ ...INSTALLATION, source: "chosen" as const, installRoot: chosen }),
+            diagnostics: Object.freeze([]),
+          };
+        },
+        readPackage: async () => MOD_PACKAGE,
+        deploy: async (input) => {
+          deployInputs.push(input);
+          return { kind: "installed", version: "0.1.0" };
+        },
+      },
+      runtimeRoot,
+    );
+    assert.equal(outcome, "companion-mod-installed");
+    assert.deepEqual(discoveryInputs, [{ chosenInstallRoot: CHOSEN_ROOT }]);
+    assert.equal(deployInputs[0]!.installRoot, CHOSEN_ROOT);
+  } finally {
+    await rm(runtimeRoot, { recursive: true, force: true });
   }
 });

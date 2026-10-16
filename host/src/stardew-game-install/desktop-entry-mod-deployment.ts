@@ -7,6 +7,7 @@ import {
   type StardewCompanionModPackage,
 } from "./deployment.js";
 import { discoverStardewGameInstallation, type StardewGameInstallationResolution } from "./discovery.js";
+import { readStardewInstallationRegistration } from "../stardew-installation-registration.internal.js";
 
 /**
  * One bounded lowercase token per outcome, matching the shape the Desktop launcher
@@ -52,7 +53,7 @@ const FAILURE_OUTCOMES: Readonly<Record<StardewCompanionModDeploymentFailure, Co
  * on a machine that has no game installed.
  */
 export type CompanionGameModDeploymentSeams = Readonly<{
-  discover: () => Promise<StardewGameInstallationResolution>;
+  discover: (input: Readonly<{ chosenInstallRoot?: string }>) => Promise<StardewGameInstallationResolution>;
   readPackage: (artifactRoot: string) => Promise<StardewCompanionModPackage>;
   deploy: (input: StardewCompanionModDeploymentInput) => Promise<StardewCompanionModDeploymentResult>;
 }>;
@@ -73,13 +74,22 @@ export type CompanionGameModDeploymentSeams = Readonly<{
  * the game has to load the Mod that generation's Host speaks to. Consent by
  * inaction (refusing to touch our own stale directory) would leave exactly the
  * mismatch this step exists to prevent.
+ *
+ * `runtimeRoot` is the player's own Host root. When the game lane has already
+ * registered the installation the player chose - a portable or custom copy that
+ * Steam/GOG discovery cannot propose - that choice is authoritative and is
+ * checked directly; otherwise discovery runs as before.
  */
 export async function ensureCompanionGameModDeployed(
   artifactRoot: string,
   seams: Partial<CompanionGameModDeploymentSeams> = {},
+  runtimeRoot?: string,
 ): Promise<CompanionGameModDeploymentOutcome> {
   try {
-    const resolution = await (seams.discover ?? discoverStardewGameInstallation)();
+    const chosenInstallRoot = await readChosenInstallRoot(runtimeRoot);
+    const resolution = await (seams.discover ?? discoverStardewGameInstallation)(
+      chosenInstallRoot === undefined ? {} : { chosenInstallRoot },
+    );
     if (resolution.kind === "not_found") return "companion-mod-game-not-found";
     // Several installed games are the player's one-time choice, and that choice is
     // the game lane's own admitted step; this step never guesses one of them.
@@ -98,5 +108,24 @@ export async function ensureCompanionGameModDeployed(
     // failures as values; anything that still throws is this step's own unknown,
     // and it is named as such rather than failing the launch.
     return "companion-mod-unavailable";
+  }
+}
+
+/**
+ * The installation the player already chose for this Host, read from the one
+ * durable registration record the game lane owns. Reading is best-effort: absent
+ * (a launch before any choice), malformed or unavailable storage all answer
+ * `undefined`, so a missing optional record falls back to discovery rather than
+ * turning itself into a stopped launch.
+ */
+async function readChosenInstallRoot(runtimeRoot: string | undefined): Promise<string | undefined> {
+  if (runtimeRoot === undefined) return undefined;
+  try {
+    const registration = await readStardewInstallationRegistration(runtimeRoot);
+    return registration !== null && registration.state === "ready" && registration.locator !== null
+      ? registration.locator
+      : undefined;
+  } catch {
+    return undefined;
   }
 }

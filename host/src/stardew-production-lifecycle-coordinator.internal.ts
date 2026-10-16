@@ -16,7 +16,10 @@ import {
   admitStardewInstallation,
   type AdmittedStardewInstallation,
 } from "./stardew-installation-admission.js";
-import { readStardewInstallationRegistration } from "./stardew-installation-registration.internal.js";
+import {
+  publishStardewInstallationRegistration,
+  readStardewInstallationRegistration,
+} from "./stardew-installation-registration.internal.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { selectStardewFolder, type WindowsStardewFolderPickerCapability } from "./windows-stardew-folder-picker/index.js";
@@ -1447,8 +1450,24 @@ function createCoordinator(
     await admitStardewInstallation(inspector, locator);
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
     const current = await readStardewInstallationRegistration(runtimeRoot);
+    if (current === null) {
+      // First selection on a fresh Host: the picker is the sole initial producer
+      // (stardew-installation-runtime-registration-plan.md section "Setup
+      // registration and reselection"). No owner exists yet - activation itself
+      // needs a ready record to bind - so the initial record is published
+      // directly, after the admission above and before any other write.
+      await publishStardewInstallationRegistration(runtimeRoot, null, {
+        schema: "gamebuddy-stardew-installation-registration/v1",
+        binding: { rootLayoutVersion: 1 },
+        revision: 1,
+        state: "ready",
+        locator,
+        activeAttempt: null,
+      });
+      return Object.freeze({ status: "registered" });
+    }
     const owner = exactOwner;
-    if (current === null || current.state !== "ready" || owner === undefined) throw new Error("stardew_installation_registration_unavailable");
+    if (current.state !== "ready" || owner === undefined) throw new Error("stardew_installation_registration_unavailable");
     await internal.replaceStagedInstallationLocator(owner, current.revision, locator);
     return Object.freeze({ status: "registered" });
   };

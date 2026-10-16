@@ -167,7 +167,7 @@ export async function runDesktopHostBootstrap(artifactRoot: string): Promise<voi
   // player whose game is absent, locked or several, and the outcome is what an
   // operator reads back from the last announced stage.
   await writeStatus("companion-mod");
-  await writeStatus(await deployCompanionGameMod(artifactRoot));
+  await writeStatus(await deployCompanionGameMod(artifactRoot, assemblyInput.manifest.runtimeRoot));
   const rootAuthority = mintDesktopRootLayoutCapability(rootLayout);
   const guardianAuthority = mintDesktopGuardianSessionCapability(frame);
   const { composition, session } = await createDesktopProductCompositionForBootstrap(

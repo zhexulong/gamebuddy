@@ -466,6 +466,11 @@ async function canonicalTemporaryRoot(prefix: string): Promise<string> {
 async function createFixture(input: Readonly<{
   stagingGate?: Promise<void>;
   failStaging?: boolean;
+  /**
+   * Skip the fixture's ready-record seed, so a test can exercise the FIRST
+   * publish a fresh installation requires (no durable registration exists).
+   */
+  omitInitialRegistration?: boolean;
   packageReadGateAt?: Readonly<{ count: number; promise: Promise<void> }>;
   failPackageReadAt?: number;
   overrides?: StardewLifecycleCoordinatorTestingOverrides;
@@ -489,14 +494,16 @@ async function createFixture(input: Readonly<{
   const runtimeRoot = await canonicalTemporaryRoot("gamebuddy-lifecycle-coordinator-");
   const packageRoot = join(runtimeRoot, "package");
   temporaryRoots.push(runtimeRoot);
-  await publishStardewInstallationRegistration(runtimeRoot, null, {
-    schema: "gamebuddy-stardew-installation-registration/v1",
-    binding: { rootLayoutVersion: 1 },
-    revision: 1,
-    state: "ready",
-    locator: gameDirectoryCandidate,
-    activeAttempt: null,
-  });
+  if (input.omitInitialRegistration !== true) {
+    await publishStardewInstallationRegistration(runtimeRoot, null, {
+      schema: "gamebuddy-stardew-installation-registration/v1",
+      binding: { rootLayoutVersion: 1 },
+      revision: 1,
+      state: "ready",
+      locator: gameDirectoryCandidate,
+      activeAttempt: null,
+    });
+  }
   await mkdir(packageRoot);
   for (const entry of packageEntries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const spawnCalls: Array<Readonly<{
@@ -2120,6 +2127,60 @@ test("manual installation picker cancellation and failure preserve registration 
         assert.deepEqual(fixture.playerSpawnCalls, []);
       } finally { await fixture.coordinator.close(); await fixture.broker.close(); }
     }
+  });
+});
+
+test("a first-time manual picker selection publishes the initial ready registration without any prior activation", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture({
+      omitInitialRegistration: true,
+      overrides: {
+        selectStardewFolder: async () => ({ status: "selected" as const, path: gameDirectoryCandidate }),
+      },
+    });
+    try {
+      assert.equal(await readStardewInstallationRegistration(fixture.runtimeRoot), null);
+      assert.deepEqual(
+        await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("discovery_picker")),
+        { status: "registered" },
+      );
+      const published = await readStardewInstallationRegistration(fixture.runtimeRoot);
+      assert.equal(published?.state, "ready");
+      assert.equal(published?.revision, 1);
+      assert.equal(published?.locator, gameDirectoryCandidate);
+      assert.equal(published?.activeAttempt, null);
+      // The freshly published record is immediately launchable: the activation
+      // that previously had nothing to bind now stages against it.
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
+      assert.deepEqual(fixture.playerSpawnCalls, []);
+    } finally { await fixture.coordinator.close(); await fixture.broker.close(); }
+  });
+});
+
+test("a later picker selection replaces the locator at the next revision through the owner, not a second publish", async () => {
+  await withWindowsPlatform(async () => {
+    const replacement = "D:\\Portable\\Stardew Valley";
+    const fixture = await createFixture({
+      overrides: {
+        selectStardewFolder: async () => ({ status: "selected" as const, path: replacement }),
+      },
+    });
+    try {
+      const before = await readStardewInstallationRegistration(fixture.runtimeRoot);
+      assert.equal(before?.revision, 1);
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      assert.deepEqual(
+        await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("discovery_picker")),
+        { status: "registered" },
+      );
+      const after = await readStardewInstallationRegistration(fixture.runtimeRoot);
+      assert.equal(after?.locator, replacement);
+      // Activation itself advances the record (it binds the attempt pointer), so a
+      // reselection moves it strictly forward rather than re-publishing revision 1.
+      assert.ok((after?.revision ?? 0) > (before?.revision ?? 0));
+      assert.notEqual(after?.locator, before?.locator);
+    } finally { await fixture.coordinator.close(); await fixture.broker.close(); }
   });
 });
 
