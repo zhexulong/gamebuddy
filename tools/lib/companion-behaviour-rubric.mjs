@@ -158,9 +158,10 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
   Object.freeze({
     id: "trace_duplicate_payload_bounded",
     class: "Performance",
-    statement: "The trace does not spend most of its bytes repeating one identical record.",
+    statement:
+      "The trace does not spend most of its bytes repeating one record; a large SINGLE record is a different fact.",
     provenance: "the same run: 107 identical 84 B observation-failure records",
-    evidence: "runReport.traceBytes.largestIdenticalRecordBytes / runReport.traceBytes.total",
+    evidence: "runReport.traceBytes.largestRepeatedRecordBytes / runReport.traceBytes.total",
   }),
   Object.freeze({
     id: "proactive_authenticity",
@@ -367,10 +368,13 @@ export function assessCompanionBehaviourRubric({ turns, presence = null, runRepo
         detail: `snapshots ${(share * 100).toFixed(1)}% of ${total} B`,
       };
     }
-    const repeated = Number(bytes.largestIdenticalRecordBytes ?? 0) / total;
+    // DUPLICATION means a record written MORE THAN ONCE. A single large record is a different fact (reported through
+    // `trace_snapshot_share` and `bytes.largestRecordBytes`), and treating it as duplication made this obligation fire
+    // on a session that had no duplicated record at all.
+    const repeated = Number(bytes.largestRepeatedRecordBytes ?? 0) / total;
     return {
       verdict: repeated > 0.05 ? "broken" : "green",
-      detail: `one identical record = ${(repeated * 100).toFixed(1)}% of the trace`,
+      detail: `largest repeated record = ${(repeated * 100).toFixed(1)}% of the trace; largest single record = ${(Number(bytes.largestRecordBytes ?? 0) / 1024).toFixed(0)} KiB`,
     };
   };
   const obligations = COMPANION_BEHAVIOUR_OBLIGATIONS.map((obligation) => {

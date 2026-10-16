@@ -174,7 +174,7 @@ test("performance obligations are decided by the run report, and unmeasured with
       observationCycles: 292,
       observationFailures: 107,
       unobservedTailMs: 216_000,
-      traceBytes: { total: 2_430_000, snapshot: 2_350_000, largestIdenticalRecordBytes: 141_000 },
+      traceBytes: { total: 2_430_000, snapshot: 2_350_000, largestRepeatedRecordBytes: 141_000 },
     },
   });
   assert.equal(obligation(broken, "observation_continuity").verdict, "broken");
@@ -195,7 +195,7 @@ test("performance obligations are decided by the run report, and unmeasured with
       observationCycles: 292,
       observationFailures: 0,
       unobservedTailMs: 2_000,
-      traceBytes: { total: 1_000_000, snapshot: 500_000, largestIdenticalRecordBytes: 1_000 },
+      traceBytes: { total: 1_000_000, snapshot: 500_000, largestRepeatedRecordBytes: 1_000 },
     },
   });
   assert.equal(obligation(healthy, "observation_continuity").verdict, "green");

@@ -440,7 +440,6 @@ if (import.meta.main) {
       .split(/\r?\n/u)
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
-    const traceBytes = { total: 0, snapshot: 0, byRecord: new Map() };
     const startedAtMs = Date.now();
     // AGENT MODE LIVENESS IS THE FACT STREAM, NOT THE SNAPSHOT CADENCE.
     //
@@ -449,6 +448,7 @@ if (import.meta.main) {
     // cadence says nothing about whether the session is alive, and using it would report a healthy session as
     // `observation_continuity: broken`. What DOES mean "we stopped hearing from the world" here is the absence of any
     // fact, so that is what this measures.
+    const traceBytes = { total: 0, snapshot: 0, byRecord: new Map(), countByRecord: new Map() };
     let lastFactAtMs = startedAtMs;
     const timeline = (record) => {
       const line = `${JSON.stringify(record)}\n`;
@@ -456,6 +456,7 @@ if (import.meta.main) {
       traceBytes.total += size;
       if (record.type === "snapshot") traceBytes.snapshot += size;
       traceBytes.byRecord.set(line, (traceBytes.byRecord.get(line) ?? 0) + size);
+      traceBytes.countByRecord.set(line, (traceBytes.countByRecord.get(line) ?? 0) + 1);
       lastFactAtMs = Date.now();
       appendFileSync(join(traceDir, "timeline.jsonl"), line);
     };
@@ -465,13 +466,25 @@ if (import.meta.main) {
       traceDir,
       onFact: (fact) => timeline({ atMs: Date.now() - startedAtMs, type: fact.type, payload: fact.payload }),
     });
+    // The tail is measured to the moment the TURN ended, not to after teardown: the quiet wait that ends the turn is
+    // my own boundary, and including it made a normally-finished session report a 36 s "unobserved" gap.
+    const turnEndedAtMs = Date.now();
+    // DUPLICATION means a record that appears MORE THAN ONCE. Measured on a real agent run: the largest single record
+    // was a 21 KB snapshot written ONCE, and counting it as "duplication" made the obligation fire on a session that had
+    // no duplicated record at all. The single-record size is reported separately so both facts stay visible.
+    const repeated = [...traceBytes.byRecord.entries()].filter(
+      ([line]) => (traceBytes.countByRecord.get(line) ?? 0) > 1,
+    );
+    const largestRepeatedRecordBytes = repeated.reduce((max, [, bytes]) => Math.max(max, bytes), 0);
+    const largestRecordBytes = [...traceBytes.byRecord.values()].reduce((max, bytes) => Math.max(max, bytes), 0);
     const runReport = {
-      durationSeconds: (Date.now() - startedAtMs) / 1_000,
-      unobservedTailMs: Date.now() - lastFactAtMs,
+      durationSeconds: (turnEndedAtMs - startedAtMs) / 1_000,
+      unobservedTailMs: turnEndedAtMs - lastFactAtMs,
       traceBytes: {
         total: traceBytes.total,
         snapshot: traceBytes.snapshot,
-        largestIdenticalRecordBytes: [...traceBytes.byRecord.values()].reduce((max, value) => Math.max(max, value), 0),
+        largestRepeatedRecordBytes,
+        largestRecordBytes,
       },
     };
     const rubric = assessCompanionBehaviourRubric({ turns: result.agentTurns, runReport });
@@ -479,6 +492,9 @@ if (import.meta.main) {
       durationSeconds: runReport.durationSeconds,
       allocation,
       agentTurns: result.agentTurns.length,
+      // The Agent words themselves, so a reviewer reads them in the report instead of re-deriving them from a
+      // transcript whose path depends on the runtime root.
+      turns: result.agentTurns.map((turn) => ({ turnId: turn.turnId, text: turn.text })),
       persona: result.personaMounted,
       admitted: result.admitted,
       settled: result.settled,
