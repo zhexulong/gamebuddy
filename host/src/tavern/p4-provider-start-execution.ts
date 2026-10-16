@@ -5,6 +5,7 @@ import {
 } from "../native-companion-content.js";
 import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { NativeChatPreview } from "./provider-invocation.js";
+import type { PiVariantActivation } from "../pi-session-context-activation.internal.js";
 import type {
   AttemptStartingTurn,
   CancelledTurn,
@@ -193,7 +194,7 @@ export async function runMountedProviderStart(
     resolveRunningBarrier = resolve;
   });
   let finalPresentationFailure: unknown | undefined;
-  let variantActivation: import("../pi-session-context-activation.internal.js").PiVariantActivation | undefined;
+  let variantActivation: PiVariantActivation | undefined;
   let responseMessageId: string | undefined;
   let previewPublished = false;
   let observationSettled = false;
