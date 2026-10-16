@@ -23,6 +23,7 @@ export function Timeline({
   onRegenerate,
   onOpeningVariant,
   pending = null,
+  pendingPlayerMessage = null,
 }: {
   transcript: readonly BrowserMessageV1[];
   preview?: Readonly<{ turnHandle: string; text: string }> | null;
@@ -36,6 +37,8 @@ export function Timeline({
     companion: string;
     untitledChat: string;
     you: string;
+    /** The send lane's one word while the Host has not answered yet. */
+    chatSending: string;
     swipeNavigation: string;
     swipePrevious: string;
     swipeNext: string;
@@ -54,6 +57,20 @@ export function Timeline({
    * regenerate affordance of another.
    */
   pending?: Readonly<{ kind: "swipe" | "regenerate" | "opening"; handle: string }> | null;
+  /**
+   * The optimistic player message: the text just sent, shown until the
+   * authoritative one lands.
+   *
+   * It belongs to the reading flow but it is not one of its rows: the message
+   * list holds the authoritative transcript (`MessageBubble`, one `<li>` per
+   * durable message), and the optimistic copy must not be a row of it - the
+   * optimistic-send journey asserts the list carries none while this is visible,
+   * so a duplicate can never be the thing that gets counted. It renders inside
+   * the scrolling section rather than beside it, because beside it is outside
+   * the scroll container: a long transcript would then scroll under an optimistic
+   * line that never moved with it.
+   */
+  pendingPlayerMessage?: Readonly<{ idempotencyKey: string; text: string }> | null;
 }) {
   // The anchor names the companion the way the transcript will: the profile's
   // own name, or the catalog's word for an unnamed one, so the invitation's own
@@ -144,14 +161,15 @@ export function Timeline({
   // following it. A layout effect runs synchronously after the DOM mutation and
   // before paint, so the decision uses the reader's last real scroll and cannot
   // race an asynchronous scroll event triggered by the content change itself.
-  // The effect re-runs when the visible content changes (message count or the
-  // streaming preview text) and on mount; a reader who scrolled up keeps their
-  // position, because `atBottomRef` is then false.
+  // The effect re-runs when the visible content changes (message count, the
+  // streaming preview text, or the optimistic player message appearing or
+  // clearing) and on mount; a reader who scrolled up keeps their position,
+  // because `atBottomRef` is then false.
   useLayoutEffect(() => {
     const section = sectionRef.current;
     if (section === null || !atBottomRef.current) return;
     section.scrollTop = section.scrollHeight;
-  }, [transcript.length, preview?.text]);
+  }, [transcript.length, preview?.text, pendingPlayerMessage?.text]);
 
   return (
     // The transcript scrolls, and a scrollable region that cannot take focus is
@@ -212,6 +230,16 @@ export function Timeline({
             />
           )}
         </ol>
+      )}
+      {/* The optimistic player message, appended to the reading flow the moment the
+          player sends and cleared the moment the Host's own transcript carries the
+          same line. `data-pending` is that marker for the shell. */}
+      {pendingPlayerMessage !== null && (
+        <div className="message-optimistic" data-pending="true" data-testid="optimistic-player-message">
+          <span className="message-optimistic-role">{labels.you}</span>
+          <span className="message-optimistic-text">{pendingPlayerMessage.text}</span>
+          <span className="message-optimistic-state">{labels.chatSending}</span>
+        </div>
       )}
     </section>
   );
