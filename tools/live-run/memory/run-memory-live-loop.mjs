@@ -1195,8 +1195,60 @@ function projectIdentityFromRunRoot(root) {
   return undefined;
 }
 
+/**
+ * Wait, bounded, for the historian's fold to produce a compartment.
+ *
+ * The fold is asynchronous: a compressed trigger makes it fire, but the compartment stream exists a moment
+ * later. Invoking the reflection before that measures `ran: true, wrote_nothing` and proves nothing - measured,
+ * which is why the wait is here rather than assumed.
+ */
+async function waitForCompartments(root, timeoutMs = 90_000) {
+  const startedAt = Date.now();
+  for (;;) {
+    const contextsDir = join(root, "contexts");
+    let keys = [];
+    try {
+      keys = readdirSync(contextsDir);
+    } catch {
+      keys = [];
+    }
+    for (const key of keys) {
+      const dbPath = join(contextsDir, key, "data", "cortexkit", "magic-context", "context.db");
+      if (!existsSync(dbPath)) continue;
+      let db;
+      try {
+        db = new DatabaseSync(dbPath, { readOnly: true });
+        const row = db.prepare("SELECT COUNT(*) AS n FROM compartments").get();
+        if ((row?.n ?? 0) > 0) return Date.now() - startedAt;
+      } catch {
+        // A store still being created is not ready; keep waiting.
+      } finally {
+        db?.close?.();
+      }
+    }
+    if (Date.now() - startedAt > timeoutMs) return null;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
+  }
+}
+
 async function runReflectionOnce({ root, continuityId, reportPath, timeoutMs = 600_000 }) {
   const harness = fileURLToPath(new URL("../../run-dreamer-live-task.mjs", import.meta.url));
+  // The reflection reads the compartment stream, so a run that has not folded yet has nothing to give it.
+  const waitedForFoldMs = await waitForCompartments(root);
+  if (waitedForFoldMs === null) {
+    return Object.freeze({
+      ran: false,
+      exitCode: null,
+      timedOut: false,
+      verdict: "no_fold",
+      addedRows: null,
+      failure: null,
+      reportPath,
+      elapsedMs: 0,
+      stdout: "",
+      stderrTail: "no compartment appeared inside the fold wait, so the reflection had no input",
+    });
+  }
   const projectIdentity = projectIdentityFromRunRoot(root);
   const startedAtMs = Date.now();
   const child = spawn(
@@ -1260,6 +1312,7 @@ async function runReflectionOnce({ root, continuityId, reportPath, timeoutMs = 6
     failure: typeof verdict?.failure === "string" ? verdict.failure : null,
     reportPath,
     elapsedMs: Date.now() - startedAtMs,
+    waitedForFoldMs,
     stdout: stdout.trim().slice(-2_048),
     stderrTail: stderr.trim().slice(-2_048),
   });
