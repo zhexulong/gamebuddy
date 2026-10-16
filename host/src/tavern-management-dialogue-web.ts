@@ -2087,6 +2087,7 @@ function voicePreference(preference: PlayerPreference): TavernVoicePreferenceV1 
     consent: preference.consent,
     decidedAtMs: preference.decidedAtMs,
     outputDevice: preference.outputDevice,
+    persona: preference.persona,
   };
 }
 

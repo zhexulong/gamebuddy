@@ -197,8 +197,16 @@ test("both settings surfaces read and write ONE record under ONE revision", asyn
       consent: "undecided",
       decidedAtMs: null,
       outputDevice: null,
+      persona: null,
     });
-    assert.deepEqual(Object.keys(voice0).sort(), ["consent", "decidedAtMs", "disclosureVersion", "outputDevice", "revision"]);
+    assert.deepEqual(Object.keys(voice0).sort(), [
+      "consent",
+      "decidedAtMs",
+      "disclosureVersion",
+      "outputDevice",
+      "persona",
+      "revision",
+    ]);
 
     // A language write advances the record to revision 1 ...
     const languageWrite = await write(origin, "/api/tavern/v1/settings/language", session, {
@@ -209,9 +217,7 @@ test("both settings surfaces read and write ONE record under ONE revision", asyn
     assert.deepEqual(await languageWrite.json(), { revision: 1, locale: "en-US" });
 
     // ... and the Voice surface reads that SAME revision, not a second one.
-    const voiceAfterLanguage = await (
-      await read(origin, "/api/tavern/v1/settings/voice-preference", session)
-    ).json();
+    const voiceAfterLanguage = await (await read(origin, "/api/tavern/v1/settings/voice-preference", session)).json();
     assert.equal(voiceAfterLanguage.revision, 1);
 
     // The voice write continues the one counter from the revision it just read ...

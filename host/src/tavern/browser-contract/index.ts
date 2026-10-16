@@ -967,6 +967,15 @@ export const TavernVoiceSurfaceStateV1Schema = strictObject({
   state: Type.Union([Type.Literal("unavailable"), Type.Literal("ready"), Type.Literal("speaking")]),
 });
 
+/**
+ * The bounded MIMO voice persona id (`null` = no persona selected). The set of
+ * ids is the extension's (`MIMO_TTS_PERSONAS`); this contract binds only the
+ * shape, so the catalogue can grow without a Host edit.
+ */
+export const TavernVoicePersonaV1Schema = Type.Union([
+  Type.Null(),
+  Type.String({ pattern: "^[a-z][a-z0-9_]{0,31}$", maxLength: 32 }),
+]);
 /** Host-owned cloud TTS disclosure and consent projection. No credentials or provider facts are expressible. */
 export const TavernVoicePreferenceV1Schema = strictObject({
   revision: Revision,
@@ -975,6 +984,10 @@ export const TavernVoicePreferenceV1Schema = strictObject({
   decidedAtMs: Type.Union([Revision, Type.Null()]),
   /** `null` = Windows default output; `waveout:N` pins one enumerated endpoint. */
   outputDevice: Type.Union([Type.Null(), Type.String({ pattern: "^waveout:[0-9]{1,4}$", maxLength: 16 })]),
+  // The selected MIMO voice persona (`GAMEBUDDY_MIMO_PERSONA`): null leaves the
+  // gateway variable unset, which the extension distinguishes from an empty
+  // string. Same bounded lowercase-snake shape the store enforces.
+  persona: TavernVoicePersonaV1Schema,
 });
 export const TavernVoicePreferenceConsentCommandV1Schema = Type.Union([
   strictObject({
@@ -990,6 +1003,11 @@ export const TavernVoicePreferenceConsentCommandV1Schema = Type.Union([
     expectedRevision: Revision,
     action: Type.Literal("setOutputDevice"),
     outputDevice: Type.Union([Type.Null(), Type.String({ pattern: "^waveout:[0-9]{1,4}$", maxLength: 16 })]),
+  }),
+  strictObject({
+    expectedRevision: Revision,
+    action: Type.Literal("setPersona"),
+    persona: TavernVoicePersonaV1Schema,
   }),
 ]);
 

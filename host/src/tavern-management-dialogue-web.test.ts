@@ -1575,6 +1575,7 @@ test("management handler exposes the Host-owned Voice preference read and consen
     consent: "undecided",
     decidedAtMs: null,
     outputDevice: null,
+    persona: null,
   });
   const missingCsrf = await run(
     request(
@@ -1609,6 +1610,7 @@ test("management handler exposes the Host-owned Voice preference read and consen
     consent: "accepted",
     decidedAtMs: 1,
     outputDevice: null,
+    persona: null,
   });
   await handler.close();
   assert.equal(recorder.closes, 1);

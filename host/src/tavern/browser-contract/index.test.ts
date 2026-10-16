@@ -14,6 +14,7 @@ import {
   TavernBrowserFixtureV1,
   TavernBrowserValidatorsV1,
   TavernCompanionLocaleV1Schema,
+  TavernVoicePersonaV1Schema,
 } from "./index.js";
 
 const handle = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
@@ -1809,4 +1810,56 @@ test("the companion language is the same bounded BCP-47 shape on the wire and in
   assert.equal(read.Check({ revision: 0, locale: null }), true);
   assert.equal(read.Check({ revision: 0, locale: "ja-JP" }), true);
   assert.equal(read.Check({ revision: 0, locale: "not a locale" }), false);
+});
+
+test("the voice persona is the same bounded shape on the wire and in the store, and rides the consent command", async () => {
+  // The contract stays dependency-free, so its persona shape is a literal. This
+  // pin keeps that literal and the Host's own VOICE_PERSONA_PATTERN from
+  // drifting: the shape is bounded, and the set of personas is the extension's.
+  const { VOICE_PERSONA_PATTERN, VOICE_PERSONA_MAX_LENGTH } = await import("../../settings/player-preference-store.js");
+  const declared = TavernVoicePersonaV1Schema as unknown as {
+    readonly anyOf: readonly { readonly type?: string; readonly pattern?: string; readonly maxLength?: number }[];
+  };
+  const stringOption = declared.anyOf.find((option) => option.type === "string");
+  assert.ok(stringOption !== undefined, "the persona shape declares a string option");
+  assert.equal(stringOption.pattern, VOICE_PERSONA_PATTERN.source);
+  assert.equal(stringOption.maxLength, VOICE_PERSONA_MAX_LENGTH);
+  assert.equal(
+    declared.anyOf.some((option) => option.type === "null"),
+    true,
+    "`null` (no persona; the gateway variable stays unset) is expressible",
+  );
+
+  // The read shape carries the persona as a required member.
+  const read = TavernBrowserValidatorsV1.TavernVoicePreferenceV1Schema;
+  const preference = (persona: unknown) => ({
+    revision: 1,
+    disclosureVersion: null,
+    consent: "undecided",
+    decidedAtMs: null,
+    outputDevice: null,
+    persona,
+  });
+  assert.equal(read.Check(preference(null)), true);
+  assert.equal(read.Check(preference("soft_maid")), true);
+  assert.equal(read.Check(preference("SoftMaid")), false);
+  assert.equal(read.Check(preference("soft maid")), false);
+  assert.equal(read.Check(preference("soft-maid")), false);
+  assert.equal(read.Check(preference("a".repeat(33))), false);
+  assert.equal(
+    read.Check({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+    false,
+    "the persona is a required member of the frozen read shape",
+  );
+  assert.equal(read.Check({ ...preference(null), extra: true }), false);
+
+  // The fourth command variant rides the existing consent operation: a persona
+  // selection is one more revision-checked mutation, never a new route.
+  const write = TavernBrowserValidatorsV1.TavernVoicePreferenceConsentCommandV1Schema;
+  assert.equal(write.Check({ expectedRevision: 1, action: "setPersona", persona: "soft_maid" }), true);
+  assert.equal(write.Check({ expectedRevision: 1, action: "setPersona", persona: null }), true);
+  assert.equal(write.Check({ expectedRevision: 1, action: "setPersona", persona: "SoftMaid" }), false);
+  assert.equal(write.Check({ expectedRevision: 1, action: "setPersona", persona: "a".repeat(33) }), false);
+  assert.equal(write.Check({ expectedRevision: 1, action: "setPersona" }), false);
+  assert.equal(write.Check({ expectedRevision: 1, action: "setPersona", persona: null, extra: true }), false);
 });
