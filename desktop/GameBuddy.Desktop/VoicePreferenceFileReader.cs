@@ -128,9 +128,9 @@ internal sealed class VoicePreferenceFileReader
             _ => throw new InvalidVoicePreferenceException(),
         };
 
-        // Voice persona: null leaves the gateway variable unset (which the
-        // extension distinguishes from an empty string); a pinned value is the
-        // frozen lowercase-snake id shape only.
+        // Voice persona: null is the player's "System default" - the launch plan
+        // resolves it to the product's default persona rather than sending none;
+        // a pinned value is the frozen lowercase-snake id shape only.
         var personaElement = value.GetProperty("persona");
         string? persona = personaElement.ValueKind switch
         {

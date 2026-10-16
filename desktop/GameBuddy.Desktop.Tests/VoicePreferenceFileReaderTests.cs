@@ -75,8 +75,9 @@ public sealed class VoicePreferenceFileReaderTests
     [Fact]
     public void Read_projects_the_voice_persona_and_defaults_it_to_null()
     {
-        // No persona in an accepted record leaves it null: the composition then
-        // leaves GAMEBUDDY_MIMO_PERSONA unset rather than empty.
+        // No persona in an accepted record leaves it null - the player's
+        // "System default", which the launch plan resolves to the product's own
+        // default persona instead of sending no persona at all.
         using var undecided = TemporaryRoot.Create();
         undecided.WritePreference("""{"schemaVersion":1,"revision":3,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":null,"persona":null}""");
         Assert.Null(new VoicePreferenceFileReader(undecided.PreferencePath).Read().Persona);

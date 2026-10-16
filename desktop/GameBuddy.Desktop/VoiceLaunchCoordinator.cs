@@ -72,7 +72,7 @@ internal static class VoiceLaunchCoordinator
         return Compose(gateway, port, preference);
     }
 
-    /// <param name="preference">The strict reader already proved consent; its stored endpoint and persona are projected verbatim, with null meaning the platform default / no persona.</param>
+    /// <param name="preference">The strict reader already proved consent; its stored endpoint and persona are projected verbatim. A null endpoint means the platform default; a null persona is the player's "System default", which the launch plan resolves to the product's own default persona (VoicePersonaCatalogue) rather than leaving the child with no voice at all.</param>
     private static VoiceLaunch Compose(AdmittedVoiceGateway gateway, int port, VoicePreference preference) =>
         new(gateway, port, GenerateToken(), preference.SelectedOutputDevice, preference.Persona);
 

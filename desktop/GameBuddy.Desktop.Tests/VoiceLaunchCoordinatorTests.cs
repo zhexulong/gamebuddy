@@ -91,14 +91,15 @@ public sealed class VoiceLaunchCoordinatorTests
     }
 
     [Fact]
-    public void Resolve_carries_the_players_stored_persona_and_defaults_it_to_null()
+    public void Resolve_carries_the_players_stored_persona_verbatim_and_an_unset_one_as_null()
     {
         using var root = TemporaryRoot.Create();
         WriteSidecar(root);
         const string generation = "g-voice-1-00000000000000000000000000000000";
 
-        // No stored persona: the launch carries null, which the composition leaves
-        // unset in the child's environment.
+        // No stored persona: the launch carries null - the player's "System default" -
+        // and the launch plan resolves that to the product's default persona rather
+        // than leaving the child with neither a voice nor a persona.
         WriteAcceptedPreference(root);
         var withoutPersona = VoiceLaunchCoordinator.Resolve(root.Path, generation, "a".PadLeft(64, 'a'), root.PreferencePath);
         Assert.NotNull(withoutPersona);

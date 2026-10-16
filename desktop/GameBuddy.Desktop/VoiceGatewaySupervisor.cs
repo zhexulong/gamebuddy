@@ -4,6 +4,42 @@ using System.Text.RegularExpressions;
 
 namespace GameBuddy.Desktop;
 
+/// <summary>
+/// The Voice personas this launcher admits, and the one "System default"
+/// resolves to.
+///
+/// The catalogue's authority is the Settings picker's own declaration
+/// (dialogue-web/src/components/management-panels.tsx), which
+/// dialogue-web/tests/persona-catalogue-gate.test.mjs pins to the vendored
+/// extension's MIMO_TTS_PERSONAS. That is TypeScript and the launcher is C#, so
+/// no import can cross; this is the mirror of the picker's declaration and
+/// VoiceGatewaySupervisorTests pins the two together by reading the picker's
+/// source text - the same mirror + gate shape the picker itself uses for the
+/// extension.
+/// </summary>
+internal static class VoicePersonaCatalogue
+{
+    /// <summary>The persona "System default" resolves to; the picker declares the same id.</summary>
+    internal const string DefaultId = "soft_maid";
+
+    /// <summary>The ids the picker offers, in its own order.</summary>
+    internal static readonly string[] Ids = { "soft_maid", "gentle_maid", "energetic_youth", "steady_mature" };
+
+    /// <summary>
+    /// Resolves what the Voice child receives: the player's stored id when the
+    /// catalogue admits it, the product's default otherwise.
+    ///
+    /// An id the catalogue does not admit must not reach the child as-is: the
+    /// extension refuses a persona it does not declare as it constructs the
+    /// provider, which takes Voice down rather than degrading it. Resolving to the
+    /// default keeps an accepted-voice player audible with the product's own
+    /// voice, which is what "System default" promises; omitting the variable
+    /// instead reproduces the silence this resolution exists to remove.
+    /// </summary>
+    internal static string Resolve(string? storedPersona) =>
+        storedPersona is not null && Array.IndexOf(Ids, storedPersona) >= 0 ? storedPersona : DefaultId;
+}
+
 internal sealed record VoiceGatewayLaunchPlan(string NodePath, string EntryPath, int Port, string Token, bool CloudTtsAdmitted, string? Persona, string OutputDevice)
 {
     /// <summary>
@@ -45,9 +81,12 @@ internal sealed record VoiceGatewayLaunchPlan(string NodePath, string EntryPath,
             ["GAMEBUDDY_WINDOWS_OUTPUT_DEVICE"] = outputDevice,
         };
         if (cloudTtsAdmitted) values.Add("GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION", "desktop-consent-v1");
-        // No persona leaves the variable unset rather than empty: the extension
-        // distinguishes the two (an unset persona resolves the profile default).
-        if (persona is not null) values.Add("GAMEBUDDY_MIMO_PERSONA", persona);
+        // The admitted child always carries a persona: the player's stored one when
+        // the catalogue admits it, the product's default otherwise (see
+        // VoicePersonaCatalogue). A null persona is "System default", not "no voice":
+        // the extension reads a child with neither a voice nor a persona as one it
+        // cannot speak with, so the label would promise a default and deliver silence.
+        if (cloudTtsAdmitted) values.Add("GAMEBUDDY_MIMO_PERSONA", VoicePersonaCatalogue.Resolve(persona));
         // The operator's credentials are an explicit allowlist, never inherited
         // wholesale: the child environment was cleared, and only these two keys are
         // put back, and only when they are actually set.

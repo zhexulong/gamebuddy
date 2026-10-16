@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace GameBuddy.Desktop.Tests;
 
 public sealed class VoiceGatewaySupervisorTests
@@ -148,19 +150,57 @@ public sealed class VoiceGatewaySupervisorTests
     }
 
     [Fact]
-    public void BuildLaunchPlan_injects_the_persona_when_present_and_leaves_it_unset_when_absent()
+    public void BuildLaunchPlan_resolves_the_stored_persona_and_the_product_default_when_none_is_stored()
     {
         using var root = TemporaryRoot.Create();
         var gateway = root.Gateway("voice/entry.js");
 
-        // No persona leaves the variable unset, which the extension distinguishes
-        // from an empty string (an empty value is not a resolvable persona).
-        var none = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true);
-        Assert.False(none.Environment.ContainsKey("GAMEBUDDY_MIMO_PERSONA"), "no persona must leave GAMEBUDDY_MIMO_PERSONA unset");
-
-        var chosen = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true, persona: "soft_maid", outputDevice: "default");
-        Assert.Equal("soft_maid", chosen.Environment["GAMEBUDDY_MIMO_PERSONA"]);
+        // A stored persona is the player's choice and reaches the child verbatim.
+        var chosen = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true, persona: "gentle_maid", outputDevice: "default");
+        Assert.Equal("gentle_maid", chosen.Environment["GAMEBUDDY_MIMO_PERSONA"]);
         Assert.NotEqual(string.Empty, chosen.Environment["GAMEBUDDY_MIMO_PERSONA"]);
+
+        // No stored persona is the picker's "System default", and it must still be
+        // audible: the admitted plan resolves it to the product's default persona.
+        // Leaving GAMEBUDDY_MIMO_PERSONA unset is what the extension reads as neither
+        // a voice nor a persona - silence, not a default.
+        var systemDefault = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true);
+        Assert.Equal(VoicePersonaCatalogue.DefaultId, systemDefault.Environment["GAMEBUDDY_MIMO_PERSONA"]);
+    }
+
+    [Fact]
+    public void BuildLaunchPlan_resolves_a_persona_the_catalogue_does_not_admit_to_the_default()
+    {
+        using var root = TemporaryRoot.Create();
+        var gateway = root.Gateway("voice/entry.js");
+        using var credentials = OperatorCredentials(null, null);
+
+        // An id neither the picker nor the extension declares must not reach the
+        // child as-is: the extension refuses an unknown persona while constructing
+        // the provider, which takes Voice down rather than degrading it.
+        var clamped = VoiceGatewaySupervisor.BuildLaunchPlan(root.Node(), gateway, 49731, ValidToken, cloudTtsAdmitted: true, persona: "invented_persona", outputDevice: "default");
+        Assert.Equal(VoicePersonaCatalogue.DefaultId, clamped.Environment["GAMEBUDDY_MIMO_PERSONA"]);
+
+        // The clamp adds no variable: the child environment stays the declared allowlist.
+        Assert.Equal(
+            new[] { "GAMEBUDDY_MIMO_PERSONA", "GAMEBUDDY_VOICE_CLOUD_TTS_ADMISSION", "GAMEBUDDY_VOICE_PORT", "GAMEBUDDY_VOICE_TOKEN", "GAMEBUDDY_WINDOWS_OUTPUT_DEVICE", "LOCALAPPDATA", "SystemRoot", "TEMP", "TMP" },
+            clamped.Environment.Keys.OrderBy(key => key, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void Voice_persona_catalogue_is_pinned_to_the_dialogue_web_picker()
+    {
+        // No import can cross from C# to the picker's TypeScript, so this is a
+        // mirror, and this test is its gate: it reads the picker's own declaration
+        // and asserts the mirrored ids and default are the same ones. The picker's
+        // set is in turn pinned to the vendored extension's MIMO_TTS_PERSONAS by
+        // dialogue-web/tests/persona-catalogue-gate.test.mjs, so the chain
+        // launcher -> picker -> extension is closed at both ends.
+        var source = File.ReadAllText(PickerSource());
+
+        Assert.Equal(VoicePersonaCatalogue.Ids.OrderBy(id => id, StringComparer.Ordinal).ToArray(), PickerPersonaIds(source));
+        Assert.Equal(VoicePersonaCatalogue.DefaultId, PickerDefaultPersona(source));
+        Assert.Contains(VoicePersonaCatalogue.DefaultId, VoicePersonaCatalogue.Ids);
     }
 
     [Fact]
@@ -321,6 +361,26 @@ public sealed class VoiceGatewaySupervisorTests
     }
 
     private static string Source() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "GameBuddy.Desktop", "VoiceGatewaySupervisor.cs"));
+
+    private static string PickerSource() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "dialogue-web", "src", "components", "management-panels.tsx"));
+
+    /// <summary>The ids the picker declares in its own MIMO_PERSONA_IDS literal, sorted.</summary>
+    private static string[] PickerPersonaIds(string source)
+    {
+        var declaration = Regex.Match(source, @"export const MIMO_PERSONA_IDS = \[([^\]]*)\]");
+        Assert.True(declaration.Success, "the picker declares MIMO_PERSONA_IDS as an array literal");
+        var ids = Regex.Matches(declaration.Groups[1].Value, "\"([a-z][a-z0-9_]*)\"").Select(match => match.Groups[1].Value).ToArray();
+        Assert.NotEmpty(ids);
+        return ids.OrderBy(id => id, StringComparer.Ordinal).ToArray();
+    }
+
+    /// <summary>The id the picker declares as its DEFAULT_MIMO_PERSONA_ID.</summary>
+    private static string PickerDefaultPersona(string source)
+    {
+        var declaration = Regex.Match(source, "export const DEFAULT_MIMO_PERSONA_ID[^=]*= \"([a-z][a-z0-9_]*)\"");
+        Assert.True(declaration.Success, "the picker declares DEFAULT_MIMO_PERSONA_ID as a literal id");
+        return declaration.Groups[1].Value;
+    }
 
     /// <summary>
     /// Sets the operator credential keys for one test and restores them on dispose.
