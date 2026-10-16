@@ -440,24 +440,46 @@ if (import.meta.main) {
       .split(/\r?\n/u)
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
-    const timeline = (record) => appendFileSync(join(traceDir, "timeline.jsonl"), `${JSON.stringify(record)}\n`);
+    const traceBytes = { total: 0, snapshot: 0, byRecord: new Map() };
     const startedAtMs = Date.now();
+    let lastSnapshotAtMs = startedAtMs;
+    // The agent path measures its own run too, for the same reason the plan path does: a Performance obligation cannot
+    // be judged from a run that reported nothing about itself.
+    const timeline = (record) => {
+      const line = `${JSON.stringify(record)}\n`;
+      const size = Buffer.byteLength(line, "utf8");
+      traceBytes.total += size;
+      if (record.type === "snapshot") {
+        traceBytes.snapshot += size;
+        lastSnapshotAtMs = Date.now();
+      }
+      traceBytes.byRecord.set(line, (traceBytes.byRecord.get(line) ?? 0) + size);
+      appendFileSync(join(traceDir, "timeline.jsonl"), line);
+    };
     const result = await runAgentDrivenLoop({
       config,
       allocation,
       traceDir,
       onFact: (fact) => timeline({ atMs: Date.now() - startedAtMs, type: fact.type, payload: fact.payload }),
     });
-    const rubric = assessCompanionBehaviourRubric({
-      turns: result.agentTurns,
-      runReport: { durationSeconds: (Date.now() - startedAtMs) / 1_000 },
-    });
-    const report = Object.freeze({
+    const runReport = {
       durationSeconds: (Date.now() - startedAtMs) / 1_000,
+      unobservedTailMs: Date.now() - lastSnapshotAtMs,
+      traceBytes: {
+        total: traceBytes.total,
+        snapshot: traceBytes.snapshot,
+        largestIdenticalRecordBytes: [...traceBytes.byRecord.values()].reduce((max, value) => Math.max(max, value), 0),
+      },
+    };
+    const rubric = assessCompanionBehaviourRubric({ turns: result.agentTurns, runReport });
+    const report = Object.freeze({
+      durationSeconds: runReport.durationSeconds,
       allocation,
       agentTurns: result.agentTurns.length,
       persona: result.personaMounted,
+      admitted: result.admitted,
       settled: result.settled,
+      runReport: { unobservedTailMs: runReport.unobservedTailMs, traceBytes: runReport.traceBytes },
       rubric,
     });
     writeFileSync(join(traceDir, "loop-report.json"), JSON.stringify(report, null, 2));

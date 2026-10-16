@@ -208,6 +208,14 @@ export async function runAgentDrivenLoop({
     host.STARDEW_GAME_INTEGRATION_ADAPTER,
   );
   const unsubscribeFact = typeof onFact === "function" ? client.onFact(onFact) : () => {};
+  // Connection state is a SEPARATE channel (`local-stardew-bridge.ts:571` vs `:575`). A live agent session dropped its
+  // bridge mid-run (`bridge_not_authenticated` for the rest of the run) and the Agent itself reported "农场这边就断线
+  // 了" -- but nothing in the trace named WHY, because this loop subscribed only to facts. The reason code is the
+  // cheapest decisive measurement for that drop.
+  const unsubscribeConnection =
+    typeof onFact === "function" && typeof client.onConnectionFact === "function"
+      ? client.onConnectionFact((fact) => onFact({ type: "bridge_connection", payload: fact }))
+      : () => {};
   try {
     const disposable = typeof configuredRuntimeRoot !== "string" || configuredRuntimeRoot.length === 0;
     const root = disposable ? await mkdtemp(join(tmpdir(), "gamebuddy-multiplayer-agent-")) : configuredRuntimeRoot;
@@ -262,6 +270,7 @@ export async function runAgentDrivenLoop({
     });
   } finally {
     unsubscribeFact();
+    unsubscribeConnection();
   }
 }
 
