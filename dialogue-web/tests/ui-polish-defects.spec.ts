@@ -405,6 +405,76 @@ test("defect 1: the CJK beat drops the faux italic without gaining weight", asyn
   expect(prose!.ratio, "the dialogue's tone stays the brighter of the two").toBeGreaterThan(beat!.ratio);
 });
 
+// --- an incidental: three live texts read the disabled token -----------------
+
+/**
+ * Three texts the player *reads* were painted in `--text-disabled`, the token the
+ * product names for text the player cannot use.
+ *
+ * Measured in the mounted shell before the change, each resolved against the
+ * effective background the runtime contrast gate uses: `.message-author` (the
+ * name over a companion's bubble), `.section-subtitle` (a surface's own section
+ * heading) and `.surface-model-recommended > span` (the caption over the
+ * suggestion chips) all computed `rgb(144, 135, 126)` = `--text-disabled`
+ * (`#90877e`) at 12 px - 5.57:1 on the canvas (`#0c0b0b`), and 4.74:1 on the
+ * card tone (`#201d1d`) the author line can also sit on. After: all three read
+ * `--text-secondary` (`#c8c0b6`) at 10.92:1 on the canvas and 9.30:1 on the card.
+ *
+ * The assertion is the identity the change is: each control's own computed
+ * colour is the product's secondary tone, and never the disabled one. It is
+ * read through the same `sampleContrast` the contrast gate uses, so a later
+ * re-tune of either token moves both readings together.
+ */
+test("the author line, a section heading and the suggestion caption read the live tone, not the disabled one", async ({ page }) => {
+  await mountShell(page, {
+    transcript: [{ role: "companion", text: "Good morning, farmer." }],
+    recommendedModels: SAME_ID_TWO_PROVIDERS,
+    // The English shell names the app bar's entries in English; the surface's own
+    // section headings are the same two texts in either catalogue.
+    locale: "en",
+  });
+  await expect(page.locator(".message-author")).toBeVisible();
+
+  const [author] = await sampleContrast(page, [".message-author"]);
+  // The chat surface's model popout carries the suggestion caption; the Game
+  // surface carries the two section headings below it.
+  await page.getByTestId("chat-model-trigger").click();
+  await expect(page.getByTestId("chat-model-drawer")).toBeVisible();
+  const [caption] = await sampleContrast(page, [".surface-model-recommended > span"]);
+  // The popout is a drawer over the conversation, so it has to be closed before
+  // the app bar behind its backdrop is reachable.
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("chat-model-drawer")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  const headings = await sampleContrast(page, [".section-subtitle"]);
+  const tokens = await page.evaluate(() => {
+    const read = (name: string): string => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${name})`;
+      document.body.appendChild(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    };
+    return { secondary: read("--text-secondary"), disabled: read("--text-disabled") };
+  });
+  console.log(
+    `[live-text-tone] ${JSON.stringify({ author, caption, headings, tokens })}`,
+  );
+
+  expect(tokens.secondary, "the two tokens are the ones the change is between").not.toBe(tokens.disabled);
+  for (const reading of [author, caption, ...headings]) {
+    expect(reading, "every one of the three is on screen").toMatchObject({ found: true });
+    expect(
+      reading.color,
+      `${reading.selector} reads ${reading.color} on ${reading.background}, ${reading.ratio}:1`,
+    ).toBe(tokens.secondary);
+    expect(reading.color, "and never the token named for text the player cannot use").not.toBe(tokens.disabled);
+    expect(reading.ratio, `${reading.selector} clears the 4.5:1 body-text floor`).toBeGreaterThanOrEqual(4.5);
+  }
+});
+
 // --- defect 2 ----------------------------------------------------------------
 
 test("defect 2: a full-width parenthesis survives verbatim and the beat still reads as a beat", async ({ page }) => {
