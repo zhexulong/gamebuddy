@@ -709,11 +709,14 @@
     gap: 8px;
   }
 
-  /* The message's own control group: the swipe pair and regenerate are the same
-   kind of target - one 44 px floor (`--touch-target-min`), one card tone, one
-   hairline - so the two read as one group rather than a control sitting beside
-   a caption. Regenerate was a transparent 11 px text row here, the smallest
-   target and the smallest type anywhere in the product. */
+  /* The message's own control strip under the bubble: the pager and regenerate
+   are the same kind of target - one 44 px floor (`--touch-target-min`), one card
+   tone, one hairline - so the two read as one group rather than a control sitting
+   beside a caption, and they are adjacent rather than diagonally opposite.
+   Regenerate was a transparent 11 px text row here, the smallest target and the
+   smallest type anywhere in the product. Wrapping is what keeps the strip a strip
+   at 400 px, where the pager's own labels and the button no longer fit on one
+   line inside the bubble's measure. */
   .swipe-controls {
     display: inline-flex;
     align-items: center;
@@ -776,6 +779,7 @@
   .message-actions {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
     margin-top: 4px;
   }

@@ -591,3 +591,125 @@ test("item 4: one variant has no switcher at all", async ({ page }) => {
   await expect(page.locator(".message-list > li[data-handle]")).toHaveCount(1);
   await expect(page.locator(".message-list .swipe-controls")).toHaveCount(0);
 });
+
+/**
+ * Item 5's own transcript: the opening (its pager is the third row's sibling
+ * control), the player's line, and the companion reply regeneration produced -
+ * a swipe set, which is the one row that carries BOTH a pager and the
+ * regenerate control.
+ */
+const PLAYER_HANDLE = "P".repeat(42) + "A";
+const SWIPE_HANDLE = "S".repeat(42) + "A";
+
+function openingThenSwipedTranscript() {
+  return [
+    ...openingTranscript(3, "Default"),
+    {
+      handle: PLAYER_HANDLE,
+      role: "player",
+      text: "你昨晚睡得好吗？",
+      locale: "und",
+      order: 1,
+      revision: 1,
+    },
+    {
+      handle: SWIPE_HANDLE,
+      role: "companion",
+      text: "……还行。",
+      locale: "und",
+      order: 2,
+      revision: 1,
+      swipeInfo: { currentIndex: 1, totalSwipes: 2, label: "1/2", hasPrevious: true, hasNext: true },
+    },
+  ];
+}
+
+/**
+ * Item 5's two boxes: the pager (the variant switcher) and the regenerate
+ * button, each with the bubble they belong to, so "above the bubble, at its top
+ * right" and "beside it, in the strip below" are both numbers.
+ */
+async function measureBubbleActions(page: Page) {
+  const row = page.locator(".message-list > li[data-handle]").last();
+  await expect(row).toBeVisible();
+  return await row.evaluate((node) => {
+    const round = (value: number) => Math.round(value);
+    const boxOf = (selector: string) => {
+      const element = node.querySelector<HTMLElement>(selector);
+      if (element === null) return null;
+      const box = element.getBoundingClientRect();
+      return {
+        top: round(box.top),
+        left: round(box.left),
+        right: round(box.right),
+        bottom: round(box.bottom),
+        width: round(box.width),
+        height: round(box.height),
+        text: (element.textContent ?? "").replace(/\s+/gu, " ").trim(),
+      };
+    };
+    return {
+      bubble: boxOf(".message-bubble"),
+      pager: boxOf(".swipe-controls"),
+      regenerate: boxOf(".regenerate-btn"),
+      headerChildren: [...(node.querySelector(".message-header")?.children ?? [])].map((child) =>
+        (child.className || child.tagName).toString(),
+      ),
+      actionChildren: [...(node.querySelector(".message-actions")?.children ?? [])].map((child) =>
+        (child.className || child.tagName).toString(),
+      ),
+    };
+  });
+}
+
+/**
+ * The pager sat in the bubble's author line - above the bubble, at its right -
+ * while regenerate sat below the bubble at its left, so regenerating and then
+ * picking another variant meant crossing the whole bubble. Neither control is
+ * wrong on its own; the defect is that one message's two controls are diagonally
+ * opposite.
+ */
+test("item 5: the variant pager and regenerate are one strip at the bubble's foot", async ({ page }) => {
+  await stubShell(page, { transcript: openingThenSwipedTranscript() });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+  await expect(page.locator(".message-list > li[data-handle]")).toHaveCount(3);
+
+  const measured = await measureBubbleActions(page);
+  console.log(`[item-5 controls] ${JSON.stringify(measured)}`);
+  expect(measured.pager, "the variant pager renders").not.toBeNull();
+  expect(measured.regenerate, "the regenerate control renders").not.toBeNull();
+  expect(measured.bubble, "the bubble renders").not.toBeNull();
+
+  const pager = measured.pager!;
+  const regenerate = measured.regenerate!;
+  const bubble = measured.bubble!;
+
+  // Both controls are below the bubble: the author line keeps the name and
+  // nothing else.
+  expect(pager.top, `the pager is below the bubble (pager ${pager.top}, bubble ${bubble.bottom})`).toBeGreaterThanOrEqual(
+    bubble.bottom,
+  );
+  expect(
+    regenerate.top,
+    `regenerate is below the bubble (${regenerate.top}, bubble ${bubble.bottom})`,
+  ).toBeGreaterThanOrEqual(bubble.bottom);
+  // …on one line…
+  expect(
+    Math.abs(Math.round(pager.top + pager.height / 2) - Math.round(regenerate.top + regenerate.height / 2)),
+    `the two controls share a line (pager ${pager.top}..${pager.bottom}, regenerate ${regenerate.top}..${regenerate.bottom})`,
+  ).toBeLessThanOrEqual(8);
+  // …beside each other, in one strip: the horizontal gap between them is the
+  // strip's own gap, not the width of a bubble.
+  const horizontalGap = Math.abs(
+    pager.left < regenerate.left ? regenerate.left - pager.right : pager.left - regenerate.right,
+  );
+  expect(horizontalGap, `the two controls are adjacent (${horizontalGap} px apart)`).toBeLessThanOrEqual(16);
+  // The author line no longer carries a control.
+  expect(measured.headerChildren, "the author line holds the name and nothing else").toEqual(["message-author"]);
+  expect(
+    measured.actionChildren.some((child) => child.includes("swipe-controls")),
+    `the strip holds the pager: ${JSON.stringify(measured.actionChildren)}`,
+  ).toBe(true);
+});

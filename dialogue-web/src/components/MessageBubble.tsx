@@ -123,6 +123,12 @@ export const MessageBubble = memo(function MessageBubble({
     !isPlayer && openingVariant !== undefined && !openingVariant.locked && openingVariant.count > 1
       ? openingVariant
       : undefined;
+  // The message's own swipe set, when the Host published more than one variant of
+  // it. It is the same shape as the opening choice, and it reads the same way.
+  const swipeSet = swipeInfo !== undefined && swipeInfo.totalSwipes > 1 ? swipeInfo : undefined;
+  // Whether this message's strip has a pager at all: the strip exists for its own
+  // controls, so a message with neither keeps no empty row under the bubble.
+  const hasControls = openingChoice !== undefined || swipeSet !== undefined;
   // The Host's per-message language, painted on the text only: the author line
   // and the swipe/regenerate controls are player-facing UI words and must keep
   // the surface's own language. `und` paints nothing (browserMessageLanguageTag),
@@ -146,13 +152,33 @@ export const MessageBubble = memo(function MessageBubble({
         {/* The author line belongs to the companion only. The player's own
             monogram already sits at the row's edge, so printing the same name
             again above the bubble reads as "[你] 你: 你好" - the line is a
-            duplicate of the avatar, not an attribution. The header also owns
-            only companion controls, so it does not exist on the player's side
-            at all; an empty box would still add the body column's gap above
-            the bubble. */}
+            duplicate of the avatar, not an attribution - and the player's side
+            has no header at all, because an empty box would still add the body
+            column's gap above the bubble. */}
         {!isPlayer && (
           <div className="message-header">
             <span className="message-author">{authorName}</span>
+          </div>
+        )}
+        {/* Both sides author text, and a `*beat*` is the same format on both:
+            the same sanitised Markdown renderer reads a person's words exactly as
+            it reads the companion's, so the identical beat cannot render two ways. */}
+        <MarkdownMessage
+          className="message-bubble"
+          text={message.text}
+          trailingHtml={CARET_MARKUP}
+          lang={languageTag}
+        />
+        {/* One strip under the bubble for everything a companion message can do
+            to itself: choose another opening, swipe the set, ask again. The pager
+            used to sit in the author line above the bubble while regenerate sat
+            here, so one message's two controls were diagonal - measured at
+            1440x900 on a regenerated reply: pager 389..435 above a 439..485
+            bubble, regenerate 493..537 under it, their centres 145 px apart - and
+            going back to an earlier variant after asking again meant crossing the
+            bubble. */}
+        {!isPlayer && (hasControls || onRegenerate) && (
+          <div className="message-actions">
             {openingChoice && (
               <div className="swipe-controls" aria-label={labels.swipeNavigation}>
                 {/* The arrow is decoration; the words are the control. Both are
@@ -183,12 +209,12 @@ export const MessageBubble = memo(function MessageBubble({
                 </button>
               </div>
             )}
-            {swipeInfo && swipeInfo.totalSwipes > 1 && (
+            {swipeSet && (
               <div className="swipe-controls" aria-label={labels.swipeNavigation}>
                 <button
                   type="button"
                   className="swipe-btn"
-                  disabled={busy || !swipeInfo.hasPrevious}
+                  disabled={busy || !swipeSet.hasPrevious}
                   onClick={() => onSwipe?.(message.handle, "prev")}
                   aria-label={labels.swipePrevious}
                   title={labels.swipePrevious}
@@ -196,11 +222,11 @@ export const MessageBubble = memo(function MessageBubble({
                   <ChevronLeft size={14} aria-hidden="true" />
                   <span className="swipe-btn-label">{labels.swipePrevious}</span>
                 </button>
-                <span className="swipe-indicator">{swipePosition(swipeInfo.label)}</span>
+                <span className="swipe-indicator">{swipePosition(swipeSet.label)}</span>
                 <button
                   type="button"
                   className="swipe-btn"
-                  disabled={busy || !swipeInfo.hasNext}
+                  disabled={busy || !swipeSet.hasNext}
                   onClick={() => onSwipe?.(message.handle, "next")}
                   aria-label={labels.swipeNext}
                   title={labels.swipeNext}
@@ -210,35 +236,24 @@ export const MessageBubble = memo(function MessageBubble({
                 </button>
               </div>
             )}
-          </div>
-        )}
-        {/* Both sides author text, and a `*beat*` is the same format on both:
-            the same sanitised Markdown renderer reads a person's words exactly as
-            it reads the companion's, so the identical beat cannot render two ways. */}
-        <MarkdownMessage
-          className="message-bubble"
-          text={message.text}
-          trailingHtml={CARET_MARKUP}
-          lang={languageTag}
-        />
-        {!isPlayer && onRegenerate && (
-          <div className="message-actions">
-            <button
-              type="button"
-              className="action-btn regenerate-btn"
-              disabled={busy}
-              {...(pending === "regenerate" ? { "data-busy": "true" as const } : {})}
-              onClick={() => onRegenerate(message.handle)}
-              title={labels.regenerateVariant}
-              aria-label={labels.regenerateVariant}
-            >
-              {pending === "regenerate" ? (
-                <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-              ) : (
-                <RefreshCw size={14} aria-hidden="true" />
-              )}
-              {labels.regenerateVariant}
-            </button>
+            {onRegenerate && (
+              <button
+                type="button"
+                className="action-btn regenerate-btn"
+                disabled={busy}
+                {...(pending === "regenerate" ? { "data-busy": "true" as const } : {})}
+                onClick={() => onRegenerate(message.handle)}
+                title={labels.regenerateVariant}
+                aria-label={labels.regenerateVariant}
+              >
+                {pending === "regenerate" ? (
+                  <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                ) : (
+                  <RefreshCw size={14} aria-hidden="true" />
+                )}
+                {labels.regenerateVariant}
+              </button>
+            )}
           </div>
         )}
       </div>
