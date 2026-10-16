@@ -54,13 +54,15 @@ export function isBoundedExitToken(value: string): boolean {
  * rather than copied, so a caller cannot smuggle a path, a credential or player
  * text into the diagnostic through a step name or a failure code.
  */
-export function buildDesktopHostExitRecord(input: Readonly<{
-  kind: DesktopHostExitKind;
-  reason: string;
-  pid: number;
-  recordedAtUnixMs: number;
-  steps: readonly DesktopHostReclamationStepOutcome[];
-}>): DesktopHostExitRecord {
+export function buildDesktopHostExitRecord(
+  input: Readonly<{
+    kind: DesktopHostExitKind;
+    reason: string;
+    pid: number;
+    recordedAtUnixMs: number;
+    steps: readonly DesktopHostReclamationStepOutcome[];
+  }>,
+): DesktopHostExitRecord {
   return Object.freeze({
     schema: DESKTOP_HOST_EXIT_RECORD_SCHEMA,
     version: 1,
@@ -68,11 +70,15 @@ export function buildDesktopHostExitRecord(input: Readonly<{
     reason: isBoundedExitToken(input.reason) ? input.reason : "desktop_host_exit_unattributed",
     pid: input.pid,
     recordedAtUnixMs: input.recordedAtUnixMs,
-    steps: Object.freeze(input.steps.map((outcome) => Object.freeze({
-      step: isBoundedExitToken(outcome.step) ? outcome.step : "unknown_step",
-      status: outcome.status,
-      failure: outcome.failure !== null && isBoundedExitToken(outcome.failure) ? outcome.failure : null,
-    }))),
+    steps: Object.freeze(
+      input.steps.map((outcome) =>
+        Object.freeze({
+          step: isBoundedExitToken(outcome.step) ? outcome.step : "unknown_step",
+          status: outcome.status,
+          failure: outcome.failure !== null && isBoundedExitToken(outcome.failure) ? outcome.failure : null,
+        }),
+      ),
+    ),
   });
 }
 

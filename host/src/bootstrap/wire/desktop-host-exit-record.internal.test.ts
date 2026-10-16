@@ -76,7 +76,13 @@ test("a reason or failure that is not a bounded token is replaced, so a path or 
 });
 
 test("the file name sorts chronologically and carries the pid", () => {
-  const record = buildDesktopHostExitRecord({ kind: "crash", reason: "clean_exit", pid: 7, recordedAtUnixMs: 0, steps: [] });
+  const record = buildDesktopHostExitRecord({
+    kind: "crash",
+    reason: "clean_exit",
+    pid: 7,
+    recordedAtUnixMs: 0,
+    steps: [],
+  });
   assert.equal(desktopHostExitRecordFileName(record), "host-exit-1970-01-01T00-00-00-000Z-7.json");
 });
 
@@ -93,7 +99,17 @@ test("writing a record creates its directory and returns the exact path it wrote
       steps,
     });
     assert.equal(typeof path, "string");
-    assert.deepEqual(await readdir(directory), [desktopHostExitRecordFileName(buildDesktopHostExitRecord({ kind: "crash", reason: "desktop_runtime_bootstrap_unavailable", pid: 99, recordedAtUnixMs: 1_760_000_000_000, steps }))]);
+    assert.deepEqual(await readdir(directory), [
+      desktopHostExitRecordFileName(
+        buildDesktopHostExitRecord({
+          kind: "crash",
+          reason: "desktop_runtime_bootstrap_unavailable",
+          pid: 99,
+          recordedAtUnixMs: 1_760_000_000_000,
+          steps,
+        }),
+      ),
+    ]);
     const written = JSON.parse((await readFile(path!, "utf8")).trim()) as Record<string, unknown>;
     assert.equal(written.schema, DESKTOP_HOST_EXIT_RECORD_SCHEMA);
     assert.equal(written.reason, "desktop_runtime_bootstrap_unavailable");

@@ -76,7 +76,10 @@ test("the naming decision is pure: each way a step can fail gets its own name, a
   // A child that will not stop, and a port/pipe that is still held, are named by
   // what the step owned - and only when the step did not name itself.
   assert.equal(
-    nameDesktopHostReclamationFailure("drain_game_lifecycle", { outcome: "rejected", error: new Error("E:\\secret\\path") }),
+    nameDesktopHostReclamationFailure("drain_game_lifecycle", {
+      outcome: "rejected",
+      error: new Error("E:\\secret\\path"),
+    }),
     DESKTOP_HOST_CHILD_WILL_NOT_STOP_FAILURE,
   );
   assert.equal(
@@ -94,13 +97,19 @@ test("the naming decision is pure: each way a step can fail gets its own name, a
   // A step with neither a child nor a held resource keeps the generic code: the
   // naming adds facts, it never invents one.
   assert.equal(
-    nameDesktopHostReclamationFailure("release_shared_authority", { outcome: "rejected", error: new Error("something went wrong") }),
+    nameDesktopHostReclamationFailure("release_shared_authority", {
+      outcome: "rejected",
+      error: new Error("something went wrong"),
+    }),
     DESKTOP_HOST_CLOSE_STEP_FAILED,
   );
   // A step's own bounded code is preserved whatever it owned: an operator
   // matches on those codes, so the naming must never overwrite one.
   assert.equal(
-    nameDesktopHostReclamationFailure("stop_admission", { outcome: "rejected", error: new Error("bridge_session_unavailable") }),
+    nameDesktopHostReclamationFailure("stop_admission", {
+      outcome: "rejected",
+      error: new Error("bridge_session_unavailable"),
+    }),
     "bridge_session_unavailable",
   );
   assert.equal(
