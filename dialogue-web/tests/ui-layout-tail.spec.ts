@@ -75,16 +75,25 @@ const composedRoot = {
   },
 };
 
+/** The mounted Chat over a given transcript, for the pager items. */
+function chatRoot(transcript: readonly Readonly<Record<string, unknown>>[]) {
+  return { ...composedRoot, chat: { ...composedRoot.chat, chat: { ...composedRoot.chat.chat, transcript } } };
+}
+
 /**
  * The Characters surface as the generation really mounts it: three authored
  * groups present, a companion with a voice directive, and an opening the card
  * shipped with three variants. The 730 px card the audit measured is that third
  * variant editor - it is content, not slack, so the fix may not be to delete it.
  */
-async function stubShell(page: Page): Promise<void> {
+async function stubShell(
+  page: Page,
+  options: Readonly<{ transcript?: readonly Readonly<Record<string, unknown>>[] }> = {},
+): Promise<void> {
+  const root = options.transcript === undefined ? composedRoot : chatRoot(options.transcript);
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot)));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot)));
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })));
   await page.route("**/api/tavern/v1/companions", (route) =>
     route.fulfill(
@@ -497,4 +506,88 @@ test("item 3: the Game surface uses the width it is given, and stays one column 
   expect(narrow!.columnCount, "the narrow surface is a single column").toBe(1);
   expect(narrow!.contentColumnCount, "the narrow surface's content is a single column too").toBe(1);
   expect(narrow!.surface.width, "400 leaves a single readable column").toBeLessThan(420);
+});
+
+/**
+ * The pager items mount the real Chat with a real opening: the Host publishes
+ * `openingVariant` on the message while the greeting set still resolves, and the
+ * shell offers the choice only there.
+ */
+const OPENING_VARIANT_ID = "V".repeat(42) + "A";
+const OPENING_HANDLE = "W".repeat(42) + "A";
+
+function openingTranscript(count: number, label: string | null) {
+  return [
+    {
+      handle: OPENING_HANDLE,
+      role: "companion",
+      text: "门廊上的那盏灯还亮着。",
+      locale: "und",
+      order: 0,
+      revision: 1,
+      openingVariant: { variantId: OPENING_VARIANT_ID, index: 0, count, label, locked: false },
+    },
+  ];
+}
+
+/** The switcher's own box, its two buttons' visible words, and the position. */
+async function measureSwitcher(page: Page) {
+  const controls = page.locator(".message-list .swipe-controls").first();
+  await expect(controls).toBeVisible();
+  return await controls.evaluate((node) => {
+    const words = (element: HTMLElement) => (element.textContent ?? "").replace(/\s+/gu, " ").trim();
+    return {
+      groupText: words(node),
+      groupHeight: Math.round(node.getBoundingClientRect().height),
+      buttons: [...node.querySelectorAll<HTMLElement>("button")].map((button) => {
+        const box = button.getBoundingClientRect();
+        return {
+          text: words(button),
+          ariaLabel: button.getAttribute("aria-label"),
+          width: Math.round(box.width),
+          height: Math.round(box.height),
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * The switcher was two arrow glyphs with no visible text: the icon is
+ * `aria-hidden`, so both buttons' meaning lived in `aria-label` alone and a
+ * sighted player saw two arrows around a small `默认 1/3`.
+ */
+test("item 4: the variant switcher's arrows carry their words, not only their name", async ({ page }) => {
+  await stubShell(page, { transcript: openingTranscript(3, "Default") });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+
+  const measured = await measureSwitcher(page);
+  console.log(`[item-4 switcher] ${JSON.stringify(measured)}`);
+
+  expect(measured.buttons, "the pager renders two arrows").toHaveLength(2);
+  expect(measured.buttons[0]!.text, "the previous arrow says what it does").toBe("上一个变体");
+  expect(measured.buttons[1]!.text, "the next arrow says what it does").toBe("下一个变体");
+  for (const button of measured.buttons) {
+    // Visible words, and the accessible name is those words: the meaning is no
+    // longer carried by the attribute alone.
+    expect(button.text, "the visible label is the control's own name").toBe(button.ariaLabel);
+    expect(button.height, "and the control still clears the 44 px touch floor").toBeGreaterThanOrEqual(44);
+  }
+  // The position semantics are unchanged: the indicator is still the plain number
+  // the Host published, beside the variant's own name.
+  expect(measured.groupText, "the position is still the plain number").toContain("1/3");
+  expect(measured.groupText, "and the variant's own name is still shown").toContain("默认");
+  expect(measured.groupHeight, "the group keeps gate 8's own floor").toBeGreaterThanOrEqual(44);
+});
+
+test("item 4: one variant has no switcher at all", async ({ page }) => {
+  await stubShell(page, { transcript: openingTranscript(1, "Default") });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+  // The message is really mounted: the control's absence is not an empty surface.
+  await expect(page.locator(".message-list > li[data-handle]")).toHaveCount(1);
+  await expect(page.locator(".message-list .swipe-controls")).toHaveCount(0);
 });

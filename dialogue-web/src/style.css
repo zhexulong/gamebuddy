@@ -726,6 +726,10 @@
     font-size: 12px;
   }
 
+  /* The arrow and its words are one control: the glyph is decoration and the
+   label is what a player reads, so the pair is a wider target, not two icons
+   around a caption. The 44 px floor is the height, which the label does not
+   change. */
   .swipe-btn {
     background: transparent;
     border: none;
@@ -733,13 +737,20 @@
     cursor: pointer;
     min-width: var(--touch-target-min);
     min-height: var(--touch-target-min);
+    padding: 0 var(--space-2);
     border-radius: var(--radius-xs);
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: var(--space-1);
     transition:
       color var(--motion-duration-fast),
       background-color var(--motion-duration-fast);
+  }
+
+  .swipe-btn-label {
+    font-size: 12px;
+    white-space: nowrap;
   }
 
   .swipe-btn:hover:not(:disabled) {
