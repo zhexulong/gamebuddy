@@ -187,14 +187,16 @@ const mountPreamble = `
           sessionManager.appendMessage({ role: "assistant", content: [{ type: "text", text: replyText }] });
         };
         // The reply the player already had, as the session received it when that
-        // line was sent, followed by this turn's own prompt and answer - exactly
-        // the shape Pi leaves after one same-position regeneration.
+        // line was sent.
         appendTurn(position.anchorText, position.committedReplyText);
-        appendTurn(position.anchorText, position.text);
         const times = [await nextTime(), await nextTime(), await nextTime(), await nextTime(), await nextTime()];
         await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
         await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
-        const activation = await scope.activateVariantPosition(position.text);
+        // The same-position turn, in the runner's own order: move the leaf to before
+        // the player's line first, then append this turn's prompt and answer exactly
+        // as Pi's prompt would.
+        const activation = await scope.branchVariantAnchor(position.anchorText);
+        appendTurn(position.anchorText, position.text);
         const modelTexts = sessionManager
           .buildSessionProjection()
           .messages.map((message) =>
@@ -782,10 +784,9 @@ test(
     turnMessageId: afterAcceptance.turnLedger === null ? null : afterAcceptance.turnLedger.messageId,
     turnVariant: afterAcceptance.turnLedger === null ? null : afterAcceptance.turnLedger.variant ?? null,
   };
-  // The provider path the service's injected start stands in for: Pi appends this
-  // turn's prompt and answer, the coordinator's activation rewrites the entries the
-  // reply position owns, and only after that does the commit append the new variant
-  // to the existing reply row.
+  // The provider path the service's injected start stands in for: the coordinator
+  // branches before the prompt, Pi appends this turn's prompt and answer, and only
+  // after that does the commit append the new variant to the existing reply row.
   const driven = await driveVariantToCompleted(fx, {
     targetMessageId: tailMessage.messageId,
     anchorText: playerMessage.text,
@@ -811,7 +812,6 @@ test(
     committedSample: "Synthetic companion reply.",
     regeneratedSample: "Regenerated companion reply.",
     acceptedState, activation: driven.activation.status,
-    contextEditCount: driven.activation.status === "activated" ? driven.activation.contextEditEntryIds.length : -1,
     modelTexts: driven.modelTexts,
     commitStatus: driven.committed.status,
     commitRoles: committedState.messages.map((m) => m.role),
@@ -875,15 +875,15 @@ test(
     assert.equal(acceptedState.turnVariant.targetMessageId, output.tailMessageId);
     assert.deepEqual(output.refusedState, { messages: 3, idempotency: 1 });
 
-    // The model's context carries the variant the player is about to read, and not the
-    // superseded text: the invariant this whole mechanism rests on, read from the
-    // session's own projection after the activation and before the commit.
-    assert.equal(output.activation, "activated");
-    assert.equal(output.contextEditCount, 1);
+    // The model's context carries the player's line exactly once, unanswered, and
+    // the variant the player is about to read exactly once - and not the superseded
+    // text: the invariant this whole mechanism rests on, read from the session's own
+    // projection after the branch and the prompt and before the commit.
+    assert.equal(output.activation, "branched");
     const modelTexts = output.modelTexts as string[];
-    assert.equal(modelTexts.filter((text) => text === output.regeneratedSample).length, 2);
+    assert.equal(modelTexts.filter((text) => text === output.regeneratedSample).length, 1);
     assert.equal(modelTexts.filter((text) => text === output.committedSample).length, 0);
-    assert.equal(modelTexts.filter((text) => text === "Synthetic player request").length, 2);
+    assert.equal(modelTexts.filter((text) => text === "Synthetic player request").length, 1);
 
     // The visible half: the same companion row, same count, same order - now carrying
     // the regenerated reply as its second variant and showing it.

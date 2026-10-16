@@ -5,7 +5,7 @@ import {
 } from "../native-companion-content.js";
 import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { NativeChatPreview } from "./provider-invocation.js";
-import type { PiVariantActivation } from "../pi-session-context-activation.internal.js";
+import type { PiVariantBranch } from "../pi-session-variant-branch.internal.js";
 import type {
   AttemptStartingTurn,
   CancelledTurn,
@@ -153,6 +153,28 @@ async function currentTerminalResult(scope: ProviderInvocationScope): Promise<Pr
 }
 
 /**
+ * The durable failure one pre-commit refusal settles as: a proven no-write
+ * refusal (a refused variant branch, a rejected prompt) leaves no visible
+ * presentation, and an ordinary Stop that terminalized the attempt first is
+ * preserved rather than overwritten.
+ */
+async function failRuntimeUnavailable(scope: ProviderInvocationScope): Promise<ProviderStartResult> {
+  const terminal = await currentTerminalResult(scope);
+  if (terminal !== undefined) return terminal;
+  const observedAtMs = Date.now();
+  const failed = requireFailed(
+    await scope.transitionStore({
+      operation: "fail",
+      reasonCode: "runtime_unavailable",
+      observedAtMs,
+      failedAtMs: observedAtMs,
+    }),
+    "runtime_unavailable",
+  );
+  return { outcome: "failed", ledger: failed };
+}
+
+/**
  * The exclusive P4c consumer. It runs inside the coordinator's close-drained
  * admission scope and performs, in frozen order:
  *
@@ -194,7 +216,8 @@ export async function runMountedProviderStart(
     resolveRunningBarrier = resolve;
   });
   let finalPresentationFailure: unknown | undefined;
-  let variantActivation: PiVariantActivation | undefined;
+  let variantBranch: PiVariantBranch | undefined;
+  let variantBranchRetained = false;
   let responseMessageId: string | undefined;
   let previewPublished = false;
   let observationSettled = false;
@@ -281,20 +304,10 @@ export async function runMountedProviderStart(
             // A same-position variant turn re-generates an existing reply: it
             // appends a swipe to that exact message instead of inserting a new
             // companion row. The target comes only from the coordinator-bound
-            // facts, never from provider content.
+            // facts, never from provider content. The model's context already
+            // carries this reply, because the branch that makes it one player
+            // line and one reply ran before the prompt.
             const variant = scope.facts.variant;
-            if (variant !== null) {
-              // Ordering: the durable variant is committed only after the model's
-              // context carries it, because the reverse - a player-visible variant
-              // the model never saw - is the divergence a same-position turn exists
-              // to close. A refusal here leaves the position exactly as it was.
-              const activation = await scope.activateVariantPosition(text);
-              if (activation.status !== "activated") {
-                process.stderr.write(`[variant] activation refused: ${activation.reason}\n`);
-                throw new Error(`native_content_variant_activation_${activation.reason}`);
-              }
-              variantActivation = activation;
-            }
             const committed = await scope.transitionPresentation(
               variant === null
                 ? {
@@ -320,22 +333,19 @@ export async function runMountedProviderStart(
             );
             if (committed.status !== "presentation_committed")
               throw new Error("native_content_presentation_commit_rejected");
-            variantActivation = undefined;
+            if (variant !== null) variantBranchRetained = true;
           } catch (error) {
             // Observer callback failure is not a terminal authority. Preserve a
             // Stop winner when one exists; otherwise let the ordinary P5 failure
             // transition below terminalize the already-durable running attempt.
             //
-            // An activated variant that did not reach a visible commit must not
-            // stay in the model's history. Only a refusal the store raises before
-            // it writes anything proves the variant is not visible; an ambiguous
-            // failure - a write whose read-back failed - may have committed it, and
-            // reverting there would produce the same divergence mirrored.
-            if (variantActivation !== undefined) {
-              if (isPresentationRefusedWithoutWrite(error) && variantActivation.revert().status !== "reverted")
-                process.stderr.write("[variant] revert refused: variant_revert_content_unavailable\n");
-              variantActivation = undefined;
-            }
+            // A branch that did not reach a visible commit must not stay in the
+            // model's history. Only a refusal the store raises before it writes
+            // anything proves the variant is not visible; an ambiguous failure - a
+            // write whose read-back failed - may have committed it, and reverting
+            // there would produce the same divergence mirrored, so the branch stays
+            // and this turn's finally does not put the leaf back.
+            if (variantBranch !== undefined && !isPresentationRefusedWithoutWrite(error)) variantBranchRetained = true;
             finalPresentationFailure = error;
           } finally {
             reservation.release();
@@ -440,6 +450,18 @@ export async function runMountedProviderStart(
     // Record the exact active prompt immediately before its one invocation so
     // an authenticated Stop cannot abort a successor turn.
     releaseActivePrompt = scope.beginActivePrompt();
+    // A same-position variant turn re-asks the anchor player line, so the leaf
+    // must move to the entry before that line BEFORE the provider request is
+    // built: the request then carries the line once and unanswered, instead of
+    // the line twice with the reply it replaced. A refused branch prompts nothing.
+    if (scope.facts.variant !== null) {
+      const branched = await scope.branchVariantAnchor(text);
+      if (branched.status !== "branched") {
+        process.stderr.write(`[variant] branch refused: ${branched.reason}\n`);
+        return await failRuntimeUnavailable(scope);
+      }
+      variantBranch = branched;
+    }
     // Exactly one Host session.prompt invocation per exact attempt. Pi-owned
     // transport retries and agent-loop continuations are never counted or
     // re-invoked by Host. Preserve its settlement class so provider rejection
@@ -555,23 +577,7 @@ export async function runMountedProviderStart(
     unsubscribeNativeAssistantEnd?.();
     unsubscribeNativeAssistantEnd = undefined;
     resolveRunningBarrier(false);
-    if (first.settlement === "rejected") {
-      // An ordinary Stop may have committed the durable terminal winner while
-      // aborting the prompt. Never overwrite it with transport failure.
-      const terminal = await currentTerminalResult(scope);
-      if (terminal !== undefined) return terminal;
-      const observedAtMs = Date.now();
-      const failed = requireFailed(
-        await scope.transitionStore({
-          operation: "fail",
-          reasonCode: "runtime_unavailable",
-          observedAtMs,
-          failedAtMs: observedAtMs,
-        }),
-        "runtime_unavailable",
-      );
-      return { outcome: "failed", ledger: failed };
-    }
+    if (first.settlement === "rejected") return await failRuntimeUnavailable(scope);
     return { outcome: "armed", ledger: armed };
   } finally {
     try {
@@ -580,6 +586,9 @@ export async function runMountedProviderStart(
       // Terminal cleanup is best-effort after the durable ledger has settled;
       // stale/cross-turn bindings fail closed inside the bridge.
     }
+    // A branch whose variant never became durable must not stay in the model's
+    // history: the player still reads the reply it replaced, so the leaf goes back.
+    if (variantBranch !== undefined && !variantBranchRetained) variantBranch.revert();
     if (!providerRunning) resolveRunningBarrier(false);
     unregister?.();
     unsubscribeNativeAssistantStart?.();
@@ -594,11 +603,11 @@ export async function runMountedProviderStart(
 
 /**
  * The refusal codes the store raises before it writes anything, so a variant
- * commit that threw one of them provably never became visible and the context
- * this turn activated can be put back. Every other failure is ambiguous - a
- * write whose read-back failed may have committed - and is deliberately left
- * alone, because a visible variant with a reverted context is the same
- * divergence mirrored.
+ * commit that threw one of them provably never became visible and the branch
+ * this turn moved can be put back. Every other failure is ambiguous - a write
+ * whose read-back failed may have committed - and is deliberately left alone,
+ * because a visible variant with a reverted branch is the same divergence
+ * mirrored.
  */
 function isPresentationRefusedWithoutWrite(error: unknown): boolean {
   return (

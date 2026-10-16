@@ -394,7 +394,7 @@ export function attachNativeCompanionContent(
  * or `null` when that message carries none this surface can persist.
  *
  * Exported because a same-position variant compares a Pi entry against the row
- * that entry produced (`pi-session-context-activation.internal.ts`), and that
+ * that entry produced (`pi-session-variant-branch.internal.ts`), and that
  * comparison is exact only while both sides run this one projection: the row's
  * text is the value this function returned when the entry was committed.
  */
