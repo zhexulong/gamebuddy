@@ -1408,3 +1408,111 @@ test("one long preview takes two lines of its row, not the whole message", async
     ).toBeLessThanOrEqual(reading.lineHeight * 2 + 1);
   }
 });
+
+/**
+ * The row's own meta line carried the lowest body-text contrast in the product:
+ * `--text-disabled` (`#90877e`) on the row's card (`--surface-raised`, `#201d1d`)
+ * computes 4.74:1 at 12px/400, where the dialogue measures 14.75:1. The line is the
+ * row's secondary fact - the thread's durable time and the opening of its last
+ * message - and the product's own 12px row metadata elsewhere (`.memory-item-meta`)
+ * reads `--text-secondary`, so this line reads that tone too rather than a token
+ * named for text the player cannot use.
+ *
+ * Both tones are resolved from the catalogue's own tokens and measured against the
+ * card this row is painted on, so the assertion is a comparison of two tones on one
+ * background rather than a floor to argue about, and a later re-tune of either token
+ * is re-measured here instead of trusted.
+ */
+test("the row's own meta line reads the product's secondary tone, not its faintest", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        chats: [
+          {
+            handle: chatHandle,
+            title: "Farm morning",
+            status: "active",
+            managementRevision: 1,
+            isSelected: true,
+            updatedAtMs: 1_760_000_000_000,
+            preview: "The parsnips took. All of them, by the look of it.",
+          },
+        ],
+      }),
+    ),
+  );
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+  await expect(page.getByTestId("chat-item-preview")).toBeVisible();
+
+  const measured = await surface.evaluate((root) => {
+    const meta = root.querySelector<HTMLElement>(".chat-item-meta")!;
+    // `rgb(r, g, b)` / `rgba(r, g, b, a)`, and null for a fully transparent paint.
+    const painted = (value: string): number[] | null => {
+      const inner = /^rgba?\(([^)]+)\)$/u.exec(value.trim())?.[1];
+      if (inner === undefined) return null;
+      const parts = inner.split(",").map((part) => Number(part.trim()));
+      return (parts[3] ?? 1) > 0 ? parts.slice(0, 3) : null;
+    };
+    const luminance = (rgb: readonly number[]): number => {
+      const channel = (value: number): number => {
+        const scaled = value / 255;
+        return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * channel(rgb[0]!) + 0.7152 * channel(rgb[1]!) + 0.0722 * channel(rgb[2]!);
+    };
+    const ratio = (foreground: readonly number[], background: readonly number[]): number => {
+      const [lighter, darker] = [luminance(foreground), luminance(background)].sort((left, right) => right - left);
+      return (lighter! + 0.05) / (darker! + 0.05);
+    };
+    // A token as the browser resolves it, which is what the row would paint if it
+    // read that token: the comparison this test is about.
+    const token = (name: string): string => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${name})`;
+      document.body.append(probe);
+      const resolved = getComputedStyle(probe).color;
+      probe.remove();
+      return resolved;
+    };
+    // The card behind the row: the first ancestor painting anything at all.
+    let background: number[] = [255, 255, 255];
+    for (let element: Element | null = meta; element !== null; element = element.parentElement) {
+      const behind = painted(getComputedStyle(element).backgroundColor);
+      if (behind !== null) {
+        background = behind;
+        break;
+      }
+    }
+    const style = getComputedStyle(meta);
+    return {
+      color: style.color,
+      background: `rgb(${background.join(", ")})`,
+      ratio: ratio(painted(style.color)!, background),
+      disabledColor: token("--text-disabled"),
+      disabledRatio: ratio(painted(token("--text-disabled"))!, background),
+      secondaryColor: token("--text-secondary"),
+      secondaryRatio: ratio(painted(token("--text-secondary"))!, background),
+      size: `${style.fontSize}/${style.fontWeight}`,
+    };
+  });
+  console.log(
+    `[chats-row-meta-contrast] measured: meta ${measured.color} on ${measured.background} = ${measured.ratio.toFixed(2)}:1 at ${measured.size}; --text-disabled ${measured.disabledColor} = ${measured.disabledRatio.toFixed(2)}:1 and --text-secondary ${measured.secondaryColor} = ${measured.secondaryRatio.toFixed(2)}:1 on the same card`,
+  );
+
+  expect(measured.color, "the row's meta line carries the product's own secondary tone").toBe(
+    measured.secondaryColor,
+  );
+  expect(
+    measured.ratio,
+    `the row's meta line reads ${measured.ratio.toFixed(2)}:1 against the ${measured.background} card it is painted on`,
+  ).toBeGreaterThanOrEqual(4.5);
+  expect(
+    measured.ratio,
+    `the row's meta line reads ${measured.ratio.toFixed(2)}:1 where the faintest tone reads ${measured.disabledRatio.toFixed(2)}:1`,
+  ).toBeGreaterThan(measured.disabledRatio);
+});

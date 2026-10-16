@@ -1316,7 +1316,13 @@
 
   .chat-item-meta {
     font-size: 12px;
-    color: var(--text-disabled);
+    /* The row's own secondary fact - the thread's durable time and the opening of
+       its last message - and it read `--text-disabled` (`#90877e`): 4.74:1 on the
+       row's card (`--surface-raised`, `#201d1d`), the lowest body-text contrast in
+       the product (the dialogue measures 14.75:1), and a token named for text the
+       player cannot use. The 12px row metadata elsewhere in the product
+       (`.memory-item-meta`) reads this tone, which is 9.30:1 on the same card. */
+    color: var(--text-secondary);
   }
 
   .chat-item-actions {
