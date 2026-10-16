@@ -4431,11 +4431,20 @@
   /* The character domain's own cards use the region they are given. Six stacked
    cards are three screens of one column once the region is wider than a
    transcript, and the grid is the surface's own: it packs the cards the surface
-   already had and falls back to one column the moment the room is gone. */
+   already had and falls back to one column the moment the room is gone.
+
+   A row's cards share the row's track height - the grid's own default, so this
+   rule deliberately sets no `align-items`. Measured at 1440x900 with
+   `align-items: start`: the second row's track was 739 px while the Persona and
+   scenario cards in it were 386 px and 329 px, which left 353 px and 410 px of
+   bare canvas above the row's own bottom edge on a surface whose grid gap is
+   12 px - two thirds of the row ending nowhere near its neighbours. Stretched,
+   every card in a row ends on that bottom edge (largest residual gap 0), and the
+   single-column narrow layout is unaffected: one card, one row, no neighbour to
+   disagree with. */
   [data-characters-panel] {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
-    align-items: start;
   }
 
   .card-import-report {
