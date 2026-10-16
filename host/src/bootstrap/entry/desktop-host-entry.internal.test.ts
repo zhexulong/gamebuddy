@@ -7,8 +7,6 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-
-
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = findPackageRoot(sourceDirectory);
 const sourceRoot = resolve(packageRoot, "src");
@@ -38,9 +36,17 @@ test("Desktop host entry exposes no public exports", async () => {
 });
 
 test("ordinary import does not consume inherited stdin or start the bootstrap entry", async () => {
-  const child = spawn(process.execPath, ["--input-type=module", "--eval", `await import(${JSON.stringify(new URL("./desktop-host-entry.internal.js", import.meta.url).href)}); process.stdout.write("imported\\n");`], {
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `await import(${JSON.stringify(new URL("./desktop-host-entry.internal.js", import.meta.url).href)}); process.stdout.write("imported\\n");`,
+    ],
+    {
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -49,13 +55,16 @@ test("ordinary import does not consume inherited stdin or start the bootstrap en
     // imports node:sqlite. It is runtime noise, not bootstrap output; filter
     // it so the empty-stderr assertion stays honest about actual output.
     const text = chunk.toString("utf8");
-    if (text.includes("ExperimentalWarning: SQLite is an experimental feature") || text.includes("--trace-warnings")) return;
+    if (text.includes("ExperimentalWarning: SQLite is an experimental feature") || text.includes("--trace-warnings"))
+      return;
     stderr.push(chunk);
   });
   child.stdin.write(validFrame);
   await new Promise((resolveImport, rejectImport) => {
     child.once("error", rejectImport);
-    child.once("close", (code) => code === 0 ? resolveImport(undefined) : rejectImport(new Error(`import_child_exit_${code}`)));
+    child.once("close", (code) =>
+      code === 0 ? resolveImport(undefined) : rejectImport(new Error(`import_child_exit_${code}`)),
+    );
   });
   assert.deepEqual(Buffer.concat(stdout), Buffer.from("imported\n"));
   assert.deepEqual(Buffer.concat(stderr), Buffer.alloc(0));
@@ -101,7 +110,8 @@ test("a rejected bootstrap frame reports one bounded failure code on stderr", as
 });
 
 test("Host bootstrap rejects a valid root until private Guardian session admission is available", async (t) => {
-  if (process.platform !== "win32") return t.skip("Windows-only bootstrap root, reparse, and current-user ownership admission");
+  if (process.platform !== "win32")
+    return t.skip("Windows-only bootstrap root, reparse, and current-user ownership admission");
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-desktop-bootstrap-"));
   try {
     const generationRoot = join(fixtureRoot, "Programs", "GameBuddy", "generation");
@@ -112,39 +122,70 @@ test("Host bootstrap rejects a valid root until private Guardian session admissi
       operationalRoot: join(fixtureRoot, "GameBuddy", "operational"),
       presentationRoot: join(fixtureRoot, "GameBuddy", "presentation"),
     };
-    await Promise.all([generationRoot, rootLayout.dataRoot, rootLayout.operationalRoot, rootLayout.presentationRoot].map(async (path) => await mkdir(path, { recursive: true })));
+    await Promise.all(
+      [generationRoot, rootLayout.dataRoot, rootLayout.operationalRoot, rootLayout.presentationRoot].map(
+        async (path) => await mkdir(path, { recursive: true }),
+      ),
+    );
     await mkdir(join(generationRoot, "bootstrap", "entry"), { recursive: true });
     await mkdir(join(generationRoot, "bootstrap", "wire"), { recursive: true });
     await mkdir(join(generationRoot, "composition"), { recursive: true });
     const entryModule = join(generationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js");
     await writeFile(entryModule, await readFile(compiledEntry));
-    await writeFile(join(generationRoot, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js"), await readFile(compiledBootstrapHelper));
+    await writeFile(
+      join(generationRoot, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js"),
+      await readFile(compiledBootstrapHelper),
+    );
     // The wire binds the production composition statically; this fixture provides
     // only the narrow facade the wire imports. These scenarios must fail at root
     // or guardian-session admission, never reach composition construction, so an
     // invocation here is a regression and fails the child loudly.
-    await writeFile(join(generationRoot, "composition", "desktop-host-composition.js"), "export async function createDesktopProductComposition() { throw new Error(\"fixture_composition_unexpectedly_constructed\"); }\n");
-    await cp(resolve(sourceDirectory, "..", "..", "windows-reparse-inspector"), join(generationRoot, "windows-reparse-inspector"), { recursive: true });
-    await cp(resolve(sourceDirectory, "..", "..", "strict-json-reader.js"), join(generationRoot, "strict-json-reader.js"));
-    await cp(resolve(sourceDirectory, "..", "..", "deployment-manifest.js"), join(generationRoot, "deployment-manifest.js"));
+    await writeFile(
+      join(generationRoot, "composition", "desktop-host-composition.js"),
+      'export async function createDesktopProductComposition() { throw new Error("fixture_composition_unexpectedly_constructed"); }\n',
+    );
+    await cp(
+      resolve(sourceDirectory, "..", "..", "windows-reparse-inspector"),
+      join(generationRoot, "windows-reparse-inspector"),
+      { recursive: true },
+    );
+    await cp(
+      resolve(sourceDirectory, "..", "..", "strict-json-reader.js"),
+      join(generationRoot, "strict-json-reader.js"),
+    );
+    await cp(
+      resolve(sourceDirectory, "..", "..", "deployment-manifest.js"),
+      join(generationRoot, "deployment-manifest.js"),
+    );
     // The wire resolves the native reparse inspector pair from the artifact root - the
     // generation directory that contains both `bootstrap` and `native` - exactly as the
     // published generation lays them out. This fixture previously placed the pair under
     // the entry's own directory, which mirrored the defect rather than the artifact, so
     // no assertion here could ever have observed it.
-    await cp(resolve(packageRoot, "native", "windows-reparse-inspector", ".dist", "win-x64"), join(generationRoot, "native", "windows-reparse-inspector", "win-x64"), { recursive: true });
+    await cp(
+      resolve(packageRoot, "native", "windows-reparse-inspector", ".dist", "win-x64"),
+      join(generationRoot, "native", "windows-reparse-inspector", "win-x64"),
+      { recursive: true },
+    );
 
     const manifestPath = join(fixtureRoot, "deployment-manifest.json");
-    await writeFile(manifestPath, `${JSON.stringify({
-      schemaVersion: 2,
-      topology: "independent_chat_and_game_surfaces",
-      runtimeRoot: fixtureRoot,
-      principal: { continuityId: "continuity-entry", companionId: "companion-entry", playerId: "player-entry" },
-      bootstrapOperationId: "bootstrap-entry",
-      authorityGeneration: 1,
-    })}\n`);
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({
+        schemaVersion: 2,
+        topology: "independent_chat_and_game_surfaces",
+        runtimeRoot: fixtureRoot,
+        principal: { continuityId: "continuity-entry", companionId: "companion-entry", playerId: "player-entry" },
+        bootstrapOperationId: "bootstrap-entry",
+        authorityGeneration: 1,
+      })}\n`,
+    );
 
-    const frameValue = { ...fixedFrame, bootstrapId: `${"a".repeat(56)}${process.pid.toString(16).padStart(8, "0")}`, rootLayout };
+    const frameValue = {
+      ...fixedFrame,
+      bootstrapId: `${"a".repeat(56)}${process.pid.toString(16).padStart(8, "0")}`,
+      rootLayout,
+    };
     const frame = Buffer.from(`${JSON.stringify(frameValue)}\n`);
     const environment = {
       GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST: manifestPath,
@@ -154,7 +195,9 @@ test("Host bootstrap rejects a valid root until private Guardian session admissi
     assert.notEqual(rejectedWithoutSession.code, 0);
     assert.deepEqual(rejectedWithoutSession.stdout, Buffer.alloc(0));
 
-    const invalidRootFrame = Buffer.from(`${JSON.stringify({ ...frameValue, rootLayout: { ...rootLayout, dataRoot: join(fixtureRoot, "GameBuddy", "other") } })}\n`);
+    const invalidRootFrame = Buffer.from(
+      `${JSON.stringify({ ...frameValue, rootLayout: { ...rootLayout, dataRoot: join(fixtureRoot, "GameBuddy", "other") } })}\n`,
+    );
     const rejected = await runEntry(invalidRootFrame, entryModule, fixtureRoot, environment);
     assert.notEqual(rejected.code, 0);
     assert.deepEqual(rejected.stdout, Buffer.alloc(0));
@@ -164,10 +207,17 @@ test("Host bootstrap rejects a valid root until private Guardian session admissi
 });
 
 test("Desktop bootstrap source consumes only frame facts before fresh root validation and acknowledgement", async () => {
-  const source = await readFile(resolve(sourceRoot, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.ts"), "utf8");
-  const entrySource = await readFile(resolve(sourceRoot, "bootstrap", "entry", "desktop-host-entry.internal.ts"), "utf8");
+  const source = await readFile(
+    resolve(sourceRoot, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.ts"),
+    "utf8",
+  );
+  const entrySource = await readFile(
+    resolve(sourceRoot, "bootstrap", "entry", "desktop-host-entry.internal.ts"),
+    "utf8",
+  );
 
-  for (const forbidden of ["process.argv", "node:child_process", "spawn(", "console.", "current.json"]) assert.equal(source.includes(forbidden), false, `forbidden bootstrap ingress: ${forbidden}`);
+  for (const forbidden of ["process.argv", "node:child_process", "spawn(", "console.", "current.json"])
+    assert.equal(source.includes(forbidden), false, `forbidden bootstrap ingress: ${forbidden}`);
   assert.match(source, /process\.env\.LOCALAPPDATA/);
   assert.match(entrySource, /import\.meta\.main/);
   assert.doesNotMatch(source, /import\.meta\.main/);
@@ -182,17 +232,30 @@ test("Desktop bootstrap source consumes only frame facts before fresh root valid
   assert.match(source, /new WeakMap<object, DesktopRootLayout>/);
   assert.doesNotMatch(source, /host-runtime-admission/);
   assert.doesNotMatch(source, /runtimeClosure|enumerateRuntimeTree|sameRuntimeTree/);
-  assert.doesNotMatch(source, /node:crypto|createHash|readdir\(|readVerifiedArtifactFile|artifactPath|safeArtifactAncestors/);
+  assert.doesNotMatch(
+    source,
+    /node:crypto|createHash|readdir\(|readVerifiedArtifactFile|artifactPath|safeArtifactAncestors/,
+  );
   assert.match(source, /createConnection\(/);
   assert.match(source, /gamebuddy-desktop-guardian-session\/v1/);
-  assert.match(source, /createDesktopProductCompositionForBootstrap\(rootAuthority, guardianAuthority, assemblyInput\)/);
+  // The private composition factory is invoked once, positionally, through the three
+  // authorities it consumes; the call is asserted by its arguments rather than by the
+  // line breaks the formatter chose between them (the source broke it across lines,
+  // which left this assertion reading a call that no longer existed).
+  assert.match(
+    source,
+    /createDesktopProductCompositionForBootstrap\(\s*rootAuthority,\s*guardianAuthority,\s*assemblyInput,\s*\)/,
+  );
   assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
 
   const rootValidation = source.indexOf("const rootLayout = await validateRootLayout(frame.rootLayout, artifactRoot)");
   const securityCheck = source.indexOf("Promise.all(roots.map((root) => inspectWindowsPathSecurity(inspector, root)))");
   const mint = source.indexOf("const rootAuthority = mintDesktopRootLayoutCapability(rootLayout)");
   const acknowledgement = source.indexOf("writeAcknowledgement(frame)");
-  assert.ok(rootValidation >= 0 && securityCheck >= 0 && rootValidation < mint && rootValidation < acknowledgement, "root security validation must precede mint and acknowledgement");
+  assert.ok(
+    rootValidation >= 0 && securityCheck >= 0 && rootValidation < mint && rootValidation < acknowledgement,
+    "root security validation must precede mint and acknowledgement",
+  );
 });
 
 function findPackageRoot(directory: string): string {
@@ -205,8 +268,20 @@ function findPackageRoot(directory: string): string {
   return candidate;
 }
 
-function startEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Users\\Player\\AppData\\Local", environment: Readonly<Record<string, string>> = {}): Readonly<{ child: ReturnType<typeof spawn>; stdoutEnded: Promise<Buffer>; result: Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>> }> {
-  const child = spawn(process.execPath, [entry], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, LOCALAPPDATA: localAppData, ...environment } });
+function startEntry(
+  frame: Buffer,
+  entry = compiledEntry,
+  localAppData = "C:\\Users\\Player\\AppData\\Local",
+  environment: Readonly<Record<string, string>> = {},
+): Readonly<{
+  child: ReturnType<typeof spawn>;
+  stdoutEnded: Promise<Buffer>;
+  result: Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>>;
+}> {
+  const child = spawn(process.execPath, [entry], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, LOCALAPPDATA: localAppData, ...environment },
+  });
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -230,14 +305,23 @@ function startEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Us
     child.stdout.once("end", end);
   });
   child.stdin.end(frame);
-  const result = new Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>>((resolveClose, rejectClose) => {
-    child.once("error", rejectClose);
-    child.once("close", (code) => resolveClose(Object.freeze({ code, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) })));
-  });
+  const result = new Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>>(
+    (resolveClose, rejectClose) => {
+      child.once("error", rejectClose);
+      child.once("close", (code) =>
+        resolveClose(Object.freeze({ code, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) })),
+      );
+    },
+  );
   return Object.freeze({ child, stdoutEnded, result });
 }
 
-async function runEntry(frame: Buffer, entry = compiledEntry, localAppData = "C:\\Users\\Player\\AppData\\Local", environment: Readonly<Record<string, string>> = {}): Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>> {
+async function runEntry(
+  frame: Buffer,
+  entry = compiledEntry,
+  localAppData = "C:\\Users\\Player\\AppData\\Local",
+  environment: Readonly<Record<string, string>> = {},
+): Promise<Readonly<{ code: number | null; stdout: Buffer; stderr: Buffer }>> {
   return await startEntry(frame, entry, localAppData, environment).result;
 }
 
@@ -254,6 +338,10 @@ function assertStdoutCarriesNoAcknowledgement(stdout: Buffer): void {
   for (const line of stdout.toString("utf8").split(/\r?\n/)) {
     if (line.length === 0) continue;
     const document = JSON.parse(line) as { readonly schema?: unknown };
-    assert.equal(document.schema, "gamebuddy-desktop-host-bootstrap-status/v1", `rejected bootstrap wrote a non-status frame: ${line}`);
+    assert.equal(
+      document.schema,
+      "gamebuddy-desktop-host-bootstrap-status/v1",
+      `rejected bootstrap wrote a non-status frame: ${line}`,
+    );
   }
 }
