@@ -1,5 +1,5 @@
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { createHash, randomUUID } from "node:crypto";
+import { copyFile, lstat, mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -8,6 +8,7 @@ import { buildWindowsReparseInspector, outputRoot as windowsReparseInspectorBuil
 import { buildWindowsBootstrapGuardian, outputRoot as windowsBootstrapGuardianBuildRoot } from "./build-windows-bootstrap-guardian.mjs";
 import { buildWindowsStardewFolderPicker, outputRoot as windowsStardewFolderPickerBuildRoot } from "./build-windows-stardew-folder-picker.mjs";
 import { runBoundedChild } from "./child-process-tool.mjs";
+import { createMagicContextArtifactManifest, describeMagicContextArtifactManifestDifference } from "./magic-context-artifact-manifest.mjs";
 // pi-koe is the split-out Voice repository (git submodule); its release
 // artifact builder produces the single-file bundle consumed by production.
 import { buildReleaseArtifact as buildVoiceGatewayReleaseArtifact } from "../../vendor/pi-koe/scripts/build-release-artifact.mjs";
@@ -25,7 +26,6 @@ const browserIdentity = Object.freeze({
   browserContract: "tavern_browser_api/v1",
   profileId: "gamebuddy.tavern.browser.v1",
 });
-const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
 function isContained(root, path) {
   const remainder = relative(root, path);
@@ -37,6 +37,14 @@ function isContained(root, path) {
  * built, approved plugin artifact.  The package remains a normal Host
  * dependency; this check refuses stale pnpm file-package copies rather than
  * falling back to a vendor source path at runtime.
+ *
+ * The comparison is a content-manifest equivalence rather than a whole-file
+ * digest equality: the shipped `dist` tree and the built `dist` tree must have
+ * the same file set, per-file sizes and per-file content hashes, with the build
+ * machine's absolute `__dirname`/`__filename` declarations neutralised (see
+ * ./magic-context-artifact-manifest.mjs).  Byte equality against the vendor
+ * directory would instead require the shipped payload to keep whatever path the
+ * build machine happened to have.
  */
 export async function verifyDeclaredMagicContextArtifact({
   root = hostRoot,
@@ -71,11 +79,36 @@ export async function verifyDeclaredMagicContextArtifact({
     relative(declaredPackageRoot, canonicalResolvedEntry) !== `dist${sep}index.js`
   ) throw new Error("magic_context_declared_package_entry_invalid");
   if (!sourceState.isFile() || !resolvedState.isFile()) throw new Error("magic_context_declared_package_artifact_invalid");
-  const [source, resolved] = await Promise.all([readFile(sourceEntry), readFile(resolvedEntry)]);
-  const sourceSha256 = sha256(source);
-  const resolvedSha256 = sha256(resolved);
-  if (sourceSha256 !== resolvedSha256) throw new Error("magic_context_declared_package_artifact_stale");
-  return Object.freeze({ entry: resolvedEntry, sha256: resolvedSha256 });
+  // `sourceEntry` is the built entry; its directory is the built artifact tree
+  // the shipped payload must reproduce file for file.
+  const sourceRoot = dirname(resolve(sourceEntry));
+  const shippedRoot = resolve(declaredPackageRoot, "dist");
+  let shippedManifest;
+  let builtManifest;
+  try {
+    [shippedManifest, builtManifest] = await Promise.all([
+      createMagicContextArtifactManifest(shippedRoot),
+      createMagicContextArtifactManifest(sourceRoot),
+    ]);
+  } catch (error) {
+    throw new Error(
+      error?.code === "ENOENT" ? "magic_context_declared_package_artifact_missing" : "magic_context_declared_package_artifact_invalid",
+      { cause: error },
+    );
+  }
+  if (shippedManifest.digest !== builtManifest.digest)
+    throw new Error(`magic_context_declared_package_artifact_stale:${describeMagicContextArtifactManifestDifference(shippedManifest, builtManifest)}`);
+  const shippedEntryPath = relative(shippedRoot, canonicalResolvedEntry).split(sep).join("/");
+  const entryManifest = shippedManifest.entries.find((item) => item.path === shippedEntryPath);
+  if (entryManifest === undefined) throw new Error("magic_context_declared_package_entry_invalid");
+  return Object.freeze({
+    package: magicContextPackage,
+    entry: resolvedEntry,
+    sha256: entryManifest.sha256,
+    packageRoot: declaredPackageRoot,
+    sourceRoot,
+    manifest: shippedManifest,
+  });
 }
 
 /** Resolve the repository's TypeScript entry without a shell wrapper. */

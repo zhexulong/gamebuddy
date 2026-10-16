@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 
-import { browserBuildEnvironment, browserBuildInvocation, buildProductionArtifact, retainEntrypointClosure, runBrowserBuild, writeBrowserViteConfig } from "./build-production-artifact.mjs";
+import { browserBuildEnvironment, browserBuildInvocation, buildProductionArtifact, retainEntrypointClosure, runBrowserBuild, verifyDeclaredMagicContextArtifact, writeBrowserViteConfig } from "./build-production-artifact.mjs";
+import { createMagicContextArtifactManifest, describeMagicContextArtifactManifestDifference, neutraliseMagicContextArtifactContent } from "./magic-context-artifact-manifest.mjs";
 import { assertApprovedProductionBundledRuntimeAvailable, assertCompleteProductionArtifact, resolveProductionEntry, verifyWindowsReparseInspectorPair } from "./production-artifact.mjs";
 
 const hostRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -311,6 +312,113 @@ test("non-Windows browser composition failure cannot create a current pointer wh
     );
     assert.equal(browserHookCalled, false);
     await assert.rejects(lstat(join(fixture.root, "current.json")), { code: "ENOENT" });
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("declared Magic Context package matches the built output by content manifest", async () => {
+  const verified = await verifyDeclaredMagicContextArtifact();
+  assert.equal(verified.entry, join(verified.packageRoot, "dist", "index.js"));
+  assert.match(verified.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(verified.package, "@cortexkit/pi-magic-context");
+  assert.equal(verified.manifest.schema, "gamebuddy-magic-context-artifact-manifest/v1");
+  assert.ok(verified.manifest.entries.some((entry) => entry.path === "index.js" && entry.size > 0));
+  for (const entry of verified.manifest.entries) assert.match(entry.sha256, /^[a-f0-9]{64}$/);
+  const built = await createMagicContextArtifactManifest(verified.sourceRoot);
+  assert.equal(built.digest, verified.manifest.digest, "the shipped dist tree must be the built dist tree");
+});
+
+test("Magic Context content manifest neutralises the build machine's absolute path declarations", async () => {
+  const fixture = await outputFixture();
+  const machineDeclarations = [
+    String.raw`C:\bun\node_modules\.bun\quickjs-singlefile-cjs-release-asyncify@0.32.0\node_modules\quickjs\dist\index.js`,
+    "/home/ci/node_modules/.bun/quickjs/dist/index.js",
+  ];
+  try {
+    const manifests = [];
+    for (const [index, declaration] of machineDeclarations.entries()) {
+      const root = join(fixture.root, `machine-${index}`);
+      await mkdir(root, { recursive: true });
+      await writeFile(
+        join(root, "index.js"),
+        `var __dirname = ${JSON.stringify(declaration)}, __filename = ${JSON.stringify(declaration)};\nexport const stable = 1;\n`,
+        "utf8",
+      );
+      manifests.push(await createMagicContextArtifactManifest(root));
+    }
+    assert.equal(manifests[0].digest, manifests[1].digest);
+    assert.equal(describeMagicContextArtifactManifestDifference(manifests[0], manifests[1]), "equivalent");
+    assert.equal(
+      neutraliseMagicContextArtifactContent('var __dirname = "D:\\repo\\node_modules\\.bun\\x";'),
+      'var __dirname = "<neutralised-absolute-path>";',
+    );
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("Magic Context content manifest names missing, extra, and altered payload files", async () => {
+  const fixture = await outputFixture();
+  const builtRoot = join(fixture.root, "built");
+  const shippedRoot = join(fixture.root, "shipped");
+  try {
+    for (const root of [builtRoot, shippedRoot]) {
+      await mkdir(root, { recursive: true });
+      await writeFile(join(root, "index.js"), "export const stable = 1;\n", "utf8");
+    }
+    const manifestOf = (root) => createMagicContextArtifactManifest(root);
+    assert.equal(describeMagicContextArtifactManifestDifference(await manifestOf(shippedRoot), await manifestOf(builtRoot)), "equivalent");
+
+    await writeFile(join(shippedRoot, "extra.js"), "export const extra = 1;\n", "utf8");
+    assert.match(describeMagicContextArtifactManifestDifference(await manifestOf(shippedRoot), await manifestOf(builtRoot)), /^unexpected-file:extra\.js$/);
+    await rm(join(shippedRoot, "extra.js"));
+
+    await writeFile(join(builtRoot, "chunk.js"), "export const chunk = 1;\n", "utf8");
+    assert.match(describeMagicContextArtifactManifestDifference(await manifestOf(shippedRoot), await manifestOf(builtRoot)), /^missing-file:chunk\.js$/);
+    await rm(join(builtRoot, "chunk.js"));
+
+    await writeFile(join(shippedRoot, "index.js"), "export const stable = 2;\n", "utf8");
+    assert.match(describeMagicContextArtifactManifestDifference(await manifestOf(shippedRoot), await manifestOf(builtRoot)), /^changed-file:index\.js:/);
+
+    await writeFile(join(shippedRoot, "index.js"), "export const stable = 111;\n", "utf8");
+    assert.match(describeMagicContextArtifactManifestDifference(await manifestOf(shippedRoot), await manifestOf(builtRoot)), /^changed-file:index\.js:/);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("declared Magic Context verification refuses a shipped payload the build did not produce", async () => {
+  const fixture = await outputFixture();
+  try {
+    await writeFile(join(fixture.root, "index.js"), "export const stale = true;\n", "utf8");
+    await assert.rejects(
+      verifyDeclaredMagicContextArtifact({ sourceEntry: join(fixture.root, "index.js") }),
+      /magic_context_declared_package_artifact_stale:unexpected-file:/,
+    );
+    await assert.rejects(
+      verifyDeclaredMagicContextArtifact({ sourceEntry: join(fixture.root, "absent.js") }),
+      /magic_context_declared_package_artifact_missing/,
+    );
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("declared Magic Context verification detects a one-byte mutation of the built payload", async () => {
+  const fixture = await outputFixture();
+  const mirrorRoot = join(fixture.root, "dist");
+  try {
+    const verified = await verifyDeclaredMagicContextArtifact();
+    await cp(verified.sourceRoot, mirrorRoot, { recursive: true });
+    const entry = join(mirrorRoot, "index.js");
+    const mutated = Buffer.from(await readFile(entry));
+    mutated[mutated.length >> 1] ^= 0x01;
+    await writeFile(entry, mutated);
+    await assert.rejects(
+      verifyDeclaredMagicContextArtifact({ sourceEntry: entry }),
+      /magic_context_declared_package_artifact_stale:changed-file:index\.js:/,
+    );
   } finally {
     await fixture.dispose();
   }
