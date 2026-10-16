@@ -63,7 +63,7 @@ const SAME_ID_TWO_PROVIDERS = [
 ] as const;
 
 type FixtureOptions = Readonly<{
-  transcript?: readonly Readonly<{ role: "player" | "companion"; text: string }>[];
+  transcript?: readonly Readonly<{ role: "player" | "companion"; text: string; opening?: boolean }>[];
   /** `null` is a conversation the Host has published no title for at all. */
   title?: string | null;
   recommendedModels?: readonly unknown[];
@@ -98,6 +98,12 @@ function composedRoot(options: FixtureOptions = {}) {
           locale: "und",
           order: index,
           revision: 1,
+          // The opening choice the Host publishes while message zero's greeting
+          // set is still unlocked and still resolves: it is what offers the
+          // `.swipe-btn` pair this fixture measures.
+          ...(message.opening === true
+            ? { openingVariant: { variantId: `${"V".repeat(42)}A`, index: 0, count: 2, label: "Default", locked: false } }
+            : {}),
         })),
         draft: { revision: 0, present: false },
         turn: null,
@@ -440,13 +446,20 @@ test("the author line, a section heading and the suggestion caption read the liv
   // surface carries the two section headings below it.
   await page.getByTestId("chat-model-trigger").click();
   await expect(page.getByTestId("chat-model-drawer")).toBeVisible();
-  const [caption] = await sampleContrast(page, [".surface-model-recommended > span"]);
+  const [caption] = await (async () => {
+    // The popout's own profile read must settle before the caption exists.
+    await expect(page.locator(".surface-model-recommended > span")).toBeVisible();
+    return sampleContrast(page, [".surface-model-recommended > span"]);
+  })();
   // The popout is a drawer over the conversation, so it has to be closed before
   // the app bar behind its backdrop is reachable.
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("chat-model-drawer")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Game", exact: true }).click();
+  await expect(page.getByTestId("game-surface")).toBeVisible();
+  // The Game surface's own reads settle before its section headings exist.
+  await expect(page.locator(".section-subtitle").first()).toBeVisible();
   const headings = await sampleContrast(page, [".section-subtitle"]);
   const tokens = await page.evaluate(() => {
     const read = (name: string): string => {
@@ -647,6 +660,111 @@ test("defect 5: two recommended models with one id read as two different chips",
     expect(mine.length, `one chip names the provider ${entry.providerLabel} (${entry.providerId})`).toBe(1);
     expect(mine[0], "and it still names the model id the chip applies").toContain(entry.modelId);
   }
+});
+
+// --- the disabled pager's double attenuation ---------------------------------
+
+/**
+ * A disabled control is attenuated once, not twice.
+ *
+ * `.swipe-btn:disabled` carried the muted token *and* an `opacity`: the two
+ * compound, and the product's own muted grey (`--text-disabled`, `#90877e`) at
+ * 40% over the card tone (`#201d1d`) paints `rgb(77,71,68)` - measured 1.84:1,
+ * so the arrow is not a dimmed control but an invisible one. The product's
+ * established disabled state is the muted token alone: the composer's placeholder
+ * and the Chats row's meta line both read `--text-disabled` at 4.74:1 on this
+ * same card tone and neither carries an opacity.
+ *
+ * Measured on the mounted shell at 1440x900, on the opening bubble's own switcher
+ * with its `Previous` arrow disabled by the Host's own `index <= 0` precondition:
+ * declared colour `rgb(144, 135, 126)` at `opacity: 0.4`, painted
+ * `rgb(77,71,68)` = 1.84:1. After: the same declared colour with no opacity, so
+ * the painted glyph IS the declared one, 4.74:1, and it clears the 4.5:1 floor.
+ *
+ * The opacity is what makes this invisible to the runtime contrast gate: gate 3
+ * composites a leaf's *own* background but reads `color` and never `opacity`, and
+ * this button is not even one of its leaves - it has a child and no text node of
+ * its own, so the gate samples the inner label span instead (4.74:1, before and
+ * after). An attenuation that lives only in `opacity` is therefore invisible to
+ * every sampler in this tree, which is the reason this test composites the two
+ * itself rather than trusting one reading.
+ */
+test("a disabled pager arrow is muted, not doubly attenuated into invisibility", async ({ page }) => {
+  await mountShell(page, {
+    transcript: [{ role: "companion", text: "The lantern over the porch is still lit.", opening: true }],
+  });
+  const [previous, next] = [page.locator(".swipe-btn").first(), page.locator(".swipe-btn").last()];
+  await expect(previous).toBeVisible();
+  await expect(previous, "the Host's own index <= 0 precondition disables it").toBeDisabled();
+  await expect(next, "and the other direction stays operable").toBeEnabled();
+
+  const read = async (button: typeof previous) =>
+    button.evaluate((node) => {
+      const parse = (value: string): [number, number, number, number] => {
+        const match = value.match(/rgba?\(([^)]+)\)/u);
+        if (match === null) return [0, 0, 0, 0];
+        const parts = match[1]!.split(",").map((part) => Number.parseFloat(part.trim()));
+        return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+      };
+      const luminance = ([red, green, blue]: readonly number[]): number => {
+        const channel = (value: number): number => {
+          const scaled = value / 255;
+          return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * channel(red!) + 0.7152 * channel(green!) + 0.0722 * channel(blue!);
+      };
+      const ratio = (foreground: readonly number[], background: readonly number[]): number => {
+        const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+        return (lighter! + 0.05) / (darker! + 0.05);
+      };
+      // The opaque background behind the arrow, composited exactly as gate 3 does.
+      const stack: [number, number, number, number][] = [];
+      for (let current: Element | null = node; current !== null; current = current.parentElement) {
+        const background = parse(getComputedStyle(current).backgroundColor);
+        stack.push(background);
+        if (background[3] >= 0.999) break;
+      }
+      let effective: number[] = [...stack[stack.length - 1]!.slice(0, 3)];
+      for (let index = stack.length - 2; index >= 0; index -= 1) {
+        const top = stack[index]!;
+        effective = [
+          top[0]! * top[3] + effective[0]! * (1 - top[3]),
+          top[1]! * top[3] + effective[1]! * (1 - top[3]),
+          top[2]! * top[3] + effective[2]! * (1 - top[3]),
+        ];
+      }
+      const style = getComputedStyle(node);
+      const declared = parse(style.color).slice(0, 3);
+      const opacity = Number.parseFloat(style.opacity);
+      const painted = declared.map((channel, index) => channel * opacity + effective[index]! * (1 - opacity));
+      return {
+        opacity,
+        declaredColor: style.color,
+        background: `rgb(${effective.map((value) => Math.round(value)).join(",")})`,
+        paintedColor: `rgb(${painted.map((value) => Math.round(value)).join(",")})`,
+        ratio: Number(ratio(painted, effective).toFixed(2)),
+      };
+    });
+
+  const disabled = await read(previous);
+  const enabled = await read(next);
+  console.log(`[disabled-pager] ${JSON.stringify({ disabled, enabled })}`);
+
+  // The compounding is gone: whatever the token says is what is painted, because
+  // no opacity attenuates it a second time.
+  expect(
+    disabled.opacity,
+    `the disabled arrow is attenuated by opacity ${disabled.opacity} as well as by its colour`,
+  ).toBe(1);
+  expect(disabled.paintedColor, "the glyph paints the colour its token declares").toBe(
+    disabled.declaredColor.replace(/\s/gu, ""),
+  );
+  expect(
+    disabled.ratio,
+    `the disabled arrow paints ${disabled.paintedColor} on ${disabled.background} = ${disabled.ratio}:1`,
+  ).toBeGreaterThanOrEqual(4.5);
+  // Muted is still muted: the disabled direction is dimmer than the live one.
+  expect(disabled.declaredColor, "the disabled direction is not the live one's tone").not.toBe(enabled.declaredColor);
 });
 
 // --- defect 6 (refuted) ------------------------------------------------------

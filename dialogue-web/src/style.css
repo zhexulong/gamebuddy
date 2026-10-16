@@ -760,8 +760,16 @@
   }
 
   .swipe-btn:disabled {
+    /* One attenuation, not two. The disabled arrow used to carry
+       `--text-disabled` (`#90877e`) *and* `opacity: 0.4`, which compound: the
+       painted glyph is `#90877e` at 40% over the card tone (`#201d1d`) -
+       `rgb(77,71,68)`, measured 1.84:1, effectively invisible. The muted token
+       alone reads 4.74:1 there, which is the disabled state the rest of the
+       product ships (`.chat-item-meta` before its fix, the composer's own
+       placeholder). The state stays readable because that tone is what the
+       other muted text in this strip (`.swipe-indicator`'s `--text-secondary`)
+       sits beside, and because the button keeps `cursor: not-allowed`. */
     color: var(--text-disabled);
-    opacity: 0.4;
     cursor: not-allowed;
   }
 
