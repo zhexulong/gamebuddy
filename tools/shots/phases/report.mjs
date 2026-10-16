@@ -470,8 +470,8 @@ function measurementsFor(L, driverTexts, run) {
     for (const line of k.split("\n")) {
       const t = line.trim();
       if (
-        /^surface before=/.test(t) ||
-        /^surface after=/.test(t) ||
+        /^surface before:/.test(t) ||
+        /^surface after:/.test(t) ||
         /^timeline title band after:/.test(t) ||
         /^title matches the chosen/.test(t) ||
         /^selected row flips:/.test(t) ||

@@ -309,6 +309,16 @@ an alternate action runtime.
 1. Use a dedicated Mods profile and an empty logical name matching
    `GameBuddyFixture[A-Za-z0-9]*`; never reuse a Farmhand fixture, a personal
    save, or a save whose route triggers an unbounded event/cutscene.
+   **Seed the profile before the first run** (both bootstrap and action runs wait on a bridge pipe the Mod only
+   opens when `EnableLocalBridge` is true). Start from `integrations/stardew/config.example.json` in
+   `<ModsPath>\GameBuddy.Stardew\config.json`, set `EnableLocalBridge: true`, and give `PipeName`,
+   `BridgeToken` (>= 16 chars) and the four scope ids (`SaveId`/`WorldId`/`PlayerId`/`CompanionId`) legal opaque
+   values. Measured 2026-10-16: without this, the bootstrap loads the save, disarms, logs `bridge=none`
+   heartbeats for the whole budget, and then dies at the pipe gate with `Native-local bridge pipe was not ready
+   before timeout` - a message that names nothing. The runner now refuses this precondition by name before it
+   launches the game, so a missing seed cannot masquerade as a timeout again.
+   Run these scripts with `pwsh` (PowerShell 7): the harness uses
+   `[IO.Path]::IsPathFullyQualified`, which Windows PowerShell 5.1 does not have.
 2. Run `tools/run-stardew-native-local-player-move-fixture.ps1` with
    `-BootstrapNativeSave`. The Mod invokes only target-version native new-game
    creation (`skipIntro: true`), keeps the bridge closed, then waits for real

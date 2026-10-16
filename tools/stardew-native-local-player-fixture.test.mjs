@@ -572,6 +572,26 @@ test("native-local lifecycle owner binds staged release and one terminal lifecyc
   assert.doesNotMatch(launcher, /Remove-Item[^\n]*-Recurse/);
 });
 
+test("native-local bootstrap launcher refuses a profile whose bridge is disabled, by name", async () => {
+  // Measured 2026-10-16: a profile seeded from config.example.json (`EnableLocalBridge: false`) loaded the save,
+  // drained its bootstrap and then died at the pipe gate with "bridge pipe was not ready before timeout" - a
+  // cause the message does not name, after a full game boot. The launcher must refuse BEFORE it launches.
+  const launcher = await readFile(
+    new URL("./run-stardew-native-local-player-move-fixture.ps1", import.meta.url),
+    "utf8",
+  );
+  const precondition = launcher.indexOf('$phase = "bridge_enablement_precondition"');
+  const bridgeRead = launcher.indexOf("$bridgeConfig.EnableLocalBridge");
+  const launch = launcher.indexOf("$process = Start-Process -FilePath $smapi");
+  const readiness = launcher.indexOf('$phase = "pipe_readiness"');
+  assert.notEqual(precondition, -1, "the bridge-enablement precondition must exist");
+  assert.notEqual(bridgeRead, -1, "it must read the field the Mod reads");
+  assert.ok(precondition < launch, "it must run before the game is launched");
+  assert.ok(precondition < readiness, "it must run before the pipe wait it explains");
+  // The pipe the run waits for comes from that same read, not a second parse of the file.
+  assert.match(launcher, /\$pipeName = \$bridgeConfig\.PipeName/);
+});
+
 test("native-local bootstrap launcher does not restore an external action template", async () => {
   const launcher = await readFile(
     new URL("./run-stardew-native-local-player-move-fixture.ps1", import.meta.url),

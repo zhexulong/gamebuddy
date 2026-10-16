@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.Audio;
 
 namespace GameBuddy.Stardew;
 
@@ -10,6 +11,9 @@ public sealed partial class ModEntry
     // Reported once, so a re-assertion is visible instead of silent: this is the fact that used to cost a whole
     // 300-second pipe timeout with no diagnostic.
     private bool windowOptionsReassertedLogged;
+    // Same rule for the audio half: "applying hidden window mode (silent...)" was a claim the operator could
+    // falsify by ear on 2026-10-16, because nothing reported whether the audible path was actually reached.
+    private bool audioSilenceAppliedLogged;
 
     private string GetEffectiveWindowMode()
     {
@@ -162,9 +166,9 @@ public sealed partial class ModEntry
             if (Game1.options is not null)
             {
                 Game1.options.pauseWhenOutOfFocus = false;
-                Game1.options.musicVolumeLevel = 0f;
-                Game1.options.soundVolumeLevel = 0f;
             }
+
+            this.ApplySilenceToEngine();
         }
         catch (Exception ex)
         {
@@ -173,6 +177,79 @@ public sealed partial class ModEntry
 
         int cmd = ResolveWindowCommand(mode);
         this.EnforceWindowAsync(mode, cmd);
+    }
+
+    /// <summary>
+    /// The audio half of the silent-background contract.
+    ///
+    /// `Game1.options.musicVolumeLevel`/`soundVolumeLevel` are only FIELDS; the engine's audible volume lives
+    /// in its audio categories (`Game1.initializeVolumeLevels()` and `Options.changeSliderOption` are the two
+    /// places that apply them: `Game1.cs:7040-7048`, `Options.cs:955-971`), plus `Game1.musicPlayerVolume` /
+    /// `Game1.ambientPlayerVolume` for the music and ambient players. Zeroing only the fields left a hidden run
+    /// audible - observed live: the Mod logged "applying hidden window mode (silent...)" while the operator heard
+    /// the title music, because nothing ever called `SetVolume(0)`. Pure and injectable so the mapping is testable
+    /// without a game, and re-asserted every tick because the engine re-applies its own options after startup.
+    /// </summary>
+    internal static void SilenceAudioVolumes(
+        Options options,
+        IAudioCategory music,
+        IAudioCategory sound,
+        IAudioCategory ambient,
+        IAudioCategory footstep,
+        Action<float> setMusicPlayerVolume,
+        Action<float> setAmbientPlayerVolume)
+    {
+        options.musicVolumeLevel = 0f;
+        options.soundVolumeLevel = 0f;
+        options.ambientVolumeLevel = 0f;
+        options.footstepVolumeLevel = 0f;
+        music.SetVolume(0f);
+        sound.SetVolume(0f);
+        ambient.SetVolume(0f);
+        footstep.SetVolume(0f);
+        setMusicPlayerVolume(0f);
+        setAmbientPlayerVolume(0f);
+    }
+
+    /// <summary>
+    /// Apply the silence to the LIVE engine objects. Touching the categories is skipped until the audio engine
+    /// has created them (`Game1.cs:2748-2751`), which is later than the first ticks: a null category is not a
+    /// result, so the caller keeps re-asserting rather than latching a failure.
+    /// </summary>
+    private void ApplySilenceToEngine()
+    {
+        if (Game1.options is null)
+            return;
+        Options options = Game1.options;
+        IAudioCategory music = Game1.musicCategory;
+        IAudioCategory sound = Game1.soundCategory;
+        IAudioCategory ambient = Game1.ambientCategory;
+        IAudioCategory footstep = Game1.footstepCategory;
+        if (music is null || sound is null || ambient is null || footstep is null)
+        {
+            options.musicVolumeLevel = 0f;
+            options.soundVolumeLevel = 0f;
+            options.ambientVolumeLevel = 0f;
+            options.footstepVolumeLevel = 0f;
+            return;
+        }
+
+        SilenceAudioVolumes(
+            options,
+            music,
+            sound,
+            ambient,
+            footstep,
+            static volume => Game1.musicPlayerVolume = volume,
+            static volume => Game1.ambientPlayerVolume = volume);
+
+        if (!this.audioSilenceAppliedLogged)
+        {
+            this.audioSilenceAppliedLogged = true;
+            this.Monitor.Log(
+                "GameBuddy silent-background contract applied to the audio categories (music/sound/ambient/footstep = 0), not only to the option fields.",
+                LogLevel.Info);
+        }
     }
 
     private void DisableThrottling()
@@ -266,6 +343,10 @@ public sealed partial class ModEntry
                 Game1.options.musicVolumeLevel = 0f;
             if (Game1.options.soundVolumeLevel != 0f)
                 Game1.options.soundVolumeLevel = 0f;
+
+            // The categories are the audible path (see SilenceAudioVolumes): a run that zeroes only the option
+            // fields is still audible, so the engine objects are re-asserted on the same every-tick cadence.
+            this.ApplySilenceToEngine();
         }
         catch
         {

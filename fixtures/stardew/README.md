@@ -121,12 +121,17 @@ writes its observed save/world/local-player binding. With an isolated Mods
 profile and no existing save of that logical name, run:
 
 ```powershell
-powershell -NoProfile -File tools/run-stardew-native-local-player-move-fixture.ps1 `
+# Run with pwsh (PowerShell 7): the harness uses [IO.Path]::IsPathFullyQualified, absent from 5.1.
+# Seed <ModsPath>\GameBuddy.Stardew\config.json first (config.example.json as the shape, EnableLocalBridge=true,
+# legal PipeName/BridgeToken/scope ids) - the Mod opens the pipe this run waits on only when it is enabled.
+pwsh -NoProfile -File tools/run-stardew-native-local-player-move-fixture.ps1 `
   -GamePath "D:\Steam\steamapps\common\Stardew Valley" `
   -ModsPath "$env:LOCALAPPDATA\GameBuddy\stardew-profiles\native-local-stable" `
   -FixtureRoot "$env:LOCALAPPDATA\GameBuddy\stardew-fixtures" `
-  -SaveName GameBuddyFixtureStable `
-  -Action till_soil -BootstrapNativeSave
+  -SaveName GameBuddyFixtureStable -TemplateName GameBuddyFixtureStable `
+  -ReleaseDir "<repo>\integrations\stardew\bin\Release\net6.0" `
+  -Action till_soil -BootstrapNativeSave -WindowMode hidden `
+  -ResultFile "$env:TEMP\bootstrap-result.json" -LifecycleResultFile "$env:TEMP\bootstrap-lifecycle.json"
 ```
 
 This prints the observed physical slot only after real `SaveLoaded` and the

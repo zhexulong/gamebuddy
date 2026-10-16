@@ -261,6 +261,17 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Native-local working-save restore failed." }
         $workingSavePrepared = $true
     }
+    $phase = "bridge_enablement_precondition"
+    # The fixture arms `NativeLocalPlayerFixture` but never enables `EnableLocalBridge`, and the fixture's
+    # OWN verifier demands it (`assertBridgeConfig`, tools/lib/stardew-native-local-player-fixture.mjs).
+    # Measured 2026-10-16: a profile seeded from config.example.json (`EnableLocalBridge: false`) loaded the
+    # save, drained its bootstrap, logged `bridge=none` heartbeats for the whole budget, and died at the pipe
+    # gate with `Native-local bridge pipe was not ready before timeout` - a cause that names nothing. Assert it
+    # HERE, against the same field the Mod reads (ModConfig.HasValidLocalBridgeConfiguration), and refuse by name.
+    $bridgeConfig = Get-Content -Raw -LiteralPath $clientConfig | ConvertFrom-Json
+    if ($bridgeConfig.EnableLocalBridge -ne $true) {
+        throw "Native-local fixture profile has EnableLocalBridge=false in $clientConfig, so the Mod will never open the pipe this run waits for. Seed the lane profile with EnableLocalBridge=true (see fixtures/stardew/RUNBOOK.md, native-local single-player SOP)."
+    }
     $phase = "smapi_launch"
     # Window-mode vocabulary/validation lives in tools/lib/stardew-live-run.mjs
     # (mirror of host/src/live-run/window-mode.ts); the fixture reads the
@@ -279,7 +290,7 @@ try {
     } else {
         $process = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $ModsPath)) -WorkingDirectory $GamePath -WindowStyle $windowStyle -PassThru
     }
-    $pipeName = (Get-Content -Raw -LiteralPath $clientConfig | ConvertFrom-Json).PipeName
+    $pipeName = $bridgeConfig.PipeName
     if ([string]::IsNullOrWhiteSpace($pipeName)) { throw "Native-local fixture config has no pipe name." }
     $phase = "pipe_readiness"
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
