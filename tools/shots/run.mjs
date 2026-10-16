@@ -113,7 +113,7 @@ function prepareRun(paths, values) {
       "no runtime fixture: pass --runtime <dir-with-node.exe> or set GB_SHOTS_RUNTIME / GB_SHOTS_RUNTIME_SEARCH",
     );
   const run = {
-    tag: sanitizeTag(`shots-${basename(outRoot)}`) || sanitizeTag(commit.slice(0, 12)),
+    tag: sanitizeTag(basename(outRoot)) || sanitizeTag(commit.slice(0, 12)),
     commit,
     shortCommit: commit.slice(0, 12),
     outRoot,
