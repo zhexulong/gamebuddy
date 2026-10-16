@@ -2445,8 +2445,6 @@ export type ManagementPipelineApi = Readonly<{
   updateModelProfile(command: TavernModelProfileUpdateCommandV1, csrfToken: string): Promise<TavernModelProfilesV1>;
   /** GET /api/tavern/v1/companions: metadata-only companion library. */
   listCompanions(): Promise<CompanionListV1>;
-  /** GET /api/tavern/v1/companions/:handle: safe detail for one projected handle. */
-  readCompanionDetail(handle: string): Promise<CompanionDetailV1>;
   /** GET /api/tavern/v1/companions/:handle/voice: the mounted companion's performance directive. */
   readCompanionVoice(handle: string): Promise<CompanionVoiceV1>;
   /**
@@ -2850,10 +2848,6 @@ export function createManagementPipelineApi(
     },
     async listCompanions(): Promise<CompanionListV1> {
       return exchange(fetchLike, "GET", "/api/tavern/v1/companions", 200, validateCompanionList);
-    },
-    async readCompanionDetail(handle: string): Promise<CompanionDetailV1> {
-      if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
-      return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}`, 200, validateCompanionDetail);
     },
     async readCompanionVoice(handle: string): Promise<CompanionVoiceV1> {
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
