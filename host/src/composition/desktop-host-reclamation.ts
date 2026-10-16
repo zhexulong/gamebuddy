@@ -15,6 +15,11 @@
  * still need the authenticated session to drive its own containment; the
  * bootstrap's two steps come last because they own no child work.
  *
+ * A step that cannot finish is never silent: it is named on its own step in the
+ * report - a child that would not stop, a port or pipe still held, or a drain
+ * that ran out of budget - so an operator reading a failed exit can act on the
+ * name instead of guessing.
+ *
  * What a step may and may not do is a product rule, not an implementation
  * detail:
  *
@@ -57,10 +62,56 @@ export const DESKTOP_HOST_RECLAMATION_STEPS = Object.freeze([
 export type DesktopHostReclamationStep = (typeof DESKTOP_HOST_RECLAMATION_STEPS)[number];
 
 /**
+ * What one reclamation step is trying to give up, which is what its failure has
+ * to name.
+ *
+ * A step never fails in the abstract: it fails because a child it drives will
+ * not stop (`child`), because a resource it holds - the presentation listener's
+ * port, the Guardian or Voice pipe - will not be released (`resource`), or for a
+ * reason of its own (`other`, which keeps whatever bounded code it reported).
+ * The kind is declared once per step and pinned by a focused test, so an exit an
+ * operator reads afterwards says which of those happened instead of a bare
+ * generic code.
+ */
+export type DesktopHostReclamationStepKind = "child" | "resource" | "other";
+
+export const DESKTOP_HOST_RECLAMATION_STEP_KIND: Readonly<
+  Record<DesktopHostReclamationStep, DesktopHostReclamationStepKind>
+> = Object.freeze({
+  /** Releases the presentation listener's port. */
+  stop_admission: "resource",
+  /** Settles in-flight Chat turns. */
+  drain_chat_runtime: "child",
+  /** Settles in-flight Game work and contains the AI role through its Job Object. */
+  drain_game_lifecycle: "child",
+  reflect_session: "other",
+  release_shared_authority: "other",
+  /** Releases the authenticated Guardian pipe. */
+  release_guardian_session: "resource",
+  /** Releases the optional Voice client's socket to the Voice Gateway. */
+  release_voice_client: "resource",
+  release_termination_watchers: "other",
+});
+
+/**
  * `not_applicable` is a DECLARED absence - this launch never had that resource -
  * and is therefore never reported as a silent skip or as a success.
  */
 export type DesktopHostReclamationStatus = "completed" | "failed" | "not_applicable";
+
+/**
+ * The named ways a reclamation step can fail, each a stable snake_case reason
+ * reported together with the step it belongs to.
+ *
+ * Naming them is the whole point. A step that could not give something up used
+ * to read either as a bare generic code or as `completed`, so an operator could
+ * not tell a child that refused to stop from a port that was still bound, and a
+ * drain that ran out of budget looked like no failure at all. Every one of these
+ * is a fact about the STEP it is attached to, never a message, a path or a
+ * stack.
+ */
+export const DESKTOP_HOST_CHILD_WILL_NOT_STOP_FAILURE = "desktop_host_child_will_not_stop";
+export const DESKTOP_HOST_RESOURCE_STILL_HELD_FAILURE = "desktop_host_resource_still_held";
 
 /**
  * The one name a step gets when it did not settle inside its drain budget.
@@ -72,6 +123,13 @@ export type DesktopHostReclamationStatus = "completed" | "failed" | "not_applica
  * the steps behind it - a step that cannot finish must not keep them from trying.
  */
 export const DESKTOP_HOST_DRAIN_TIMEOUT_FAILURE = "desktop_host_drain_timeout";
+
+/**
+ * The name a step's failure keeps when nothing more specific can be said about
+ * it: a step that did not name itself and owns neither a child nor a resource
+ * an operator can act on.
+ */
+export const DESKTOP_HOST_CLOSE_STEP_FAILED = "desktop_host_close_step_failed";
 
 /**
  * How long one reclamation step may take before it is NAMED as a failed drain.
@@ -120,7 +178,42 @@ const boundedToken = /^[a-z][a-z0-9_.:-]{1,159}$/;
  */
 export function boundedReclamationCode(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
-  return boundedToken.test(message) ? message : "desktop_host_close_step_failed";
+  return boundedToken.test(message) ? message : DESKTOP_HOST_CLOSE_STEP_FAILED;
+}
+
+/**
+ * How one reclamation step settled: the one way it can succeed and the three
+ * ways it can fail. This is the FACT the naming decision below reads, kept
+ * separate from it so the decision stays pure and testable without a game.
+ */
+export type DesktopHostReclamationStepSettlement =
+  | Readonly<{ outcome: "completed" }>
+  | Readonly<{ outcome: "rejected"; error: unknown }>
+  | Readonly<{ outcome: "timed_out" }>;
+
+/**
+ * Names one step's failure from the facts of how it settled, or null when it
+ * completed. Pure: nothing here touches a child, a port or a clock.
+ *
+ * The order is the product's. A step that never settled is a drain timeout no
+ * matter what it owned. A step that settled by refusing keeps its own bounded
+ * code when it has one, because an operator matches on those codes; otherwise
+ * it is named by what it owned - a child that would not stop, or a port/pipe
+ * that is still held - and only a step with neither falls back to the generic
+ * code.
+ */
+export function nameDesktopHostReclamationFailure(
+  step: DesktopHostReclamationStep,
+  settlement: DesktopHostReclamationStepSettlement,
+): string | null {
+  if (settlement.outcome === "completed") return null;
+  if (settlement.outcome === "timed_out") return DESKTOP_HOST_DRAIN_TIMEOUT_FAILURE;
+  const code = boundedReclamationCode(settlement.error);
+  if (code !== DESKTOP_HOST_CLOSE_STEP_FAILED) return code;
+  const kind = DESKTOP_HOST_RECLAMATION_STEP_KIND[step];
+  if (kind === "child") return DESKTOP_HOST_CHILD_WILL_NOT_STOP_FAILURE;
+  if (kind === "resource") return DESKTOP_HOST_RESOURCE_STILL_HELD_FAILURE;
+  return code;
 }
 
 /**
@@ -140,7 +233,7 @@ export async function runDesktopHostReclamation(
       outcomes.push(Object.freeze({ step: operation.step, status: "not_applicable", failure: null }));
       continue;
     }
-    const failure = await runDesktopHostReclamationStep(close, drainTimeoutMs);
+    const failure = await runDesktopHostReclamationStep(operation.step, close, drainTimeoutMs);
     outcomes.push(
       Object.freeze({
         step: operation.step,
@@ -153,8 +246,15 @@ export async function runDesktopHostReclamation(
 }
 
 /**
- * One step under its drain budget: the bounded failure code, or null when the
- * step completed.
+ * The value the drain budget rejects with: a private symbol rather than an
+ * `Error`, so a step that closes by rejecting with the timeout's own code keeps
+ * its own code and only the budget this module set can mean the drain expired.
+ */
+const DESKTOP_HOST_DRAIN_EXPIRED = Symbol("desktop_host_drain_expired");
+
+/**
+ * One step under its drain budget: the named failure, or null when the step
+ * completed.
  *
  * A step that has not settled inside its budget is abandoned and named, so the
  * timeouts of the steps behind it start instead of waiting behind a step nothing
@@ -164,6 +264,7 @@ export async function runDesktopHostReclamation(
  * the timeout exists to complete has been written.
  */
 async function runDesktopHostReclamationStep(
+  step: DesktopHostReclamationStep,
   close: () => Promise<void>,
   drainTimeoutMs: number,
 ): Promise<string | null> {
@@ -180,13 +281,16 @@ async function runDesktopHostReclamationStep(
       closeAttempt,
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
-          reject(new Error(DESKTOP_HOST_DRAIN_TIMEOUT_FAILURE));
+          reject(DESKTOP_HOST_DRAIN_EXPIRED);
         }, drainTimeoutMs);
       }),
     ]);
-    return null;
+    return nameDesktopHostReclamationFailure(step, { outcome: "completed" });
   } catch (error) {
-    return boundedReclamationCode(error);
+    return nameDesktopHostReclamationFailure(
+      step,
+      error === DESKTOP_HOST_DRAIN_EXPIRED ? { outcome: "timed_out" } : { outcome: "rejected", error },
+    );
   } finally {
     // The budget timer is the one handle this module must never leak: a live
     // 300s timer would keep the process up for the rest of its budget after the
