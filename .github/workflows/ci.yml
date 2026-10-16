@@ -11,6 +11,12 @@ permissions:
 jobs:
   host:
     runs-on: windows-latest
+    # Bounded so a hang is one loud, named failure instead of an unbounded job
+    # that both blocks every later step's signal and holds a runner. Measured
+    # 2026-10-16: `test:mounted` hung for 106 minutes with an empty log (its
+    # first real execution - earlier gates had always been red), while the
+    # identical command finishes locally in 1.8m.
+    timeout-minutes: 60
     steps:
       # vendor/magic-context and vendor/pi-koe are git submodules (d8bf059,
       # 00e7640) and the steps below install and build inside both. A fresh
