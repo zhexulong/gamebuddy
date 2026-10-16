@@ -1303,3 +1303,108 @@ test("two Chats that were opened differently read differently in their rows", as
   expect(measured.metaOverflow, `the meta line overflows by ${measured.metaOverflow} px`).toBeLessThanOrEqual(1);
   expect(measured.metaWidth).toBeLessThanOrEqual(measured.cardWidth);
 });
+
+/**
+ * The measured defect: a row's own meta line carried the whole preview - a single
+ * preview element measured 42,293 px² of text at 1440x900 and 35,392 px² at
+ * 400x800, about seven lines - so one list row was several lines tall and the list
+ * could not be scanned. A row is a title and the row's own facts; the rest of the
+ * message belongs to the conversation selecting the row opens.
+ *
+ * The clamp is asserted by the height the element actually renders at, never by
+ * reading the CSS property back. The element is read twice: as it ships, and with
+ * the clamp lifted on that same element, so "the text needs more lines than the row
+ * gives it" is a measurement of this preview rather than a claim about the fixture.
+ * Both widths are read because this row is the one surface that ships at a wide
+ * desktop column and at a 400 px phone.
+ */
+test("one long preview takes two lines of its row, not the whole message", async ({ page }) => {
+  // The Host bounds `preview` at 160 characters on the wire (the management
+  // client's own validator), so a row's preview is at most this long and a longer
+  // one is not a row the product can render at all. The text is the companion's
+  // own words rather than the UI's, so it stays what a player would actually read
+  // in the English shell.
+  const preview = [
+    "晨雾还没散开的时候她已经出门了，门廊上的灯还亮着，地里的霜也还没有化。",
+    "你昨天翻的地都还在那儿，一排排垄沟黑着，那是水管走过的印子。",
+    "风从松林那边过来，带着湿泥和草腥气，她把围巾往上拉了拉，又换了只手拎种子袋。",
+    "壶在屋里烧着，窗户上一层雾，所以厨房看着比院子暖些。",
+    "她还是在门口站了一会儿，因为防风草成活了，全都成了。过来看看？",
+  ].join("");
+  expect(preview.length, "the fixture is the longest preview the contract admits").toBe(160);
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        chats: [
+          {
+            handle: chatHandle,
+            title: "Farm morning",
+            status: "active",
+            managementRevision: 1,
+            isSelected: true,
+            updatedAtMs: 1_760_000_000_000,
+            preview,
+          },
+        ],
+      }),
+    ),
+  );
+
+  const readings: { width: number; lineHeight: number; shipped: number; unclamped: number; cardHeight: number; previewChars: number }[] =
+    [];
+  for (const width of [1440, 400] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+    const surface = page.getByTestId("chats-surface");
+    await expect(surface).toBeVisible();
+    await expect(page.getByTestId("chat-item-preview")).toHaveText(preview);
+
+    const measured = await surface.evaluate((root) => {
+      const meta = root.querySelector<HTMLElement>(".chat-item-meta")!;
+      const card = root.querySelector<HTMLElement>(".chat-item-card")!;
+      const lineHeight = Number.parseFloat(getComputedStyle(meta).lineHeight);
+      const shipped = meta.getBoundingClientRect().height;
+      // The clamp lifted on this same element, so both readings carry the same
+      // text at the same width and the second one is this preview's own need.
+      meta.style.setProperty("-webkit-line-clamp", "none");
+      const unclamped = meta.getBoundingClientRect().height;
+      meta.style.removeProperty("-webkit-line-clamp");
+      return {
+        lineHeight,
+        shipped: Math.round(shipped),
+        unclamped: Math.round(unclamped),
+        cardHeight: Math.round(card.getBoundingClientRect().height),
+        previewChars: (root.querySelector("[data-testid='chat-item-preview']")?.textContent ?? "").length,
+      };
+    });
+    readings.push({ width, ...measured });
+  }
+
+  // Every width's reading is printed before any of them is judged, so a failure
+  // reports the whole shape of the defect rather than its first line.
+  const lines = (height: number, lineHeight: number): string => (height / lineHeight).toFixed(1);
+  console.log(
+    `[chats-row-preview-clamp] measured: ${readings
+      .map(
+        (reading) =>
+          `${reading.width}px: meta ${reading.shipped}px (${lines(reading.shipped, reading.lineHeight)} lines) where the same text needs ${reading.unclamped}px (${lines(reading.unclamped, reading.lineHeight)} lines); card ${reading.cardHeight}px`,
+      )
+      .join(" | ")}`,
+  );
+
+  for (const reading of readings) {
+    const at = `${reading.width}px`;
+    expect(reading.previewChars, `${at}: the row really carries the whole preview`).toBe(preview.length);
+    expect(
+      reading.unclamped,
+      `${at}: the preview needs ${reading.unclamped}px (${lines(reading.unclamped, reading.lineHeight)} lines), so the clamp has something to hold`,
+    ).toBeGreaterThan(reading.lineHeight * 3);
+    expect(
+      reading.shipped,
+      `${at}: the row's own meta line renders ${reading.shipped}px, which is ${lines(reading.shipped, reading.lineHeight)} lines`,
+    ).toBeLessThanOrEqual(reading.lineHeight * 2 + 1);
+  }
+});

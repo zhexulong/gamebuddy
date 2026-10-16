@@ -4539,6 +4539,25 @@
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
   }
+  /* A Chats *list row* carried its whole preview too. The row's own meta line - the
+     stamp and the last message's opening - measured 42,293 px² of text at 1440x900
+     and 35,392 px² at 400x800, about seven lines, so a single row was several lines
+     tall and the list could not be scanned. The row is a title and two lines of its
+     own facts; the rest of the message belongs to the conversation selecting the row
+     opens. Measured on this tree against a 160-character preview, which is the
+     longest the management wire admits (`isLengthBoundedString(preview, 0, 160)`):
+     the meta line was 72 px of 4 lines at 1440 and 108 px of 6 lines at 400.
+
+     The layer is `theme.polish`, where the sibling clamp above lives, and not
+     `theme.legacy` where the row's own geometry is written: this clamp has to win
+     against that rule, and an unlayered rule would win against every layer instead
+     (gate 2.3). */
+  [data-testid="chat-item"] > .chat-item-meta {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
   /* The Chats list is a column of conversation rows, and a row is a title with the
      row's own action icons at its tail. The surface lays its content out at the
      whole panel width, which put the title's text and its first action icon
