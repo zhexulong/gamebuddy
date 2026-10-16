@@ -441,13 +441,21 @@ export function readAgentTurns({ runtimeRoot, identity, piSessionId }) {
       } catch {
         continue;
       }
-      if (record?.type !== "message" || record?.role !== "assistant") continue;
-      const parts = Array.isArray(record.content) ? record.content : [];
-      const spoken = parts
-        .filter((part) => part?.type === "text" && typeof part.text === "string")
-        .map((part) => part.text.trim())
-        .filter((part) => part.length > 0)
-        .join(" ");
+      // MEASURED shape: the transcript nests the turn under `message`
+      // (`{"type":"message","message":{"role","content"}}`), and `content` may be a string or a parts array. Guessing
+      // either wrong is what made an earlier reader report zero spoken turns while the file was full of them.
+      if (record?.type !== "message") continue;
+      const envelope = record.message ?? record;
+      if (envelope?.role !== "assistant") continue;
+      const parts = Array.isArray(envelope.content) ? envelope.content : [];
+      const spoken = (
+        typeof envelope.content === "string"
+          ? envelope.content
+          : parts
+              .filter((part) => part?.type === "text" && typeof part.text === "string")
+              .map((part) => part.text)
+              .join(" ")
+      ).trim();
       if (spoken === "") continue;
       turns.push({ turnId: `agent_${turns.length + 1}`, text: spoken });
     }
