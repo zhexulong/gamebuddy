@@ -7,10 +7,10 @@ import { expect, test } from "@playwright/test";
  * The defect (the character-surface audit): an import ended with
  * `It is now a companion you can chat with.` beside a companion the Chat surface
  * cannot show. There is no companion-activation route in the Host at all - the
- * served operation set is `companion.list` / `companion.detail` /
- * `companion.worldbook.read` / `companion.create` (`host/src/tavern/browser-contract/index.ts:639-642`),
+ * served operation set is `companion.list` / `companion.worldbook.read` /
+ * `companion.create` (`host/src/tavern/browser-contract/index.ts:643-645`),
  * the only `activate` in the route table is `settings.connection.activate`
- * (`:662`), and the companion in play is `manifest.principal.companionId`, a
+ * (`:665`), and the companion in play is `manifest.principal.companionId`, a
  * start-up fact (`host/src/composition/desktop-presentation-admission-owner.ts:271`).
  * A runtime switch would move the deployment principal and therefore the
  * continuity/Memory partition, so no control may be offered here.

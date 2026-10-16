@@ -181,7 +181,6 @@ type TavernManagementDomains = Readonly<
     Pick<
       TavernManagementDialogueWebOptions,
       | "libraryService"
-      | "companionDetailService"
       | "companionVoiceService"
       | "newCompanionProvisioner"
       | "newChatProvisioner"
@@ -314,20 +313,6 @@ function createTavernManagementDomains(
       // `companionId`; the library carries it too, so a plain concat renders the
       // current companion twice (same handle, same name).
       return mergeMountedCompanionList(companions, currentCompanionId, mountedName, companionHandleFor);
-    },
-  });
-  const companionDetailService = Object.freeze({
-    async read(handle: string) {
-      // Only the exact mounted companion's handle resolves; any other handle
-      // (foreign, forged, or a non-mounted library entry) is null and reported
-      // 404 rather than projected as a different identity.
-      if (handle !== companionHandleFor(currentCompanionId)) return null;
-      const mountedName = await mountedNamePromise;
-      if (mountedName === undefined) return null;
-      // The mounted companion's canonical display name is the identity profile
-      // the runtime provisioned at mount; the artifact-store companion.json
-      // only exists for library-created companions.
-      return Object.freeze({ name: mountedName });
     },
   });
   /**
@@ -515,7 +500,6 @@ function createTavernManagementDomains(
       modelProfileStore,
       playerPreferenceStore,
       libraryService,
-      companionDetailService,
       companionVoiceService,
       companionWorldBookService,
       newCompanionProvisioner,
@@ -787,7 +771,6 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
   worldInfoService: ["read", "setBinding"],
   connectionService: ["read", "create", "test", "activate", "selectModel", "remove"],
   libraryService: ["listCompanions"],
-  companionDetailService: ["read"],
   companionVoiceService: ["read", "update"],
   companionWorldBookService: ["read"],
   newCompanionProvisioner: ["create"],
@@ -867,7 +850,6 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.profiles.read",
       "settings.profiles.update",
       "companion.list",
-      "companion.detail",
       "companion.worldbook.read",
       "companion.create",
       "persona.read",
@@ -915,7 +897,6 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.profiles.read",
       "settings.profiles.update",
       "companion.list",
-      "companion.detail",
       "companion.worldbook.read",
       "companion.create",
       "persona.read",

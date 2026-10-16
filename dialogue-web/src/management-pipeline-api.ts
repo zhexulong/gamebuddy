@@ -91,7 +91,6 @@ type TavernBrowserOperationV1 = Readonly<{
     | "settings.profiles.read"
     | "settings.profiles.update"
     | "companion.list"
-    | "companion.detail"
     | "companion.worldbook.read"
     | "companion.create"
     | "character.import.stage"
@@ -137,7 +136,6 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.settings.profiles.read"
     | "tavern.operation.settings.profiles.update"
     | "tavern.operation.companion.list"
-    | "tavern.operation.companion.detail"
     | "tavern.operation.companion.worldbook.read"
     | "tavern.operation.companion.create"
     | "tavern.operation.character.import.stage"
@@ -784,7 +782,6 @@ const OPERATION_IDS = [
   "settings.profiles.update",
   // design/28 §2 Character / Persona / Scenario / Greeting + Chat retention.
   "companion.list",
-  "companion.detail",
   // design/28 §2 the companion's OWN world book: what the reviewed card carried,
   // which is a different thing from the World Info items a Chat can attach.
   "companion.worldbook.read",
@@ -837,7 +834,6 @@ const LABEL_KEYS = [
   "tavern.operation.settings.profiles.update",
   "tavern.nav.characters",
   "tavern.operation.companion.list",
-  "tavern.operation.companion.detail",
   "tavern.operation.companion.worldbook.read",
   "tavern.operation.companion.create",
   "tavern.operation.character.import.stage",

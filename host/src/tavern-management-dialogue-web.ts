@@ -174,7 +174,6 @@ const MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITH_MEMORY = ["chat", "memory"] as 
 /** Optional Character / Persona / Scenario / Greeting / retention extension. */
 const MANAGEMENT_P9_ROUTES = [
   "companion.list",
-  "companion.detail",
   "companion.worldbook.read",
   "companion.create",
   "persona.read",
@@ -319,14 +318,6 @@ export type TavernManagementDialogueWebOptions = Readonly<{
      * companion identifier.
      */
     listCompanions(): Promise<readonly Readonly<{ handle: string; name: string; isCurrent: boolean }>[]>;
-  }>;
-  /**
-   * Read-only safe companion detail, keyed by the exact opaque handle from
-   * `libraryService.listCompanions`. Any other handle resolves to null and is
-   * reported 404; the underlying service never names a durable identity.
-   */
-  companionDetailService?: Readonly<{
-    read(handle: string): Promise<Readonly<{ name: string }> | null>;
   }>;
   /**
    * The mounted companion's own performance directive (the reviewed card's
@@ -570,7 +561,6 @@ export function createTavernManagementDialogueWebRequestHandler(
   const connectionService = options.connectionService;
   const modelProfileStore = options.modelProfileStore;
   const libraryService = options.libraryService;
-  const companionDetailService = options.companionDetailService;
   const companionVoiceService = options.companionVoiceService;
   const companionWorldBookService = options.companionWorldBookService;
   const newCompanionProvisioner = options.newCompanionProvisioner;
@@ -653,7 +643,6 @@ export function createTavernManagementDialogueWebRequestHandler(
   // also be declared in operationIds.
   const P9_ROUTE_SERVICES = [
     ["companion.list", libraryService],
-    ["companion.detail", libraryService],
     ["companion.create", libraryService],
     ["persona.read", personaService],
     ["persona.update", personaService],
@@ -1210,32 +1199,6 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!TavernBrowserValidatorsV1.CompanionListV1Schema.Check(list))
           throw new Error("companion_list_service_unavailable");
         return sendJson(response, 200, list);
-      }
-      {
-        const companionDetailHandle = matchCompanionDetailRoute(request.method, url.pathname);
-        if (companionDetailHandle !== null) {
-          // companion.detail: the exact opaque handle the list projected. A
-          // foreign handle is answered by the bound service as null (404), so
-          // browser input can never name another durable companion identity.
-          if (url.search !== "" || (await hasRequestBody(request)))
-            return sendProblem(response, 400, "invalid_request");
-          if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
-          if (
-            !profile.routeIds.includes("companion.detail") ||
-            libraryService === undefined ||
-            companionDetailService === undefined
-          )
-            return sendProblem(response, 404, "profile_operation_unavailable");
-          const detail = await companionDetailService.read(companionDetailHandle);
-          if (detail === null) return sendProblem(response, 404, "companion_not_found");
-          const result: CompanionDetailV1 = Object.freeze({
-            apiVersion: TAVERN_BROWSER_API_VERSION,
-            name: detail.name,
-          });
-          if (!TavernBrowserValidatorsV1.CompanionDetailV1Schema.Check(result))
-            throw new Error("companion_detail_service_unavailable");
-          return sendJson(response, 200, result);
-        }
       }
       {
         const worldBookHandle = matchCompanionWorldBookRoute(request.method, url.pathname);
@@ -2060,12 +2023,6 @@ function matchRetentionRoute(
         chatHandle: match[1]!,
         operation: match[2] as "archive" | "restore" | "trash",
       });
-}
-
-function matchCompanionDetailRoute(method: string | undefined, pathname: string): string | null {
-  if (method !== "GET") return null;
-  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})$/.exec(pathname);
-  return match === null ? null : match[1]!;
 }
 
 /** character.voice.read / character.voice.update: the mounted companion's directive. */

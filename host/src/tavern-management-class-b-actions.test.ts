@@ -14,7 +14,10 @@ import type { TavernConnectionProbe } from "./tavern/connection-probe.js";
 import { createTavernConnectionService } from "./tavern/connection-service.js";
 import type { TavernManagementState, TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
 import type { WorldInfoStateV1 } from "./tavern/world-info-binding/world-info-binding-management-service.js";
-import { startTavernManagementDialogueWebServer, type TavernModelProfileProjection } from "./tavern-management-dialogue-web.js";
+import {
+  startTavernManagementDialogueWebServer,
+  type TavernModelProfileProjection,
+} from "./tavern-management-dialogue-web.js";
 
 /**
  * ADR-0010's Class B rule, enforced as a rule rather than as one removed guard.
@@ -106,7 +109,6 @@ const OPTIONAL_GROUPS = [
   ["settings.profiles.read", "settings.profiles.update"],
   [
     "companion.list",
-    "companion.detail",
     "companion.worldbook.read",
     "companion.create",
     "persona.read",
@@ -402,9 +404,7 @@ test("ADR-0010 Class B: every action the ADR names succeeds with a turn in fligh
   const worldInfoState = (): WorldInfoStateV1 => ({
     state: worldInfoBound ? "selected" : "none",
     revision: worldInfoBound ? WORLD_INFO_REVISION_BOUND : WORLD_INFO_REVISION,
-    items: [
-      { handle: ITEM_HANDLE, title: "Pelican Town", summary: null, selected: worldInfoBound, pending: false },
-    ],
+    items: [{ handle: ITEM_HANDLE, title: "Pelican Town", summary: null, selected: worldInfoBound, pending: false }],
   });
   let preference: PlayerPreference = {
     revision: 0,
@@ -437,7 +437,8 @@ test("ADR-0010 Class B: every action the ADR names succeeds with a turn in fligh
       ),
     ),
   });
-  const connectionProbe: TavernConnectionProbe = async () => Object.freeze({ outcome: "ready" as const, failure: null });
+  const connectionProbe: TavernConnectionProbe = async () =>
+    Object.freeze({ outcome: "ready" as const, failure: null });
 
   const turn = runningTurnFacade();
   const connection = createTavernConnectionService({ agentDir: root, probe: connectionProbe });
@@ -465,7 +466,11 @@ test("ADR-0010 Class B: every action the ADR names succeeds with a turn in fligh
       },
       async transitionLifecycle(command) {
         const status =
-          command.operation === "archive" ? ("archived" as const) : command.operation === "trash" ? ("trashed" as const) : ("active" as const);
+          command.operation === "archive"
+            ? ("archived" as const)
+            : command.operation === "trash"
+              ? ("trashed" as const)
+              : ("active" as const);
         return {
           apiVersion: 1 as const,
           handle: command.chatHandle,

@@ -142,7 +142,15 @@ async function bootstrap(origin, token, sessionEntry) {
   const body = await response.json().catch(() => undefined);
   const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
   if (!response.ok || typeof cookie !== "string" || typeof (body?.csrfToken ?? body?.chat?.csrfToken) !== "string") {
-      process.stderr.write(`[bootstrap-diag] ${response.status} ${response.url ?? ""} body=${(() => { try { return JSON.stringify(body ?? null); } catch { return "unavailable"; } })().slice(0, 300)}\n`);
+    process.stderr.write(
+      `[bootstrap-diag] ${response.status} ${response.url ?? ""} body=${(() => {
+        try {
+          return JSON.stringify(body ?? null);
+        } catch {
+          return "unavailable";
+        }
+      })().slice(0, 300)}\n`,
+    );
     throw new Error(`bootstrap_failed:${response.status}`);
   }
   return Object.freeze({ cookie, csrf: body.csrfToken ?? body.chat.csrfToken });
@@ -226,13 +234,12 @@ async function exerciseOperations(origin, client) {
     const snapshot = await readJson(origin, client, "/api/tavern/v1/state");
     const generation = snapshot?.selection?.generation;
     const revision = snapshot?.chat?.draft?.revision;
-    if (!Number.isSafeInteger(generation) || generation <= 0)
-      throw new Error("selection_generation_unavailable");
+    if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error("selection_generation_unavailable");
     if (!Number.isInteger(revision) || revision < 0) throw new Error("draft_revision_unavailable");
     return { generation, revision };
   };
 
-    await attempt("draft.save", async () => {
+  await attempt("draft.save", async () => {
     const { generation, revision } = await currentDraft();
     const draft = await sendJson(origin, client, "PUT", "/api/tavern/v1/draft", {
       apiVersion: 1,
@@ -245,8 +252,7 @@ async function exerciseOperations(origin, client) {
     // accepting 2xx would report a pass for a write that stored nothing.
     if (draft === null || typeof draft !== "object") throw new Error("draft_state_unavailable");
     if (draft.text !== "please be brief") throw new Error("draft_text_not_applied");
-    if (!Number.isInteger(draft.revision) || draft.revision <= revision)
-      throw new Error("draft_revision_unadvanced");
+    if (!Number.isInteger(draft.revision) || draft.revision <= revision) throw new Error("draft_revision_unadvanced");
   });
 
   await attempt("draft.discard", async () => {
@@ -259,8 +265,7 @@ async function exerciseOperations(origin, client) {
     // Discarding must clear the text and advance the revision.
     if (draft === null || typeof draft !== "object") throw new Error("draft_state_unavailable");
     if (draft.text !== null && draft.text !== "") throw new Error("draft_text_survived_discard");
-    if (!Number.isInteger(draft.revision) || draft.revision <= revision)
-      throw new Error("draft_revision_unadvanced");
+    if (!Number.isInteger(draft.revision) || draft.revision <= revision) throw new Error("draft_revision_unadvanced");
   });
 
   // chat.rename: the CAS revision is the SELECTED CHAT LIST ENTRY's
@@ -269,8 +274,7 @@ async function exerciseOperations(origin, client) {
     const snapshot = await readJson(origin, client, "/api/tavern/v1/state");
     const generation = snapshot?.selection?.generation;
     const chatHandle = snapshot?.selection?.chatHandle;
-    if (!Number.isSafeInteger(generation) || generation <= 0)
-      throw new Error("selection_generation_unavailable");
+    if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error("selection_generation_unavailable");
     if (typeof chatHandle !== "string" || chatHandle.length === 0) throw new Error("chat_handle_unavailable");
     const list = await readJson(origin, client, "/api/tavern/v1/chats?apiVersion=1");
     const entries = Array.isArray(list?.chats) ? list.chats : Array.isArray(list) ? list : [];
@@ -296,7 +300,7 @@ async function exerciseOperations(origin, client) {
       throw new Error("management_revision_unadvanced");
   });
 
-    await attempt("memory.mutate", async () => {
+  await attempt("memory.mutate", async () => {
     const memory = await readJson(origin, client, "/api/tavern/v1/memory");
     if (typeof memory?.projectionRevision !== "string" || memory.projectionRevision.length === 0)
       throw new Error("projection_revision_unavailable");
@@ -314,8 +318,7 @@ async function exerciseOperations(origin, client) {
     if (result === null || typeof result !== "object") throw new Error("memory_result_unavailable");
     if (typeof result.projectionRevision !== "string" || result.projectionRevision.length === 0)
       throw new Error("projection_revision_missing_after_mutation");
-    if (result.projectionRevision === memory.projectionRevision)
-      throw new Error("projection_revision_unadvanced");
+    if (result.projectionRevision === memory.projectionRevision) throw new Error("projection_revision_unadvanced");
     if (!Array.isArray(result.memories)) throw new Error("memory_result_list_unavailable");
     if (result.memories.length !== before + 1) throw new Error("memory_row_not_created");
   });
@@ -323,14 +326,12 @@ async function exerciseOperations(origin, client) {
   await attempt("world-info.bind", async () => {
     const snapshot = await readJson(origin, client, "/api/tavern/v1/state");
     const generation = snapshot?.selection?.generation;
-    if (!Number.isSafeInteger(generation) || generation <= 0)
-      throw new Error("selection_generation_unavailable");
+    if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error("selection_generation_unavailable");
     // The world-info CAS revision comes from its own read route; the snapshot
     // carries `chat.worldInfo` but the binding command CASes a revision string.
     const worldInfo = await readJson(origin, client, "/api/tavern/v1/world-info");
     const revision = worldInfo?.revision;
-    if (typeof revision !== "string" || revision.length === 0)
-      throw new Error("world_info_revision_unavailable");
+    if (typeof revision !== "string" || revision.length === 0) throw new Error("world_info_revision_unavailable");
     if (!Array.isArray(worldInfo.items)) throw new Error("world_info_items_unavailable");
     // COVERAGE BOUNDARY, deliberately not papered over. The browser contract
     // declares no world-info authoring route (25 routeIds, only read + bind), so
@@ -425,8 +426,7 @@ async function exerciseOperations(origin, client) {
     if (language === null || typeof language !== "object") throw new Error("language_preference_unavailable");
     // The declared projection (design/28 5.1), not just "some object came
     // back": a revision and a bounded BCP-47 tag (null = never configured).
-    if (!Number.isInteger(language.revision) || language.revision < 0)
-      throw new Error("language_revision_unavailable");
+    if (!Number.isInteger(language.revision) || language.revision < 0) throw new Error("language_revision_unavailable");
     if (language.locale !== null && !COMPANION_LOCALE_PATTERN.test(language.locale))
       throw new Error("language_locale_invalid");
   });
@@ -434,8 +434,7 @@ async function exerciseOperations(origin, client) {
   await attempt("settings.language.update", async () => {
     const before = await readJson(origin, client, "/api/tavern/v1/settings/language");
     const expectedRevision = before?.revision;
-    if (!Number.isInteger(expectedRevision) || expectedRevision < 0)
-      throw new Error("language_revision_unavailable");
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 0) throw new Error("language_revision_unavailable");
     // Write the locale the record does not already carry, so the assertions
     // below cannot pass on a value that was there before the write. The tag is
     // deliberately outside the pair the panel used to be limited to: accepting it is
@@ -486,7 +485,8 @@ async function exerciseOperations(origin, client) {
     // list. Accepting the reply because it parsed would pass even if nothing
     // was stored, which is exactly the hollow-success shape this producer has
     // to rule out for every operation it reports as passed.
-    if (!Number.isInteger(state?.revision) || state.revision < 1) throw new Error("connection_create_revision_unadvanced");
+    if (!Number.isInteger(state?.revision) || state.revision < 1)
+      throw new Error("connection_create_revision_unadvanced");
     if (!Array.isArray(state?.connections) || state.connections.length === 0)
       throw new Error("connection_create_not_stored");
   });
@@ -497,7 +497,9 @@ async function exerciseOperations(origin, client) {
   // and activatable without any probe on the real loopback endpoint.
   const connectionList = async () => {
     const state = await readJson(origin, client, "/api/tavern/v1/settings/connection");
-    const connection = Array.isArray(state?.connections) ? state.connections.find((entry) => entry?.connectionId) : undefined;
+    const connection = Array.isArray(state?.connections)
+      ? state.connections.find((entry) => entry?.connectionId)
+      : undefined;
     if (connection === undefined) throw new Error("connection_entry_unavailable");
     return { connectionId: connection.connectionId, revision: state?.revision };
   };
@@ -528,10 +530,16 @@ async function exerciseOperations(origin, client) {
 
   await attempt("settings.connection.activate", async () => {
     const { connectionId, revision } = await connectionList();
-    const state = await sendJson(origin, client, "POST", `/api/tavern/v1/settings/connections/${connectionId}/activate`, {
-      apiVersion: 1,
-      expectedRevision: revision,
-    });
+    const state = await sendJson(
+      origin,
+      client,
+      "POST",
+      `/api/tavern/v1/settings/connections/${connectionId}/activate`,
+      {
+        apiVersion: 1,
+        expectedRevision: revision,
+      },
+    );
     if (state?.active?.connectionId !== connectionId) throw new Error("connection_activation_state_invalid");
   });
 
@@ -658,42 +666,10 @@ async function exerciseOperations(origin, client) {
       throw new Error("companion_handle_unavailable");
     if (typeof current.name !== "string" || current.name.length === 0) throw new Error("companion_name_missing");
     for (const entry of list.companions) {
-      if (typeof entry?.handle !== "string" || entry.handle.length === 0) throw new Error("companion_handle_unavailable");
+      if (typeof entry?.handle !== "string" || entry.handle.length === 0)
+        throw new Error("companion_handle_unavailable");
       if (typeof entry?.name !== "string" || entry.name.length === 0) throw new Error("companion_name_missing");
     }
-  });
-
-  await attempt("companion.detail", async () => {
-    const list = await readJson(origin, client, "/api/tavern/v1/companions");
-    const current = Array.isArray(list?.companions)
-      ? list.companions.find((entry) => entry?.isCurrent === true)
-      : undefined;
-    const handle = current?.handle;
-    if (typeof handle !== "string" || handle.length === 0) throw new Error("companion_handle_unavailable");
-    if (typeof current.name !== "string" || current.name.length === 0) throw new Error("companion_name_missing");
-    const detail = await readJson(origin, client, `/api/tavern/v1/companions/${handle}`);
-    if (detail === null || typeof detail !== "object") throw new Error("companion_detail_unavailable");
-    // The detail projection is `apiVersion` + `name` by contract
-    // (CompanionDetailV1Schema: "name only (companion-detail boundary)"), so it
-    // carries no handle to compare: the identity proof available here is that
-    // the name this route answers with for `handle` is the name the LIST
-    // attributed to that same handle. "Some non-empty name came back" would pass
-    // for any companion the surface felt like answering with - including the
-    // current one regardless of the handle in the path.
-    if (detail.apiVersion !== 1) throw new Error("companion_detail_api_version_invalid");
-    if (detail.name !== current.name) throw new Error("companion_detail_identity_mismatch");
-    // ...and the route must resolve an EXACT handle: a near-miss of the handle
-    // the list projected has to be refused as `companion_not_found` rather than
-    // answered with whatever companion the surface holds. That refusal is what
-    // makes the name comparison above evidence about THIS companion instead of
-    // evidence that the route answered at all.
-    const nearMiss = `${handle[0] === "A" ? "B" : "A"}${handle.slice(1)}`;
-    const refused = await deadlineFetch(`${origin}/api/tavern/v1/companions/${nearMiss}`, {
-      headers: { Cookie: client.cookie, Origin: origin },
-    });
-    const problem = await refused.json().catch(() => undefined);
-    if (refused.status !== 404 || problem?.code !== "companion_not_found")
-      throw new Error("companion_detail_foreign_handle_resolved");
   });
 
   await attempt("companion.create", async () => {
@@ -819,7 +795,7 @@ async function exerciseOperations(origin, client) {
     retainedChat = Object.freeze({ generation, chatHandle, managementRevision: result.managementRevision });
   });
 
-    await attempt("chat.restore", async () => {
+  await attempt("chat.restore", async () => {
     const { generation, chatHandle, managementRevision } = await currentChat();
     const result = await sendJson(origin, client, "POST", `/api/tavern/v1/chats/${chatHandle}/restore`, {
       apiVersion: 1,
@@ -833,7 +809,7 @@ async function exerciseOperations(origin, client) {
     retainedChat = Object.freeze({ generation, chatHandle, managementRevision: result.managementRevision });
   });
 
-    await attempt("chat.trash", async () => {
+  await attempt("chat.trash", async () => {
     // Trash is legal directly from active (resolveLifecycleTransition:
     // trash from active or archived), and the previous restore left the chat
     // active with a threaded revision, so this is a single real transition.
@@ -902,7 +878,8 @@ async function exerciseOperations(origin, client) {
     if (read === null || typeof read !== "object") throw new Error("character_import_read_unavailable");
     if (read.importId !== stagedImportId) throw new Error("character_import_read_id_mismatch");
     if (read.reviewed !== false) throw new Error("character_import_read_review_state_invalid");
-    if (!Array.isArray(read.fields) || read.fields.length === 0) throw new Error("character_import_read_fields_missing");
+    if (!Array.isArray(read.fields) || read.fields.length === 0)
+      throw new Error("character_import_read_fields_missing");
   });
 
   await attempt("character.import.review", async () => {
@@ -958,15 +935,9 @@ async function exerciseOperations(origin, client) {
     // classified: a record written with an empty report would still be listed,
     // so an all-zero row would report a pass for evidence that says nothing.
     let classified = 0;
-    for (const classification of [
-      "accepted_typed",
-      "preserved_opaque",
-      "dropped_unsupported",
-      "rejected_invalid",
-    ]) {
+    for (const classification of ["accepted_typed", "preserved_opaque", "dropped_unsupported", "rejected_invalid"]) {
       const count = counts[classification];
-      if (!Number.isSafeInteger(count) || count < 0)
-        throw new Error("character_import_history_count_invalid");
+      if (!Number.isSafeInteger(count) || count < 0) throw new Error("character_import_history_count_invalid");
       classified += count;
     }
     if (classified <= 0) throw new Error("character_import_history_counts_empty");
@@ -976,8 +947,7 @@ async function exerciseOperations(origin, client) {
 }
 
 export async function runManagementOperationEvidence({ outcomesPath, reportPath } = {}) {
-  if (typeof outcomesPath !== "string" || outcomesPath.length === 0)
-    throw new Error("outcomes_path_required");
+  if (typeof outcomesPath !== "string" || outcomesPath.length === 0) throw new Error("outcomes_path_required");
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-tavern-ui-evidence-"));
   await mkdir(root, { recursive: true });
   const nonceSha256 = createHash("sha256").update(randomBytes(32)).digest("hex");
@@ -1050,17 +1020,17 @@ export async function runManagementOperationEvidence({ outcomesPath, reportPath 
     if (typeof reportPath === "string" && reportPath.length > 0)
       await writeFile(reportPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
     const passed = operations.filter((entry) => entry.outcome === "passed").length;
-  process.stdout.write(
-    `${JSON.stringify({ state: passed > 0 ? "collected" : "blocked", passed, total: operations.length, operations })}\n`,
-  );
-  // Exit non-zero when nothing passed. The outcomes file is still written - it
-  // records what actually happened - but a caller that shells out must not see
-  // success from a run that produced no evidence at all. Previously this exited
-  // 0 and relied on the downstream recorder to reject the file, which made a
-  // total failure look like a successful collection to anything reading the
-  // exit status.
-  if (passed === 0) process.exitCode = 1;
-  return payload;
+    process.stdout.write(
+      `${JSON.stringify({ state: passed > 0 ? "collected" : "blocked", passed, total: operations.length, operations })}\n`,
+    );
+    // Exit non-zero when nothing passed. The outcomes file is still written - it
+    // records what actually happened - but a caller that shells out must not see
+    // success from a run that produced no evidence at all. Previously this exited
+    // 0 and relied on the downstream recorder to reject the file, which made a
+    // total failure look like a successful collection to anything reading the
+    // exit status.
+    if (passed === 0) process.exitCode = 1;
+    return payload;
   } finally {
     launch.dispose?.();
     launch.child?.kill?.();

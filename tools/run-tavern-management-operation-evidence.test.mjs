@@ -53,7 +53,6 @@ const ALL_OPERATIONS = [
   "settings.profiles.read",
   "settings.profiles.update",
   "companion.list",
-  "companion.detail",
   "companion.create",
   "persona.read",
   "persona.update",
@@ -72,9 +71,7 @@ const ALL_OPERATIONS = [
 ];
 
 test("the producer exercises every operation the mounted profile declares", async () => {
-  const { readMountedTavernManagementProfile } = await import(
-    "./lib/tavern-mounted-operation-vocabulary.mjs"
-  );
+  const { readMountedTavernManagementProfile } = await import("./lib/tavern-mounted-operation-vocabulary.mjs");
   const declared = readMountedTavernManagementProfile().operationIds;
   assert.deepEqual([...declared].sort(), [...ALL_OPERATIONS].sort());
   for (const operationId of declared) attemptBody(operationId);
@@ -87,10 +84,7 @@ test("no operation is reported as passed on the strength of a 2xx alone", () => 
   for (const operationId of ALL_OPERATIONS) {
     const body = attemptBody(operationId);
     const assertions = [...body.matchAll(/throw new Error\("([a-z0-9_]+)"\)/g)].map((m) => m[1]);
-    assert.ok(
-      assertions.length > 0,
-      `${operationId} asserts nothing about the response: ${body.slice(0, 120)}`,
-    );
+    assert.ok(assertions.length > 0, `${operationId} asserts nothing about the response: ${body.slice(0, 120)}`);
   }
 });
 
@@ -145,32 +139,8 @@ test("the writes assert their durable effect, not only the reply shape", () => {
       );
     }
     assert.match(afterMutation, /revision/, `${operationId} must assert the revision it advanced`);
-    assert.match(
-      afterMutation,
-      /unadvanced/,
-      `${operationId} must fail when the revision did not advance`,
-    );
+    assert.match(afterMutation, /unadvanced/, `${operationId} must fail when the revision did not advance`);
   }
-});
-
-test("the companion detail read asserts identity, not just a non-empty name", () => {
-  // The detail route projects `apiVersion` + `name` only (CompanionDetailV1Schema:
-  // "name only (companion-detail boundary)"), so the projected name is what has
-  // to match the name the LIST attributed to the exact handle that was asked
-  // for. A `name.length > 0` check passes for whatever companion the route felt
-  // like answering with - a hollow pass for the read whose whole point is
-  // resolving one exact companion.
-  const body = attemptBody("companion.detail");
-  assert.match(
-    body,
-    /companion_detail_identity_mismatch/,
-    "companion.detail must reject a detail that is not the asked-for companion",
-  );
-  assert.match(
-    body,
-    /detail\.name !== current\.name/,
-    "companion.detail must compare the name the list projected for that exact handle",
-  );
 });
 
 test("the probe refuses a not-configured outcome as evidence", () => {
