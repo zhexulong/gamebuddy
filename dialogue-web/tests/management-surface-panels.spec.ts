@@ -1191,3 +1191,95 @@ test("the Chats list rows take the surface's own measure instead of the whole pa
     "the row's controls stay on the title's line",
   ).toBeLessThanOrEqual(8);
 });
+
+/**
+ * The defect this pins: every row of the Chats list read the same `New chat`, with
+ * no time and no preview, so two Chats the player had never renamed were one row
+ * twice and picking one was a guess. The Host now projects each thread's own
+ * durable `updatedAtMs` and its last message as plain-text `preview`; this asserts
+ * the rows a player actually reads are different, and that the row's new meta line
+ * fits the narrowest layout this panel ships in.
+ */
+test("two Chats that were opened differently read differently in their rows", async ({ page }) => {
+  // The stamp is the browser's own calendar day, so take that day from the browser
+  // rather than from this runner's timezone.
+  await page.goto("about:blank");
+  const dayStart = await page.evaluate(
+    () => new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime(),
+  );
+  const secondHandle = `${"D".repeat(42)}A`;
+  const chats = [
+    {
+      handle: chatHandle,
+      title: null,
+      status: "active",
+      managementRevision: 1,
+      isSelected: true,
+      updatedAtMs: dayStart + 60_000,
+      preview: "Good morning, farmer. The valley is quiet today.",
+    },
+    {
+      handle: secondHandle,
+      title: null,
+      status: "active",
+      managementRevision: 1,
+      isSelected: false,
+      updatedAtMs: dayStart - 60_000,
+      // The exact plain-text form the Host's own projection yields for the
+      // marker-bearing opening `*The lantern was still lit.* {{user}}, the
+      // parsnips took.`, which the Host's contract test pins.
+      preview: "The lantern was still lit., the parsnips took.",
+    },
+  ];
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/chats?*", (route) => route.fulfill(json200({ apiVersion: 1, chats })));
+
+  await page.setViewportSize({ width: 400, height: 800 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+  const rows = surface.getByTestId("chat-item");
+  await expect(rows).toHaveCount(2);
+
+  const rowText = await rows.allTextContents();
+  // Before this change both of these were the single word `New chat`.
+  expect(rowText[0], "two Chats the player never named read as the same row").not.toBe(rowText[1]);
+  // The row carries the Host's own two facts verbatim: the thread's durable time as
+  // the catalogue's own relative word, and the last message as plain text. Paired per
+  // row and then ordered by preview, so the assertion cannot pass on the wrong row.
+  const pairs = (
+    await rows.evaluateAll((nodes: HTMLElement[]) =>
+      nodes.map((node) => ({
+        when: node.querySelector("[data-testid='chat-item-when']")?.textContent ?? null,
+        preview: node.querySelector("[data-testid='chat-item-preview']")?.textContent ?? null,
+      })),
+    )
+  ).sort((left, right) => String(left.preview).localeCompare(String(right.preview)));
+  expect(pairs).toEqual([
+    { when: "Today", preview: "Good morning, farmer. The valley is quiet today." },
+    { when: "Yesterday", preview: "The lantern was still lit., the parsnips took." },
+  ]);
+  for (const text of rowText) {
+    expect(text, "a row rendered transcript markup").not.toContain("*");
+    expect(text, "a row rendered an unresolved macro").not.toContain("{{");
+  }
+
+  // 400 px is the narrowest layout this surface ships in: the meta line wraps
+  // inside the card rather than pushing the row out of its own column.
+  const measured = await surface.evaluate((root) => {
+    const card = root.querySelector<HTMLElement>(".chat-item-card")!;
+    const meta = root.querySelector<HTMLElement>(".chat-item-meta")!;
+    return {
+      cardOverflow: Math.round(card.scrollWidth - card.clientWidth),
+      metaOverflow: Math.round(meta.scrollWidth - meta.clientWidth),
+      cardWidth: Math.round(card.getBoundingClientRect().width),
+      metaWidth: Math.round(meta.getBoundingClientRect().width),
+      metaLineHeight: getComputedStyle(meta).lineHeight,
+    };
+  });
+  console.log(`[chats-row-meta-400px] measured: ${JSON.stringify(measured)}`);
+  expect(measured.cardOverflow, `the row overflows its card by ${measured.cardOverflow} px`).toBeLessThanOrEqual(1);
+  expect(measured.metaOverflow, `the meta line overflows by ${measured.metaOverflow} px`).toBeLessThanOrEqual(1);
+  expect(measured.metaWidth).toBeLessThanOrEqual(measured.cardWidth);
+});
