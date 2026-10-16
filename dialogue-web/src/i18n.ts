@@ -136,7 +136,6 @@ const en = {
   memoryContent: "Memory content",
   editMemory: "Edit memory",
   archiveMemory: "Archive memory",
-  deleteMemory: "Delete memory",
   // Whose memory a row is. Shown as a badge so a player can tell their own writing from what the
   // companion remembers, and can audit or correct either.
   originPlayer: "I told her this",
@@ -678,7 +677,6 @@ const zh: Messages = {
   memoryContent: "记忆内容",
   editMemory: "编辑记忆",
   archiveMemory: "归档记忆",
-  deleteMemory: "删除记忆",
   originPlayer: "我告诉她的",
   originCompanion: "她自己记得的",
   memoryChapters: "她记得的长故事",

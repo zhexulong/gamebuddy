@@ -518,8 +518,8 @@ const UNREAD_RECORDED_DEBT = [
     keys: ["chatsEmpty", "memoryEmpty", "selected", "untitled", "voiceAccepted", "voiceRevoked", "voiceUndecided"],
   },
   {
-    reason: "the live Memory surface reads `components/memory-notebook-labels.ts`; these older words have no reader",
-    keys: ["deleteMemory", "semanticMemory"],
+    reason: "the live Memory surface reads `components/memory-notebook-labels.ts`; this older word has no reader",
+    keys: ["semanticMemory"],
   },
   {
     reason: "the game facts row renders connection/instance/world/save/compatibility/outcome only; these two have no reader",
