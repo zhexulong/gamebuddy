@@ -964,9 +964,14 @@ export function VoiceSettingsPanel({
               value={voiceView.preference.persona ?? ""}
               onChange={(event) => onSelectPersona(event.target.value === "" ? null : event.target.value)}
             >
-              {/* No persona leaves the gateway variable unset, which the
-                  extension distinguishes from an empty string. */}
-              <option value="">{labels.voicePersonaDefault}</option>
+              {/* No persona is "System default", and the option names the
+                  persona that default resolves to: the launcher sends the
+                  product's own default persona for an unset choice, so the
+                  label says whose voice the player will hear instead of
+                  promising a default it does not name. */}
+              <option value="">
+                {labels.voicePersonaDefault.replace("{{persona}}", personaLabel(DEFAULT_MIMO_PERSONA_ID, labels))}
+              </option>
               {MIMO_PERSONA_IDS.map((personaId) => (
                 <option key={personaId} value={personaId}>
                   {personaLabel(personaId, labels)}
