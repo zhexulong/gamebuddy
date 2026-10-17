@@ -245,12 +245,33 @@ export function Timeline({
       )}
       {/* The optimistic player message, appended to the reading flow the moment the
           player sends and cleared the moment the Host's own transcript carries the
-          same line. `data-pending` is that marker for the shell. */}
+          same line. `data-pending` is that marker for the shell.
+
+          It is the *same row* as the authoritative one - the same component, the
+          same avatar, bubble and measure - rendered outside the transcript's own
+          list rather than as one of its rows: the send journey asserts the list
+          carries none while this is visible, so a duplicate can never be the thing
+          that gets counted. Rendering it separately is what made sending jump: a
+          grey box the player wrote in became a wine bubble under a monogram. */}
       {pendingPlayerMessage !== null && (
-        <div className="message-optimistic" data-pending="true" data-testid="optimistic-player-message">
-          <span className="message-optimistic-role">{labels.you}</span>
-          <span className="message-optimistic-text">{pendingPlayerMessage.text}</span>
-          <span className="message-optimistic-state">{labels.chatSending}</span>
+        <div className="message-pending" data-pending="true" data-testid="optimistic-player-message">
+          <MessageBubble
+            as="div"
+            message={Object.freeze({
+              // The key is the send's own idempotency key, not a durable handle:
+              // this row is a local echo and never names a Host record.
+              handle: `pending_${pendingPlayerMessage.idempotencyKey}`,
+              role: "player" as const,
+              text: pendingPlayerMessage.text,
+              locale: "und" as const,
+              order: transcript.length,
+              revision: 0,
+            })}
+            companionName={companionName}
+            playerLabel={labels.you}
+            labels={labels}
+            waitingNote={labels.chatSending}
+          />
         </div>
       )}
     </section>

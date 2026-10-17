@@ -4288,57 +4288,48 @@
 
    The sent text is shown immediately, marked `data-pending`, and disappears the
    moment the Host's authoritative transcript for the same idempotency key lands.
-   Appended block; the rules above are untouched.
+
+   It is the authoritative row, not a second shape of one: `MessageBubble` renders
+   it (`as="div"`, outside the transcript's own list - the send journey asserts
+   the list carries none while it is visible), so the avatar, the bubble tone and
+   the measure are the same objects. What used to be here was a separate grey box
+   - its own padding, radius, 82% measure and three text spans - so the moment the
+   real message landed the player watched their line jump from a grey box into a
+   wine bubble under a monogram. Only two things remain this row's own: the dimming
+   beat, and the one word under the bubble saying the Host has not answered.
    ========================================================================== */
 
-  .message-optimistic {
+  .message-pending {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    align-self: flex-end;
-    max-width: 82%;
-    margin: 4px 0 0;
-    padding: 8px 12px;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    background-color: var(--surface-raised);
-    opacity: 0.72;
   }
 
-  .message-optimistic[data-pending] {
+  .message-pending[data-pending] {
     animation: message-optimistic-breathe 1.4s var(--motion-ease-smooth) infinite;
   }
 
-  .message-optimistic-role {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-disabled);
+  .message-waiting-row .message-bubble {
+    opacity: 0.72;
   }
 
-  .message-optimistic-text {
-    font-size: 14px;
-    color: var(--text-primary);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-
-  .message-optimistic-state {
+  .message-waiting {
     font-size: 11px;
     color: var(--text-secondary);
+    text-align: right;
   }
 
   @keyframes message-optimistic-breathe {
     0%,
     100% {
-      opacity: 0.72;
+      opacity: 1;
     }
     50% {
-      opacity: 0.5;
+      opacity: 0.72;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .message-optimistic[data-pending] {
+    .message-pending[data-pending] {
       animation: none;
     }
   }

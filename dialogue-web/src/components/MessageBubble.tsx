@@ -76,6 +76,8 @@ export const MessageBubble = memo(function MessageBubble({
   onOpeningVariant,
   pending = null,
   streaming = false,
+  waitingNote = null,
+  as = "li",
   labels,
 }: {
   message: BrowserMessageV1;
@@ -102,6 +104,24 @@ export const MessageBubble = memo(function MessageBubble({
    * character and the preview's and the committed message's bytes stay identical.
    */
   streaming?: boolean;
+  /**
+   * The optimistic player row's own word under the bubble ("sending"), while the
+   * Host has not answered yet.
+   *
+   * It exists so that row is this component rather than a second copy of it: the
+   * pending line and the authoritative one are the same row with the same avatar,
+   * bubble tone and geometry, so the moment the Host's transcript carries the
+   * message nothing moves. A separate markup path made that a visible jump - the
+   * grey box the player sent became a wine bubble under a monogram a moment later.
+   */
+  waitingNote?: string | null;
+  /**
+   * The element the row renders as. The transcript's rows are `<li>` of its own
+   * `<ol>`; the optimistic row is the same presentation *outside* that list,
+   * because it is not one of the transcript's rows (the send journey asserts the
+   * list carries none while it is visible), so its caller renders it as a `<div>`.
+   */
+  as?: "li" | "div";
   labels: Readonly<{
     swipeNavigation: string;
     swipePrevious: string;
@@ -134,12 +154,14 @@ export const MessageBubble = memo(function MessageBubble({
   // the surface's own language. `und` paints nothing (browserMessageLanguageTag),
   // so the document's language still styles a CJK beat through `:lang(zh)`.
   const languageTag = browserMessageLanguageTag(message.locale);
+  const Row = as;
 
   return (
-    <li
-      className={`message ${isPlayer ? "player" : "companion"}`}
+    <Row
+      className={`message ${isPlayer ? "player" : "companion"}${waitingNote === null ? "" : " message-waiting-row"}`}
       data-handle={message.handle}
       {...(busy ? { "aria-busy": "true" as const, "data-pending": pending } : {})}
+      {...(waitingNote === null ? {} : { "aria-busy": "true" as const, "data-waiting": "true" as const })}
       {...(streaming ? { "data-streaming": "true" as const } : {})}
     >
       {/* The avatar is the row's first child on both sides, and the player's
@@ -252,9 +274,14 @@ export const MessageBubble = memo(function MessageBubble({
                 {labels.regenerateVariant}
               </button>
             )}
+            {waitingNote !== null && (
+              <span className="message-waiting" role="status">
+                {waitingNote}
+              </span>
+            )}
           </div>
         )}
       </div>
-    </li>
+    </Row>
   );
 });

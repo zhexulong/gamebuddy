@@ -5296,10 +5296,32 @@ test("sending shows the player's text immediately with a pending marker, then co
   // the invitation to start one.
   await expect(surface.locator("[data-empty-anchor]")).toHaveCount(0);
 
+  // …and it is already **the row** the authoritative message will be, not a
+  // second shape of one: same avatar, same bubble tone and radius, same measure.
+  // The defect this pins: the pending text used to be a grey box of its own, so
+  // sending made the player's own line jump into a wine bubble on landing.
+  const pendingRow = await readPlayerRow(optimistic);
+
   // The authoritative message lands: the pair collapses to exactly one message and the optimistic
   // entry is gone (never a duplicate).
   await expect(optimistic).toHaveCount(0);
-  await expect(surface.locator(".message-list > li", { hasText: playerText })).toHaveCount(1);
+  const settled = surface.locator(".message-list > li", { hasText: playerText });
+  await expect(settled).toHaveCount(1);
+  const settledRow = await readPlayerRow(settled);
+  console.log(`[optimistic row] pending=${JSON.stringify(pendingRow)} settled=${JSON.stringify(settledRow)}`);
+  expect(pendingRow.isPlayerRow, "the pending line is a player row").toBe(true);
+  expect(pendingRow.hasAvatar, "and it carries the same monogram the settled row does").toBe(settledRow.hasAvatar);
+  expect(pendingRow.bubbleBackground, "the bubble is the same tone before and after").toBe(settledRow.bubbleBackground);
+  expect(pendingRow.bubbleRadius, "and the same shape").toBe(settledRow.bubbleRadius);
+  expect(pendingRow.bubbleFontSize, "and the same type").toBe(settledRow.bubbleFontSize);
+  expect(
+    Math.abs(pendingRow.bubbleRight - settledRow.bubbleRight),
+    `and the same right edge (${pendingRow.bubbleRight} vs ${settledRow.bubbleRight})`,
+  ).toBeLessThanOrEqual(8);
+  expect(
+    Math.abs(pendingRow.bubbleWidth - settledRow.bubbleWidth),
+    `and the same measure (${pendingRow.bubbleWidth} vs ${settledRow.bubbleWidth})`,
+  ).toBeLessThanOrEqual(8);
   await expect(surface.locator("[data-empty-anchor]")).toHaveCount(0);
 
   // A reload re-reads the authoritative transcript and leaves no optimistic ghost.
@@ -5810,3 +5832,32 @@ test("the composed conversation opens the projected event stream, previews a del
   await expect.poll(() => stateReads).toBe(2);
   await expect(surface).not.toContainText("Unable to read chat");
 });
+
+/**
+ * One player row's own shape, read from the row itself.
+ *
+ * It exists so the send journey can compare the optimistic row with the settled
+ * one on the things a player actually sees change: the monogram beside the
+ * bubble, the bubble's tone, radius, type and measure.
+ */
+async function readPlayerRow(row: import("@playwright/test").Locator) {
+  return await row.evaluate((node) => {
+    // The caller may hand this either the row itself or the block that carries it
+    // (the optimistic line's marker element wraps the row), so the row is found
+    // rather than assumed.
+    const element = node.classList.contains("message") ? node : (node.querySelector(".message") ?? node);
+    const bubble = element.querySelector<HTMLElement>(".message-bubble");
+    const avatar = element.querySelector<HTMLElement>(".avatar");
+    const box = bubble?.getBoundingClientRect() ?? null;
+    const style = bubble === null || bubble === undefined ? null : getComputedStyle(bubble);
+    return {
+      isPlayerRow: element.classList.contains("player"),
+      hasAvatar: avatar !== null && (avatar.textContent ?? "").trim().length > 0,
+      bubbleBackground: style?.backgroundColor ?? null,
+      bubbleRadius: style?.borderRadius ?? null,
+      bubbleFontSize: style?.fontSize ?? null,
+      bubbleWidth: Math.round(box?.width ?? 0),
+      bubbleRight: Math.round(box?.right ?? 0),
+    };
+  });
+}
