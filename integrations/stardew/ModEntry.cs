@@ -1416,6 +1416,7 @@ public sealed partial class ModEntry : Mod
                 // line saying why. Named here for the same reason the probe gates are.
                 this.LogBlockedTickReasonOnce("this world no longer satisfies the configured native-local player scope");
                 this.PumpBridgeWhileBodyOwned();
+                this.MarkTickPhase("idle_between_ticks");
                 return;
             }
             this.LogNativeLocalPlayerReadinessIfBlocked();
@@ -1439,6 +1440,7 @@ public sealed partial class ModEntry : Mod
             nativeLocalState.BodyProgramController?.Update();
             this.npcDialoguePager?.Observe(nativeLocalState.BridgeSession);
             this.PublishPendingStopObservation(nativeLocalState);
+            this.MarkTickPhase("idle_between_ticks");
             return;
         }
         this.TryInitializeNativeFixtureScenario();
