@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -51,6 +52,16 @@ import {
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ADR = join(REPO, "design", "adr", "0010-unified-in-flight-action-rule.md");
+/**
+ * ADR-0010 lives in the separately mounted private `design/` repository (AGENTS.md), and a plain
+ * repository checkout does not create it - so the case that derives its requirement FROM the ADR
+ * skips with a named reason instead of failing on a missing fixture. That is the same disposition
+ * `tools/check-gameplay-capability-catalog.test.mjs` records for its own design mount; the cases
+ * that assert against this repository's own sources stay unconditional.
+ */
+const designAdrSkipReason = existsSync(ADR)
+  ? false
+  : "requires the design/ reference mount (design/adr/0010-unified-in-flight-action-rule.md), which a repository checkout does not create";
 
 /**
  * The Class B action ids the ADR itself names, read from the `### Class B`
@@ -388,7 +399,7 @@ test("ADR-0010 Class B: no Host module re-wires a turn-state reader into a Class
   );
 });
 
-test("ADR-0010 Class B: every action the ADR names succeeds with a turn in flight and leaves the turn alone", async () => {
+test("ADR-0010 Class B: every action the ADR names succeeds with a turn in flight and leaves the turn alone", { skip: designAdrSkipReason }, async () => {
   // 1. The requirement is the ADR's, not this file's: derive it and prove the
   //    table covers exactly it. A Class B action added to the ADR without a
   //    request here is the failure this catches.
