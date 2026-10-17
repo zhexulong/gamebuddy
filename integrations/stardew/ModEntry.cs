@@ -44,6 +44,33 @@ public sealed partial class ModEntry : Mod
         }
     }
 
+    /// <summary>
+    /// Service the bridge while an exclusive body owner (a probe or the sleep lifecycle) holds the actor.
+    ///
+    /// The exclusive gates used to <c>return</c> before the drain, which DEADLOCKED the night: the sleep lifecycle
+    /// waits for <c>DayStarted</c>, <c>DayStarted</c> needs the end-of-night menus closed, and the menu holding it
+    /// (<c>LevelUpMenu</c>, pushed by the same call site as the settlement menu) can only be closed by a BRIDGE
+    /// REQUEST. With the pipe undrained that request was never answered, so the lifecycle waited on a step only it
+    /// could unblock - measured 2026-10-17 on run g17: the lifecycle repeated
+    /// <c>still in AwaitingDayStart</c> while <c>menu=LevelUpMenu</c> stayed open and every <c>respond_level_up</c>
+    /// (the harness's own, and the companion's) came back <c>bridge_connect_deadline_exceeded</c>.
+    ///
+    /// Ownership of the ACTOR is untouched: this pumps the connection and the execution state machine, so a request
+    /// that wants the body is refused by the body owner exactly as before - as a receipt, never as silence.
+    /// </summary>
+    private void PumpBridgeWhileBodyOwned()
+    {
+        ScreenEmbodimentState state = this.GetEmbodimentState();
+        this.ObserveBridgeGeneration(state);
+        this.ObserveNativeChatPipeDeliveries(state);
+        this.ObserveNavigationPipeDeliveries(state);
+        this.ObserveExecutionResponsePipeDeliveries(state);
+        this.ObserveTerminalReceiptDeliveries(state);
+        this.DrainLocalPipeBridge(state);
+        this.LogNativeLocalPipelineHeartbeat();
+        state.Executions?.Update();
+    }
+
 
     /// <summary>
     /// Launcher-injected per-launch generation for the formal AI Farmhand
@@ -1267,6 +1294,7 @@ public sealed partial class ModEntry : Mod
                 // never completes stops processing every future request while the process stays alive, and silence
                 // is indistinguishable from a frozen world (measured 2026-10-17: a run's Mod log simply stopped).
                 this.LogBlockedTickReasonOnce("the path-predicate probe owns the actor and has not completed");
+                this.PumpBridgeWhileBodyOwned();
                 return;
             }
             // The M2 sleep-modal probe owns the actor's route and the (P2)
@@ -1277,6 +1305,7 @@ public sealed partial class ModEntry : Mod
                 if (this.sleepModalProbe.Update())
                     this.sleepModalProbe = null;
                 this.LogBlockedTickReasonOnce("the sleep-modal probe owns the actor and has not completed");
+                this.PumpBridgeWhileBodyOwned();
                 return;
             }
             // The single-player cross-day lifecycle is the other exclusive body
@@ -1287,6 +1316,7 @@ public sealed partial class ModEntry : Mod
                 if (this.sleepLifecycle.Update())
                     this.sleepLifecycle = null;
                 this.LogBlockedTickReasonOnce("the cross-day sleep lifecycle owns the actor and has not completed");
+                this.PumpBridgeWhileBodyOwned();
                 return;
             }
             this.TryInitializeEmbodiment();
