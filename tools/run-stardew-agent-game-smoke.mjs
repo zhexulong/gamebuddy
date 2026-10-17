@@ -175,7 +175,7 @@ try {
   const evidenceComplete = hasMatchingEquipToolEvidence(evidenceDetail);
   // A trace-only diagnostic must never turn a failed/rejected/uncertain
   // receipt into a zero-exit success. It is allowed to prove only that the
-  // expected observation/status/todo path ran and no action receipt claims
+  // expected observation/status path ran and no action receipt claims
   // success; live action acceptance remains a separate gate.
   const traceTerminalReceipt =
     receipt === null || ["blocked", "cancelled", "expired", "failed", "rejected", "uncertain"].includes(receipt.state);
@@ -183,7 +183,6 @@ try {
     traceOnly &&
     agentTools.includes("stardew_observe") &&
     agentTools.includes("stardew_execution_status") &&
-    agentTools.includes("todowrite") &&
     agentSettled.length > 0 &&
     traceTerminalReceipt;
   const passed = receipt?.state === "succeeded" && receipt.reasonCode === "tool_equipped" && evidenceComplete;

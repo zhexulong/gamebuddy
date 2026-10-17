@@ -615,7 +615,7 @@ test("runtime mounts a fake integration through the module port", async () => {
   try {
     assert.deepEqual(
       runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
-      ["arcade_activate_console", "companion_status", "todowrite"],
+      ["arcade_activate_console", "companion_status"],
     );
     const manifest = JSON.parse(
       await readFile(runtime.paths.runManifestPath, "utf8"),
@@ -633,7 +633,7 @@ test("runtime mounts a fake integration through the module port", async () => {
     integrationState.capabilities = [];
     assert.deepEqual(
       runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
-      ["arcade_activate_console", "companion_status", "todowrite"],
+      ["arcade_activate_console", "companion_status"],
     );
     const withdrawn = runtime.session.agent.state.tools.find(
       (tool) => tool.name === "arcade_activate_console",
@@ -1267,7 +1267,6 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
             "stardew_water_crop",
             "stardew_water_pet_bowl",
             "stardew_water_slime_hutch_trough",
-            "todowrite",
           ],
         );
       } finally {
@@ -1454,7 +1453,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
   try {
     assert.deepEqual(
       runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
-      ["companion_status", "todowrite"],
+      ["companion_status"],
     );
     assert.equal(runtime.extensions.length, 1);
     assert.equal(
@@ -1482,7 +1481,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
     // Owner ruling C4: the historian is tool-less by upstream's default, so the Host no longer writes
     // `disallowed_tools` at all - the key survived only as a no-op, and `expand_tools` stays off.
     assert.equal("disallowed_tools" in config.historian, false);
-    assert.deepEqual(config.todowrite, { enabled: true, overlay: false });
+    assert.deepEqual(config.todowrite, { enabled: false, overlay: false });
     // Owner ruling D: narrow-open Dreamer (memory hygiene only).
     assert.equal(config.dreamer.disable, false);
     assert.equal(config.dreamer.inject_docs, false);
@@ -1602,7 +1601,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
     assert.match(resumedEntries, /gamebuddy_test_event/);
     assert.deepEqual(
       resumed.session.agent.state.tools.map((tool) => tool.name).sort(),
-      ["companion_status", "todowrite"],
+      ["companion_status"],
     );
   } finally {
     resumed.session.dispose();
