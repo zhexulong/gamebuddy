@@ -35,6 +35,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { classifyPathEntry, listStardewProcessIds, removeSandboxTree } from "./lib/windows-process-tree.mjs";
+import { appendLaneOutput, laneDiagnosis, liveLaneVerdict } from "./lib/lane-diagnosis.mjs";
 
 const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/u, "$1");
 const RELEASE_DIR = join(REPO, "integrations", "stardew", "bin", "Release", "net6.0");
@@ -312,36 +313,15 @@ function cleanupChecks() {
  * same shape the launcher used to have for teardown (identify a process by image name instead of by the exact PID
  * this run launched) - which is why the plan's Lane A-4 requires per-lane PID accounting in the first place.
  */
-/**
- * The most useful thing a failed lane said, in one bounded line.
- *
- * PowerShell wraps an exception across several decorated lines, so the LAST line is usually a `~~~~` underline. The
- * message is the line that names a cause, so the first line carrying a known marker is preferred, and the tail is
- * the fallback.
- */
-function laneDiagnosis(stderr) {
-  const lines = String(stderr)
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !/^[~^\s]+$/u.test(line));
-  const named = lines.find((line) =>
-    /Native-local|native_local_|scenario_fixture_mismatch|bridge_enablement|Throw|Exception|Error:/u.test(line),
-  );
-  return (named ?? lines.at(-1) ?? "no_output").slice(0, 300);
-}
-
-function classifyLaneFailure(reported) {
-  const text = String(reported);
-  if (/exactly one SMAPI process/u.test(text)) return "exactly_one_smapi_process";
-  if (/pipe was not ready/u.test(text)) return "bridge_pipe_not_ready";
-  return null;
-}
-
 async function liveLanes() {
   const laneA = makeSandbox("live-a", { PipeName: PIPE_A });
   const laneB = makeSandbox("live-b", { PipeName: PIPE_B });
-  let liveOutcome = "unknown";
-  liveVerdict = liveOutcome;
+  const slotsRoot = join(process.env.APPDATA ?? "", "StardewValley", "Saves");
+  const slotsBefore = new Set(
+    readdirSync(slotsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name),
+  );
   const before = {
     steamMods: fingerprintKey(treeFingerprint(STEAM_MODS)),
     profile: fingerprintKey(treeFingerprint(SOURCE_PROFILE)),
@@ -353,6 +333,7 @@ async function liveLanes() {
   const results = lanes.map(({ lane, slot }) => ({
     lane,
     slot,
+    bootstrap: "",
     resultFile: join(lane.root, "result.json"),
     exitCode: null,
     stderr: "",
@@ -394,8 +375,14 @@ async function liveLanes() {
               ],
               { cwd: REPO, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env } },
             );
+            // BOTH streams: PowerShell's formatted exception display goes to stdout, so capturing stderr alone left
+            // a failed lane with "no output" and no cause to name.
+            child.stdout.on("data", (chunk) => {
+              entry.stderr = appendLaneOutput(entry.stderr, chunk);
+              entry.bootstrap = appendLaneOutput(entry.bootstrap, chunk);
+            });
             child.stderr.on("data", (chunk) => {
-              entry.stderr = (entry.stderr + String(chunk)).slice(-2000);
+              entry.stderr = appendLaneOutput(entry.stderr, chunk);
             });
             child.on("close", (code) => {
               entry.exitCode = code;
@@ -405,11 +392,8 @@ async function liveLanes() {
       ),
     );
 
-    const laneFailures = [];
     for (const entry of results) {
       const reported = existsSync(entry.resultFile) ? JSON.parse(readFileSync(entry.resultFile, "utf8")) : null;
-      const cause = classifyLaneFailure(entry.stderr);
-      if (cause !== null) laneFailures.push(cause);
       check(`lane_${entry.lane.name}_reached_a_result`, reported !== null, laneDiagnosis(entry.stderr));
       // A lane that passed is a lane that ran; a lane that did not reports the cause it named.
       if (reported !== null)
@@ -427,29 +411,37 @@ async function liveLanes() {
         slotDirs.join(","),
       );
     }
-    const bothRan = results.every((entry) => existsSync(entry.resultFile));
-    const serialization = [...new Set(laneFailures)].sort().join("+");
-    if (bothRan) liveOutcome = "ran";
-    else if (serialization.length > 0) liveOutcome = `isolated_lanes_cannot_run_concurrently:${serialization}`;
-    else liveOutcome = "isolated_lanes_failed_for_an_unnamed_reason";
-    check(
-      "steam_mods_untouched_by_two_parallel_lanes",
-      before.steamMods === fingerprintKey(treeFingerprint(STEAM_MODS)),
-      STEAM_MODS,
-    );
-    check(
-      "source_profile_untouched_by_two_parallel_lanes",
-      before.profile === fingerprintKey(treeFingerprint(SOURCE_PROFILE)),
-      SOURCE_PROFILE,
-    );
+    // Nothing outside the lanes' own sandboxes was written, by either lane.
+    const after = {
+      steamMods: fingerprintKey(treeFingerprint(STEAM_MODS)),
+      profile: fingerprintKey(treeFingerprint(SOURCE_PROFILE)),
+    };
+    check("steam_mods_untouched_by_two_parallel_lanes", before.steamMods === after.steamMods, STEAM_MODS);
+    check("source_profile_untouched_by_two_parallel_lanes", before.profile === after.profile, SOURCE_PROFILE);
     check(
       "no_lock_residue_in_either_lane",
       results.every((entry) => !existsSync(join(entry.lane.root, LOCK_DIRECTORY))),
       results.map((entry) => existsSync(join(entry.lane.root, LOCK_DIRECTORY))).join(","),
     );
+    // Every slot this run created belongs to one of its lanes: no lane wrote anywhere else.
+    const slotsAfter = new Set(
+      readdirSync(slotsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name),
+    );
+    const created = [...slotsAfter].filter((name) => !slotsBefore.has(name));
+    check(
+      "every_new_slot_belongs_to_a_lane_that_ran",
+      created.every((name) => results.some((entry) => name.startsWith(entry.slot))),
+      created.join(","),
+    );
     // THE ORPHAN ASSERTION: a lane that reclaimed its launch tree leaves nothing behind for the NEXT lane.
     const survivors = listStardewProcessIds();
     check("zero_surviving_game_processes", survivors.length === 0, survivors.join(","));
+    liveVerdict = liveLaneVerdict({
+      lanesRan: results.every((entry) => existsSync(entry.resultFile)),
+      outcomes: results.map((entry) => entry.stderr),
+    });
   } finally {
     for (const { lane } of lanes) removeSandboxTree(lane.root);
   }
