@@ -131,6 +131,7 @@
     "dismount_transport",
     "dismiss_modal",
     "answer_dialogue",
+    "respond_level_up",
     "advance_day",
     "send_multiplayer_chat",
     "color_placed_object",
@@ -1525,7 +1526,31 @@
       "requiredLiveTopology": "single_player_native_companion"
     },
     {
-      "actionId": "answer_dialogue",
+    "actionId": "respond_level_up",
+    "lifecycle": "live_verified",
+    "seams": [
+      {
+        "kind": "native",
+        "file": "StardewValley.Menus/LevelUpMenu.cs",
+        "signature": "public void okButtonClicked()",
+        "sensitivity": "mp-insensitive",
+        "modeNeutralReason": "okButtonClicked settles the LOCAL player's own level: getLevelPerk writes that player's stats and mail, RemoveLevelFromLevelList drops the menu's own newLevels entry, and the two flags are client-side UI. No shared-world state is read or written."
+      },
+      {
+        "kind": "native",
+        "file": "StardewValley.Menus/LevelUpMenu.cs",
+        "signature": "public void getImmediateProfessionPerk(int whichProfession)",
+        "sensitivity": "mp-insensitive",
+        "modeNeutralReason": "getImmediateProfessionPerk adds the chosen profession id to the local player's own professions set and applies its immediate stat effects; the body forks on nothing world-mode related. THAT THE FIELD IS A SYNCED NetIntHashSet is a propagation question for a shared world, not a fork in this method, and this action's live evidence so far is single-player only - which `requiredLiveTopology` states."
+      }
+    ],
+    "admission": {
+      "verdict": "admits_multiplayer"
+    },
+    "requiredLiveTopology": "single_player_native_companion"
+  },
+  {
+    "actionId": "answer_dialogue",
       "lifecycle": "live_verified",
       "seams": [
         {
