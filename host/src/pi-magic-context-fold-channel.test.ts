@@ -20,6 +20,19 @@ import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createCompanionRuntime, type CompanionIdentity } from "./runtime.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
+/**
+ * The root these cases build in: the same shape the Host's own launcher uses, because the
+ * product verifies it. `%LOCALAPPDATA%` on Windows - a path the OS authored, so it is already
+ * canonical - falling back to the temp directory elsewhere. Canonicalizing `tmpdir()` alone is
+ * NOT enough on a CI runner (measured: the same cases still failed `unsafe_path_boundary` with
+ * that fix in place), which is why this follows `settings/player-preference-store.test.ts` and the
+ * wire fixture: build where the product builds, not where the runner happens to point TMP.
+ */
+function canonicalRootParent(): string {
+  const root = process.platform === "win32" ? (process.env.LOCALAPPDATA ?? tmpdir()) : tmpdir();
+  return realpathSync(root);
+}
+
 const identity: CompanionIdentity = Object.freeze({
   continuityId: "continuity_01",
   playerId: "player_01",
@@ -60,7 +73,7 @@ function findUserConfig(root: string): Record<string, unknown> {
 async function constructAndReadConfig(
   env: Partial<Record<(typeof CHANNEL_KEYS)[number], string>>,
 ): Promise<Record<string, unknown>> {
-  const root = mkdtempSync(join(realpathSync(tmpdir()), "gamebuddy-fold-channel-"));
+  const root = mkdtempSync(join(canonicalRootParent(), "gamebuddy-fold-channel-"));
   const previous = CHANNEL_KEYS.map((key) => [key, process.env[key]] as const);
   for (const key of CHANNEL_KEYS) delete process.env[key];
   Object.assign(process.env, env);
