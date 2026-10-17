@@ -132,6 +132,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      # The host suite's receipt-parity case shells out to `dotnet test --no-restore` over
+      # GameBuddy.Stardew.Core.Tests, so those projects must be restored first - the same
+      # restore the stardew-scaffold job runs before its C# suites. Without it the case fails
+      # on an absent project.assets.json, which the suite reports as
+      # stardew_receipt_parity_dotnet_failed (measured: FAIL before this step, PASS after).
+      - run: dotnet restore GameBuddy.sln --locked-mode
       # The host suite resolves its `bun` test-dependency invocation from this variable and
       # deliberately refuses the npm bun.ps1 shim on PATH (fixed argv cannot execute it), so a bare
       # `bun` on PATH is not enough. Measured as `test_dependency_bun_executable_unset` when this
