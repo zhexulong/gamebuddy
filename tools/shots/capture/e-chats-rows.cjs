@@ -127,9 +127,11 @@ const forceLongPreview = () => {
   say("=== ITEM: 会话 rows as the surface opens ===");
   say(JSON.stringify(facts, null, 1));
 
+  let landedInChat = null;
   while (facts.rowCount < 2) {
     const created = await page.evaluate(() => {
       const surface = document.querySelector('[data-testid="chats-surface"]');
+      if (surface === null) return "no_chats_surface";
       const button = [...surface.querySelectorAll("button")].find((candidate) => (candidate.textContent ?? "").includes("新建会话"));
       if (button === undefined) return "no_create_button";
       button.click();
@@ -138,10 +140,24 @@ const forceLongPreview = () => {
     say("create another conversation:", created);
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await page.waitForTimeout(1500);
+      // Creating a Chat now lands IN it: the shell selects the new conversation and moves
+      // the region to the chat surface, so the list is not on screen any more. Recorded
+      // here as the fact it is (this driver used to read the list straight after the
+      // click, which is what made it throw on a null `chats-surface`), and the list is
+      // asked for again below before the rows are read.
+      landedInChat = await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null);
+      if (landedInChat) break;
       facts = await page.evaluate(readRows);
       if (facts.rowCount >= 2) break;
     }
-    if (created === "no_create_button") break;
+    if (created !== "clicked") break;
+    if (landedInChat === true) {
+      say("create landed in the new Chat (the shell selected it), so the list is re-opened:", landedInChat);
+      const reopened = await activateSurface(page, "会话");
+      say("re-opened the Chats surface:", reopened);
+      await page.waitForTimeout(1200);
+      facts = await page.evaluate(readRows);
+    }
   }
 
   say("=== ITEM: rows with two conversations (both must be UNNAMED here) ===");

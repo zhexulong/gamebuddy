@@ -21,6 +21,10 @@ const DRIVERS = [
   { key: "i-followup", file: "i-followup.cjs", out: "i-followup.txt" },
   { key: "j-card-import", file: "j-card-import.cjs", out: "j-card-import.txt" },
   { key: "k-chat-select", file: "k-chat-select.cjs", out: "k-chat-select.txt" },
+  // The surfaces the overnight work added or changed, so a new feature lands with a driver that
+  // measures it rather than only with a screenshot nobody can read back: the companion's picture,
+  // the read-only inspector, and the World Info library's authoring panel.
+  { key: "l-new-surfaces", file: "l-new-surfaces.cjs", out: "l-new-surfaces.txt" },
 ];
 
 async function exists(path) {
