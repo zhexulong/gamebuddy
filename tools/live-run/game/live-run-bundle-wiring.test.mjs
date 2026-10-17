@@ -113,6 +113,21 @@ test("a transport that dies mid-run is recorded, and is its own verdict", () => 
   assert.match(SOURCE, /bridgeDisconnections,/);
 });
 
+test("a disposable root lives in the repository's own scratch area, never the product root", () => {
+  // The product's durable runtime root must never be the target of a test, and the OS temp tree is shared with
+  // every other tool. Memory writes and voice preferences made by a run belong in `.tmp/` (git-ignored).
+  assert.match(
+    SOURCE,
+    /const disposableParent = join\(fileURLToPath\(new URL\("\.\.\/\.\.\/\.\.", import\.meta\.url\)\), "\.tmp"\);/,
+  );
+  assert.match(SOURCE, /await mkdir\(disposableParent, \{ recursive: true \}\);/);
+  assert.match(
+    SOURCE,
+    /const root = usesDisposableRoot \? await mkdtemp\(join\(disposableParent, "gamebuddy-agent-ab-"\)\) : configuredRuntimeRoot;/,
+  );
+  assert.doesNotMatch(SOURCE, /from "node:os"/);
+});
+
 test("the launcher and the runner agree about the window mode the bundle reports", () => {
   // Measured live 2026-10-16: the launcher set only GAMEBUDDY_LADDER_WINDOW_MODE (which the ORCHESTRATOR reads
   // for the game child), so the runner believed it was `visible`, left GPU/resolution null and still claimed

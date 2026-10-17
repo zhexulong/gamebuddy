@@ -23,7 +23,6 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
@@ -1268,7 +1267,14 @@ const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge
 // The runtime root is the operator's durable root when one is configured; otherwise this run OWNS a disposable
 // temporary root (and therefore the principal written into its manifest).
 const usesDisposableRoot = !usesConfiguredRuntimeRoot;
-const root = usesDisposableRoot ? await mkdtemp(join(tmpdir(), "gamebuddy-agent-ab-")) : configuredRuntimeRoot;
+// A disposable root lives in the repository's own scratch area (`.tmp/`, git-ignored) rather than the OS temp
+// directory. Two reasons, both about not touching anything durable: the product's real runtime root must never be
+// the target of a test, and the OS temp tree is shared with every other tool on the machine. Memory writes and
+// voice preferences made by a run therefore land in `.tmp/` and nowhere else, and a run that wants the DURABLE
+// root has to say so explicitly with GAMEBUDDY_RUNTIME_ROOT.
+const disposableParent = join(fileURLToPath(new URL("../../..", import.meta.url)), ".tmp");
+await mkdir(disposableParent, { recursive: true });
+const root = usesDisposableRoot ? await mkdtemp(join(disposableParent, "gamebuddy-agent-ab-")) : configuredRuntimeRoot;
 const runtimeRoot = usesDisposableRoot ? join(root, "runtime") : root;
 await mkdir(join(runtimeRoot, "settings"), { recursive: true });
 // The reviewed live-run persona, provisioned by the product's own file convention
