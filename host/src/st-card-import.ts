@@ -3,6 +3,7 @@ import type { IdentityProfile } from "./identity-profile.js";
 import { hasUnrenderedMacro, macroTable, renderMacros, renderWorldBookText } from "./tavern/macro-engine.js";
 import { DEFAULT_COMPANION_LOCALE, type CompanionLocale } from "./settings/player-preference-store.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
+import { isCompletePngFile } from "./tavern/companion-avatar/index.js";
 import { MAX_WORLDBOOK_SCAN_DEPTH, type WorldBookEntry } from "./worldbook.js";
 
 const MAX_JSON_DEPTH = ST_CARD_DECODER_LIMITS_V1.jsonDepth;
@@ -155,6 +156,43 @@ export function decodeStCard(input: string | Uint8Array): StCardImportReport {
   }
   if (!isRecord(value)) return rejected(source, "root", "card_must_be_an_object");
   return reportFromValue(value, source);
+}
+
+/**
+ * A PNG card whose image the import could not keep, and why. This is the one
+ * avatar fact the player is told about, because a companion who silently has no
+ * picture reads as a card that never had one.
+ *
+ * There is no `too large` member on purpose: the avatar is the card file, so the
+ * decoder's own PNG ceiling (`ST_CARD_DECODER_LIMITS_V1.inputBytesPng`, which is
+ * also `MAX_COMPANION_AVATAR_BYTES`) bounds both, and a card past it is refused
+ * whole - by name, as `input_too_large`, before any avatar question arises.
+ */
+export type StCardAvatarDropReason = "avatar_malformed";
+
+/**
+ * The card's own picture, decided from the bytes the card arrived as.
+ *
+ * The avatar IS the card: for a PNG card the image and the `tEXt` chunk carrying
+ * the card are the same object, so there is nothing to extract - only a decision
+ * about whether these bytes are a picture at all. A `.json` card has none
+ * (`absent`), and a PNG that is not a structurally complete container (`no IHDR
+ * first, no IEND, a chunk length past the end of the file`) is dropped by name
+ * rather than stored as a file no browser could render. That last case is real:
+ * the decoder finds its `tEXt` chunk wherever it lies, so a card can be perfectly
+ * importable while its image is not a picture.
+ */
+export type StCardAvatarDecision =
+  | Readonly<{ state: "present"; bytes: Uint8Array }>
+  | Readonly<{ state: "absent" }>
+  | Readonly<{ state: "dropped"; reason: StCardAvatarDropReason }>;
+
+export function stCardAvatar(input: string | Uint8Array): StCardAvatarDecision {
+  const bytes = typeof input === "string" ? Buffer.from(input, "utf8") : input;
+  if (!isPng(bytes)) return Object.freeze({ state: "absent" });
+  return isCompletePngFile(bytes)
+    ? Object.freeze({ state: "present", bytes })
+    : Object.freeze({ state: "dropped", reason: "avatar_malformed" });
 }
 
 /** Backwards-compatible preview helper for already-decoded JSON values. */

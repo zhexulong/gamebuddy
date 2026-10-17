@@ -354,6 +354,30 @@ export type CompanionVoiceV1 = Readonly<{
 export type UpdateCompanionVoiceCommandV1 =
   | Readonly<{ apiVersion: 1; expectedProfileRevision: number; text: string }>
   | Readonly<{ apiVersion: 1; expectedProfileRevision: number; clear: true }>;
+/**
+ * The largest card file the stage route accepts, mirroring the Host's own limit
+ * (`ST_CARD_DECODER_LIMITS_V1.inputBytesPng`, the card decoder's PNG input
+ * ceiling). A PNG card IS its picture - the image and the `tEXt` chunk holding
+ * the card are one file - so the number that bounds an importable card bounds
+ * its picture too. The picker refuses a larger file before reading a byte of it,
+ * and the PNG arm's payload is bounded by this same number, base64-inflated.
+ */
+export const MAX_CARD_FILE_BYTES = 32 * 1024 * 1024;
+const MAX_CARD_FILE_BASE64_CHARS = Math.ceil(MAX_CARD_FILE_BYTES / 3) * 4;
+
+/**
+ * `character.import.stage`'s body, mirrored from the Host's own union.
+ *
+ * A `.json` card is its own text. A PNG card is the WHOLE picked file, base64:
+ * the picture and the card are the same object, so sending them as two fields
+ * would assert a pairing the Host cannot check. One payload, one parser, one
+ * authority - the Host's decoder reads the card's fields and its picture out of
+ * the bytes the Host itself received.
+ */
+export type StageStCardImportCommandV1 =
+  | Readonly<{ apiVersion: 1; cardSource: "json"; card: string }>
+  | Readonly<{ apiVersion: 1; cardSource: "png"; cardFileBase64: string }>;
+
 export type StCardImportFieldSummaryV1 = Readonly<{
   field: string;
   eligibility: "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
@@ -1241,6 +1265,25 @@ const RECOMMENDED_MODEL_KEYS = [
 ] as const;
 const MODEL_PROFILE_UPDATE_KEYS = ["apiVersion", "surface", "expectedRevision", "modelId", "thinkingLevel"] as const;
 const MODEL_PROFILE_SURFACES = ["chat", "game"] as const;
+const STAGE_ST_CARD_IMPORT_JSON_KEYS = ["apiVersion", "cardSource", "card"] as const;
+const STAGE_ST_CARD_IMPORT_PNG_KEYS = ["apiVersion", "cardSource", "cardFileBase64"] as const;
+
+/**
+ * The stage command as the browser intends to send it. Both arms are refused
+ * before the request leaves: a payload the Host would reject is not sent, and an
+ * over-large one is never read into memory in the first place.
+ */
+function isStageStCardImportCommand(value: unknown): value is StageStCardImportCommandV1 {
+  if (!isRecord(value) || value.apiVersion !== TAVERN_BROWSER_API_VERSION) return false;
+  if (value.cardSource === "json")
+    return hasExactKeys(value, STAGE_ST_CARD_IMPORT_JSON_KEYS) && isLengthBoundedString(value.card, 1, 2_097_152);
+  if (value.cardSource === "png")
+    return (
+      hasExactKeys(value, STAGE_ST_CARD_IMPORT_PNG_KEYS) &&
+      isLengthBoundedString(value.cardFileBase64, 1, MAX_CARD_FILE_BASE64_CHARS)
+    );
+  return false;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -2878,7 +2921,7 @@ export type ManagementPipelineApi = Readonly<{
     csrfToken: string,
   ): Promise<ChatRetentionResultV1>;
   /** POST /api/tavern/v1/imports: stage a character card for review (design/28 Import row). */
-  stageStCardImport(card: string, csrfToken: string): Promise<StCardImportStageResultV1>;
+  stageStCardImport(command: StageStCardImportCommandV1, csrfToken: string): Promise<StCardImportStageResultV1>;
   /** GET /api/tavern/v1/imports/:importId: safe review data for one staged card. */
   readStCardImport(importId: string): Promise<StCardImportReadResultV1>;
   /** POST /api/tavern/v1/imports/:importId/review: record an explicit eligible-field review. */
@@ -3464,8 +3507,11 @@ export function createManagementPipelineApi(
       );
       return result;
     },
-    async stageStCardImport(card: string, csrfToken: string): Promise<StCardImportStageResultV1> {
-      if (!isLengthBoundedString(card, 1, 2_097_152) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+    async stageStCardImport(
+      command: StageStCardImportCommandV1,
+      csrfToken: string,
+    ): Promise<StCardImportStageResultV1> {
+      if (!isStageStCardImportCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
       const result = await exchange(
         fetchLike,
         "POST",
@@ -3473,7 +3519,7 @@ export function createManagementPipelineApi(
         200,
         validateStCardImportStageResult,
         { "Content-Type": "application/json", "x-csrf-token": csrfToken },
-        { apiVersion: TAVERN_BROWSER_API_VERSION, card },
+        command,
       );
       observe("character.import.stage", "passed", result.importId);
       return result;

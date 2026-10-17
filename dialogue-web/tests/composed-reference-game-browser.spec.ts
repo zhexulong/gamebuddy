@@ -2742,7 +2742,7 @@ test("choosing a character card file stages a review, and reports what the Host 
   await review.locator("[data-card-import-review-confirm]").click();
   await expect.poll(() => confirms.length).toBe(1);
 
-  expect(imports[0]?.body).toEqual({ apiVersion: 1, card: cardText });
+  expect(imports[0]?.body).toEqual({ apiVersion: 1, cardSource: "json", card: cardText });
   expect(imports[0]?.csrf).toBe(csrfToken);
   const reviewedFields = (body: unknown): unknown => (body as { reviewedFields?: unknown }).reviewedFields;
   expect(reviewedFields(reviews[0]?.body)).toEqual(["name", "persona_core"]);

@@ -6,9 +6,11 @@ import test from "node:test";
 import { DEFAULT_IDENTITY_PROFILE, identityProfileHash, identityProfileMetadata } from "../identity-profile.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+import { pngCardFile } from "../test-support/png-card.test-support.js";
 import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import { TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
+import { companionAvatarPath } from "./companion-avatar/index.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
 import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
@@ -222,19 +224,16 @@ test("New Companion maps the reviewed persona and renders card macros determinis
     // own it, so the test closes it before the root is removed.
     const threadStore = createChatThreadStore(root, "b".repeat(64));
     try {
-      const created = await provisionNewCompanion(
-        root,
-        "player",
-        personaCandidate,
-        review,
-        threadStore,
-      );
+      const created = await provisionNewCompanion(root, "player", personaCandidate, review, threadStore);
       assert.deepEqual(created.profile.persona, {
         core: "GameBuddy Companion is calm when player needs help.",
         interactionStyle: "Listen to player before answering.",
         expressionStyle: "GameBuddy Companion speaks clearly to player.",
       });
-      assert.equal(identityProfileHash(created.profile), identityProfileHash({ ...created.profile, persona: { ...created.profile.persona! } }));
+      assert.equal(
+        identityProfileHash(created.profile),
+        identityProfileHash({ ...created.profile, persona: { ...created.profile.persona! } }),
+      );
     } finally {
       threadStore.close?.();
     }
@@ -254,13 +253,7 @@ test("New Companion provisions a fresh opaque identity and Host-owned profile bi
     }).review(pending, { reviewedFields: ["persona_core"], approvedAtMs: 9 });
     const threadStore = createChatThreadStore(root, "b".repeat(64));
     try {
-      const created = await provisionNewCompanion(
-        root,
-        "player",
-        pending,
-        review,
-        threadStore,
-      );
+      const created = await provisionNewCompanion(root, "player", pending, review, threadStore);
       assert.notEqual(created.identity.companionId, "companion");
       assert.notEqual(created.identity.continuityId, "continuity");
       assert.equal(created.profile.persona?.core, "calm");
@@ -315,13 +308,7 @@ test("New Companion provisions reviewed scenario and first greeting for library 
       approvedAtMs: 100,
     });
     threadStore = createChatThreadStore(root, "c".repeat(64));
-    const created = await provisionNewCompanion(
-      root,
-      "player",
-      narrativeCandidate,
-      review,
-      threadStore,
-    );
+    const created = await provisionNewCompanion(root, "player", narrativeCandidate, review, threadStore);
 
     const runtimePaths = resolveRuntimePaths(created.identity, root);
     const tavernPaths = resolveTavernPaths(runtimePaths, created.identity);
@@ -340,16 +327,11 @@ test("New Companion provisions reviewed scenario and first greeting for library 
     assert.equal(persistedGreeting.variants.length, 1);
     assert.equal(persistedGreeting.variants[0]?.text, "The wind is cold, but the sunrise is magnificent.");
 
-    const library = createTavernLibraryService(
-      tavernPaths,
-      store,
-      threadStore,
-      {
-        async readExact() {
-          return identityProfileMetadata(created.profile);
-        },
+    const library = createTavernLibraryService(tavernPaths, store, threadStore, {
+      async readExact() {
+        return identityProfileMetadata(created.profile);
       },
-    );
+    });
 
     const digest = createHash("sha256").update(resolve(tavernPaths.companionRoot), "utf8").digest("hex").slice(0, 32);
     const scenarioId = `player-scenario-${digest}`;
@@ -441,7 +423,8 @@ test("reviewed card world book lands as the bound worldbook.json and threads car
   } finally {
     await cleanupTestRoot(root);
   }
-});test("an approved card name names the companion; an unapproved one leaves the default", async () => {
+});
+test("an approved card name names the companion; an unapproved one leaves the default", async () => {
   const root = await canonicalTestRoot("tavern-reviewed-name-");
   const namedCandidate = {
     ...candidate,
@@ -629,6 +612,58 @@ test("provisioning the same reviewed card twice does not multiply greeting varia
     assert.equal(first.length, 3);
     assert.deepEqual(second, first);
     // Fails if a second import appends to the same variant list instead of rebuilding it.
+  } finally {
+    threadStore?.close?.();
+    await cleanupTestRoot(root);
+  }
+});
+
+/**
+ * The reviewed card's picture is part of what the import keeps.
+ *
+ * A PNG card's image and the `tEXt` chunk that carries its card are one object,
+ * so "the avatar" is not a second artifact to be modelled: it is the file the
+ * player picked, written to the one path the runtime avatar face reads it from.
+ * A card that carried no picture provisions a companion with none - absence is
+ * an ordinary state, never a zero-byte file that would read as a broken image.
+ */
+test("provisioning writes the reviewed card's picture into her own root, and nothing when there is none", async () => {
+  const root = await canonicalTestRoot("tavern-new-companion-avatar-");
+  let threadStore: ReturnType<typeof createChatThreadStore> | undefined;
+  try {
+    const review = createNewCompanionService({
+      async create() {
+        throw new Error("not_used");
+      },
+    }).review(candidate, { reviewedFields: ["persona_core"], approvedAtMs: 1 });
+    const picture = pngCardFile(JSON.stringify({ data: { name: "Candidate" } }));
+    threadStore = createChatThreadStore(root, "e".repeat(64));
+    const withPicture = await provisionNewCompanion(root, "player", candidate, review, threadStore, picture);
+    assert.deepEqual(
+      await readFile(
+        companionAvatarPath(root, "player", {
+          companionId: withPicture.identity.companionId,
+          continuityId: withPicture.identity.continuityId!,
+        }),
+      ),
+      Buffer.from(picture),
+    );
+
+    threadStore.close?.();
+    threadStore = createChatThreadStore(root, "f".repeat(64));
+    const withoutPicture = await provisionNewCompanion(root, "player", candidate, review, threadStore);
+    await assert.rejects(
+      access(
+        companionAvatarPath(root, "player", {
+          companionId: withoutPicture.identity.companionId,
+          continuityId: withoutPicture.identity.continuityId!,
+        }),
+      ),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    // The two companions are separate namespaces: one import can never overwrite
+    // another's picture, because neither shares a root.
+    assert.notEqual(withPicture.identity.companionId, withoutPicture.identity.companionId);
   } finally {
     threadStore?.close?.();
     await cleanupTestRoot(root);

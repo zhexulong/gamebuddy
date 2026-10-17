@@ -2,6 +2,8 @@ import { type Static, type TSchema, Type } from "typebox";
 import { Compile, type Validator } from "typebox/compile";
 import { Format } from "typebox/format";
 
+import { ST_CARD_DECODER_LIMITS_V1 } from "../compatibility-manifest.v1.js";
+
 export const TAVERN_BROWSER_API_V1 = "tavern_browser_api/v1" as const;
 export const TAVERN_BROWSER_API_VERSION = 1 as const;
 
@@ -344,11 +346,45 @@ export const StCardImportLossV1Schema = strictObject({
   reason: Type.String({ minLength: 1, maxLength: 128 }),
   count: Revision,
 });
-export const StageStCardImportCommandV1Schema = strictObject({
-  apiVersion: ApiVersion,
-  /** Raw CCv2/v3 card JSON text (bounded at the same ceiling as the decoder). */
-  card: Type.String({ minLength: 1, maxLength: 2_097_152 }),
-});
+/**
+ * The card-file ceiling, base64-inflated: `ST_CARD_DECODER_LIMITS_V1.inputBytesPng`
+ * is the decoder's own limit on a PNG card's bytes, and base64 costs 4 characters
+ * per 3 bytes. Computed from that one number rather than spelled again, so the
+ * wire and the decoder can never disagree about what a card file may be.
+ */
+const MAX_PNG_CARD_BASE64_CHARS = Math.ceil(ST_CARD_DECODER_LIMITS_V1.inputBytesPng / 3) * 4;
+/**
+ * The stage route's request-body ceiling: the union's larger arm plus a small
+ * JSON envelope. Base64 uses no character JSON escapes, so the margin only has
+ * to cover the field names - unlike a decoded-text limit, which a `\uXXXX`
+ * escape can inflate sixfold (`MAX_TEXT_UTF8_BYTES`).
+ */
+export const MAX_ST_CARD_IMPORT_BODY_BYTES = MAX_PNG_CARD_BASE64_CHARS + 8_192;
+/**
+ * `character.import.stage`'s body: a bounded tagged union, because a card on
+ * disk is one of exactly two things and the Host must know which without
+ * guessing.
+ *
+ *  - `json`: the card's own text - a `.json` file, or text the player pasted.
+ *  - `png`: the WHOLE picked file, base64. A PNG card's picture and the `tEXt`
+ *    chunk carrying its card are the same object, so a browser that sent the
+ *    card's fields and its picture as two fields would be asserting a pairing no
+ *    Host could check. Sending the file makes the pairing structural: the Host's
+ *    own decoder reads the card's fields and its picture out of the one byte
+ *    string the Host itself read.
+ */
+export const StageStCardImportCommandV1Schema = Type.Union([
+  strictObject({
+    apiVersion: ApiVersion,
+    cardSource: Type.Literal("json"),
+    card: Type.String({ minLength: 1, maxLength: ST_CARD_DECODER_LIMITS_V1.inputBytesJson }),
+  }),
+  strictObject({
+    apiVersion: ApiVersion,
+    cardSource: Type.Literal("png"),
+    cardFileBase64: Type.String({ minLength: 1, maxLength: MAX_PNG_CARD_BASE64_CHARS }),
+  }),
+]);
 export const StCardImportStageResultV1Schema = strictObject({
   apiVersion: ApiVersion,
   importId: OpaqueHandle,

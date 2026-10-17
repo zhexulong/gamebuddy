@@ -114,7 +114,7 @@ export function createCompanionAvatarService(
     async read(handle: string): Promise<CompanionAvatarRead | null> {
       const companion = await options.resolveCompanion(handle);
       if (companion === null) return null;
-      return await readCompanionAvatar(
+      return await readAvatarFile(
         companionAvatarPath(options.runtimeRoot, options.playerId, companion),
         options.runtimeRoot,
       );
@@ -128,11 +128,11 @@ export function createCompanionAvatarService(
  * The lock creates and verifies the companion's own directory before the write
  * (the directory may not exist yet: a card that carried no scenario and no
  * greeting never caused one to be created), and the write itself is the same
- * exclusive-temporary-then-rename an every other durable artifact here uses.
+ * exclusive-temporary-then-rename as every other durable artifact here uses.
  * Called once, at provision: a companion namespace is never adopted or
  * overwritten, so one companion root holds one name and one picture.
  */
-export async function writeCompanionAvatar(path: string, bytes: Uint8Array, containmentRoot: string): Promise<void> {
+export async function writeAvatarFile(path: string, bytes: Uint8Array, containmentRoot: string): Promise<void> {
   await withPathLock(
     path,
     async () => {
@@ -142,7 +142,16 @@ export async function writeCompanionAvatar(path: string, bytes: Uint8Array, cont
   );
 }
 
-async function readCompanionAvatar(path: string, containmentRoot: string): Promise<CompanionAvatarRead> {
+/**
+ * Reads one avatar file at an exact path, inside an exact containment root.
+ *
+ * Absence (`absent`) is an ordinary state, not an error; a file that exists and
+ * cannot be used throws, because "there is no picture" and "her picture is there
+ * and unreadable" are different facts. Both the companion's own picture and the
+ * staged copy of a just-imported one are read through this one function, so the
+ * two can never disagree about what an avatar file is.
+ */
+export async function readAvatarFile(path: string, containmentRoot: string): Promise<CompanionAvatarRead> {
   try {
     // The leaf may be absent; its ancestry may not be unprovable. This refuses a
     // symlinked or reparse-point companion root (or avatar) before any byte is

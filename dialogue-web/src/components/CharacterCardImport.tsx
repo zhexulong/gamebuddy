@@ -1,18 +1,18 @@
 import { ChevronDown } from "lucide-react";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import type { Locale } from "../i18n";
-import type {
-  ManagementPipelineApi,
-  StCardImportHistoryV1,
-  StCardImportStageResultV1,
+import {
+  MAX_CARD_FILE_BYTES,
+  type ManagementPipelineApi,
+  type StCardImportHistoryV1,
+  type StCardImportStageResultV1,
+  type StageStCardImportCommandV1,
 } from "../management-pipeline-api";
 import { characterFieldLabel, characterLabels, type CharacterLabels } from "./character-domain-labels";
-import { extractCharacterCardJsonFromPng, isPngBytes } from "./png-character-card";
+import { isPngCardFile } from "./png-character-card";
 
-/** The stage route accepts card JSON text up to 2 MiB (StageStCardImportCommandV1). */
+/** The JSON arm's own ceiling: the decoder's text input bound (StageStCardImportCommandV1). */
 const MAX_CARD_TEXT_LENGTH = 2_097_152;
-/** Do not pull an unbounded file into memory just to look for a card chunk. */
-const MAX_FILE_BYTES = 32 * 1024 * 1024;
 
 /**
  * The Host's own staged facts for one card, in the one shape both the
@@ -112,6 +112,21 @@ function fieldNames(fields: readonly string[], labels: CharacterLabels): string 
 }
 
 /**
+ * Base64 of the picked file's bytes, in the one spelling the Host's decoder
+ * accepts: canonical padding, no whitespace, no line breaks.
+ *
+ * Chunked because `String.fromCharCode(...bytes)` on a 32 MiB picture overflows
+ * the argument limit long before it exhausts anything else.
+ */
+function base64Of(bytes: Uint8Array): string {
+  const CHUNK_BYTES = 0x8000;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES)
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + CHUNK_BYTES));
+  return btoa(binary);
+}
+
+/**
  * Import a character card (design/28 §2, design/26 §4.6).
  *
  * The primary path is the player choosing a `.json` / `.png` file from disk:
@@ -177,13 +192,13 @@ export function CharacterCardImport({
    * `character.import.stage` and keeps the Host's report until the player
    * decides. No companion exists and the durable list is untouched either way.
    */
-  const stageCard = async (cardText: string): Promise<void> => {
+  const stageCard = async (command: StageStCardImportCommandV1): Promise<void> => {
     if (busy) return;
     setBusy(true);
     setStaged(null);
     setOutcome(null);
     try {
-      setStaged(await api.stageStCardImport(cardText, csrfToken));
+      setStaged(await api.stageStCardImport(command, csrfToken));
     } catch {
       setOutcome({ kind: "error", message: labels.importFailed });
     } finally {
@@ -230,16 +245,26 @@ export function CharacterCardImport({
     setStaged(null);
   };
 
-  const readFile = async (file: File): Promise<{ ok: true; text: string } | { ok: false; message: string }> => {
-    if (file.size > MAX_FILE_BYTES) return { ok: false, message: labels.importFailedTooLarge };
+  /**
+   * The picked file as one arm of the stage command.
+   *
+   * A PNG card is sent as the WHOLE file, base64: the picture and the card are
+   * the same object, so the Host's decoder owns both and there is no pairing for
+   * this side to assert. Anything else is read as text here, which is all a
+   * `.json` card is. Nothing about the card's CONTENT is decided on this side -
+   * this reads bytes, picks an arm, and stops.
+   */
+  const readFile = async (
+    file: File,
+  ): Promise<{ ok: true; command: StageStCardImportCommandV1 } | { ok: false; message: string }> => {
+    if (file.size > MAX_CARD_FILE_BYTES) return { ok: false, message: labels.importFailedTooLarge };
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const text = isPngBytes(bytes)
-      ? await extractCharacterCardJsonFromPng(bytes)
-      : new TextDecoder("utf-8", { fatal: false }).decode(bytes).replace(/^\uFEFF/u, "");
-    if (text === undefined || text.trim().length === 0)
-      return { ok: false, message: isPngBytes(bytes) ? labels.importFailedPng : labels.importFailedText };
+    if (isPngCardFile(bytes))
+      return { ok: true, command: { apiVersion: 1, cardSource: "png", cardFileBase64: base64Of(bytes) } };
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes).replace(/^\uFEFF/u, "");
+    if (text.trim().length === 0) return { ok: false, message: labels.importFailedText };
     if (text.length > MAX_CARD_TEXT_LENGTH) return { ok: false, message: labels.importFailedTooLarge };
-    return { ok: true, text };
+    return { ok: true, command: { apiVersion: 1, cardSource: "json", card: text } };
   };
 
   const handleFile = async (file: File): Promise<void> => {
@@ -249,7 +274,7 @@ export function CharacterCardImport({
       setOutcome({ kind: "error", message: read.message });
       return;
     }
-    await stageCard(read.text);
+    await stageCard(read.command);
   };
 
   const stagedReport = staged === null ? null : reportOf(staged);
@@ -308,7 +333,7 @@ export function CharacterCardImport({
             type="button"
             className="small-button"
             disabled={busy || pasted.trim().length === 0}
-            onClick={() => void stageCard(pasted.trim())}
+            onClick={() => void stageCard({ apiVersion: 1, cardSource: "json", card: pasted.trim() })}
           >
             {busy ? labels.importBusy : labels.importSubmit}
           </button>

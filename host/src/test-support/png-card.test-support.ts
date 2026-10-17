@@ -30,6 +30,16 @@ export function pngCardFileWithoutPayload(): Uint8Array {
   return pngFileWithText("chara", "");
 }
 
+/**
+ * A file that CARRIES a card and is not a complete PNG container: the signature
+ * and the `tEXt` chunk that holds the card, and then nothing - no IHDR, no IDAT,
+ * no IEND. The Host's decoder finds its chunk wherever it lies, so this card is
+ * perfectly importable while its image is not a picture any browser could render.
+ */
+export function pngCardFileWithoutImage(cardJson: string): Uint8Array {
+  return Buffer.concat([Buffer.from(SIGNATURE), Buffer.from(chunk("tEXt", latin1(`chara\u0000${cardJson}`)))]);
+}
+
 const SIGNATURE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const CRC_TABLE = (() => {
   const table = new Int32Array(256);

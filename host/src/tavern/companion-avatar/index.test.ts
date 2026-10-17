@@ -12,7 +12,7 @@ import {
   companionAvatarPath,
   createCompanionAvatarService,
   isCompletePngFile,
-  writeCompanionAvatar,
+  writeAvatarFile,
 } from "./index.js";
 
 test.before(async () => {
@@ -86,7 +86,7 @@ test("a written avatar reads back byte for byte, and an absent one is absent", a
     assert.equal(await service.read(`${"C".repeat(42)}A`), null);
     const picture = pngCardFile(JSON.stringify({ spec: "chara_card_v3", data: { name: "Rin" } }));
     const path = companionAvatarPath(root, identity.playerId, identity);
-    await writeCompanionAvatar(path, picture, root);
+    await writeAvatarFile(path, picture, root);
     const read = await service.read(handle);
     assert.equal(read?.state, "present");
     assert.deepEqual(await readFile(path), Buffer.from(picture));

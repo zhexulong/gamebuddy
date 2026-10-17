@@ -28,6 +28,7 @@ import {
   type GreetingUpdateCommandV1,
   type GreetingV1,
   isComposedTavernProfile,
+  MAX_ST_CARD_IMPORT_BODY_BYTES,
   type MemoryMutationCommandV1,
   type MemoryReadV1,
   type PersonaUpdateCommandV1,
@@ -238,13 +239,6 @@ const MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES = [
  * inspector the Host cannot serve.
  */
 const MANAGEMENT_COMPANION_PROFILE_ROUTES = ["companion.profile.read"] as const;
-/**
- * Import-stage body ceiling: the card JSON itself is bounded by the decoder
- * (ST_CARD_DECODER_LIMITS_V1.inputBytesJson) and the JSON envelope adds a
- * small margin. Far above the 24 KiB default body bound used by every other
- * management route.
- */
-const MAX_ST_CARD_IMPORT_BODY_BYTES = 2_097_152 + 8_192;
 const bootstrapRequestValidator = Compile(
   (TavernBrowserContractV1.routes.find((route) => route.routeId === "bootstrap")! as { request: TSchema }).request,
 );
@@ -1538,13 +1532,17 @@ export function createTavernManagementDialogueWebRequestHandler(
           return sendProblem(response, 404, "profile_operation_unavailable");
         const body = await readJsonBody(request, MAX_ST_CARD_IMPORT_BODY_BYTES);
         if (!stageStCardImportValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const card = stageStCardImportInput(body as StageStCardImportCommandV1);
+        // A base64 payload that is not canonical does not decode to the file the
+        // player picked, so it is refused rather than silently shortened.
+        if (card === undefined) return sendProblem(response, 400, "invalid_request");
         // The opaque handle the contract projects is a canonical base64url
         // token (`OpaqueHandle`, shared with every other Host handle); a
         // prefixed or UUID-shaped id fails the response schema's own check.
         const importId = randomBytes(24).toString("base64url");
         let staged;
         try {
-          staged = await stCardImportService.import(importId, (body as StageStCardImportCommandV1).card);
+          staged = await stCardImportService.import(importId, card);
         } catch {
           // Invalid / rejected cards never persist and never get an importId
           // beyond this request; the player sees the decode problem directly.
@@ -2457,6 +2455,24 @@ async function hasRequestBody(request: IncomingMessage): Promise<boolean> {
     if ((Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk)) > 0) hasBody = true;
   }
   return hasBody;
+}
+
+/**
+ * The stage command's two arms as the one input the import service takes.
+ *
+ * The PNG arm's base64 must be canonical. `Buffer.from(value, "base64")`
+ * silently DROPS whatever it does not recognize, so a payload that is not
+ * exactly what the browser sent would be imported as a different, shorter file -
+ * a card whose bytes are not the ones the player picked. Re-encoding and
+ * comparing is what makes "the file the Host decoded" equal "the file the player
+ * chose".
+ */
+function stageStCardImportInput(command: StageStCardImportCommandV1): string | Uint8Array | undefined {
+  if (command.cardSource === "json") return command.card;
+  const encoded = command.cardFileBase64;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(encoded) || encoded.length % 4 !== 0) return undefined;
+  const bytes = Buffer.from(encoded, "base64");
+  return bytes.toString("base64") === encoded ? bytes : undefined;
 }
 function authenticate(
   request: IncomingMessage,

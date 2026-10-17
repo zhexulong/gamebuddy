@@ -41,7 +41,6 @@ export type CharacterLabels = Readonly<{
   importVoiceCarried: string;
   importVoiceDropped: string;
   importFailed: string;
-  importFailedPng: string;
   importFailedText: string;
   importFailedTooLarge: string;
   /**
@@ -250,7 +249,6 @@ const en: CharacterLabels = Object.freeze({
   importVoiceCarried: "Keeps the card's own performance directive.",
   importVoiceDropped: "The card's own performance directive was too long and was not kept.",
   importFailed: "The card could not be imported.",
-  importFailedPng: "That PNG does not contain a character card.",
   importFailedText: "That file is not readable character card text.",
   importFailedTooLarge: "That file is too large to import (limit 2 MB).",
   importReviewTitle: "Review before importing",
@@ -428,7 +426,6 @@ const zh: CharacterLabels = Object.freeze({
   importVoiceCarried: "保留卡片自带的演出指导。",
   importVoiceDropped: "卡片自带的演出指导过长，未能保留。",
   importFailed: "无法导入该角色卡。",
-  importFailedPng: "该 PNG 不包含角色卡数据。",
   importFailedText: "该文件不是可读取的角色卡文本。",
   importFailedTooLarge: "该文件过大，无法导入（上限 2 MB）。",
   importReviewTitle: "导入前确认",

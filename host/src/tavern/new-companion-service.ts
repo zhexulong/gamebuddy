@@ -14,6 +14,7 @@ import { withPathLock } from "../path-lock.js";
 import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../runtime.js";
 import { join } from "node:path";
 import { TavernArtifactStore } from "./artifact-store.js";
+import { companionAvatarPath, writeAvatarFile } from "./companion-avatar/index.js";
 import { type ChatThreadStore, createChatThreadStore } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
@@ -124,6 +125,12 @@ export async function provisionNewCompanion(
   candidate: CharacterCandidate,
   review: NewCompanionReview,
   threads: ChatThreadStore,
+  /**
+   * The reviewed card's own picture, read from the staged import. Absent for a
+   * `.json` card and for a PNG whose image the import could not keep - both of
+   * which the player was told about at stage time.
+   */
+  avatar?: Uint8Array,
 ): Promise<NewCompanionProvision> {
   // Validation is deliberately performed before any namespace or profile exists.
   if (
@@ -148,6 +155,7 @@ export async function provisionNewCompanion(
     approved,
     candidate.worldBookCandidates,
     candidate.worldBookScanDepth,
+    avatar,
   );
 }
 
@@ -159,6 +167,7 @@ async function provisionNewCompanionNamespace(
   approved?: ReadonlyMap<string, string>,
   worldBookCandidates?: CharacterCandidate["worldBookCandidates"],
   worldBookScanDepth?: number,
+  avatar?: Uint8Array,
 ): Promise<NewCompanionProvision> {
   const paths = resolveRuntimePaths(identity, root);
   // The containment-aware lock creates and verifies each parent component
@@ -225,6 +234,19 @@ async function provisionNewCompanionNamespace(
       if (greetingVariants.length > 0) {
         await greetingService.create({ label: "Initial Greeting", variants: greetingVariants });
       }
+      // The reviewed card's own picture, written where the avatar face reads it.
+      // The companion's root is created here if the card carried neither a
+      // scenario nor a greeting, and the write is atomic: a half-written picture
+      // is never a picture the browser can fetch.
+      if (avatar !== undefined)
+        await writeAvatarFile(
+          companionAvatarPath(paths.root, identity.playerId, {
+            companionId: identity.companionId,
+            continuityId: identity.continuityId!,
+          }),
+          avatar,
+          paths.root,
+        );
       const threads = suppliedThreads ?? createChatThreadStore(paths.runtimeCwd, identityKey(identity));
       try {
         const library = createTavernLibraryService(tavernPaths, new TavernArtifactStore(paths.root), threads, {

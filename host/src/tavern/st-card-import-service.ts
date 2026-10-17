@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
-import { decodeStCard, type StCardImportDisposition, type StCardImportReport } from "../st-card-import.js";
+import {
+  decodeStCard,
+  stCardAvatar,
+  type StCardAvatarDropReason,
+  type StCardImportDisposition,
+  type StCardImportReport,
+} from "../st-card-import.js";
 import type { ArtifactEnvelope, TavernArtifactStore } from "./artifact-store.js";
+import { readAvatarFile, writeAvatarFile } from "./companion-avatar/index.js";
 import { createNewCompanionService, type NewCompanionReview } from "./new-companion-service.js";
 import { type TavernPaths, tavernImportPath } from "./tavern-paths.js";
 import {
@@ -31,8 +38,21 @@ export class StCardImportService {
     const report = decodeStCard(input);
     if (report.candidate === undefined || report.format === undefined) throw new Error("st_card_import_rejected");
     const sourceHash = hash(input);
+    // The card's own picture, staged BESIDE its candidate rather than inside it.
+    // A PNG card's image and the `tEXt` chunk that carries its card are one
+    // object, so this is simply the file the player picked, kept where the confirm
+    // step will find it. Only a card that decoded has one: a rejected card stages
+    // nothing at all, and an import that is staged and then cancelled leaves
+    // nothing in any companion's own root - the companion namespace does not
+    // exist until confirm provisions it.
+    const avatar = stCardAvatar(input);
     const candidate = candidateFromReport(importId, report, sourceHash);
-    const importReport = reportFromDecode(importId, report, sourceHash);
+    const importReport = reportFromDecode(
+      importId,
+      report,
+      sourceHash,
+      avatar.state === "dropped" ? avatar.reason : undefined,
+    );
     const candidatePath = tavernImportPath(this.paths, importId, "candidate.json");
     const reportPath = tavernImportPath(this.paths, importId, "report.json");
     const persistedCandidate = (await this.store.write(
@@ -45,6 +65,11 @@ export class StCardImportService {
       importReport,
       validateTavernArtifact,
     )) as ArtifactEnvelope<StCardImportRecord>;
+    // Written last, and after the two artifacts above have created the import's
+    // own directory: a stage that fails here leaves an inert staging record with
+    // no picture rather than a picture nothing describes.
+    if (avatar.state === "present")
+      await writeAvatarFile(tavernImportPath(this.paths, importId, "avatar.png"), avatar.bytes, this.paths.root);
     return Object.freeze({ candidate: persistedCandidate, report: persistedReport });
   }
 
@@ -72,6 +97,20 @@ export class StCardImportService {
   /** Safe export exposes only canonical, hash-verified inert artifacts—not an ST card or raw source payload. */
   async export(importId: string): Promise<PersistedStCardImport> {
     return this.read(importId);
+  }
+
+  /**
+   * The reviewed card's own picture, as the stage step left it.
+   *
+   * `undefined` is an ordinary state: a `.json` card has no picture, and a PNG
+   * card whose image was not a picture was dropped at stage time and said so in
+   * the report. A staged file that EXISTS and cannot be used throws instead -
+   * confirm must not quietly provision a companion without the picture the stage
+   * report told the player about.
+   */
+  async stagedAvatar(importId: string): Promise<Uint8Array | undefined> {
+    const read = await readAvatarFile(tavernImportPath(this.paths, importId, "avatar.png"), this.paths.root);
+    return read.state === "absent" ? undefined : read.bytes;
   }
 
   async recordReview(
@@ -187,7 +226,12 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
     ...(value.worldBookScanDepth === undefined ? {} : { worldBookScanDepth: value.worldBookScanDepth }),
   });
 }
-function reportFromDecode(importId: string, report: StCardImportReport, sourceHash: string): StCardImportRecord {
+function reportFromDecode(
+  importId: string,
+  report: StCardImportReport,
+  sourceHash: string,
+  avatarDrop: StCardAvatarDropReason | undefined,
+): StCardImportRecord {
   return Object.freeze({
     schemaVersion: 1,
     revision: 1,
@@ -195,7 +239,17 @@ function reportFromDecode(importId: string, report: StCardImportReport, sourceHa
     source: report.source,
     ...(report.format !== undefined ? { sourceFormat: report.format } : {}),
     sourceHash,
-    dispositions: Object.freeze(report.dispositions.map(disposition)),
+    dispositions: Object.freeze([
+      ...report.dispositions.map(disposition),
+      // The card's picture, when these bytes were a PNG the import could not keep
+      // as one. It rides the same disposition vocabulary every other kept or lost
+      // field rides, so the player-visible review says it in the same sentence it
+      // says everything else - a silently picture-less companion would read as a
+      // card that had no picture.
+      ...(avatarDrop === undefined
+        ? []
+        : [Object.freeze({ field: "avatar", classification: "dropped_unsupported" as const, reason: avatarDrop })]),
+    ]),
     // The decoder's own counted-loss ledger travels with the audit record, so a
     // review surface reports a loss (a `system_prompt` beyond the voice bound is
     // the common one) through that one vocabulary rather than a second one.

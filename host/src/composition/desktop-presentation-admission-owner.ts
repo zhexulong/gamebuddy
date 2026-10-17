@@ -539,6 +539,7 @@ function createTavernManagementDomains(
       imported.candidate.artifact,
       review,
       libraryThreads,
+      await stCardImportService.stagedAvatar(importId),
     );
     await stCardImportHistoryService.record({
       importId,

@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
-import {
-  identityKey,
-  type CompanionIdentity,
-  type RuntimePaths,
-} from "../runtime-identity.js";
+import { identityKey, type CompanionIdentity, type RuntimePaths } from "../runtime-identity.js";
 
 export type TavernPaths = Readonly<{
   root: string;
@@ -45,7 +41,11 @@ export function tavernThreadPath(paths: TavernPaths, threadId: string, file: "th
   valid(threadId);
   return join(paths.continuityRoot, "threads", threadId, file);
 }
-export function tavernImportPath(paths: TavernPaths, importId: string, file: "candidate.json" | "report.json"): string {
+export function tavernImportPath(
+  paths: TavernPaths,
+  importId: string,
+  file: "candidate.json" | "report.json" | "avatar.png",
+): string {
   valid(importId);
   return join(paths.playerRoot, "imports", importId, file);
 }
