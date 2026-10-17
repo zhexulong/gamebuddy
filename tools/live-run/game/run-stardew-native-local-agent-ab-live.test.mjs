@@ -388,10 +388,11 @@ test("morning_routine is a self-directed session whose output is a capability au
       `${actionId} changes nothing in the world and must not count as accomplishment`,
     );
   }
-  // A self-directed session gets a play-session budget (a harness bound, not a product verdict).
+  // A self-directed session gets a play-session budget (a harness bound, not a product verdict). A multi-day
+  // run needs it for the same reason: its days are ordinary self-directed sessions.
   assert.match(
     RUNNER_SOURCE,
-    /process\.env\.GAMEBUDDY_AGENT_WAIT_SECONDS \?\? \(SCENARIO === "morning_routine" \? 1800 : 600\)/,
+    /process\.env\.GAMEBUDDY_AGENT_WAIT_SECONDS \?\?\n?\s*\(SCENARIO === "morning_routine" \|\| SCENARIO === "multiday_routine" \? 1800 : 600\),/,
   );
   // An open goal must not smuggle a tool sequence back in. The retired rungs' prompts did exactly that (named
   // tools, ordered steps), so the check is over every scenario prompt.
