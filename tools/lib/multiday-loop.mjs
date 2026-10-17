@@ -25,24 +25,10 @@ import {
 } from "./multiday-baseline.mjs";
 
 /** Poll spacing while a night rolls over (the same cadence the deterministic crossing uses). */
-export const POLL_INTERVAL_MS = 250;
+const POLL_INTERVAL_MS = 250;
 
 /** How many times ONE menu type may be dismissed before its persistence is a named stop. */
 export const MAX_DISMISS_ATTEMPTS = 3;
-
-/** The day's own prompt, in both locales: the same intent every day, plus where the day sits. */
-export const MULTI_DAY_DAY_PROMPT = Object.freeze({
-  zh: (day) =>
-    `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。今天没有人给你派活——你自己看看周围，想做什么就做什么。` +
-    `天黑了、活儿干完了，就回屋上床睡觉，明天接着来。（台词之外可以用括号写角色的情绪或内心，同伴会把它演成语气而不是念出来；` +
-    `身体动作请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）。` +
-    `**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——不要每一步都插一句旁白，也不要列项目清单式地汇报。**`,
-  en: (day) =>
-    `It is morning in Stardew Valley (day ${String(day)} in a row for you). Nobody has assigned you anything today - look around and do whatever you think is worth doing. ` +
-    `When it gets dark and the work is done, go inside and sleep in your bed; you will pick it up tomorrow. ` +
-    `(besides spoken lines you may put the character's feelings in brackets - the companion renders them as tone; perform body actions through express_emote / face_direction, not asterisk stage directions). ` +
-    `**How to talk: you are the player's companion playing along, not a task announcer.**`,
-});
 
 /** The menu the actor is held by, in the shape the Mod reports it. */
 export function readHeldMenu(snapshot) {
