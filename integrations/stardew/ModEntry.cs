@@ -1253,6 +1253,7 @@ public sealed partial class ModEntry : Mod
         if (this.provisioningConfigurationRejected)
         {
             this.LogBlockedTickReasonOnce("the configuration was rejected at launch (see the rejection line above)");
+            this.PumpBridgeWhileBodyOwned();
             return;
         }
         // Before anything else this tick: the engine decides whether to start and
@@ -1266,11 +1267,13 @@ public sealed partial class ModEntry : Mod
         {
             this.LogBlockedTickReasonOnce("a body-program teardown is pending, so this tick clears state and yields");
             this.ClearState(pendingTeardownState, "body_program_teardown_drain");
+            this.PumpBridgeWhileBodyOwned();
             return;
         }
         if (this.sleepModalProbeRejected || this.sleepLifecycleRejected)
         {
             this.LogBlockedTickReasonOnce("a sleep probe/lifecycle request was rejected at launch");
+            this.PumpBridgeWhileBodyOwned();
             return;
         }
         if (this.worldCreationBootstrap is { IsArmed: true })
@@ -1281,7 +1284,10 @@ public sealed partial class ModEntry : Mod
             this.LogBlockedTickReasonOnce("a formal Player Host world creation is armed, which owns the title screen");
             this.worldCreationBootstrap.TryCreate();
             if (this.worldCreationBootstrap.IsArmed)
+            {
+                this.PumpBridgeWhileBodyOwned();
                 return;
+            }
         }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
@@ -1351,6 +1357,7 @@ public sealed partial class ModEntry : Mod
                 // it (a stray server, a second farmer, a scope mismatch) would stop answering every request with no
                 // line saying why. Named here for the same reason the probe gates are.
                 this.LogBlockedTickReasonOnce("this world no longer satisfies the configured native-local player scope");
+                this.PumpBridgeWhileBodyOwned();
                 return;
             }
             this.LogNativeLocalPlayerReadinessIfBlocked();
