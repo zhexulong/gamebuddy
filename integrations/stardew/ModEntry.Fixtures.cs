@@ -28,6 +28,37 @@ public sealed partial class ModEntry : Mod
 {
     // ── 本地在轨测试夹具与宿主自动化（自 ModEntry.cs 机械剥离，方法体 0 改动）──
 
+    private bool hostAutomationFixtureInitialized;
+    private bool hostAutomationFixtureReadinessPublished;
+
+    /// <summary>
+    /// The Farm tile the play session starts the actor on, remembered so the composed multi-day world can assert
+    /// that its field is part of the same walkable area as the farmhouse.
+    ///
+    /// Re-deriving it after the props are placed would answer a different question (the scan skips occupied tiles),
+    /// so the fixture records the tile it actually used.
+    /// </summary>
+    private Vector2? nativeLocalPlaySessionStartTile;
+
+    private sealed record NativeLocalFeedFixturePending(string AnimalHouseName, Vector2 TroughTile, Vector2 StandingTile);
+    private sealed record NativeLocalCollectAnimalProductFixturePending(string AnimalHouseName, long AnimalId, Vector2 AnimalTile, string ProduceId, string ToolKind);
+    private sealed record NativeLocalClearHoeDirtFixturePending(string FarmName, Vector2 DirtTile, Vector2 StandingTile);
+
+    private sealed record NativeLocalUseObeliskFixturePending(string FarmName, string BuildingType, Vector2 Origin, Vector2 StandingTile);
+    private sealed record NativeLocalDigArtifactSpotFixturePending(string FarmName, Vector2 ArtifactTile, Vector2 StandingTile);
+    private sealed record NativeLocalBaitCrabPotFixturePending(string FarmName, Vector2 TargetTile, Vector2 StandingTile, StardewValley.Objects.CrabPot Pot, StardewValley.Object Bait, long OwnerId);
+
+    private sealed record NativeLocalPlaceCrabPotFixturePending(
+        string FarmName,
+        Vector2 TargetTile,
+        Vector2 StandingTile,
+        StardewValley.Object CrabPot,
+        int CrabPotStack,
+        Item?[] InventoryItems,
+        int[] InventoryStacks,
+        string?[] InventoryIds);
+
+
     private void TryInitializeNativeLocalPlayerFixture()
     {
         NativeLocalPlayerFixtureConfig? fixture = this.config.NativeLocalPlayerFixture;

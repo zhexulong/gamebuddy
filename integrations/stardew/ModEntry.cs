@@ -119,18 +119,8 @@ public sealed partial class ModEntry : Mod
     private bool hostAutomationSaveMenuOpened;
     private bool hostAutomationObservedAiClient;
     private bool hostAutomationObservedAiClientExit;
-    private bool hostAutomationFixtureInitialized;
-    private bool hostAutomationFixtureReadinessPublished;
     private bool nativeLocalPlayerFixtureStarted;
     private bool nativeLocalPlayerFixtureInitialized;
-    /// <summary>
-    /// The Farm tile the play session starts the actor on, remembered so the composed multi-day world can assert
-    /// that its field is part of the same walkable area as the farmhouse.
-    ///
-    /// Re-deriving it after the props are placed would answer a different question (the scan skips occupied tiles),
-    /// so the fixture records the tile it actually used.
-    /// </summary>
-    private Vector2? nativeLocalPlaySessionStartTile;
     private bool nativeLocalPlayerFixtureTerminal;
     private long nativeLocalPlayerFixtureDeadlineUnixMs;
     private long nativeLocalPlayerFixtureLastReadinessLogUnixMs;
@@ -2756,23 +2746,6 @@ public sealed partial class ModEntry : Mod
         return false;
     }
 
-    private sealed record NativeLocalFeedFixturePending(string AnimalHouseName, Vector2 TroughTile, Vector2 StandingTile);
-    private sealed record NativeLocalCollectAnimalProductFixturePending(string AnimalHouseName, long AnimalId, Vector2 AnimalTile, string ProduceId, string ToolKind);
-    private sealed record NativeLocalClearHoeDirtFixturePending(string FarmName, Vector2 DirtTile, Vector2 StandingTile);
-
-    private sealed record NativeLocalUseObeliskFixturePending(string FarmName, string BuildingType, Vector2 Origin, Vector2 StandingTile);
-    private sealed record NativeLocalDigArtifactSpotFixturePending(string FarmName, Vector2 ArtifactTile, Vector2 StandingTile);
-    private sealed record NativeLocalBaitCrabPotFixturePending(string FarmName, Vector2 TargetTile, Vector2 StandingTile, StardewValley.Objects.CrabPot Pot, StardewValley.Object Bait, long OwnerId);
-
-    private sealed record NativeLocalPlaceCrabPotFixturePending(
-        string FarmName,
-        Vector2 TargetTile,
-        Vector2 StandingTile,
-        StardewValley.Object CrabPot,
-        int CrabPotStack,
-        Item?[] InventoryItems,
-        int[] InventoryStacks,
-        string?[] InventoryIds);
 
     private delegate bool TryBridgeRequest<TRequest, TResponse>(BridgeEnvelope<TRequest> request, out BridgeEnvelope<TResponse>? response, out string reasonCode);
     private static bool IsOpaqueRequestId(string value) => value.Length is >= 1 and <= 64 && value.All(character => (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '_' or '-');
