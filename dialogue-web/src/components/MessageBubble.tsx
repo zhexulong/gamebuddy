@@ -181,9 +181,11 @@ export const MessageBubble = memo(function MessageBubble({
           <div className="message-actions">
             {openingChoice && (
               <div className="swipe-controls" aria-label={labels.swipeNavigation}>
-                {/* The arrow is decoration; the words are the control. Both are
-                    inside the button, so the visible label IS the accessible name
-                    and a sighted player never has to guess what the glyph means. */}
+                {/* The glyph is the visible control and the number between the two
+                    is the state; the words live in the accessible name. Long labels
+                    here are what wrapped the strip to two rows at 400 px, and in a
+                    narrow chat the dialogue is what the player is reading - this is
+                    Tavern's own `\u2039 1/3 \u203a` for the same reason. */}
                 <button
                   type="button"
                   className="swipe-btn"
@@ -193,7 +195,6 @@ export const MessageBubble = memo(function MessageBubble({
                   title={labels.swipePrevious}
                 >
                   <ChevronLeft size={14} aria-hidden="true" />
-                  <span className="swipe-btn-label">{labels.swipePrevious}</span>
                 </button>
                 <span className="swipe-indicator">{openingVariantWords(openingChoice, labels)}</span>
                 <button
@@ -205,7 +206,6 @@ export const MessageBubble = memo(function MessageBubble({
                   title={labels.swipeNext}
                 >
                   <ChevronRight size={14} aria-hidden="true" />
-                  <span className="swipe-btn-label">{labels.swipeNext}</span>
                 </button>
               </div>
             )}
@@ -220,7 +220,6 @@ export const MessageBubble = memo(function MessageBubble({
                   title={labels.swipePrevious}
                 >
                   <ChevronLeft size={14} aria-hidden="true" />
-                  <span className="swipe-btn-label">{labels.swipePrevious}</span>
                 </button>
                 <span className="swipe-indicator">{swipePosition(swipeSet.label)}</span>
                 <button
@@ -232,7 +231,6 @@ export const MessageBubble = memo(function MessageBubble({
                   title={labels.swipeNext}
                 >
                   <ChevronRight size={14} aria-hidden="true" />
-                  <span className="swipe-btn-label">{labels.swipeNext}</span>
                 </button>
               </div>
             )}

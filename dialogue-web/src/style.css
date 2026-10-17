@@ -712,9 +712,10 @@
    tone, one hairline - so the two read as one group rather than a control sitting
    beside a caption, and they are adjacent rather than diagonally opposite.
    Regenerate was a transparent 11 px text row here, the smallest target and the
-   smallest type anywhere in the product. Wrapping is what keeps the strip a strip
-   at 400 px, where the pager's own labels and the button no longer fit on one
-   line inside the bubble's measure. */
+   smallest type anywhere in the product. The strip still wraps if a future
+   control cannot fit, but the pager no longer forces it: the visible labels that
+   made it two rows at 400 px are gone, and the words now live in the accessible
+   name. */
   .swipe-controls {
     display: inline-flex;
     align-items: center;
@@ -727,10 +728,11 @@
     font-size: 12px;
   }
 
-  /* The arrow and its words are one control: the glyph is decoration and the
-   label is what a player reads, so the pair is a wider target, not two icons
-   around a caption. The 44 px floor is the height, which the label does not
-   change. */
+  /* The glyph is the whole visible control and the number beside it is the state,
+   so each button is a bare 44 px target rather than a target plus a caption. The
+   words are the accessible name (`aria-label` + `title`); the visible labels that
+   used to sit here are what wrapped the strip onto a second row at 400 px, where
+   the dialogue - not the pager - is what the player is reading. */
   .swipe-btn {
     background: transparent;
     border: none;
@@ -747,11 +749,6 @@
     transition:
       color var(--motion-duration-fast),
       background-color var(--motion-duration-fast);
-  }
-
-  .swipe-btn-label {
-    font-size: 12px;
-    white-space: nowrap;
   }
 
   .swipe-btn:hover:not(:disabled) {
