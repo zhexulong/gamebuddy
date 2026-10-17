@@ -435,6 +435,13 @@ async function liveLanes() {
       created.every((name) => results.some((entry) => name.startsWith(entry.slot))),
       created.join(","),
     );
+    // The gate cleans up the disposable slots its own lanes created: they are test artifacts, and leaving them in
+    // the player's save list would be this gate's own pollution. Only slots this run created are removed, by name.
+    for (const name of created) rmSync(join(slotsRoot, name), { recursive: true, force: true });
+    check(
+      "gate_removed_the_slots_it_created",
+      created.every((name) => !existsSync(join(slotsRoot, name))),
+    );
     // THE ORPHAN ASSERTION: a lane that reclaimed its launch tree leaves nothing behind for the NEXT lane.
     const survivors = listStardewProcessIds();
     check("zero_surviving_game_processes", survivors.length === 0, survivors.join(","));
