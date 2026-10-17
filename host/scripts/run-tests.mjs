@@ -37,6 +37,17 @@ export const EXCLUSIVE_FILE_GROUPS = Object.freeze([
     name: "stardew-core-test-project-build",
     pattern: /stardew-(?:execution-request|snapshot|navigation|execution-receipt)-wire-parity\.test\.js$/u,
   }),
+  Object.freeze({
+    // The other half of the same doctrine: this file is individually FINE and only looks broken
+    // under company. It stands up a real named-pipe bridge, drives the real client and the
+    // product's frame path over it, so every round trip is a real syscall - and under a loaded
+    // machine those round trips stop being microseconds. Measured 2026-10-17: 2s alone here,
+    // and PASSING alone on the CI runner with a 60s per-test timeout, while the same file inside
+    // a 2-way batch exceeded its 600s stall budget (heartbeats clean, no failing test). The
+    // runner's own note above describes this exact signature, so it is the runner's job.
+    name: "named-pipe-real-time-coordinator",
+    pattern: /gameplay-task-subagent\.test\.js$/u,
+  }),
 ]);
 
 /** The declared exclusive groups a path belongs to, identified by its `dist-test`-relative shape. */
@@ -206,7 +217,11 @@ async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFi
   const failures = new Array(batch.length);
   let nextIndex = 0;
   let stopped = false;
-  const relativePath = (path) => relative(hostRoot, path).replaceAll("\\\\", "/");
+  // One backslash, so a Windows path is normalized exactly once: the literal had been written
+  // with two, which matches nothing, so every path this produces kept its backslashes (messages
+  // and heartbeat labels alike). `exclusiveGroupsFor` always wrote it correctly, which is why the
+  // group matching worked while the message spelling did not.
+  const relativePath = (path) => relative(hostRoot, path).replaceAll("\\", "/");
   const runOne = async (index) => {
     const path = batch[index];
     const fileRemainingMs = deadlineMs - now();
