@@ -93,7 +93,7 @@ export function buildFailureSnapshot({
  * needs, derived from the trace's own game times so a long wait is planned rather than discovered by an
  * unrelated harness timeout.
  */
-export function buildReproPlan({ actionTrace, turn, slot, scenario } = {}) {
+export function buildReproPlan({ actionTrace, turn, slot, scenario, crossings = 0 } = {}) {
   if (!Array.isArray(actionTrace) || !Number.isInteger(turn) || turn < 0) return null;
   if (typeof slot !== "string" || slot.length === 0) return null;
   const replayed = actionTrace.slice(0, turn);
@@ -109,12 +109,28 @@ export function buildReproPlan({ actionTrace, turn, slot, scenario } = {}) {
     "--turn",
     String(turn),
   ].join(" ");
+  // What this command can and cannot reach, stated rather than implied.
+  //
+  // The replay model is DAY-LEVEL: it restarts from the morning of one slot and drives the recorded trace. That is
+  // enough for a failure inside the first day, and it is NOT enough for a failure on day 2 or later, because
+  // crossing a night needs the sleep lifecycle and the world the previous nights produced - neither of which this
+  // command reproduces. Measured 2026-10-17: a review found the bundle accepted a multi-day failure's single-slot
+  // command as "the way back", which it is not. Naming the gap is the honest half; the caller that owns the
+  // crossings decides whether to extend the model.
+  const reachable = Number.isInteger(crossings) && crossings > 0 ? "first_day_only" : "the_failing_day";
   return Object.freeze({
     command,
     expectedWallClockMs: budget === null ? null : budget.totalMs,
     replayedSteps: replayed.length,
     // Published so a reader can see the wait is derived, not guessed (the trace is the only source).
     schedule: budget === null ? null : budget.steps,
+    crossingsBeforeFailure: Number.isInteger(crossings) ? crossings : 0,
+    reach: reachable,
+    // A multi-day failure cannot be re-entered by this command, and saying so is part of the plan.
+    reachReasonCode:
+      reachable === "the_failing_day"
+        ? null
+        : `day_level_replay_cannot_reach_a_later_day:crossings=${String(crossings)}`,
   });
 }
 

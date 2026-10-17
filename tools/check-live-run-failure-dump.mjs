@@ -84,6 +84,7 @@ const completeRepro = {
   command:
     "node tools/live-run/game/run-single-step.mjs --day-start-slot GameBuddyFixtureStable_1 --day-action-trace actionTrace.jsonl --turn 2",
   expectedWallClockMs: 112_000,
+  reach: "the_failing_day",
 };
 
 const checks = [];
@@ -183,6 +184,18 @@ async function main() {
       (error) => String(error.message),
     );
     check("repro_budget_required", String(result).includes("repro_budget_missing"), String(result));
+  });
+
+  // 5a. A repro that does not say what it can REACH is not one this bundle can vouch for.
+  await withFixture("no-reach", null, async (root) => {
+    const result = await writeEvidenceBundle(root, {
+      bundle: failingBundle({ failure: completeFailure, repro: { ...completeRepro, reach: undefined } }),
+      actionTrace: TRACE,
+    }).then(
+      () => "written",
+      (error) => String(error.message),
+    );
+    check("repro_reach_required", String(result).includes("repro_reach_unstated"), String(result));
   });
 
   // 5. The trace cannot lose the clock: a replay with no recorded game time cannot be gated.

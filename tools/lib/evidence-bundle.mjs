@@ -281,6 +281,12 @@ export function validateEvidenceBundle(bundle, { actionTrace = null } = {}) {
   if (isNonEmptyString(reproCommand) && !isFiniteNumber(bundle.repro?.expectedWallClockMs)) {
     violations.push(violation("repro_budget_missing", "repro.expectedWallClockMs"));
   }
+  // A repro whose REACH is unstated is not a repro this bundle can vouch for. `reach` is the plan's own word for
+  // what the command can get back to: a day-level replay reaches the failing day only from the first morning, so a
+  // failure after any night crossed must say so rather than present a command that cannot arrive.
+  if (isNonEmptyString(reproCommand) && !["the_failing_day", "first_day_only"].includes(bundle.repro?.reach)) {
+    violations.push(violation("repro_reach_unstated", "repro.reach"));
+  }
 
   return Object.freeze({
     ok: violations.length === 0,
@@ -369,6 +375,7 @@ const CHECKED_OBLIGATIONS = Object.freeze([
   "failure_at_ms_invalid",
   "repro_command_missing",
   "repro_budget_missing",
+  "repro_reach_unstated",
 ]);
 
 async function readJsonLines(path) {

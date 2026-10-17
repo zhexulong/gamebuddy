@@ -256,6 +256,14 @@ test("the replay plan derives its budget from the trace and points at the real e
   assert.ok(plan.command.includes(SINGLE_STEP_ENTRY));
   assert.ok(plan.command.includes("--turn 2"));
   assert.ok(plan.command.includes("--scenario morning_routine"));
+  // The plan STATES its reach: a day-level replay reaches the failing day only from the first morning, so a
+  // failure after any night crossed is a named gap rather than a command that cannot arrive.
+  assert.equal(plan.reach, "the_failing_day");
+  assert.equal(plan.reachReasonCode, null);
+  assert.equal(plan.crossingsBeforeFailure, 0);
+  const afterNights = buildReproPlan({ actionTrace: TRACE, turn: 2, slot: "Slot_1", crossings: 2 });
+  assert.equal(afterNights.reach, "first_day_only");
+  assert.match(afterNights.reachReasonCode, /day_level_replay_cannot_reach_a_later_day:crossings=2/);
   assert.equal(buildReproPlan({ actionTrace: TRACE, turn: 1, slot: "" }), null);
   assert.equal(buildReproPlan({ actionTrace: "nope", turn: 1, slot: "s" }), null);
 });

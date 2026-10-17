@@ -106,6 +106,7 @@ const failing = (failureOverrides = {}, reproOverrides = {}) =>
     repro: {
       command: "node tools/live-run/game/run-single-step.mjs --day-action-trace actionTrace.jsonl --turn 30",
       expectedWallClockMs: 2_520_000,
+      reach: "the_failing_day",
       ...reproOverrides,
     },
   });
