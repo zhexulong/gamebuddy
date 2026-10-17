@@ -71,6 +71,29 @@ test("the failure dump is built from the bridge's own facts and the trace's own 
   assert.match(SOURCE, /reason: process\.env\.GAMEBUDDY_GPU === undefined \? "headless_environment" : null,/);
 });
 
+test("the run's own narrative is judged and folded into the verdict", () => {
+  // Reflection's only input is what the Historian wrote, so a run whose prose is a technical changelog has nothing
+  // worth reflecting on. The judgement is made ONCE, published in the manifest, and folded into the verdict - a
+  // report that says `passed` while the rubric found a violation would be the "gate passes while the behaviour is
+  // absent" shape the plan names.
+  assert.match(
+    SOURCE,
+    /import \{ checkHistorianRubric, readCompartments \} from "\.\.\/\.\.\/lib\/historian-rubric\.mjs";/,
+  );
+  assert.match(SOURCE, /function judgeRunHistorianRubric\(runtimeRoot\) \{/);
+  assert.match(SOURCE, /historianRubricOutcome = judgeRunHistorianRubric\(runtimeRoot\);/);
+  assert.match(SOURCE, /const historianRubricPassed = historianRubricOutcome\.state !== "failed";/);
+  // `unmeasured` is deliberately NOT red: "there was nothing to judge" and "the narrative was bad" differ.
+  assert.match(SOURCE, /return Object\.freeze\(\{ state: "unmeasured", reasonCode: "no_compartments_written"/);
+  assert.match(SOURCE, /historian_rubric_violation:\$\{entry\.obligation\}@\$\{entry\.where\}/);
+  // The verdict reads it, and the manifest carries it next to the voice lane.
+  const verdict = SOURCE.slice(SOURCE.indexOf("      worldBookPassed &&"), SOURCE.indexOf('        ? "passed"'));
+  assert.ok(verdict.includes("historianRubricPassed"), "the verdict must read the narrative obligation");
+  assert.match(SOURCE, /historianRubric: \{\n      state: historianRubricOutcome\.state,/);
+  // The failure path reports it too, which is why the variable is declared outside the try.
+  assert.match(SOURCE, /let historianRubricOutcome = null;/);
+});
+
 test("the world snapshot and the capability face are sampled during the run, not re-read after teardown", () => {
   // Measured live 2026-10-16: the bundle was assembled after the session ended, when the bridge had already
   // cleared `#snapshot`, so the failure dump was all nulls (the contract refused it) and the presence projection

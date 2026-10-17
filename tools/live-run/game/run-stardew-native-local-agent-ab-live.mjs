@@ -29,6 +29,7 @@ import { createHash } from "node:crypto";
 import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
 import { assessMultiDayBaseline, MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "../../lib/multiday-baseline.mjs";
 import { chooseLevelUpResolution, parsePendingLevelUps } from "../../lib/level-up-evidence.mjs";
+import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
 import { identityKey } from "../../../host/dist-test/runtime-identity.js";
@@ -1801,6 +1802,9 @@ let voiceResult = null;
 // The multi-day outcome: the loop's own records plus the baseline's judgement of them. Declared out here so
 // the failure path can report what the run did before it stopped instead of losing the crossings it made.
 let multidayOutcome = null;
+// The run's own narrative judgement, made once before the verdict and published in the bundle. Declared out here so
+// the failure path can report it too (the catch may run before the verdict block).
+let historianRubricOutcome = null;
 try {
   runtime = await binding.executeWithBinding((bindingToken) =>
     withConsumedBindingExecution(bindingToken, (execution) => {
@@ -2212,6 +2216,13 @@ try {
   // absence-as-pass: rungs 0-2 emit no companion line by design, and rung 6 requires speech before this point
   // (sessionSpoken), so an unassessed interaction can never turn a rung into a pass.
   const interactionPassed = interactionOutcome !== "failed";
+  // The narrative obligation, in the verdict rather than beside it: a run whose Historian wrote a technical
+  // changelog has nothing worth reflecting on, and a report that says `passed` while the rubric found a violation
+  // would be the "gate passes while the behaviour is absent" shape the plan names. `unmeasured` (the run wrote no
+  // compartments) is NOT folded in: "there was nothing to judge" and "the narrative was bad" are different
+  // findings, and only the second is a defect of this run.
+  historianRubricOutcome = judgeRunHistorianRubric(runtimeRoot);
+  const historianRubricPassed = historianRubricOutcome.state !== "failed";
   // System-level diagnostics: aggregate every rejected action into a small set
   // of system findings (component attribution + count + sample), so each live
   // run yields a "system health report" instead of just pass/blocked. A finding
@@ -2283,7 +2294,8 @@ try {
       contextPassed &&
       contentPassed &&
       worldBookPassed &&
-      interactionPassed
+      interactionPassed &&
+      historianRubricPassed
         ? "passed"
         : "blocked",
     scenario: SCENARIO,
@@ -2377,6 +2389,7 @@ try {
     runtimeRoot,
     actionTrace,
     settlement: { snapshot: lastObservedSnapshot, reasonCode: null, component: null },
+    historianRubric: historianRubricOutcome,
   });
   // Close the capture: keep the runtime root's evidence, record the result
   // JSON itself, and surface any capture failure on the result.
@@ -2452,6 +2465,7 @@ try {
     runtimeRoot,
     actionTrace,
     settlement: { snapshot: lastObservedSnapshot, reasonCode: partialResult.error, component: "runner" },
+    historianRubric: historianRubricOutcome,
   });
   partialResult.capture = await closeCapture(capture, runtimeRoot, partialResult);
   const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_${SCENARIO}-${Date.now()}.result.json`);
@@ -2608,7 +2622,66 @@ async function closeCapture(capture, runtimeRoot, into) {
  * command and the wall-clock budget derived from the trace. Without it a failure is a story; with it, a
  * reproducible morning.
  */
-async function writeRunBundle({ capture, result, scenario, runtimeRoot, actionTrace, settlement }) {
+/**
+ * Judge the narrative this run's Historian wrote, from the SAME captured runtime root the reflection path reads.
+ *
+ * Reflection's only input is the compartments, so a run whose prose is a technical changelog has nothing worth
+ * reflecting on - and until now the game surface had no historian wiring at all (the rubric ran only on the memory
+ * loop). Violations are NAMED (`historian_rubric_violation:<obligation>@<where>`) and make the run red; a run that
+ * wrote nothing is `unmeasured` rather than red, because "there was no narrative to judge" and "the narrative was
+ * bad" are different findings and only one of them is a defect.
+ */
+function judgeRunHistorianRubric(runtimeRoot) {
+  if (typeof runtimeRoot !== "string" || runtimeRoot.length === 0) {
+    return Object.freeze({
+      state: "unmeasured",
+      reasonCode: "runtime_root_unavailable",
+      compartmentsChecked: 0,
+      violations: [],
+    });
+  }
+  try {
+    const compartments = readCompartments(runtimeRoot);
+    if (compartments.length === 0) {
+      return Object.freeze({
+        state: "unmeasured",
+        reasonCode: "no_compartments_written",
+        compartmentsChecked: 0,
+        violations: [],
+      });
+    }
+    const judged = checkHistorianRubric(compartments);
+    return Object.freeze({
+      state: judged.violations.length === 0 ? "passed" : "failed",
+      reasonCode:
+        judged.violations.length === 0
+          ? null
+          : judged.violations.map((entry) => `historian_rubric_violation:${entry.obligation}@${entry.where}`).join(","),
+      compartmentsChecked: judged.compartmentsChecked,
+      violations: judged.violations,
+    });
+  } catch (error) {
+    return Object.freeze({
+      state: "unmeasured",
+      reasonCode: `historian_rubric_unreadable:${String(error?.message ?? error).slice(0, 120)}`,
+      compartmentsChecked: 0,
+      violations: [],
+    });
+  }
+}
+
+async function writeRunBundle({
+  capture,
+  result,
+  scenario,
+  runtimeRoot,
+  actionTrace,
+  settlement,
+  historianRubric = null,
+}) {
+  // The narrative the run wrote, judged from its own captured runtime root. The CALLER judges it (the verdict needs
+  // the same answer); this falls back to judging here so the bundle is never silent about it.
+  const historianRubricOutcome = historianRubric ?? judgeRunHistorianRubric(runtimeRoot);
   const verdictState = result?.state === "passed" ? "passed" : "failed";
   const failed = verdictState === "failed";
   // Both halves of "where and when": the snapshot carries the clock and location, the execution receipt's local
@@ -2690,6 +2763,11 @@ async function writeRunBundle({ capture, result, scenario, runtimeRoot, actionTr
       steps: [],
       reflection: settlement ? "completed" : "skipped",
     },
+    historianRubric: {
+      state: historianRubricOutcome.state,
+      reasonCode: historianRubricOutcome.reasonCode,
+      compartmentsChecked: historianRubricOutcome.compartmentsChecked,
+    },
     voice: {
       state: result?.voiceResult?.state ?? "unobserved",
       playback:
@@ -2703,6 +2781,11 @@ async function writeRunBundle({ capture, result, scenario, runtimeRoot, actionTr
           ? null
           : (result?.voiceResult?.disabledReason ?? "voice_not_completed"),
     },
+    historianRubric: Object.freeze({
+      state: historianRubricOutcome.state,
+      reasonCode: historianRubricOutcome.reasonCode,
+      compartmentsChecked: historianRubricOutcome.compartmentsChecked,
+    }),
     failure,
     repro,
   };
