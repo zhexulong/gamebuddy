@@ -78,30 +78,93 @@ test("local Stardew bridge sends typed observe_scene requests only for Mod-publi
         const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
         buffer = buffer.subarray(4 + length);
         if (request.type === "hello") {
-          socket.write(frame({ ...request, messageId: "scene_hello", type: "hello_ack", payload: {
-            sessionId: "scene_session", capabilities: ["observe_scene"], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [],
-            presentationLocale: "en-US", registrations: [{ actionId: "observe_scene", familyId: "world_perception", identityVersion: 1, lifecycle: "published", kind: "read_only" }],
-            runtimeRole: "native_local_fixture", launchGeneration: null,
-          }}));
-          socket.write(frame({ ...request, messageId: "scene_snapshot", type: "snapshot", correlationId: "scene_snapshot", payload: {
-            revision: 1, location: "Farm", tile: { x: 1, y: 1 }, stamina: 100, exhausted: false, health: 100, actionable: true,
-            capabilities: ["observe_scene"], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", activeExecution: null,
-            timeOfDay: 600,
-            dayOfMonth: 1,
-            seasonIndex: 0,
-            year: 1,
-          }}));
+          socket.write(
+            frame({
+              ...request,
+              messageId: "scene_hello",
+              type: "hello_ack",
+              payload: {
+                sessionId: "scene_session",
+                capabilities: ["observe_scene"],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "observe_scene",
+                    familyId: "world_perception",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "read_only",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
+          socket.write(
+            frame({
+              ...request,
+              messageId: "scene_snapshot",
+              type: "snapshot",
+              correlationId: "scene_snapshot",
+              payload: {
+                revision: 1,
+                location: "Farm",
+                tile: { x: 1, y: 1 },
+                stamina: 100,
+                exhausted: false,
+                health: 100,
+                actionable: true,
+                capabilities: ["observe_scene"],
+                catalogRevision: 1,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                activeExecution: null,
+                timeOfDay: 600,
+                dayOfMonth: 1,
+                seasonIndex: 0,
+                year: 1,
+              },
+            }),
+          );
         } else if (request.type === "observe_scene_request") {
           requestType = request.type;
-          socket.write(frame({ ...request, messageId: "scene_result", type: "observe_scene_result", payload: {
-           observationId: "observation_01", currentLocation: "Farm", currentRegion: "outdoor", affordances: [{ ref: "sr1_AAAAAAAAAAAAAAAA", kind: "chest", name: "Chest", distance: 1, direction: "East", actionHint: null }],
-             summary: "A chest is nearby.", partial: false, truncatedReason: null, ground: null,
-          }}));
+          socket.write(
+            frame({
+              ...request,
+              messageId: "scene_result",
+              type: "observe_scene_result",
+              payload: {
+                observationId: "observation_01",
+                currentLocation: "Farm",
+                currentRegion: "outdoor",
+                affordances: [
+                  {
+                    ref: "sr1_AAAAAAAAAAAAAAAA",
+                    kind: "chest",
+                    name: "Chest",
+                    distance: 1,
+                    direction: "East",
+                    actionHint: null,
+                  },
+                ],
+                summary: "A chest is nearby.",
+                partial: false,
+                truncatedReason: null,
+                ground: null,
+              },
+            }),
+          );
         }
       }
     });
   });
-  await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject));
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     // `connect()` resolves as soon as the hello_ack is authenticated; the
@@ -113,8 +176,8 @@ test("local Stardew bridge sends typed observe_scene requests only for Mod-publi
     assert.equal(client.state.snapshot?.revision, 1);
     const result = await client.observeScene();
     assert.equal(requestType, "observe_scene_request");
-     assert.equal(result.observationId, "observation_01");
-     assert.equal(result.affordances[0]?.ref, "sr1_AAAAAAAAAAAAAAAA");
+    assert.equal(result.observationId, "observation_01");
+    assert.equal(result.affordances[0]?.ref, "sr1_AAAAAAAAAAAAAAAA");
     client.close();
   } finally {
     peer?.destroy();
@@ -139,19 +202,19 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
           messageId: "mod_hello_01",
           type: "hello_ack",
           payload: {
-    sessionId: "session_01",
-    capabilities: ["inspect_self"],
-    catalogRevision: 1,
-    policyIdentity: mockPolicyIdentity,
-    enabledActionIds: [],
+            sessionId: "session_01",
+            capabilities: ["inspect_self"],
+            catalogRevision: 1,
+            policyIdentity: mockPolicyIdentity,
+            enabledActionIds: [],
             presentationLocale: "en-US",
             registrations: [
               {
                 actionId: "move_to_tile",
                 familyId: "movement_navigation",
                 identityVersion: 1,
-                    lifecycle: "published",
-                    kind: "execution",
+                lifecycle: "published",
+                kind: "execution",
               },
             ],
             runtimeRole: "native_local_fixture",
@@ -488,11 +551,11 @@ test("local Stardew bridge refuses a solicited snapshot whose catalogRevision wa
               messageId: "observe_stale_hello",
               type: "hello_ack",
               payload: {
-    sessionId: "session_01",
-    capabilities: [],
-    catalogRevision: 1,
-    policyIdentity: mockPolicyIdentity,
-    enabledActionIds: [],
+                sessionId: "session_01",
+                capabilities: [],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
                 presentationLocale: "en-US",
                 registrations: [
                   {
@@ -582,11 +645,11 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
               messageId: "catalog_hello",
               type: "hello_ack",
               payload: {
-    sessionId: "catalog_session",
-    capabilities: ["inspect_self"],
-    catalogRevision: 1,
-    policyIdentity: mockPolicyIdentity,
-    enabledActionIds: [],
+                sessionId: "catalog_session",
+                capabilities: ["inspect_self"],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
                 presentationLocale: "en-US",
                 registrations: [
                   {
@@ -662,7 +725,11 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
           timestampMs: Date.now(),
           scope,
           type: "catalog_update",
-          payload: { catalogRevision: 1, policyIdentity: { value: identityValue, capabilityRevision: revision }, enabledActionIds: ["move_to_tile"] },
+          payload: {
+            catalogRevision: 1,
+            policyIdentity: { value: identityValue, capabilityRevision: revision },
+            enabledActionIds: ["move_to_tile"],
+          },
         }),
       );
 
@@ -756,13 +823,21 @@ test("local Stardew bridge rejects a duplicate-key raw named-pipe frame before J
           messageId: "mod_hello_duplicate_key",
           type: "hello_ack",
           payload: {
-    sessionId: "session_duplicate_key",
-    capabilities: [],
-    catalogRevision: 1,
-    policyIdentity: mockPolicyIdentity,
-    enabledActionIds: [],
+            sessionId: "session_duplicate_key",
+            capabilities: [],
+            catalogRevision: 1,
+            policyIdentity: mockPolicyIdentity,
+            enabledActionIds: [],
             presentationLocale: "en-US",
-            registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+            registrations: [
+              {
+                actionId: "move_to_tile",
+                familyId: "movement_navigation",
+                identityVersion: 1,
+                lifecycle: "published",
+                kind: "execution",
+              },
+            ],
             runtimeRole: "native_local_fixture",
             launchGeneration: null,
           },
@@ -814,7 +889,25 @@ test("local Stardew bridge forwards a validated player_input semantic event", as
                   ...request,
                   messageId: "mod_hello_player_control",
                   type: "hello_ack",
-                  payload: { sessionId: "session_player_control", capabilities: [], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [], presentationLocale: "zh-CN", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
+                  payload: {
+                    sessionId: "session_player_control",
+                    capabilities: [],
+                    catalogRevision: 1,
+                    policyIdentity: mockPolicyIdentity,
+                    enabledActionIds: [],
+                    presentationLocale: "zh-CN",
+                    registrations: [
+                      {
+                        actionId: "move_to_tile",
+                        familyId: "movement_navigation",
+                        identityVersion: 1,
+                        lifecycle: "published",
+                        kind: "execution",
+                      },
+                    ],
+                    runtimeRole: "native_local_fixture",
+                    launchGeneration: null,
+                  },
                 }
               : {
                   ...request,
@@ -916,7 +1009,25 @@ test("local Stardew bridge reports a fixed diagnostic then closes on rejected pl
             ...request,
             messageId: "mod_hello_player_control_reject",
             type: "hello_ack",
-             payload: { sessionId: "session_player_control_reject", capabilities: [], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [], presentationLocale: "zh-CN", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
+            payload: {
+              sessionId: "session_player_control_reject",
+              capabilities: [],
+              catalogRevision: 1,
+              policyIdentity: mockPolicyIdentity,
+              enabledActionIds: [],
+              presentationLocale: "zh-CN",
+              registrations: [
+                {
+                  actionId: "move_to_tile",
+                  familyId: "movement_navigation",
+                  identityVersion: 1,
+                  lifecycle: "published",
+                  kind: "execution",
+                },
+              ],
+              runtimeRole: "native_local_fixture",
+              launchGeneration: null,
+            },
           }),
         );
       }
@@ -1013,20 +1124,26 @@ test("local Stardew bridge delivers one exact-correlated terminal receipt across
               ...request,
               messageId: "mod_hello_execution_receipt",
               type: "hello_ack",
-               payload: {
-    sessionId: "session_execution_receipt",
-    capabilities: ["move_to_tile"],
-    catalogRevision: 1,
-    policyIdentity: mockPolicyIdentity,
-    enabledActionIds: ["move_to_tile"],
-                 presentationLocale: "en-US",
-                 registrations: [
-                   { actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" },
-                 ],
-                 runtimeRole: "native_local_fixture",
-                 launchGeneration: null,
-               },
-             }),
+              payload: {
+                sessionId: "session_execution_receipt",
+                capabilities: ["move_to_tile"],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: ["move_to_tile"],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
           );
           continue;
         }
@@ -1127,7 +1244,25 @@ test("local Stardew bridge delivers an exact-correlated system notice receipt", 
               ...request,
               messageId: "mod_hello_system_notice",
               type: "hello_ack",
-              payload: { sessionId: "session_system_notice", capabilities: [], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [], presentationLocale: "en-US", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
+              payload: {
+                sessionId: "session_system_notice",
+                capabilities: [],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
             }),
           );
           continue;
@@ -1191,7 +1326,25 @@ test("local Stardew bridge authenticates and observes Mod-declared capabilities"
                 ...request,
                 messageId: "mod_hello_01",
                 type: "hello_ack",
-                 payload: { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: ["move_to_tile"], presentationLocale: "en-US", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
+                payload: {
+                  sessionId: "session_01",
+                  capabilities: ["move_to_tile"],
+                  catalogRevision: 1,
+                  policyIdentity: mockPolicyIdentity,
+                  enabledActionIds: ["move_to_tile"],
+                  presentationLocale: "en-US",
+                  registrations: [
+                    {
+                      actionId: "move_to_tile",
+                      familyId: "movement_navigation",
+                      identityVersion: 1,
+                      lifecycle: "published",
+                      kind: "execution",
+                    },
+                  ],
+                  runtimeRole: "native_local_fixture",
+                  launchGeneration: null,
+                },
               }
             : {
                 ...request,
@@ -1258,14 +1411,20 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
               messageId: "mod_hello_cancel_identity",
               type: "hello_ack",
               payload: {
-    sessionId: "session_cancel_identity",
-    capabilities: ["move_to_tile"],
-    catalogRevision: 1,
-    policyIdentity: mockPolicyIdentity,
-    enabledActionIds: ["move_to_tile"],
+                sessionId: "session_cancel_identity",
+                capabilities: ["move_to_tile"],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: ["move_to_tile"],
                 presentationLocale: "en-US",
                 registrations: [
-                  { actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" },
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
                 ],
                 runtimeRole: "native_local_fixture",
                 launchGeneration: null,
@@ -1339,7 +1498,6 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
   }
 });
 
-
 async function withNavigationBridge(
   name: string,
   onNavigation: (socket: Socket, request: Extract<BridgeMessage, { type: "navigation_read_request" }>) => void,
@@ -1358,12 +1516,39 @@ async function withNavigationBridge(
         const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
         buffer = buffer.subarray(4 + length);
         if (request.type === "hello") {
-          socket.write(frame({ ...request, messageId: `hello_${name}`, type: "hello_ack", payload: { sessionId: `session_${name}`, capabilities: [], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [], presentationLocale: "en-US", registrations: [{ actionId: "find_destination", familyId: "world_navigation", identityVersion: 1, lifecycle: "published", kind: "read_only" }], runtimeRole: "native_local_fixture", launchGeneration: null } }));
+          socket.write(
+            frame({
+              ...request,
+              messageId: `hello_${name}`,
+              type: "hello_ack",
+              payload: {
+                sessionId: `session_${name}`,
+                capabilities: [],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "find_destination",
+                    familyId: "world_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "read_only",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
         } else if (request.type === "navigation_read_request") onNavigation(socket, request);
       }
     });
   });
-  await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject));
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject),
+  );
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
     assert.ok(peer !== undefined);
@@ -1377,51 +1562,138 @@ async function withNavigationBridge(
 
 test("navigationRead dispatches an exact-correlated request without mutating bridge state or facts", async () => {
   let received: Extract<BridgeMessage, { type: "navigation_read_request" }> | undefined;
-  await withNavigationBridge("success", (socket, request) => {
-    received = request;
-    socket.write(frame({ ...request, messageId: "nav_result_success", type: "navigation_read_result", payload: { status: "resolved", reason: "exact_current_locale", entries: null, nextCursor: null, candidates: null, destination: { kind: "label", label: "Farm", ref: null }, unlockState: "unknown" } }));
-  }, async (client) => {
-    const before = client.state;
-    let facts = 0;
-    client.onFact(() => facts++);
-    const result = await client.navigationRead({ operation: "find_destination", args: { query: "Farm" } });
-    assert.equal(received?.type, "navigation_read_request");
-    assert.deepEqual(received?.payload, { operation: "find_destination", args: { query: "Farm" } });
-    assert.equal(result.status, "resolved");
-    assert.equal(facts, 0);
-    assert.equal(client.state.snapshot, before.snapshot);
-    assert.equal(client.state.latestReceipt, before.latestReceipt);
-    assert.deepEqual(client.state.enabledActionIds, before.enabledActionIds);
-  });
+  await withNavigationBridge(
+    "success",
+    (socket, request) => {
+      received = request;
+      socket.write(
+        frame({
+          ...request,
+          messageId: "nav_result_success",
+          type: "navigation_read_result",
+          payload: {
+            status: "resolved",
+            reason: "exact_current_locale",
+            entries: null,
+            nextCursor: null,
+            candidates: null,
+            destination: { kind: "label", label: "Farm", ref: null },
+            unlockState: "unknown",
+          },
+        }),
+      );
+    },
+    async (client) => {
+      const before = client.state;
+      let facts = 0;
+      client.onFact(() => facts++);
+      const result = await client.navigationRead({ operation: "find_destination", args: { query: "Farm" } });
+      assert.equal(received?.type, "navigation_read_request");
+      assert.deepEqual(received?.payload, { operation: "find_destination", args: { query: "Farm" } });
+      assert.equal(result.status, "resolved");
+      assert.equal(facts, 0);
+      assert.equal(client.state.snapshot, before.snapshot);
+      assert.equal(client.state.latestReceipt, before.latestReceipt);
+      assert.deepEqual(client.state.enabledActionIds, before.enabledActionIds);
+    },
+  );
 });
 
 test("navigationRead rejects a wrong correlated response type without admitting its state", async () => {
-  await withNavigationBridge("wrong_type", (socket, request) => {
-    socket.write(frame({ ...request, messageId: "nav_wrong_snapshot", type: "snapshot", payload: { revision: 99, location: "Farm", tile: { x: 1, y: 1 }, stamina: 1, exhausted: false, health: 1, actionable: true, capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", timeOfDay: 600, dayOfMonth: 1, seasonIndex: 0, year: 1, activeExecution: null } }));
-  }, async (client) => {
-    await assert.rejects(client.navigationRead({ operation: "inspect_world_map", args: {} }), /unexpected_navigation_read_response/);
-    assert.equal(client.state.snapshot, null);
-    assert.equal(client.state.latestReceipt, null);
-  });
+  await withNavigationBridge(
+    "wrong_type",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "nav_wrong_snapshot",
+          type: "snapshot",
+          payload: {
+            revision: 99,
+            location: "Farm",
+            tile: { x: 1, y: 1 },
+            stamina: 1,
+            exhausted: false,
+            health: 1,
+            actionable: true,
+            capabilities: [],
+            catalogRevision: 1,
+            enabledActionIds: [],
+            presentationLocale: "en-US",
+            timeOfDay: 600,
+            dayOfMonth: 1,
+            seasonIndex: 0,
+            year: 1,
+            activeExecution: null,
+          },
+        }),
+      );
+    },
+    async (client) => {
+      await assert.rejects(
+        client.navigationRead({ operation: "inspect_world_map", args: {} }),
+        /unexpected_navigation_read_response/,
+      );
+      assert.equal(client.state.snapshot, null);
+      assert.equal(client.state.latestReceipt, null);
+    },
+  );
 });
 
 test("navigationRead rejects a wrong correlated receipt without mutating receipt state", async () => {
-  await withNavigationBridge("wrong_receipt", (socket, request) => {
-    socket.write(frame({ ...request, messageId: "nav_wrong_receipt", type: "execution_receipt", payload: { executionId: "wrong_execution", requestId: "wrong_request", actionId: "move_to_tile", state: "succeeded", reasonCode: "completed", revision: 1, evidence: {} } }));
-  }, async (client) => {
-    await assert.rejects(client.navigationRead({ operation: "inspect_world_map", args: {} }), /unexpected_navigation_read_response/);
-    assert.equal(client.state.latestReceipt, null);
-  });
+  await withNavigationBridge(
+    "wrong_receipt",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "nav_wrong_receipt",
+          type: "execution_receipt",
+          payload: {
+            executionId: "wrong_execution",
+            requestId: "wrong_request",
+            actionId: "move_to_tile",
+            state: "succeeded",
+            reasonCode: "completed",
+            revision: 1,
+            evidence: {},
+          },
+        }),
+      );
+    },
+    async (client) => {
+      await assert.rejects(
+        client.navigationRead({ operation: "inspect_world_map", args: {} }),
+        /unexpected_navigation_read_response/,
+      );
+      assert.equal(client.state.latestReceipt, null);
+    },
+  );
 });
 
 test("local bridge rejects an inbound navigation_read_request", async () => {
-  await withNavigationBridge("inbound", () => undefined, async (client, peer) => {
-    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) => client.onConnectionFact(resolvePromise));
-    peer.write(frame({ protocolVersion: 1, messageId: "inbound_nav", correlationId: "inbound_nav", timestampMs: Date.now(), scope, type: "navigation_read_request", payload: { operation: "inspect_world_map", args: {} } }));
-    assert.equal((await disconnected).reasonCode, "unexpected_inbound_request");
-  });
+  await withNavigationBridge(
+    "inbound",
+    () => undefined,
+    async (client, peer) => {
+      const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+        client.onConnectionFact(resolvePromise),
+      );
+      peer.write(
+        frame({
+          protocolVersion: 1,
+          messageId: "inbound_nav",
+          correlationId: "inbound_nav",
+          timestampMs: Date.now(),
+          scope,
+          type: "navigation_read_request",
+          payload: { operation: "inspect_world_map", args: {} },
+        }),
+      );
+      assert.equal((await disconnected).reasonCode, "unexpected_inbound_request");
+    },
+  );
 });
-
 
 async function withBodyProgramBridge(
   name: string,
@@ -1441,29 +1713,41 @@ async function withBodyProgramBridge(
         const request = JSON.parse(buffer.subarray(4, length + 4).toString("utf8")) as BridgeMessage;
         buffer = buffer.subarray(length + 4);
         if (request.type === "hello") {
-          socket.write(frame({
-            ...request,
-            messageId: `body_program_hello_${name}`,
-            type: "hello_ack",
-            payload: {
-    sessionId: `body_program_session_${name}`,
-    capabilities: [],
-    catalogRevision: 1,
-    policyIdentity: mockPolicyIdentity,
-    enabledActionIds: [],
-              presentationLocale: "en-US",
-              registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
-              runtimeRole: "native_local_fixture",
-              launchGeneration: null,
-            },
-          }));
+          socket.write(
+            frame({
+              ...request,
+              messageId: `body_program_hello_${name}`,
+              type: "hello_ack",
+              payload: {
+                sessionId: `body_program_session_${name}`,
+                capabilities: [],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
         } else if (request.type === "program_events") {
           respond(socket, request);
         }
       }
     });
   });
-  await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject));
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject),
+  );
   try {
     await run(await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter));
   } finally {
@@ -1473,118 +1757,192 @@ async function withBodyProgramBridge(
 }
 
 test("body program closes the named pipe for a structurally valid wrong correlated response", async () => {
-  await withBodyProgramBridge("wrong_correlated_response", (socket, request) => {
-    socket.write(frame({
-      ...request,
-      messageId: "body_program_wrong_type",
-      type: "program_status_result",
-      payload: { programId: request.payload.programId, status: "accepted", catalogRevision: 1 },
-    }));
-  }, async (client) => {
-    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
-      client.onConnectionFact(resolvePromise),
-    );
-    await assert.rejects(
-      client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
-      /body_program_protocol_invalid/,
-    );
-    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
-    assert.equal(client.state.connected, false);
-  });
+  await withBodyProgramBridge(
+    "wrong_correlated_response",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "body_program_wrong_type",
+          type: "program_status_result",
+          payload: { programId: request.payload.programId, status: "accepted", catalogRevision: 1 },
+        }),
+      );
+    },
+    async (client) => {
+      const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+        client.onConnectionFact(resolvePromise),
+      );
+      await assert.rejects(
+        client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
+        /body_program_protocol_invalid/,
+      );
+      assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+      assert.equal(client.state.connected, false);
+    },
+  );
 });
 
 test("body program closes the named pipe for a wrong correlated programId", async () => {
-  await withBodyProgramBridge("wrong_program_id", (socket, request) => {
-    socket.write(frame({
-      ...request,
-      messageId: "body_program_wrong_program",
-      type: "program_events_result",
-      payload: { programId: "foreign_program", code: "found", nextCursor: 1, highWater: 1, events: [{ cursor: 1, programId: "foreign_program", kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }] },
-    }));
-  }, async (client) => {
-    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
-      client.onConnectionFact(resolvePromise),
-    );
-    await assert.rejects(
-      client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
-      /body_program_protocol_invalid/,
-    );
-    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
-    assert.equal(client.state.connected, false);
-  });
+  await withBodyProgramBridge(
+    "wrong_program_id",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "body_program_wrong_program",
+          type: "program_events_result",
+          payload: {
+            programId: "foreign_program",
+            code: "found",
+            nextCursor: 1,
+            highWater: 1,
+            events: [
+              {
+                cursor: 1,
+                programId: "foreign_program",
+                kind: "accepted",
+                catalogRevision: 1,
+                nodeId: null,
+                nodeAttempt: null,
+              },
+            ],
+          },
+        }),
+      );
+    },
+    async (client) => {
+      const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+        client.onConnectionFact(resolvePromise),
+      );
+      await assert.rejects(
+        client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
+        /body_program_protocol_invalid/,
+      );
+      assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+      assert.equal(client.state.connected, false);
+    },
+  );
 });
 
 test("body program closes the named pipe when events exceed the requested page size", async () => {
-  await withBodyProgramBridge("page_size", (socket, request) => {
-    socket.write(frame({
-      ...request,
-      messageId: "body_program_excess_events",
-      type: "program_events_result",
-      payload: {
-        programId: request.payload.programId,
-        code: "found",
-        nextCursor: 2,
-        highWater: 2,
-        events: [
-          { cursor: 1, programId: request.payload.programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null },
-          { cursor: 2, programId: request.payload.programId, kind: "running", catalogRevision: 1, nodeId: null, nodeAttempt: null },
-        ],
-      },
-    }));
-  }, async (client) => {
-    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
-      client.onConnectionFact(resolvePromise),
-    );
-    await assert.rejects(
-      client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
-      /body_program_protocol_invalid/,
-    );
-    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
-    assert.equal(client.state.connected, false);
-  });
+  await withBodyProgramBridge(
+    "page_size",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "body_program_excess_events",
+          type: "program_events_result",
+          payload: {
+            programId: request.payload.programId,
+            code: "found",
+            nextCursor: 2,
+            highWater: 2,
+            events: [
+              {
+                cursor: 1,
+                programId: request.payload.programId,
+                kind: "accepted",
+                catalogRevision: 1,
+                nodeId: null,
+                nodeAttempt: null,
+              },
+              {
+                cursor: 2,
+                programId: request.payload.programId,
+                kind: "running",
+                catalogRevision: 1,
+                nodeId: null,
+                nodeAttempt: null,
+              },
+            ],
+          },
+        }),
+      );
+    },
+    async (client) => {
+      const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+        client.onConnectionFact(resolvePromise),
+      );
+      await assert.rejects(
+        client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
+        /body_program_protocol_invalid/,
+      );
+      assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+      assert.equal(client.state.connected, false);
+    },
+  );
 });
 
 test("body program accepts a legitimate empty events page above the event high-water", async () => {
-  await withBodyProgramBridge("empty_page_above_highwater", (socket, request) => {
-    socket.write(frame({
-      ...request,
-      messageId: "body_program_empty_page",
-      type: "program_events_result",
-      payload: { programId: request.payload.programId, code: "found", events: [], nextCursor: request.payload.cursor, highWater: request.payload.cursor - 5 },
-    }));
-  }, async (client) => {
-    const result = await client.programEvents({ programId: "program_01", cursor: 100, pageSize: 32 });
-    assert.deepEqual(result, { programId: "program_01", code: "found", events: [], nextCursor: 100, highWater: 95 });
-    assert.equal(client.state.connected, true);
-    client.close();
-  });
+  await withBodyProgramBridge(
+    "empty_page_above_highwater",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "body_program_empty_page",
+          type: "program_events_result",
+          payload: {
+            programId: request.payload.programId,
+            code: "found",
+            events: [],
+            nextCursor: request.payload.cursor,
+            highWater: request.payload.cursor - 5,
+          },
+        }),
+      );
+    },
+    async (client) => {
+      const result = await client.programEvents({ programId: "program_01", cursor: 100, pageSize: 32 });
+      assert.deepEqual(result, { programId: "program_01", code: "found", events: [], nextCursor: 100, highWater: 95 });
+      assert.equal(client.state.connected, true);
+      client.close();
+    },
+  );
 });
 
 test("body program still closes for a non-empty page whose high-water is below the requested cursor", async () => {
-  await withBodyProgramBridge("nonempty_below_highwater", (socket, request) => {
-    socket.write(frame({
-      ...request,
-      messageId: "body_program_nonempty_below",
-      type: "program_events_result",
-      payload: {
-        programId: request.payload.programId,
-        code: "found",
-        nextCursor: 101,
-        highWater: 100,
-        events: [{ cursor: 101, programId: request.payload.programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }],
-      },
-    }));
-  }, async (client) => {
-    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
-      client.onConnectionFact(resolvePromise),
-    );
-    await assert.rejects(
-      client.programEvents({ programId: "program_01", cursor: 100, pageSize: 1 }),
-      /body_program_protocol_invalid/,
-    );
-    assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
-    assert.equal(client.state.connected, false);
-  });
+  await withBodyProgramBridge(
+    "nonempty_below_highwater",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "body_program_nonempty_below",
+          type: "program_events_result",
+          payload: {
+            programId: request.payload.programId,
+            code: "found",
+            nextCursor: 101,
+            highWater: 100,
+            events: [
+              {
+                cursor: 101,
+                programId: request.payload.programId,
+                kind: "accepted",
+                catalogRevision: 1,
+                nodeId: null,
+                nodeAttempt: null,
+              },
+            ],
+          },
+        }),
+      );
+    },
+    async (client) => {
+      const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+        client.onConnectionFact(resolvePromise),
+      );
+      await assert.rejects(
+        client.programEvents({ programId: "program_01", cursor: 100, pageSize: 1 }),
+        /body_program_protocol_invalid/,
+      );
+      assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+      assert.equal(client.state.connected, false);
+    },
+  );
 });
 
 test("body program requests forward exact authenticated messages and retain modeled rejections", async () => {
@@ -1603,11 +1961,32 @@ test("body program requests forward exact authenticated messages and retain mode
         buffer = buffer.subarray(length + 4);
         requests.push(request);
         if (request.type === "hello") {
-          socket.write(frame({ ...request, messageId: "body_program_hello", type: "hello_ack", payload: {
-            sessionId: "body_program_session", capabilities: [], catalogRevision: 1, policyIdentity: mockPolicyIdentity, enabledActionIds: [], presentationLocale: "en-US",
-            registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
-            runtimeRole: "native_local_fixture", launchGeneration: null,
-          } }));
+          socket.write(
+            frame({
+              ...request,
+              messageId: "body_program_hello",
+              type: "hello_ack",
+              payload: {
+                sessionId: "body_program_session",
+                capabilities: [],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
           continue;
         }
         const bodyProgramRequest = request as Readonly<{
@@ -1615,24 +1994,67 @@ test("body program requests forward exact authenticated messages and retain mode
           payload: Readonly<{ programId: string; cursor?: number }>;
         }>;
         const nextCursor = (bodyProgramRequest.payload.cursor ?? 0) + 1;
-        const payload = bodyProgramRequest.type === "program_status"
-          ? { code: "found", snapshot: { programId: bodyProgramRequest.payload.programId, state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } }
-          : bodyProgramRequest.type === "program_events"
-            ? { programId: bodyProgramRequest.payload.programId, code: "found", nextCursor, highWater: nextCursor, events: [{ cursor: nextCursor, programId: bodyProgramRequest.payload.programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }] }
-            : { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics: [] }, snapshot: null };
-        const type = request.type === "program_submit" ? "program_submit_result" : request.type === "program_status" ? "program_status_result" : "program_events_result";
+        const payload =
+          bodyProgramRequest.type === "program_status"
+            ? {
+                code: "found",
+                snapshot: {
+                  programId: bodyProgramRequest.payload.programId,
+                  state: "active",
+                  catalogRevision: 1,
+                  stopEpoch: 0,
+                  eventHighWater: 0,
+                  nodes: [],
+                },
+              }
+            : bodyProgramRequest.type === "program_events"
+              ? {
+                  programId: bodyProgramRequest.payload.programId,
+                  code: "found",
+                  nextCursor,
+                  highWater: nextCursor,
+                  events: [
+                    {
+                      cursor: nextCursor,
+                      programId: bodyProgramRequest.payload.programId,
+                      kind: "accepted",
+                      catalogRevision: 1,
+                      nodeId: null,
+                      nodeAttempt: null,
+                    },
+                  ],
+                }
+              : {
+                  code: "rejected",
+                  verification: { accepted: false, catalogRevision: 1, diagnostics: [] },
+                  snapshot: null,
+                };
+        const type =
+          request.type === "program_submit"
+            ? "program_submit_result"
+            : request.type === "program_status"
+              ? "program_status_result"
+              : "program_events_result";
         socket.write(frame({ ...request, messageId: `body_program_${type}`, type, payload }));
       }
     });
   });
-  await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject));
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject),
+  );
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
-      const candidate = { programId: "program_01", nodes: [{ nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }] } as const;
+    const candidate = {
+      programId: "program_01",
+      nodes: [{ nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }],
+    } as const;
     assert.equal((await client.programSubmit(candidate)).code, "rejected");
     assert.equal((await client.programStatus({ programId: "program_01" })).snapshot?.catalogRevision, 1);
     assert.equal((await client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 })).nextCursor, 1);
-    assert.deepEqual(requests.slice(1).map((request) => request.type), ["program_submit", "program_status", "program_events"]);
+    assert.deepEqual(
+      requests.slice(1).map((request) => request.type),
+      ["program_submit", "program_status", "program_events"],
+    );
     for (const request of requests.slice(1)) assert.deepEqual(request.scope, scope);
     client.close();
     await assert.rejects(client.programStatus({ programId: "program_01" }), /bridge_not_authenticated/);
@@ -1663,13 +2085,21 @@ test("local Stardew bridge fails closed when a fact listener throws event_pump_e
             messageId: "mod_hello_listener_overflow",
             type: "hello_ack",
             payload: {
-    sessionId: "session_listener_overflow",
-    capabilities: [],
-    catalogRevision: 1,
-    policyIdentity: mockPolicyIdentity,
-    enabledActionIds: [],
+              sessionId: "session_listener_overflow",
+              capabilities: [],
+              catalogRevision: 1,
+              policyIdentity: mockPolicyIdentity,
+              enabledActionIds: [],
               presentationLocale: "en-US",
-              registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+              registrations: [
+                {
+                  actionId: "move_to_tile",
+                  familyId: "movement_navigation",
+                  identityVersion: 1,
+                  lifecycle: "published",
+                  kind: "execution",
+                },
+              ],
               runtimeRole: "native_local_fixture",
               launchGeneration: null,
             },
@@ -1710,6 +2140,94 @@ test("local Stardew bridge fails closed when a fact listener throws event_pump_e
   }
 });
 
+test("a Mod error frame settles the pending request with the Mod own reason code", async () => {
+  // The Mod names a refusal in an error frame; an error frame is an expected response for every request type, so
+  // the pending call used to be left to its own timer and the caller saw `bridge_connect_deadline_exceeded`
+  // instead. Measured 2026-10-17: a capability refusal answered as `action_not_available` surfaced as a 45 s
+  // timeout, and both sides logs read like a transport fault because neither reported the refusal.
+  const pipeName = `gamebuddy_error_frame_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  let sendError: (() => void) | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type === "hello") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_hello_error_frame",
+              type: "hello_ack",
+              payload: {
+                sessionId: "session_error_frame",
+                capabilities: [],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
+          continue;
+        }
+        sendError = () =>
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_error_frame",
+              type: "error",
+              payload: { reasonCode: "action_not_available" },
+            }),
+          );
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
+    const dispatched = client.execute({
+      requestId: "req_error_frame",
+      idempotencyKey: "idem_error_frame",
+      action: "move_to_tile",
+      args: { x: 1, y: 1 },
+      expectedRevision: client.state.snapshot?.revision ?? 1,
+      deadlineMs: Date.now() + 30_000,
+    });
+    assert.ok(sendError !== undefined);
+    sendError();
+    await assert.rejects(
+      () => dispatched,
+      (error: Error) => error.message === "action_not_available",
+      "the caller must receive the Mod own reason, not its own deadline",
+    );
+    // The frame is still recorded for observation, and it is NOT a receipt.
+    assert.equal(client.state.latestReasonCode, "action_not_available");
+    assert.equal(client.state.latestReceipt, null);
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
 test("local Stardew bridge maps an arbitrary fact listener exception to fact_listener_failed", async () => {
   const pipeName = `gamebuddy_listener_failed_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;
@@ -1731,13 +2249,21 @@ test("local Stardew bridge maps an arbitrary fact listener exception to fact_lis
             messageId: "mod_hello_listener_failed",
             type: "hello_ack",
             payload: {
-    sessionId: "session_listener_failed",
-    capabilities: [],
-    catalogRevision: 1,
-    policyIdentity: mockPolicyIdentity,
-    enabledActionIds: [],
+              sessionId: "session_listener_failed",
+              capabilities: [],
+              catalogRevision: 1,
+              policyIdentity: mockPolicyIdentity,
+              enabledActionIds: [],
               presentationLocale: "en-US",
-              registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+              registrations: [
+                {
+                  actionId: "move_to_tile",
+                  familyId: "movement_navigation",
+                  identityVersion: 1,
+                  lifecycle: "published",
+                  kind: "execution",
+                },
+              ],
               runtimeRole: "native_local_fixture",
               launchGeneration: null,
             },
@@ -1798,13 +2324,21 @@ test("a pending observe rejects through the normal close path when a fact listen
               messageId: "mod_hello_listener_pending",
               type: "hello_ack",
               payload: {
-    sessionId: "session_listener_pending",
-    capabilities: [],
-    catalogRevision: 1,
-    policyIdentity: mockPolicyIdentity,
-    enabledActionIds: [],
+                sessionId: "session_listener_pending",
+                capabilities: [],
+                catalogRevision: 1,
+                policyIdentity: mockPolicyIdentity,
+                enabledActionIds: [],
                 presentationLocale: "en-US",
-                registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
                 runtimeRole: "native_local_fixture",
                 launchGeneration: null,
               },

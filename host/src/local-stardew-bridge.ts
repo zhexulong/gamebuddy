@@ -89,6 +89,7 @@ export type LocalStardewBridgeDiagnostic = Readonly<{
     | "pipe_frame_dispatched"
     | "pipe_write_completed"
     | "pipe_write_failed"
+    | "mod_refusal_received"
     | "native_chat_pipe_data_received"
     | "native_chat_bridge_inbound_frame_received"
     | "native_chat_bridge_player_control_validated"
@@ -750,6 +751,22 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       this.transport.close("unexpected_hello_ack");
       return;
     }
+    if (message.type === "error") {
+      // The Mod's NAME for a refusal must reach the caller that asked. An error frame is an expected response for
+      // every request type, so it used to fall through to the generic handling below: the pending call was never
+      // settled by it, and its own timer produced `bridge_connect_deadline_exceeded` instead of the reason the Mod
+      // had already given. Measured 2026-10-17: a capability refusal answered as `action_not_available` surfaced as
+      // a 45 s timeout, and both sides' logs looked like a transport fault because neither reported the refusal.
+      this.#latestReasonCode = message.payload.reasonCode;
+      if (pending !== undefined) {
+        this.#pending.delete(message.correlationId);
+        clearTimeout(pending.timer);
+        pending.reject(new Error(message.payload.reasonCode));
+      }
+      for (const listener of this.#diagnosticListeners)
+        listener({ stage: "mod_refusal_received", reasonCode: message.payload.reasonCode });
+      return;
+    }
     // A query response is a solicited recovery result. Its only consumer is
     // the caller (the reconnect supervisor), which then routes it through the
     // coordinator's normal receipt admission. Never race that authority with
@@ -888,7 +905,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         // legitimately carry the same revision (see acceptSnapshot), which is
         // exactly how the real post-action location reaches the Agent.
       }
-    } else if (message.type === "semantic_event" || message.type === "lifecycle" || message.type === "error") {
+    } else if (message.type === "semantic_event" || message.type === "lifecycle") {
       this.#latestReasonCode = message.payload.reasonCode;
     }
     if (
