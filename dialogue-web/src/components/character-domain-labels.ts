@@ -92,6 +92,30 @@ export type CharacterLabels = Readonly<{
    * activation operation, so this surface offers no control and says so.
    */
   companionInPlay: string;
+  /**
+   * The roster row's own control, whose accessible name says what it does: it
+   * VIEWS the companion's authored facts. It is not an activation control - the
+   * companion in play is chosen by the start-up configuration - so the words never
+   * promise a switch.
+   */
+  companionInspect: string;
+  /** The inspector drawer's own vocabulary; every field is labelled, and an
+   * absent one says she was made without it rather than showing an empty box. */
+  companionInspectorClose: string;
+  /** The in-play statement the inspector carries in its own words: a state, never
+   * a control, because no activation operation exists. */
+  companionInspectorInPlay: string;
+  companionInspectorNotInPlay: string;
+  companionInspectorUnavailable: string;
+  companionInspectorPersonaTitle: string;
+  companionInspectorPersonaCore: string;
+  companionInspectorScenarioAbsent: string;
+  companionInspectorOpeningsTitle: string;
+  companionInspectorGreetingsAbsent: string;
+  companionInspectorWorldBookTitle: string;
+  companionInspectorWorldBookAbsent: string;
+  /** "She was made without one" for a group whose heading already names the group. */
+  companionInspectorAbsent: string;
   newCompanionTitle: string;
   newCompanionHint: string;
   newCompanionCreate: string;
@@ -262,6 +286,20 @@ const en: CharacterLabels = Object.freeze({
   companionCurrent: "current",
   companionInPlay:
     "The companion in play is chosen by the start-up configuration — a companion imported or created here is archived safely in your local companion library, and becomes the one in play only when GameBuddy later starts with her.",
+  companionInspect: "View {{name}}'s character",
+  companionInspectorClose: "Close",
+  companionInspectorInPlay: "This is the companion in play.",
+  companionInspectorNotInPlay:
+    "{{name}} is saved in your companion library. She is not the companion in play — the companion in play was chosen by the start-up configuration, and viewing her character here does not change that.",
+  companionInspectorUnavailable: "Her character could not be read.",
+  companionInspectorPersonaTitle: "Description and personality",
+  companionInspectorPersonaCore: "Who she is",
+  companionInspectorScenarioAbsent: "She was made without a scenario.",
+  companionInspectorOpeningsTitle: "Openings",
+  companionInspectorGreetingsAbsent: "She was made without an opening; a chat with her starts empty.",
+  companionInspectorWorldBookTitle: "Her own world book",
+  companionInspectorWorldBookAbsent: "She was made without a world book.",
+  companionInspectorAbsent: "She was made without one.",
   newCompanionTitle: "New companion",
   newCompanionHint: "A display name only; GameBuddy mints every identity.",
   newCompanionCreate: "Create companion",
@@ -426,6 +464,20 @@ const zh: CharacterLabels = Object.freeze({
   companionCurrent: "当前",
   companionInPlay:
     "在玩的伙伴由启动配置选定——你在这里导入或创建的伙伴会安全归档到本地伙伴库，只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。",
+  companionInspect: "查看 {{name}} 的角色",
+  companionInspectorClose: "关闭",
+  companionInspectorInPlay: "这就是在玩的伙伴。",
+  companionInspectorNotInPlay:
+    "{{name}} 已保存在你的伙伴库中。她不是在玩的伙伴——在玩的伙伴由启动配置选定，在这里查看她的角色并不会改变这一点。",
+  companionInspectorUnavailable: "无法读取她的角色资料。",
+  companionInspectorPersonaTitle: "描述与性格",
+  companionInspectorPersonaCore: "她是谁",
+  companionInspectorScenarioAbsent: "创建她时没有场景。",
+  companionInspectorOpeningsTitle: "开场白",
+  companionInspectorGreetingsAbsent: "创建她时没有开场白；与她的对话会以空白开始。",
+  companionInspectorWorldBookTitle: "她自己的世界书",
+  companionInspectorWorldBookAbsent: "创建她时没有世界书。",
+  companionInspectorAbsent: "创建她时没有这项设定。",
   newCompanionTitle: "新建伙伴",
   newCompanionHint: "只需填写显示名称；所有身份由 GameBuddy 铸造。",
   newCompanionCreate: "创建伙伴",

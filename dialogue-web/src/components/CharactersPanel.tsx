@@ -10,6 +10,7 @@ import type {
 } from "../management-pipeline-api";
 import { problemTextWithCode } from "../management-pipeline-api";
 import { CharacterCardImport } from "./CharacterCardImport";
+import { CompanionInspectorDrawer, type InspectedCompanion } from "./CompanionInspectorDrawer";
 import { characterLabels } from "./character-domain-labels";
 
 /** A save's outcome: `saved`, or the refusal's own bounded reason, or none. */
@@ -63,6 +64,10 @@ export function CharactersPanel({
 }): ReactElement {
   const labels = characterLabels(locale);
   const [companionList, setCompanionList] = useState<CompanionListV1 | "loading" | "unavailable">("loading");
+  const [inspected, setInspected] = useState<InspectedCompanion | null>(null);
+  // The roster row that opened the inspector; the drawer gives focus back to it on
+  // close (the shell's own focus-restoration idiom).
+  const inspectorOpener = useRef<HTMLElement | null>(null);
   const [createName, setCreateName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createNotice, setCreateNotice] = useState<SaveNotice>(null);
@@ -361,7 +366,23 @@ export function CharactersPanel({
               <ul data-companion-list>
                 {companionList.companions.map((entry) => (
                   <li key={entry.handle} data-companion-entry>
-                    <span>{entry.name}</span>
+                    {/* The row is how the player READS a companion: it opens the
+                        read-only inspector for the companion it names. It is a
+                        control for the keyboard, and its accessible name says
+                        what it does, so it can never read as an activation
+                        control this Host has no operation for. */}
+                    <button
+                      type="button"
+                      className="companion-entry-open"
+                      data-companion-inspect
+                      aria-label={labels.companionInspect.replace("{{name}}", entry.name)}
+                      onClick={(event) => {
+                        inspectorOpener.current = event.currentTarget;
+                        setInspected({ handle: entry.handle, name: entry.name, isCurrent: entry.isCurrent });
+                      }}
+                    >
+                      {entry.name}
+                    </button>
                     {entry.isCurrent && <em className="companion-current-badge">{labels.companionCurrent}</em>}
                   </li>
                 ))}
@@ -632,6 +653,7 @@ export function CharactersPanel({
 
           {opening !== "unavailable" && (
             <section aria-label={labels.openingTitle} data-opening-editor>
+              {" "}
               <h3>{labels.openingTitle}</h3>
               <p className="management-settings-hint">{labels.openingHint}</p>
               {opening === "loading" ? (
@@ -713,6 +735,17 @@ export function CharactersPanel({
               )}
             </section>
           )}
+
+          {/* The inspector is the drawer's own read of the clicked companion; it
+              edits nothing, and it is the only place an archived companion's
+              authored facts can be read at all. */}
+          <CompanionInspectorDrawer
+            api={api}
+            companion={inspected}
+            locale={locale}
+            onClose={() => setInspected(null)}
+            restoreFocusTo={inspectorOpener}
+          />
         </>
       )}
     </section>

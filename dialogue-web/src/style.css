@@ -2661,6 +2661,24 @@
     background-color: var(--surface-canvas);
   }
 
+  /* The roster row's own control: the companion's name opens the read-only
+   inspector. It is a button so the keyboard reaches it, and the row keeps its
+   52 px floor, but it paints as the row's own label - transparent, borderless -
+   rather than a second control beside the current badge. */
+  [data-companion-entry] > .companion-entry-open {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    min-height: 44px;
+    padding: 0;
+    background-color: transparent;
+    border: 0;
+    color: var(--text-primary);
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+  }
+
   /* Selection is a card that also reads as selected: glass accent border plus
    the burgundy wash, never colour alone. */
   .chat-item-card.selected,
