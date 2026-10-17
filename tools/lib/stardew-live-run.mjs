@@ -86,10 +86,14 @@ export async function launchStardewLiveRun({
   if (typeof modsPath !== "string" || !isAbsolute(modsPath)) throw new Error("invalid_live_run_mods_path");
   if (typeof pipeName !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(pipeName))
     throw new Error("invalid_live_run_pipe_name");
+  // The window mode is validated with the REST of the caller's inputs, before any environment check: a malformed
+  // argument is a caller bug regardless of the tree's state, and checking the build first made this refusable only
+  // as `live_run_artifact_stale` whenever another lane had touched host/src (found by this module's own test on a
+  // genuinely stale tree).
+  const mode = normalizeLiveRunWindowMode(windowMode);
   // Refuse BEFORE a game process exists. The runner checks this too, but a caller that reaches the runner has
   // already paid for a save load -- measured: a stale artifact refused the run and left the launched game behind.
   await assertLiveRunArtifactFresh();
-  const mode = normalizeLiveRunWindowMode(windowMode);
   const smapi = join(gamePath, "StardewModdingAPI.exe");
 
   const child = spawn(smapi, ["--mods-path", modsPath], {
