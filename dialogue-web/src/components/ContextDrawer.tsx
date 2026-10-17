@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 
 /**
  * The one contextual drawer primitive (design/26 §4.2, §7.2; design/104 §2).
@@ -60,7 +60,7 @@ export function ContextDrawer({
     };
   }, [restoreFocusTo]);
 
-  const handleKeyDown = (event: { key: string; shiftKey: boolean; preventDefault(): void }): void => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
     if (event.key === "Escape") {
       // Escape belongs to this drawer while it is open: closing it must not also
       // step the shell back to the conversation, or close the surface it was
