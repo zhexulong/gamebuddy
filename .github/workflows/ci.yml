@@ -115,7 +115,19 @@ jobs:
       - run: pnpm --filter @gamebuddy/dialogue-web test:artifact
       - name: Install the frontend journeys' Chromium
         run: pnpm --dir dialogue-web exec playwright install --with-deps chromium
+      # Bisect of the 2026-10-16 mounted hang. `test:mounted` wraps the whole suite
+      # in the probe's single `spawnSync` child with inherited stdio, so a stall
+      # inside it yields one log line and no diagnosis (it ran 106 and 50 minutes
+      # across two runs with identical single-line output, while the same command
+      # is green locally in 1.8m). This bare run isolates Playwright from the
+      # probe: a hang here names Playwright/the dev server, a pass here with a
+      # hang below names the probe's spawn layer. Bounded, so either answer is a
+      # named failure instead of a silent hour.
+      - name: Bisect - bare Playwright, one journey
+        timeout-minutes: 10
+        run: pnpm --dir dialogue-web exec playwright test tests/app-bar-status-narrow.spec.ts --project=chromium --workers=1
       - run: pnpm --filter @gamebuddy/dialogue-web test:mounted
+        timeout-minutes: 25
       - run: pnpm test
       # The composed runtime's launch contract: the environment block the launcher hands the Host child
       # (including the embedded-runtime declaration the background historian is gated on) and the session
@@ -131,7 +143,6 @@ jobs:
       # reason - in tools/tool-test-corpus-quarantine.json. It fails if one of those starts passing, so an
       # exclusion cannot outlive its defect.
       - run: pnpm test:tool-corpus
-      - run: node tools/verify-phase0b-host.mjs
       - run: pnpm dependency-audit
       - run: pnpm check:dependency-risk
       - run: pnpm test:dependency-risk

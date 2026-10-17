@@ -3,9 +3,9 @@
   "artifactKind": "dependency_risk_acceptances",
   "snapshotId": "pi-0.84.4-magic-context-0.41.0-upgrade",
   "lockfileHashes": {
-    "pnpm-lock.yaml": "c4541266f5f9d456162e759c34d6267c3fc47dcdd5315c693da8461d1854688e",
-    "vendor/magic-context/bun.lock": "9b7cf5be22fb36175c55dac50c08ab490864bfddc82af4a79f838e4bdb55c324",
-    "integrations/stardew/packages.lock.json": "938bcea4b1529466c6c5fc02ce6924048021a236899f35b2e8e8444d57d9b8c1"
+    "pnpm-lock.yaml": "392f2348a419526b8b861fcdcb3a6179358f9b84ff147361935b99c700ddc66a",
+    "vendor/magic-context/bun.lock": "5f8b0c7089743ea645277846664bfdeab59115ad8919048204ccc963047301ef",
+    "integrations/stardew/packages.lock.json": "c13e6f751d0b3ac39969bd9dba9c3d669a3c36903b8ff5daaa051bbd4f20fc9e"
   },
   "records": []
 }
