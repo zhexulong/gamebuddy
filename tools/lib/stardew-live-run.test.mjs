@@ -14,8 +14,7 @@ import {
 } from "./stardew-live-run.mjs";
 
 const execFileAsync = promisify(execFile);
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 
 const toolPath = fileURLToPath(new URL("./stardew-live-run.mjs", import.meta.url));
 const source = readFileSync(toolPath, "utf8");
