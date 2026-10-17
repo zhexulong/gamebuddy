@@ -21,15 +21,52 @@
  *     this a loop rather than one rollover.
  */
 
+/** The season index the world reported after this night, whichever of the two shapes carried it. */
+function seasonIndexFor(after) {
+  if (typeof after?.seasonIndex === "number") return after.seasonIndex;
+  return typeof after?.season === "string" ? SEASON_NAMES.indexOf(after.season) : SEASON_NAMES.length;
+}
+
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
 
-/** The engine's own day count per season, used by the calendar cross-check below. */
-const DAYS_PER_SEASON = 28;
+/** The engine's own season order, and the days each season holds a festival on. */
+export const SEASON_NAMES = Object.freeze(["spring", "summer", "fall", "winter"]);
+export const DAYS_PER_SEASON = 28;
 
 /** The bounded window this corpus is willing to call a baseline. */
 export const MINIMUM_BASELINE_DAYS = 2;
 export const MAXIMUM_BASELINE_DAYS = 3;
+
+/**
+ * What this baseline does NOT cover, published with its verdict instead of living only in the fixture's source.
+ *
+ * The reviewer's point stands: a verdict whose scope is unstated reads as wider than it is. A real 3-7 day
+ * companion will meet a festival (spring 13), a season boundary (spring 28 -> summer 1) and a profession
+ * milestone; those days take different code paths in the game's own day pipeline, so a pass here must not be read
+ * as covering them. The rules below make that a BLOCKED result if a run ever widens into one, rather than a silent
+ * pass, and the gate's own output carries this list.
+ */
+export const BASELINE_SCOPE_NOTES = Object.freeze([
+  "consecutive days inside ONE season: a rollover that crosses the season boundary (day 28 -> day 1) is out of scope",
+  "no festival days: a night landing on a festival day is out of scope",
+  "single-player topology: a shared-world ready barrier is not exercised here",
+  "no profession milestones: levels 5 and 10 are a choice, and the fixture pins the five skills so none can arise",
+]);
+
+/** The days the engine runs a world-state change on, in the season order this module already knows. */
+/**
+ * The days each season runs a world-state change on.
+ *
+ * A night that lands on one of these takes a different path in the game's own day pipeline, which is why the
+ * baseline names it out of scope rather than passing it (see `BASELINE_SCOPE_NOTES`).
+ */
+export const FESTIVAL_DAYS_BY_SEASON = Object.freeze({
+  spring: Object.freeze([13, 24]),
+  summer: Object.freeze([11, 28]),
+  fall: Object.freeze([16, 27]),
+  winter: Object.freeze([8, 25]),
+});
 
 /** Menus the product's own `dismiss_modal` closes as a pure cancel (`ShippingMenu` is the one a rollover raises). */
 export const DISMISSIBLE_ROLLOVER_MENUS = Object.freeze(["ShippingMenu"]);
@@ -110,7 +147,37 @@ export function classifyNight({ terminal, after }) {
       facts: Object.freeze(facts),
     });
   }
-  return Object.freeze({ advanced: true, reasonCode: null, facts: Object.freeze(facts), expectedDayOfMonth });
+  return Object.freeze({
+    advanced: true,
+    reasonCode: null,
+    facts: Object.freeze(facts),
+    expectedDayOfMonth,
+    dayBefore,
+    dayAfter,
+  });
+}
+
+/**
+ * A night that left the scope this corpus covers, or null when it stayed inside.
+ *
+ * The scope is named in `BASELINE_SCOPE_NOTES`; this is the half that makes it enforceable. Both cases are real
+ * days a longer companion meets - the season-boundary rollover and a festival - and both take different paths in
+ * the game's own day pipeline, so a pass must not be read as covering them.
+ */
+export function nightOutsideBaselineScope(classified) {
+  if (classified === null || classified === undefined) return null;
+  if (!classified.advanced) return null;
+  // A season rollover is the night that ends on day 1: only the 28 -> 1 wrap can produce it, so it needs no
+  // day-of-month history (the receipt's own totals increase monotonically and do not wrap).
+  if (classified.expectedDayOfMonth === 1) {
+    return "night_crossed_a_season_boundary:expected_day=1";
+  }
+  const season = SEASON_NAMES[classified.seasonIndex];
+  const festivals = FESTIVAL_DAYS_BY_SEASON[season];
+  if (festivals !== undefined && festivals.includes(classified.expectedDayOfMonth)) {
+    return `night_landed_on_a_festival_day:${String(season)}:${String(classified.expectedDayOfMonth)}`;
+  }
+  return null;
 }
 
 /**
@@ -148,6 +215,14 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
       continue;
     }
     daysCrossed += 1;
+
+    // Scope, enforced rather than assumed: this corpus proves consecutive days inside one season, with no
+    // festival and no profession milestone. A night that left that window is a BLOCKED result, because the
+    // verdict would otherwise read as covering a day the run never actually held.
+    const outsideScope = nightOutsideBaselineScope(
+      night.dayBefore === undefined ? night : { ...night, seasonIndex: seasonIndexFor(record.after) },
+    );
+    if (outsideScope !== null) violations.push(violation(outsideScope, `${where}.night`));
 
     // The Mod's own night facts. `saving_observed` is not required (a dismissed menu skips the
     // menu-owned save), but the two edges that DECIDE the terminal are.

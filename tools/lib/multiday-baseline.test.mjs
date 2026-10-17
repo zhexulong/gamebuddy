@@ -51,7 +51,7 @@ const MENU = (overrides = {}) => ({
 const DAY = (overrides = {}) => ({
   day: overrides.day ?? 1,
   terminal: overrides.terminal === null ? null : TERMINAL(overrides.terminal),
-  after: overrides.after ?? { dayOfMonth: 8, timeOfDay: 610, seasonIndex: 3 },
+  after: overrides.after ?? { dayOfMonth: 8, timeOfDay: 610, seasonIndex: 0 },
   menus: overrides.menus ?? [MENU()],
   nextDayAccomplishedActionIds: overrides.nextDayAccomplishedActionIds ?? ["harvest_crop", "cut_weeds"],
 });

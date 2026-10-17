@@ -17,7 +17,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { assessMultiDayBaseline, parseReceiptEvidence } from "./lib/multiday-baseline.mjs";
+import { assessMultiDayBaseline, BASELINE_SCOPE_NOTES, parseReceiptEvidence } from "./lib/multiday-baseline.mjs";
 import { readEvidenceBundle } from "./lib/evidence-bundle.mjs";
 
 const checks = [];
@@ -49,7 +49,7 @@ const day = (overrides = {}) => ({
           reasonCode: overrides.reasonCode ?? "day_advanced",
           evidence: overrides.evidence ?? EVIDENCE(),
         },
-  after: overrides.after ?? { dayOfMonth: 7, timeOfDay: 610, seasonIndex: 3, year: 1 },
+  after: overrides.after ?? { dayOfMonth: 7, timeOfDay: 610, seasonIndex: 0, year: 1 },
   menus: overrides.menus ?? [
     {
       menuType: "ShippingMenu",
@@ -161,6 +161,41 @@ function fixtureChecks() {
     );
   }
 
+  // 2b. The SCOPE is enforced, not just documented: a night that leaves it is red rather than a broader pass.
+  // The evidence totals and the world's calendar must AGREE for a night to be classified at all, so each case
+  // carries both: the totals the Mod reported and the day the world showed afterwards.
+  const outOfScopeNights = [
+    [
+      "season_boundary",
+      "night_crossed_a_season_boundary",
+      () =>
+        day({
+          evidence: EVIDENCE({ dayBefore: 27, daysBefore: 27, dayAfter: 28, daysAfter: 28 }),
+          after: { dayOfMonth: 1, timeOfDay: 610, seasonIndex: 0 },
+        }),
+    ],
+    [
+      "festival",
+      "night_landed_on_a_festival_day",
+      () =>
+        day({
+          evidence: EVIDENCE({ dayBefore: 11, daysBefore: 11, dayAfter: 12, daysAfter: 12 }),
+          after: { dayOfMonth: 13, timeOfDay: 610, seasonIndex: 0 },
+        }),
+    ],
+  ];
+  for (const [id, expected, produce] of outOfScopeNights) {
+    const produced = assessMultiDayBaseline({
+      dayRecords: [produce(), day({ day: 2 })],
+      daysRequested: 2,
+    }).violations.map((entry) => entry.code);
+    check(
+      `scope_${id}_is_out_of_scope`,
+      produced.some((code) => code.startsWith(expected)),
+      produced.join(","),
+    );
+  }
+
   // 3. The window is enforced: a one-night "multi-day" run cannot claim the baseline.
   const oneNight = assessMultiDayBaseline({ dayRecords: [day()], daysRequested: 1 });
   check(
@@ -224,6 +259,8 @@ process.stdout.write(
     mode: runDir === null ? "rules" : "run-dir",
     runDir,
     status: failed.length === 0 ? "passed" : "failed",
+    // WHAT THIS VERDICT COVERS, next to the verdict itself: a pass must not read as wider than the corpus.
+    scope: BASELINE_SCOPE_NOTES,
     checks,
     // Read-only echo of the raw record for a real run, so a reader sees the crossings rather than only the verdict.
     ...(runDir !== null && existsSync(join(runDir, "manifest.json"))
