@@ -151,6 +151,8 @@ export type CharacterLabels = Readonly<{
   companionWorldBookKeySeparator: string;
   companionWorldBookAlwaysOn: string;
   companionWorldBookNoEntries: string;
+  /** The disclosure that reveals one entry's own text. */
+  companionWorldBookEntryText: string;
 
   /** The decoder's own disposition classes, in player words. */
   dispositionAccepted: string;
@@ -283,6 +285,7 @@ const en: CharacterLabels = Object.freeze({
   companionWorldBookKeySeparator: ", ",
   companionWorldBookAlwaysOn: "Always with her",
   companionWorldBookNoEntries: "Her own book is here, but it carries no entries yet.",
+  companionWorldBookEntryText: "What it says",
 
   dispositionAccepted: "used",
   dispositionPreserved: "kept unchanged",
@@ -411,6 +414,7 @@ const zh: CharacterLabels = Object.freeze({
   companionWorldBookKeySeparator: "、",
   companionWorldBookAlwaysOn: "始终随行",
   companionWorldBookNoEntries: "她的世界书已在这里，但里面还没有词条。",
+  companionWorldBookEntryText: "看看正文",
 
   dispositionAccepted: "已使用",
   dispositionPreserved: "原样保留",

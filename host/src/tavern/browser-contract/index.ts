@@ -783,17 +783,39 @@ export const CompanionDetailV1Schema = strictObject({
   name: Type.String({ minLength: 1, maxLength: 128 }),
 });
 /**
+ * The longest rendered entry body the browser may read, in UTF-16 code units. It is
+ * the same order as the other authored-text bounds on this contract and exists so a
+ * pathological entry cannot make the surface unreadable; a body over it is refused
+ * with a named code rather than truncated, because a silently shortened entry would
+ * read as the author's text.
+ */
+export const COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH = 4_096;
+
+/**
  * One entry of the companion's own durable world book (`<runtimeCwd>/worldbook.json`),
  * as the reviewed card import persisted it.
  *
- * The entry's body is deliberately NOT projected: the worldbook tools already omit
- * bodies from their catalog, and a body is context the companion reads rather than
- * text the browser renders. What the player cannot otherwise find out is that the
- * entry exists at all, and which of their own words reaches it - `keys` are the
- * card's own trigger words, and per-turn selection matches them against what the
- * player actually said, so an entry whose keys are invisible is an entry the player
- * cannot deliberately reach. `constant` marks the always-on background, which is
- * carried whatever is said and therefore carries no trigger words.
+ * The entry's body IS projected, read-only, for the player. It used to say the
+ * opposite - "deliberately NOT projected: the worldbook tools already omit bodies
+ * from their catalog, and a body is context the companion reads rather than text
+ * the browser renders" - and that reasoning did not survive the surface it sits
+ * on: the same panel lets the player read and edit this companion's voice
+ * directive, persona, scenario and greetings, and the card's own text was already
+ * shown to them at import review. Seeing a trigger word but not the text it
+ * triggers is the defect that reasoning left in place. `keys` remain the card's
+ * own trigger words, and per-turn selection matches them against what the player
+ * actually said, so between them the player can now see both what an entry says
+ * and which of their own words reaches it. `constant` marks the always-on
+ * background, which is carried whatever is said and therefore carries no trigger
+ * words.
+ *
+ * The body is projected already rendered through the run's macro table
+ * (`desktop-presentation-admission-owner.ts`, the same authority the scenario
+ * projection uses), so a `{{user}}`/`{{char}}` placeholder never reaches the
+ * player - and the durable file keeps the author's own text. **Editing** an entry
+ * is a planned capability, not a forbidden one: it needs a `PUT` with the same
+ * `expectedRevision` CAS the neighbouring companion mutations carry, and it is not
+ * served yet.
  */
 export const CompanionWorldBookEntryV1Schema = strictObject({
   title: Type.String({ minLength: 1, maxLength: 256 }),

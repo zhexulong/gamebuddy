@@ -136,6 +136,19 @@ function CompanionWorldBookSection({
                         entry.keys.join(labels.companionWorldBookKeySeparator),
                       )}
                 </p>
+                {/* The entry's own text. It is what the player came to read: a row
+                    that shows which words reach it but not what it says is a row
+                    they can deliberately reach and still cannot read. Folded shut
+                    by default so the list stays scannable, and rendered from the
+                    Host's own projection - the `{{user}}`/`{{char}}` macros in the
+                    card's text are already resolved by the time it arrives. */}
+                <details className="custom-disclosure" data-companion-world-book-entry-text>
+                  <summary>
+                    <ChevronDown size={14} aria-hidden="true" />
+                    {labels.companionWorldBookEntryText}
+                  </summary>
+                  <p className="companion-world-book-body">{entry.content}</p>
+                </details>
               </div>
             ))}
           </div>

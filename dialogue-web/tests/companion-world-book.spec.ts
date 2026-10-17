@@ -140,8 +140,8 @@ test("a companion who has a world book shows its count and its trigger words", a
     apiVersion: 1,
     present: true,
     entries: [
-      { title: "温室", keys: ["温室", "玻璃房"], constant: false },
-      { title: "洒水器", keys: ["洒水器", "灌溉"], constant: false },
+      { title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "温室的玻璃是她去年冬天换的,她说这样开春就能提前育苗。" },
+      { title: "洒水器", keys: ["洒水器", "灌溉"], constant: false, content: "洒水器是她修好的,管子接在井边。" },
     ],
   });
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
@@ -161,6 +161,20 @@ test("a companion who has a world book shows its count and its trigger words", a
   await expect(entries.first()).toContainText("触发词：温室、玻璃房");
   await expect(entries.nth(1)).toContainText("洒水器");
   await expect(entries.nth(1)).toContainText("触发词：洒水器、灌溉");
+
+  // Each entry's own text is readable, one fold down. A row that shows which words
+  // reach it but not what it says is a row the player can deliberately reach and
+  // still cannot read - the half the earlier "the body is not projected" decision
+  // left in place. The list itself is a disclosure, so it opens first; the entry's
+  // own fold is what the text hides behind.
+  await block.locator("[data-companion-world-book-disclosure] > summary").click();
+  const firstText = entries.first().locator("[data-companion-world-book-entry-text]");
+  await expect(firstText).toBeVisible();
+  await firstText.locator("> summary").click();
+  await expect(firstText).toContainText("温室的玻璃是她去年冬天换的");
+  // …and the Host renders the card's macros before the browser ever sees the body,
+  // so no placeholder can be painted here.
+  await expect(block).not.toContainText("{{");
 
   // The attachable library is a DIFFERENT list and is empty here, so its block is
   // not rendered at all - it can no longer read as "you have no world book".
@@ -205,10 +219,11 @@ test("a world book that carries no entries says so instead of showing a zero", a
  */
 test("the companion's trigger list folds into a disclosure at 400x800", async ({ page }) => {
   const entries = Array.from({ length: 8 }, (_, index) => ({
-    title: `词条 ${index}`,
-    keys: ["料理", "做饭", "黑莓脆皮乐", "土豆饼", "绿茶", "防风草", "清晨", "拓荒"],
-    constant: false,
-  }));
+      title: `词条 ${index}`,
+      keys: ["料理", "做饭", "黑莓脆皮乐", "土豆饼", "绿茶", "防风草", "清晨", "拓荒"],
+      constant: false,
+      content: `第 ${index} 条正文。`,
+    }));
   await stubCharacters(page, { apiVersion: 1, present: true, entries });
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
   await page.setViewportSize({ width: 400, height: 800 });
@@ -230,7 +245,7 @@ test("the companion's trigger list folds into a disclosure at 400x800", async ({
   await expect(rows.first()).toBeHidden();
   const collapsed = await block.evaluate((node) => Math.round(node.getBoundingClientRect().height));
 
-  await disclosure.locator("summary").click();
+  await disclosure.locator("> summary").click();
   await expect(rows.first()).toBeVisible();
   const expanded = await block.evaluate((node) => Math.round(node.getBoundingClientRect().height));
   console.log(`[world-book-disclosure] collapsed=${collapsed} expanded=${expanded}`);
@@ -260,8 +275,8 @@ test("the companion's own trigger list draws the same card rows as the bindable 
     apiVersion: 1,
     present: true,
     entries: [
-      { title: "温室", keys: ["温室", "玻璃房"], constant: false },
-      { title: "洒水器", keys: ["洒水器", "灌溉"], constant: false },
+      { title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "温室的玻璃是她去年冬天换的,她说这样开春就能提前育苗。" },
+      { title: "洒水器", keys: ["洒水器", "灌溉"], constant: false, content: "洒水器是她修好的,管子接在井边。" },
     ],
   });
   // The attachable library is non-empty here, so its own row is the comparison.
@@ -281,7 +296,7 @@ test("the companion's own trigger list draws the same card rows as the bindable 
   const block = surface.locator("[data-companion-world-book]");
   await expect(block).toBeVisible();
   const disclosure = block.locator("[data-companion-world-book-disclosure]");
-  await disclosure.locator("summary").click();
+  await disclosure.locator("> summary").click();
   await expect(block.locator("[data-companion-world-book-entry]").first()).toBeVisible();
   await expect(surface.locator("[data-world-book-list] > [role=listitem]").first()).toBeVisible();
 

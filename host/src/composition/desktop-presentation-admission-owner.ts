@@ -34,7 +34,8 @@ import {
   chatListPreviewText,
 } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
-import { macroTable } from "../tavern/macro-engine.js";
+import { COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH } from "../tavern/browser-contract/index.js";
+import { macroTable, renderMacros } from "../tavern/macro-engine.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
 import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import type { ChatManagementService } from "../tavern/chat-management/chat-management-service.js";
@@ -353,12 +354,31 @@ function createTavernManagementDomains(
     async read(handle: string) {
       if (handle !== companionHandleFor(currentCompanionId)) return null;
       const book = await readCompanionWorldBook(runtimePaths.runtimeCwd);
+      // The bodies are authored text in the card's own words, so they carry the
+      // author's `{{user}}`/`{{char}}` macros verbatim; the player reads them
+      // through the run's own macro table, exactly as the scenario projection does
+      // (`withScenarioSurfaceMacros`), never as a raw placeholder. Rendering
+      // happens before the bound is applied, so a macro that straddles it is
+      // resolved whole instead of being cut into a stray `{{`.
+      const macros = await macroTable({
+        char: (await mountedNamePromise) ?? "",
+        locale: await resolveCompanionLocale(manifest.runtimeRoot),
+      });
+      const rendered = book.entries.map((entry) => {
+        const content = renderMacros(entry.content, macros);
+        if (content.length > COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH)
+          throw new Error("companion_world_book_entry_too_long");
+        return Object.freeze({
+          title: entry.title,
+          keys: [...entry.keys],
+          constant: entry.constant,
+          content,
+        });
+      });
       return Object.freeze({
         apiVersion: TAVERN_BROWSER_API_VERSION,
         present: book.present,
-        entries: book.entries.map((entry) =>
-          Object.freeze({ title: entry.title, keys: [...entry.keys], constant: entry.constant }),
-        ),
+        entries: rendered,
       });
     },
   });

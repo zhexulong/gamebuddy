@@ -197,9 +197,13 @@ export type CompanionDetailV1 = Readonly<{
 /**
  * One entry of the companion's OWN world book - the reviewed card's
  * `character_book`, which the import persisted under the companion's runtime
- * root. The body is deliberately not projected (the Host's own worldbook tools
- * omit bodies too): what the player cannot otherwise find out is that the entry
- * exists and which of their own words reaches it.
+ * root. The entry's body IS projected, read-only: the panel already lets the player
+ * read and edit this companion's voice directive, persona, scenario and greetings,
+ * so a row showing which words reach an entry but not what it says is a row they
+ * can deliberately reach and still cannot read. The Host renders the body through
+ * the run's macro table before it is sent, so no `{{user}}`/`{{char}}` placeholder
+ * reaches this surface. Editing an entry is a planned capability, not a forbidden
+ * one; it is not served yet.
  */
 export type CompanionWorldBookEntryV1 = Readonly<{
   title: string;
@@ -211,6 +215,8 @@ export type CompanionWorldBookEntryV1 = Readonly<{
   keys: readonly string[];
   /** Always-on background, carried whatever is said, so it has no trigger words. */
   constant: boolean;
+  /** The entry's text, as the Host rendered it: macros resolved, bounded. */
+  content: string;
 }>;
 /**
  * The companion's own world book. A different thing from the World Info items a
@@ -1341,7 +1347,7 @@ function isCompanionCharacterVoice(value: unknown): value is CompanionCharacterV
 }
 
 const COMPANION_WORLD_BOOK_KEYS = ["apiVersion", "present", "entries"] as const;
-const COMPANION_WORLD_BOOK_ENTRY_KEYS = ["title", "keys", "constant"] as const;
+const COMPANION_WORLD_BOOK_ENTRY_KEYS = ["title", "keys", "constant", "content"] as const;
 /**
  * The companion's own world book, read once per mount. The browser may not widen
  * what the Host bounded: an entry's title is `worldbook.ts`'s own title bound, its
@@ -1366,6 +1372,8 @@ function isCompanionWorldBookEntry(value: unknown): value is CompanionWorldBookE
     hasExactKeys(value, COMPANION_WORLD_BOOK_ENTRY_KEYS) &&
     isLengthBoundedString(value.title, 1, 256) &&
     typeof value.constant === "boolean" &&
+    // The Host bounds the rendered body; the mirror may not widen it.
+    isLengthBoundedString(value.content, 0, 4_096) &&
     Array.isArray(value.keys) &&
     value.keys.length <= 16 &&
     value.keys.every((key) => isLengthBoundedString(key, 1, 64))
