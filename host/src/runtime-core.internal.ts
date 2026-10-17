@@ -886,7 +886,11 @@ export async function createRuntimeWithFixedToolsCore(
             // enabling a current-session hint and being mistaken for continuity recall.
             auto_search: { enabled: MAGIC_CONTEXT_RECALL_ENABLED },
           },
-          todowrite: { enabled: true, overlay: false },
+          // Upstream's `todowrite` is its coding-agent task-list tool, and this surface never calls it:
+          // the Companion plays Stardew, it does not plan a code change. It is switched OFF here rather
+          // than mounted and hidden, so the model is never offered a tool it must not use. The extension
+          // itself stays loaded - Memory, the Historian and context assembly all still come from it.
+          todowrite: { enabled: false, overlay: false },
           smart_drops: false,
           // Upstream's smart drops cannot be turned off, so this Host states which tool results they
           // must leave alone (see magic-context-protected-tools.ts for the policy and its test for the
@@ -1146,7 +1150,6 @@ export async function createRuntimeWithFixedToolsCore(
       ? []
       : [
           ...PHASE_0B_ALLOWED_TOOL_NAMES,
-          ...(loadMagicContextExtension ? ["todowrite"] : []),
           ...fixedToolNames,
           ...integrationTools.map((tool) => tool.name),
           ...worldBookTools.map((tool) => tool.name),
