@@ -432,6 +432,55 @@ test("P4c installs the durable authored-context plan before its plain-text promp
   assert.deepEqual(events, ["read-plan", "assert-install", "read-text", "prompt"]);
 });
 
+test("P4c forwards the plan's selected volatile world-book refs into the volatile install", async () => {
+  // The keyword-gated world-book entries live ONLY in `plan.volatileSources`: the
+  // catalog's per-turn selection (chat-thread-store.ts `selectAuthoredContextVolatileSourceRefs`)
+  // put them there, and this call is the only place that selection is handed to the
+  // vendor's per-turn m[1] binding. Passing `[]` here compiles, leaves every stable
+  // assertion green, and silently drops every entry the player's words just matched.
+  const volatileRef = Object.freeze({
+    sourceId: "book_01_entry_2",
+    kind: "lorebook_entry",
+    revision: "1",
+    canonicalHash: "b".repeat(64),
+    totalOrderKey: "0002",
+    provenance: "tavern-world-book-entry/book_01_entry_2/revision/1/canonical/c",
+  });
+  let installedVolatile: readonly AuthoredVolatileSourceRef[] | undefined;
+  const { scope } = createScope({
+    readAcceptedAuthoredContextPlan: async () =>
+      Object.freeze({
+        turnId: facts.turnId,
+        stableSources: Object.freeze([]),
+        volatileSources: Object.freeze([volatileRef]),
+      }),
+    authoredContextCapability: Object.freeze({
+      assertInstall(
+        _durableTurnId: string,
+        _refs: readonly AuthoredStableSourceRef[],
+        volatileRefs?: readonly AuthoredVolatileSourceRef[],
+      ) {
+        installedVolatile = volatileRefs;
+      },
+      clearVolatileForTurn: (_durableTurnId: string) => undefined,
+    }),
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver() {
+        return () => undefined;
+      },
+      session: Object.freeze({
+        prompt() {
+          return Promise.resolve();
+        },
+      }),
+    }),
+  });
+
+  await runMountedProviderStart(scope);
+
+  assert.deepEqual(installedVolatile, [volatileRef]);
+});
+
 test("P4c fails closed on an authored-context mismatch before prompt", async () => {
   let promptCalls = 0;
   const { scope } = createScope({
