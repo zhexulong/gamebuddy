@@ -163,7 +163,7 @@ test("the rollover watcher dispatches through the harness, not with a raw execut
   assert.equal((watcher.match(/await executeFresh\(client, \{/gu) ?? []).length, 2, "both dispatches");
   assert.match(
     RUNNER,
-    /import \{ executeFresh, observeFresh, TERMINAL_STATES \} from "\.\.\/\.\.\/lib\/stardew-native-smoke-harness-v1\.mjs";/,
+    /import \{ executeFresh, TERMINAL_STATES \} from "\.\.\/\.\.\/lib\/stardew-native-smoke-harness-v1\.mjs";/,
   );
 });
 

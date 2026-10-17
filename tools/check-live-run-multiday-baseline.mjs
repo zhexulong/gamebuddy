@@ -244,11 +244,11 @@ function parseOption(name) {
 const runDir = parseOption("--run-dir");
 if (runDir === null) fixtureChecks();
 else {
-  if (!existsSync(join(runDir, "manifest.json"))) {
-    check("run_dir_has_a_manifest", false, runDir);
-  } else {
+  if (existsSync(join(runDir, "manifest.json"))) {
     check("run_dir_has_a_manifest", true);
     await runDirChecks(runDir);
+  } else {
+    check("run_dir_has_a_manifest", false, runDir);
   }
 }
 

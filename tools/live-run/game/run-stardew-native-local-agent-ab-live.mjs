@@ -29,7 +29,7 @@ import { createHash } from "node:crypto";
 import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
 import { assessMultiDayBaseline, MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "../../lib/multiday-baseline.mjs";
 import { chooseLevelUpResolution, parsePendingLevelUps } from "../../lib/level-up-evidence.mjs";
-import { executeFresh, observeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
+import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
 import { identityKey } from "../../../host/dist-test/runtime-identity.js";
 import { dehydrateCompanionSpeech } from "../../../host/dist-test/companion-speech-dehydration.js";
@@ -786,14 +786,14 @@ client.onFact((fact) => {
       console.error("BRIDGE_FACT_UNSERIALIZABLE", JSON.stringify({ type: entry.type, reasonCode: entry.reasonCode }));
       return;
     }
-    if (!loggedFactLines.has(serialized)) {
-      loggedFactLines.add(serialized);
-      console.error("BRIDGE_FACT", serialized);
-    } else {
+    if (loggedFactLines.has(serialized)) {
       console.error(
         "BRIDGE_FACT_REDELIVERED",
         JSON.stringify({ type: entry.type, reasonCode: entry.reasonCode, executionId: entry.executionId }),
       );
+    } else {
+      loggedFactLines.add(serialized);
+      console.error("BRIDGE_FACT", serialized);
     }
   }
 });
@@ -2101,11 +2101,11 @@ try {
               // said nothing" - for a fault in the pipe (measured 2026-10-16).
               bridgeDisconnections.length > 0
               ? "bridge_disconnected"
-              : !sessionSpoken
-                ? "silent"
-                : accomplishedActionIds.length > 0
+              : sessionSpoken
+                ? accomplishedActionIds.length > 0
                   ? "completed"
-                  : "nothing_accomplished";
+                  : "nothing_accomplished"
+                : "silent";
   const morningRoutinePassed =
     SCENARIO === "morning_routine"
       ? sessionTurns.length > 0 && attemptedActionIds.length > 0 && sessionVerdict === "completed"

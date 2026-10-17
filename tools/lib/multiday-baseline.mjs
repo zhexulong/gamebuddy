@@ -259,7 +259,7 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
         }
         continue;
       }
-      if (!DISMISSIBLE_ROLLOVER_MENUS.includes(menu?.menuType) && !WAIT_ROLLOVER_MENUS.includes(menu?.menuType)) {
+      if (!(DISMISSIBLE_ROLLOVER_MENUS.includes(menu?.menuType) || WAIT_ROLLOVER_MENUS.includes(menu?.menuType))) {
         // A menu the product must not close (one with no audited handling) stops the night; the baseline
         // cannot claim a cross-day loop while one was raised.
         violations.push(violation(`night_raised_unclosable_menu:${String(menu?.menuType)}`, `${where}.menus`));
