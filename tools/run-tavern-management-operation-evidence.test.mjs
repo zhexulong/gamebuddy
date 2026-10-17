@@ -39,6 +39,10 @@ const ALL_OPERATIONS = [
   "chat.rename",
   "memory.mutate",
   "world-info.bind",
+  "world-info.detail",
+  "world-info.create",
+  "world-info.update",
+  "world-info.delete",
   "settings.voice.read",
   "settings.voice.consent",
   "settings.voice.devices",
@@ -124,6 +128,16 @@ test("the writes assert their durable effect, not only the reply shape", () => {
       "language_locale_not_durable",
     ],
     "world-info.bind": ["world_info_revision_unadvanced"],
+    // The authoring writes: each code may only be emitted once the write has answered or
+    // the item has been read back through the detail route.
+    "world-info.create": ["world_info_create_revision_unadvanced", "world_info_item_not_created"],
+    "world-info.update": [
+      "world_info_update_revision_unadvanced",
+      "world_info_item_revision_unadvanced",
+      "world_info_update_not_applied",
+      "world_info_update_not_durable",
+    ],
+    "world-info.delete": ["world_info_delete_revision_unadvanced", "world_info_item_not_removed"],
   };
   for (const [operationId, codes] of Object.entries(postWriteAssertions)) {
     const body = attemptBody(operationId);
@@ -168,10 +182,10 @@ test("the producer's CLI entry compares against fileURLToPath", () => {
 });
 
 test("the world-info coverage boundary is recorded, not hidden", () => {
-  // No world-info authoring route exists, so a fresh root cannot produce a
-  // bindable handle and the only reachable command is sourceHandle: null. The
-  // producer must say so, because the operation still reports `passed` and a
-  // reader would otherwise take it as evidence for the bind path.
+  // This operation seeds no catalog, so on a fresh root it cannot produce a bindable
+  // handle and the only command it sends is sourceHandle: null. The producer must say
+  // so, because the operation still reports `passed` and a reader would otherwise take
+  // it as evidence for the bound path.
   const body = attemptBody("world-info.bind");
   assert.match(body, /COVERAGE BOUNDARY/);
   assert.match(body, /bindExact/, "the uncovered path must be named");

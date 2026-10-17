@@ -333,14 +333,14 @@ async function exerciseOperations(origin, client) {
     const revision = worldInfo?.revision;
     if (typeof revision !== "string" || revision.length === 0) throw new Error("world_info_revision_unavailable");
     if (!Array.isArray(worldInfo.items)) throw new Error("world_info_items_unavailable");
-    // COVERAGE BOUNDARY, deliberately not papered over. The browser contract
-    // declares no world-info authoring route (25 routeIds, only read + bind), so
-    // a fresh root's managed catalog is empty and no bindable `handle` can be
-    // obtained. `sourceHandle: null` is therefore the ONLY reachable command,
-    // which makes this operation evidence for the unbind path and NOT for
-    // `bindExact` (managed-world-info-binding.ts). Asserting a bound state here
-    // would require a catalog this surface cannot create. The state the command
-    // returns is asserted below so the round-trip is real; the gap itself is
+    // THIS OPERATION'S COVERAGE BOUNDARY, deliberately not papered over. `world-info.bind`
+    // seeds nothing and this is the run's first library step, so on a fresh gate root the
+    // catalog it reads is empty and `sourceHandle: null` is the ONLY command it can send.
+    // The evidence below is therefore evidence for the unbind path and NOT for `bindExact`
+    // (managed-world-info-binding.ts); that path stays uncovered by this runner. Asserting
+    // a bound state here would require a catalog this step does not create - the authoring
+    // steps below create one, and they are what cover the library's write half. The state
+    // the command returns is asserted below so the round-trip is real; the gap itself is
     // recorded for the release review rather than hidden by a thin assertion.
     const state = await sendJson(origin, client, "PUT", "/api/tavern/v1/world-info", {
       apiVersion: 1,
@@ -353,6 +353,117 @@ async function exerciseOperations(origin, client) {
       throw new Error("world_info_revision_unadvanced");
     if (typeof state.state !== "string" || state.state.length === 0)
       throw new Error("world_info_binding_state_unavailable");
+  });
+
+  // The managed library's authoring half, on the same fresh root the bind step above left
+  // empty. Every step reads the current opaque projection first: a handle or a projection
+  // revision from any other read is refused rather than guessed, which is why the pair used
+  // below always comes from one read.
+  const AUTHORED_TITLE = "Gate fixture town";
+  const worldInfoProjection = async () => {
+    const snapshot = await readJson(origin, client, "/api/tavern/v1/state");
+    const generation = snapshot?.selection?.generation;
+    if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error("selection_generation_unavailable");
+    const state = await readJson(origin, client, "/api/tavern/v1/world-info");
+    if (typeof state?.revision !== "string" || state.revision.length === 0)
+      throw new Error("world_info_revision_unavailable");
+    if (!Array.isArray(state.items)) throw new Error("world_info_items_unavailable");
+    return { generation, revision: state.revision, items: state.items };
+  };
+  const authoredItem = async () => {
+    const { generation, revision, items } = await worldInfoProjection();
+    const item = items.find((candidate) => candidate.title === AUTHORED_TITLE);
+    if (item === undefined) throw new Error("world_info_authored_item_unavailable");
+    return { generation, revision, handle: item.handle };
+  };
+  const worldInfoItemPath = (generation, revision, handle) =>
+    `/api/tavern/v1/world-info/item?apiVersion=1&selectionGeneration=${generation}` +
+    `&expectedRevision=${revision}&itemHandle=${handle}`;
+
+  await attempt("world-info.create", async () => {
+    const { generation, revision, items } = await worldInfoProjection();
+    const before = items.length;
+    const created = await sendJson(origin, client, "POST", "/api/tavern/v1/world-info/item", {
+      apiVersion: 1,
+      selectionGeneration: generation,
+      expectedRevision: revision,
+      item: {
+        publicTitle: AUTHORED_TITLE,
+        summary: "A small valley town.",
+        entries: [
+          { scope: "setting", publicTitle: "Square", summary: "The town centre." },
+          { scope: "companion", publicTitle: "Rain", summary: "It rains on the farm.", keys: ["rain"] },
+        ],
+      },
+    });
+    // A create that stored nothing answers with the same projection revision and the same
+    // number of items, so both are checked on the reply rather than on the read it CASed
+    // against.
+    if (created === null || typeof created !== "object") throw new Error("world_info_state_unavailable");
+    if (typeof created.revision !== "string" || created.revision === revision)
+      throw new Error("world_info_create_revision_unadvanced");
+    if (!Array.isArray(created.items) || created.items.length !== before + 1)
+      throw new Error("world_info_item_not_created");
+  });
+
+  await attempt("world-info.detail", async () => {
+    const { generation, revision, handle } = await authoredItem();
+    const detail = await readJson(origin, client, worldInfoItemPath(generation, revision, handle));
+    // The reply is the item's own content: a read that answered with the list row would
+    // carry no entries at all.
+    if (detail === null || typeof detail !== "object") throw new Error("world_info_item_unavailable");
+    if (detail.publicTitle !== AUTHORED_TITLE) throw new Error("world_info_item_title_mismatch");
+    if (detail.revision !== 1) throw new Error("world_info_item_revision_unexpected");
+    if (!Array.isArray(detail.entries) || detail.entries.length !== 2)
+      throw new Error("world_info_item_entries_unavailable");
+  });
+
+  await attempt("world-info.update", async () => {
+    const { generation, revision, handle } = await authoredItem();
+    const updated = await sendJson(origin, client, "PUT", "/api/tavern/v1/world-info/item", {
+      apiVersion: 1,
+      selectionGeneration: generation,
+      expectedRevision: revision,
+      itemHandle: handle,
+      item: {
+        publicTitle: AUTHORED_TITLE,
+        summary: "The revised town facts.",
+        entries: [{ scope: "setting", publicTitle: "Square", summary: "The town centre, revised." }],
+        expectedRevision: 1,
+      },
+    });
+    if (updated === null || typeof updated !== "object") throw new Error("world_info_state_unavailable");
+    if (typeof updated.revision !== "string" || updated.revision === revision)
+      throw new Error("world_info_update_revision_unadvanced");
+    // The library's own revision advanced for the ITEM, not the projection: reading it back
+    // through the detail route is what proves the new content was stored.
+    const after = await authoredItem();
+    const detail = await readJson(origin, client, worldInfoItemPath(after.generation, after.revision, after.handle));
+    if (detail?.revision !== 2) throw new Error("world_info_item_revision_unadvanced");
+    if (detail?.summary !== "The revised town facts.") throw new Error("world_info_update_not_applied");
+    if (detail?.entries?.[0]?.summary !== "The town centre, revised.") throw new Error("world_info_update_not_durable");
+  });
+
+  await attempt("world-info.delete", async () => {
+    const { generation, revision, items } = await worldInfoProjection();
+    const item = items.find((candidate) => candidate.title === AUTHORED_TITLE);
+    if (item === undefined) throw new Error("world_info_authored_item_unavailable");
+    const before = items.length;
+    const removed = await sendJson(origin, client, "DELETE", "/api/tavern/v1/world-info/item", {
+      apiVersion: 1,
+      selectionGeneration: generation,
+      expectedRevision: revision,
+      itemHandle: item.handle,
+    });
+    if (removed === null || typeof removed !== "object") throw new Error("world_info_state_unavailable");
+    if (typeof removed.revision !== "string" || removed.revision === revision)
+      throw new Error("world_info_delete_revision_unadvanced");
+    if (!Array.isArray(removed.items) || removed.items.length !== before - 1)
+      throw new Error("world_info_item_not_removed");
+    // The removal must also be gone from a fresh read, not only from the reply.
+    const after = await worldInfoProjection();
+    if (after.items.some((candidate) => candidate.title === AUTHORED_TITLE))
+      throw new Error("world_info_removed_item_retained");
   });
 
   // settings.voice.read / .consent / .devices: the voice preference is a
