@@ -13,6 +13,22 @@ internal sealed class LocalPipeBridge : IDisposable
 {
     private const int MaximumQueuedMessages = 64;
     private const int MaximumInboundRequestsPerSecond = 32;
+
+    private long inboundFramesRead;
+    private long inboundFramesEnqueued;
+    private string? lastInboundFrameType;
+
+    /// <summary>
+    /// What the reader thread has actually seen, for the game thread's own heartbeat line.
+    ///
+    /// The last blocker of a live night was a request the Host sent and the Mod never dequeued, and neither side's log
+    /// said which end dropped it: the Host only reports its own timer, and the reader had no visibility from the game
+    /// thread. These counters are that visibility - `read` counts frames off the pipe, `enqueued` counts frames handed to
+    /// the game thread, so a gap between them names which half to look at, and `lastType` says what the newest frame was.
+    /// </summary>
+    internal readonly record struct InboundFrameCounters(long Read, long Enqueued, string? LastType);
+    internal InboundFrameCounters SnapshotInboundFrameCounters() =>
+        new(Interlocked.Read(ref this.inboundFramesRead), Interlocked.Read(ref this.inboundFramesEnqueued), this.lastInboundFrameType);
     private readonly string pipeName;
     private readonly CancellationTokenSource cancellation = new();
     private readonly ConcurrentQueue<PipeInbound> inbound = new();
@@ -160,6 +176,10 @@ internal sealed class LocalPipeBridge : IDisposable
         while (!cancellationToken.IsCancellationRequested)
         {
             string json = await ReadFrameAsync(stream, cancellationToken).ConfigureAwait(false);
+            // Read BEFORE the rate and queue checks below: a frame that is read but not enqueued is exactly the
+            // difference these counters exist to make visible.
+            Interlocked.Increment(ref this.inboundFramesRead);
+            this.lastInboundFrameType = FrameTypeOf(json);
             long nowMs = Environment.TickCount64;
             if (nowMs - windowStartMs >= 1_000)
             {
@@ -174,7 +194,20 @@ internal sealed class LocalPipeBridge : IDisposable
                 throw new InvalidDataException("bridge_inbound_rate_limited");
             }
             this.inbound.Enqueue(new PipeInbound(generation, json));
+            Interlocked.Increment(ref this.inboundFramesEnqueued);
         }
+    }
+
+    /** The envelope's own `type`, read without materializing the document: the heartbeat only needs to name it. */
+    private static string? FrameTypeOf(string json)
+    {
+        const string marker = "\"type\":";
+        int at = json.IndexOf(marker, StringComparison.Ordinal);
+        if (at < 0) return null;
+        int start = json.IndexOf('"', at + marker.Length);
+        if (start < 0) return null;
+        int end = json.IndexOf('"', start + 1);
+        return end < 0 ? null : json.Substring(start + 1, end - start - 1);
     }
 
     private async Task WriteLoopAsync(Stream stream, long generation, CancellationToken cancellationToken)

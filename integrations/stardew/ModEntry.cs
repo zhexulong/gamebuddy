@@ -932,7 +932,14 @@ public sealed partial class ModEntry : Mod
         Farmer? player = Game1.player;
         bool navigateBusy = !(player is null) && this.GetEmbodimentState().Executions?.IsBodyBusy == true;
         bool bridgeConnected = this.ReadinessBridgeConnected();
-        this.Monitor.Log($"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")}", LogLevel.Trace);
+        // What the READER has seen, which is the half neither side's log showed during the night that hung: the Host only
+        // reports its own timer, so `rx=0/0` says "the frame never arrived" while `read>enqueued` says "the Mod dropped
+        // it", and `last` names the newest frame.
+        LocalPipeBridge.InboundFrameCounters inbound = this.GetEmbodimentState().LocalPipeBridge?.SnapshotInboundFrameCounters()
+            ?? default;
+        this.Monitor.Log(
+            $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};last={(inbound.LastType ?? "none")}",
+            LogLevel.Trace);
     }
 
     /// <summary>Content-free bridge liveness used only by the diagnostic heartbeat.</summary>
