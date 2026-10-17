@@ -116,10 +116,17 @@ public sealed class MultiDayPlaySessionFixtureTests
         // mid-run `no_native_path` cannot disagree about what reachable means.
         given.Should().Contain("StardewBodyController.AssessReachability(");
         given.Should().Contain("home.getPorchStandingSpot()");
-        // Three outcomes, each named: unreachable, unknown (component over budget), and door off map.
-        given.Should().Contain("fixture_native_local_multi_day_home_unreachable:from=");
-        given.Should().Contain("fixture_native_local_multi_day_home_reachability_unknown:from=");
+        // Measured on the FARM and from the spot the actor stands on when it comes OUT, never from its own tile:
+        // at arm time the actor's tile is its bed inside the house, and probing the Farm's map from an interior
+        // coordinate refused every world (component_tiles=22 around the bed, measured on run g5).
+        given.Should().NotContain("Point from = new((int)player.Tile.X");
+        given.Should().Contain("FindNativeLocalShippingBinStandingTile(farm, bin)");
+        // Four outcomes, each named: unreachable, unknown (component over budget), door off map, and a bin with no
+        // standing tile at all.
+        given.Should().Contain("fixture_native_local_multi_day_home_unreachable:door=");
+        given.Should().Contain("fixture_native_local_multi_day_home_reachability_unknown:door=");
         given.Should().Contain("fixture_native_local_multi_day_home_door_off_map:");
+        given.Should().Contain("fixture_native_local_multi_day_bin_standing_tile_missing:");
         // The refusal carries numbers rather than a verdict, and it says nothing about the ROUTE.
         given.Should().Contain("component_tiles={assessed.ComponentTiles}");
         given.Should().Contain("closest=");

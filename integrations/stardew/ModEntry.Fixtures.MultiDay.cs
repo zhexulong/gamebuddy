@@ -42,27 +42,52 @@ public sealed partial class ModEntry
         if (!farm.isTileOnMap(new Vector2(door.X, door.Y)))
             throw new InvalidOperationException($"fixture_native_local_multi_day_home_door_off_map:{door.X},{door.Y}");
 
-        Point from = new((int)player.Tile.X, (int)player.Tile.Y);
+        // Measured on the FARM, from the spot the actor stands on when it comes OUT of its home - not from the
+        // actor's own tile.
+        //
+        // The first version of this check used `player.Tile`, and at arm time that tile is the actor's BED
+        // coordinate INSIDE the house: probing the Farm's map from an interior coordinate gave
+        // `component_tiles=22` around the bed and refused every world (measured 2026-08-17 on run g5, from=9,9).
+        // What this scenario needs to know is whether the FARM is one walkable piece between the door and the
+        // places the day uses, because the actor leaves the house to work and has to come back.
+        //
+        // The authority is the SAME probe the refusal receipts publish (AssessReachability), so an arm-time refusal
+        // and a mid-run `no_native_path` cannot disagree about what "reachable" means.
         var layer = farm.map.Layers[0];
+        bool Walkable(Point tile) =>
+            tile.X >= 0
+            && tile.Y >= 0
+            && tile.X < layer.LayerWidth
+            && tile.Y < layer.LayerHeight
+            && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y));
+
+        // The other place the day needs: the tile the actor stands on to use the shipping bin. A farm where home and
+        // the bin are in different walkable components cannot support a day that ends - and a bin with no standing
+        // tile at all is its own named refusal rather than an assumption.
+        StardewValley.Buildings.ShippingBin? bin = farm.buildings.OfType<StardewValley.Buildings.ShippingBin>().FirstOrDefault();
+        if (bin is null)
+            throw new InvalidOperationException("fixture_native_local_multi_day_bin_missing");
+        Vector2? binStanding = FindNativeLocalShippingBinStandingTile(farm, bin);
+        if (binStanding is not { } binTile)
+            throw new InvalidOperationException(
+                $"fixture_native_local_multi_day_bin_standing_tile_missing:bin={bin.tileX.Value},{bin.tileY.Value}");
+        Point binStandingTile = new((int)binTile.X, (int)binTile.Y);
         ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
-            from,
             door,
-            tile => tile.X >= 0
-                && tile.Y >= 0
-                && tile.X < layer.LayerWidth
-                && tile.Y < layer.LayerHeight
-                && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y)),
+            binStandingTile,
+            Walkable,
             maxVisited: 8000,
             findClosestReachable: true);
-        // A null verdict means the component exceeded the budget; that is not a world this scenario may arm in
-        // either, because no bounded claim about the way home can be made from it.
         if (verdict is not { } assessed)
-            throw new InvalidOperationException($"fixture_native_local_multi_day_home_reachability_unknown:from={from.X},{from.Y};door={door.X},{door.Y}");
+        {
+            throw new InvalidOperationException(
+                $"fixture_native_local_multi_day_home_reachability_unknown:door={door.X},{door.Y};bin={binStandingTile.X},{binStandingTile.Y}");
+        }
         if (assessed.TargetEnclosed)
         {
             Point? closest = assessed.ClosestToTarget;
             throw new InvalidOperationException(
-                $"fixture_native_local_multi_day_home_unreachable:from={from.X},{from.Y};door={door.X},{door.Y};component_tiles={assessed.ComponentTiles};closest={(closest is null ? "none" : $"{closest.Value.X},{closest.Value.Y}")}");
+                $"fixture_native_local_multi_day_home_unreachable:door={door.X},{door.Y};bin={binStandingTile.X},{binStandingTile.Y};component_tiles={assessed.ComponentTiles};closest={(closest is null ? "none" : $"{closest.Value.X},{closest.Value.Y}")}");
         }
     }
 
