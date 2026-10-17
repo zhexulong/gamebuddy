@@ -11,7 +11,7 @@ import { deflateSync } from "node:zlib";
  * carries its JSON: `pngCardFile(JSON.stringify(card))` is an ST card file whose
  * picture is the real image above.
  */
-export function pngFileWithText(keyword: string, value: string): Uint8Array {
+function pngFileWithText(keyword: string, value: string): Uint8Array {
   const text = latin1(`${keyword}\u0000${value}`);
   return pngFile([chunk("tEXt", text)]);
 }
@@ -23,11 +23,6 @@ export function pngCardFile(cardJson: string, keyword = "chara"): Uint8Array {
 /** The same real PNG with no text chunk at all: a picture that carries no card. */
 export function pngPictureFile(): Uint8Array {
   return pngFile([]);
-}
-
-/** The same real PNG with one empty text chunk: a card that carries nothing readable. */
-export function pngCardFileWithoutPayload(): Uint8Array {
-  return pngFileWithText("chara", "");
 }
 
 /**

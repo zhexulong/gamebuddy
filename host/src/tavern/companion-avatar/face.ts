@@ -26,7 +26,7 @@ import type { CompanionAvatarService } from "./index.js";
  * nothing behind this face an unauthenticated peer could not already read from
  * the same user account's disk.
  */
-export const COMPANION_AVATAR_ROUTE_PREFIX = "/assets/companions/" as const;
+const COMPANION_AVATAR_ROUTE_PREFIX = "/assets/companions/" as const;
 
 const AVATAR_PATH_PATTERN = /^\/assets\/companions\/([A-Za-z0-9_-]{22,128})\/avatar\.png$/u;
 
