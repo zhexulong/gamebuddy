@@ -1,10 +1,9 @@
 name: Wire admission diagnostic
 
 # Manual, diagnostic-only. The `host` job's wire-fixture batch cannot be observed while an
-# earlier gate is red (2026-10-17: the four `multiday-baseline`/`multiday-loop` exports from
-# Lane G0 stop it at `Check Knip reachability`). This runs ONLY the fixture that names the
-# root-admission refusal, so the probe's output is reachable without waiting on unrelated
-# gates. It is not a release gate and nothing depends on it.
+# earlier gate is red. This runs ONLY that fixture, so the admission probe's output and the
+# root-ownership facts are reachable without waiting on unrelated gates. It is not a release
+# gate and nothing depends on it.
 on:
   workflow_dispatch:
 
@@ -39,10 +38,39 @@ jobs:
         with:
           global-json-file: global.json
       - run: pnpm --dir host build:test
-      # Run the batch's FIRST file alone, which is where CI refuses. Its stderr carries the
-      # probe lines, and the runner prints the child's message under the failing test.
-      - name: Wire admission probe
+      # What the roots' owners actually are on this runner, and whether a directory created
+      # under the profile differs from one created under RUNNER_TEMP.
+      - name: Root ownership facts
+        shell: pwsh
+        run: |
+          Write-Host "whoami: $(whoami)"
+          Write-Host "runner_temp: $env:RUNNER_TEMP"
+          Write-Host "localappdata: $env:LOCALAPPDATA"
+          Write-Host "userprofile: $env:USERPROFILE"
+          foreach ($p in @($env:RUNNER_TEMP, $env:LOCALAPPDATA, $env:USERPROFILE)) {
+            if ([string]::IsNullOrEmpty($p)) { continue }
+            Write-Host ("owner_of_dir " + $p + " => " + (Get-Acl -LiteralPath $p).Owner)
+          }
+          $t = Join-Path $env:RUNNER_TEMP ("owner-probe-" + (Get-Random))
+          $l = Join-Path $env:LOCALAPPDATA ("owner-probe-" + (Get-Random))
+          New-Item -ItemType Directory -Force -Path $t | Out-Null
+          New-Item -ItemType Directory -Force -Path $l | Out-Null
+          Write-Host ("owner_of_new_in_temp => " + (Get-Acl -LiteralPath $t).Owner)
+          Write-Host ("owner_of_new_in_localappdata => " + (Get-Acl -LiteralPath $l).Owner)
+          Remove-Item -Recurse -Force $t, $l
+      - name: Wire admission probe (RUNNER_TEMP)
         run: node --import ./scripts/compiled-test-bootstrap.mjs --test --test-concurrency=1 dist-test/bootstrap/wire/desktop-runtime-bootstrap.internal.test.js
         working-directory: host
-        env:
-          GAMEBUDDY_BUN_EXECUTABLE: ${{ steps.bun.outputs.bun-path }}
+      # Falsification test: the same fixture with TEMP/TMP under the profile instead. If this
+      # batch goes green, the refusal is the OWNER of the RUNNER_TEMP tree, not anything the
+      # product or the fixture asserts about shapes, chains or volumes.
+      - name: Wire admission probe (profile-backed TEMP)
+        shell: pwsh
+        working-directory: host
+        run: |
+          $temp = Join-Path $env:LOCALAPPDATA "gb-wire-probe-temp"
+          New-Item -ItemType Directory -Force -Path $temp | Out-Null
+          $env:TEMP = $temp
+          $env:TMP = $temp
+          Write-Host ("probe temp owner: " + (Get-Acl -LiteralPath $temp).Owner)
+          node --import ./scripts/compiled-test-bootstrap.mjs --test --test-concurrency=1 dist-test/bootstrap/wire/desktop-runtime-bootstrap.internal.test.js
