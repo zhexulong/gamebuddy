@@ -1898,6 +1898,28 @@ export function createStardewActionTools(
   }
   {
     // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "respond_level_up");
+    if (registration?.descriptor && isModDescriptorComplete("respond_level_up", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("respond_level_up", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.respond_level_up,
+          label: "Settle a Level-up",
+          description:
+            'Settle the level-up the actor is being shown: choice "confirm" for an ordinary level, or "branch_a"/"branch_b" for one of the two professions a level-5 or level-10 menu offers. Pass the skill and level the menu is about, so a persistent choice can never be applied to the wrong level-up.',
+          parameters: schema,
+          action: "respond_level_up",
+          toArgs: (params) => ({
+            choice: params.choice,
+            expectedSkill: params.expectedSkill,
+            expectedLevel: params.expectedLevel,
+          }),
+        }),
+      );
+    }
+  }
+  {
+    // constant mount; per-action admission at execution
     const registration = modRegistrations.find((entry) => entry.actionId === "ride_minecart");
     if (registration?.descriptor && isModDescriptorComplete("ride_minecart", registration.descriptor)) {
       const schema = buildCandidateToolSchema("ride_minecart", registration.descriptor);

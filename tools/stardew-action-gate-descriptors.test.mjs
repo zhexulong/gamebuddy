@@ -49,7 +49,11 @@ test("every published execution action is either gated or an explicitly declared
 
   assert.deepEqual(neither, [], `published actions with no descriptor and no exemption: ${neither.join(", ")}`);
   assert.deepEqual(both, [], `published actions that are both gated and exempt: ${both.join(", ")}`);
-  assert.deepEqual(unknownExemption, [], `exemptions naming actions that are not published: ${unknownExemption.join(", ")}`);
+  assert.deepEqual(
+    unknownExemption,
+    [],
+    `exemptions naming actions that are not published: ${unknownExemption.join(", ")}`,
+  );
 
   // Every exemption must name a runner that actually exists, so the carve-out
   // carries evidence rather than prose alone.
@@ -58,10 +62,7 @@ test("every published execution action is either gated or an explicitly declared
     assert.match(entry.terminalReasonCode, /^[a-z][a-z0-9_]{1,127}$/, `${entry.actionId} exemption reason code`);
     await access(resolve(ROOT, "tools", entry.runner), constants.R_OK);
     const source = await readFile(resolve(ROOT, "tools", entry.runner), "utf8");
-    assert.ok(
-      source.includes(`"${entry.actionId}"`),
-      `${entry.runner} must drive ${entry.actionId}`,
-    );
+    assert.ok(source.includes(`"${entry.actionId}"`), `${entry.runner} must drive ${entry.actionId}`);
     assert.ok(
       source.includes(`"${entry.terminalReasonCode}"`),
       `${entry.runner} must assert terminal reason code ${entry.terminalReasonCode}`,
@@ -74,18 +75,18 @@ test("descriptor runner identity names the native-local shared-harness runner fo
   // actual native-local route (run-stardew-native-local-player-*), which is
   // the shared-harness runner. Any parallel/legacy runner ID is stale.
   const expectedRunners = Object.freeze({
-    "send_multiplayer_chat": "run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs",
-    "collect_building_chest_output": "run-stardew-native-local-player-collect-building-chest-output-smoke.mjs",
-    "load_building_chest": "run-stardew-native-local-player-load-building-chest-smoke.mjs",
-    "color_placed_object": "run-stardew-native-local-player-color-placed-object-smoke.mjs",
-    "dye_clothing_with_item": "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs",
-    "tailor_clothing": "run-stardew-native-local-player-tailor-clothing-smoke.mjs",
-    "redeem_prize_ticket": "run-stardew-native-local-player-prize-ticket-smoke.mjs",
-    "claim_museum_reward": "run-stardew-native-local-player-claim-museum-reward-smoke.mjs",
-    "accept_special_order": "run-stardew-native-local-player-accept-special-order-smoke.mjs",
-    "accept_daily_quest": "run-stardew-native-local-player-accept-daily-quest-smoke.mjs",
-    "name_entity": "run-stardew-native-local-player-name-entity-smoke.mjs",
-    "build_farm_building": "run-stardew-native-local-player-build-farm-building-smoke.mjs",
+    send_multiplayer_chat: "run-stardew-native-local-player-send-multiplayer-chat-smoke.mjs",
+    collect_building_chest_output: "run-stardew-native-local-player-collect-building-chest-output-smoke.mjs",
+    load_building_chest: "run-stardew-native-local-player-load-building-chest-smoke.mjs",
+    color_placed_object: "run-stardew-native-local-player-color-placed-object-smoke.mjs",
+    dye_clothing_with_item: "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs",
+    tailor_clothing: "run-stardew-native-local-player-tailor-clothing-smoke.mjs",
+    redeem_prize_ticket: "run-stardew-native-local-player-prize-ticket-smoke.mjs",
+    claim_museum_reward: "run-stardew-native-local-player-claim-museum-reward-smoke.mjs",
+    accept_special_order: "run-stardew-native-local-player-accept-special-order-smoke.mjs",
+    accept_daily_quest: "run-stardew-native-local-player-accept-daily-quest-smoke.mjs",
+    name_entity: "run-stardew-native-local-player-name-entity-smoke.mjs",
+    build_farm_building: "run-stardew-native-local-player-build-farm-building-smoke.mjs",
     toggle_animal_door: "run-stardew-native-local-player-toggle-animal-door-smoke.mjs",
     claim_mail_attachment: "run-stardew-native-local-player-claim-mail-attachment-smoke.mjs",
     pan_ore: "run-stardew-native-local-player-pan-ore-smoke.mjs",
@@ -99,8 +100,8 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     use_obelisk: "run-stardew-native-local-player-use-obelisk-smoke.mjs",
     withdraw_silo_hay: "run-stardew-native-local-player-withdraw-silo-hay-smoke.mjs",
     move_to_tile: "run-stardew-native-local-player-move-smoke.mjs",
-  // Promoted 2026-10-12 with its native-local live gate.
-  clear_fish_pond: "run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
+    // Promoted 2026-10-12 with its native-local live gate.
+    clear_fish_pond: "run-stardew-native-local-player-clear-fish-pond-smoke.mjs",
     equip_tool: "run-stardew-native-local-player-equip-tool-smoke.mjs",
     travel: "run-stardew-native-local-player-travel-smoke.mjs",
     enter_exit: "run-stardew-native-local-player-enter-exit-smoke.mjs",
@@ -184,6 +185,9 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     dismiss_modal: "run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs",
     answer_dialogue: "run-stardew-native-local-player-wia-answer-question-smoke.mjs",
     talk_to_npc: "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
+    // The level-up family, alongside the modal one: the menu is pushed at the same call site as the settlement
+    // menu, so its proof drives one night and then settles what the rollover raised.
+    respond_level_up: "run-stardew-native-local-player-respond-level-up-smoke.mjs",
   });
   // Obsolete parallel-route runner IDs that must never be re-selected.
   const forbiddenRouteIds = Object.freeze([
@@ -301,7 +305,8 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "mount_transport",
       "enter_mine",
       "dismiss_modal",
-        "answer_dialogue",
+      "answer_dialogue",
+      "respond_level_up",
       "place_owned_object",
       "remove_placed_item",
       "break_container_source",

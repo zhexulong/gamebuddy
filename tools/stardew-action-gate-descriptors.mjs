@@ -448,6 +448,13 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "answer_dialogue_answered",
     "native_wia_answer_question_v1",
   ),
+  gate(
+    "respond_level_up",
+    1,
+    "run-stardew-native-local-player-respond-level-up-smoke.mjs",
+    "level_up_resolved",
+    "native_multi_day_play_session_v1",
+  ),
   // Promoted to live-verified on 2026-10-08 after their native-local gates passed.
   gate(
     "place_owned_object",

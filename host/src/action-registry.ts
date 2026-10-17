@@ -19,7 +19,6 @@ export type StardewActionAdapter = Readonly<{
  * identity-version, or lifecycle facts.
  */
 export const STARDEW_ACTION_ADAPTERS = Object.freeze([
-
   actionAdapter(
     "place_owned_object",
     "Place an owned object",
@@ -38,18 +37,10 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Break one breakable container (a mine barrel or crate) with the equipped heavy hitter. Read the opaque target id and its tile from the `worldObjectTargets` entries of the most recent observation. The native call returns false even when it destroys the container, so the receipt's postcondition is the container being GONE plus the drops the game produced.",
     ["world_object"],
   ),
-  actionAdapter(
-    "move_to_tile",
-    "Move to a Stardew tile",
-    "Move the Farmhand to a live, structured target tile.",
-    ["tile"],
-  ),
-  actionAdapter(
-    "equip_tool",
-    "Equip a tool",
-    "Select a Tool already owned by the Farmhand.",
-    ["inventory_slot"],
-  ),
+  actionAdapter("move_to_tile", "Move to a Stardew tile", "Move the Farmhand to a live, structured target tile.", [
+    "tile",
+  ]),
+  actionAdapter("equip_tool", "Equip a tool", "Select a Tool already owned by the Farmhand.", ["inventory_slot"]),
   actionAdapter(
     "navigate_to_destination",
     "Navigate to a Stardew destination",
@@ -104,21 +95,26 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Activate a discovered warp obelisk. The Mod chooses the destination from the target itself (a Data/Buildings obelisk, or the island farm obelisk tile), so the caller names the structure and never a destination.",
     ["obelisk"],
   ),
-  actionAdapter("use_raft", "Launch a raft", "Use the equipped native Raft on an adjacent water tile to begin rafting.", ["raft", "water_tile"]),
+  actionAdapter(
+    "use_raft",
+    "Launch a raft",
+    "Use the equipped native Raft on an adjacent water tile to begin rafting.",
+    ["raft", "water_tile"],
+  ),
   actionAdapter("mount_transport", "Mount a named horse", "Mount one advertised named native horse.", ["horse"]),
-  actionAdapter("enter_mine", "Enter the mine", "Enter the live mine entrance. The destination level comes from the entrance tile's own declaration, exactly as it does for a real click, so no client level is accepted.", ["mine_entrance"]),
+  actionAdapter(
+    "enter_mine",
+    "Enter the mine",
+    "Enter the live mine entrance. The destination level comes from the entrance tile's own declaration, exactly as it does for a real click, so no client level is accepted.",
+    ["mine_entrance"],
+  ),
   actionAdapter(
     "enter_exit",
     "Enter or exit through a discovered door",
     "Use a live native door transition from the current Stardew location.",
     ["door", "building_entrance"],
   ),
-  actionAdapter(
-    "till_soil",
-    "Till a soil tile",
-    "Use a native Hoe on a live soil target.",
-    ["soil_tile"],
-  ),
+  actionAdapter("till_soil", "Till a soil tile", "Use a native Hoe on a live soil target.", ["soil_tile"]),
   actionAdapter(
     "pickup_forage",
     "Pick up a forage target",
@@ -131,12 +127,7 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Approach a live native Debris target and verify its native magnetic collection enters the Farmhand inventory.",
     ["item_drop"],
   ),
-  actionAdapter(
-    "water_crop",
-    "Water a live crop",
-    "Use the native Watering Can on a live unwatered crop.",
-    ["crop"],
-  ),
+  actionAdapter("water_crop", "Water a live crop", "Use the native Watering Can on a live unwatered crop.", ["crop"]),
   actionAdapter(
     "refill_watering_can",
     "Refill a Watering Can",
@@ -209,12 +200,10 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Use the native Farmer eat path on a live ordinary edible inventory item.",
     ["inventory_slot", "food"],
   ),
-  actionAdapter(
-    "harvest_crop",
-    "Harvest a ready crop",
-    "Use native Crop.harvest on a live ready ordinary crop.",
-    ["crop", "inventory"],
-  ),
+  actionAdapter("harvest_crop", "Harvest a ready crop", "Use native Crop.harvest on a live ready ordinary crop.", [
+    "crop",
+    "inventory",
+  ]),
   actionAdapter(
     "break_rock_source",
     "Break a one-hit rock source",
@@ -239,18 +228,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Use one equipped Axe terminal strike on a live ordinary mature one-hit tree; source transformation is the completion boundary.",
     ["tree_source", "tool"],
   ),
-  actionAdapter(
-    "express_emote",
-    "Express an emote",
-    "Express a character emote in the game world.",
-    ["character_emote"],
-  ),
-  actionAdapter(
-    "face_direction",
-    "Face a cardinal direction",
-    "Turn the Farmhand to face a cardinal direction.",
-    ["character_facing"],
-  ),
+  actionAdapter("express_emote", "Express an emote", "Express a character emote in the game world.", [
+    "character_emote",
+  ]),
+  actionAdapter("face_direction", "Face a cardinal direction", "Turn the Farmhand to face a cardinal direction.", [
+    "character_facing",
+  ]),
   actionAdapter(
     "interact_npc_with_item",
     "Offer an item to an NPC",
@@ -385,6 +368,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["dialogue", "modal"],
   ),
   actionAdapter(
+    "respond_level_up",
+    "Settle a level-up",
+    "Confirm an ordinary level-up or choose one of the two profession branches the displayed LevelUpMenu offers.",
+    ["modal", "level_up"],
+  ),
+  actionAdapter(
     "water_slime_hutch_trough",
     "Water a Slime Hutch trough",
     "Use the native Watering Can on an unwatered trough tile inside the current Slime Hutch.",
@@ -426,21 +415,66 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Use the equipped scythe on a live adjacent Grass tuft (a TerrainFeature, distinct from weeds) through its native tool action until the tuft is removed; grassType 1/7 feeds Hay into a silo, grassType 6 drops rare items.",
     ["grass", "tool"],
   ),
-  actionAdapter("clear_cask", "Clear a cask", "Use an equipped Axe, Pickaxe, or Hoe on a live adjacent Cask, removing its held output or the empty Cask through the native tool path.", ["cask", "tool"]),
-  actionAdapter("dress_mannequin", "Dress a mannequin", "Put a held hat, clothing item, or boots onto a live adjacent mannequin through its native drop-in path.", ["mannequin", "inventory_slot"]),
-  actionAdapter("set_sign_display", "Set a sign display", "Display the held item on a live adjacent sign through its native action.", ["sign", "inventory_slot"]),
-  actionAdapter("deposit_silo_hay", "Deposit silo hay", "Store held Hay in a live adjacent Farm Silo using the native hay-capacity path.", ["silo", "inventory_slot"]),
-  actionAdapter("toggle_tool_light", "Toggle tool light", "Toggle the currently equipped Lantern through its native DoFunction path.", ["tool"]),
+  actionAdapter(
+    "clear_cask",
+    "Clear a cask",
+    "Use an equipped Axe, Pickaxe, or Hoe on a live adjacent Cask, removing its held output or the empty Cask through the native tool path.",
+    ["cask", "tool"],
+  ),
+  actionAdapter(
+    "dress_mannequin",
+    "Dress a mannequin",
+    "Put a held hat, clothing item, or boots onto a live adjacent mannequin through its native drop-in path.",
+    ["mannequin", "inventory_slot"],
+  ),
+  actionAdapter(
+    "set_sign_display",
+    "Set a sign display",
+    "Display the held item on a live adjacent sign through its native action.",
+    ["sign", "inventory_slot"],
+  ),
+  actionAdapter(
+    "deposit_silo_hay",
+    "Deposit silo hay",
+    "Store held Hay in a live adjacent Farm Silo using the native hay-capacity path.",
+    ["silo", "inventory_slot"],
+  ),
+  actionAdapter(
+    "toggle_tool_light",
+    "Toggle tool light",
+    "Toggle the currently equipped Lantern through its native DoFunction path.",
+    ["tool"],
+  ),
   actionAdapter(
     "harvest_bush",
     "Harvest a berry bush",
     "Use the native berry-bush interaction on a live, ready bush and verify its fruit debris appears.",
     ["bush", "forage"],
   ),
-  actionAdapter("harvest_fruit_tree", "Harvest a fruit tree", "Use the native fruit-tree interaction and verify fruit debris appears.", ["fruit_tree", "forage"]),
-  actionAdapter("shake_tree", "Shake a tree", "Shake one live tree that has not been shaken today and verify its seed state changes.", ["tree", "forage"]),
-  actionAdapter("take_pedestal_item", "Take a pedestal item", "Take the displayed item through the native pedestal inventory transaction.", ["pedestal", "inventory"]),
-  actionAdapter("toggle_fence_gate", "Toggle a fence gate", "Toggle one live fence gate through its native gate state transition.", ["fence_gate"]),
+  actionAdapter(
+    "harvest_fruit_tree",
+    "Harvest a fruit tree",
+    "Use the native fruit-tree interaction and verify fruit debris appears.",
+    ["fruit_tree", "forage"],
+  ),
+  actionAdapter(
+    "shake_tree",
+    "Shake a tree",
+    "Shake one live tree that has not been shaken today and verify its seed state changes.",
+    ["tree", "forage"],
+  ),
+  actionAdapter(
+    "take_pedestal_item",
+    "Take a pedestal item",
+    "Take the displayed item through the native pedestal inventory transaction.",
+    ["pedestal", "inventory"],
+  ),
+  actionAdapter(
+    "toggle_fence_gate",
+    "Toggle a fence gate",
+    "Toggle one live fence gate through its native gate state transition.",
+    ["fence_gate"],
+  ),
   actionAdapter(
     "scythe_crop",
     "Scythe a crop",
@@ -509,8 +543,7 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
   ),
 ]) satisfies readonly StardewActionAdapter[];
 
-export type StardewActionId =
-  (typeof STARDEW_ACTION_ADAPTERS)[number]["actionId"];
+export type StardewActionId = (typeof STARDEW_ACTION_ADAPTERS)[number]["actionId"];
 
 /** A current restrictive projection: registration facts remain Mod-owned. */
 export type VisibleStardewAction = StardewActionAdapter & ActionRegistration;
@@ -519,17 +552,17 @@ export type VisibleStardewAction = StardewActionAdapter & ActionRegistration;
  * The Mod must explicitly opt this action into ObservationBinding/v1. A Host
  * schema cannot add that capability when the authenticated registration omits it.
  */
-export function acceptsObservationBindingV1(
-  registration: ActionRegistration,
-): boolean {
+export function acceptsObservationBindingV1(registration: ActionRegistration): boolean {
   const sceneTarget = registration.descriptor?.sceneTarget;
-  return registration.actionId === "pickup_forage" &&
+  return (
+    registration.actionId === "pickup_forage" &&
     sceneTarget?.type === "ObservationBinding" &&
     sceneTarget.version === 1 &&
     sceneTarget.required === true &&
     sceneTarget.requiredProperties.length === 2 &&
     sceneTarget.requiredProperties[0] === "observationId" &&
-    sceneTarget.requiredProperties[1] === "ref";
+    sceneTarget.requiredProperties[1] === "ref"
+  );
 }
 
 /**
@@ -589,6 +622,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   water_pet_bowl: "stardew_water_pet_bowl",
   dismiss_modal: "stardew_dismiss_modal",
   answer_dialogue: "stardew_answer_dialogue",
+  respond_level_up: "stardew_respond_level_up",
   water_slime_hutch_trough: "stardew_water_slime_hutch_trough",
   chest_store: "stardew_chest_store",
   chest_retrieve: "stardew_chest_retrieve",
@@ -638,22 +672,9 @@ export const STARDEW_ACTION_TOOL_NAMES = {
  * therefore be explicit and fail closed instead of silently broadening a deny.
  */
 export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
-  collect_resource: Object.freeze([
-    "chop_tree_source",
-    "break_rock_source",
-    "pickup_item",
-  ]),
-  use_tool: Object.freeze([
-    "tool_transform_object",
-    "chop_tree_source",
-    "break_rock_source",
-    "clear_hoedirt",
-  ]),
-  combat_attack: Object.freeze([
-    "melee_attack",
-    "ranged_attack",
-    "weapon_special",
-  ]),
+  collect_resource: Object.freeze(["chop_tree_source", "break_rock_source", "pickup_item"]),
+  use_tool: Object.freeze(["tool_transform_object", "chop_tree_source", "break_rock_source", "clear_hoedirt"]),
+  combat_attack: Object.freeze(["melee_attack", "ranged_attack", "weapon_special"]),
   place_item: Object.freeze([
     "place_decor_or_furniture",
     "place_fence_or_gate",
@@ -661,16 +682,8 @@ export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
     "place_crab_pot",
     "place_explosive",
   ]),
-  transfer_item: Object.freeze([
-    "transfer_to_container",
-    "transfer_from_container",
-  ]),
-  manage_animal: Object.freeze([
-    "toggle_animal_door",
-    "clear_fish_pond",
-    "purchase_animal",
-    "sell_or_relocate_animal",
-  ]),
+  transfer_item: Object.freeze(["transfer_to_container", "transfer_from_container"]),
+  manage_animal: Object.freeze(["toggle_animal_door", "clear_fish_pond", "purchase_animal", "sell_or_relocate_animal"]),
   world_interact: Object.freeze(["execute_world_operation"]),
   // The one SOCIAL act that is not about an NPC in front of the actor: a line to the whole lobby.
   send_multiplayer_chat: Object.freeze(["send_multiplayer_chat"]),
@@ -683,11 +696,7 @@ export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
     "control_minigame_phase",
     "claim_minigame_or_festival_reward",
   ]),
-  minigame_play: Object.freeze([
-    "start_minigame_phase",
-    "control_minigame_phase",
-    "claim_minigame_or_festival_reward",
-  ]),
+  minigame_play: Object.freeze(["start_minigame_phase", "control_minigame_phase", "claim_minigame_or_festival_reward"]),
   end_day: Object.freeze(["sleep_ready", "advance_day_after_ready"]),
   milk_animal: Object.freeze(["collect_animal_product"]),
   shear_animal: Object.freeze(["collect_animal_product"]),
@@ -721,9 +730,7 @@ export function parseActionPolicy(value: unknown): ActionPolicy {
   const deniedActions = [...(value.deniedActions as string[])];
   const deniedFamilies = [...(value.deniedFamilies as string[])];
   if (deniedActions.some((id) => id in RETIRED_ACTION_POLICY_MIGRATIONS)) {
-    throw new Error(
-      "retired_action_policy_identifier_requires_explicit_migration",
-    );
+    throw new Error("retired_action_policy_identifier_requires_explicit_migration");
   }
   // Policy is restrictive: IDs are checked against the authenticated Mod
   // catalog only when tools are materialized. A Host-local registry must not
@@ -739,9 +746,7 @@ function boundedIdentifierArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
     value.length <= 128 &&
-    value.every(
-      (item) => typeof item === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(item),
-    )
+    value.every((item) => typeof item === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(item))
   );
 }
 
@@ -754,7 +759,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // not about lifecycle: a member may be Experimental (admitted through the
 // candidate carve-out) or already live_verified.
 export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
-
   "place_owned_object",
   "remove_placed_item",
   "break_container_source",
@@ -770,6 +774,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "ride_minecart",
   "dismiss_modal",
   "answer_dialogue",
+  "respond_level_up",
   "shop_purchase",
   "ride_bus",
   "select_mine_elevator_floor",
@@ -831,9 +836,7 @@ export function getDescriptorArgument(
  * actually arrives, so both readers below accept either shape and compare the whole name list in
  * order.
  */
-function publishedArgumentNames(
-  descriptor: ActionRegistration["descriptor"],
-): readonly string[] | undefined {
+function publishedArgumentNames(descriptor: ActionRegistration["descriptor"]): readonly string[] | undefined {
   if (!descriptor) return undefined;
   if (Array.isArray(descriptor.arguments)) return descriptor.arguments.map((argument) => argument.name);
   if (descriptor.argumentSchema && isRecord(descriptor.argumentSchema)) return Object.keys(descriptor.argumentSchema);
@@ -849,9 +852,7 @@ function hasExactPublishedArgumentNames(
 }
 
 /** The postcondition is published as a record with a `name`; older shapes carry a bare string. */
-function publishedPostconditionName(
-  descriptor: ActionRegistration["descriptor"],
-): string | undefined {
+function publishedPostconditionName(descriptor: ActionRegistration["descriptor"]): string | undefined {
   const postcondition: unknown = descriptor?.postcondition;
   if (typeof postcondition === "string") return postcondition;
   if (isRecord(postcondition) && typeof postcondition.name === "string") return postcondition.name;
@@ -863,20 +864,19 @@ export function getArgumentEnum(
 ): readonly string[] | undefined {
   if (!argument) return undefined;
   if (Array.isArray(argument.enum) && argument.enum.length > 0) return argument.enum;
-  if (Array.isArray(argument.boundedEnumValues) && argument.boundedEnumValues.length > 0) return argument.boundedEnumValues;
+  if (Array.isArray(argument.boundedEnumValues) && argument.boundedEnumValues.length > 0)
+    return argument.boundedEnumValues;
   return undefined;
 }
 
-export function isModDescriptorComplete(
-  actionId: string,
-  descriptor: ActionRegistration["descriptor"],
-): boolean {
+export function isModDescriptorComplete(actionId: string, descriptor: ActionRegistration["descriptor"]): boolean {
   if (!descriptor || !isValidActionDescriptor(descriptor)) return false;
 
   if (actionId === "place_owned_object") {
     // The lane's placement shape: the tile, the backpack slot holding the item, the item's own
     // wire identity and the opaque placement target, all mandatory.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"]))
+      return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "owned_object_placed") return false;
     return true;
@@ -918,7 +918,8 @@ export function isModDescriptorComplete(
     // The offer routes through the native GameLocation.checkAction ingress
     // (not a single method binding), so the complete-descriptor gate covers
     // the exact five-argument shape and the write postcondition instead.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"]))
+      return false;
     if (descriptor.effect !== "write") return false;
     if (!descriptor.postcondition) return false;
     return true;
@@ -967,7 +968,8 @@ export function isModDescriptorComplete(
     return true;
   }
   if (actionId === "equip_wearable") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "expectedQualifiedItemId", "expectedTargetId"])) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "expectedQualifiedItemId", "expectedTargetId"]))
+      return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "wearable_equipped") return false;
     return true;
@@ -985,31 +987,31 @@ export function isModDescriptorComplete(
     return true;
   }
   if (actionId === "use_warp_item") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["slot","expectedQualifiedItemId"])) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "expectedQualifiedItemId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "warp_item_arrived") return false;
     return true;
   }
   if (actionId === "pan_ore") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["slot","x","y"])) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "x", "y"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "ore_panned") return false;
     return true;
   }
   if (actionId === "claim_mail_attachment") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["x","y","expectedTargetId"])) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "mail_claimed") return false;
     return true;
   }
   if (actionId === "load_building_chest") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["x","y","slot","expectedTargetId"])) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "building_chest_loaded") return false;
     return true;
   }
   if (actionId === "collect_building_chest_output") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["x","y","expectedTargetId"])) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "building_chest_output_collected") return false;
     return true;
@@ -1079,11 +1081,25 @@ export function isModDescriptorComplete(
     if (publishedPostconditionName(descriptor) !== "answer_dialogue_answered") return false;
     return true;
   }
+  if (actionId === "respond_level_up") {
+    // The choice (a closed set, so the descriptor's enum is part of the contract) plus the pair the Mod
+    // validates against the menu it is holding.
+    if (!hasExactPublishedArgumentNames(descriptor, ["choice", "expectedSkill", "expectedLevel"])) return false;
+    const choice = getDescriptorArgument(descriptor, "choice");
+    const skill = getDescriptorArgument(descriptor, "expectedSkill");
+    const level = getDescriptorArgument(descriptor, "expectedLevel");
+    if (!choice || choice.type !== "string" || !skill || skill.type !== "integer" || !level || level.type !== "integer")
+      return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "level_up_resolved") return false;
+    return true;
+  }
   if (actionId === "shop_purchase") {
     // The opaque shop the actor already stands next to, the good's wire identity and how many units:
     // deliberately no coordinate, because walking is move_to_tile's job and a walk failure must never be
     // reported as a trade failure.
-    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId", "expectedQualifiedItemId", "quantity"])) return false;
+    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId", "expectedQualifiedItemId", "quantity"]))
+      return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "item_purchased") return false;
     return true;
@@ -1175,8 +1191,7 @@ export function visibleActionsFromModCatalog(
   liveCapabilities: readonly string[],
   policy: ActionPolicy = DEFAULT_ACTION_POLICY,
 ): readonly VisibleStardewAction[] {
-  if (registrations.length === 0 || liveCapabilities.length === 0)
-    return Object.freeze([]);
+  if (registrations.length === 0 || liveCapabilities.length === 0) return Object.freeze([]);
 
   const adapters = new Map<string, StardewActionAdapter>(
     STARDEW_ACTION_ADAPTERS.map((entry) => [entry.actionId, entry]),
@@ -1226,9 +1241,7 @@ export function visibleActionsFromModCatalog(
         identityVersion: registration.identityVersion,
         lifecycle: registration.lifecycle,
         kind: registration.kind,
-        ...(registration.descriptor !== undefined
-          ? { descriptor: registration.descriptor }
-          : {}),
+        ...(registration.descriptor !== undefined ? { descriptor: registration.descriptor } : {}),
       }),
     );
   }
@@ -1242,11 +1255,7 @@ export function searchActionsFromModCatalog(
   policy: ActionPolicy = DEFAULT_ACTION_POLICY,
 ): readonly VisibleStardewAction[] {
   const normalized = query.trim().toLocaleLowerCase();
-  const visible = visibleActionsFromModCatalog(
-    registrations,
-    capabilities,
-    policy,
-  );
+  const visible = visibleActionsFromModCatalog(registrations, capabilities, policy);
   if (normalized.length === 0) return visible;
   // Match the words, not the whole phrase. A caller searching the surface asks
   // in words - a live trace shows "Jodi npc gift" and "npc gift" - and a single
