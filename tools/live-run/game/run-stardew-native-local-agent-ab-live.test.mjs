@@ -288,7 +288,7 @@ test("morning_routine is a self-directed session whose output is a capability au
   assert.match(RUNNER_SOURCE, /const SESSION_GOALS = \(process\.env\.GAMEBUDDY_AGENT_SESSION_GOALS \?\? ""\)/);
   assert.match(
     RUNNER_SOURCE,
-    /if \(SCENARIO === "morning_routine"\) \{\n    for \(const \[index, goal\] of SESSION_GOALS\.entries\(\)\)/,
+    /if \(SCENARIO === "morning_routine"\) \{\n\s+for \(const \[index, goal\] of SESSION_GOALS\.entries\(\)\)/,
   );
   assert.match(
     RUNNER_SOURCE,

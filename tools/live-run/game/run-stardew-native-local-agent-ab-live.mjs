@@ -227,7 +227,7 @@ const SCENARIO_PROMPTS = Object.freeze({
       `做完今天想做的事就回屋上床睡觉（用 advance_day），明天接着来。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
     en: (day) =>
       `It is morning in Stardew Valley (day ${String(day)} in a row for you). Nobody has assigned you anything today - look around and do whatever you think is worth doing. ` +
-      `When you are done for the day, go inside and sleep in your bed (use advance_day); you will pick it up tomorrow. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+      `When you are done for the day, go back inside the farmhouse first and then sleep in your bed (use advance_day); you will pick it up tomorrow. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
