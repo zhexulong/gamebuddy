@@ -289,9 +289,18 @@ const LABEL_KEYS = [
   "tavern.operation.submit",
   "tavern.operation.cancel",
 ] as const;
-const NAVIGATION_ITEM_IDS = ["chat", "memory"] as const;
+/**
+ * The contract's own `NavigationItemId` union (`host/src/tavern/browser-contract/index.ts`): a
+ * `tavern_browser_api/v1` snapshot may carry any of the three. The reference profile projects only
+ * `chat` today (`assertReferenceProfile` pins `navigationItemIds`), but this module validates the
+ * frozen contract DTO rather than one profile's projection - the same rule `PROBLEM_CODES` follows -
+ * so it must know every member the contract declares. A mirror missing one turns a value the
+ * contract calls legal into `TavernProtocolError` the moment the projection widens.
+ */
+const NAVIGATION_ITEM_IDS = ["chat", "memory", "characters"] as const;
 const NAVIGATION_AVAILABILITY = ["available", "unavailable"] as const;
-const WORLD_INFO_STATES = ["none", "selected", "locked", "unavailable"] as const;
+/** The contract's `WorldInfoBindingState` union. `locked` is not a Host state; `pending` is. */
+const WORLD_INFO_STATES = ["none", "selected", "pending", "unavailable"] as const;
 // Every code the `tavern_browser_api/v1` router can send: the contract's `ProblemCode` union
 // (`host/src/tavern/browser-contract/index.ts`) plus the transport-level `payload_too_large` the
 // router answers an over-ceiling body with (`reference-pipeline-dialogue-web.ts:434`, deliberately
@@ -381,6 +390,22 @@ const SNAPSHOT_KEYS = [
 const SNAPSHOT_KEYS_WITH_VOICE = [...SNAPSHOT_KEYS, "voice"] as const;
 const VOICE_SURFACE_KEYS = ["state"] as const;
 const VOICE_SURFACE_STATES = ["unavailable", "ready", "speaking"] as const;
+/**
+ * The five `eventType` members `BrowserEventV1Schema` declares. Named once because two things read
+ * it - the `EventSource` listener list below and the payload dispatch - and because a contract that
+ * grows an event type must fail the drift gate rather than be silently unsubscribed.
+ */
+const EVENT_TYPES = [
+  "companion.delta",
+  "message.committed",
+  "draft.changed",
+  "turn.state_changed",
+  "stream.resync_required",
+] as const;
+/** The resync reasons `BrowserEventV1Schema`'s `stream.resync_required` payload declares. */
+const RESYNC_REASONS = ["gap", "epoch_changed", "restart", "ambiguous_cursor"] as const;
+/** The languages `SubmitMessageCommandV1Schema` accepts (`BrowserMessageV1` additionally carries `und`). */
+const SUBMIT_LOCALES = ["en", "zh-CN"] as const;
 const SNAPSHOT_BUILD_KEYS = ["browserContract", "profileId"] as const;
 const SNAPSHOT_BROWSER_SESSION_KEYS = ["expiresAtMs"] as const;
 const SNAPSHOT_SELECTION_KEYS = ["chatHandle", "generation", "stateRevision"] as const;
@@ -667,7 +692,7 @@ function isBrowserEvent(value: unknown): value is BrowserEventV1 {
     return (
       isRecord(value.payload) &&
       hasExactKeys(value.payload, ["reason"]) &&
-      isOneOf(value.payload.reason, ["gap", "epoch_changed", "restart", "ambiguous_cursor"])
+      isOneOf(value.payload.reason, RESYNC_REASONS)
     );
   return false;
 }
@@ -731,7 +756,7 @@ function isSubmitMessageCommand(value: unknown): value is SubmitMessageCommandV1
   if (!hasExactKeys(value, expectedKeys)) return false;
   if (value.apiVersion !== TAVERN_BROWSER_API_VERSION || !isPositiveSafeInteger(value.selectionGeneration))
     return false;
-  if (!isNfcUtf8Text(value.text) || !isOneOf(value.locale, ["en", "zh-CN"])) return false;
+  if (!isNfcUtf8Text(value.text) || !isOneOf(value.locale, SUBMIT_LOCALES)) return false;
   if ("expectedDraftRevision" in value && !isNonNegativeSafeInteger(value.expectedDraftRevision)) return false;
   return true;
 }
@@ -1061,13 +1086,6 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
       const params = new URLSearchParams({ apiVersion: String(TAVERN_BROWSER_API_VERSION) });
       if (options.cursor !== undefined) params.set("cursor", options.cursor);
       const source = new EventSource(`/api/tavern/v1/events?${params.toString()}`, { withCredentials: true });
-      const eventTypes = [
-        "companion.delta",
-        "message.committed",
-        "draft.changed",
-        "turn.state_changed",
-        "stream.resync_required",
-      ] as const;
       const handle = (raw: Event): void => {
         const message = raw as MessageEvent<string>;
         let value: unknown;
@@ -1080,11 +1098,11 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
           options.onError(new Event("protocol_error"));
         }
       };
-      for (const eventType of eventTypes) source.addEventListener(eventType, handle);
+      for (const eventType of EVENT_TYPES) source.addEventListener(eventType, handle);
       source.onerror = options.onError;
       return Object.freeze({
         close() {
-          for (const eventType of eventTypes) source.removeEventListener(eventType, handle);
+          for (const eventType of EVENT_TYPES) source.removeEventListener(eventType, handle);
           source.close();
         },
       });
