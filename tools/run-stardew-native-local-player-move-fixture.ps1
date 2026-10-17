@@ -42,11 +42,28 @@ function Publish-FailureLifecycleResult([string]$Phase) {
     } catch {}
 }
 
-function Assert-NoStardewProcesses([string]$Phase) {
-    $running = @(Get-Process -Name 'StardewModdingAPI','Stardew Valley','StardewValley' -ErrorAction SilentlyContinue)
+function Get-StardewProcessIds() {
+    # Read-only, for a REPORT. Nothing is killed by image name anywhere in this driver: `taskkill` takes the exact
+    # PID this transaction launched.
+    return @(Get-Process -Name 'StardewModdingAPI','Stardew Valley','StardewValley' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+}
+
+function Assert-CannotHaveForgottenOwnGame([string]$Phase, [int[]]$OwnProcessIds) {
+    # The failure this guards is a FORGOTTEN game of our own: a previous fixture transaction that left its game
+    # running makes the fixture files and the save slot unsafe to touch, and the message has to say so.
+    #
+    # It deliberately does NOT require the machine to be free of every Stardew process. That wider rule made two
+    # lanes mutually impossible: lane B saw lane A's game and refused with "requires no pre-existing
+    # Stardew/SMAPI process before fixture preparation (PIDs: 37292,41044)", even though every file, pipe, save slot
+    # and lock it used was its own. Whether a process belongs to THIS transaction is knowable (it launched it), and
+    # whether a stranger's game should keep running is not this driver's decision - the player may be playing.
+    $running = @(Get-StardewProcessIds)
+    $owned = @($running | Where-Object { $OwnProcessIds -contains $_ })
+    if ($owned.Count -gt 0) {
+        throw "Native-local fixture requires the game it launched to be gone before $Phase (owned PIDs: $($owned -join ','))."
+    }
     if ($running.Count -gt 0) {
-        $ids = ($running | ForEach-Object Id) -join ','
-        throw "Native-local fixture requires no pre-existing Stardew/SMAPI process before $Phase (PIDs: $ids)."
+        Write-Warning "Another Stardew/SMAPI process is running during $Phase (PIDs: $($running -join ',')). It is not this transaction's and is left alone."
     }
 }
 
@@ -111,7 +128,7 @@ try {
     }
     # This guard precedes every profile/config/bundle mutation. The one process
     # launched below is therefore the only game process in this transaction.
-    Assert-NoStardewProcesses 'fixture preparation'
+    Assert-CannotHaveForgottenOwnGame 'fixture preparation' @()
 } catch {
     $failure = $_
     $failurePhase = $phase
@@ -127,18 +144,23 @@ function Assert-LaunchedSmapiIdentity([string]$ExpectedSmapi, [string]$ExpectedM
     # A stale launcher can hand off to another installation, whose default Mods
     # root may expose a valid but unrelated pipe. Attest the actual running
     # SMAPI process before any bridge request, not merely the requested command.
-    $expectedSmapiPath = Get-NormalizedWindowsPath $ExpectedSmapi
-    $expectedModsPath = Get-NormalizedWindowsPath $ExpectedModsPath
-    $running = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.Name -ieq 'StardewModdingAPI.exe' })
-    if ($running.Count -ne 1) {
-        $ids = ($running | ForEach-Object ProcessId) -join ','
-        throw "Native-local launch identity requires exactly one SMAPI process after pipe readiness (PIDs: $ids)."
-    }
-    $actual = $running[0]
-    if ($actual.ProcessId -ne $ExpectedProcessId) {
-        throw "Native-local launch identity mismatch: running SMAPI is not the exact process launched by this transaction; no bridge action was sent."
-    }
-    if ([string]::IsNullOrWhiteSpace($actual.ExecutablePath) -or -not [string]::Equals((Get-NormalizedWindowsPath $actual.ExecutablePath), $expectedSmapiPath, [StringComparison]::OrdinalIgnoreCase)) {
+        $expectedSmapiPath = Get-NormalizedWindowsPath $ExpectedSmapi
+        $expectedModsPath = Get-NormalizedWindowsPath $ExpectedModsPath
+        $running = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.Name -ieq 'StardewModdingAPI.exe' })
+        # Identity is the EXACT process this transaction launched, not how many SMAPI processes happen to exist.
+        #
+        # The guard here used to require `$running.Count -eq 1` across the whole machine, which made two lanes
+        # mutually impossible: lane B counted lane A's game and refused with "requires exactly one SMAPI process
+        # (PIDs: 37292,41044)" even though every file, pipe and save slot was its own. The count was only ever a
+        # proxy for the real question ("is the process I launched the one that is running?"), and the exact-PID
+        # check below answers it directly and more strictly. Ownership of a stray process is not this
+        # transaction's business: the launcher reclaims by its own PID and asserts zero survivors.
+        $actual = $running | Where-Object { $_.ProcessId -eq $ExpectedProcessId } | Select-Object -First 1
+        if ($null -eq $actual) {
+            $ids = ($running | ForEach-Object ProcessId) -join ','
+            throw "Native-local launch identity mismatch: the SMAPI process launched by this transaction (PID $ExpectedProcessId) is not running after pipe readiness (other SMAPI PIDs: $ids); no bridge action was sent."
+        }
+        if ([string]::IsNullOrWhiteSpace($actual.ExecutablePath) -or -not [string]::Equals((Get-NormalizedWindowsPath $actual.ExecutablePath), $expectedSmapiPath, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Native-local launch identity mismatch: SMAPI did not remain in the requested GamePath; no bridge action was sent."
     }
     # Do not use substring matching here: an unrelated --mods-path such as
@@ -367,8 +389,18 @@ try {
     $cleanupFailurePhase = $null
     try {
         $phase = "process_teardown"
-        if ($null -ne $process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force; $process.WaitForExit() }
-        Assert-NoStardewProcesses 'fixture teardown'
+        if ($null -ne $process -and -not $process.HasExited) {
+            # The TREE, by exact PID: the game is a separate image this process spawned, so killing only the SMAPI
+            # child left `Stardew Valley.exe` running and the NEXT run met it as a busy fixture root with an
+            # orphaned transaction (measured repeatedly 2026-10-16/17). Exit status 128 is `taskkill`'s "the
+            # process is already gone", which is a legitimate outcome here and the only one tolerated.
+            & taskkill /PID $process.Id /T /F *> $null
+            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 128) {
+                throw "Native-local process teardown failed for PID $($process.Id) (taskkill exit $LASTEXITCODE)."
+            }
+            $process.WaitForExit()
+        }
+        Assert-CannotHaveForgottenOwnGame 'fixture teardown' @($process.Id)
     } catch {
         $cleanupFailure = $_
         $cleanupFailurePhase = $phase

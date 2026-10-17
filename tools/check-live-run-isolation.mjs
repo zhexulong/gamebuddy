@@ -312,6 +312,24 @@ function cleanupChecks() {
  * same shape the launcher used to have for teardown (identify a process by image name instead of by the exact PID
  * this run launched) - which is why the plan's Lane A-4 requires per-lane PID accounting in the first place.
  */
+/**
+ * The most useful thing a failed lane said, in one bounded line.
+ *
+ * PowerShell wraps an exception across several decorated lines, so the LAST line is usually a `~~~~` underline. The
+ * message is the line that names a cause, so the first line carrying a known marker is preferred, and the tail is
+ * the fallback.
+ */
+function laneDiagnosis(stderr) {
+  const lines = String(stderr)
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !/^[~^\s]+$/u.test(line));
+  const named = lines.find((line) =>
+    /Native-local|native_local_|scenario_fixture_mismatch|bridge_enablement|Throw|Exception|Error:/u.test(line),
+  );
+  return (named ?? lines.at(-1) ?? "no_output").slice(0, 300);
+}
+
 function classifyLaneFailure(reported) {
   const text = String(reported);
   if (/exactly one SMAPI process/u.test(text)) return "exactly_one_smapi_process";
@@ -392,23 +410,21 @@ async function liveLanes() {
       const reported = existsSync(entry.resultFile) ? JSON.parse(readFileSync(entry.resultFile, "utf8")) : null;
       const cause = classifyLaneFailure(entry.stderr);
       if (cause !== null) laneFailures.push(cause);
-      check(
-        `lane_${entry.lane.name}_reached_a_result`,
-        reported !== null,
-        entry.stderr.split("\n").filter(Boolean).at(-2) ?? "",
-      );
+      check(`lane_${entry.lane.name}_reached_a_result`, reported !== null, laneDiagnosis(entry.stderr));
       // A lane that passed is a lane that ran; a lane that did not reports the cause it named.
       if (reported !== null)
         check(`lane_${entry.lane.name}_succeeded`, reported.state === "passed", String(reported.state));
       // The slot is a directory under the game's own Saves root, named from the logical slot the lane was given.
+      // A bootstrap creates a fresh uniquely-suffixed slot, so the assertion is "at least one exists", and
+      // "only its own" is judged against the pre-run snapshot taken below.
       const slotDirs = readdirSync(join(process.env.APPDATA ?? "", "StardewValley", "Saves"), { withFileTypes: true })
-        .filter((name) => name.isDirectory() && name.name.startsWith(entry.slot))
-        .map((name) => name.name);
-      check(`lane_${entry.lane.name}_slot_exists`, slotDirs.length === 1, slotDirs.join(","));
-      // "The OTHER lane's slot was not touched" is judged by both slots still being there and distinct.
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith(entry.slot))
+        .map((entry) => entry.name);
+      check(`lane_${entry.lane.name}_slot_exists`, slotDirs.length >= 1, slotDirs.join(","));
       check(
-        `lane_${entry.lane.name}_slot_is_its_own`,
-        slotDirs.every((name) => name.includes(entry.slot)),
+        `lane_${entry.lane.name}_created_only_its_own_slots`,
+        slotDirs.every((name) => name.startsWith(entry.slot)),
+        slotDirs.join(","),
       );
     }
     const bothRan = results.every((entry) => existsSync(entry.resultFile));
