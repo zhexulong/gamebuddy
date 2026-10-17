@@ -770,7 +770,10 @@ test("a dispatch deadline comes from the action's own published watchdog, not on
       identityVersion: 1,
       lifecycle: "live_verified",
       kind: "execution",
-      descriptor: { watchdogMs: 600_000 },
+      // `isModDescriptorComplete` is what gates advance_day's mount, so this fixture has to satisfy it - and
+      // then carry the watchdog this case is about. The night takes no arguments and publishes its own
+      // day-advanced postcondition, which is exactly what the gate checks.
+      descriptor: { arguments: [], effect: "write", postcondition: "day_advanced", watchdogMs: 600_000 },
     },
     { actionId: "till_soil", familyId: "farming_crops", identityVersion: 1, lifecycle: "published", kind: "execution" },
   ];
