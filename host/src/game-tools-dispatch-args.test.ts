@@ -32,7 +32,12 @@ const REGISTRY = readFileSync(join(ROOT, "host", "src", "action-registry.ts"), "
 /** The mount blocks, with the action id and the toArgs expression that feeds the request. */
 function mountBlocks() {
   const blocks: Array<{ action: string; params: string; body: string }> = [];
-  const re = /entry\.actionId === "([a-z_]+)",[\s\S]{0,1200}?toArgs: \(([^)]*)\) => \(([\s\S]{0,400}?)\),\n/g;
+  // The mount's action literal is the `find` predicate that selects the registration, and the arrow it belongs to
+  // closes right after the id (`")`), not with the comma an object-literal comparison would have. Reading `",`
+  // here found ZERO blocks after the mounts were rewritten into that shape, which is why this case failed with
+  // "expected the mount blocks to be found, found 0" - and why the pattern is written to the CURRENT shape with
+  // the floor assertion below still guarding it.
+  const re = /entry\.actionId === "([a-z_]+)"\)[\s\S]{0,1200}?toArgs: \(([^)]*)\) => \(([\s\S]{0,400}?)\),\n/g;
   for (const match of GAME_TOOLS.matchAll(re)) {
     const [, action, params, body] = match;
     assert.ok(

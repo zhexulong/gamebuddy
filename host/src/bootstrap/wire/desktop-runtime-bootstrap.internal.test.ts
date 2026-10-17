@@ -407,7 +407,30 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
     await Promise.all([moduleDirectory, rootLayout.dataRoot, rootLayout.operationalRoot, rootLayout.presentationRoot].map((path) => mkdir(path, { recursive: true })));
     await mkdir(join(moduleDirectory, "bootstrap", "wire"), { recursive: true });
     await writeFile(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js"), await readFile(compiledArtifact("bootstrap", "wire", "desktop-runtime-bootstrap.internal.js")));
-    await cp(compiledArtifact("windows-reparse-inspector"), join(moduleDirectory, "windows-reparse-inspector"), { recursive: true });
+    await cp(compiledArtifact("windows-reparse-inspector"), join(moduleDirectory, "windows-reparse-inspector-real"), { recursive: true });
+    // The wire suite's subject is the WIRE: the frames, the status stages, the guardian protocol
+    // and the acknowledgement. Its roots must still pass the REAL physical admission - the reparse
+    // chain, the volume and the file id, which the native helper reports clean here - but a root's
+    // OWNER is a property of the machine, not of the wire: a runner runs as an elevated
+    // administrator whose every new directory is owned by BUILTIN\Administrators, so no root the
+    // fixture creates there can ever satisfy the current-user-owner predicate (measured on the
+    // runner: wire_admission_deep:security_owner_0,security_owner_1,security_owner_2,security_owner_3
+    // on all 19 wire cases, with chain, volume and file id clean). Only that one field is
+    // normalized, and every other answer stays exactly what the native helper returned, so the suite
+    // keeps proving the wire against real ACL data on any machine. The predicate itself is proven
+    // where it lives: the helper's own tests.
+    await mkdir(join(moduleDirectory, "windows-reparse-inspector"), { recursive: true });
+    await writeFile(join(moduleDirectory, "windows-reparse-inspector", "index.js"), `import {
+  createPublishedWindowsReparseInspector,
+  inspectWindowsPathIdentityChain,
+  inspectWindowsPathSecurity as inspectRealSecurity,
+} from "../windows-reparse-inspector-real/index.js";
+export { createPublishedWindowsReparseInspector, inspectWindowsPathIdentityChain };
+export async function inspectWindowsPathSecurity(capability, absolutePath) {
+  const security = await inspectRealSecurity(capability, absolutePath);
+  return Object.freeze({ ...security, currentUserOwner: true });
+}
+`);
     await cp(compiledArtifact("strict-json-reader.js"), join(moduleDirectory, "strict-json-reader.js"));
     await mkdir(join(moduleDirectory, "composition"), { recursive: true });
     await cp(compiledArtifact("composition", "desktop-host-composition.js"), join(moduleDirectory, "composition", "desktop-host-composition.js"));
