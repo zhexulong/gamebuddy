@@ -306,10 +306,7 @@ run([
 ]);
 console.log("fixture transaction restored");
 
-if (!fs.existsSync(resultPath)) {
-  console.log("no result file was written — the runner failed before it could report");
-  process.exitCode = 1;
-} else {
+if (fs.existsSync(resultPath)) {
   const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
   console.log(
     "RESULT",
@@ -332,6 +329,9 @@ if (!fs.existsSync(resultPath)) {
     }),
   );
   console.log("result:", resultPath);
+} else {
+  console.log("no result file was written — the runner failed before it could report");
+  process.exitCode = 1;
 }
 
 import { fileURLToPath } from "node:url";

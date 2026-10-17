@@ -97,9 +97,9 @@ export function classifyPathEntry(path) {
   // `isSymbolicLink()` is TRUE for a Windows junction as well as a directory symlink, and `readlink` returns the
   // link's target for both. That is the whole test: measured on this machine (Node v24.21.0) - a junction reports
   // `isSymbolicLink()=true, isDirectory()=false` and `readdirSync({withFileTypes})` marks it `isSymbolicLink()`.
-  // No subprocess and no attribute parsing is needed, and an entry that cannot be stat'ed is treated as a link so
-  // the walk detaches it rather than descending into it.
-  return metadata.isSymbolicLink() ? "reparse_point" : metadata.isDirectory() ? "directory" : "file";
+  // No subprocess and no attribute parsing is needed.
+  if (metadata.isSymbolicLink()) return "reparse_point";
+  return metadata.isDirectory() ? "directory" : "file";
 }
 
 /** The link's target, for a reader that wants to know where a detach pointed. */

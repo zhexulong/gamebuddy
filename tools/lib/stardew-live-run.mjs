@@ -224,6 +224,5 @@ async function cliMain(argv) {
   }
 }
 
-const isCli =
-  process.argv[1] !== undefined && process.argv[1].replaceAll("\\", "/").endsWith("tools/lib/stardew-live-run.mjs");
+const isCli = process.argv[1]?.replaceAll("\\", "/").endsWith("tools/lib/stardew-live-run.mjs") ?? false;
 if (isCli) await cliMain(process.argv.slice(2));

@@ -20,7 +20,7 @@ if (process.argv.length > 2) {
 
 let GAME_PATH = process.env.GAMEBUDDY_STARDEW_GAME_DIR;
 let MODS_PATH = process.env.GAMEBUDDY_STARDEW_MODS_DIR;
-if (!GAME_PATH || !MODS_PATH) {
+if (!(GAME_PATH && MODS_PATH)) {
   // No default: this orchestrator deliberately starts a real game process, so
   // machine-specific paths must be supplied explicitly.
   console.error("GAMEBUDDY_STARDEW_GAME_DIR and GAMEBUDDY_STARDEW_MODS_DIR must be set");
