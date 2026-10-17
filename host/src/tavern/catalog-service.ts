@@ -57,7 +57,7 @@ export type TavernCompanionWorldBookSource = Readonly<{
   keywordEntries?: readonly Readonly<{ entryId: string; title: string; content: string; keys?: readonly string[] }>[];
 }>;
 /** Managed World Info is source-aware and uses exact repository revision content. */
-export type TavernManagedWorldInfoSource = Readonly<{
+type TavernManagedWorldInfoSource = Readonly<{
   binding: TavernStableManagedWorldInfoBinding;
   content: string;
 }>;
