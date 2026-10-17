@@ -115,17 +115,16 @@ jobs:
       - run: pnpm --filter @gamebuddy/dialogue-web test:artifact
       - name: Install the frontend journeys' Chromium
         run: pnpm --dir dialogue-web exec playwright install --with-deps chromium
-      # Bisect of the 2026-10-16 mounted hang. `test:mounted` wraps the whole suite
-      # in the probe's single `spawnSync` child with inherited stdio, so a stall
-      # inside it yields one log line and no diagnosis (it ran 106 and 50 minutes
-      # across two runs with identical single-line output, while the same command
-      # is green locally in 1.8m). This bare run isolates Playwright from the
-      # probe: a hang here names Playwright/the dev server, a pass here with a
-      # hang below names the probe's spawn layer. Bounded, so either answer is a
-      # named failure instead of a silent hour.
-      - name: Bisect - bare Playwright, one journey
-        timeout-minutes: 10
-        run: pnpm --dir dialogue-web exec playwright test tests/app-bar-status-narrow.spec.ts --project=chromium --workers=1
+      # Bisect of the 2026-10-16 mounted hang. First execution (run 38999658380)
+      # answered the first half: a bare one-journey Playwright pass SUCCEEDED in 4
+      # seconds on this runner, so Playwright, vite and Chromium are all healthy
+      # here; the stall is in the probe's own `spawnSync` wrapper below. This step
+      # now runs the probe's exact child command at full width (every journey, the
+      # same --project/--workers the probe passes) so the second half is isolated
+      # too: pass = the probe's spawn layer; hang = the full-width suite itself.
+      - name: Bisect - bare Playwright, the probe's exact command
+        timeout-minutes: 15
+        run: pnpm --dir dialogue-web exec playwright test --project=chromium --workers=1
       - run: pnpm --filter @gamebuddy/dialogue-web test:mounted
         timeout-minutes: 25
       - run: pnpm test
