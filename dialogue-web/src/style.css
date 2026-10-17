@@ -3138,6 +3138,21 @@
     margin-inline: auto;
   }
 
+  /* The World Info authoring panel is a section of the Characters surface, and it
+     was appended to the product after this measure went in, so it never got one:
+     measured at 1440x900, its heading, its hint, its library list and its own
+     create row all sprawled the whole 1408 px region, and an armed row's
+     confirmation block read 1382 px inside a 1408 px row - one label and one
+     control at opposite ends of the panel, which is exactly what the measure is
+     for. The section takes the measure and centres itself in the region, so every
+     block it holds (heading, hint, list, authoring form and action rows) is one
+     column, and the confirmation still spans the row it belongs to. */
+  [data-world-book] {
+    width: 100%;
+    max-width: var(--management-form-measure);
+    margin-inline: auto;
+  }
+
   /* The stacks that are not a card carry a card's own inset, so a field in a card
    and a field in the stack beside it are the same box. */
   .connection-form,
