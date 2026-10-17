@@ -28,8 +28,10 @@ const PUBLIC_ERROR_CODES = new Set([
   "native_local_fixture_path_missing",
   "native_local_fixture_preparation_failed",
   "native_local_fixture_recovery_required",
-  "release_bundle_missing",
-  "release_bundle_mismatch",
+  // `release_bundle_missing` / `release_bundle_mismatch` are deliberately NOT public: their message carries the
+  // bundle path, and this list is what decides whether a failure may be shown to an operator. A preparation
+  // failure therefore reports the blanket code, which is the contract this module was written to keep (an earlier
+  // version of this list let the suffixed path through, and the deploy-redaction test caught it).
   "native_local_fixture_restore_failed",
   "native_local_fixture_save_root_required",
   "native_local_fixture_template_invalid",
@@ -43,10 +45,10 @@ const PUBLIC_ERROR_CODES = new Set([
 
 function redactPublicFailure(error, fallbackCode) {
   if (!(error instanceof Error)) return new Error(fallbackCode);
-  // Some public codes carry a detail suffix (release_bundle_missing:<path>), so the
-  // whitelist is matched on the code prefix. Without this, exactly the failures a
-  // gate reader needs (a missing bundle file, a mismatched bundle entry) collapsed
-  // into the blanket preparation_failed and were undiagnosable.
+  // A public code may carry a detail suffix (e.g. `native_local_fixture_config_invalid:missing_field`), so the
+  // list is matched on the code prefix: without that, exactly the failures a gate reader needs collapsed into one
+  // blanket code. Membership is decided by whether the message is SAFE to show, not by whether it is useful -
+  // which is why the bundle-path codes stay out of the list.
   const code = error.message.split(":", 1)[0];
   return new Error(PUBLIC_ERROR_CODES.has(code) ? error.message : fallbackCode);
 }
@@ -585,6 +587,12 @@ export function fixtureActions(action) {
     return [
       "advance_day",
       "dismiss_modal",
+      // The night raises a `LevelUpMenu` in the same window as the settlement menu, and only a bridge request can
+      // close it (closing it is what lets `DayStarted` run). Leaving the action out of the ENABLED set made the
+      // whole surface refuse it: the Mod's capability check answers `action_not_available`, the Host's caller only
+      // reports its own timer, and the run died on the menu with no receipt saying why
+      // (measured 2026-10-17, run g22: four `respond_level_up` dispatches, zero receipts).
+      "respond_level_up",
       "move_to_tile",
       "travel",
       "enter_exit",
