@@ -1982,6 +1982,10 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         // advance_day targets the actor's own bed and its readiness is native
         // state, so it carries no client-supplied arguments at all.
             "advance_day" => Array.Empty<string>(),
+    // respond_level_up answers the day-end `LevelUpMenu`: `choice` is the one value its own declared domain allows,
+    // and the `(skill, level)` pair the caller believes the menu is about is the binding - a persistent profession
+    // write must never be applicable to the wrong level-up.
+    "respond_level_up" => new[] { "choice", "expectedSkill", "expectedLevel" },
     // WIA §4.2: dismiss_modal targets the currently open modal itself, so it
     // carries no client-supplied arguments either.
     "dismiss_modal" => Array.Empty<string>(),
