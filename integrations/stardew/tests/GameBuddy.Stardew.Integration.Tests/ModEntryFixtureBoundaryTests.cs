@@ -45,6 +45,9 @@ public sealed class ModEntryFixtureBoundaryTests
         "InstallNativeLocalEnterMineLadderFixture",
         "InitializeNativeLocalMoveLadderFixture",
         "InitializeNativeLocalMultiDayFixture",
+    // The composed multi-day world's own two members: the door's standing spot (the tile the session's start must be
+    // able to reach) and the shared reachability refusal the composed branch reads.
+    "NativeLocalMultiDayDoorStandingSpot", "AssertNativeLocalMultiDayHomeReachable", "AssertReachable",
         "InstallNativeLocalTailoringFixture",
         "InitializeNativeLocalColorPlacedObjectFixture",
         "InstallNativeLocalTalkToNpcFixture",

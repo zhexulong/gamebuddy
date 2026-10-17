@@ -37,12 +37,7 @@ public sealed partial class ModEntry
     /// </summary>
     private void AssertNativeLocalMultiDayHomeReachable(Farmer player, Farm farm)
     {
-        FarmHouse home = Game1.getLocationFromName(player.homeLocation.Value) as FarmHouse
-            ?? throw new InvalidOperationException("fixture_native_local_multi_day_home_missing");
-        Point door = home.getPorchStandingSpot();
-        if (!farm.isTileOnMap(new Vector2(door.X, door.Y)))
-            throw new InvalidOperationException($"fixture_native_local_multi_day_home_door_off_map:{door.X},{door.Y}");
-
+        Point door = NativeLocalMultiDayDoorStandingSpot(player, farm);
         // Measured on the FARM, from the spot the actor stands on when it comes OUT of its home - not from the
         // actor's own tile.
         //
@@ -85,6 +80,17 @@ public sealed partial class ModEntry
 
         AssertReachable(door, binStandingTile, Walkable, "bin");
         AssertReachable(door, field, Walkable, "field");
+    }
+
+    /// <summary>The Farm tile the actor stands on when it comes out of its own home, refused by name if unusable.</summary>
+    private static Point NativeLocalMultiDayDoorStandingSpot(Farmer player, Farm farm)
+    {
+        FarmHouse home = Game1.getLocationFromName(player.homeLocation.Value) as FarmHouse
+            ?? throw new InvalidOperationException("fixture_native_local_multi_day_home_missing");
+        Point door = home.getPorchStandingSpot();
+        if (!farm.isTileOnMap(new Vector2(door.X, door.Y)))
+            throw new InvalidOperationException($"fixture_native_local_multi_day_home_door_off_map:{door.X},{door.Y}");
+        return door;
     }
 
     /// <summary>Refuse by name and with numbers when the Farm's door cannot reach one of the day's places.</summary>

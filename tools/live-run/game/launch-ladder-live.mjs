@@ -83,8 +83,6 @@ const templateName = option("template", saveName);
 const suffix = label.length > 0 ? `-${label}` : "";
 const resultPath = path.join(repo, "tools", `_${scenario}${suffix}.result.json`);
 const logPath = path.join(repo, "tools", `_${scenario}${suffix}-live-runner.log`);
-// Where the Mod writes the cross-day lifecycle's own evidence. Named after the run so two lanes cannot collide.
-const lifecyclePath = path.join(repo, "tools", `_${scenario}${suffix}-lifecycle.json`);
 const lockDir = path.join(fixtureRoot, ".stardew-native-local-player-fixture.lock");
 
 const node = process.execPath;
@@ -205,15 +203,18 @@ const prepareAttempt = (attempt) => {
     binding,
     "--action",
     action,
-    // The cross-day lifecycle IS the seam that performs a night, so a scenario that ends its own day has to arm
-    // it.
+    // NOTE: the cross-day lifecycle is deliberately NOT armed here.
     //
-    // Without this block `advance_day` is ACCEPTED (its receipt says `target=own_bed;never_direct_new_day=true`)
-    // and then nothing advances the day: the handler deliberately never calls the day transition itself, and the
-    // Mod's own config only wires the lifecycle when the evidence path is supplied. Measured 2026-10-17 on run g6:
-    // the companion slept at 8:50, sat until 13:20 and the run ended with `crossings=0` and no night terminal - a
-    // harness omission that read exactly like a companion that could not sleep.
-    ...(scenario === "multiday_routine" ? ["--sleep-lifecycle-evidence", lifecyclePath] : []),
+    // Arming it (`--sleep-lifecycle-evidence`, i.e. `SleepLifecycle.Enable`) at config load starts it BEFORE the
+    // bridge exists, and it then sits in `AwaitingEligibility`, reporting `time_paused` and
+    // `bridge session unavailable`, while the Mod never opens the pipe: the launcher dies at
+    // `stardew_pipe_not_listening:gamebuddy-stardew` and the companion never gets to act. Measured 2026-10-17 on
+    // run g8, in the SMAPI log: `sleep lifecycle started` at load time, the multi-day and play-session givens armed,
+    // then `not_home` / `time_paused` forever and no bridge attach.
+    //
+    // So a night still cannot be advanced by this launcher, and that is the NEXT change: the lifecycle has to be
+    // armed after the bridge (or created on demand when `advance_day` arrives) rather than at config load. Leaving
+    // it off keeps runs attachable and playable in the meantime, which is what the other findings need.
   ]);
   console.log(`fixture prepared (action=${action}, attempt ${attempt})`);
 };

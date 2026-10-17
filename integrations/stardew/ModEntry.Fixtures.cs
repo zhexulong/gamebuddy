@@ -993,7 +993,11 @@ public sealed partial class ModEntry : Mod
                 // itself is not the Given. The fixture performs no sleep and dispatches no action:
                 // production alone ends the night and alone harvests, cuts and plants.
                 InitializeNativeLocalMultiDayFixture(player, farm);
-            InitializeNativeLocalPlaySessionFixture(player, farm);
+            // The play session must begin somewhere it can WALK HOME from, so the door is passed in as the tile the
+            // start has to reach. Choosing a start in a different piece of the Farm is what stranded run g4; the
+            // assertion below then re-checks the composed world, so neither the choice nor the check is assumed.
+            Point doorStandingSpot = NativeLocalMultiDayDoorStandingSpot(player, farm);
+            InitializeNativeLocalPlaySessionFixture(player, farm, new Vector2(doorStandingSpot.X, doorStandingSpot.Y));
             // (c) The composed world must let the companion GO HOME.
             //
             // Lane G0's whole point is that the companion ends its own day, and `advance_day` only begins a
@@ -3279,7 +3283,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
     /// chain, which is the point: the rung measures what the companion chooses to
     /// do with a farm, not whether a scripted sequence ran.
     /// </summary>
-    private void InitializeNativeLocalPlaySessionFixture(Farmer player, Farm farm)
+    private void InitializeNativeLocalPlaySessionFixture(Farmer player, Farm farm, Vector2? requiredReachable = null)
     {
         // Tools first: a session that cannot act is not a session. Same ids and
         // idempotence as the ladder-3 farming fixture so the world is one a real
@@ -3341,8 +3345,11 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // cauliflower a few tiles away was genuinely unreachable, and the session spent turns on refusals that
         // looked like capability failures), while starting at an open crossroads but leaving the props at the
         // map origin made the session spend its turns walking to them.
-        Vector2 startTile = FindNativeLocalPlaySessionStartTile(farm)
-            ?? throw new InvalidOperationException("fixture_native_local_play_session_start_tile_missing");
+        Vector2 startTile = FindNativeLocalPlaySessionStartTile(farm, requiredReachable)
+            ?? throw new InvalidOperationException(
+                requiredReachable is { } required
+                    ? $"fixture_native_local_play_session_start_tile_not_connected_to:{required.X},{required.Y}"
+                    : "fixture_native_local_play_session_start_tile_missing");
         // Recorded for the composed world's reachability assertion: the tile the session actually starts on, not one
         // re-derived after the props exist (a re-scan skips occupied tiles and would answer a different question).
         this.nativeLocalPlaySessionStartTile = startTile;
@@ -3913,8 +3920,15 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     /// neighbours passable and unoccupied. Measured reason: the Farm's corner where the origin-scan placed the
     /// props is a two-tile pocket (`component_tiles=2` in a live receipt), so a session started there could not
     /// reach targets a few tiles away for reasons nothing in the world showed it.
+    ///
+    /// `requiredReachable` is a tile the start must be able to WALK to. The composed multi-day scenario passes the
+    /// farmhouse door, because a session that begins in a different piece of the Farm than its own front door can
+    /// never end a day - measured 2026-10-17 on run g7: the door's component held 162 tiles and the play-session
+    /// start (37,54) was outside it, so the companion could work the field and never walk home. The probe is the same
+    /// `AssessReachability` the refusal receipts publish, so an arm-time refusal and a mid-run `no_native_path`
+    /// cannot disagree about what "reachable" means.
     /// </summary>
-    private static Vector2? FindNativeLocalPlaySessionStartTile(GameLocation farm)
+    private static Vector2? FindNativeLocalPlaySessionStartTile(GameLocation farm, Vector2? requiredReachable = null)
     {
         int width = farm.map.Layers[0].LayerWidth;
         int height = farm.map.Layers[0].LayerHeight;
@@ -3937,6 +3951,9 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             if (!cardinal.All(neighbour => StardewBodyController.IsWalkableTile(farm, Game1.player, neighbour)
                 && !farm.objects.ContainsKey(neighbour)
                 && !farm.terrainFeatures.ContainsKey(neighbour)))
+                continue;
+            // The start must be able to reach what the run needs, when the caller names it.
+            if (requiredReachable is { } required && !IsReachableFromStart(farm, tile, required))
                 continue;
             return tile;
         }
