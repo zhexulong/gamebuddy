@@ -53,12 +53,16 @@ export function killProcessTree(pid, { exec = execFileSync, timeoutMs = 60_000 }
  */
 export function listStardewProcessIds({ exec = execFileSync, timeoutMs = 60_000 } = {}) {
   const names = STARDEW_IMAGE_NAMES.map((name) => `'${name}'`).join(",");
+  // The explicit `exit 0` is load-bearing: `Get-Process` writes an error record for a name that matches nothing,
+  // and PowerShell then exits 1 even under `-ErrorAction SilentlyContinue`. "No such process" is a legitimate
+  // answer to this question (measured: the query made the launcher's fixture gate throw), so the command states
+  // its own success and stdout is the only signal.
   const output = exec(
     "powershell",
     [
       "-NoProfile",
       "-Command",
-      `Get-Process -Name ${names} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id`,
+      `$p = Get-Process -Name ${names} -ErrorAction SilentlyContinue; if ($p) { $p | Select-Object -ExpandProperty Id }; exit 0`,
     ],
     { encoding: "utf8", timeout: timeoutMs, windowsHide: true },
   );

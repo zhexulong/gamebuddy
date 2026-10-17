@@ -27,6 +27,9 @@ public sealed class MultiDayPlaySessionFixtureTests
     private static string ReadModConfigSource() =>
         File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModConfig.cs")));
 
+    private static string ReadMultiDayGivenSource() =>
+        File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModEntry.Fixtures.MultiDay.cs")));
+
     private static string ReadRunnerFixtureSource() =>
         File.ReadAllText(RepositorySourcePath(Path.Combine("tools", "lib", "stardew-native-local-player-fixture.mjs")));
 
@@ -52,6 +55,44 @@ public sealed class MultiDayPlaySessionFixtureTests
         body.Should().Contain("InitializeNativeLocalMultiDayFixture(player, farm);");
         // (b) each new day still has work in it.
         body.Should().Contain("InitializeNativeLocalPlaySessionFixture(player, farm);");
+    }
+
+    [Fact]
+    public void TheGivenPinsEverySkillSoNoLevelUpMenuCanArriveMidRun()
+    {
+        // `showEndOfNightStuff` pushes one LevelUpMenu per entry in `player.newLevels` (Game1.cs:9130-9134), and that
+        // menu is correctly NOT dismissible - its close hook writes the level perk. Refusing a PENDING level-up was
+        // not enough: the companion earns experience while it works, so a mid-run level-up would arm the very menu
+        // the run cannot pass. A maxed skill cannot level again, which is what makes the guarantee structural.
+        string source = ReadMultiDayGivenSource();
+        source.Should().Contain("PinnedSkills = { \"Farming\", \"Fishing\", \"Foraging\", \"Mining\", \"Combat\" }");
+        source.Should().Contain("player.setSkillLevel(skill, 10)", "the engine's own setter keeps experiencePoints consistent");
+        // Every pin is asserted, and the notices the pin itself queued are cleared and re-asserted empty.
+        source.Should().Contain("fixture_native_local_multi_day_skills_not_maxed");
+        source.Should().Contain("player.newLevels.Clear();");
+        source.Should().Contain("fixture_native_local_multi_day_pending_level_up");
+        // The mastery side effect of five maxed skills is a REAL persistent write (Game1.cs:9135-9141), so it is
+        // reported rather than left to be discovered on the first rollover.
+        source.Should().Contain("\"gotMasteryHint\"");
+        source.Should().Contain("mastery_hint_already_armed=");
+        source.Should().Contain("mastery_cave_visited=");
+        source.Should().Contain("guarantee=first_rollover_may_add_gotMasteryHint");
+    }
+
+    [Fact]
+    public void TheGivenKeepsTheFatigueAssertionReachableWithMaxedSkills()
+    {
+        // With every skill maxed the tools cost meaningfully less energy, so an ordinary morning may never reach a
+        // low-stamina threshold and the fatigue/self-heal assertion would become untestable. The construction is a
+        // direct stamina write (the same technique the attach-time fixtures already use) below the runner's low
+        // threshold and well above the -15 pass-out floor - the game's own energy economy stays untouched.
+        string source = ReadMultiDayGivenSource();
+        source.Should().Contain("private const float LowMorningStamina = 12f;");
+        source.Should().Contain("player.stamina = LowMorningStamina;");
+        source.Should().Contain("fixture_native_local_multi_day_stamina_not_armed");
+        source.Should().Contain("stamina={player.stamina}");
+        // 12 is above the native pass-out floor, so the actor is tired rather than collapapsed.
+        source.Should().NotContain("player.stamina = -15");
     }
 
     [Fact]

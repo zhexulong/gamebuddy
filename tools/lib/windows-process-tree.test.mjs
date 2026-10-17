@@ -165,3 +165,20 @@ test("listing Stardew processes parses the tool's own output and never invents a
   // A non-numeric line is dropped rather than becoming NaN, which would make a survivor comparison meaningless.
   assert.deepEqual(listStardewProcessIds({ exec: () => "abc\n333\n" }), [333]);
 });
+
+test("the query answers 'none found' as a fact instead of failing", () => {
+  // Measured 2026-10-17: `Get-Process -Name <no match>` writes an error record and PowerShell then exits 1 even
+  // under `-ErrorAction SilentlyContinue`, so the launcher's fixture gate threw on a machine with no game
+  // running - a legitimate "none" reported as a crash. The command now states its own success.
+  const seen = [];
+  listStardewProcessIds({
+    exec: (file, args) => {
+      seen.push({ file, args });
+      return "";
+    },
+  });
+  assert.equal(seen[0].file, "powershell");
+  const command = seen[0].args.at(-1);
+  assert.match(command, /exit 0$/u, "the query must not fail when nothing matches");
+  assert.match(command, /Get-Process -Name 'StardewModdingAPI','Stardew Valley'/u);
+});

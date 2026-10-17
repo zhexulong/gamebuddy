@@ -9,6 +9,20 @@ namespace GameBuddy.Stardew;
 public sealed partial class ModEntry
 {
     /// <summary>
+    /// The five skills, all of which the multi-day Given pins to 10.
+    ///
+    /// These are the names `Farmer.setSkillLevel` accepts (Farmer.cs:7181-7233, resolved through
+    /// `getSkillNumberFromName`), and the same five that gate the mastery hint (Game1.cs:9135).
+    /// </summary>
+    private static readonly string[] PinnedSkills = { "Farming", "Fishing", "Foraging", "Mining", "Combat" };
+
+    /// <summary>
+    /// The morning stamina the multi-day Given arms, chosen from the same range the attach-time fixtures use:
+    /// below the runner's low-stamina threshold, and well above the -15 pass-out floor.
+    /// </summary>
+    private const float LowMorningStamina = 12f;
+
+    /// <summary>
     /// The multi-day Given (<c>native_multi_day_v1</c>): the one structural unknown
     /// this fixture exists to reach is whether the companion loop can cross several
     /// in-game days in ONE run, so the Given establishes exactly the four facts that
@@ -87,14 +101,52 @@ public sealed partial class ModEntry
         if (shippingBin.CountItemStacks() != 1)
             throw new InvalidOperationException("fixture_native_local_multi_day_bin_seed_failed");
 
-        // (4) No pending level-up. This is the Given's own precondition, so it fails
-        // closed by name at arm time instead of arming a run the runner must stop.
+        // (4) No pending level-up, and no level-up CAN arrive during the run.
+        //
+        // `showEndOfNightStuff` pushes one LevelUpMenu per entry in `player.newLevels` (Game1.cs:9130-9134), and
+        // that menu is correctly NOT dismissible (its close hook writes the level perk). Refusing a PENDING
+        // level-up was not enough on its own: the companion earns experience while it works, so a mid-run level-up
+        // would arm the very menu the run cannot pass (the plan records this as a certainty, not a risk). Pinning
+        // every skill to 10 removes the possibility, because a maxed skill cannot level again.
+        //
+        // The engine's own setter is used, so `experiencePoints` is left consistent with the level it reports
+        // (Farmer.cs:7181-7233 -> `getBaseExperienceForLevel`). It also queues a HUD notice per level gained, and
+        // those notices are exactly `player.newLevels`; clearing them here discards the fixture's own doing rather
+        // than a player's pending choice.
+        foreach (string skill in PinnedSkills)
+        {
+            if (!player.setSkillLevel(skill, 10))
+                throw new InvalidOperationException($"fixture_native_local_multi_day_skill_not_pinned:{skill}");
+        }
+        // The guarantees below depend on five maxed skills, so the pin is ASSERTED rather than assumed.
+        if (player.farmingLevel.Value != 10 || player.fishingLevel.Value != 10 || player.foragingLevel.Value != 10
+            || player.miningLevel.Value != 10 || player.combatLevel.Value != 10)
+            throw new InvalidOperationException("fixture_native_local_multi_day_skills_not_maxed");
+        player.newLevels.Clear();
         if (player.newLevels.Count != 0)
             throw new InvalidOperationException($"fixture_native_local_multi_day_pending_level_up:{player.newLevels.Count}");
 
+        // (4b) The mastery side effect of five maxed skills, recorded rather than left to be discovered.
+        //
+        // The first rollover adds `gotMasteryHint` to `player.mailReceived` and queues a global message
+        // (Game1.cs:9135-9141). Both are REAL world writes - mail is persistent and the message is a UI event - so
+        // the fixture reports which one the run will produce instead of pretending the pin is free.
+        bool masteryHintAlreadyArmed = player.mailReceived.Contains("gotMasteryHint");
+        bool masteryCaveVisited = player.locationsVisited.Contains("MasteryCave");
+
+        // (4c) Low morning stamina: the fatigue/self-heal assertion has to stay reachable.
+        //
+        // With every skill maxed the tools cost meaningfully less energy, so an ordinary morning may never reach a
+        // low-stamina threshold and the assertion would become untestable. The construction is the same one the
+        // attach-time fixtures already use (a direct stamina write, below the runner's low threshold and well above
+        // the -15 pass-out floor) rather than a changed energy economy: the game's own rules stay untouched.
+        player.stamina = LowMorningStamina;
+        if (player.stamina != LowMorningStamina)
+            throw new InvalidOperationException("fixture_native_local_multi_day_stamina_not_armed");
+
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log(
-            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};time={Game1.timeOfDay};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups=0;guarantee=first_rollover_pushes_ShippingMenu;guarantee=no_rollover_pushes_LevelUpMenu;production alone dispatches advance_day and dismiss_modal and emits receipts.",
+            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};time={Game1.timeOfDay};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups=0;skills_pinned={string.Join(",", PinnedSkills)}@{10};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;guarantee=no_rollover_pushes_LevelUpMenu;guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
             LogLevel.Info);
     }
 }
