@@ -1130,8 +1130,17 @@ function buildCapabilityAudit({
 }
 /** How long ONE night's rollover may take before the harness stops watching. A harness bound, not a product verdict. */
 const MULTIDAY_NIGHT_TIMEOUT_MS = 600_000;
-/** How long one harness dispatch may take to be admitted, and to reach its terminal. */
-const MULTIDAY_DISPATCH_TIMEOUT_MS = 120_000;
+/**
+ * How long one harness dispatch may take to be admitted, and to reach its terminal.
+ *
+ * 45 s, not the 120 s this first used: the Mod bounds a request's deadline by the ACTION'S OWN published watchdog
+ * (`BridgeSession.IsFreshExecutionRequest`), whose default is 60 s (`BodyProgramModels.cs:153`) - only the
+ * cross-day lifecycle publishes 600 s, and the harness never dispatches that (the companion does, through the
+ * Host's tool layer, which sizes its deadline from the same descriptor). A 120 s deadline was refused by name
+ * with `invalid_deadline` (measured 2026-10-17, run g14), and 45 s leaves slack for the two processes' clock reads
+ * differing by the request's transit time.
+ */
+const MULTIDAY_DISPATCH_TIMEOUT_MS = 45_000;
 
 /** How long one `dismiss_modal` may take to reach its terminal before the wait is named. */
 const MULTIDAY_DISMISS_TIMEOUT_MS = 60_000;
