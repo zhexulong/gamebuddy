@@ -334,8 +334,14 @@ test("morning_routine is a self-directed session whose output is a capability au
   assert.match(RUNNER_SOURCE, /: "nothing_accomplished"/);
   // Run M did 17 native actions over fifteen minutes and never said a word to the player:
   // a play session that never speaks must not pass as a companion session.
+  // The binding is `sessionSpoken` since a sibling commit renamed it (`ff938c3a`), and the verdict states silence as
+  // the FALLBACK arm rather than as a `?` branch. Both assertions keep their intent: the binding is declared, it is
+  // read by the verdict, and a session that never spoke is its own outcome - so this stays a test of the rule rather
+  // than of one spelling of it.
   assert.match(RUNNER_SOURCE, /const spokeToPlayer = typeof presentedSummary === "string"/);
-  assert.match(RUNNER_SOURCE, /\? "silent"/);
+  assert.match(RUNNER_SOURCE, /: "silent";/);
+  // The run reports BOTH: what the companion said, and whether that counts for this scenario's verdict.
+  assert.match(RUNNER_SOURCE, /const sessionSpoken = SCENARIO !== "morning_routine" \|\| spokeToPlayer;/);
   assert.match(RUNNER_SOURCE, /spokeToPlayer,/);
   // The failure path must never be the thing that crashes: run N played twelve actions and wrote
   // NO artifact because the catch block read a try-scoped binding, losing both the artifact and
@@ -361,7 +367,7 @@ test("morning_routine is a self-directed session whose output is a capability au
   };
   // ORDER, and the order IS the fix: a failed turn is decided BEFORE silence, so a provider failure
   // can never again be reported as the companion choosing to stay quiet.
-  assert.ok(positionOf('? "turn_failed"') < positionOf('? "silent"'), "turn_failed must be decided before silent");
+  assert.ok(positionOf('? "turn_failed"') < positionOf(': "silent";'), "turn_failed must be decided before silent");
   assert.ok(
     positionOf("const spokeToPlayer = typeof presentedSummary") < positionOf("const sessionVerdict ="),
     "spokeToPlayer is read by the verdict, so it must be declared first",
