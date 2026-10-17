@@ -36,8 +36,39 @@ public sealed partial class ModEntry : Mod
     /// </summary>
     private readonly HashSet<string> blockedTickReasonsLogged = new(StringComparer.Ordinal);
 
-    private void LogBlockedTickReasonOnce(string reason)
+    /// <summary>Name the stage this tick is executing, so a tick that never returns can still be located.</summary>
+    private void MarkTickPhase(string phase)
     {
+        Volatile.Write(ref this.tickWatchdogPhase, phase);
+    }
+
+    private void BeginTickWatchdog()
+    {
+        if (this.tickWatchdog is not null)
+            return;
+        this.tickWatchdog = new Timer(_ => this.ReportStalledTick(), null, TickWatchdogPeriodMs, TickWatchdogPeriodMs);
+    }
+
+    private void ReportStalledTick()
+    {
+        long started = Interlocked.Read(ref this.tickWatchdogTickStartedAtMs);
+        long tick = Interlocked.Read(ref this.tickWatchdogTick);
+        if (started == 0L)
+            return;
+        long elapsed = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - started;
+        if (elapsed < TickWatchdogStallMs)
+            return;
+        // One line per stalled tick: the phase is the answer, and repeating it every period would only add noise.
+        if (Interlocked.Exchange(ref this.tickWatchdogLastStalledTick, tick) == tick)
+            return;
+        this.Monitor.Log(
+            $"GameBuddy tick {tick} has been running for {elapsed / 1000}s; last phase={this.tickWatchdogPhaseForReport()}.",
+            LogLevel.Warn);
+    }
+
+    private string tickWatchdogPhaseForReport() => Volatile.Read(ref this.tickWatchdogPhase) ?? "unknown";
+
+    private void LogBlockedTickReasonOnce(string reason)    {
         if (this.blockedTickReasonsLogged.Add(reason))
         {
             this.Monitor.Log($"GameBuddy fixture tick is not advancing: {reason}", LogLevel.Warn);
@@ -152,6 +183,24 @@ public sealed partial class ModEntry : Mod
     private long nativeLocalPlayerFixtureDeadlineUnixMs;
     private long nativeLocalPlayerFixtureLastReadinessLogUnixMs;
     private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
+
+    /// <summary>
+    /// Tick watchdog state: the phase the current tick is in, and when that tick started.
+    ///
+    /// Measured 2026-10-18 (run g23): the Mod's log stopped at the cross-day lifecycle's
+    /// `AwaitingSettlement -> AwaitingSave` while the game process burned a full core for fifteen minutes and the
+    /// engine never wrote the save. Every gate already says why it yields, but a tick that never RETURNS cannot
+    /// report anything - so a background timer reads these fields and names the phase the tick is stuck in. The
+    /// marker is a plain field write on the game thread, which is what makes it affordable to set per stage.
+    /// </summary>
+    private Timer? tickWatchdog;
+    private long tickWatchdogTickStartedAtMs;
+    private long tickWatchdogTick;
+    private string? tickWatchdogPhase;
+    private long tickWatchdogLastStalledTick = -1;
+    private long tickCounter;
+    private const int TickWatchdogPeriodMs = 5_000;
+    private const int TickWatchdogStallMs = 12_000;
     private bool nativeLocalPlayerFixtureBootstrapInvoked;
     private bool nativeLocalPlayerFixtureBootstrapTerminal;
     private WorldCreationBootstrap? worldCreationBootstrap;
@@ -1248,6 +1297,12 @@ public sealed partial class ModEntry : Mod
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
+        long tick = ++this.tickCounter;
+        Interlocked.Exchange(ref this.tickWatchdogTickStartedAtMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        Interlocked.Exchange(ref this.tickWatchdogTick, tick);
+        this.BeginTickWatchdog();
+        this.MarkTickPhase("window_mode");
+        Volatile.Write(ref this.tickWatchdogPhase, "window_mode");
         this.ApplyWindowModeTick();
         // This gate must precede bootstrap, binding, producer, and bridge work.
         if (this.provisioningConfigurationRejected)
@@ -1291,6 +1346,7 @@ public sealed partial class ModEntry : Mod
         }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
+            Volatile.Write(ref this.tickWatchdogPhase, "fixture_init");
             this.TryInitializeNativeLocalPlayerFixture();
             if (this.nativeLocalPlayerFixtureTerminal || !Context.IsWorldReady)
             {
@@ -1344,12 +1400,14 @@ public sealed partial class ModEntry : Mod
             // and observes Saving/Saved/DayStarted.
             if (this.sleepLifecycle is not null)
             {
+                Volatile.Write(ref this.tickWatchdogPhase, "sleep_lifecycle");
                 if (this.sleepLifecycle.Update())
                     this.sleepLifecycle = null;
                 this.LogBlockedTickReasonOnce("the cross-day sleep lifecycle owns the actor and has not completed");
                 this.PumpBridgeWhileBodyOwned();
                 return;
             }
+            Volatile.Write(ref this.tickWatchdogPhase, "embodiment");
             this.TryInitializeEmbodiment();
             if (!this.IsConfiguredNativeLocalPlayer(out _, out _))
             {
@@ -1368,8 +1426,10 @@ public sealed partial class ModEntry : Mod
             this.ObserveNavigationPipeDeliveries(nativeLocalState);
             this.ObserveExecutionResponsePipeDeliveries(nativeLocalState);
             this.ObserveTerminalReceiptDeliveries(nativeLocalState);
+            Volatile.Write(ref this.tickWatchdogPhase, "pipe_drain");
             this.DrainLocalPipeBridge(nativeLocalState);
             this.LogNativeLocalPipelineHeartbeat();
+            Volatile.Write(ref this.tickWatchdogPhase, "executions_update");
             nativeLocalState.Executions?.Update();
             // The Body Program successor pump must run on the native-local player
             // lane exactly like the formal lane: it auto-starts dependency-free
