@@ -673,10 +673,20 @@ test("coordinator-branded World Info acknowledgement applies only the exact desi
   }
 });
 
-// A live v4 root holds ONE binding row per thread; v5 splits it into one row per
-// slot. The fixture below builds the real current root and then re-shapes ONLY the
-// one table v5 changed (plus the recorded version), which is exactly the difference
-// a live v4 root has, so the migration is exercised against a real old-shaped file.
+// A live v4 root holds ONE binding row per thread, and that row belongs to ONE
+// source family (the v4 CHECK required it); v5 keeps one row per slot. The fixture
+// below builds the real current root and then re-shapes ONLY the one table v5
+// changed (plus the recorded version), which is exactly the difference a live v4
+// root has, so the migration runs against a real old-shaped file.
+//
+// The first version of this fixture wrote ONE thread carrying both families and
+// then tried to fold them back into a single v4 row: that cannot exist. The
+// `INSERT` hit `UNIQUE constraint failed: ...thread_id` - and because the raw handle
+// was still open when the throw left the scope, the `rm` in the `finally` blocked
+// instead of failing, so the whole file hung (0.0 s of CPU over a minute) rather
+// than reporting a fixture error. Two threads, one family each, is what a v4 root
+// actually looks like; the raw handle is closed in a `finally` so a fixture fault
+// can never hang the runner again.
 test("a v4 root keeps the companion's own book and the attached managed item across the slot migration", async () => {
   const root = await canonicalTestRoot("gamebuddy-chat-world-info-migration-");
   const key = createHash("sha256").update(["player_01", "companion_01", "continuity_01"].join("\u001f")).digest("hex");
@@ -701,13 +711,21 @@ test("a v4 root keeps the companion's own book and the attached managed item acr
       continuityId: "continuity_01",
       chatSurfaceSessionId: "surface_01",
       companionWorldBookBinding: companionRevision,
+      opening: "blank",
+    });
+    await creation.createExplicit({
+      chatThreadId: "thread_02",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatSurfaceSessionId: "surface_02",
       managedWorldInfoBinding: managedRevision,
       opening: "blank",
     });
     s.close?.();
     const dbPath = join(root, "tavern", "v3", "continuities", key, "tavern.sqlite");
     const oldShape = new DatabaseSync(dbPath);
-    oldShape.exec(`
+    try {
+      oldShape.exec(`
       ALTER TABLE tavern_thread_world_info_bindings RENAME TO tavern_thread_world_info_bindings_v5;
       CREATE TABLE tavern_thread_world_info_bindings (
         thread_id TEXT PRIMARY KEY REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
@@ -769,23 +787,34 @@ test("a v4 root keeps the companion's own book and the attached managed item acr
       DROP TABLE tavern_thread_world_info_bindings_v5;
       PRAGMA user_version = 4;
     `);
-    oldShape.close();
+    } finally {
+      // Closed here rather than on the success path alone: a fixture that throws must
+      // not leave the file open, because an open handle makes the `rm` below block
+      // instead of failing (which is how this test hung the whole file).
+      oldShape.close();
+    }
 
     const migrated = createChatThreadStore(root, key);
-    const state = await migrated.resumeThread("thread_01", "surface_01");
-    assert.deepEqual(state.thread.companionWorldBookBinding, companionRevision);
-    assert.deepEqual(state.thread.appliedCompanionWorldBookBinding, companionRevision);
-    assert.deepEqual(state.thread.managedWorldInfoBinding, managedRevision);
-    assert.deepEqual(state.thread.appliedManagedWorldInfoBinding, managedRevision);
+    const first = await migrated.resumeThread("thread_01", "surface_01");
+    const second = await migrated.resumeThread("thread_02", "surface_02");
+    assert.deepEqual(first.thread.companionWorldBookBinding, companionRevision);
+    assert.deepEqual(first.thread.appliedCompanionWorldBookBinding, companionRevision);
+    assert.equal(first.thread.managedWorldInfoBinding, undefined);
+    assert.deepEqual(second.thread.managedWorldInfoBinding, managedRevision);
+    assert.deepEqual(second.thread.appliedManagedWorldInfoBinding, managedRevision);
+    assert.equal(second.thread.companionWorldBookBinding, undefined);
     migrated.close?.();
     const inspected = new DatabaseSync(dbPath);
-    const version = (inspected.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
-    const slots = (
-      inspected.prepare("SELECT slot FROM tavern_thread_world_info_bindings ORDER BY slot").all() as any[]
-    ).map((row) => row.slot);
-    inspected.close();
-    assert.equal(version, 5);
-    assert.deepEqual(slots, ["companion", "managed"]);
+    try {
+      const version = (inspected.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+      const slots = (
+        inspected.prepare("SELECT slot FROM tavern_thread_world_info_bindings ORDER BY slot, thread_id").all() as any[]
+      ).map((row) => row.slot);
+      assert.equal(version, 5);
+      assert.deepEqual(slots, ["companion", "managed"]);
+    } finally {
+      inspected.close();
+    }
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
