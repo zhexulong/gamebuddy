@@ -156,6 +156,7 @@
   ],
   "ignoreBinaries": [
     "playwright",
+    "pwsh",
     "where.exe",
     "taskkill.exe",
     "game-action"
