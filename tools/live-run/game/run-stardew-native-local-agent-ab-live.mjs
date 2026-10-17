@@ -29,7 +29,7 @@ import { createHash } from "node:crypto";
 import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
 import { assessMultiDayBaseline, MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "../../lib/multiday-baseline.mjs";
 import { chooseLevelUpResolution, parsePendingLevelUps } from "../../lib/level-up-evidence.mjs";
-import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
+import { executeFresh, observeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
 import { identityKey } from "../../../host/dist-test/runtime-identity.js";
 import { dehydrateCompanionSpeech } from "../../../host/dist-test/companion-speech-dehydration.js";
@@ -1130,6 +1130,9 @@ function buildCapabilityAudit({
 }
 /** How long ONE night's rollover may take before the harness stops watching. A harness bound, not a product verdict. */
 const MULTIDAY_NIGHT_TIMEOUT_MS = 600_000;
+/** How long one harness dispatch may take to be admitted, and to reach its terminal. */
+const MULTIDAY_DISPATCH_TIMEOUT_MS = 120_000;
+
 /** How long one `dismiss_modal` may take to reach its terminal before the wait is named. */
 const MULTIDAY_DISMISS_TIMEOUT_MS = 60_000;
 /** How often the night watcher asks the world. It runs only while a night is in flight. */
@@ -1291,11 +1294,14 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     const levelUp = decision.levelUp;
     const requestId = `multiday_level_up_${String(day)}_${String(Date.now())}`;
     try {
-      const accepted = await client.execute({
-        requestId,
-        idempotencyKey: `${requestId}_idem`,
+      const levelUpSnapshot = await observeQuietly();
+      const accepted = await executeFresh(client, {
         action: "respond_level_up",
         args: { choice: "confirm", expectedSkill: levelUp.skill, expectedLevel: levelUp.level },
+        snapshot: levelUpSnapshot,
+        requestId,
+        idempotencyKey: `${requestId}_idem`,
+        timeoutMs: MULTIDAY_DISPATCH_TIMEOUT_MS,
       });
       const deadline = Date.now() + MULTIDAY_DISMISS_TIMEOUT_MS;
       for (;;) {
@@ -1340,11 +1346,17 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     dismiss: async (menuType) => {
       const requestId = `multiday_dismiss_${String(day)}_${String(Date.now())}`;
       try {
-        const accepted = await client.execute({
-          requestId,
-          idempotencyKey: `${requestId}_idem`,
+        // The SAME dispatch discipline as the smoke harness: a fresh observation supplies expectedRevision and a
+        // bounded deadline. Two raw `client.execute` calls here (no revision, no deadline) were rejected with
+        // `receipt_not_found` on run g12, so the probe never produced the evidence it exists to read.
+        const probeSnapshot = await observeQuietly();
+        const accepted = await executeFresh(client, {
           action: "dismiss_modal",
           args: {},
+          snapshot: probeSnapshot,
+          requestId,
+          idempotencyKey: `${requestId}_idem`,
+          timeoutMs: MULTIDAY_DISPATCH_TIMEOUT_MS,
         });
         const deadline = Date.now() + MULTIDAY_DISMISS_TIMEOUT_MS;
         for (;;) {

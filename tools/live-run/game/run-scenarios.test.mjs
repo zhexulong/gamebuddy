@@ -148,6 +148,25 @@ test("the run budget is a harness bound that fits the scenario, not one fixed nu
   assert.match(RUNNER, /A harness bound, never a product verdict/u);
 });
 
+test("the rollover watcher dispatches through the harness, not with a raw execute", () => {
+  // Measured 2026-10-17 on run g12: both of the watcher's dispatches used `client.execute` directly, without
+  // `expectedRevision` and without a deadline, and the Host refused them with `receipt_not_found` - so the probe
+  // that reads the pending level-up never produced a receipt, and the agent's own guesses filled the gap. The
+  // smoke harness's `executeFresh` supplies the revision and the bound; using it is what makes the dispatch
+  // admissible.
+  const watcher = RUNNER.slice(
+    RUNNER.indexOf("async function watchNightRollover(day"),
+    RUNNER.indexOf("async function startVoiceLane"),
+  );
+  assert.match(watcher, /await executeFresh\(client, \{/);
+  assert.doesNotMatch(watcher, /client\.execute\(\{/);
+  assert.equal((watcher.match(/await executeFresh\(client, \{/gu) ?? []).length, 2, "both dispatches");
+  assert.match(
+    RUNNER,
+    /import \{ executeFresh, observeFresh, TERMINAL_STATES \} from "\.\.\/\.\.\/lib\/stardew-native-smoke-harness-v1\.mjs";/,
+  );
+});
+
 test("a day that only reported back is asked again, by the companion's own decision", () => {
   // Measured 2026-10-17 (run m11): the companion worked six real pieces of farm work in 360s and then reported to
   // the player. `companion_did_not_sleep` named it correctly, but the harness had never asked again - a day ends
