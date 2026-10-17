@@ -2837,14 +2837,17 @@ test("a card whose lorebook entries import produces them on the character's own 
     companions: [{ handle: characterHandle, name: "Nova", isCurrent: true }],
     // What the Host would serve after this card was confirmed: the companion's
     // own world book, entry by entry, with the trigger words the card supplied.
-    companionWorldBook: {
-      apiVersion: 1,
-      present: true,
-      entries: [
-        { title: "Observatory", keys: [], constant: true },
-        { title: "Comet", keys: ["comet"], constant: false },
-      ],
-    },
+      companionWorldBook: {
+        apiVersion: 1,
+        present: true,
+        entries: [
+          // The body is part of the entry's shape and the client mirror validates
+          // it exactly, so a fixture without it is rejected whole and the section
+          // then renders nothing at all.
+          { title: "Observatory", keys: [], constant: true, content: "The old observatory on the ridge." },
+          { title: "Comet", keys: ["comet"], constant: false, content: "A comet is expected next week." },
+        ],
+      },
   });
   const { confirms } = await stubImportSuccess(page);
 
