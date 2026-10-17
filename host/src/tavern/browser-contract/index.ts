@@ -125,6 +125,14 @@ const ProblemCode = Type.Union([
   // The companion's performance directive is a durable profile field edited against an exact
   // profile revision; a stale edit is its own bounded, non-retryable-by-repeating fact.
   Type.Literal("character_voice_conflict"),
+  // The managed World Info library's own refusals (`world-info.detail`/`create`/`update`/`delete`).
+  // Each names exactly what happened - the item is gone, its title is taken, the edit raced a newer
+  // revision, or the mounted Chat still reads it - because a generic failure tells the player
+  // nothing about which of the four they must act on.
+  Type.Literal("world_info_not_found"),
+  Type.Literal("world_info_already_exists"),
+  Type.Literal("world_info_revision_conflict"),
+  Type.Literal("world_info_in_use"),
 ]);
 
 /**
@@ -640,6 +648,10 @@ const OperationId = Type.Union([
   Type.Literal("chat.rename"),
   Type.Literal("memory.mutate"),
   Type.Literal("world-info.bind"),
+  Type.Literal("world-info.detail"),
+  Type.Literal("world-info.create"),
+  Type.Literal("world-info.update"),
+  Type.Literal("world-info.delete"),
   Type.Literal("companion.list"),
   Type.Literal("companion.worldbook.read"),
   Type.Literal("companion.create"),
@@ -682,6 +694,10 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.rename"),
   Type.Literal("tavern.operation.memory.mutate"),
   Type.Literal("tavern.operation.world-info.bind"),
+  Type.Literal("tavern.operation.world-info.detail"),
+  Type.Literal("tavern.operation.world-info.create"),
+  Type.Literal("tavern.operation.world-info.update"),
+  Type.Literal("tavern.operation.world-info.delete"),
   Type.Literal("tavern.operation.chat.archive"),
   Type.Literal("tavern.operation.chat.restore"),
   Type.Literal("tavern.operation.chat.trash"),
@@ -762,6 +778,80 @@ export const SetWorldInfoBindingCommandV1Schema = strictObject({
   selectionGeneration: PositiveGeneration,
   expectedRevision: OpaqueHandle,
   sourceHandle: Type.Union([OpaqueHandle, Type.Null()]),
+});
+/**
+ * One authored entry of a managed World Info item. `scope`, the entry's own trigger words and the
+ * always-on flag are the entry's facts; nothing durable about the library (storage handle, path,
+ * canonical hash) is expressible here.
+ */
+export const WorldInfoEntryV1Schema = strictObject({
+  scope: Type.Union([Type.Literal("companion"), Type.Literal("setting")]),
+  publicTitle: Type.String({ minLength: 1, maxLength: 128 }),
+  summary: Type.String({ minLength: 1, maxLength: 4_000 }),
+  keys: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 128 })),
+  secondaryKeys: Type.Optional(
+    Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 128 }),
+  ),
+  selectiveLogic: Type.Optional(Type.Union([Type.Literal(0), Type.Literal(1), Type.Literal(2), Type.Literal(3)])),
+  constant: Type.Optional(Type.Boolean()),
+});
+/**
+ * One library item's own content at one exact revision: what `world-info.detail` returns and what
+ * `world-info.create`/`update` carry. `revision` is the library's own optimistic revision - an
+ * integer the library mints - because an edit CASes on it directly; the opaque projection handle
+ * that guards *which* library the browser is looking at travels separately, on the command.
+ *
+ * `entries` is deliberately uncapped. The managed store bounds an item by its own revision
+ * envelope, and a smaller contract cap would refuse an artifact the library legitimately holds -
+ * the same reason `MemoryReadV1.memories` carries no cap.
+ */
+export const WorldInfoItemV1Schema = strictObject({
+  revision: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+  publicTitle: Type.String({ minLength: 1, maxLength: 128 }),
+  summary: Type.String({ minLength: 1, maxLength: 4_000 }),
+  entries: Type.Array(WorldInfoEntryV1Schema),
+});
+/**
+ * `world-info.detail`'s addressing command: the exact opaque library projection the browser last
+ * read, plus one item's opaque handle inside it. A raw title, a storage revision number or a
+ * handle from any other projection is never expressible.
+ */
+export const WorldInfoItemCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  expectedRevision: OpaqueHandle,
+  itemHandle: OpaqueHandle,
+});
+/**
+ * `world-info.create`: the new item's content, addressed in the exact opaque projection the browser
+ * read. The library refuses a title an item already carries and reports `world_info_already_exists`.
+ */
+export const WorldInfoCreateCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  expectedRevision: OpaqueHandle,
+  item: strictObject({
+    publicTitle: Type.String({ minLength: 1, maxLength: 128 }),
+    summary: Type.String({ minLength: 1, maxLength: 4_000 }),
+    entries: Type.Array(WorldInfoEntryV1Schema),
+  }),
+});
+/**
+ * `world-info.update`: one item's new content. The top-level `expectedRevision` is the opaque
+ * projection handle; `item.expectedRevision` is the library's own revision the edit CASes on, so a
+ * stale edit is refused with `world_info_revision_conflict` rather than overwriting a newer one.
+ */
+export const WorldInfoUpdateCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  expectedRevision: OpaqueHandle,
+  itemHandle: OpaqueHandle,
+  item: strictObject({
+    publicTitle: Type.String({ minLength: 1, maxLength: 128 }),
+    summary: Type.String({ minLength: 1, maxLength: 4_000 }),
+    entries: Type.Array(WorldInfoEntryV1Schema),
+    expectedRevision: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+  }),
 });
 
 /**
@@ -1683,6 +1773,69 @@ const RouteDescriptors = Object.freeze([
     request: SetWorldInfoBindingCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: WorldInfoStateV1Schema },
   }),
+  // The managed library's authoring group: reading one item's own content and creating,
+  // rewriting or removing it. All four address an item by an opaque handle from the exact
+  // current projection, and the mutations answer with the re-projected library state, so a
+  // caller re-renders from the Host's own answer instead of a local guess.
+  route({
+    routeId: "world-info.detail",
+    method: "GET",
+    path: "/api/tavern/v1/world-info/item",
+    operationId: "world-info.detail",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: WorldInfoItemCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: WorldInfoItemV1Schema },
+  }),
+  route({
+    routeId: "world-info.create",
+    method: "POST",
+    path: "/api/tavern/v1/world-info/item",
+    operationId: "world-info.create",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: WorldInfoCreateCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: WorldInfoStateV1Schema },
+  }),
+  route({
+    routeId: "world-info.update",
+    method: "PUT",
+    path: "/api/tavern/v1/world-info/item",
+    operationId: "world-info.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: WorldInfoUpdateCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: WorldInfoStateV1Schema },
+  }),
+  route({
+    routeId: "world-info.delete",
+    method: "DELETE",
+    path: "/api/tavern/v1/world-info/item",
+    operationId: "world-info.delete",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: WorldInfoItemCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: WorldInfoStateV1Schema },
+  }),
   route({
     routeId: "settings.voice.read",
     method: "GET",
@@ -2223,6 +2376,11 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernModelProfileUpdateCommandV1Schema,
     WorldInfoStateV1Schema,
     SetWorldInfoBindingCommandV1Schema,
+    WorldInfoEntryV1Schema,
+    WorldInfoItemV1Schema,
+    WorldInfoItemCommandV1Schema,
+    WorldInfoCreateCommandV1Schema,
+    WorldInfoUpdateCommandV1Schema,
     CompanionListEntryV1Schema,
     CompanionListV1Schema,
     CompanionDetailV1Schema,
@@ -2326,6 +2484,11 @@ export type MemoryMutationCommandV1 = Static<typeof MemoryMutationCommandV1Schem
 export type MemoryMutationResultV1 = Static<typeof MemoryMutationResultV1Schema>;
 export type WorldInfoStateV1 = Static<typeof WorldInfoStateV1Schema>;
 export type SetWorldInfoBindingCommandV1 = Static<typeof SetWorldInfoBindingCommandV1Schema>;
+export type WorldInfoEntryV1 = Static<typeof WorldInfoEntryV1Schema>;
+export type WorldInfoItemV1 = Static<typeof WorldInfoItemV1Schema>;
+export type WorldInfoItemCommandV1 = Static<typeof WorldInfoItemCommandV1Schema>;
+export type WorldInfoCreateCommandV1 = Static<typeof WorldInfoCreateCommandV1Schema>;
+export type WorldInfoUpdateCommandV1 = Static<typeof WorldInfoUpdateCommandV1Schema>;
 export type CompanionListEntryV1 = Static<typeof CompanionListEntryV1Schema>;
 export type CompanionListV1 = Static<typeof CompanionListV1Schema>;
 export type CompanionDetailV1 = Static<typeof CompanionDetailV1Schema>;

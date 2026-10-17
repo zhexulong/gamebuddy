@@ -46,6 +46,10 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "memory.mutate",
       "world-info.read",
       "world-info.bind",
+      "world-info.detail",
+      "world-info.create",
+      "world-info.update",
+      "world-info.delete",
       "settings.voice.read",
       "settings.voice.consent",
       "settings.voice.devices",
@@ -1125,6 +1129,62 @@ test("every route freezes the exact security, binding, and success policy matrix
       "application/json",
     ],
     [
+      "world-info.detail",
+      "GET",
+      "/api/tavern/v1/world-info/item",
+      "browser_session",
+      "same-origin",
+      "none",
+      "none",
+      [],
+      [],
+      ["apiVersion", "selectionGeneration", "expectedRevision", "itemHandle"],
+      200,
+      "application/json",
+    ],
+    [
+      "world-info.create",
+      "POST",
+      "/api/tavern/v1/world-info/item",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "world-info.update",
+      "PUT",
+      "/api/tavern/v1/world-info/item",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "world-info.delete",
+      "DELETE",
+      "/api/tavern/v1/world-info/item",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
       "settings.voice.read",
       "GET",
       "/api/tavern/v1/settings/voice-preference",
@@ -1746,6 +1806,86 @@ test("world-info bind command is a strict opaque revision-scoped union", () => {
     TavernBrowserValidatorsV1.SetWorldInfoBindingCommandV1Schema.Check({ ...bind, sourceHandle: `${handle}=` }),
     false,
   );
+});
+test("world-info authoring DTOs carry item content and address it by opaque handles", () => {
+  const entry = { scope: "setting", publicTitle: "Square", summary: "Town center." };
+  const item = { revision: 1, publicTitle: "Pelican Town", summary: "A small valley town.", entries: [entry] };
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoItemV1Schema.Check(item), true);
+  // The entry's optional facts are legal when present, never inventable.
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoItemV1Schema.Check({
+      ...item,
+      entries: [{ ...entry, keys: ["square"], secondaryKeys: ["town"], selectiveLogic: 3, constant: true }],
+    }),
+    true,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoItemV1Schema.Check({ ...item, entries: [{ ...entry, selectiveLogic: 4 }] }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoItemV1Schema.Check({ ...item, entries: [{ ...entry, keys: [] }] }),
+    false,
+  );
+  // One item's own projection carries its content and its own revision, and no
+  // library-internal fact: no storage handle, no canonical hash, and a raw title is
+  // never a revision.
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoItemV1Schema.Check({ ...item, handle }), false);
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoItemV1Schema.Check({ ...item, canonicalHash: "a".repeat(64) }),
+    false,
+  );
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoItemV1Schema.Check({ ...item, revision: 0 }), false);
+
+  const create = {
+    apiVersion: 1,
+    selectionGeneration: 1,
+    expectedRevision: handle,
+    item: { publicTitle: "Pelican Town", summary: "A small valley town.", entries: [entry] },
+  };
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoCreateCommandV1Schema.Check(create), true);
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoCreateCommandV1Schema.Check({ ...create, expectedRevision: "Pelican Town" }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoCreateCommandV1Schema.Check({ ...create, selectionGeneration: 0 }),
+    false,
+  );
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoCreateCommandV1Schema.Check({ ...create, extra: true }), false);
+  // A create carries no library revision of its own: the library mints the item's first one.
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoCreateCommandV1Schema.Check({
+      ...create,
+      item: { ...create.item, expectedRevision: 1 },
+    }),
+    false,
+  );
+
+  const update = { ...create, itemHandle: handle, item: { ...create.item, expectedRevision: 1 } };
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoUpdateCommandV1Schema.Check(update), true);
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoUpdateCommandV1Schema.Check({
+      ...update,
+      item: { ...update.item, expectedRevision: 0 },
+    }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoUpdateCommandV1Schema.Check({ ...update, itemHandle: "Pelican Town" }),
+    false,
+  );
+  // The CAS revision belongs to the edited item; an update without it is not expressible.
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoUpdateCommandV1Schema.Check({ ...update, item: create.item }), false);
+
+  // The same shape is the detail query and the delete body: one address, one meaning.
+  const address = { apiVersion: 1, selectionGeneration: 1, expectedRevision: handle, itemHandle: handle };
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoItemCommandV1Schema.Check(address), true);
+  assert.equal(
+    TavernBrowserValidatorsV1.WorldInfoItemCommandV1Schema.Check({ ...address, itemHandle: "Pelican Town" }),
+    false,
+  );
+  assert.equal(TavernBrowserValidatorsV1.WorldInfoItemCommandV1Schema.Check({ ...address, extra: true }), false);
 });
 test("import operations carry CSRF-bound write routes and safe projections", () => {
   const stage = TavernBrowserContractV1.routes.find((route) => route.routeId === "character.import.stage");

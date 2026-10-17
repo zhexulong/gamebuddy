@@ -60,7 +60,10 @@ import {
   type TavernVoicePreferenceConsentCommandV1,
   type TavernVoicePreferenceV1,
   type TavernVoiceDevicesV1,
+  type WorldInfoCreateCommandV1,
+  type WorldInfoItemCommandV1,
   type WorldInfoStateV1,
+  type WorldInfoUpdateCommandV1,
 } from "./tavern/browser-contract/index.js";
 import { TavernConnectionRevisionConflict } from "./tavern/connection-store.js";
 import { TAVERN_PROVIDER_CATALOG } from "./tavern/provider-catalog.js";
@@ -212,6 +215,19 @@ const MANAGEMENT_CHAT_CREATE_ROUTES = ["chat.create"] as const;
  * at composition. */
 const MANAGEMENT_CHAT_SELECT_ROUTES = ["chat.select"] as const;
 /**
+ * Optional World Info authoring extension: only a profile that declares these routes mounts the
+ * managed library's own surface on `/api/tavern/v1/world-info/item` (read one item's content, and
+ * create, rewrite or remove an item). Like every other option it follows the core in the frozen
+ * group order, so a profile that advertises it without the bound World Info service fails closed
+ * at composition rather than showing an editor the Host cannot serve.
+ */
+const MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES = [
+  "world-info.detail",
+  "world-info.create",
+  "world-info.update",
+  "world-info.delete",
+] as const;
+/**
  * Import-stage body ceiling: the card JSON itself is bounded by the decoder
  * (ST_CARD_DECODER_LIMITS_V1.inputBytesJson) and the JSON envelope adds a
  * small margin. Far above the 24 KiB default body bound used by every other
@@ -229,6 +245,9 @@ const chatOpeningValidator = Compile(TavernBrowserContractV1.schemas.ChatOpening
 const createChatValidator = Compile(TavernBrowserContractV1.schemas.CreateChatCommandV1Schema);
 const selectChatValidator = Compile(TavernBrowserContractV1.schemas.SelectChatCommandV1Schema);
 const worldInfoBindValidator = Compile(TavernBrowserContractV1.schemas.SetWorldInfoBindingCommandV1Schema);
+const worldInfoItemValidator = Compile(TavernBrowserContractV1.schemas.WorldInfoItemCommandV1Schema);
+const worldInfoCreateValidator = Compile(TavernBrowserContractV1.schemas.WorldInfoCreateCommandV1Schema);
+const worldInfoUpdateValidator = Compile(TavernBrowserContractV1.schemas.WorldInfoUpdateCommandV1Schema);
 const memoryMutationValidator = Compile(TavernBrowserContractV1.schemas.MemoryMutationCommandV1Schema);
 const connectionCreateValidator = Compile(TavernBrowserContractV1.schemas.TavernConnectionCreateCommandV1Schema);
 const connectionRevisionValidator = Compile(TavernBrowserContractV1.schemas.TavernConnectionRevisionCommandV1Schema);
@@ -918,6 +937,102 @@ export function createTavernManagementDialogueWebRequestHandler(
         const body = await readJsonBody(request, MAX_BODY_BYTES);
         if (!worldInfoBindValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const worldInfo = await worldInfoService.setBinding(body as SetWorldInfoBindingCommandV1);
+        if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
+          throw new Error("world_info_binding_service_unavailable");
+        return sendJson(response, 200, worldInfo);
+      }
+      // World Info authoring: one managed library item addressed by an opaque handle
+      // from the exact projection the browser read. The read carries its command in the
+      // query (a GET has no body); the three mutations carry it as a body and answer with
+      // the re-projected library state, so the caller re-renders from the Host's own
+      // answer rather than from a local guess.
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/world-info/item") {
+        if (await hasRequestBody(request)) return sendProblem(response, 400, "invalid_request");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (
+          !profile.routeIds.includes("world-info.detail") ||
+          !profile.operationIds.includes("world-info.detail") ||
+          worldInfoService === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const queryValue: Record<string, string | number> = {};
+        const seen = new Set<string>();
+        for (const [key, value] of url.searchParams) {
+          if (
+            seen.has(key) ||
+            (key !== "apiVersion" &&
+              key !== "selectionGeneration" &&
+              key !== "expectedRevision" &&
+              key !== "itemHandle")
+          )
+            return sendProblem(response, 400, "invalid_request");
+          seen.add(key);
+          // Query parameters arrive as strings; the contract keeps apiVersion and the
+          // selection generation as integers, so the dispatcher parses exactly those two.
+          queryValue[key] = key === "apiVersion" || key === "selectionGeneration" ? Number(value) : value;
+        }
+        if (!worldInfoItemValidator.Check(queryValue)) return sendProblem(response, 400, "invalid_request");
+        const item = await worldInfoService.detail(queryValue as WorldInfoItemCommandV1);
+        // The projection Handle was current, so a missing item is a genuine library fact:
+        // the item was removed by another writer since the browser read the list.
+        if (item === null) return sendProblem(response, 404, "world_info_not_found");
+        if (!TavernBrowserValidatorsV1.WorldInfoItemV1Schema.Check(item))
+          throw new Error("world_info_binding_service_unavailable");
+        return sendJson(response, 200, item);
+      }
+      if (request.method === "POST" && url.pathname === "/api/tavern/v1/world-info/item") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("world-info.create") ||
+          !profile.operationIds.includes("world-info.create") ||
+          worldInfoService === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!worldInfoCreateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const worldInfo = await worldInfoService.create(body as WorldInfoCreateCommandV1);
+        if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
+          throw new Error("world_info_binding_service_unavailable");
+        return sendJson(response, 200, worldInfo);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/world-info/item") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("world-info.update") ||
+          !profile.operationIds.includes("world-info.update") ||
+          worldInfoService === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!worldInfoUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const worldInfo = await worldInfoService.update(body as WorldInfoUpdateCommandV1);
+        if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
+          throw new Error("world_info_binding_service_unavailable");
+        return sendJson(response, 200, worldInfo);
+      }
+      if (request.method === "DELETE" && url.pathname === "/api/tavern/v1/world-info/item") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("world-info.delete") ||
+          !profile.operationIds.includes("world-info.delete") ||
+          worldInfoService === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!worldInfoItemValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const worldInfo = await worldInfoService.delete(body as WorldInfoItemCommandV1);
         if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
           throw new Error("world_info_binding_service_unavailable");
         return sendJson(response, 200, worldInfo);
@@ -1920,6 +2035,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_CHAT_OPENING_ROUTES,
     MANAGEMENT_CHAT_CREATE_ROUTES,
     MANAGEMENT_CHAT_SELECT_ROUTES,
+    MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES,
   ] as const;
   const operationGroups = [
     coreOperations,
@@ -1933,6 +2049,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_CHAT_OPENING_ROUTES,
     MANAGEMENT_CHAT_CREATE_ROUTES,
     MANAGEMENT_CHAT_SELECT_ROUTES,
+    MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES,
   ] as const;
   if (!isCanonicalGroupSelection(profile.routeIds, routeGroups, coreRoutes)) return false;
   if (!isCanonicalGroupSelection(profile.operationIds, operationGroups, coreOperations)) return false;
@@ -2141,6 +2258,14 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "chat_management_lifecycle_invalid") return { status: 409, code: "state_reconciliation_required" };
   if (message === "world_info_binding_conflict" || message === "world_info_binding_locked")
     return { status: 409, code: "state_reconciliation_required" };
+  // World Info authoring: each library refusal is its own bounded, player-actionable
+  // fact. Flattening any of them into the reconciliation code would tell the player to
+  // re-read the surface when the fact is that the item is gone, its title is taken, its
+  // content moved on, or the mounted Chat is still reading it.
+  if (message === "world_info_not_found") return { status: 404, code: "world_info_not_found" };
+  if (message === "world_info_already_exists") return { status: 409, code: "world_info_already_exists" };
+  if (message === "world_info_revision_conflict") return { status: 409, code: "world_info_revision_conflict" };
+  if (message === "world_info_in_use") return { status: 409, code: "world_info_in_use" };
   if (message === "context_unavailable") return { status: 503, code: "runtime_unavailable" };
   if (message === "world_info_binding_service_unavailable" || message === "world_info_binding_service_closed")
     return { status: 503, code: "runtime_unavailable" };

@@ -77,6 +77,10 @@ type TavernBrowserOperationV1 = Readonly<{
     | "chat.create"
     | "memory.mutate"
     | "world-info.bind"
+    | "world-info.detail"
+    | "world-info.create"
+    | "world-info.update"
+    | "world-info.delete"
     | "settings.voice.read"
     | "settings.voice.consent"
     | "settings.voice.devices"
@@ -122,6 +126,10 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.chat.select"
     | "tavern.operation.memory.mutate"
     | "tavern.operation.world-info.bind"
+    | "tavern.operation.world-info.detail"
+    | "tavern.operation.world-info.create"
+    | "tavern.operation.world-info.update"
+    | "tavern.operation.world-info.delete"
     | "tavern.operation.settings.voice.read"
     | "tavern.operation.settings.voice.consent"
     | "tavern.operation.settings.voice.devices"
@@ -177,6 +185,49 @@ export type SetWorldInfoBindingCommandV1 = Readonly<{
   selectionGeneration: number;
   expectedRevision: string;
   sourceHandle: string | null;
+}>;
+
+/** One authored entry of a managed World Info item. */
+export type WorldInfoEntryV1 = Readonly<{
+  scope: "companion" | "setting";
+  publicTitle: string;
+  summary: string;
+  keys?: readonly string[];
+  secondaryKeys?: readonly string[];
+  selectiveLogic?: 0 | 1 | 2 | 3;
+  constant?: boolean;
+}>;
+/** One managed library item's own content at one exact revision, as `world-info.detail` returns it. */
+export type WorldInfoContentV1 = Readonly<{
+  revision: number;
+  publicTitle: string;
+  summary: string;
+  entries: readonly WorldInfoEntryV1[];
+}>;
+/** The authored content a create or update carries, without the library's own revision. */
+export type WorldInfoAuthoredContentV1 = Readonly<{
+  publicTitle: string;
+  summary: string;
+  entries: readonly WorldInfoEntryV1[];
+}>;
+export type WorldInfoItemCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  expectedRevision: string;
+  itemHandle: string;
+}>;
+export type WorldInfoCreateCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  expectedRevision: string;
+  item: WorldInfoAuthoredContentV1;
+}>;
+export type WorldInfoUpdateCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  expectedRevision: string;
+  itemHandle: string;
+  item: WorldInfoAuthoredContentV1 & Readonly<{ expectedRevision: number }>;
 }>;
 
 /** Metadata-only companion library entry: opaque handle plus display name. */
@@ -780,6 +831,10 @@ const OPERATION_IDS = [
   "chat.create",
   "memory.mutate",
   "world-info.bind",
+  "world-info.detail",
+  "world-info.create",
+  "world-info.update",
+  "world-info.delete",
   "settings.voice.read",
   "settings.voice.consent",
   "settings.voice.devices",
@@ -832,6 +887,10 @@ const LABEL_KEYS = [
   "tavern.operation.chat.select",
   "tavern.operation.memory.mutate",
   "tavern.operation.world-info.bind",
+  "tavern.operation.world-info.detail",
+  "tavern.operation.world-info.create",
+  "tavern.operation.world-info.update",
+  "tavern.operation.world-info.delete",
   "tavern.operation.settings.voice.read",
   "tavern.operation.settings.voice.consent",
   "tavern.operation.settings.voice.devices",
@@ -922,6 +981,13 @@ const PROBLEM_CODES = [
   "chat_opening_locked",
   "chat_opening_not_greeting",
   "chat_opening_variant_not_found",
+  // The managed World Info library's own refusals (`world-info.create`/`update`/`delete`/`detail`):
+  // the item is gone, its title is taken, the edit raced a newer revision, or the mounted Chat
+  // still reads it. Each reaches the player as its own code rather than as a generic failure.
+  "world_info_not_found",
+  "world_info_already_exists",
+  "world_info_revision_conflict",
+  "world_info_in_use",
   // A companion record that is absent, incomplete or unreadable: a data-integrity fact, not a
   // retryable runtime outage.
   "companion_record_unreadable",
@@ -1282,6 +1348,126 @@ function isSetWorldInfoBindingCommand(value: unknown): value is SetWorldInfoBind
     isPositiveSafeInteger(value.selectionGeneration) &&
     isOpaqueHandle(value.expectedRevision) &&
     (value.sourceHandle === null || isOpaqueHandle(value.sourceHandle))
+  );
+}
+
+const WORLD_INFO_ENTRY_KEYS = ["scope", "publicTitle", "summary"] as const;
+const WORLD_INFO_CONTENT_KEYS = ["revision", "publicTitle", "summary", "entries"] as const;
+const WORLD_INFO_AUTHORED_KEYS = ["publicTitle", "summary", "entries"] as const;
+const WORLD_INFO_UPDATE_ITEM_KEYS = ["publicTitle", "summary", "entries", "expectedRevision"] as const;
+const WORLD_INFO_ITEM_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "itemHandle"] as const;
+const WORLD_INFO_CREATE_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "item"] as const;
+const WORLD_INFO_UPDATE_COMMAND_KEYS = [
+  "apiVersion",
+  "selectionGeneration",
+  "expectedRevision",
+  "itemHandle",
+  "item",
+] as const;
+
+/** A trigger-word list: non-empty and bounded, exactly as the library stores one. */
+function isWorldInfoKeyList(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length >= 1 &&
+    value.length <= 128 &&
+    value.every((key) => isLengthBoundedString(key, 1, 128))
+  );
+}
+
+function isWorldInfoSelectiveLogic(value: unknown): boolean {
+  return value === 0 || value === 1 || value === 2 || value === 3;
+}
+
+function isWorldInfoEntry(value: unknown): value is WorldInfoEntryV1 {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value);
+  if (!WORLD_INFO_ENTRY_KEYS.every((key) => keys.includes(key))) return false;
+  // The four additive optional entry facts; any subset is legal.
+  const optionalKeys = ["keys", "secondaryKeys", "selectiveLogic", "constant"] as const;
+  if (keys.length !== WORLD_INFO_ENTRY_KEYS.length + optionalKeys.filter((key) => key in value).length) return false;
+  if ("keys" in value && !isWorldInfoKeyList(value.keys)) return false;
+  if ("secondaryKeys" in value && !isWorldInfoKeyList(value.secondaryKeys)) return false;
+  if ("selectiveLogic" in value && !isWorldInfoSelectiveLogic(value.selectiveLogic)) return false;
+  if ("constant" in value && typeof value.constant !== "boolean") return false;
+  return (
+    (value.scope === "companion" || value.scope === "setting") &&
+    isLengthBoundedString(value.publicTitle, 1, 128) &&
+    isLengthBoundedString(value.summary, 1, 4_000)
+  );
+}
+
+function isWorldInfoEntryList(value: unknown): value is readonly WorldInfoEntryV1[] {
+  return Array.isArray(value) && value.every(isWorldInfoEntry);
+}
+
+/** The authored content a create carries: the library mints the item's first revision. */
+function isWorldInfoAuthoredContent(value: unknown): value is WorldInfoAuthoredContentV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, WORLD_INFO_AUTHORED_KEYS) &&
+    isLengthBoundedString(value.publicTitle, 1, 128) &&
+    isLengthBoundedString(value.summary, 1, 4_000) &&
+    isWorldInfoEntryList(value.entries)
+  );
+}
+
+/**
+ * One item's own projection. `revision` is the library's own optimistic revision - an integer -
+ * and `entries` is uncapped for the same reason the contract leaves it uncapped: the library's own
+ * envelope is the bound, and a stricter mirror would refuse a legal artifact.
+ */
+function isWorldInfoContent(value: unknown): value is WorldInfoContentV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, WORLD_INFO_CONTENT_KEYS) &&
+    isPositiveSafeInteger(value.revision) &&
+    isLengthBoundedString(value.publicTitle, 1, 128) &&
+    isLengthBoundedString(value.summary, 1, 4_000) &&
+    isWorldInfoEntryList(value.entries)
+  );
+}
+
+function isWorldInfoProjectionCommand(value: Record<string, unknown>): boolean {
+  return (
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isPositiveSafeInteger(value.selectionGeneration) &&
+    isOpaqueHandle(value.expectedRevision)
+  );
+}
+
+function isWorldInfoItemCommand(value: unknown): value is WorldInfoItemCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, WORLD_INFO_ITEM_COMMAND_KEYS) &&
+    isWorldInfoProjectionCommand(value) &&
+    isOpaqueHandle(value.itemHandle)
+  );
+}
+
+function isWorldInfoCreateCommand(value: unknown): value is WorldInfoCreateCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, WORLD_INFO_CREATE_COMMAND_KEYS) &&
+    isWorldInfoProjectionCommand(value) &&
+    isWorldInfoAuthoredContent(value.item)
+  );
+}
+
+function isWorldInfoUpdateCommand(value: unknown): value is WorldInfoUpdateCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, WORLD_INFO_UPDATE_COMMAND_KEYS) &&
+    isWorldInfoProjectionCommand(value) &&
+    isOpaqueHandle(value.itemHandle) &&
+    isRecord(value.item) &&
+    hasExactKeys(value.item, WORLD_INFO_UPDATE_ITEM_KEYS) &&
+    isPositiveSafeInteger(value.item.expectedRevision) &&
+    isWorldInfoAuthoredContent({
+      publicTitle: value.item.publicTitle,
+      summary: value.item.summary,
+      entries: value.item.entries,
+    })
   );
 }
 
@@ -2233,6 +2419,26 @@ export function validateSetWorldInfoBindingCommand(value: unknown): SetWorldInfo
   return value;
 }
 
+export function validateWorldInfoContent(value: unknown): WorldInfoContentV1 {
+  if (!isWorldInfoContent(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateWorldInfoItemCommand(value: unknown): WorldInfoItemCommandV1 {
+  if (!isWorldInfoItemCommand(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateWorldInfoCreateCommand(value: unknown): WorldInfoCreateCommandV1 {
+  if (!isWorldInfoCreateCommand(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateWorldInfoUpdateCommand(value: unknown): WorldInfoUpdateCommandV1 {
+  if (!isWorldInfoUpdateCommand(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validateCompanionList(value: unknown): CompanionListV1 {
   if (!isCompanionList(value)) throw new TavernProtocolError();
   return value;
@@ -2424,6 +2630,21 @@ export type ManagementPipelineApi = Readonly<{
   readWorldInfo(): Promise<WorldInfoStateV1>;
   /** PUT exact bind/unbind command with browser-session CSRF protection. */
   setWorldInfoBinding(command: SetWorldInfoBindingCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
+  /**
+   * GET /api/tavern/v1/world-info/item: one library item's own content at its exact
+   * revision, addressed by an opaque handle from the state projection the caller read
+   * (browser session; no CSRF header).
+   */
+  readWorldInfoItem(command: WorldInfoItemCommandV1): Promise<WorldInfoContentV1>;
+  /** POST /api/tavern/v1/world-info/item: creates an item and answers with the re-projected state. */
+  createWorldInfo(command: WorldInfoCreateCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
+  /**
+   * PUT /api/tavern/v1/world-info/item: rewrites one item's content, CASing on the
+   * library revision the caller read (`item.expectedRevision`).
+   */
+  updateWorldInfo(command: WorldInfoUpdateCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
+  /** DELETE /api/tavern/v1/world-info/item: removes an item from the library. */
+  deleteWorldInfo(command: WorldInfoItemCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
   /** GET /api/tavern/v1/settings/language (browser session; no CSRF header). */
   readLanguagePreference(): Promise<TavernLanguagePreferenceV1>;
   /**
@@ -2707,6 +2928,64 @@ export function createManagementPipelineApi(
         command,
       );
       observe("world-info.bind", "passed", result.revision);
+      return result;
+    },
+    async readWorldInfoItem(command: WorldInfoItemCommandV1): Promise<WorldInfoContentV1> {
+      if (!isWorldInfoItemCommand(command)) throw new TavernProtocolError();
+      const params = new URLSearchParams({
+        apiVersion: String(TAVERN_BROWSER_API_VERSION),
+        selectionGeneration: String(command.selectionGeneration),
+        expectedRevision: command.expectedRevision,
+        itemHandle: command.itemHandle,
+      });
+      return exchange(
+        fetchLike,
+        "GET",
+        `/api/tavern/v1/world-info/item?${params.toString()}`,
+        200,
+        validateWorldInfoContent,
+      );
+    },
+    async createWorldInfo(command: WorldInfoCreateCommandV1, csrfToken: string): Promise<WorldInfoStateV1> {
+      if (!isWorldInfoCreateCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/world-info/item",
+        200,
+        validateWorldInfoState,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("world-info.create", "passed", result.revision);
+      return result;
+    },
+    async updateWorldInfo(command: WorldInfoUpdateCommandV1, csrfToken: string): Promise<WorldInfoStateV1> {
+      if (!isWorldInfoUpdateCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/world-info/item",
+        200,
+        validateWorldInfoState,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("world-info.update", "passed", result.revision);
+      return result;
+    },
+    async deleteWorldInfo(command: WorldInfoItemCommandV1, csrfToken: string): Promise<WorldInfoStateV1> {
+      if (!isWorldInfoItemCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "DELETE",
+        "/api/tavern/v1/world-info/item",
+        200,
+        validateWorldInfoState,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("world-info.delete", "passed", result.revision);
       return result;
     },
     async readVoicePreference(): Promise<TavernVoicePreferenceV1> {

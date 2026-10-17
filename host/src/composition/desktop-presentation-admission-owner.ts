@@ -896,6 +896,12 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       // Chat selection (ADR 0009) follows New Chat: choosing an existing Chat the
       // next runtime start mounts.
       "chat.select",
+      // The managed World Info library's authoring surface follows the last group in
+      // the dispatcher's own canonical order.
+      "world-info.detail",
+      "world-info.create",
+      "world-info.update",
+      "world-info.delete",
     ],
     operationIds: [
       "draft.save",
@@ -938,6 +944,10 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "chat.opening",
       "chat.create",
       "chat.select",
+      "world-info.detail",
+      "world-info.create",
+      "world-info.update",
+      "world-info.delete",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds. The

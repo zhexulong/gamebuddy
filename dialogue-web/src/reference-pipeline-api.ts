@@ -348,6 +348,11 @@ const PROBLEM_CODES = [
   // The companion's performance directive is CASed on the exact profile revision the browser
   // read; a stale edit is its own bounded refusal.
   "character_voice_conflict",
+  // The managed World Info library's own refusals (`world-info.create`/`update`/`delete`/`detail`).
+  "world_info_not_found",
+  "world_info_already_exists",
+  "world_info_revision_conflict",
+  "world_info_in_use",
   // Transport: the over-ceiling request body the router refuses before any route runs.
   "payload_too_large",
 ] as const;
