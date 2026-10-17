@@ -84,7 +84,8 @@ test("the run's own narrative is judged and folded into the verdict", () => {
   assert.match(SOURCE, /historianRubricOutcome = judgeRunHistorianRubric\(runtimeRoot\);/);
   assert.match(SOURCE, /const historianRubricPassed = historianRubricOutcome\.state !== "failed";/);
   // `unmeasured` is deliberately NOT red: "there was nothing to judge" and "the narrative was bad" differ.
-  assert.match(SOURCE, /return Object\.freeze\(\{ state: "unmeasured", reasonCode: "no_compartments_written"/);
+  // Formatting-insensitive: what matters is that the no-narrative case is its own named state.
+  assert.match(SOURCE, /state: "unmeasured",[\s\S]{0,60}?no_compartments_written/);
   assert.match(SOURCE, /historian_rubric_violation:\$\{entry\.obligation\}@\$\{entry\.where\}/);
   // The verdict reads it, and the manifest carries it next to the voice lane.
   const verdict = SOURCE.slice(SOURCE.indexOf("      worldBookPassed &&"), SOURCE.indexOf('        ? "passed"'));

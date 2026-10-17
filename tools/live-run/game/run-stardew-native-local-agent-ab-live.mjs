@@ -2315,6 +2315,13 @@ try {
     // work of the day that followed it, and the baseline's judgement of the lot. Absent for every other
     // scenario, because it is a fact about crossings and not a generic field.
     multiday: multidayOutcome,
+    // The run's own narrative judgement, on the RESULT (the bundle carries the same object): the verdict folds it
+    // in, so a caller reading `state` cannot miss it.
+    historianRubric: Object.freeze({
+      state: historianRubricOutcome?.state ?? "unmeasured",
+      reasonCode: historianRubricOutcome?.reasonCode ?? null,
+      compartmentsChecked: historianRubricOutcome?.compartmentsChecked ?? 0,
+    }),
     // Whether the transport itself died mid-run, with the Mod's own reason code and how far in it happened.
     // A `bridge_disconnected` verdict is otherwise unauditable: this says whether the pipe dropped one action in,
     // or before the session had a chance to say anything.
@@ -2781,11 +2788,6 @@ async function writeRunBundle({
           ? null
           : (result?.voiceResult?.disabledReason ?? "voice_not_completed"),
     },
-    historianRubric: Object.freeze({
-      state: historianRubricOutcome.state,
-      reasonCode: historianRubricOutcome.reasonCode,
-      compartmentsChecked: historianRubricOutcome.compartmentsChecked,
-    }),
     failure,
     repro,
   };
