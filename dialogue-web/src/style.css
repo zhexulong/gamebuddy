@@ -3153,6 +3153,25 @@
     margin-inline: auto;
   }
 
+  /* The Settings surface's four field groups and the Chats panel's own action row
+     were the last two blocks still hugging the region's left edge while the
+     content they belong to sat centred. Measured at 1440x900: the four group
+     headings and the connection read-back row all started at x=16 while the fields
+     they name centred at x=400, and the Chats panel's "new chat" button sat at
+     x=16 while the list it acts on centred at x=400 - a 384 px jump between a
+     section title and its own section, and between a control and the thing it
+     acts on. Both take the measure and the centring the blocks inside them already
+     have, so a title, its fields and its read-back rows are one column. */
+  [data-language-settings],
+  [data-voice-settings],
+  [data-connection-settings],
+  [data-model-profiles],
+  .surface-content > .button-group {
+    width: 100%;
+    max-width: var(--management-form-measure);
+    margin-inline: auto;
+  }
+
   /* The stacks that are not a card carry a card's own inset, so a field in a card
    and a field in the stack beside it are the same box. */
   .connection-form,
