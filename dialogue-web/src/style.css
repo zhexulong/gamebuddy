@@ -3820,6 +3820,33 @@
     overflow-wrap: anywhere;
   }
 
+  /* The companion inspector's authored prose: her persona, her scenario, her
+   openings and her world book's entry bodies are the same read as the world book
+   panels above, so they take those exact declarations rather than a third style.
+   What they were missing is the one declaration that tells an author's own line
+   breaks from ordinary wrapping, which the read-only authored-text bands already
+   carry (`.reference-draft-section p`): measured on the mounted drawer at
+   1440x900, a persona of five authored lines painted as one 126 px block at the
+   inherited 14px/21px with `white-space: normal`, so its shape was gone, and an
+   authored two-line `Direct,\nand never in a hurry.` read as one line. With the
+   declarations below it is 166 px over 8 line boxes at 13px/1.6 and the same at
+   400 px, and the two-line authored field is two lines. The drawer is still a
+   read: this is type, not a control, and it renders exactly the text the Host
+   sent. */
+  [data-companion-inspector-persona-core],
+  [data-companion-inspector-persona-interaction-style],
+  [data-companion-inspector-persona-expression-style],
+  [data-companion-inspector-scenario-text] > p,
+  [data-companion-inspector-opening-text] > p,
+  [data-companion-inspector-world-book-entry-text] > p {
+    margin: var(--space-1) 0 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
   [data-import-history-entry] > span {
     display: block;
     font-size: 13px;
