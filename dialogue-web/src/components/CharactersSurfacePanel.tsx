@@ -180,11 +180,38 @@ type WorldBookNotice = Readonly<{ kind: "success" | "failure"; text: string }> |
 
 /** One entry being authored: the entry's own facts, with its trigger words as the player typed them. */
 type WorldBookEntryDraft = Readonly<{
+  /**
+   * The row's own identity while it is being authored.
+   *
+   * It exists because the editor's rows are editable: keying them by position
+   * makes React reconcile an edit into the wrong row and remount the input
+   * mid-keystroke, which is what an index key is warned about. It is client-only
+   * - `submitDraft` builds the wire payload field by field, so it cannot be sent -
+   * and it is minted per row, so adding or removing rows never reuses one.
+   */
+  rowId: string;
   scope: "companion" | "setting";
   publicTitle: string;
   summary: string;
   keys: string;
 }>;
+
+/**
+ * The next authoring row's identity. A module counter rather than a uuid: the id
+ * never leaves the browser, and a counter keeps a test deterministic.
+ */
+let nextWorldBookRowId = 0;
+
+function newWorldBookEntryDraft(): WorldBookEntryDraft {
+  nextWorldBookRowId += 1;
+  return {
+    rowId: `world-book-row-${nextWorldBookRowId}`,
+    scope: "setting",
+    publicTitle: "",
+    summary: "",
+    keys: "",
+  };
+}
 
 /**
  * The item being authored. `handle` is null while creating one; `itemRevision`
@@ -200,12 +227,7 @@ type WorldBookDraft = Readonly<{
 }>;
 
 /** The entry a new draft starts with: a setting fact, which is what the importer's own fallback is. */
-const EMPTY_WORLD_BOOK_ENTRY: WorldBookEntryDraft = Object.freeze({
-  scope: "setting" as const,
-  publicTitle: "",
-  summary: "",
-  keys: "",
-});
+const EMPTY_WORLD_BOOK_ENTRY: WorldBookEntryDraft = Object.freeze(newWorldBookEntryDraft());
 
 /** The entry's trigger words, comma-separated in any of the three comma shapes a player types. */
 function parseTriggerWords(value: string): string[] {
@@ -222,6 +244,20 @@ function parseTriggerWords(value: string): string[] {
  * refuses an empty title or summary with `invalid_request`, which names nothing
  * a player can act on.
  */
+/**
+ * The submit control's own words: it says what pressing it will do, and while the
+ * request is in flight it says that instead. A nested conditional in the JSX reads
+ * as the three cases stacked in one line; naming them keeps each one legible.
+ */
+function worldBookSubmitLabel(
+  saving: boolean,
+  editing: boolean,
+  labels: { saving: string; worldBookSave: string; worldBookCreateSubmit: string },
+): string {
+  if (saving) return labels.saving;
+  return editing ? labels.worldBookSave : labels.worldBookCreateSubmit;
+}
+
 function worldBookDraftIsComplete(draft: WorldBookDraft): boolean {
   return (
     draft.publicTitle.trim().length > 0 &&
@@ -353,6 +389,7 @@ function CharacterWorldBookPanel({
         publicTitle: content.publicTitle,
         summary: content.summary,
         entries: content.entries.map((entry) => ({
+          ...newWorldBookEntryDraft(),
           scope: entry.scope,
           publicTitle: entry.publicTitle,
           summary: entry.summary,
@@ -476,126 +513,21 @@ function CharacterWorldBookPanel({
         </p>
       ) : (
         <div role="list" data-world-book-list>
-          {items.map((item) => {
-            const isOpen = opened !== null && opened.handle === item.handle;
-            const isArmed = armed === item.handle;
-            return (
-              <div key={item.handle} role="listitem" data-world-book-item={item.handle}>
-                <strong>{item.title}</strong>
-                {item.summary !== null && <p>{item.summary}</p>}
-                <div className="composer-actions">
-                  {item.selected || item.pending ? (
-                    <button
-                      type="button"
-                      className="small-button"
-                      aria-label={`${labels.worldBookDetach}: ${item.title}`}
-                      onClick={() => bind(null)}
-                    >
-                      {labels.worldBookDetach}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="small-button"
-                      aria-label={`${labels.worldBookAttach}: ${item.title}`}
-                      onClick={() => bind(item.handle)}
-                    >
-                      {labels.worldBookAttach}
-                    </button>
-                  )}
-                </div>
-                {/* The row's own authoring strip, and while its delete is armed
-                    the strip steps aside: the confirmation is the row's only
-                    action until it is answered, and it never shares a line with
-                    the controls it replaces. */}
-                {isArmed ? (
-                  <div data-world-book-confirm>
-                    <p role="status" data-world-book-confirm-prompt>
-                      {labels.worldBookDeleteConfirm.replace("{{title}}", item.title)}
-                    </p>
-                    <div className="composer-actions">
-                      <button
-                        type="button"
-                        className="small-button danger"
-                        data-world-book-confirm-yes
-                        onClick={() => remove(item.handle)}
-                      >
-                        {labels.worldBookDelete}
-                      </button>
-                      <button
-                        type="button"
-                        className="small-button"
-                        data-world-book-confirm-no
-                        onClick={() => setArmed(null)}
-                      >
-                        {labels.worldBookCancel}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="composer-actions">
-                    <button
-                      type="button"
-                      className="small-button"
-                      data-world-book-open
-                      aria-expanded={isOpen}
-                      onClick={() => toggleEntries(item.handle)}
-                    >
-                      {isOpen ? labels.worldBookHideEntries : labels.worldBookShowEntries}
-                    </button>
-                    <button
-                      type="button"
-                      className="small-button"
-                      data-world-book-edit
-                      aria-label={`${labels.worldBookEdit}: ${item.title}`}
-                      onClick={() => beginEdit(item.handle)}
-                    >
-                      {labels.worldBookEdit}
-                    </button>
-                    <button
-                      type="button"
-                      className="small-button"
-                      data-world-book-delete
-                      aria-label={`${labels.worldBookDelete}: ${item.title}`}
-                      onClick={() => setArmed(item.handle)}
-                    >
-                      {labels.worldBookDelete}
-                    </button>
-                  </div>
-                )}
-                {isOpen && (
-                  <div data-world-book-content>
-                    <p className="management-settings-hint">{labels.worldBookEntriesLabel}</p>
-                    {opened.content.entries.length === 0 ? (
-                      <p className="management-settings-hint" data-world-book-content-empty>
-                        {labels.worldBookEntriesEmpty}
-                      </p>
-                    ) : (
-                      <div role="list" data-world-book-entry-list>
-                        {opened.content.entries.map((entry, index) => (
-                          // An entry has no durable id here: its title and its
-                          // index are what a list of entries keys by, and a
-                          // title is not unique inside one item.
-                          <div key={`${entry.publicTitle}\u0000${index}`} role="listitem" data-world-book-entry>
-                            <strong>{entry.publicTitle}</strong>
-                            <p>{entry.summary}</p>
-                            <p className="management-settings-hint" data-world-book-entry-facts>
-                              {entry.scope === "companion"
-                                ? labels.worldBookEntryScopeCompanion
-                                : labels.worldBookEntryScopeSetting}
-                              {entry.keys === undefined || entry.keys.length === 0
-                                ? ` - ${labels.companionWorldBookAlwaysOn}`
-                                : ` - ${labels.worldBookEntryKeys}: ${entry.keys.join(labels.companionWorldBookKeySeparator)}`}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {items.map((item) => (
+            <WorldBookItemRow
+              key={item.handle}
+              item={item}
+              opened={opened !== null && opened.handle === item.handle ? opened.content : null}
+              isArmed={armed === item.handle}
+              labels={labels}
+              onBind={bind}
+              onToggleEntries={toggleEntries}
+              onBeginEdit={beginEdit}
+              onArm={() => setArmed(item.handle)}
+              onDisarm={() => setArmed(null)}
+              onRemove={remove}
+            />
+          ))}
         </div>
       )}
       {/* Creating a second item is served by the same route, so the entry point
@@ -624,6 +556,158 @@ function CharacterWorldBookPanel({
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * One row of the library: what an item is, its attach/detach control, the
+ * authoring strip, the armed delete confirmation, and - when the item's content is
+ * open - the entries that content holds.
+ *
+ * It is a component rather than a block inside the panel because the panel was 395
+ * lines of render and handlers: the parts that only draw are separated from the
+ * parts that own state, so the panel reads as the state machine it is.
+ */
+function WorldBookItemRow({
+  item,
+  opened,
+  isArmed,
+  labels,
+  onBind,
+  onToggleEntries,
+  onBeginEdit,
+  onArm,
+  onDisarm,
+  onRemove,
+}: {
+  item: WorldInfoStateV1["items"][number];
+  opened: WorldInfoContentV1 | null;
+  isArmed: boolean;
+  labels: ReturnType<typeof characterLabels>;
+  onBind: (sourceHandle: string | null) => void;
+  onToggleEntries: (itemHandle: string) => void;
+  onBeginEdit: (itemHandle: string) => void;
+  onArm: () => void;
+  onDisarm: () => void;
+  onRemove: (itemHandle: string) => void;
+}): ReactElement {
+  const isOpen = opened !== null;
+  return (
+    <div role="listitem" data-world-book-item={item.handle}>
+      <strong>{item.title}</strong>
+      {item.summary !== null && <p>{item.summary}</p>}
+      <div className="composer-actions">
+        {item.selected || item.pending ? (
+          <button
+            type="button"
+            className="small-button"
+            aria-label={`${labels.worldBookDetach}: ${item.title}`}
+            onClick={() => onBind(null)}
+          >
+            {labels.worldBookDetach}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="small-button"
+            aria-label={`${labels.worldBookAttach}: ${item.title}`}
+            onClick={() => onBind(item.handle)}
+          >
+            {labels.worldBookAttach}
+          </button>
+        )}
+      </div>
+      {/* The row's own authoring strip, and while its delete is armed the strip
+          steps aside: the confirmation is the row's only action until it is
+          answered, and it never shares a line with the controls it replaces. */}
+      {isArmed ? (
+        <div data-world-book-confirm>
+          <p role="status" data-world-book-confirm-prompt>
+            {labels.worldBookDeleteConfirm.replace("{{title}}", item.title)}
+          </p>
+          <div className="composer-actions">
+            <button
+              type="button"
+              className="small-button danger"
+              data-world-book-confirm-yes
+              onClick={() => onRemove(item.handle)}
+            >
+              {labels.worldBookDelete}
+            </button>
+            <button type="button" className="small-button" data-world-book-confirm-no onClick={onDisarm}>
+              {labels.worldBookCancel}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="composer-actions">
+          <button
+            type="button"
+            className="small-button"
+            data-world-book-open
+            aria-expanded={isOpen}
+            onClick={() => onToggleEntries(item.handle)}
+          >
+            {isOpen ? labels.worldBookHideEntries : labels.worldBookShowEntries}
+          </button>
+          <button
+            type="button"
+            className="small-button"
+            data-world-book-edit
+            aria-label={`${labels.worldBookEdit}: ${item.title}`}
+            onClick={() => onBeginEdit(item.handle)}
+          >
+            {labels.worldBookEdit}
+          </button>
+          <button
+            type="button"
+            className="small-button"
+            data-world-book-delete
+            aria-label={`${labels.worldBookDelete}: ${item.title}`}
+            onClick={onArm}
+          >
+            {labels.worldBookDelete}
+          </button>
+        </div>
+      )}
+      {opened !== null && (
+        <div data-world-book-content>
+          <p className="management-settings-hint">{labels.worldBookEntriesLabel}</p>
+          {opened.entries.length === 0 ? (
+            <p className="management-settings-hint" data-world-book-content-empty>
+              {labels.worldBookEntriesEmpty}
+            </p>
+          ) : (
+            <div role="list" data-world-book-entry-list>
+              {opened.entries.map((entry) => (
+                // An entry has no durable id on this wire: the fields the player reads
+                // are what distinguish one from another, so the key is built from them
+                // rather than from the position in the list - a position is not an
+                // identity, and keying by it is exactly what makes a reordered list
+                // reconcile into the wrong rows. Two entries equal in every one of
+                // these fields are the same row to the player.
+                <div
+                  key={`${entry.publicTitle}\u0000${entry.scope}\u0000${entry.summary}\u0000${(entry.keys ?? []).join(",")}`}
+                  role="listitem"
+                  data-world-book-entry
+                >
+                  <strong>{entry.publicTitle}</strong>
+                  <p>{entry.summary}</p>
+                  <p className="management-settings-hint" data-world-book-entry-facts>
+                    {entry.scope === "companion"
+                      ? labels.worldBookEntryScopeCompanion
+                      : labels.worldBookEntryScopeSetting}
+                    {entry.keys === undefined || entry.keys.length === 0
+                      ? ` - ${labels.companionWorldBookAlwaysOn}`
+                      : ` - ${labels.worldBookEntryKeys}: ${entry.keys.join(labels.companionWorldBookKeySeparator)}`}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -684,7 +768,7 @@ function WorldBookDraftEditor({
       />
       <p className="management-settings-label">{labels.worldBookEntriesLabel}</p>
       {draft.entries.map((entry, index) => (
-        <div key={index} data-world-book-entry-draft>
+        <div key={entry.rowId} data-world-book-entry-draft>
           <label className="management-settings-label" htmlFor={`world-book-entry-${index}-scope`}>
             {labels.worldBookEntryScope}
           </label>
@@ -765,7 +849,7 @@ function WorldBookDraftEditor({
           disabled={saving || !worldBookDraftIsComplete(draft)}
           onClick={onSubmit}
         >
-          {saving ? labels.saving : editing ? labels.worldBookSave : labels.worldBookCreateSubmit}
+          {worldBookSubmitLabel(saving, editing, labels)}
         </button>
         <button type="button" className="small-button" data-world-book-cancel disabled={saving} onClick={onCancel}>
           {labels.worldBookCancel}

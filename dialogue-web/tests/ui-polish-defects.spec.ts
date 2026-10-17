@@ -644,6 +644,11 @@ test("defect 5: two recommended models with one id read as two different chips",
   await mountShell(page, { transcript: [{ role: "companion", text: "Hello." }], recommendedModels: SAME_ID_TWO_PROVIDERS });
   await page.getByTestId("chat-model-trigger").click();
   await expect(page.getByTestId("chat-model-drawer")).toBeVisible();
+  // Wait for the suggestions before reading them: the drawer opens before its chips
+  // render, so a snapshot here reads however many had painted - usually none under
+  // load, and the empty list then failed as "both suggestions are offered" (the
+  // test passes alone and failed in roughly half the multi-file runs).
+  await expect(page.locator(".surface-model-chip")).toHaveCount(SAME_ID_TWO_PROVIDERS.length);
 
   const chips = await page.locator(".surface-model-chip").evaluateAll((nodes) =>
     nodes.map((node) => (node.textContent ?? "").trim()),
