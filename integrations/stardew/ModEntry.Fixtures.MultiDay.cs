@@ -142,7 +142,14 @@ public sealed partial class ModEntry
     /// (Farmer.cs:2261 sets <c>currentLocation</c> from <c>homeLocation</c>), and
     /// that home holds a real bed. <c>advance_day</c> only starts a night from a
     /// FarmHouse and walks to the bed itself, so nothing is warped here beyond
-    /// re-establishing the engine's own placement when it does not hold.</item>
+        /// re-establishing the engine's own placement when it does not hold.
+        /// <para>
+        /// In the COMPOSED world this Given composes with the play-session one, which moves the actor out to the
+        /// Farm's start tile - so when the companion begins its day it stands OUTSIDE and has to walk home before a
+        /// night can begin. That is the intended composition (a day of work, then bed), and it is why this Given
+        /// also asserts that home is REACHABLE from where the session starts: the position described above is the one
+        /// the multi-day half establishes, not the one the composed run ends up in.
+        /// </para></item>
     /// <item><b>A ShippingMenu WILL be triggered, once</b>: the first rollover
     /// raises the morning-after summary. That is deliberate - it is the menu that
     /// holds the actor at the end of a night, and therefore the one that decides

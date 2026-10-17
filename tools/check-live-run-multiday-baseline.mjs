@@ -232,8 +232,16 @@ async function runDirChecks(runDir) {
     Array.isArray(multiday.dayRecords) && multiday.dayRecords.length === multiday.crossings,
   );
   // Judged again HERE from the raw record, so a run that reported its own verdict cannot override the gate.
-  const rejudged = assessMultiDayBaseline({ dayRecords: multiday.dayRecords, daysRequested: multiday.crossings });
-  check("gate_rejudgement_agrees", rejudged.ok, codes.join(",") || undefined);
+  const requested = Number.isInteger(multiday.requestedCrossings) ? multiday.requestedCrossings : multiday.crossings;
+  const rejudged = assessMultiDayBaseline({ dayRecords: multiday.dayRecords, daysRequested: requested });
+  check("gate_rejudgement_agrees", rejudged.ok, rejudged.violations.map((entry) => entry.code).join(",") || undefined);
+  // A run that was asked for three nights and crossed two is red, and by name: the window rule could not see this
+  // while the requested and achieved counts were the same number.
+  check(
+    "run_crossed_the_nights_it_was_asked_for",
+    multiday.crossings === requested,
+    `crossed=${String(multiday.crossings)} requested=${String(requested)}`,
+  );
 }
 
 function parseOption(name) {

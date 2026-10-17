@@ -1896,10 +1896,14 @@ try {
     });
     multidayOutcome = Object.freeze({
       crossings: crossing.daysCrossed,
+      // What the RUN was asked for, next to what it achieved: judging the window against the achieved count made the
+      // window rule unable to notice "asked for three nights, crossed two" (a review found this), because the two
+      // numbers were the same by construction.
+      requestedCrossings: MULTIDAY_CROSSINGS,
       completed: crossing.completed,
       reasonCode: crossing.reasonCode,
       // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
-      assessment: assessMultiDayBaseline({ dayRecords: crossing.dayRecords, daysRequested: crossing.daysCrossed }),
+      assessment: assessMultiDayBaseline({ dayRecords: crossing.dayRecords, daysRequested: MULTIDAY_CROSSINGS }),
       dayRecords: crossing.dayRecords,
     });
   } else {
