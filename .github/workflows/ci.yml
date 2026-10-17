@@ -32,6 +32,7 @@ jobs:
           node-version: 24.13.0
           cache: pnpm
       - uses: oven-sh/setup-bun@v2
+        id: bun
         with:
           bun-version: 1.4.2
       # Build the vendored source before pnpm packages the local dependency.
@@ -131,7 +132,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      # The host suite resolves its `bun` test-dependency invocation from this variable and
+      # deliberately refuses the npm bun.ps1 shim on PATH (fixed argv cannot execute it), so a bare
+      # `bun` on PATH is not enough. Measured as `test_dependency_bun_executable_unset` when this
+      # step finally executed - it never had before, because the knip gate died ahead of it.
       - run: pnpm test
+        env:
+          GAMEBUDDY_BUN_EXECUTABLE: ${{ steps.bun.outputs.bun-path }}
       # The composed runtime's launch contract: the environment block the launcher hands the Host child
       # (including the embedded-runtime declaration the background historian is gated on) and the session
       # entry it publishes. This one file has no `test:` script of its own, so the aggregate corpus step
