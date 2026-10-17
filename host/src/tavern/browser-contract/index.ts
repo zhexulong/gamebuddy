@@ -911,6 +911,18 @@ export const CompanionWorldBookEntryV1Schema = strictObject({
   title: Type.String({ minLength: 1, maxLength: 256 }),
   keys: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 16 }),
   constant: Type.Boolean(),
+  /**
+   * The entry's own text, as the Host rendered it: macros resolved, bounded.
+   *
+   * It belongs in this schema because the dispatcher validates every reply
+   * against it before the browser sees one (`tavern-management-dialogue-web.ts`
+   * checks `CompanionWorldBookV1Schema`), so a service that projects a field the
+   * published schema does not declare fails closed with
+   * `companion_record_unreadable` - which is what happened when the body was
+   * first projected here: the projection carried it, the schema did not, and the
+   * route answered 503 for every read.
+   */
+  content: Type.String({ maxLength: COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH }),
 });
 /**
  * The companion's own world book. This is a DIFFERENT thing from the World Info
