@@ -37,10 +37,11 @@ const ALL_OPERATIONS = [
   "draft.save",
   "draft.discard",
   "chat.rename",
+  "chat.opening",
   "memory.mutate",
   "world-info.bind",
-  "world-info.detail",
   "world-info.create",
+  "world-info.detail",
   "world-info.update",
   "world-info.delete",
   "settings.voice.read",
@@ -58,12 +59,17 @@ const ALL_OPERATIONS = [
   "settings.profiles.update",
   "companion.list",
   "companion.create",
+  "companion.worldbook.read",
+  "character.voice.read",
+  "character.voice.update",
   "persona.read",
   "persona.update",
   "scenario.read",
   "scenario.update",
   "greeting.read",
   "greeting.update",
+  "chat.create",
+  "chat.select",
   "chat.archive",
   "chat.restore",
   "chat.trash",
@@ -138,6 +144,14 @@ test("the writes assert their durable effect, not only the reply shape", () => {
       "world_info_update_not_durable",
     ],
     "world-info.delete": ["world_info_delete_revision_unadvanced", "world_info_item_not_removed"],
+    // The companion directive is CASed on her profile revision; the edit must advance it and read
+    // back through the read route.
+    "character.voice.update": [
+      "character_voice_profile_revision_unadvanced",
+      "character_voice_not_applied",
+      "character_voice_source_not_player",
+      "character_voice_not_durable",
+    ],
   };
   for (const [operationId, codes] of Object.entries(postWriteAssertions)) {
     const body = attemptBody(operationId);

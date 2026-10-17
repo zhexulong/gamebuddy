@@ -300,6 +300,44 @@ async function exerciseOperations(origin, client) {
       throw new Error("management_revision_unadvanced");
   });
 
+  // chat.opening: the greeting variant choice for the mounted, not-yet-sealed Chat. It is legal
+  // exactly while `opening_locked_at_event_id` is null, which a fresh run's Chat is - the lock is
+  // written by a submit and this runner never submits - and it must run before `greeting.update`
+  // below, which rewrites the greeting set the mounted Chat's opening was drawn from.
+  await attempt("chat.opening", async () => {
+    const greeting = await readJson(origin, client, "/api/tavern/v1/greeting");
+    const count = Array.isArray(greeting?.variants) ? greeting.variants.length : 0;
+    if (count < 1) throw new Error("chat_opening_greeting_variants_unavailable");
+    const before = await readJson(origin, client, "/api/tavern/v1/state");
+    const generation = before?.selection?.generation;
+    if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error("selection_generation_unavailable");
+    const opened = Array.isArray(before?.chat?.transcript) ? before.chat.transcript[0]?.openingVariant : undefined;
+    const currentIndex = Number.isInteger(opened?.index) ? opened.index : 0;
+    // A different position whenever the set has one, so a pass cannot be the variant the Chat
+    // already opened with.
+    const targetIndex = count > 1 && currentIndex === 0 ? 1 : 0;
+    const chosen = await sendJson(origin, client, "PUT", "/api/tavern/v1/chat/opening", {
+      apiVersion: 1,
+      selectionGeneration: generation,
+      targetIndex,
+    });
+    if (chosen === null || typeof chosen !== "object") throw new Error("chat_opening_result_unavailable");
+    const variant = chosen.openingVariant;
+    if (variant === null || typeof variant !== "object") throw new Error("chat_opening_variant_unavailable");
+    if (variant.index !== targetIndex) throw new Error("chat_opening_index_not_applied");
+    if (variant.count !== count) throw new Error("chat_opening_count_mismatch");
+    if (typeof variant.variantId !== "string" || variant.variantId.length === 0)
+      throw new Error("chat_opening_variant_id_missing");
+    if (variant.locked !== false) throw new Error("chat_opening_sealed_by_commit");
+    // The durable half, read through the snapshot: message zero must carry the committed variant,
+    // so a commit that only answered its own projection fails here.
+    const after = await readJson(origin, client, "/api/tavern/v1/state");
+    const opening = Array.isArray(after?.chat?.transcript) ? after.chat.transcript[0]?.openingVariant : undefined;
+    if (opening === undefined || opening === null) throw new Error("chat_opening_not_durable");
+    if (opening.variantId !== variant.variantId) throw new Error("chat_opening_variant_not_durable");
+    if (opening.index !== targetIndex) throw new Error("chat_opening_index_not_durable");
+  });
+
   await attempt("memory.mutate", async () => {
     const memory = await readJson(origin, client, "/api/tavern/v1/memory");
     if (typeof memory?.projectionRevision !== "string" || memory.projectionRevision.length === 0)
@@ -798,6 +836,89 @@ async function exerciseOperations(origin, client) {
       throw new Error("companion_create_not_listed");
   });
 
+  // The mounted companion's own opaque handle, re-read from the library immediately before each
+  // use: a handle belongs to the projection it was read in, so it is never cached across steps.
+  const currentCompanionHandle = async () => {
+    const list = await readJson(origin, client, "/api/tavern/v1/companions");
+    const current = Array.isArray(list?.companions)
+      ? list.companions.find((entry) => entry?.isCurrent === true)
+      : undefined;
+    if (current === undefined || typeof current.handle !== "string" || current.handle.length === 0)
+      throw new Error("companion_current_handle_unavailable");
+    return current.handle;
+  };
+
+  // companion.worldbook.read: her OWN book (what the reviewed card carried), which is a different
+  // store from the attachable library above. The mounted companion was provisioned from a card
+  // whose world book the conversation's own binding names, so an absent book here would mean the
+  // surface lost the book the Chat is actually carrying.
+  await attempt("companion.worldbook.read", async () => {
+    const handle = await currentCompanionHandle();
+    // KNOWN BLOCKER for this operation, recorded so nobody has to derive it again: the route
+    // validates its own reply with `CompanionWorldBookV1Schema`
+    // (`host/src/tavern-management-dialogue-web.ts:1333`) and fails closed with
+    // `companion_record_unreadable` (503), because the service's entry projection carries `content`
+    // (`host/src/tavern/companion-world-book-service.ts:41,62`) which the published entry schema
+    // does not declare (`host/src/tavern/browser-contract/index.ts:910`). Until those two agree this
+    // operation reports `blocked` here - which is the truth about it - and the projector below
+    // still asserts the field the surface reads.
+    const book = await readJson(origin, client, `/api/tavern/v1/companions/${handle}/worldbook`);
+    if (book === null || typeof book !== "object") throw new Error("companion_world_book_unavailable");
+    if (book.present !== true) throw new Error("companion_world_book_not_present");
+    if (!Array.isArray(book.entries) || book.entries.length === 0)
+      throw new Error("companion_world_book_entries_missing");
+    for (const entry of book.entries) {
+      if (typeof entry?.title !== "string" || entry.title.length === 0)
+        throw new Error("companion_world_book_title_missing");
+      if (typeof entry.constant !== "boolean") throw new Error("companion_world_book_constant_invalid");
+      if (!Array.isArray(entry.keys)) throw new Error("companion_world_book_keys_missing");
+      if (typeof entry.content !== "string") throw new Error("companion_world_book_content_missing");
+    }
+  });
+
+  // character.voice.read / .update: the mounted companion's own performance directive, held on her
+  // identity profile and edited against that profile's exact revision. The read proves the surface;
+  // the write must advance the profile revision AND read back through the read route.
+  await attempt("character.voice.read", async () => {
+    const handle = await currentCompanionHandle();
+    const voice = await readJson(origin, client, `/api/tavern/v1/companions/${handle}/voice`);
+    if (voice === null || typeof voice !== "object") throw new Error("character_voice_unavailable");
+    if (!Number.isInteger(voice.profileRevision) || voice.profileRevision < 0)
+      throw new Error("character_voice_profile_revision_unavailable");
+    const directive = voice.characterVoice;
+    if (directive !== null && directive !== undefined) {
+      if (typeof directive.text !== "string" || directive.text.length === 0)
+        throw new Error("character_voice_text_missing");
+      if (directive.source !== "card" && directive.source !== "player")
+        throw new Error("character_voice_source_invalid");
+    }
+  });
+
+  await attempt("character.voice.update", async () => {
+    const handle = await currentCompanionHandle();
+    const before = await readJson(origin, client, `/api/tavern/v1/companions/${handle}/voice`);
+    const expectedProfileRevision = before?.profileRevision;
+    if (!Number.isInteger(expectedProfileRevision) || expectedProfileRevision < 0)
+      throw new Error("character_voice_profile_revision_unavailable");
+    const written = await sendJson(origin, client, "PUT", `/api/tavern/v1/companions/${handle}/voice`, {
+      apiVersion: 1,
+      expectedProfileRevision,
+      text: "The gate keeps the ledger, and the ledger keeps the gate.",
+    });
+    if (written === null || typeof written !== "object") throw new Error("character_voice_write_unavailable");
+    if (written.characterVoice?.text !== "The gate keeps the ledger, and the ledger keeps the gate.")
+      throw new Error("character_voice_not_applied");
+    // An edit always re-authors the directive as the player's own, which is the provenance the
+    // review surface reads; a write that stored the text as `card` did not record the edit.
+    if (written.characterVoice?.source !== "player") throw new Error("character_voice_source_not_player");
+    if (!Number.isInteger(written.profileRevision) || written.profileRevision <= expectedProfileRevision)
+      throw new Error("character_voice_profile_revision_unadvanced");
+    const after = await readJson(origin, client, `/api/tavern/v1/companions/${handle}/voice`);
+    if (after?.characterVoice?.text !== written.characterVoice.text) throw new Error("character_voice_not_durable");
+    if (after?.profileRevision !== written.profileRevision)
+      throw new Error("character_voice_readback_revision_mismatch");
+  });
+
   await attempt("persona.read", async () => {
     const persona = await readJson(origin, client, "/api/tavern/v1/persona");
     if (persona === null || typeof persona !== "object") throw new Error("persona_unavailable");
@@ -867,6 +988,76 @@ async function exerciseOperations(origin, client) {
       throw new Error("greeting_revision_unadvanced");
     if (!Array.isArray(saved.variants) || saved.variants.length !== 1 || saved.variants[0]?.text !== "Morning, chief.")
       throw new Error("greeting_variant_not_applied");
+  });
+
+  // chat.create / chat.select: the new-chat flow and the focus transfer. chat.create answers with
+  // the created Chat's list entry (the contract fixes that it is NOT the mounted one); chat.select
+  // then chooses it, and the mount's own projection must report the choice - which is what makes
+  // this a switch rather than the no-op the already-selected Chat is. Both run here, while the
+  // mounted Chat is still active, so the retention steps below then operate on the selected Chat
+  // exactly as they operate on any mounted Chat.
+  let createdChatHandle = null;
+  await attempt("chat.create", async () => {
+    const snapshot = await readJson(origin, client, "/api/tavern/v1/state");
+    const generation = snapshot?.selection?.generation;
+    if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error("selection_generation_unavailable");
+    const before = await readJson(origin, client, "/api/tavern/v1/chats?apiVersion=1");
+    const listed = Array.isArray(before?.chats) ? before.chats : [];
+    if (listed.length === 0) throw new Error("chat_list_empty_before_create");
+    const created = await sendJson(origin, client, "POST", "/api/tavern/v1/chats", {
+      apiVersion: 1,
+      selectionGeneration: generation,
+    });
+    if (created === null || typeof created !== "object") throw new Error("chat_create_unavailable");
+    const entry = created.chat;
+    if (entry === null || typeof entry !== "object") throw new Error("chat_create_entry_unavailable");
+    if (typeof entry.handle !== "string" || entry.handle.length === 0) throw new Error("chat_create_handle_missing");
+    if (entry.status !== "active") throw new Error("chat_create_status_invalid");
+    // The contract's own fact: the created Chat is not the mounted one until a selection says so.
+    if (entry.isSelected !== false) throw new Error("chat_create_claimed_selection");
+    if (!Number.isInteger(entry.managementRevision) || entry.managementRevision < 0)
+      throw new Error("chat_create_revision_unavailable");
+    if (typeof entry.updatedAtMs !== "number" || entry.updatedAtMs <= 0)
+      throw new Error("chat_create_timestamp_missing");
+    if (created.opening !== null && (typeof created.opening !== "string" || created.opening.length === 0))
+      throw new Error("chat_create_opening_invalid");
+    // The durable postcondition: the active list gained exactly one row, naming the created Chat
+    // and still reporting the mounted one as the selected one.
+    const after = await readJson(origin, client, "/api/tavern/v1/chats?apiVersion=1");
+    const afterListed = Array.isArray(after?.chats) ? after.chats : [];
+    if (afterListed.length !== listed.length + 1) throw new Error("chat_create_not_listed");
+    const row = afterListed.find((candidate) => candidate?.handle === entry.handle);
+    if (row === undefined) throw new Error("chat_create_row_missing");
+    if (row.isSelected !== false) throw new Error("chat_create_row_claimed_selection");
+    if (!afterListed.some((candidate) => candidate?.isSelected === true))
+      throw new Error("chat_create_lost_the_selected_chat");
+    createdChatHandle = entry.handle;
+  });
+
+  await attempt("chat.select", async () => {
+    if (createdChatHandle === null) throw new Error("chat_select_target_unavailable");
+    const before = await readJson(origin, client, "/api/tavern/v1/state");
+    const generation = before?.selection?.generation;
+    if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error("selection_generation_unavailable");
+    if (before?.selection?.chatHandle === createdChatHandle) throw new Error("chat_select_target_already_selected");
+    const selected = await sendJson(origin, client, "PUT", "/api/tavern/v1/chat/select", {
+      apiVersion: 1,
+      selectionGeneration: generation,
+      chatHandle: createdChatHandle,
+    });
+    if (selected === null || typeof selected !== "object") throw new Error("chat_select_result_unavailable");
+    if (selected.status !== "switched") throw new Error("chat_select_not_switched");
+    // The durable half: the mount's own projection names the chosen Chat, and the active list marks
+    // exactly that row selected. A reply that said `switched` while the mount stayed where it was
+    // fails here.
+    const after = await readJson(origin, client, "/api/tavern/v1/state");
+    if (after?.selection?.chatHandle !== createdChatHandle) throw new Error("chat_select_not_durable");
+    const listed = await readJson(origin, client, "/api/tavern/v1/chats?apiVersion=1");
+    const row = Array.isArray(listed?.chats)
+      ? listed.chats.find((candidate) => candidate?.handle === createdChatHandle)
+      : undefined;
+    if (row === undefined) throw new Error("chat_select_target_missing_from_list");
+    if (row.isSelected !== true) throw new Error("chat_select_selection_not_durable");
   });
 
   // Chat lifecycle retention: the exact mounted chat's handle + management
