@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -28,14 +29,20 @@ import {
 import {
   type ChatCreateResultV1,
   type ChatSelectResultV1,
+  type CompanionProfileV1,
+  type CompanionWorldBookV1,
   type CreateChatCommandV1,
   type SelectChatCommandV1,
   TAVERN_BROWSER_API_VERSION,
   chatListPreviewText,
 } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
-import { COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH } from "../tavern/browser-contract/index.js";
-import { macroTable, renderMacros } from "../tavern/macro-engine.js";
+import {
+  COMPANION_PROFILE_NAME_MAX_LENGTH,
+  COMPANION_PROFILE_TEXT_MAX_LENGTH,
+  COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH,
+} from "../tavern/browser-contract/index.js";
+import { type MacroTable, macroTable, renderMacros } from "../tavern/macro-engine.js";
 import type { ChatEventStream } from "../tavern/chat-event-stream.js";
 import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import type { ChatManagementService } from "../tavern/chat-management/chat-management-service.js";
@@ -274,6 +281,11 @@ function createTavernManagementDomains(
   const mountedNamePromise = readIdentityProfile(runtimePaths.identityProfilePath)
     .then((identityProfile) => identityProfile.identity.name)
     .catch(() => undefined);
+  const mountedMacros = async (): Promise<MacroTable> =>
+    macroTable({
+      char: (await mountedNamePromise) ?? "",
+      locale: await resolveCompanionLocale(manifest.runtimeRoot),
+    });
   const personaService = createPersonaManagementService(artifactStore, tavernPaths.playerRoot);
   // The scenario projection is the one surface a card's raw `{{user}}`/`{{char}}`
   // macros used to leak through: the durable record keeps them (they are the
@@ -281,11 +293,7 @@ function createTavernManagementDomains(
   // table with the companion's real name and the player's locale reference.
   const scenarioService = withScenarioSurfaceMacros(
     createScenarioManagementService(artifactStore, tavernPaths.companionRoot),
-    async () =>
-      macroTable({
-        char: (await mountedNamePromise) ?? "",
-        locale: await resolveCompanionLocale(manifest.runtimeRoot),
-      }),
+    mountedMacros,
   );
   const greetingService = createGreetingManagementService(artifactStore, tavernPaths.companionRoot);
   // The library service owns one lazily opened thread connection; it is opened
@@ -304,6 +312,34 @@ function createTavernManagementDomains(
   const currentCompanionId = manifest.principal.companionId;
   const companionHandleFor = (companionId: string): string =>
     lease.browserProjection.projectCompanionHandle(companionId);
+  /**
+   * The roster companion one opaque handle names.
+   *
+   * The handle is a per-mount HMAC of the durable companion id, so it is not
+   * invertible. The reverse map exists only by enumerating the very records the
+   * roster was built from and comparing their handles through the SAME projection,
+   * which is what makes it total over the roster by construction and impossible
+   * for browser input to use to name a durable identity the roster never showed.
+   * The mounted companion is spliced into the roster even when her own library
+   * record is unreadable (`mergeMountedCompanionList`), so her handle is matched
+   * explicitly too.
+   */
+  const companionForHandle = async (
+    handle: string,
+  ): Promise<Readonly<{ companionId: string; continuityId: string; name: string | null }> | null> => {
+    if (handle === companionHandleFor(currentCompanionId)) {
+      return Object.freeze({
+        companionId: currentCompanionId,
+        continuityId: manifest.principal.continuityId,
+        name: (await mountedNamePromise) ?? null,
+      });
+    }
+    const companions = await libraryBase.listCompanions();
+    const match = companions.find((companion) => companionHandleFor(companion.companionId) === handle);
+    return match === undefined
+      ? null
+      : Object.freeze({ companionId: match.companionId, continuityId: match.continuityId, name: match.name });
+  };
   // The mounted companion is ALWAYS the current library entry: its projected
   // handle is the only handle the detail route will ever resolve. Created
   // companions join the library durably below.
@@ -353,32 +389,79 @@ function createTavernManagementDomains(
   const companionWorldBookService = Object.freeze({
     async read(handle: string) {
       if (handle !== companionHandleFor(currentCompanionId)) return null;
-      const book = await readCompanionWorldBook(runtimePaths.runtimeCwd);
-      // The bodies are authored text in the card's own words, so they carry the
-      // author's `{{user}}`/`{{char}}` macros verbatim; the player reads them
-      // through the run's own macro table, exactly as the scenario projection does
-      // (`withScenarioSurfaceMacros`), never as a raw placeholder. Rendering
-      // happens before the bound is applied, so a macro that straddles it is
-      // resolved whole instead of being cut into a stray `{{`.
+      return await projectRenderedCompanionWorldBook(runtimePaths.runtimeCwd, await mountedMacros());
+    },
+  });
+  /**
+   * The read-only character inspector: one roster companion's own authored facts.
+   *
+   * Every other companion-addressed read resolves the MOUNTED companion only
+   * (`companion.worldbook.read`, `characters.voice.read`) or is the PLAYER's own
+   * record (`persona.read`), so no route projected what an archived companion
+   * actually carries. This one resolves any handle the roster handed out - the
+   * roster is built from the library's own records with `companionHandleFor`, so
+   * enumerating them is total by construction - and reads her artifacts from the
+   * roots her own `companion.json` derives, with the same `identityKey` the mount
+   * derives them with. Nothing is written and no thread binding is read: this is a
+   * companion, not a Chat.
+   */
+  const companionProfileService = Object.freeze({
+    async read(handle: string): Promise<CompanionProfileV1 | null> {
+      const companion = await companionForHandle(handle);
+      if (companion === null) return null;
+      const identity = Object.freeze({
+        playerId: manifest.principal.playerId,
+        companionId: companion.companionId,
+        continuityId: companion.continuityId,
+      });
+      const companionRuntime = resolveRuntimePaths(identity, manifest.runtimeRoot);
+      const companionTavern = resolveTavernPaths(companionRuntime, identity);
+      // A missing identity profile is ordinary absence, not an error: the profile
+      // is unreadable only when the producer never wrote one (both provisioning
+      // paths write it), and the inspector then carries her library name and
+      // reports no persona authored. A profile that is PRESENT but unreadable
+      // still fails closed, so a corrupt profile never reads as "no persona".
+      const identityProfile = existsSync(companionRuntime.identityProfilePath)
+        ? await readIdentityProfile(companionRuntime.identityProfilePath)
+        : null;
+      const name = identityProfile?.identity.name ?? companion.name;
+      // The roster only projects a handle for a companion it can name, so a handle
+      // that resolves to no name at all is not a roster handle.
+      if (name === null) return null;
       const macros = await macroTable({
-        char: (await mountedNamePromise) ?? "",
+        char: name,
         locale: await resolveCompanionLocale(manifest.runtimeRoot),
       });
-      const rendered = book.entries.map((entry) => {
-        const content = renderMacros(entry.content, macros);
-        if (content.length > COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH)
-          throw new Error("companion_world_book_entry_too_long");
-        return Object.freeze({
-          title: entry.title,
-          keys: [...entry.keys],
-          constant: entry.constant,
-          content,
-        });
-      });
+      const scenario = await createScenarioManagementService(artifactStore, companionTavern.companionRoot).read();
+      const greetings = await createGreetingManagementService(artifactStore, companionTavern.companionRoot).read();
+      const persona = identityProfile?.persona;
       return Object.freeze({
         apiVersion: TAVERN_BROWSER_API_VERSION,
-        present: book.present,
-        entries: rendered,
+        name: renderProfileLabel(name, macros),
+        persona: Object.freeze({
+          present: persona !== undefined,
+          core: renderProfileTextOrNull(persona?.core, macros),
+          interactionStyle: renderProfileTextOrNull(persona?.interactionStyle, macros),
+          expressionStyle: renderProfileTextOrNull(persona?.expressionStyle, macros),
+        }),
+        scenario: Object.freeze({
+          present: scenario !== null,
+          name: scenario === null ? null : renderProfileLabel(scenario.name, macros),
+          description: scenario === null ? null : renderProfileText(scenario.description, macros),
+        }),
+        greetings: Object.freeze({
+          present: greetings !== null,
+          label: greetings?.label === undefined ? null : renderProfileLabel(greetings.label, macros),
+          variants: Object.freeze(
+            (greetings?.variants ?? []).map((variant) =>
+              Object.freeze({
+                label: variant.label === undefined ? null : renderProfileLabel(variant.label, macros),
+                text: renderProfileText(variant.text, macros),
+              }),
+            ),
+          ),
+        }),
+        worldBook: await projectRenderedCompanionWorldBook(companionRuntime.runtimeCwd, macros),
       });
     },
   });
@@ -522,6 +605,7 @@ function createTavernManagementDomains(
       libraryService,
       companionVoiceService,
       companionWorldBookService,
+      companionProfileService,
       newCompanionProvisioner,
       newChatProvisioner,
       ...(chatSelectProvisioner === undefined ? {} : { chatSelectProvisioner }),
@@ -533,6 +617,66 @@ function createTavernManagementDomains(
       confirmStCardImport,
     }),
     owned: Object.freeze(owned),
+  });
+}
+
+/**
+ * One authored profile field, rendered through the run's macro table and bounded.
+ *
+ * Rendering happens BEFORE the bound is applied, so a macro that straddles it is
+ * resolved whole instead of being cut into a stray `{{`; and a field that renders
+ * past its bound is refused with one named code rather than silently shortened,
+ * because a shortened field would read as the author's own text.
+ */
+function renderProfileText(text: string, macros: MacroTable): string {
+  const rendered = renderMacros(text, macros);
+  if (rendered.length > COMPANION_PROFILE_TEXT_MAX_LENGTH) throw new Error("companion_profile_text_too_long");
+  return rendered;
+}
+
+/** One authored profile text field that may not be there at all. */
+function renderProfileTextOrNull(text: string | undefined, macros: MacroTable): string | null {
+  return text === undefined ? null : renderProfileText(text, macros);
+}
+
+/** One authored single-line profile label (a name, an opening's label), bounded. */
+function renderProfileLabel(text: string, macros: MacroTable): string {
+  const rendered = renderMacros(text, macros);
+  if (rendered.length > COMPANION_PROFILE_NAME_MAX_LENGTH) throw new Error("companion_profile_text_too_long");
+  return rendered;
+}
+
+/**
+ * The one companion-world-book projection, served by BOTH the mounted read
+ * (`companion.worldbook.read`) and the inspector (`companion.profile.read`).
+ *
+ * The bodies are authored text in the card's own words, so they carry the
+ * author's `{{user}}`/`{{char}}` macros verbatim; the player reads them through
+ * the run's own macro table, exactly as the scenario projection does
+ * (`withScenarioSurfaceMacros`), never as a raw placeholder. Rendering happens
+ * before the bound is applied, so a macro that straddles it is resolved whole. Two
+ * projections of this one fact would bound it differently, so there is one.
+ */
+async function projectRenderedCompanionWorldBook(
+  runtimeCwd: string,
+  macros: MacroTable,
+): Promise<CompanionWorldBookV1> {
+  const book = await readCompanionWorldBook(runtimeCwd);
+  const rendered = book.entries.map((entry) => {
+    const content = renderMacros(entry.content, macros);
+    if (content.length > COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH)
+      throw new Error("companion_world_book_entry_too_long");
+    return Object.freeze({
+      title: entry.title,
+      keys: [...entry.keys],
+      constant: entry.constant,
+      content,
+    });
+  });
+  return Object.freeze({
+    apiVersion: TAVERN_BROWSER_API_VERSION,
+    present: book.present,
+    entries: rendered,
   });
 }
 
@@ -793,6 +937,7 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
   libraryService: ["listCompanions"],
   companionVoiceService: ["read", "update"],
   companionWorldBookService: ["read"],
+  companionProfileService: ["read"],
   newCompanionProvisioner: ["create"],
   newChatProvisioner: ["create"],
   chatSelectProvisioner: ["select"],
@@ -902,6 +1047,9 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "world-info.create",
       "world-info.update",
       "world-info.delete",
+      // The read-only character inspector appends after the World Info authoring
+      // group, in that same canonical order.
+      "companion.profile.read",
     ],
     operationIds: [
       "draft.save",
@@ -948,6 +1096,7 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "world-info.create",
       "world-info.update",
       "world-info.delete",
+      "companion.profile.read",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds. The

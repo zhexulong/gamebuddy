@@ -654,6 +654,9 @@ const OperationId = Type.Union([
   Type.Literal("world-info.delete"),
   Type.Literal("companion.list"),
   Type.Literal("companion.worldbook.read"),
+  // The read-only character inspector: one companion's own authored facts, by
+  // the roster's own opaque handle.
+  Type.Literal("companion.profile.read"),
   Type.Literal("companion.create"),
   Type.Literal("character.import.stage"),
   Type.Literal("character.import.read"),
@@ -705,6 +708,7 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.character.voice.update"),
   Type.Literal("tavern.operation.companion.list"),
   Type.Literal("tavern.operation.companion.worldbook.read"),
+  Type.Literal("tavern.operation.companion.profile.read"),
   Type.Literal("tavern.operation.companion.create"),
   Type.Literal("tavern.operation.character.import.stage"),
   Type.Literal("tavern.operation.character.import.read"),
@@ -939,6 +943,124 @@ export const CompanionWorldBookV1Schema = strictObject({
   apiVersion: ApiVersion,
   present: Type.Boolean(),
   entries: Type.Array(CompanionWorldBookEntryV1Schema, { maxItems: 128 }),
+});
+/**
+ * The longest authored profile text the browser may read, in UTF-16 code units.
+ *
+ * It is the same authored-text bound the neighbouring schema projections carry
+ * (`ScenarioV1Schema`, `GreetingV1Schema`, `CompanionCharacterVoiceV1Schema`),
+ * and it exists in the same shape as `COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH`:
+ * a field that renders past it is refused with a named code rather than
+ * truncated, because a silently shortened field would read as the author's text.
+ */
+export const COMPANION_PROFILE_TEXT_MAX_LENGTH = 8_192;
+/**
+ * The longest single-line profile label: a name, a set label, a variant label.
+ * It is the identity profile's own name bound, copied here because this module
+ * stays dependency-free (the browser client loads it directly).
+ */
+export const COMPANION_PROFILE_NAME_MAX_LENGTH = 128;
+
+/**
+ * The companion's own authored persona, as the identity profile holds it.
+ *
+ * `present` separates the two facts the inspector must never conflate: she was
+ * provisioned without a persona at all, or she has one and a given dimension of
+ * it is empty. Each dimension is orthogonal (who she is / how she treats the
+ * player / her tone), so a card that wrote only one carries only that one.
+ */
+const CompanionProfilePersonaV1Schema = strictObject({
+  present: Type.Boolean(),
+  core: Type.Union([
+    Type.String({
+      minLength: 1,
+      maxLength: COMPANION_PROFILE_TEXT_MAX_LENGTH,
+      format: "tavern-browser-nfc-utf8-text-v1",
+    }),
+    Type.Null(),
+  ]),
+  interactionStyle: Type.Union([
+    Type.String({
+      minLength: 1,
+      maxLength: COMPANION_PROFILE_TEXT_MAX_LENGTH,
+      format: "tavern-browser-nfc-utf8-text-v1",
+    }),
+    Type.Null(),
+  ]),
+  expressionStyle: Type.Union([
+    Type.String({
+      minLength: 1,
+      maxLength: COMPANION_PROFILE_TEXT_MAX_LENGTH,
+      format: "tavern-browser-nfc-utf8-text-v1",
+    }),
+    Type.Null(),
+  ]),
+});
+/**
+ * The companion's own scenario, as the reviewed card wrote it at provisioning.
+ * `present: false` is "she was made without one"; both fields are null in that
+ * case, so an absent scenario never reads as a scenario with empty text.
+ */
+const CompanionProfileScenarioV1Schema = strictObject({
+  present: Type.Boolean(),
+  name: Type.Union([Type.String({ minLength: 1, maxLength: COMPANION_PROFILE_NAME_MAX_LENGTH }), Type.Null()]),
+  description: Type.Union([
+    Type.String({
+      minLength: 1,
+      maxLength: COMPANION_PROFILE_TEXT_MAX_LENGTH,
+      format: "tavern-browser-nfc-utf8-text-v1",
+    }),
+    Type.Null(),
+  ]),
+});
+/**
+ * One opening the companion can start a chat with. Its text is authored content
+ * and reaches the player already rendered through the run's macro table, so a
+ * `{{user}}`/`{{char}}` placeholder is never painted here; the durable record
+ * keeps the author's own words.
+ */
+const CompanionProfileOpeningVariantV1Schema = strictObject({
+  label: Type.Union([Type.String({ minLength: 1, maxLength: COMPANION_PROFILE_NAME_MAX_LENGTH }), Type.Null()]),
+  text: Type.String({
+    minLength: 1,
+    maxLength: COMPANION_PROFILE_TEXT_MAX_LENGTH,
+    format: "tavern-browser-nfc-utf8-text-v1",
+  }),
+});
+/**
+ * The companion's own greeting set, which a chat with her opens from.
+ * `present: false` is "she was made without one" - there is no empty variant
+ * list to confuse it with, because a greeting set always carries a variant.
+ */
+const CompanionProfileGreetingsV1Schema = strictObject({
+  present: Type.Boolean(),
+  label: Type.Union([Type.String({ minLength: 1, maxLength: COMPANION_PROFILE_NAME_MAX_LENGTH }), Type.Null()]),
+  variants: Type.Array(CompanionProfileOpeningVariantV1Schema, { maxItems: 16 }),
+});
+/**
+ * The read-only character inspector's projection: one companion's own authored
+ * facts, addressed by the same opaque handle the roster projected.
+ *
+ * It is NOT the mounted editor's projection. `persona.read` is the PLAYER's
+ * persona; `scenario.read`/`greeting.read` and the world-book read resolve only
+ * the mounted companion. This is the one read that resolves any roster
+ * companion and returns what SHE carries: her name, her persona, her scenario,
+ * her openings and her own world book. It is read-only by construction - the
+ * schema declares no command and no route serves a write - so the inspector can
+ * never become a second, divergent place to edit a field another panel owns.
+ *
+ * `present` on each group is the fact the panel tells apart: "she was made
+ * without one" versus "she has one and it is empty". Every authored string is
+ * rendered through the run's macro table before it leaves the Host, exactly as
+ * the scenario and world-book projections do.
+ */
+export const CompanionProfileV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  name: Type.String({ minLength: 1, maxLength: COMPANION_PROFILE_NAME_MAX_LENGTH }),
+  persona: CompanionProfilePersonaV1Schema,
+  scenario: CompanionProfileScenarioV1Schema,
+  greetings: CompanionProfileGreetingsV1Schema,
+  worldBook: CompanionWorldBookV1Schema,
 });
 /**
  * The mounted companion's own performance directive, as the durable identity
@@ -2080,6 +2202,20 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CompanionWorldBookV1Schema },
   }),
   route({
+    routeId: "companion.profile.read",
+    method: "GET",
+    path: "/api/tavern/v1/companions/:companionHandle/profile",
+    operationId: "companion.profile.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: CompanionProfileV1Schema },
+  }),
+  route({
     routeId: "companion.create",
     method: "POST",
     path: "/api/tavern/v1/companions",
@@ -2398,6 +2534,7 @@ export const TavernBrowserContractV1 = Object.freeze({
     CompanionDetailV1Schema,
     CompanionWorldBookEntryV1Schema,
     CompanionWorldBookV1Schema,
+    CompanionProfileV1Schema,
     CompanionVoiceV1Schema,
     CompanionCharacterVoiceV1Schema,
     UpdateCompanionVoiceCommandV1Schema,
@@ -2522,6 +2659,31 @@ export type MemoryReadV1 = Readonly<{
   apiVersion: typeof TAVERN_BROWSER_API_VERSION;
   projectionRevision: string;
   memories: readonly MemoryItemV1[];
+}>;
+/**
+ * The character inspector's projection, hand-written for the same reason
+ * `MemoryReadV1` is: the projection freezes every list it carries, so the type
+ * has to say `readonly` rather than describe a mutable array the producer never
+ * returns. The schema (`CompanionProfileV1Schema`) is still the validator the
+ * dispatcher checks the reply against, so the two are one declaration of the same
+ * shape at the two layers that need it.
+ */
+export type CompanionProfileV1 = Readonly<{
+  apiVersion: typeof TAVERN_BROWSER_API_VERSION;
+  name: string;
+  persona: Readonly<{
+    present: boolean;
+    core: string | null;
+    interactionStyle: string | null;
+    expressionStyle: string | null;
+  }>;
+  scenario: Readonly<{ present: boolean; name: string | null; description: string | null }>;
+  greetings: Readonly<{
+    present: boolean;
+    label: string | null;
+    variants: readonly Readonly<{ label: string | null; text: string }>[];
+  }>;
+  worldBook: CompanionWorldBookV1;
 }>;
 export type TavernConnectionSetupFieldV1 = Static<typeof TavernConnectionSetupFieldV1Schema>;
 export type TavernConnectionApiShapeV1 = Static<typeof TavernConnectionApiShapeV1Schema>;

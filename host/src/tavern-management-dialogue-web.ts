@@ -16,6 +16,7 @@ import {
   type CompanionDetailV1,
   type CompanionWorldBookV1,
   type CompanionListV1,
+  type CompanionProfileV1,
   type CompanionCharacterVoiceV1,
   type CompanionVoiceV1,
   type ComposedTavernProfile,
@@ -228,6 +229,16 @@ const MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES = [
   "world-info.delete",
 ] as const;
 /**
+ * Optional companion-profile extension: only a profile that declares this route mounts the
+ * read-only character inspector on `/api/tavern/v1/companions/:companionHandle/profile` - one
+ * roster companion's own authored facts (her name, persona, scenario, openings and her own world
+ * book), addressed by the same opaque handle `companion.list` handed out. It appends after the
+ * World Info authoring group in the frozen canonical order, and like every other option a profile
+ * that advertises it without the bound service fails closed at composition rather than showing an
+ * inspector the Host cannot serve.
+ */
+const MANAGEMENT_COMPANION_PROFILE_ROUTES = ["companion.profile.read"] as const;
+/**
  * Import-stage body ceiling: the card JSON itself is bounded by the decoder
  * (ST_CARD_DECODER_LIMITS_V1.inputBytesJson) and the JSON envelope adds a
  * small margin. Far above the 24 KiB default body bound used by every other
@@ -363,6 +374,16 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    */
   companionWorldBookService?: Readonly<{
     read(handle: string): Promise<CompanionWorldBookV1 | null>;
+  }>;
+  /**
+   * The read-only character inspector: the authored facts of ANY companion in the
+   * roster, addressed by the same opaque handle `companion.list` projected. A
+   * handle the current mount never handed out is answered as null (404) rather
+   * than resolved to another companion, so the browser can never name a durable
+   * companion identity. Read-only by construction: there is no update member.
+   */
+  companionProfileService?: Readonly<{
+    read(handle: string): Promise<CompanionProfileV1 | null>;
   }>;
   /**
    * Host-owned new-companion provisioner. The browser sends a display name
@@ -582,6 +603,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const libraryService = options.libraryService;
   const companionVoiceService = options.companionVoiceService;
   const companionWorldBookService = options.companionWorldBookService;
+  const companionProfileService = options.companionProfileService;
   const newCompanionProvisioner = options.newCompanionProvisioner;
   const newChatProvisioner = options.newChatProvisioner;
   const chatSelectProvisioner = options.chatSelectProvisioner;
@@ -694,6 +716,14 @@ export function createTavernManagementDialogueWebRequestHandler(
   if (profile.routeIds.includes("companion.worldbook.read")) {
     if (companionWorldBookService === undefined) throw new Error("tavern_management_composition_unavailable");
     if (!profile.operationIds.includes("companion.worldbook.read"))
+      throw new Error("tavern_management_composition_unavailable");
+  }
+  // The character inspector is mounted only when the exact read is injected; a
+  // profile that advertises the route without it fails closed before dispatch, so
+  // the surface is never shown an inspector the Host cannot serve.
+  if (profile.routeIds.includes("companion.profile.read")) {
+    if (companionProfileService === undefined) throw new Error("tavern_management_composition_unavailable");
+    if (!profile.operationIds.includes("companion.profile.read"))
       throw new Error("tavern_management_composition_unavailable");
   }
   // The reviewed ST-card import routes are mounted only when the exact
@@ -1333,6 +1363,27 @@ export function createTavernManagementDialogueWebRequestHandler(
           if (!TavernBrowserValidatorsV1.CompanionWorldBookV1Schema.Check(worldBook))
             throw new Error("companion_world_book_service_unavailable");
           return sendJson(response, 200, worldBook);
+        }
+      }
+      {
+        const profileHandle = matchCompanionProfileRoute(request.method, url.pathname);
+        if (profileHandle !== null) {
+          // companion.profile.read: the read-only character inspector. The exact opaque
+          // handle the roster projected resolves to THAT companion's own authored facts,
+          // whoever she is; a handle this mount never handed out is answered by the bound
+          // service as null (404), so browser input can never name a durable companion
+          // identity. Nothing is written and no thread binding is consulted - this reads a
+          // companion, not a Chat.
+          if (url.search !== "" || (await hasRequestBody(request)))
+            return sendProblem(response, 400, "invalid_request");
+          if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+          if (!profile.routeIds.includes("companion.profile.read") || companionProfileService === undefined)
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          const companionProfile = await companionProfileService.read(profileHandle);
+          if (companionProfile === null) return sendProblem(response, 404, "companion_not_found");
+          if (!TavernBrowserValidatorsV1.CompanionProfileV1Schema.Check(companionProfile))
+            throw new Error("companion_profile_service_unavailable");
+          return sendJson(response, 200, companionProfile);
         }
       }
       {
@@ -2012,7 +2063,8 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
   // revision. A profile may declare any subset of the optional groups, and only
   // them, in the frozen canonical order: core, output devices, language,
   // connections, model profiles, companions/personas/retention, card import,
-  // new-chat opening. A partially applied group, an undeclared route or a
+  // new-chat opening, new chat, chat selection, World Info authoring, companion
+  // profile. A partially applied group, an undeclared route or a
   // reordered list fails closed, so no route is mounted that this dispatcher
   // cannot serve.
   const coreRoutes = withMemory
@@ -2036,6 +2088,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_CHAT_CREATE_ROUTES,
     MANAGEMENT_CHAT_SELECT_ROUTES,
     MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES,
+    MANAGEMENT_COMPANION_PROFILE_ROUTES,
   ] as const;
   const operationGroups = [
     coreOperations,
@@ -2050,6 +2103,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_CHAT_CREATE_ROUTES,
     MANAGEMENT_CHAT_SELECT_ROUTES,
     MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES,
+    MANAGEMENT_COMPANION_PROFILE_ROUTES,
   ] as const;
   if (!isCanonicalGroupSelection(profile.routeIds, routeGroups, coreRoutes)) return false;
   if (!isCanonicalGroupSelection(profile.operationIds, operationGroups, coreOperations)) return false;
@@ -2153,6 +2207,13 @@ function matchCompanionVoiceRoute(method: string | undefined, pathname: string):
 function matchCompanionWorldBookRoute(method: string | undefined, pathname: string): string | null {
   if (method !== "GET") return null;
   const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})\/worldbook$/.exec(pathname);
+  return match === null ? null : match[1]!;
+}
+
+/** companion.profile.read: one roster companion's own authored facts, read-only. */
+function matchCompanionProfileRoute(method: string | undefined, pathname: string): string | null {
+  if (method !== "GET") return null;
+  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})\/profile$/.exec(pathname);
   return match === null ? null : match[1]!;
 }
 

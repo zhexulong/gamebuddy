@@ -96,6 +96,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "settings.profiles.update"
     | "companion.list"
     | "companion.worldbook.read"
+    | "companion.profile.read"
     | "companion.create"
     | "character.import.stage"
     | "character.import.read"
@@ -145,6 +146,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.settings.profiles.update"
     | "tavern.operation.companion.list"
     | "tavern.operation.companion.worldbook.read"
+    | "tavern.operation.companion.profile.read"
     | "tavern.operation.companion.create"
     | "tavern.operation.character.import.stage"
     | "tavern.operation.character.import.read"
@@ -280,6 +282,53 @@ export type CompanionWorldBookV1 = Readonly<{
   apiVersion: 1;
   present: boolean;
   entries: readonly CompanionWorldBookEntryV1[];
+}>;
+/**
+ * The companion's own authored persona, as her identity profile holds it.
+ * `present` is false when she was provisioned without one at all; a dimension is
+ * null when that dimension is absent, which is a different fact from an empty
+ * sentence.
+ */
+export type CompanionProfilePersonaV1 = Readonly<{
+  present: boolean;
+  core: string | null;
+  interactionStyle: string | null;
+  expressionStyle: string | null;
+}>;
+/**
+ * The companion's own scenario. `present: false` is "she was made without one";
+ * both fields are null then, so an absent scenario never reads as empty text.
+ */
+export type CompanionProfileScenarioV1 = Readonly<{
+  present: boolean;
+  name: string | null;
+  description: string | null;
+}>;
+/** One opening with its own text, already rendered by the Host (no `{{macro}}`). */
+export type CompanionProfileGreetingVariantV1 = Readonly<{
+  label: string | null;
+  text: string;
+}>;
+/** The companion's own greeting set; `present: false` is "she was made without one". */
+export type CompanionProfileGreetingsV1 = Readonly<{
+  present: boolean;
+  label: string | null;
+  variants: readonly CompanionProfileGreetingVariantV1[];
+}>;
+/**
+ * The read-only character inspector: one companion's own authored facts, by the
+ * same opaque handle the roster projected. It is not the mounted editor's
+ * projection (`persona.read` is the PLAYER's persona, and the scenario/greeting
+ * reads resolve only the mounted companion) and it carries no command at all, so
+ * the inspector can never become a second place to edit a field another panel owns.
+ */
+export type CompanionProfileV1 = Readonly<{
+  apiVersion: 1;
+  name: string;
+  persona: CompanionProfilePersonaV1;
+  scenario: CompanionProfileScenarioV1;
+  greetings: CompanionProfileGreetingsV1;
+  worldBook: CompanionWorldBookV1;
 }>;
 /**
  * The mounted companion's own performance directive, as the durable identity
@@ -853,6 +902,9 @@ const OPERATION_IDS = [
   // design/28 §2 the companion's OWN world book: what the reviewed card carried,
   // which is a different thing from the World Info items a Chat can attach.
   "companion.worldbook.read",
+  // design/28 §2 the read-only character inspector: one roster companion's own authored
+  // facts, which no other route projects for a companion who is not the mounted one.
+  "companion.profile.read",
   "companion.create",
   // design/28 §2 companion directive: the mounted companion's own performance
   // directive (the reviewed card's `system_prompt`), read/edit/clear.
@@ -907,6 +959,7 @@ const LABEL_KEYS = [
   "tavern.nav.characters",
   "tavern.operation.companion.list",
   "tavern.operation.companion.worldbook.read",
+  "tavern.operation.companion.profile.read",
   "tavern.operation.companion.create",
   "tavern.operation.character.import.stage",
   "tavern.operation.character.import.read",
@@ -1563,6 +1616,72 @@ function isCompanionWorldBookEntry(value: unknown): value is CompanionWorldBookE
     Array.isArray(value.keys) &&
     value.keys.length <= 16 &&
     value.keys.every((key) => isLengthBoundedString(key, 1, 64))
+  );
+}
+
+const COMPANION_PROFILE_KEYS = ["apiVersion", "name", "persona", "scenario", "greetings", "worldBook"] as const;
+const COMPANION_PROFILE_PERSONA_KEYS = ["present", "core", "interactionStyle", "expressionStyle"] as const;
+const COMPANION_PROFILE_SCENARIO_KEYS = ["present", "name", "description"] as const;
+const COMPANION_PROFILE_GREETINGS_KEYS = ["present", "label", "variants"] as const;
+const COMPANION_PROFILE_GREETING_VARIANT_KEYS = ["label", "text"] as const;
+/**
+ * The read-only character inspector, as the Host bounded it. Every authored text
+ * field is the Host's own bound (the same 8_192 / 128 the scenario, greeting and
+ * voice projections carry), and the world book reuses the mirror's own validator,
+ * so this read can never widen what the neighbouring read accepts.
+ */
+function isCompanionProfile(value: unknown): value is CompanionProfileV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_PROFILE_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isLengthBoundedString(value.name, 1, 128) &&
+    isCompanionProfilePersona(value.persona) &&
+    isCompanionProfileScenario(value.scenario) &&
+    isCompanionProfileGreetings(value.greetings) &&
+    isCompanionWorldBook(value.worldBook)
+  );
+}
+
+function isCompanionProfilePersona(value: unknown): value is CompanionProfilePersonaV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_PROFILE_PERSONA_KEYS) &&
+    typeof value.present === "boolean" &&
+    (value.core === null || isLengthBoundedString(value.core, 1, 8_192)) &&
+    (value.interactionStyle === null || isLengthBoundedString(value.interactionStyle, 1, 8_192)) &&
+    (value.expressionStyle === null || isLengthBoundedString(value.expressionStyle, 1, 8_192))
+  );
+}
+
+function isCompanionProfileScenario(value: unknown): value is CompanionProfileScenarioV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_PROFILE_SCENARIO_KEYS) &&
+    typeof value.present === "boolean" &&
+    (value.name === null || isLengthBoundedString(value.name, 1, 128)) &&
+    (value.description === null || isLengthBoundedString(value.description, 1, 8_192))
+  );
+}
+
+function isCompanionProfileGreetings(value: unknown): value is CompanionProfileGreetingsV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_PROFILE_GREETINGS_KEYS) &&
+    typeof value.present === "boolean" &&
+    (value.label === null || isLengthBoundedString(value.label, 1, 128)) &&
+    Array.isArray(value.variants) &&
+    value.variants.length <= 16 &&
+    value.variants.every(isCompanionProfileGreetingVariant)
+  );
+}
+
+function isCompanionProfileGreetingVariant(value: unknown): value is CompanionProfileGreetingVariantV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_PROFILE_GREETING_VARIANT_KEYS) &&
+    (value.label === null || isLengthBoundedString(value.label, 1, 128)) &&
+    isLengthBoundedString(value.text, 1, 8_192)
   );
 }
 
@@ -2459,6 +2578,11 @@ export function validateCompanionWorldBook(value: unknown): CompanionWorldBookV1
   return value;
 }
 
+export function validateCompanionProfile(value: unknown): CompanionProfileV1 {
+  if (!isCompanionProfile(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validatePersona(value: unknown): PersonaV1 {
   if (!isPersona(value)) throw new TavernProtocolError();
   return value;
@@ -2706,6 +2830,12 @@ export type ManagementPipelineApi = Readonly<{
    * the World Info items a conversation can attach.
    */
   readCompanionWorldBook(handle: string): Promise<CompanionWorldBookV1>;
+  /**
+   * GET /api/tavern/v1/companions/:handle/profile: the read-only character
+   * inspector - one roster companion's own authored facts, by the handle the
+   * roster listed. It resolves any listed companion, not only the mounted one.
+   */
+  readCompanionProfile(handle: string): Promise<CompanionProfileV1>;
   /** PUT /api/tavern/v1/companions/:handle/voice: edit or clear the directive, CASed on its revision. */
   updateCompanionVoice(
     handle: string,
@@ -3173,6 +3303,10 @@ export function createManagementPipelineApi(
         200,
         validateCompanionWorldBook,
       );
+    },
+    async readCompanionProfile(handle: string): Promise<CompanionProfileV1> {
+      if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
+      return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/profile`, 200, validateCompanionProfile);
     },
     async updateCompanionVoice(
       handle: string,
