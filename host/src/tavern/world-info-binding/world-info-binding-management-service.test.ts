@@ -12,6 +12,7 @@ import {
   TavernBrowserValidatorsV1,
 } from "../browser-contract/index.js";
 import { createWorldInfoBindingManagementService } from "./world-info-binding-management-service.js";
+import { canonicalHash } from "../artifact-store.js";
 
 const principal = Object.freeze({ playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" });
 
@@ -173,7 +174,11 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
       repoUrl,
       root,
     ],
-    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: { ...process.env, GAMEBUDDY_MOUNT_SETTLE: process.env.GAMEBUDDY_MOUNT_SETTLE ?? "0" } },
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      env: { ...process.env, GAMEBUDDY_MOUNT_SETTLE: process.env.GAMEBUDDY_MOUNT_SETTLE ?? "0" },
+    },
   );
   const output: Buffer[] = [];
   const errors: Buffer[] = [];
@@ -261,7 +266,9 @@ test("mounted binding service binds and unbinds the exact immutable revision wit
   assert.equal(unbind.state, "pending");
   assert.equal(unbind.items.filter((item) => item.pending).length, 1);
   assert.equal(results.durableAfterUnbindBinding, undefined);
-  const appliedAfterUnbind = results.appliedBinding as { source: string; publicTitle: string; revision: number } | undefined;
+  const appliedAfterUnbind = results.appliedBinding as
+    | { source: string; publicTitle: string; revision: number }
+    | undefined;
   assert.ok(appliedAfterUnbind);
   assert.equal(appliedAfterUnbind.source, "managed_world_info");
   assert.equal(appliedAfterUnbind.revision, 1);
@@ -307,12 +314,126 @@ test("mounted binding service reports pending after changing World Info behind a
   assert.equal((results.lockedRead as { state: string }).state, "pending");
   assert.equal((results.lockedUnbind as { ok: boolean }).ok, true);
   assert.equal(results.durableAfterLockMessages, 1);
-  const binding = results.durableAfterLockBinding as { source: string; publicTitle: string; revision: number } | undefined;
+  const binding = results.durableAfterLockBinding as
+    | { source: string; publicTitle: string; revision: number }
+    | undefined;
   assert.equal(binding, undefined);
-  const applied = results.durableAfterLockAppliedBinding as { source: string; publicTitle: string; revision: number } | undefined;
+  const applied = results.durableAfterLockAppliedBinding as
+    | { source: string; publicTitle: string; revision: number }
+    | undefined;
   assert.ok(applied);
   assert.equal(applied.source, "managed_world_info");
   assert.equal(applied.revision, 1);
+});
+
+test("mounted binding service serves the library write half through the exact projection", async () => {
+  const results = await mounted(`
+    const { readFile, readdir } = await import("node:fs/promises");
+    const initial = await service.read();
+    const created = await service.create({ apiVersion: 1, selectionGeneration: generation, expectedRevision: initial.revision, item: { publicTitle: "Stardew Valley", summary: "A larger valley.", entries: [{ scope: "setting", publicTitle: "Bus Stop", summary: "Town entrance." }] } });
+    const createdItem = created.items.find((item) => item.title === "Stardew Valley");
+    const detail = await service.detail({ apiVersion: 1, selectionGeneration: generation, expectedRevision: created.revision, itemHandle: createdItem.handle });
+    // Both a superseded projection handle and a handle from a different
+    // projection conflict before any repository I/O.
+    const staleDetail = await code(() => service.detail({ apiVersion: 1, selectionGeneration: generation, expectedRevision: initial.revision, itemHandle: createdItem.handle }));
+    const foreignHandle = await code(() => service.delete({ apiVersion: 1, selectionGeneration: generation, expectedRevision: created.revision, itemHandle: initial.items[0].handle }));
+    const updated = await service.update({ apiVersion: 1, selectionGeneration: generation, expectedRevision: created.revision, itemHandle: createdItem.handle, item: { expectedRevision: 1, publicTitle: "Stardew Valley", summary: "A larger valley, revised.", entries: [{ scope: "setting", publicTitle: "Bus Stop", summary: "Town entrance, revised." }] } });
+    const updatedItem = updated.items.find((item) => item.title === "Stardew Valley");
+    const detailAfterUpdate = await service.detail({ apiVersion: 1, selectionGeneration: generation, expectedRevision: updated.revision, itemHandle: updatedItem.handle });
+    const staleDelete = await code(() => service.delete({ apiVersion: 1, selectionGeneration: generation, expectedRevision: created.revision, itemHandle: createdItem.handle }));
+    const removed = await service.delete({ apiVersion: 1, selectionGeneration: generation, expectedRevision: updated.revision, itemHandle: updatedItem.handle });
+    const final = await service.read();
+    const revisionsRoot = root + "/world-info-management/revisions";
+    const handles = await readdir(revisionsRoot);
+    const catalog = JSON.parse(await readFile(root + "/world-info-management/catalog.json", "utf8"));
+    const disk = {};
+    for (const handle of handles) {
+      const files = await readdir(revisionsRoot + "/" + handle);
+      disk[handle] = { files };
+      for (const file of files) disk[handle][file] = JSON.parse(await readFile(revisionsRoot + "/" + handle + "/" + file, "utf8"));
+    }
+    process.stdout.write(JSON.stringify({ initial, created, detail, staleDetail, foreignHandle, updated, detailAfterUpdate, staleDelete, removed, final, catalog, handles, disk }));
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+  assert.equal((results.initial as { items: readonly unknown[] }).items.length, 1);
+  assert.equal((results.created as { items: readonly unknown[] }).items.length, 2);
+  const detail = results.detail as {
+    publicTitle: string;
+    revision: number;
+    entries: readonly { publicTitle: string; summary: string }[];
+  };
+  assert.equal(detail.publicTitle, "Stardew Valley");
+  assert.equal(detail.revision, 1);
+  assert.equal(detail.entries[0]?.summary, "Town entrance.");
+  assert.equal((results.staleDetail as { error: string }).error, "world_info_binding_conflict");
+  assert.equal((results.foreignHandle as { error: string }).error, "world_info_binding_conflict");
+  const detailAfterUpdate = results.detailAfterUpdate as { publicTitle: string; revision: number; summary: string };
+  assert.equal(detailAfterUpdate.revision, 2);
+  assert.equal(detailAfterUpdate.summary, "A larger valley, revised.");
+  assert.equal((results.staleDelete as { error: string }).error, "world_info_binding_conflict");
+  assert.deepEqual(
+    (results.removed as { items: readonly { title: string }[] }).items.map((item) => item.title),
+    ["Pelican Town"],
+  );
+  assert.deepEqual(
+    (results.final as { items: readonly { title: string }[] }).items.map((item) => item.title),
+    ["Pelican Town"],
+  );
+  // The immutable revision files for the deleted item are retained on disk and
+  // still verify against their own canonical hashes.
+  const catalog = results.catalog as { artifacts: readonly { handle: string; publicTitle: string }[] };
+  assert.deepEqual(
+    catalog.artifacts.map((artifact) => artifact.publicTitle),
+    ["Pelican Town"],
+  );
+  const disk = results.disk as Record<string, { files: string[]; [file: string]: unknown }>;
+  const catalogHandles = new Set(catalog.artifacts.map((artifact) => artifact.handle));
+  const deletedHandle = Object.keys(disk).find((handle) => !catalogHandles.has(handle));
+  assert.ok(deletedHandle, "the deleted item's revision directory must survive the catalog removal");
+  const retained = disk[deletedHandle]!;
+  assert.deepEqual([...retained.files].sort(), ["1.json", "2.json"]);
+  for (const file of ["1.json", "2.json"] as const) {
+    const envelope = retained[file] as { canonicalHash: string; artifact: unknown };
+    assert.equal(canonicalHash(envelope.artifact), envelope.canonicalHash, `${file} must still verify after delete`);
+  }
+});
+
+test("mounted binding service refuses a removal or rename of an item the mounted Chat binds", async () => {
+  const results = await mounted(`
+    // A freshly mounted Chat may already carry a default world_book applied
+    // binding, and a managed binding cannot replace another source family.
+    // Clear both through the public store/coordinator seams so the exact case
+    // under test - a mounted Chat bound to a managed library item - exists.
+    const s0 = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    await store().setWorldBookBinding({ chatThreadId: lease.chatThreadId, chatSurfaceSessionId: lease.chatSurfaceSessionId, companionId: "companion_01", continuityId: "continuity_01", expectedUpdatedAtMs: s0.thread.updatedAtMs });
+    const s1 = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    await applyMounted(undefined, s1.thread.appliedWorldBookBinding);
+    const first = await service.read();
+    await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: first.items[0].handle });
+    const boundRead = await service.read();
+    const bound = boundRead.items[0];
+    const refusedDelete = await code(() => service.delete({ apiVersion: 1, selectionGeneration: generation, expectedRevision: boundRead.revision, itemHandle: bound.handle }));
+    const refusedRename = await code(() => service.update({ apiVersion: 1, selectionGeneration: generation, expectedRevision: boundRead.revision, itemHandle: bound.handle, item: { expectedRevision: 1, publicTitle: "Renamed Town", summary: "A small valley town.", entries: [{ scope: "setting", publicTitle: "Square", summary: "Town center." }] } }));
+    // A content-only update keeps the public title, so the binding still resolves.
+    await service.update({ apiVersion: 1, selectionGeneration: generation, expectedRevision: boundRead.revision, itemHandle: bound.handle, item: { expectedRevision: 1, publicTitle: "Pelican Town", summary: "A small valley town, revised.", entries: [{ scope: "setting", publicTitle: "Square", summary: "Town center." }] } });
+    const afterUpdate = await service.read();
+    await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: afterUpdate.revision, sourceHandle: null });
+    const afterUnbind = await service.read();
+    const removed = await service.delete({ apiVersion: 1, selectionGeneration: generation, expectedRevision: afterUnbind.revision, itemHandle: afterUnbind.items[0].handle });
+    const final = await service.read();
+    process.stdout.write(JSON.stringify({ refusedDelete, refusedRename, afterUpdateCount: afterUpdate.items.length, removed, final }));
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+  assert.equal((results.refusedDelete as { error: string }).error, "world_info_in_use");
+  assert.equal((results.refusedRename as { error: string }).error, "world_info_in_use");
+  assert.equal(results.afterUpdateCount, 1);
+  const removed = results.removed as { items: readonly unknown[] };
+  assert.equal(removed.items.length, 0);
+  assert.equal((results.final as { items: readonly unknown[] }).items.length, 0);
 });
 
 test("binding service source keeps store, resolver, lease and coordinator authority private", async () => {
@@ -546,4 +667,3 @@ test("mounted binding service settles a pristine bind immediately when the coord
     else process.env.GAMEBUDDY_MOUNT_SETTLE = previous;
   }
 });
-

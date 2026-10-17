@@ -3,6 +3,7 @@ import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { join } from "node:path";
 import test from "node:test";
 import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
+import { canonicalHash } from "../artifact-store.js";
 import { createWorldInfoManagementRepository } from "./world-info-management.js";
 
 const request = Object.freeze({
@@ -74,6 +75,53 @@ test("managed World Info creates, lists, details, updates, and preserves immutab
   }
 });
 
+test("managed World Info delete removes the item from the library and keeps its immutable revision on disk", async () => {
+  const { root, repository } = await temporaryRepository();
+  try {
+    await repository.create(request);
+    await repository.create({ ...request, publicTitle: "Cindersap Forest" });
+    const catalog = JSON.parse(await readFile(join(root, "world-info-management", "catalog.json"), "utf8")) as {
+      artifacts: readonly { handle: string; publicTitle: string }[];
+    };
+    const item = catalog.artifacts.find((artifact) => artifact.publicTitle === "Pelican Town")!;
+    const revisionPath = join(root, "world-info-management", "revisions", item.handle, "1.json");
+    const envelope = JSON.parse(await readFile(revisionPath, "utf8")) as {
+      schemaVersion: number;
+      revision: number;
+      canonicalHash: string;
+      artifact: unknown;
+    };
+
+    await repository.delete("Pelican Town");
+
+    // Only that item leaves the library; deleting a name the catalog no longer
+    // holds is an explicit refusal rather than a silent success.
+    assert.deepEqual(
+      (await repository.list()).map((projection) => projection.publicTitle),
+      ["Cindersap Forest"],
+    );
+    assert.equal(await repository.detail("Pelican Town"), null);
+    assert.deepEqual(await repository.history("Pelican Town"), []);
+    await assert.rejects(() => repository.delete("Pelican Town"), /world_info_not_found/);
+    const rewritten = JSON.parse(await readFile(join(root, "world-info-management", "catalog.json"), "utf8")) as {
+      artifacts: readonly { publicTitle: string }[];
+    };
+    assert.deepEqual(
+      rewritten.artifacts.map((artifact) => artifact.publicTitle),
+      ["Cindersap Forest"],
+    );
+
+    // The immutable revision file is retained exactly as written and still
+    // verifies against its own canonical hash: a Chat bound to this exact
+    // revision keeps reading the artifact the library no longer lists.
+    const retained = JSON.parse(await readFile(revisionPath, "utf8")) as typeof envelope;
+    assert.deepEqual(retained, envelope);
+    assert.equal(canonicalHash(retained.artifact), retained.canonicalHash);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("managed World Info rejects unknown, executable, scoped, and control-bearing input", async () => {
   const { root, repository } = await temporaryRepository();
   try {
@@ -81,7 +129,10 @@ test("managed World Info rejects unknown, executable, scoped, and control-bearin
       { ...request, alwaysOnPremise: "not allowed" },
       { ...request, entries: [{ scope: "world", publicTitle: "No", summary: "No" }] },
       { ...request, entries: [{ scope: "setting", publicTitle: "No", summary: "<script>alert(1)</script>" }] },
-      { ...request, entries: [{ scope: "setting", publicTitle: "title\nbreak", summary: "Title cannot have newline" }] },
+      {
+        ...request,
+        entries: [{ scope: "setting", publicTitle: "title\nbreak", summary: "Title cannot have newline" }],
+      },
       { ...request, entries: [{ scope: "setting", publicTitle: "No", summary: "null\u0000byte" }] },
       { ...request, entries: [{ scope: "setting", publicTitle: "No", summary: "Safe", regex: ".*" }] },
     ])
