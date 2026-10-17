@@ -176,18 +176,27 @@ test("a companion who has a world book shows its count and its trigger words", a
   // so no placeholder can be painted here.
   await expect(block).not.toContainText("{{");
 
-  // The attachable library is a DIFFERENT list and is empty here, so its block is
-  // not rendered at all - it can no longer read as "you have no world book".
-  await expect(surface.locator("[data-world-book]")).toHaveCount(0);
+  // The attachable library is a DIFFERENT list and is empty here: it says so and
+  // offers its own create control. Empty is now its own state rather than no
+  // block at all - a fresh product's library is always empty, and a panel that
+  // renders nothing there leaves the whole authoring path unreachable.
+  const library = surface.locator("[data-world-book]");
+  await expect(library.locator("[data-world-book-empty]")).toHaveText("你的世界书库还是空的。");
+  await expect(library.locator("[data-world-book-create]")).toBeVisible();
 });
 
-test("a companion who has no world book renders no world-book block", async ({ page }) => {
+test("a companion who has no world book renders no block for her own book", async ({ page }) => {
   await stubCharacters(page, null);
   const surface = await openCharacters(page, "Characters");
 
   await expect(surface).toBeVisible();
   await expect(surface.locator("[data-companion-world-book]")).toHaveCount(0);
-  await expect(surface.locator("[data-world-book]")).toHaveCount(0);
+  // The attachable library is a different list with its own block, and on a fresh
+  // product it is empty: it states that and offers create instead of rendering
+  // nothing (which is how the authoring path used to be unreachable).
+  const library = surface.locator("[data-world-book]");
+  await expect(library.locator("[data-world-book-empty]")).toHaveText("Your world book library is empty.");
+  await expect(library.locator("[data-world-book-create]")).toBeVisible();
   // The surface itself is not lost with the block: the library and its own
   // sections are still there.
   await expect(surface.getByRole("heading", { name: "Companions" })).toBeVisible();

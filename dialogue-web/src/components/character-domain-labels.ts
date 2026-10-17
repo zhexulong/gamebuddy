@@ -141,6 +141,42 @@ export type CharacterLabels = Readonly<{
   worldBookFailed: string;
 
   /**
+   * The managed library's authoring surface: a fresh product's library is
+   * always empty, so the empty state is the entry point to the whole feature.
+   */
+  worldBookEmpty: string;
+  worldBookCreate: string;
+  worldBookCreateTitle: string;
+  worldBookEditTitle: string;
+  worldBookDraftHint: string;
+  worldBookItemTitle: string;
+  worldBookItemSummary: string;
+  worldBookEntriesLabel: string;
+  worldBookEntriesEmpty: string;
+  worldBookShowEntries: string;
+  worldBookHideEntries: string;
+  worldBookEdit: string;
+  worldBookDelete: string;
+  worldBookDeleteConfirm: string;
+  worldBookSave: string;
+  worldBookCreateSubmit: string;
+  worldBookCancel: string;
+  worldBookEntryScope: string;
+  worldBookEntryScopeCompanion: string;
+  worldBookEntryScopeSetting: string;
+  worldBookEntryTitle: string;
+  worldBookEntrySummary: string;
+  worldBookEntryKeys: string;
+  worldBookEntryKeysHint: string;
+  worldBookEntryAdd: string;
+  worldBookEntryRemove: string;
+  worldBookDeleted: string;
+  worldBookCreateFailed: string;
+  worldBookSaveFailed: string;
+  worldBookDeleteFailed: string;
+  worldBookDetailFailed: string;
+
+  /**
    * The companion's OWN world book, which is a different thing from the list
    * above: it is what her card carried and what she always has with her.
    */
@@ -277,6 +313,39 @@ const en: CharacterLabels = Object.freeze({
   worldBookUnavailable: "The world book is temporarily unavailable.",
   worldBookFailed: "The world book could not be updated.",
 
+  worldBookEmpty: "Your world book library is empty.",
+  worldBookCreate: "Create a world book",
+  worldBookCreateTitle: "New world book",
+  worldBookEditTitle: "Editing {{title}}",
+  worldBookDraftHint:
+    "A world book is a title, a summary and at least one entry. An entry is used when your own words match one of its trigger words.",
+  worldBookItemTitle: "Title",
+  worldBookItemSummary: "Summary",
+  worldBookEntriesLabel: "Entries",
+  worldBookEntriesEmpty: "This world book carries no entries yet.",
+  worldBookShowEntries: "Read it",
+  worldBookHideEntries: "Close",
+  worldBookEdit: "Edit",
+  worldBookDelete: "Delete",
+  worldBookDeleteConfirm: "Remove {{title}} from the library?",
+  worldBookSave: "Save",
+  worldBookCreateSubmit: "Create",
+  worldBookCancel: "Cancel",
+  worldBookEntryScope: "Whose fact is it",
+  worldBookEntryScopeCompanion: "About her",
+  worldBookEntryScopeSetting: "About the world",
+  worldBookEntryTitle: "Entry title",
+  worldBookEntrySummary: "What it says",
+  worldBookEntryKeys: "Trigger words",
+  worldBookEntryKeysHint: "Separated by commas. Leave empty for an entry that is always on.",
+  worldBookEntryAdd: "Add entry",
+  worldBookEntryRemove: "Remove entry",
+  worldBookDeleted: "Removed from the library.",
+  worldBookCreateFailed: "The world book could not be created.",
+  worldBookSaveFailed: "The world book could not be saved.",
+  worldBookDeleteFailed: "The world book could not be deleted.",
+  worldBookDetailFailed: "Its own text could not be read.",
+
   companionWorldBookTitle: "Your companion's own world book",
   companionWorldBookHint:
     "The world book her card carried, kept here with her. An entry is used when your own words match one of its trigger words, unless it is marked as always on.",
@@ -405,6 +474,38 @@ const zh: CharacterLabels = Object.freeze({
   worldBookPending: "已保存，将在下一回合完全生效。",
   worldBookUnavailable: "世界书暂时不可用。",
   worldBookFailed: "无法更新世界书。",
+
+  worldBookEmpty: "你的世界书库还是空的。",
+  worldBookCreate: "新建世界书",
+  worldBookCreateTitle: "新建世界书",
+  worldBookEditTitle: "正在编辑 {{title}}",
+  worldBookDraftHint: "一本世界书由标题、简介和至少一条词条组成。当你的话命中词条的触发词时，这条词条才会被用到。",
+  worldBookItemTitle: "标题",
+  worldBookItemSummary: "简介",
+  worldBookEntriesLabel: "词条",
+  worldBookEntriesEmpty: "这本世界书里还没有词条。",
+  worldBookShowEntries: "查看内容",
+  worldBookHideEntries: "收起",
+  worldBookEdit: "编辑",
+  worldBookDelete: "删除",
+  worldBookDeleteConfirm: "要把 {{title}} 从书库中删除吗？",
+  worldBookSave: "保存",
+  worldBookCreateSubmit: "创建",
+  worldBookCancel: "取消",
+  worldBookEntryScope: "属于谁的设定",
+  worldBookEntryScopeCompanion: "关于她",
+  worldBookEntryScopeSetting: "关于世界",
+  worldBookEntryTitle: "词条标题",
+  worldBookEntrySummary: "词条内容",
+  worldBookEntryKeys: "触发词",
+  worldBookEntryKeysHint: "用逗号分隔。留空表示这条词条始终生效。",
+  worldBookEntryAdd: "添加词条",
+  worldBookEntryRemove: "移除词条",
+  worldBookDeleted: "已从书库中删除。",
+  worldBookCreateFailed: "无法创建这本世界书。",
+  worldBookSaveFailed: "无法保存这本世界书。",
+  worldBookDeleteFailed: "无法删除这本世界书。",
+  worldBookDetailFailed: "无法读取它的内容。",
 
   companionWorldBookTitle: "伴侣自己的世界书",
   companionWorldBookHint:

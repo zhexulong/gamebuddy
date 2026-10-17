@@ -13,7 +13,7 @@
  * folded into Characters (cf4d37c0). `dialogue-web/src/main.tsx` is the authority
  * for the profile ids that exist: only `composed-reference-game` is mounted.
  */
-import { expect, test } from "@playwright/test";
+import { type Locator, type Page, expect, test } from "@playwright/test";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;
@@ -1668,4 +1668,597 @@ test("the Settings surface moves the companion voice persona through the consent
   await surface.locator("#ui-language").selectOption("zh-CN");
   await expect(select.locator("option").first()).toHaveText("系统默认 — 软糯少女音");
   await expect(select).toHaveValue("gentle_maid");
+});
+
+/* ==========================================================================
+   A-07: the World Info library is an authoring surface
+
+   The managed library is empty on every fresh install - nothing in the repository
+   seeds it - and the panel used to render NOTHING at all when it was empty
+   (`if (view.worldInfo.items.length === 0) return null;`), so on a new product
+   the whole authoring path was invisible and unreachable. The library is now the
+   surface the wire already served: an empty state with its own entry point, an
+   item's own entries behind a disclosure, create, edit through the item's own
+   revision, and an armed delete.
+
+   The assertions, and the failure each one catches:
+    - the empty library says so AND offers create: catches the panel that is
+      invisible exactly where every fresh product starts;
+    - a create posts the exact authored content and the new item is a row the
+      Host's own reply carries: catches a panel that invents a row locally;
+    - opening an item asks `world-info.detail` for the exact opaque library
+      revision it read and renders the entries the reply carried: catches an item
+      that opens onto nothing, or one addressed by a revision the panel guessed;
+    - an edit carries the item's OWN content revision (`item.expectedRevision`)
+      and re-renders the reply, including a row only the reply lists: catches a
+      save that overwrites whatever is current, and a save rendered from the
+      panel's own request rather than from the Host's answer;
+    - the delete arms first and sends nothing until it is confirmed: catches a
+      destructive control that fires on the first click;
+    - a stale edit and a refused delete each reach the player as their own code:
+      catches a refusal collapsed into the panel's one generic sentence;
+    - the armed confirmation is its own block under the row's strip, quoted as
+      geometry at both widths: catches a confirmation wedged into the row's own
+      horizontal line (the defect that stretched a Chats row to 3148 px).
+   ========================================================================== */
+
+/** An opaque handle of the shape the wire demands, from a repeated marker. */
+const opaqueFrom = (marker: string): string => `${marker.repeat(42)}A`;
+
+/**
+ * A fresh opaque handle. The wire's handles are CANONICAL unpadded base64url: no
+ * padding, `length % 4 !== 1`, and the trailing bits of the last character
+ * zeroed - so a marker plus an arbitrary digit (`"R".repeat(41) + "1"`) is
+ * rejected by the client's own validator, and the tails below are the sixteen
+ * characters that keep the pattern canonical.
+ */
+const HANDLE_TAILS = "AEIMQUYcgkosw048";
+const mintedOpaque = (marker: string, index: number): string =>
+  `${marker.repeat(42)}${HANDLE_TAILS[index % HANDLE_TAILS.length]}`;
+
+type FakeWorldBookEntry = Readonly<{
+  scope: "companion" | "setting";
+  publicTitle: string;
+  summary: string;
+  keys?: readonly string[];
+}>;
+
+type FakeWorldBookItem = Readonly<{
+  handle: string;
+  publicTitle: string;
+  summary: string;
+  entries: readonly FakeWorldBookEntry[];
+  /** The item's own content revision, which `update` CASes on. */
+  revision: number;
+}>;
+
+/**
+ * A mutable stand-in for the managed library, over the routes `world-info.read`
+ * and `/world-info/item` own, with the wire's own rules: one item's content at
+ * its own revision (`detail`), a duplicate title refused, an update CASed on the
+ * item's revision, and delete/rename refused for a title a conversation holds.
+ * Every mutation answers with the whole re-projected library, exactly as the
+ * Host does, and `requests` records what the panel actually sent.
+ */
+function fakeWorldBook(initial: readonly FakeWorldBookItem[], revisionSeed: string) {
+  const items = new Map(initial.map((item) => [item.handle, item] as const));
+  const held = new Set<string>();
+  let revision = revisionSeed;
+  let minted = 0;
+  const requests: { reads: unknown[]; creates: unknown[]; updates: unknown[]; deletes: unknown[] } = {
+    reads: [],
+    creates: [],
+    updates: [],
+    deletes: [],
+  };
+  // The library's own opaque projection handle: a new one per mutation, never a
+  // function of the content, which is what makes a stale handle observable.
+  const nextRevision = (): string => {
+    minted += 1;
+    return mintedOpaque("R", minted);
+  };
+  const state = () => ({
+    state: items.size === 0 ? "none" : "selected",
+    revision,
+    items: [...items.values()].map((item) => ({
+      handle: item.handle,
+      title: item.publicTitle,
+      summary: item.summary,
+      selected: false,
+      pending: false,
+    })),
+  });
+  const problem = (status: number, code: string) => ({
+    status,
+    contentType: "application/json",
+    body: JSON.stringify({
+      type: `urn:gamebuddy:tavern:${code}`,
+      title: code,
+      status,
+      code,
+      requestId: opaqueFrom("Q"),
+      retryable: false,
+    }),
+  });
+  return {
+    requests,
+    /** Another writer's item: only a mutation's own reply will carry it to this mount. */
+    addItem: (item: FakeWorldBookItem): void => {
+      items.set(item.handle, item);
+      revision = nextRevision();
+    },
+    /** Another writer rewrote this item, so an editor opened earlier now holds a stale revision. */
+    advanceItem: (handle: string): void => {
+      const item = items.get(handle);
+      if (item !== undefined) items.set(handle, { ...item, revision: item.revision + 1 });
+    },
+    /** The mounted conversation holds this title, so the library refuses to remove or rename it. */
+    hold: (publicTitle: string): void => {
+      held.add(publicTitle);
+    },
+    async register(page: Page): Promise<void> {
+      await page.route("**/api/tavern/v1/world-info", (route) => route.fulfill(json200(state())));
+      await page.route(/\/api\/tavern\/v1\/world-info\/item(\?|$)/u, async (route) => {
+        const request = route.request();
+        if (request.method() === "GET") {
+          const query = new URL(request.url()).searchParams;
+          const itemHandle = query.get("itemHandle") ?? "";
+          requests.reads.push({
+            apiVersion: Number(query.get("apiVersion")),
+            selectionGeneration: Number(query.get("selectionGeneration")),
+            expectedRevision: query.get("expectedRevision"),
+            itemHandle,
+          });
+          const item = items.get(itemHandle);
+          if (item === undefined) return route.fulfill(problem(404, "world_info_not_found"));
+          return route.fulfill(
+            json200({
+              revision: item.revision,
+              publicTitle: item.publicTitle,
+              summary: item.summary,
+              entries: item.entries,
+            }),
+          );
+        }
+        const command = request.postDataJSON() as {
+          expectedRevision: string;
+          itemHandle?: string;
+          item?: { publicTitle: string; summary: string; entries: readonly FakeWorldBookEntry[]; expectedRevision?: number };
+        };
+        if (request.method() === "POST") {
+          requests.creates.push(command);
+          const authored = command.item;
+          if (authored === undefined) return route.fulfill(problem(400, "invalid_request"));
+          if ([...items.values()].some((candidate) => candidate.publicTitle === authored.publicTitle))
+            return route.fulfill(problem(409, "world_info_already_exists"));
+          const handle = mintedOpaque("I", items.size);
+          items.set(handle, {
+            handle,
+            publicTitle: authored.publicTitle,
+            summary: authored.summary,
+            entries: authored.entries,
+            revision: 1,
+          });
+          revision = nextRevision();
+          return route.fulfill(json200(state()));
+        }
+        if (request.method() === "PUT") {
+          requests.updates.push(command);
+          const handle = command.itemHandle ?? "";
+          const current = items.get(handle);
+          const authored = command.item;
+          if (current === undefined || authored === undefined)
+            return route.fulfill(problem(404, "world_info_not_found"));
+          if (authored.expectedRevision !== current.revision)
+            return route.fulfill(problem(409, "world_info_revision_conflict"));
+          if (authored.publicTitle !== current.publicTitle && held.has(current.publicTitle))
+            return route.fulfill(problem(409, "world_info_in_use"));
+          items.set(handle, {
+            handle,
+            publicTitle: authored.publicTitle,
+            summary: authored.summary,
+            entries: authored.entries,
+            revision: current.revision + 1,
+          });
+          revision = nextRevision();
+          return route.fulfill(json200(state()));
+        }
+        requests.deletes.push(command);
+        const handle = command.itemHandle ?? "";
+        const current = items.get(handle);
+        if (current === undefined) return route.fulfill(problem(404, "world_info_not_found"));
+        if (held.has(current.publicTitle)) return route.fulfill(problem(409, "world_info_in_use"));
+        items.delete(handle);
+        revision = nextRevision();
+        return route.fulfill(json200(state()));
+      });
+    },
+  };
+}
+
+/**
+ * The composed Characters surface over `library`: the shell's own reads, the
+ * character domain's one-shot reads, and the library's two routes. Returns the
+ * `[data-world-book]` panel, ready to drive.
+ */
+async function mountCharactersWithLibrary(
+  page: Page,
+  library: { register: (page: Page) => Promise<void> },
+): Promise<Locator> {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(composedRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/companions", (route) =>
+    route.fulfill(json200({ apiVersion: 1, companions: [] })),
+  );
+  const characterReads = {
+    persona: { apiVersion: 1, present: false, revision: null, name: null, description: null },
+    scenario: { apiVersion: 1, present: false, revision: null, name: null, description: null, preview: null },
+    greeting: { apiVersion: 1, present: false, revision: null, label: null, variants: [] },
+    "import-history": { apiVersion: 1, entries: [] },
+  };
+  for (const [path, body] of Object.entries(characterReads)) {
+    await page.route(`**/api/tavern/v1/${path}`, (route) => route.fulfill(json200(body)));
+  }
+  await library.register(page);
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Characters", exact: true }).click();
+  await expect(page.getByTestId("characters-surface")).toBeVisible();
+  const panel = page.locator("[data-world-book]");
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+test("the empty World Info library says so and offers create, and the created item appears", async ({ page }) => {
+  const revisionSeed = opaqueFrom("W");
+  const library = fakeWorldBook([], revisionSeed);
+  const panel = await mountCharactersWithLibrary(page, library);
+
+  // The change that makes the feature reachable at all.
+  await expect(panel.locator("[data-world-book-empty]")).toHaveText("Your world book library is empty.");
+  await expect(panel.locator("[data-world-book-list]")).toHaveCount(0);
+  await expect(panel.locator("[data-world-book-create]")).toBeVisible();
+
+  await panel.locator("[data-world-book-create]").click();
+  const draft = panel.locator("[data-world-book-draft]");
+  await expect(draft).toBeVisible();
+  await draft.locator("#world-book-item-title").fill("Pelican Town");
+  await draft.locator("#world-book-item-summary").fill("A valley town, and the people in it.");
+  await draft.locator("#world-book-entry-0-title").fill("The square");
+  await draft.locator("#world-book-entry-0-summary").fill("Benches, a fountain, and the notice board.");
+  await draft.locator("#world-book-entry-0-keys").fill("square, fountain");
+  await draft.locator("[data-world-book-submit]").click();
+
+  await expect.poll(() => library.requests.creates.length).toBe(1);
+  expect(library.requests.creates[0]).toEqual({
+    apiVersion: 1,
+    selectionGeneration: 1,
+    expectedRevision: revisionSeed,
+    item: {
+      publicTitle: "Pelican Town",
+      summary: "A valley town, and the people in it.",
+      entries: [
+        {
+          scope: "setting",
+          publicTitle: "The square",
+          summary: "Benches, a fountain, and the notice board.",
+          keys: ["square", "fountain"],
+        },
+      ],
+    },
+  });
+  // The new row is the Host's own reply: the empty state is gone, the list has
+  // the item, and the form closed.
+  await expect(panel.locator("[data-world-book-empty]")).toHaveCount(0);
+  await expect(panel.locator("[data-world-book-list] > [role=listitem]")).toHaveCount(1);
+  await expect(panel.getByText("Pelican Town", { exact: true })).toBeVisible();
+  await expect(draft).toHaveCount(0);
+  await expect(panel.getByRole("status")).toContainText("Saved.");
+});
+
+test("a World Info item opens to show its entries, read at the library's own revision", async ({ page }) => {
+  const revisionSeed = opaqueFrom("W");
+  const handle = opaqueFrom("V");
+  const library = fakeWorldBook(
+    [
+      {
+        handle,
+        publicTitle: "Pelican Town",
+        summary: "A valley town, and the people in it.",
+        revision: 3,
+        entries: [
+          {
+            scope: "companion",
+            publicTitle: "Her greenhouse",
+            summary: "The glass is hers; she replaced it last winter.",
+            keys: ["greenhouse", "glass"],
+          },
+          { scope: "setting", publicTitle: "The square", summary: "Benches and a fountain." },
+        ],
+      },
+    ],
+    revisionSeed,
+  );
+  const panel = await mountCharactersWithLibrary(page, library);
+
+  // The list carries titles and summaries only: an item's own text is not in the
+  // state projection, so nothing is rendered before the item is asked for.
+  await expect(panel.locator("[data-world-book-entry]")).toHaveCount(0);
+
+  await panel.locator("[data-world-book-open]").click();
+  await expect.poll(() => library.requests.reads.length).toBe(1);
+  expect(library.requests.reads[0]).toEqual({
+    apiVersion: 1,
+    selectionGeneration: 1,
+    expectedRevision: revisionSeed,
+    itemHandle: handle,
+  });
+
+  const entries = panel.locator("[data-world-book-entry]");
+  await expect(entries).toHaveCount(2);
+  await expect(entries.first()).toContainText("Her greenhouse");
+  await expect(entries.first()).toContainText("The glass is hers; she replaced it last winter.");
+  await expect(entries.first().locator("[data-world-book-entry-facts]")).toContainText("About her");
+  await expect(entries.first().locator("[data-world-book-entry-facts]")).toContainText(
+    "Trigger words: greenhouse, glass",
+  );
+  await expect(entries.nth(1).locator("[data-world-book-entry-facts]")).toContainText("About the world");
+  await expect(entries.nth(1).locator("[data-world-book-entry-facts]")).toContainText("Always with her");
+});
+
+test("editing a World Info item saves through the item's own revision and re-renders the Host's answer", async ({
+  page,
+}) => {
+  const revisionSeed = opaqueFrom("W");
+  const handle = opaqueFrom("V");
+  const library = fakeWorldBook(
+    [
+      {
+        handle,
+        publicTitle: "Pelican Town",
+        summary: "A valley town, and the people in it.",
+        revision: 3,
+        entries: [{ scope: "setting", publicTitle: "The square", summary: "Benches and a fountain." }],
+      },
+    ],
+    revisionSeed,
+  );
+  const panel = await mountCharactersWithLibrary(page, library);
+
+  await panel.getByRole("button", { name: "Edit: Pelican Town" }).click();
+  const draft = panel.locator("[data-world-book-draft]");
+  await expect(draft).toBeVisible();
+  // The editor opens on what the item really holds, not on a blank form.
+  await expect(draft.locator("#world-book-item-title")).toHaveValue("Pelican Town");
+  await expect(draft.locator("#world-book-entry-0-title")).toHaveValue("The square");
+  await expect(draft.locator("#world-book-entry-0-summary")).toHaveValue("Benches and a fountain.");
+
+  await draft.locator("#world-book-item-title").fill("Pelican Town, revisited");
+  await draft.locator("#world-book-entry-0-summary").fill("Benches, a fountain, and the notice board.");
+  // Another writer adds a book this mount has never listed: only the mutation's
+  // own reply carries it, so that row appearing is what proves the panel
+  // rendered the Host's answer instead of its own request.
+  library.addItem({
+    handle: opaqueFrom("U"),
+    publicTitle: "Cindersap Forest",
+    summary: "The woods south of the farm.",
+    revision: 1,
+    entries: [{ scope: "setting", publicTitle: "The clearing", summary: "Where the spring onions grow." }],
+  });
+  await draft.locator("[data-world-book-submit]").click();
+
+  await expect.poll(() => library.requests.updates.length).toBe(1);
+  expect(library.requests.updates[0]).toEqual({
+    apiVersion: 1,
+    selectionGeneration: 1,
+    expectedRevision: revisionSeed,
+    itemHandle: handle,
+    item: {
+      publicTitle: "Pelican Town, revisited",
+      summary: "A valley town, and the people in it.",
+      entries: [
+        { scope: "setting", publicTitle: "The square", summary: "Benches, a fountain, and the notice board." },
+      ],
+      // The item's own revision, read from `world-info.detail`, is the CAS.
+      expectedRevision: 3,
+    },
+  });
+  await expect(draft).toHaveCount(0);
+  await expect(panel.getByText("Pelican Town, revisited", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Cindersap Forest", { exact: true })).toBeVisible();
+});
+
+test("deleting a World Info item arms first, sends nothing, and names the item it removes", async ({ page }) => {
+  const revisionSeed = opaqueFrom("W");
+  const townHandle = opaqueFrom("V");
+  const forestHandle = opaqueFrom("U");
+  const library = fakeWorldBook(
+    [
+      {
+        handle: townHandle,
+        publicTitle: "Pelican Town",
+        summary: "A valley town.",
+        revision: 1,
+        entries: [{ scope: "setting", publicTitle: "The square", summary: "Benches and a fountain." }],
+      },
+      {
+        handle: forestHandle,
+        publicTitle: "Cindersap Forest",
+        summary: "The woods south of the farm.",
+        revision: 1,
+        entries: [{ scope: "setting", publicTitle: "The clearing", summary: "Where the spring onions grow." }],
+      },
+    ],
+    revisionSeed,
+  );
+  const panel = await mountCharactersWithLibrary(page, library);
+  const town = panel.locator(`[data-world-book-item="${townHandle}"]`);
+  const forest = panel.locator(`[data-world-book-item="${forestHandle}"]`);
+
+  await town.getByRole("button", { name: "Delete: Pelican Town" }).click();
+  const confirm = town.locator("[data-world-book-confirm]");
+  await expect(confirm).toBeVisible();
+  // The confirmation names the item, so "armed" is never ambiguous.
+  await expect(confirm.locator("[data-world-book-confirm-prompt]")).toHaveText("Remove Pelican Town from the library?");
+  expect(library.requests.deletes.length, "the delete fired before it was confirmed").toBe(0);
+  // While armed the row's own strip steps aside, and the other row keeps its own.
+  await expect(town.locator("[data-world-book-edit]")).toHaveCount(0);
+  await expect(forest.getByRole("button", { name: "Delete: Cindersap Forest" })).toBeVisible();
+
+  await confirm.locator("[data-world-book-confirm-no]").click();
+  await expect(confirm).toHaveCount(0);
+  expect(library.requests.deletes.length).toBe(0);
+
+  await town.getByRole("button", { name: "Delete: Pelican Town" }).click();
+  await town.locator("[data-world-book-confirm-yes]").click();
+  await expect.poll(() => library.requests.deletes.length).toBe(1);
+  expect(library.requests.deletes[0]).toEqual({
+    apiVersion: 1,
+    selectionGeneration: 1,
+    expectedRevision: revisionSeed,
+    itemHandle: townHandle,
+  });
+  // The reply is the library: the removed item is gone and the other is still there.
+  await expect(panel.locator("[data-world-book-item]")).toHaveCount(1);
+  await expect(panel.getByText("Pelican Town", { exact: true })).toHaveCount(0);
+  await expect(panel.getByText("Cindersap Forest", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("status")).toContainText("Removed from the library.");
+});
+
+test("a stale edit and a refused delete each reach the player with their own code", async ({ page }) => {
+  const revisionSeed = opaqueFrom("W");
+  const townHandle = opaqueFrom("V");
+  const forestHandle = opaqueFrom("U");
+  const forest = { handle: forestHandle, publicTitle: "Cindersap Forest", summary: "The woods.", revision: 1, entries: [] };
+  const library = fakeWorldBook(
+    [
+      {
+        handle: townHandle,
+        publicTitle: "Pelican Town",
+        summary: "A valley town.",
+        revision: 3,
+        entries: [{ scope: "setting", publicTitle: "The square", summary: "Benches and a fountain." }],
+      },
+      forest,
+    ],
+    revisionSeed,
+  );
+  const panel = await mountCharactersWithLibrary(page, library);
+
+  await panel.getByRole("button", { name: "Edit: Pelican Town" }).click();
+  const draft = panel.locator("[data-world-book-draft]");
+  await expect(draft).toBeVisible();
+  await draft.locator("#world-book-item-summary").fill("A valley town, and the people in it.");
+  // Another writer rewrote the item while this editor was open.
+  library.advanceItem(townHandle);
+  await draft.locator("[data-world-book-submit]").click();
+
+  await expect.poll(() => library.requests.updates.length).toBe(1);
+  const attempted = library.requests.updates[0] as { item: { expectedRevision: number } };
+  expect(attempted.item.expectedRevision, "the edit CASes on the revision it read").toBe(3);
+  await expect(panel.locator(".error-banner")).toContainText(
+    "The world book could not be saved. (world_info_revision_conflict)",
+  );
+  // A refusal never looks like a save: the form stays open with what was typed.
+  await expect(draft).toBeVisible();
+
+  // A delete of a title the mounted conversation holds is refused with its own
+  // sentence and its own code, and the item stays in the library.
+  library.hold("Cindersap Forest");
+  await panel.locator("[data-world-book-cancel]").click();
+  const forestRow = panel.locator(`[data-world-book-item="${forestHandle}"]`);
+  await forestRow.getByRole("button", { name: "Delete: Cindersap Forest" }).click();
+  await forestRow.locator("[data-world-book-confirm-yes]").click();
+  await expect.poll(() => library.requests.deletes.length).toBe(1);
+  await expect(panel.locator(".error-banner")).toContainText(
+    "The world book could not be deleted. (world_info_in_use)",
+  );
+  await expect(panel.getByText("Cindersap Forest", { exact: true })).toBeVisible();
+});
+
+test("the armed World Info delete puts its confirmation on its own block, measured", async ({ page }) => {
+  // One unbreakable run (114 characters, inside the item title's 128-character
+  // wire bound), so a title squeezed by a confirmation that took its width is
+  // visible as an extra line - the Chats row's own measurement.
+  const longTitle = "Farmnoteswithoutanybreakthatkeepgrowing".repeat(3);
+  const revisionSeed = opaqueFrom("W");
+  const handle = opaqueFrom("V");
+  const library = fakeWorldBook(
+    [
+      {
+        handle,
+        publicTitle: longTitle,
+        summary: "A valley town, and the people in it.",
+        revision: 1,
+        entries: [{ scope: "setting", publicTitle: "The square", summary: "Benches and a fountain." }],
+      },
+    ],
+    revisionSeed,
+  );
+  const panel = await mountCharactersWithLibrary(page, library);
+  const row = panel.locator(`[data-world-book-item="${handle}"]`);
+
+  const measure = async () =>
+    await row.evaluate((node) => {
+      const strip = node.querySelector(".composer-actions") as HTMLElement;
+      const confirm = node.querySelector("[data-world-book-confirm]") as HTMLElement | null;
+      const list = node.parentElement as HTMLElement;
+      const title = node.querySelector("strong") as HTMLElement;
+      const range = document.createRange();
+      range.selectNodeContents(title);
+      const box = node.getBoundingClientRect();
+      return {
+        titleLines: range.getClientRects().length,
+        rowHeight: Math.round(box.height),
+        rowWidth: Math.round(box.width),
+        listWidth: Math.round(list.getBoundingClientRect().width),
+        stripBottom: Math.round(strip.getBoundingClientRect().bottom),
+        confirmTop: confirm === null ? null : Math.round(confirm.getBoundingClientRect().top),
+        confirmWidth: confirm === null ? null : Math.round(confirm.getBoundingClientRect().width),
+        confirmHeight: confirm === null ? null : Math.round(confirm.getBoundingClientRect().height),
+      };
+    });
+
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 400, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(row).toBeVisible();
+
+    const unarmed = await measure();
+    await row.locator("[data-world-book-delete]").click();
+    const confirm = row.locator("[data-world-book-confirm]");
+    await expect(confirm).toBeVisible();
+    const armed = await measure();
+    console.log(`[world-book-armed] ${viewport.width}x${viewport.height}: ${JSON.stringify({ unarmed, armed })}`);
+
+    const geometry = `${viewport.width}x${viewport.height} ${JSON.stringify({ unarmed, armed })}`;
+    expect(armed.confirmTop, `the confirmation must have a box (${geometry})`).not.toBeNull();
+    // Its own block, under the row's strip: this is the assertion a confirmation
+    // wedged into the strip's horizontal line fails.
+    expect(
+      armed.confirmTop!,
+      `the confirmation must start at or below the row's own strip (${geometry})`,
+    ).toBeGreaterThanOrEqual(armed.stripBottom - 1);
+    // It spans the row's own inner width rather than being squeezed into whatever
+    // was left of a shared line.
+    expect(armed.confirmWidth!, `the confirmation spans its row (${geometry})`).toBeGreaterThanOrEqual(
+      armed.rowWidth - 40,
+    );
+    expect(armed.confirmWidth!, `the confirmation stays inside its row (${geometry})`).toBeLessThanOrEqual(
+      armed.rowWidth,
+    );
+    expect(armed.rowWidth, `the row is not stretched past its list (${geometry})`).toBeLessThanOrEqual(armed.listWidth);
+    // Arming grows the row by the confirmation it added, not by a squashed line.
+    expect(
+      armed.rowHeight - unarmed.rowHeight,
+      `arming grows the row by its confirmation (${geometry})`,
+    ).toBeLessThanOrEqual((armed.confirmHeight ?? 0) + 24);
+    expect(armed.titleLines, `arming adds no line to the title (${geometry})`).toBeLessThanOrEqual(unarmed.titleLines);
+    await expect(row.locator("[data-world-book-edit]")).toHaveCount(0);
+
+    await confirm.locator("[data-world-book-confirm-no]").click();
+    await expect(confirm).toHaveCount(0);
+  }
 });

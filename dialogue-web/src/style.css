@@ -4647,6 +4647,117 @@
     translate: 0 var(--press-shift);
   }
 
+  /* ==========================================================================
+   The World Info library's authoring surface (A-07 lane block)
+
+   The managed library is empty on every fresh install, and the panel used to
+   render nothing at all when it was: no list, no create control, no way to reach
+   the feature. It now renders an empty state with its own entry point, an item's
+   own entries behind a disclosure, and the create/edit form - and those three
+   need rules the bind-only row never had.
+
+   The entry rows are the same card/list layer as the library's own rows
+   (`[data-world-book-list] > [role="listitem"]`, above), re-stated for the nested
+   list because a nested `[role="listitem"]` is not a child of the library list
+   and would otherwise paint as bare, squeezed text inside another card.
+
+   The confirmation is its own block under the row it belongs to, and the row's
+   authoring strip is not rendered while it is armed: a confirm block sharing a
+   horizontal row with the row's controls is what stretched a Chats row to
+   3148 px, so this one is a column with its own hairline.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+  [data-world-book-content] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+  }
+
+  [data-world-book-entry-list] {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  [data-world-book-entry] {
+    min-height: var(--row-min-height);
+    padding: var(--space-3);
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
+
+  [data-world-book-entry] > strong {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  [data-world-book-entry] > p {
+    margin: var(--space-1) 0 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
+
+  [data-world-book-entry] > [data-world-book-entry-facts] {
+    font-size: 12px;
+    color: var(--text-disabled);
+  }
+
+  [data-world-book-draft] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
+
+  [data-world-book-draft] > h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+
+  [data-world-book-draft] > [data-world-book-entry-draft] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background-color: var(--surface-card);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-sm);
+  }
+
+  [data-world-book-confirm] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  [data-world-book-confirm] > [data-world-book-confirm-prompt] {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--danger);
+    overflow-wrap: anywhere;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .tavern-app-shell :is(button, summary):active:not(:disabled) {
       translate: none;
