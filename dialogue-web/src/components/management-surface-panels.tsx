@@ -486,13 +486,25 @@ export function ChatsSurfacePanel({
             // rename/archive/trash strip steps aside: the confirmation is the row's only action
             // until it is answered.
             const armedHere = confirmation !== null && confirmation.handle === chat.handle;
+            const editingHere = editing !== null && editing.handle === chat.handle;
+            /*
+             * The row's whole surface is the select control: its title, its stamp and
+             * its preview are one gesture, because the preview is most of the row's
+             * area and the title alone is a target a thumb misses. Two states take the
+             * surface away rather than sharing it - the armed confirmation, which is the
+             * row's only action until it is answered, and the rename editor, whose own
+             * field must not also be a selection target.
+             */
+            const rowSelects = !armedHere && !editingHere && selectAvailable !== false && selecting === null;
             return (
               <div
                 key={chat.handle}
                 role="listitem"
                 data-testid="chat-item"
                 data-selected={isSelected ? "true" : "false"}
+                data-selectable={rowSelects ? "true" : undefined}
                 className={`chat-item-card ${isSelected ? "selected" : ""}`}
+                onClick={rowSelects ? () => selectChat(chat.handle) : undefined}
               >
                 {editing !== null && editing.handle === chat.handle && renameAvailable !== false ? (
                   <>
@@ -530,7 +542,12 @@ export function ChatsSurfacePanel({
                         data-testid="chat-select"
                         aria-current={isSelected ? "true" : undefined}
                         disabled={selectAvailable === false || selecting !== null}
-                        onClick={() => selectChat(chat.handle)}
+                        onClick={(event) => {
+                          // The row carries the same gesture, so the title answers it
+                          // once rather than once per handler between here and the row.
+                          event.stopPropagation();
+                          selectChat(chat.handle);
+                        }}
                       >
                         {name}
                       </button>
@@ -549,7 +566,10 @@ export function ChatsSurfacePanel({
                               className="icon-button-small"
                               title={labels.renameChat}
                               aria-label={labels.renameChat}
-                              onClick={() => setEditing({ handle: chat.handle, title: chat.title ?? "" })}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setEditing({ handle: chat.handle, title: chat.title ?? "" });
+                              }}
                             >
                               <Pencil size={14} aria-hidden="true" />
                             </button>
@@ -563,13 +583,14 @@ export function ChatsSurfacePanel({
                                 className="icon-button-small"
                                 title={labels.chatRetentionArchive}
                                 aria-label={labels.chatRetentionArchive}
-                                onClick={() =>
+                                onClick={(event) => {
+                                  event.stopPropagation();
                                   setConfirmation({
                                     handle: chat.handle,
                                     operation: "archive",
                                     selectedAtArm: currentChatHandle,
-                                  })
-                                }
+                                  });
+                                }}
                               >
                                 <Archive size={14} aria-hidden="true" />
                               </button>
@@ -578,13 +599,14 @@ export function ChatsSurfacePanel({
                                 className="icon-button-small"
                                 title={labels.chatRetentionTrash}
                                 aria-label={labels.chatRetentionTrash}
-                                onClick={() =>
+                                onClick={(event) => {
+                                  event.stopPropagation();
                                   setConfirmation({
                                     handle: chat.handle,
                                     operation: "trash",
                                     selectedAtArm: currentChatHandle,
-                                  })
-                                }
+                                  });
+                                }}
                               >
                                 <Trash2 size={14} aria-hidden="true" />
                               </button>

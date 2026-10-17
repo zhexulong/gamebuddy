@@ -4611,6 +4611,116 @@ test("clicking the already-mounted Chat shows it and issues no selection", async
 });
 
 /**
+ * The row is a select control across its whole surface, not only across its title.
+ *
+ * The measured defect: only the title line is inside `[data-testid="chat-select"]`,
+ * while the preview and the stamp - the rest of the row's area, and almost all of it
+ * on a phone - are outside it, so a thumb that lands on the preview does nothing at
+ * all. The row's own surface now carries the same gesture its title does, and the
+ * row's action buttons stop the event rather than the row wrapping them in a button
+ * that would nest one control inside another.
+ *
+ * The assertions, and the failure each one catches:
+ *  - the mounted row's preview opens the conversation with no `chat/select` request:
+ *    catches the dead preview and a preview that admits a selection for the Chat the
+ *    runtime already holds;
+ *  - another row's preview sends the selection naming *that* row's Chat: catches a
+ *    surface that selects the wrong conversation, or none;
+ *  - a row's action button still only arms its own confirmation and sends no
+ *    selection: catches the new surface swallowing the buttons that live inside it;
+ *  - the armed confirmation is outside the surface: catches a press on the
+ *    confirmation's own words selecting the Chat behind it.
+ */
+test("the whole Chats row selects its conversation: the preview and stamp too, never the row's own buttons", async ({
+  page,
+}) => {
+  const secondHandle = "C".repeat(42) + "A";
+  const selections: string[] = [];
+  let mountedHandle = handle;
+  const listOf = () => ({
+    apiVersion: 1,
+    chats: [
+      { handle, title: "First conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === handle, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." },
+      { handle: secondHandle, title: "Second conversation", status: "active", managementRevision: 1, isSelected: mountedHandle === secondHandle, updatedAtMs: 1_760_086_400_000, preview: "She is already on the porch with the lantern." },
+    ],
+  });
+  const secondChat = {
+    ...chat,
+    selection: { chatHandle: secondHandle, generation: 2, stateRevision: secondHandle },
+    chat: {
+      ...chat.chat,
+      title: "Second conversation",
+      transcript: [
+        {
+          handle: "E".repeat(42) + "A",
+          role: "companion",
+          text: "This is the second conversation.",
+          locale: "und",
+          order: 0,
+          revision: 1,
+        },
+      ],
+    },
+  };
+  const mountedRoot = () => ({ ...root, chat: mountedHandle === handle ? chat : secondChat });
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+  await page.route(/(\/api\/tavern\/v1\/chats)(\?|$)/, (route) => route.fulfill(jsonOk(listOf())));
+  await page.route("**/api/tavern/v1/chat/select", (route) => {
+    const body = route.request().postDataJSON() as { chatHandle: string };
+    selections.push(body.chatHandle);
+    mountedHandle = body.chatHandle;
+    return route.fulfill(jsonOk({ apiVersion: 1, status: "switched" }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const chats = page.getByTestId("chats-surface");
+  await expect(chats.getByTestId("chat-item")).toHaveCount(2);
+  const first = chats.getByTestId("chat-item").first();
+  const second = chats.getByTestId("chat-item").nth(1);
+  await expect(first).toHaveAttribute("data-selected", "true");
+
+  // The preview is most of the row and it is inside the surface now, so choosing the
+  // mounted conversation needs no admission - exactly as choosing its title does not.
+  await first.getByTestId("chat-item-preview").click();
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+  await expect(chats).toHaveCount(0);
+  expect(selections, "the mounted Chat must not create a selection admission").toEqual([]);
+  await page.goBack();
+  await expect(first).toBeVisible();
+
+  // Another row's preview names that row's conversation, and moves to it.
+  await second.getByTestId("chat-item-preview").click();
+  await expect.poll(() => selections.length).toBe(1);
+  expect(selections[0]).toBe(secondHandle);
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(
+    "This is the second conversation.",
+  );
+  await page.goBack();
+  await expect(first).toBeVisible();
+  expect(selections.length, "returning to the list selects nothing").toBe(1);
+
+  // The row's own action button still does only its own action: it arms the
+  // confirmation in place and admits no selection.
+  await first.getByRole("button", { name: "Archive", exact: true }).click();
+  const confirm = first.getByTestId("chat-retention-confirm");
+  await expect(confirm).toBeVisible();
+  await expect(page.getByTestId("chats-surface")).toBeVisible();
+  expect(selections, "the Archive button must not also select the conversation").toHaveLength(1);
+
+  // …and the confirmation it opened is outside the surface: its own words are not a
+  // second way to select the Chat behind it.
+  await confirm.locator(".chat-item-confirm-prompt").click();
+  await expect(page.getByTestId("chats-surface")).toBeVisible();
+  expect(selections, "the armed confirmation must not be inside the click surface").toHaveLength(1);
+});
+
+/**
  * Selecting a Chat is a focus transfer: the conversation it names is what the
  * player is looking at next (ADR-0010 Class A - "click another conversation and
  * it shows immediately", the behaviour ChatGPT, Claude and SillyTavern all have).

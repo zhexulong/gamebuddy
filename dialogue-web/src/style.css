@@ -4702,6 +4702,15 @@
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
   }
+  /* The row is the select control now, not only its title: the preview and the
+     stamp are inside the same gesture, so the pointer follows it across the whole
+     surface. `cursor` is inherited, so one declaration on the row reaches every
+     child that does not name its own - and the row carries the attribute only
+     while it really is a click surface, because the armed confirmation and the
+     rename editor take the surface away. */
+  [data-testid="chat-item"][data-selectable="true"] {
+    cursor: pointer;
+  }
   /* The Chats list is a column of conversation rows, and a row is a title with the
      row's own action icons at its tail. The surface lays its content out at the
      whole panel width, which put the title's text and its first action icon
