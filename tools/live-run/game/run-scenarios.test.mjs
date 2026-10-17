@@ -161,6 +161,14 @@ test("the rollover watcher dispatches through the harness, not with a raw execut
   assert.match(watcher, /await executeFresh\(client, \{/);
   assert.doesNotMatch(watcher, /client\.execute\(\{/);
   assert.equal((watcher.match(/await executeFresh\(client, \{/gu) ?? []).length, 2, "both dispatches");
+  // A REFUSAL is the immediate answer and mints no later receipt: `rejected` is not in the shared TERMINAL_STATES,
+  // so polling the fact log for it timed out on run g15 and the probe reported "the pair was never published"
+  // while the refusal carrying the pair was already in hand. Both dispatches check the response first.
+  assert.equal(
+    (watcher.match(/if \(typeof accepted\?\.state === "string" && accepted\.state !== "accepted"\)/gu) ?? []).length,
+    2,
+    "both dispatches read a refusal from the response",
+  );
   assert.match(
     RUNNER,
     /import \{ executeFresh, TERMINAL_STATES \} from "\.\.\/\.\.\/lib\/stardew-native-smoke-harness-v1\.mjs";/,

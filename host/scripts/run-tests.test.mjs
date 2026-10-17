@@ -2,10 +2,17 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import test from "node:test";
 import { chunkTestFiles, discoverTestFiles, exclusiveGroupsFor, machineDefaultConcurrency, preflightTestArtifact, runCompiledTests, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
 import { assertTestArtifactFreshness, assertTestArtifactInventory, writeTestArtifactInventory } from "./test-artifact-inventory.mjs";
+
+// A real file path, under the Host root, shaped like the ones `discoverTestFiles` hands the
+// runner - so the message under test carries the same `dist-test/...` spelling production does.
+// (These two cases used to pass a bare "slow.test.js", which the runner could only render as
+// `..\slow.test.js`; the assertion then failed on a fixture that no real run produces.)
+const staleFile = fileURLToPath(new URL("../dist-test/slow.test.js", import.meta.url));
+const brokenFile = fileURLToPath(new URL("../dist-test/broken.test.js", import.meta.url));
 
 async function withFixture(run) {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-test-runner-"));
@@ -128,7 +135,7 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
   test("names the file whose own budget expired, and keeps the suite deadline as its bound", async () => {
     const seen = [];
     await assert.rejects(
-      runTestBatches(["slow.test.js"], {
+      runTestBatches([staleFile], {
         suite: "fixture",
         timeoutMs: 900_000,
         perFileMs: 5_000,
@@ -138,9 +145,9 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
           throw new Error("test_supervisor_timeout:pid=1:timeout_ms=5000");
         },
       }),
-      /test_file_timeout:slow\.test\.js:budget_ms=5000/,
+      /test_file_timeout:dist-test\/slow\.test\.js:budget_ms=5000/,
     );
-    assert.deepEqual(seen, [{ batch: ["slow.test.js"], timeoutMs: 5_000 }]);
+    assert.deepEqual(seen, [{ batch: [staleFile], timeoutMs: 5_000 }]);
 
     // When the suite deadline is nearer than a file's own budget, the suite keeps owning the
     // failure - the per-file bound must not mask a suite that ran out of time.
@@ -174,7 +181,7 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
     // failure and must keep its message and output. Getting this backwards reports real failures
     // as timeouts and hides why they failed.
     await assert.rejects(
-      runTestBatches(["slow.test.js"], {
+      runTestBatches([staleFile], {
         suite: "fixture",
         perFileMs: 5_000,
         now: () => 0,
@@ -182,11 +189,11 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
           throw new Error("test_supervisor_timeout:pid=1:timeout_ms=5000\npartial output");
         },
       }),
-      /test_file_timeout:slow\.test\.js:budget_ms=5000/,
+      /test_file_timeout:dist-test\/slow\.test\.js:budget_ms=5000/,
     );
 
     await assert.rejects(
-      runTestBatches(["broken.test.js"], {
+      runTestBatches([brokenFile], {
         suite: "fixture",
         perFileMs: 900_000,
         timeoutMs: 900_000,
@@ -217,16 +224,27 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
     assert.equal(exclusiveGroupsFor("dist-test/runtime.test.js").length, 0, "an ordinary file stays concurrent");
     assert.equal(exclusiveGroupsFor("dist-test/tavern\\chat-lifecycle\\chat-lifecycle.test.js").length, 0);
 
+    // The named-pipe coordinator is exclusive for a different reason: it is fine alone (2s here,
+    // and passing alone on the CI runner) but depends on real syscall round trips, so a loaded
+    // machine turns it into a stall-budget expiry. An exclusive file runs after the concurrent
+    // pool has drained, which is the property the test below asserts.
+    assert.equal(
+      exclusiveGroupsFor("dist-test/gameplay-task-subagent.test.js").length,
+      1,
+      "the named-pipe coordinator must be declared exclusive",
+    );
+
     let inFlight = 0;
     let mostConcurrent = 0;
     const exclusiveOverlap = [];
+    const exclusiveOverlappedOrdinary = [];
     const exclusiveRunning = new Set();
     await runTestBatches(
       [
         "dist-test/ordinary-a.test.js",
         "dist-test/stardew-execution-request-wire-parity.test.js",
         "dist-test/ordinary-b.test.js",
-        "dist-test/stardew-snapshot-wire-parity.test.js",
+        "dist-test/gameplay-task-subagent.test.js",
       ],
       {
         suite: "fixture",
@@ -238,7 +256,10 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
           inFlight += 1;
           mostConcurrent = Math.max(mostConcurrent, inFlight);
           if (exclusive) {
+            // Two members must never overlap, and an exclusive file must not overlap an ORDINARY
+            // one either: that is what running after the pool drained means.
             if (exclusiveRunning.size > 0) exclusiveOverlap.push(path);
+            if (inFlight > 1) exclusiveOverlappedOrdinary.push(path);
             exclusiveRunning.add(path);
           }
           await new Promise((resolve) => setTimeout(resolve, 5));
@@ -248,6 +269,11 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
       },
     );
     assert.deepEqual(exclusiveOverlap, [], "two members of one exclusive group must never overlap");
+    assert.deepEqual(
+      exclusiveOverlappedOrdinary,
+      [],
+      "an exclusive file runs after the concurrent pool has drained, never beside an ordinary file",
+    );
     // The two ordinary files still overlapped each other: the exclusion is per file, not a
     // switch that serializes the whole suite.
     assert.equal(mostConcurrent, 2, "the ordinary files keep their concurrency");
