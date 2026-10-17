@@ -17,6 +17,7 @@ import {
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
 import type { MemoryManagementService } from "./tavern/memory-management/memory-management.js";
 import type { TavernManagementState, TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
+import type { PublicWorldInfoProjection } from "./tavern/world-info-management/world-info-management.js";
 import type { WorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
 import {
   createTavernManagementDialogueWebRequestHandler,
@@ -52,6 +53,25 @@ const profile = composeTavernProfile({
     "settings.voice.read",
     "settings.voice.consent",
     "settings.voice.devices",
+  ],
+  navigationItemIds: ["chat"],
+});
+
+/**
+ * The same management profile plus the World Info authoring group. All four of its
+ * routes sit on one path and are declared last, in the dispatcher's own canonical
+ * group order, so this profile is a legal capability slice.
+ */
+const worldInfoAuthoringProfile = composeTavernProfile({
+  profileId: "gamebuddy.tavern-management.chat-list-title",
+  releaseTier: "tavern_management",
+  routeIds: [...profile.routeIds, "world-info.detail", "world-info.create", "world-info.update", "world-info.delete"],
+  operationIds: [
+    ...profile.operationIds,
+    "world-info.detail",
+    "world-info.create",
+    "world-info.update",
+    "world-info.delete",
   ],
   navigationItemIds: ["chat"],
 });
@@ -192,12 +212,28 @@ const worldInfoState: WorldInfoStateV1 = {
   ],
 };
 
+/** One library item's own content, as the authoring read route projects it. */
+const worldInfoItem: PublicWorldInfoProjection = {
+  revision: 1,
+  publicTitle: "Pelican Town",
+  summary: "The revised town facts.",
+  entries: [{ scope: "setting", publicTitle: "Square", summary: "Town center." }],
+};
+
 function worldInfoService(recorder?: {
   reads?: number;
   sets?: number;
   closes?: number;
   readError?: Error | undefined;
   setError?: Error | undefined;
+  details?: number;
+  creates?: number;
+  updates?: number;
+  deletes?: number;
+  detailResult?: PublicWorldInfoProjection | null | undefined;
+  createError?: Error | undefined;
+  updateError?: Error | undefined;
+  deleteError?: Error | undefined;
 }): WorldInfoBindingManagementService {
   const counters = recorder ?? { reads: 0, sets: 0, closes: 0 };
   return Object.freeze({
@@ -211,17 +247,25 @@ function worldInfoService(recorder?: {
       if (counters.setError !== undefined) throw counters.setError;
       return worldInfoState;
     },
+    /** The item's own content, or `null` when the caller set it to the "no longer listed" answer. */
     async detail() {
-      throw new Error("unused_world_info_detail");
+      counters.details = (counters.details ?? 0) + 1;
+      return counters.detailResult === undefined ? worldInfoItem : counters.detailResult;
     },
     async create() {
-      throw new Error("unused_world_info_create");
+      counters.creates = (counters.creates ?? 0) + 1;
+      if (counters.createError !== undefined) throw counters.createError;
+      return worldInfoState;
     },
     async update() {
-      throw new Error("unused_world_info_update");
+      counters.updates = (counters.updates ?? 0) + 1;
+      if (counters.updateError !== undefined) throw counters.updateError;
+      return worldInfoState;
     },
     async delete() {
-      throw new Error("unused_world_info_delete");
+      counters.deletes = (counters.deletes ?? 0) + 1;
+      if (counters.deleteError !== undefined) throw counters.deleteError;
+      return worldInfoState;
     },
     async close() {
       counters.closes = (counters.closes ?? 0) + 1;
@@ -2019,6 +2063,9 @@ test("every CSRF-protected management mutation answers 403 csrf_failed for a mis
     ["PUT", "/api/tavern/v1/persona"],
     ["PUT", "/api/tavern/v1/scenario"],
     ["PUT", "/api/tavern/v1/greeting"],
+    ["POST", "/api/tavern/v1/world-info/item"],
+    ["PUT", "/api/tavern/v1/world-info/item"],
+    ["DELETE", "/api/tavern/v1/world-info/item"],
   ];
   for (const [method, path] of mutations) {
     const response = await run(request(method, path, { origin: "http://127.0.0.1:7331", cookie }));
@@ -2029,5 +2076,280 @@ test("every CSRF-protected management mutation answers 403 csrf_failed for a mis
       `${method} ${path} did not name the CSRF failure`,
     );
   }
+  await handler.close();
+});
+
+/**
+ * The World Info authoring routes. One read and three mutations, all on the same path, all
+ * addressed by an opaque handle from the exact projection the caller read: the read carries
+ * its command in the query and the mutations in a body, and every route answers with the
+ * library's own answer instead of a local guess.
+ */
+test("management handler serves world-info.detail with session, an exact query and a named refusal", async () => {
+  const worldInfoRecorder = {
+    reads: 0,
+    sets: 0,
+    closes: 0,
+    details: 0,
+    detailResult: undefined as PublicWorldInfoProjection | null | undefined,
+  };
+  const handler = createTavernManagementDialogueWebRequestHandler({
+    managementStateFacade: facade,
+    managementService: service({ lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 }),
+    worldInfoService: worldInfoService(worldInfoRecorder),
+    playerPreferenceStore: voicePreferenceStore,
+    profile: worldInfoAuthoringProfile,
+    bootstrapToken: token,
+  });
+  const run = async (input: import("node:http").IncomingMessage) => {
+    const output = new ControlledResponse("finish");
+    await dispatch(handler, input, output);
+    return { status: output.status, body: output.body };
+  };
+  const query = `apiVersion=1&selectionGeneration=1&expectedRevision=${handle}&itemHandle=${handle}`;
+
+  // The read is a browser-session read: without a session it does no service work.
+  assert.equal(
+    (await run(request("GET", `/api/tavern/v1/world-info/item?${query}`, { "sec-fetch-site": "same-origin" }))).status,
+    401,
+  );
+  assert.equal(worldInfoRecorder.details, 0);
+
+  const bootstrap = new ControlledResponse("finish");
+  await dispatch(
+    handler,
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
+    bootstrap,
+  );
+  assert.equal(bootstrap.status, 200);
+  const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+
+  // The query is strict: an undeclared parameter and a missing command field both refuse
+  // before the service is consulted.
+  assert.equal(
+    (
+      await run(
+        request("GET", `/api/tavern/v1/world-info/item?${query}&extra=1`, { cookie, "sec-fetch-site": "same-origin" }),
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await run(
+        request("GET", "/api/tavern/v1/world-info/item?apiVersion=1", { cookie, "sec-fetch-site": "same-origin" }),
+      )
+    ).status,
+    400,
+  );
+  assert.equal(worldInfoRecorder.details, 0);
+
+  // A valid command returns the item's own content at its exact revision.
+  const read = await run(
+    request("GET", `/api/tavern/v1/world-info/item?${query}`, { cookie, "sec-fetch-site": "same-origin" }),
+  );
+  assert.equal(read.status, 200);
+  assert.deepEqual(JSON.parse(read.body), worldInfoItem);
+  assert.equal(worldInfoRecorder.details, 1);
+
+  // An item the library no longer lists is its own bounded 404, never a generic failure.
+  worldInfoRecorder.detailResult = null;
+  const missing = await run(
+    request("GET", `/api/tavern/v1/world-info/item?${query}`, { cookie, "sec-fetch-site": "same-origin" }),
+  );
+  assert.equal(missing.status, 404);
+  const problem = JSON.parse(missing.body) as { code: string; status: number; type: string; title: string };
+  assert.equal(problem.code, "world_info_not_found");
+  assert.equal(problem.status, 404);
+  assert.equal(problem.type, "urn:gamebuddy:tavern:world_info_not_found");
+  assert.equal(problem.title, "world info not found");
+  await handler.close();
+});
+
+test("management handler serves the world-info authoring mutations with CSRF and one named refusal each", async () => {
+  const worldInfoRecorder = {
+    reads: 0,
+    sets: 0,
+    closes: 0,
+    creates: 0,
+    updates: 0,
+    deletes: 0,
+    createError: undefined as Error | undefined,
+    updateError: undefined as Error | undefined,
+    deleteError: undefined as Error | undefined,
+  };
+  const handler = createTavernManagementDialogueWebRequestHandler({
+    managementStateFacade: facade,
+    managementService: service({ lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 }),
+    worldInfoService: worldInfoService(worldInfoRecorder),
+    playerPreferenceStore: voicePreferenceStore,
+    profile: worldInfoAuthoringProfile,
+    bootstrapToken: token,
+  });
+  const run = async (input: import("node:http").IncomingMessage) => {
+    const output = new ControlledResponse("finish");
+    await dispatch(handler, input, output);
+    return { status: output.status, body: output.body };
+  };
+  const bootstrap = new ControlledResponse("finish");
+  await dispatch(
+    handler,
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
+    bootstrap,
+  );
+  assert.equal(bootstrap.status, 200);
+  const csrf = (JSON.parse(bootstrap.body) as { csrfToken: string }).csrfToken;
+  const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+
+  const content = {
+    publicTitle: "Pelican Town",
+    summary: "The revised town facts.",
+    entries: [{ scope: "setting", publicTitle: "Square", summary: "Town center." }],
+  };
+  const address = { apiVersion: 1, selectionGeneration: 1, expectedRevision: handle, itemHandle: handle };
+  // A create addresses nothing existing: it carries the projection handle and the content.
+  const createCommand = {
+    apiVersion: 1,
+    selectionGeneration: 1,
+    expectedRevision: handle,
+    item: content,
+  };
+  const updateCommand = { ...address, item: { ...content, expectedRevision: 1 } };
+  const mutation = (method: string, body: unknown, csrfToken?: string) =>
+    run(
+      request(
+        method,
+        "/api/tavern/v1/world-info/item",
+        {
+          origin: "http://127.0.0.1:7331",
+          cookie,
+          ...(csrfToken === undefined ? {} : { "x-csrf-token": csrfToken }),
+        },
+        body,
+      ),
+    );
+
+  // Every mutation refuses a missing CSRF token before any service work.
+  assert.equal((await mutation("POST", createCommand)).status, 403);
+  assert.equal((await mutation("PUT", updateCommand)).status, 403);
+  assert.equal((await mutation("DELETE", address)).status, 403);
+  assert.deepEqual([worldInfoRecorder.creates, worldInfoRecorder.updates, worldInfoRecorder.deletes], [0, 0, 0]);
+
+  // A strict body violation is refused before the service is consulted.
+  assert.equal((await mutation("POST", { ...createCommand, extra: true }, csrf)).status, 400);
+  assert.equal((await mutation("PUT", { ...updateCommand, item: content }, csrf)).status, 400);
+  assert.equal((await mutation("DELETE", { ...address, itemHandle: "Pelican Town" }, csrf)).status, 400);
+  assert.deepEqual([worldInfoRecorder.creates, worldInfoRecorder.updates, worldInfoRecorder.deletes], [0, 0, 0]);
+
+  // The three mutations reach the service once each and answer with its re-projected state.
+  const created = await mutation("POST", createCommand, csrf);
+  assert.equal(created.status, 200);
+  assert.deepEqual(JSON.parse(created.body), worldInfoState);
+  const updated = await mutation("PUT", updateCommand, csrf);
+  assert.equal(updated.status, 200);
+  assert.deepEqual(JSON.parse(updated.body), worldInfoState);
+  const removed = await mutation("DELETE", address, csrf);
+  assert.equal(removed.status, 200);
+  assert.deepEqual(JSON.parse(removed.body), worldInfoState);
+  assert.deepEqual([worldInfoRecorder.creates, worldInfoRecorder.updates, worldInfoRecorder.deletes], [1, 1, 1]);
+
+  // Each library refusal reaches the player as its own bounded code, with no raw text.
+  const refusal = async (method: string, body: unknown, message: string) => {
+    if (method === "POST") worldInfoRecorder.createError = new Error(message);
+    else if (method === "PUT") worldInfoRecorder.updateError = new Error(message);
+    else worldInfoRecorder.deleteError = new Error(message);
+    const response = await mutation(method, body, csrf);
+    assert.equal(response.status, 409, `${method} answered ${response.status}`);
+    const payload = JSON.parse(response.body) as { code: string; status: number; type: string; title: string };
+    assert.equal(payload.code, message);
+    assert.equal(payload.status, 409);
+    assert.equal(payload.type, `urn:gamebuddy:tavern:${message}`);
+    assert.ok(!payload.title.includes(message), "the raw service message must not leak into the title");
+    assert.ok(!payload.title.includes("world_info"), "a raw internal identifier must not leak");
+  };
+  await refusal("POST", createCommand, "world_info_already_exists");
+  await refusal("PUT", updateCommand, "world_info_revision_conflict");
+  await refusal("DELETE", address, "world_info_in_use");
+
+  await handler.close();
+  assert.equal(worldInfoRecorder.closes, 1);
+});
+
+test("management handler does not serve a World Info authoring route the profile never declares", async () => {
+  const worldInfoRecorder = { reads: 0, sets: 0, closes: 0, details: 0, creates: 0, updates: 0, deletes: 0 };
+  // The injected service is present, so a route that answers here answers because the
+  // profile declared it - not because the handler happened to have something to call.
+  const handler = createTavernManagementDialogueWebRequestHandler({
+    managementStateFacade: facade,
+    managementService: service({ lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 }),
+    worldInfoService: worldInfoService(worldInfoRecorder),
+    playerPreferenceStore: voicePreferenceStore,
+    profile,
+    bootstrapToken: token,
+  });
+  const bootstrap = new ControlledResponse("finish");
+  await dispatch(
+    handler,
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
+    bootstrap,
+  );
+  assert.equal(bootstrap.status, 200);
+  const csrf = (JSON.parse(bootstrap.body) as { csrfToken: string }).csrfToken;
+  const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+  const run = async (input: import("node:http").IncomingMessage) => {
+    const output = new ControlledResponse("finish");
+    await dispatch(handler, input, output);
+    return { status: output.status, body: output.body };
+  };
+  const query = `apiVersion=1&selectionGeneration=1&expectedRevision=${handle}&itemHandle=${handle}`;
+  const address = { apiVersion: 1, selectionGeneration: 1, expectedRevision: handle, itemHandle: handle };
+  const projection = { apiVersion: 1, selectionGeneration: 1, expectedRevision: handle };
+
+  for (const [method, path, body] of [
+    ["GET", `/api/tavern/v1/world-info/item?${query}`, undefined],
+    [
+      "POST",
+      "/api/tavern/v1/world-info/item",
+      { ...projection, item: { publicTitle: "Pelican Town", summary: "s", entries: [] } },
+    ],
+    [
+      "PUT",
+      "/api/tavern/v1/world-info/item",
+      { ...address, item: { publicTitle: "Pelican Town", summary: "s", entries: [], expectedRevision: 1 } },
+    ],
+    ["DELETE", "/api/tavern/v1/world-info/item", address],
+  ] as const) {
+    const response = await run(
+      request(
+        method,
+        path,
+        method === "GET"
+          ? { cookie, "sec-fetch-site": "same-origin" }
+          : { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
+        body,
+      ),
+    );
+    assert.equal(response.status, 404, `${method} ${path} answered ${response.status}`);
+    assert.equal((JSON.parse(response.body) as { code: string }).code, "profile_operation_unavailable");
+  }
+  assert.deepEqual(
+    [worldInfoRecorder.details, worldInfoRecorder.creates, worldInfoRecorder.updates, worldInfoRecorder.deletes],
+    [0, 0, 0, 0],
+  );
   await handler.close();
 });
