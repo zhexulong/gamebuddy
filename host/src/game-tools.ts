@@ -26,18 +26,20 @@ import {
 
 type IntegrationDispatchAdmissionFactory = () => IntegrationDispatchAdmission;
 
+/** The wait budget for an action that publishes none of its own, matching the historical hard-coded value. */
+const DEFAULT_DISPATCH_DEADLINE_MS = 30_000;
+/**
+ * The ceiling a Mod-published watchdog is clamped to. It matches the bridge's own maximum request timeout, so a
+ * Mod cannot hand the Host a wait the transport would refuse anyway.
+ */
+const MAX_DISPATCH_DEADLINE_MS = 600_000;
+
 /** A bridge that executes only Mod-declared player-enabled capabilities. */
 export interface MoveCapableIntegration extends StardewBridgeConnection {
   execute(request: ExecutionRequest): Promise<ExecutionReceipt>;
-  cancel(
-    requestId: string,
-    executionId: string,
-    reasonCode: string,
-  ): Promise<ExecutionReceipt>;
+  cancel(requestId: string, executionId: string, reasonCode: string): Promise<ExecutionReceipt>;
 }
-function isMoveCapable(
-  value: StardewBridgeConnection,
-): value is MoveCapableIntegration {
+function isMoveCapable(value: StardewBridgeConnection): value is MoveCapableIntegration {
   return (
     "execute" in value &&
     typeof (value as { execute?: unknown }).execute === "function" &&
@@ -92,13 +94,12 @@ function gameActionToolFactory(
 }
 
 /** Caller-supplied identity fields read from the preserved concrete tool schema. */
-function callerRequestIds(
-  params: unknown,
-): Readonly<{ requestId?: string; idempotencyKey?: string }> {
+function callerRequestIds(params: unknown): Readonly<{ requestId?: string; idempotencyKey?: string }> {
   if (typeof params !== "object" || params === null) return {};
   const record = params as Readonly<Record<string, unknown>>;
   const requestId = typeof record.requestId === "string" && record.requestId.length > 0 ? record.requestId : undefined;
-  const idempotencyKey = typeof record.idempotencyKey === "string" && record.idempotencyKey.length > 0 ? record.idempotencyKey : undefined;
+  const idempotencyKey =
+    typeof record.idempotencyKey === "string" && record.idempotencyKey.length > 0 ? record.idempotencyKey : undefined;
   return Object.freeze({
     ...(requestId === undefined ? {} : { requestId }),
     ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
@@ -107,10 +108,12 @@ function callerRequestIds(
 
 type NavigationActionId = "inspect_world_map" | "find_destination";
 type NavigationReadIntegration = StardewBridgeConnection & {
-  navigationRead(request: Readonly<{
-    operation: NavigationActionId;
-    args: Readonly<Record<string, unknown>>;
-  }>): Promise<unknown>;
+  navigationRead(
+    request: Readonly<{
+      operation: NavigationActionId;
+      args: Readonly<Record<string, unknown>>;
+    }>,
+  ): Promise<unknown>;
 };
 
 /** Read-only tools always expose facts exactly as supplied by the Mod. */
@@ -139,9 +142,7 @@ export function createStardewObservationTools(
           await integration.observe();
           refresh = "fresh";
         } catch (error) {
-          refreshError = String(
-            error instanceof Error ? error.message : String(error),
-          );
+          refreshError = String(error instanceof Error ? error.message : String(error));
         }
       }
       const snapshot = integration.state.snapshot;
@@ -166,11 +167,7 @@ export function createStardewObservationTools(
           available,
           refresh,
           refreshError,
-          reasonCode: available
-            ? refresh === "fresh"
-              ? "available_fresh"
-              : "available_cached"
-            : unavailableReason,
+          reasonCode: available ? (refresh === "fresh" ? "available_fresh" : "available_cached") : unavailableReason,
           snapshotJson: available ? JSON.stringify(snapshot) : null,
         },
       };
@@ -189,9 +186,7 @@ export function createStardewObservationTools(
           {
             type: "text" as const,
             text:
-              receipt === null
-                ? "No authoritative Stardew execution receipt is available."
-                : JSON.stringify(receipt),
+              receipt === null ? "No authoritative Stardew execution receipt is available." : JSON.stringify(receipt),
           },
         ],
         details: {
@@ -211,15 +206,9 @@ export function createStardewObservationTools(
       const modRegistrations = state.catalogRegistrations ?? [];
       const currentCapabilities =
         state.connected && state.snapshot !== null
-          ? state.capabilities.filter((capability) =>
-              state.snapshot!.capabilities.includes(capability),
-            )
+          ? state.capabilities.filter((capability) => state.snapshot!.capabilities.includes(capability))
           : [];
-      const actions = visibleActionsFromModCatalog(
-        modRegistrations,
-        currentCapabilities,
-        policy,
-      ).map((entry) => ({
+      const actions = visibleActionsFromModCatalog(modRegistrations, currentCapabilities, policy).map((entry) => ({
         actionId: entry.actionId,
         familyId: entry.familyId,
         label: entry.label,
@@ -248,21 +237,16 @@ export function createStardewObservationTools(
       const modRegistrations = state.catalogRegistrations ?? [];
       const currentCapabilities =
         state.connected && state.snapshot !== null
-          ? state.capabilities.filter((capability) =>
-              state.snapshot!.capabilities.includes(capability),
-            )
+          ? state.capabilities.filter((capability) => state.snapshot!.capabilities.includes(capability))
           : [];
-      const actions = searchActionsFromModCatalog(
-        modRegistrations,
-        currentCapabilities,
-        params.query,
-        policy,
-      ).map((entry) => ({
-        actionId: entry.actionId,
-        familyId: entry.familyId,
-        label: entry.label,
-        targetKinds: entry.targetKinds,
-      }));
+      const actions = searchActionsFromModCatalog(modRegistrations, currentCapabilities, params.query, policy).map(
+        (entry) => ({
+          actionId: entry.actionId,
+          familyId: entry.familyId,
+          label: entry.label,
+          targetKinds: entry.targetKinds,
+        }),
+      );
       return {
         content: [{ type: "text" as const, text: JSON.stringify(actions) }],
         details: { actions },
@@ -280,8 +264,7 @@ export function createStardewObservationTools(
     return (
       state.connected &&
       snapshot !== null &&
-      typeof (integration as { navigationRead?: unknown }).navigationRead ===
-        "function" &&
+      typeof (integration as { navigationRead?: unknown }).navigationRead === "function" &&
       state.catalogRevision === snapshot.catalogRevision &&
       state.capabilities.includes(actionId) &&
       snapshot.capabilities.includes(actionId) &&
@@ -297,9 +280,7 @@ export function createStardewObservationTools(
       )
     );
   };
-  const requireStrictObject = (
-    params: unknown,
-  ): Readonly<Record<string, unknown>> => {
+  const requireStrictObject = (params: unknown): Readonly<Record<string, unknown>> => {
     if (typeof params !== "object" || params === null || Array.isArray(params))
       throw new Error("invalid_tool_parameters");
     return params as Readonly<Record<string, unknown>>;
@@ -311,24 +292,29 @@ export function createStardewObservationTools(
   const sceneCapabilityReady = (): boolean => {
     const state = integration.state;
     const snapshot = state.snapshot;
-    return state.connected && snapshot !== null &&
+    return (
+      state.connected &&
+      snapshot !== null &&
       state.catalogRevision === snapshot.catalogRevision &&
-      state.capabilities.includes("observe_scene") && snapshot.capabilities.includes("observe_scene") &&
-      (state.catalogRegistrations ?? []).some((registration) =>
-        registration.actionId === "observe_scene" && registration.familyId === "world_perception" &&
-        registration.identityVersion === 1 && registration.lifecycle === "published" && registration.kind === "read_only") &&
+      state.capabilities.includes("observe_scene") &&
+      snapshot.capabilities.includes("observe_scene") &&
+      (state.catalogRegistrations ?? []).some(
+        (registration) =>
+          registration.actionId === "observe_scene" &&
+          registration.familyId === "world_perception" &&
+          registration.identityVersion === 1 &&
+          registration.lifecycle === "published" &&
+          registration.kind === "read_only",
+      ) &&
       typeof (integration as { observeScene?: unknown }).observeScene === "function" &&
       !new Set(policy?.deniedActions ?? []).has("observe_scene") &&
-      !new Set(policy?.deniedFamilies ?? []).has("world_perception");
+      !new Set(policy?.deniedFamilies ?? []).has("world_perception")
+    );
   };
 
-  const tools: Array<ReturnType<typeof defineTool>> = [
-    observe,
-    execution,
-    catalog,
-    search,
-  ];
-  { // constant mount; readiness re-checked at execution
+  const tools: Array<ReturnType<typeof defineTool>> = [observe, execution, catalog, search];
+  {
+    // constant mount; readiness re-checked at execution
     tools.push(
       defineTool({
         // Renamed from stardew_observe_scene: sharing the stardew_observe prefix with the per-turn
@@ -336,7 +322,8 @@ export function createStardewObservationTools(
         // wire action id is unchanged.
         name: "stardew_read_scene",
         label: "Observe Stardew Scene",
-        description: "Read the Mod-advertised live Stardew scene projection. Scene references are observational only " +
+        description:
+          "Read the Mod-advertised live Stardew scene projection. Scene references are observational only " +
           "and never authorize mutation. Each affordance may carry `reachable` (true, false, or ABSENT): true means the " +
           "companion can act on it from where it stands (walk onto the tile or stand beside it), false means a measured no, " +
           "and ABSENT means undecided -- nobody measured it, which is not a denial. Prefer acting on reachable targets; " +
@@ -346,28 +333,26 @@ export function createStardewObservationTools(
           if (!requireStrictObject(params) || Object.keys(params).length !== 0)
             throw new Error("invalid_tool_parameters");
           if (!sceneCapabilityReady()) throw new Error("bridge_capability_not_ready");
-          const result = await (integration as StardewBridgeConnection & { observeScene: (request: {}) => Promise<unknown> }).observeScene({});
+          const result = await (
+            integration as StardewBridgeConnection & { observeScene: (request: {}) => Promise<unknown> }
+          ).observeScene({});
           if (!isValidObserveSceneResult(result)) throw new Error("invalid_observe_scene_result");
           return navigationResult(result);
         },
       }),
     );
   }
-  { // constant mount; readiness re-checked at execution
+  {
+    // constant mount; readiness re-checked at execution
     tools.push(
       defineTool({
         name: "stardew_inspect_world_map",
         label: "Inspect Stardew World Map",
-        description:
-          "Read the authoritative Stardew navigation map without changing the game.",
+        description: "Read the authoritative Stardew navigation map without changing the game.",
         parameters: Type.Object(
           {
-            nodeRef: Type.Optional(
-              Type.String({ minLength: 1, maxLength: 128 }),
-            ),
-            cursor: Type.Optional(
-              Type.String({ minLength: 1, maxLength: 128 }),
-            ),
+            nodeRef: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           },
           { additionalProperties: false },
         ),
@@ -383,22 +368,19 @@ export function createStardewObservationTools(
                 (args[keys[0]!] as string).length > 128))
           )
             throw new Error("invalid_tool_parameters");
-          if (!navigationCapabilityReady("inspect_world_map"))
-            throw new Error("bridge_capability_not_ready");
+          if (!navigationCapabilityReady("inspect_world_map")) throw new Error("bridge_capability_not_ready");
           return navigationResult(
             await (integration as NavigationReadIntegration).navigationRead({
               operation: "inspect_world_map",
-              args:
-                keys.length === 0
-                  ? {}
-                  : { [keys[0]!]: args[keys[0]!] },
+              args: keys.length === 0 ? {} : { [keys[0]!]: args[keys[0]!] },
             }),
           );
         },
       }),
     );
   }
-  { // constant mount; readiness re-checked at execution
+  {
+    // constant mount; readiness re-checked at execution
     tools.push(
       defineTool({
         name: "stardew_find_destination",
@@ -420,8 +402,7 @@ export function createStardewObservationTools(
             args.query.length > 128
           )
             throw new Error("invalid_tool_parameters");
-          if (!navigationCapabilityReady("find_destination"))
-            throw new Error("bridge_capability_not_ready");
+          if (!navigationCapabilityReady("find_destination")) throw new Error("bridge_capability_not_ready");
           return navigationResult(
             await (integration as NavigationReadIntegration).navigationRead({
               operation: "find_destination",
@@ -447,13 +428,10 @@ export function buildCandidateToolSchema(
     const arg = getDescriptorArgument(descriptor, "emote");
     const enumVals = getArgumentEnum(arg);
     if (!enumVals || enumVals.length === 0) {
-      throw new Error(
-        "Invalid or incomplete descriptor for express_emote: missing emote enum",
-      );
+      throw new Error("Invalid or incomplete descriptor for express_emote: missing emote enum");
     }
     const literals = enumVals.map((v) => Type.Literal(v));
-    const emoteSchema =
-      literals.length === 1 ? literals[0]! : Type.Union(literals);
+    const emoteSchema = literals.length === 1 ? literals[0]! : Type.Union(literals);
     return Type.Object(
       {
         emote: emoteSchema,
@@ -466,13 +444,10 @@ export function buildCandidateToolSchema(
     const arg = getDescriptorArgument(descriptor, "direction");
     const enumVals = getArgumentEnum(arg);
     if (!enumVals || enumVals.length === 0) {
-      throw new Error(
-        "Invalid or incomplete descriptor for face_direction: missing direction enum",
-      );
+      throw new Error("Invalid or incomplete descriptor for face_direction: missing direction enum");
     }
     const literals = enumVals.map((v) => Type.Literal(v));
-    const directionSchema =
-      literals.length === 1 ? literals[0]! : Type.Union(literals);
+    const directionSchema = literals.length === 1 ? literals[0]! : Type.Union(literals);
     return Type.Object(
       {
         direction: directionSchema,
@@ -549,11 +524,7 @@ export function buildCandidateToolSchema(
     );
   }
 
-  if (
-    actionId === "withdraw_silo_hay" ||
-    actionId === "use_obelisk" ||
-    actionId === "toggle_animal_door"
-  ) {
+  if (actionId === "withdraw_silo_hay" || actionId === "use_obelisk" || actionId === "toggle_animal_door") {
     // Same shape as ride_minecart: the tile plus the opaque target from the most
     // recent observation, both copied verbatim.
     return Type.Object(
@@ -576,10 +547,10 @@ export function buildCandidateToolSchema(
   // them) and no test noticed, because a runner calls `execute` directly and never mounts a tool. A
   // derived schema cannot drift from the Mod the way a hand-maintained list does.
   const declaredNames = declaredArgumentNames(descriptor);
-  if (declaredNames === undefined)
-    throw new Error(`Unsupported candidate action: ${actionId}`);
+  if (declaredNames === undefined) throw new Error(`Unsupported candidate action: ${actionId}`);
   const properties: Record<string, TSchema> = {};
-  for (const name of declaredNames) properties[name] = candidateArgumentSchema(name, declaredArgumentType(descriptor, name));
+  for (const name of declaredNames)
+    properties[name] = candidateArgumentSchema(name, declaredArgumentType(descriptor, name));
   return Type.Object(properties, { additionalProperties: false });
 }
 
@@ -599,7 +570,11 @@ function declaredArgumentNames(descriptor: ActionRegistrationDescriptor): readon
     const names = descriptor.arguments.map((argument) => argument?.name);
     return names.every((name) => typeof name === "string" && name.length > 0) ? (names as string[]) : undefined;
   }
-  if (descriptor.argumentSchema !== undefined && typeof descriptor.argumentSchema === "object" && descriptor.argumentSchema !== null)
+  if (
+    descriptor.argumentSchema !== undefined &&
+    typeof descriptor.argumentSchema === "object" &&
+    descriptor.argumentSchema !== null
+  )
     return Object.keys(descriptor.argumentSchema);
   return undefined;
 }
@@ -657,8 +632,7 @@ export function createStardewActionTools(
   policy: ActionPolicy | undefined,
   dispatchAdmissionFactory?: IntegrationDispatchAdmissionFactory,
 ) {
-  if (!isMoveCapable(integration) || dispatchAdmissionFactory === undefined)
-    return [] as const;
+  if (!isMoveCapable(integration) || dispatchAdmissionFactory === undefined) return [] as const;
   const state = integration.state;
   if (!state.connected || state.snapshot === null) return [] as const;
   // Frozen Manifest content only: descriptor-complete blocks (express_emote,
@@ -666,12 +640,9 @@ export function createStardewActionTools(
   // capability snapshots or per-turn permission.
   const modRegistrations = state.catalogRegistrations ?? [];
   const tools: Array<ReturnType<typeof defineTool>> = [];
-  const makeGameActionTool = gameActionToolFactory(
-    integration,
-    policy,
-    dispatchAdmissionFactory,
-  );
-  { // constant mount; per-action admission at execution
+  const makeGameActionTool = gameActionToolFactory(integration, policy, dispatchAdmissionFactory);
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.navigate_to_destination,
@@ -696,12 +667,8 @@ export function createStardewActionTools(
                 { additionalProperties: false },
               ),
             ]),
-            requestId: Type.Optional(
-              Type.String({ minLength: 1, maxLength: 128 }),
-            ),
-            idempotencyKey: Type.Optional(
-              Type.String({ minLength: 1, maxLength: 128 }),
-            ),
+            requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           },
           { additionalProperties: false },
         ),
@@ -710,7 +677,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.move_to_tile,
@@ -723,19 +691,16 @@ export function createStardewActionTools(
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "move_to_tile",
         toArgs: (params) => ({ x: params.x, y: params.y }),
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.travel,
@@ -745,19 +710,16 @@ export function createStardewActionTools(
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "travel",
         toArgs: (params) => ({ x: params.x, y: params.y }),
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.enter_exit,
@@ -767,19 +729,16 @@ export function createStardewActionTools(
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "enter_exit",
         toArgs: (params) => ({ x: params.x, y: params.y }),
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.till_soil,
@@ -789,59 +748,56 @@ export function createStardewActionTools(
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "till_soil",
         toArgs: (params) => ({ x: params.x, y: params.y }),
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.pickup_forage,
         label: "Pick Up Stardew Forage",
         description:
           "Pick up a live native forage target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the forageTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates), and sceneTarget must be the { observationId, ref } binding that stardew_read_scene published for that same target. Only the authoritative native receipt and target disappearance can report completion.",
-        parameters: Type.Object({
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedQualifiedItemId: Type.String({
-            minLength: 1,
-            maxLength: 128,
-          }),
-           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-           sceneTarget: Type.Object(
-             {
-               observationId: Type.String({ minLength: 1, maxLength: 128 }),
-               ref: Type.String({ pattern: "^sr1_[A-Za-z0-9_-]{16}$" }),
-             },
-             { additionalProperties: false },
-           ),
-           requestId: Type.Optional(
-             Type.String({ minLength: 1, maxLength: 128 }),
-           ),
-           idempotencyKey: Type.Optional(
-             Type.String({ minLength: 1, maxLength: 128 }),
-           ),
-         }, { additionalProperties: false }),
-         action: "pickup_forage",
-         toArgs: (params) => ({
-           x: params.x,
-           y: params.y,
-           expectedQualifiedItemId: params.expectedQualifiedItemId,
-           expectedTargetId: params.expectedTargetId,
-           sceneTarget: params.sceneTarget,
-         }),
+        parameters: Type.Object(
+          {
+            x: Type.Integer({ minimum: 0, maximum: 1000 }),
+            y: Type.Integer({ minimum: 0, maximum: 1000 }),
+            expectedQualifiedItemId: Type.String({
+              minLength: 1,
+              maxLength: 128,
+            }),
+            expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+            sceneTarget: Type.Object(
+              {
+                observationId: Type.String({ minLength: 1, maxLength: 128 }),
+                ref: Type.String({ pattern: "^sr1_[A-Za-z0-9_-]{16}$" }),
+              },
+              { additionalProperties: false },
+            ),
+            requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          },
+          { additionalProperties: false },
+        ),
+        action: "pickup_forage",
+        toArgs: (params) => ({
+          x: params.x,
+          y: params.y,
+          expectedQualifiedItemId: params.expectedQualifiedItemId,
+          expectedTargetId: params.expectedTargetId,
+          sceneTarget: params.sceneTarget,
+        }),
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.pickup_item,
@@ -856,12 +812,8 @@ export function createStardewActionTools(
             maxLength: 128,
           }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "pickup_item",
         toArgs: (params) => ({
@@ -873,7 +825,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.refill_watering_can,
@@ -885,12 +838,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "refill_watering_can",
         toArgs: (params) => ({
@@ -902,7 +851,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.water_crop,
@@ -913,12 +863,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "water_crop",
         toArgs: (params) => ({
@@ -929,7 +875,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.plant_seed,
@@ -945,12 +892,8 @@ export function createStardewActionTools(
             maxLength: 128,
           }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "plant_seed",
         toArgs: (params) => ({
@@ -963,7 +906,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.place_wood_fence,
@@ -976,12 +920,8 @@ export function createStardewActionTools(
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedQualifiedItemId: Type.Literal("(O)322"),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "place_wood_fence",
         toArgs: (params) => ({
@@ -994,7 +934,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.place_crab_pot,
@@ -1007,12 +948,8 @@ export function createStardewActionTools(
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedQualifiedItemId: Type.Literal("(O)710"),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "place_crab_pot",
         toArgs: (params) => ({
@@ -1025,7 +962,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.bait_crab_pot,
@@ -1038,12 +976,8 @@ export function createStardewActionTools(
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedQualifiedItemId: Type.Literal("(O)685"),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "bait_crab_pot",
         toArgs: (params) => ({
@@ -1056,7 +990,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.harvest_bush,
@@ -1076,28 +1011,49 @@ export function createStardewActionTools(
     );
   }
   for (const action of ["harvest_fruit_tree", "shake_tree", "take_pedestal_item", "toggle_fence_gate"] as const) {
-    const labels = ({
-      harvest_fruit_tree: ["Harvest Stardew Fruit Tree", "fruitTreeTargets", "Harvest fruit from a live fruit tree through its native interaction."],
-      shake_tree: ["Shake Stardew Tree", "shakeTreeTargets", "Shake a live tree that has not been shaken today through its native interaction."],
-      take_pedestal_item: ["Take Stardew Pedestal Item", "pedestalTargets", "Take the displayed item through the native pedestal inventory transaction."],
-      toggle_fence_gate: ["Toggle Stardew Fence Gate", "fenceGateTargets", "Toggle a live fence gate through its native gate state transition."],
-    } as const)[action];
-    tools.push(makeGameActionTool({
-      name: STARDEW_ACTION_TOOL_NAMES[action],
-      label: labels[0],
-      description: `${labels[2]} x, y and expectedTargetId must be copied exactly from ${labels[1]} in the most recent observe result for the current location; the target id names the exact object, so a stale id from another location or an earlier visit is refused rather than applied. Do not invent or guess coordinates.`,
-      parameters: Type.Object({
-        x: Type.Integer({ minimum: 0, maximum: 1000 }),
-        y: Type.Integer({ minimum: 0, maximum: 1000 }),
-        expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-        requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-        idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    const labels = (
+      {
+        harvest_fruit_tree: [
+          "Harvest Stardew Fruit Tree",
+          "fruitTreeTargets",
+          "Harvest fruit from a live fruit tree through its native interaction.",
+        ],
+        shake_tree: [
+          "Shake Stardew Tree",
+          "shakeTreeTargets",
+          "Shake a live tree that has not been shaken today through its native interaction.",
+        ],
+        take_pedestal_item: [
+          "Take Stardew Pedestal Item",
+          "pedestalTargets",
+          "Take the displayed item through the native pedestal inventory transaction.",
+        ],
+        toggle_fence_gate: [
+          "Toggle Stardew Fence Gate",
+          "fenceGateTargets",
+          "Toggle a live fence gate through its native gate state transition.",
+        ],
+      } as const
+    )[action];
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES[action],
+        label: labels[0],
+        description: `${labels[2]} x, y and expectedTargetId must be copied exactly from ${labels[1]} in the most recent observe result for the current location; the target id names the exact object, so a stale id from another location or an earlier visit is refused rather than applied. Do not invent or guess coordinates.`,
+        parameters: Type.Object({
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        }),
+        action,
+        toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
       }),
-      action,
-      toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
-    }));
+    );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.fertilize_tile,
@@ -1113,12 +1069,8 @@ export function createStardewActionTools(
             maxLength: 128,
           }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "fertilize_tile",
         toArgs: (params) => ({
@@ -1131,7 +1083,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.machine_inspect,
@@ -1142,12 +1095,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "machine_inspect",
         toArgs: (params) => ({
@@ -1158,7 +1107,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.machine_load,
@@ -1171,12 +1121,8 @@ export function createStardewActionTools(
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedQualifiedItemId: Type.Literal("(O)433"),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "machine_load",
         toArgs: (params) => ({
@@ -1189,7 +1135,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.machine_collect_output,
@@ -1200,12 +1147,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "machine_collect_output",
         toArgs: (params) => ({
@@ -1216,7 +1159,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.collect_animal_product,
@@ -1228,12 +1172,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "collect_animal_product",
         toArgs: (params) => ({
@@ -1245,7 +1185,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.feed_animal,
@@ -1257,12 +1198,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "feed_animal",
         toArgs: (params) => ({
@@ -1274,7 +1211,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.use_item,
@@ -1287,12 +1225,8 @@ export function createStardewActionTools(
             minLength: 1,
             maxLength: 128,
           }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "use_item",
         toArgs: (params) => ({
@@ -1302,7 +1236,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.harvest_crop,
@@ -1317,12 +1252,8 @@ export function createStardewActionTools(
             maxLength: 128,
           }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "harvest_crop",
         toArgs: (params) => ({
@@ -1334,7 +1265,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.chop_tree_source,
@@ -1346,12 +1278,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "chop_tree_source",
         toArgs: (params) => ({
@@ -1363,7 +1291,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.dig_artifact_spot,
@@ -1375,12 +1304,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "dig_artifact_spot",
         toArgs: (params) => ({
@@ -1392,7 +1317,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.clear_hoedirt,
@@ -1404,12 +1330,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "clear_hoedirt",
         toArgs: (params) => ({
@@ -1421,7 +1343,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.break_rock_source,
@@ -1433,12 +1356,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "break_rock_source",
         toArgs: (params) => ({
@@ -1450,38 +1369,27 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.equip_tool,
         label: "Equip Stardew Tool",
         description: `Select a Tool already owned by the AI Farmhand by semantic category (${[...TOOL_SELECTOR_VALUES].join(", ")}). The Mod receipt reports the authoritative before/after CurrentTool state.`,
         parameters: Type.Object({
-          tool: Type.Union(
-            [...TOOL_SELECTOR_VALUES].map((selector) =>
-              Type.Literal(selector),
-            ),
-          ),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          tool: Type.Union([...TOOL_SELECTOR_VALUES].map((selector) => Type.Literal(selector))),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "equip_tool",
         toArgs: (params) => ({ tool: params.tool }),
       }),
     );
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "send_multiplayer_chat",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("send_multiplayer_chat", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "send_multiplayer_chat");
+    if (registration?.descriptor && isModDescriptorComplete("send_multiplayer_chat", registration.descriptor)) {
       const schema = buildCandidateToolSchema("send_multiplayer_chat", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1497,14 +1405,10 @@ export function createStardewActionTools(
     }
   }
 
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "name_entity",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("name_entity", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "name_entity");
+    if (registration?.descriptor && isModDescriptorComplete("name_entity", registration.descriptor)) {
       const schema = buildCandidateToolSchema("name_entity", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1520,24 +1424,16 @@ export function createStardewActionTools(
     }
   }
 
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "express_emote",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("express_emote", registration.descriptor)
-    ) {
-      const schema = buildCandidateToolSchema(
-        "express_emote",
-        registration.descriptor,
-      );
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "express_emote");
+    if (registration?.descriptor && isModDescriptorComplete("express_emote", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("express_emote", registration.descriptor);
       tools.push(
         makeGameActionTool({
           name: STARDEW_ACTION_TOOL_NAMES.express_emote,
           label: "Express Stardew Emote",
-          description:
-            "Show a native overhead emote balloon for the companion actor.",
+          description: "Show a native overhead emote balloon for the companion actor.",
           parameters: schema,
           action: "express_emote",
           toArgs: (params) => ({ emote: params.emote }),
@@ -1545,24 +1441,16 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "face_direction",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("face_direction", registration.descriptor)
-    ) {
-      const schema = buildCandidateToolSchema(
-        "face_direction",
-        registration.descriptor,
-      );
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "face_direction");
+    if (registration?.descriptor && isModDescriptorComplete("face_direction", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("face_direction", registration.descriptor);
       tools.push(
         makeGameActionTool({
           name: STARDEW_ACTION_TOOL_NAMES.face_direction,
           label: "Face Stardew Direction",
-          description:
-            "Turn the companion actor to face a cardinal direction (up, right, down, left).",
+          description: "Turn the companion actor to face a cardinal direction (up, right, down, left).",
           parameters: schema,
           action: "face_direction",
           toArgs: (params) => ({ direction: params.direction }),
@@ -1570,21 +1458,11 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "interact_npc_with_item",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete(
-        "interact_npc_with_item",
-        registration.descriptor,
-      )
-    ) {
-      const schema = buildCandidateToolSchema(
-        "interact_npc_with_item",
-        registration.descriptor,
-      );
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "interact_npc_with_item");
+    if (registration?.descriptor && isModDescriptorComplete("interact_npc_with_item", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("interact_npc_with_item", registration.descriptor);
       tools.push(
         makeGameActionTool({
           name: STARDEW_ACTION_TOOL_NAMES.interact_npc_with_item,
@@ -1604,14 +1482,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "talk_to_npc",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("talk_to_npc", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "talk_to_npc");
+    if (registration?.descriptor && isModDescriptorComplete("talk_to_npc", registration.descriptor)) {
       const schema = buildCandidateToolSchema("talk_to_npc", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1630,14 +1504,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "pet_animal",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("pet_animal", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "pet_animal");
+    if (registration?.descriptor && isModDescriptorComplete("pet_animal", registration.descriptor)) {
       const schema = buildCandidateToolSchema("pet_animal", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1656,14 +1526,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "advance_day",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("advance_day", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "advance_day");
+    if (registration?.descriptor && isModDescriptorComplete("advance_day", registration.descriptor)) {
       const schema = buildCandidateToolSchema("advance_day", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1678,14 +1544,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "dismiss_modal",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("dismiss_modal", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "dismiss_modal");
+    if (registration?.descriptor && isModDescriptorComplete("dismiss_modal", registration.descriptor)) {
       const schema = buildCandidateToolSchema("dismiss_modal", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1700,14 +1562,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "ride_bus",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("ride_bus", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "ride_bus");
+    if (registration?.descriptor && isModDescriptorComplete("ride_bus", registration.descriptor)) {
       const schema = buildCandidateToolSchema("ride_bus", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1722,14 +1580,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "withdraw_silo_hay",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("withdraw_silo_hay", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "withdraw_silo_hay");
+    if (registration?.descriptor && isModDescriptorComplete("withdraw_silo_hay", registration.descriptor)) {
       const schema = buildCandidateToolSchema("withdraw_silo_hay", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1748,14 +1602,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "clear_fish_pond",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("clear_fish_pond", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "clear_fish_pond");
+    if (registration?.descriptor && isModDescriptorComplete("clear_fish_pond", registration.descriptor)) {
       const schema = buildCandidateToolSchema("clear_fish_pond", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1774,14 +1624,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "build_farm_building",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("build_farm_building", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "build_farm_building");
+    if (registration?.descriptor && isModDescriptorComplete("build_farm_building", registration.descriptor)) {
       const schema = buildCandidateToolSchema("build_farm_building", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1801,14 +1647,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "accept_daily_quest",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("accept_daily_quest", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "accept_daily_quest");
+    if (registration?.descriptor && isModDescriptorComplete("accept_daily_quest", registration.descriptor)) {
       const schema = buildCandidateToolSchema("accept_daily_quest", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1826,14 +1668,10 @@ export function createStardewActionTools(
     }
   }
 
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "accept_special_order",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("accept_special_order", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "accept_special_order");
+    if (registration?.descriptor && isModDescriptorComplete("accept_special_order", registration.descriptor)) {
       const schema = buildCandidateToolSchema("accept_special_order", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1851,14 +1689,10 @@ export function createStardewActionTools(
     }
   }
 
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "claim_museum_reward",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("claim_museum_reward", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "claim_museum_reward");
+    if (registration?.descriptor && isModDescriptorComplete("claim_museum_reward", registration.descriptor)) {
       const schema = buildCandidateToolSchema("claim_museum_reward", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1876,14 +1710,10 @@ export function createStardewActionTools(
     }
   }
 
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "redeem_prize_ticket",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("redeem_prize_ticket", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "redeem_prize_ticket");
+    if (registration?.descriptor && isModDescriptorComplete("redeem_prize_ticket", registration.descriptor)) {
       const schema = buildCandidateToolSchema("redeem_prize_ticket", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1899,14 +1729,10 @@ export function createStardewActionTools(
     }
   }
 
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "tailor_clothing",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("tailor_clothing", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "tailor_clothing");
+    if (registration?.descriptor && isModDescriptorComplete("tailor_clothing", registration.descriptor)) {
       const schema = buildCandidateToolSchema("tailor_clothing", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1926,14 +1752,10 @@ export function createStardewActionTools(
     }
   }
 
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "color_placed_object",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("color_placed_object", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "color_placed_object");
+    if (registration?.descriptor && isModDescriptorComplete("color_placed_object", registration.descriptor)) {
       const schema = buildCandidateToolSchema("color_placed_object", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1953,14 +1775,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "dye_clothing_with_item",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("dye_clothing_with_item", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "dye_clothing_with_item");
+    if (registration?.descriptor && isModDescriptorComplete("dye_clothing_with_item", registration.descriptor)) {
       const schema = buildCandidateToolSchema("dye_clothing_with_item", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -1980,14 +1798,10 @@ export function createStardewActionTools(
     }
   }
 
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "toggle_animal_door",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("toggle_animal_door", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "toggle_animal_door");
+    if (registration?.descriptor && isModDescriptorComplete("toggle_animal_door", registration.descriptor)) {
       const schema = buildCandidateToolSchema("toggle_animal_door", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2006,14 +1820,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "use_obelisk",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("use_obelisk", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "use_obelisk");
+    if (registration?.descriptor && isModDescriptorComplete("use_obelisk", registration.descriptor)) {
       const schema = buildCandidateToolSchema("use_obelisk", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2032,14 +1842,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "shop_purchase",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("shop_purchase", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "shop_purchase");
+    if (registration?.descriptor && isModDescriptorComplete("shop_purchase", registration.descriptor)) {
       const schema = buildCandidateToolSchema("shop_purchase", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2054,14 +1860,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "select_mine_elevator_floor",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("select_mine_elevator_floor", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "select_mine_elevator_floor");
+    if (registration?.descriptor && isModDescriptorComplete("select_mine_elevator_floor", registration.descriptor)) {
       const schema = buildCandidateToolSchema("select_mine_elevator_floor", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2076,14 +1878,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "answer_dialogue",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("answer_dialogue", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "answer_dialogue");
+    if (registration?.descriptor && isModDescriptorComplete("answer_dialogue", registration.descriptor)) {
       const schema = buildCandidateToolSchema("answer_dialogue", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2098,14 +1896,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "ride_minecart",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("ride_minecart", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "ride_minecart");
+    if (registration?.descriptor && isModDescriptorComplete("ride_minecart", registration.descriptor)) {
       const schema = buildCandidateToolSchema("ride_minecart", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2124,7 +1918,8 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.clear_debris,
@@ -2136,12 +1931,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "clear_debris",
         toArgs: (params) => ({
@@ -2153,7 +1944,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.npc_relationship,
@@ -2164,12 +1956,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "npc_relationship",
         toArgs: (params) => ({
@@ -2180,7 +1968,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.water_pet_bowl,
@@ -2191,12 +1980,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "water_pet_bowl",
         toArgs: (params) => ({
@@ -2207,7 +1992,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.water_slime_hutch_trough,
@@ -2218,12 +2004,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "water_slime_hutch_trough",
         toArgs: (params) => ({
@@ -2234,7 +2016,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.chest_store,
@@ -2250,12 +2033,8 @@ export function createStardewActionTools(
             maxLength: 128,
           }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "chest_store",
         toArgs: (params) => ({
@@ -2268,7 +2047,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.chest_retrieve,
@@ -2284,12 +2064,8 @@ export function createStardewActionTools(
             maxLength: 128,
           }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "chest_retrieve",
         toArgs: (params) => ({
@@ -2302,7 +2078,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.chop_stump,
@@ -2314,12 +2091,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "chop_stump",
         toArgs: (params) => ({
@@ -2331,7 +2104,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.plant_sapling,
@@ -2347,12 +2121,8 @@ export function createStardewActionTools(
             maxLength: 128,
           }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "plant_sapling",
         toArgs: (params) => ({
@@ -2365,7 +2135,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.cut_weeds,
@@ -2377,12 +2148,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "cut_weeds",
         toArgs: (params) => ({
@@ -2394,7 +2161,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.cut_grass,
@@ -2406,12 +2174,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "cut_grass",
         toArgs: (params) => ({
@@ -2423,12 +2187,14 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.clear_cask,
         label: "Clear Cask",
-        description: "Use the equipped Axe, Pickaxe, or Hoe on one live adjacent Cask. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and caskTargets in the MOST RECENT observe result. A filled Cask drops its contents and remains; an empty Cask is removed. Returns cask_cleared.",
+        description:
+          "Use the equipped Axe, Pickaxe, or Hoe on one live adjacent Cask. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and caskTargets in the MOST RECENT observe result. A filled Cask drops its contents and remains; an empty Cask is removed. Returns cask_cleared.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -2438,7 +2204,12 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "clear_cask",
-        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
       }),
     );
   }
@@ -2447,22 +2218,50 @@ export function createStardewActionTools(
     const isSign = action === "set_sign_display";
     const targetKey = isMannequin ? "mannequinTargets" : isSign ? "signTargets" : "siloTargets";
     const label = isMannequin ? "Dress Mannequin" : isSign ? "Set Sign Display" : "Deposit Silo Hay";
-    tools.push(makeGameActionTool({
-      name: STARDEW_ACTION_TOOL_NAMES[action], label,
-      description: `${label} using the held inventory item. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and ${targetKey} in the MOST RECENT observe result for the current location; the target id names the exact object, so a stale id is refused rather than applied. The item must be the one that slot really holds, and a refusal names which precondition failed rather than reporting a generic failure.`,
-      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
-      action, toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
-    }));
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES[action],
+        label,
+        description: `${label} using the held inventory item. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and ${targetKey} in the MOST RECENT observe result for the current location; the target id names the exact object, so a stale id is refused rather than applied. The item must be the one that slot really holds, and a refusal names which precondition failed rather than reporting a generic failure.`,
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        }),
+        action,
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
+      }),
+    );
   }
   {
-    tools.push(makeGameActionTool({
-      name: STARDEW_ACTION_TOOL_NAMES.toggle_tool_light, label: "Toggle Tool Light",
-      description: "Toggle the Lantern light; slot must identify the Lantern currently equipped, copied from lanternSlots in the most recent observe result. The light toggles on the tool itself, not on a world object.",
-      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
-      action: "toggle_tool_light", toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y }),
-    }));
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.toggle_tool_light,
+        label: "Toggle Tool Light",
+        description:
+          "Toggle the Lantern light; slot must identify the Lantern currently equipped, copied from lanternSlots in the most recent observe result. The light toggles on the tool itself, not on a world object.",
+        parameters: Type.Object({
+          slot: Type.Integer({ minimum: 0, maximum: 36 }),
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        }),
+        action: "toggle_tool_light",
+        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y }),
+      }),
+    );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.scythe_crop,
@@ -2474,12 +2273,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "scythe_crop",
         toArgs: (params) => ({
@@ -2491,7 +2286,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.craft_item,
@@ -2500,12 +2296,8 @@ export function createStardewActionTools(
           "Craft one learned recipe from the Farmhand's own inventory. expectedTargetId must be copied exactly from the craftingRecipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). A targetId is the canonical recipe identity, not its display name. An unknown or unlearned recipe fails closed. Items that do not fit are dropped on the ground rather than lost, and the receipt reports the exact conservation evidence. Returns crafted_item_created.",
         parameters: Type.Object({
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "craft_item",
         toArgs: (params) => ({
@@ -2514,7 +2306,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.cook_recipe,
@@ -2523,12 +2316,8 @@ export function createStardewActionTools(
           "Cook one learned cooking recipe at a live adjacent cooking station. expectedTargetId must be copied exactly from the cookingRecipeTargets entries of the MOST RECENT observe result (never invent or guess a recipe). A targetId is the canonical recipe identity, not its display name. The station adjacency is re-derived and re-checked Mod-side from the live world rather than trusted from the client. Items that do not fit are dropped on the ground rather than lost. Returns dish_cooked.",
         parameters: Type.Object({
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "cook_recipe",
         toArgs: (params) => ({
@@ -2537,7 +2326,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.collect_crab_pot_output,
@@ -2548,12 +2338,8 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "collect_crab_pot_output",
         toArgs: (params) => ({
@@ -2564,7 +2350,8 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
+  {
+    // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.ship_item,
@@ -2580,12 +2367,8 @@ export function createStardewActionTools(
             maxLength: 128,
           }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-          requestId: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
-          idempotencyKey: Type.Optional(
-            Type.String({ minLength: 1, maxLength: 128 }),
-          ),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "ship_item",
         toArgs: (params) => ({
@@ -2598,46 +2381,73 @@ export function createStardewActionTools(
       }),
     );
   }
-  { // constant mount; per-action admission at execution
-    tools.push(makeGameActionTool({
-      name: STARDEW_ACTION_TOOL_NAMES.mount_transport,
-      label: "Mount a Native Horse",
-      description: "Mount an advertised named horse in range; x, y and expectedTargetId must be copied exactly from horseTargets in the most recent observe result. The Mod waits for the native mounting animation to finish before reporting success.",
-      parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }, { additionalProperties: false }),
-      action: "mount_transport",
-      toArgs: params => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
-    }));
-    tools.push(makeGameActionTool({
-      name: STARDEW_ACTION_TOOL_NAMES.enter_mine,
-      label: "Enter the Mine",
-      description: "Enter the mine through the live entrance tile OR descend the ladder tile inside a shaft; x, y and expectedTargetId must be copied exactly from mineEntranceTargets in the most recent observe result. The ladder descends exactly one level, derived from the live shaft. This uses normal game progression and does not accept a level selector - to choose a floor, use stardew_select_mine_elevator_floor.",
-      parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }, { additionalProperties: false }),
-      action: "enter_mine",
-      toArgs: params => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
-    }));
-    tools.push(makeGameActionTool({
-      name: STARDEW_ACTION_TOOL_NAMES.use_raft,
-      label: "Launch Stardew Raft",
-      description: "Launch the equipped Raft from an adjacent native water tile listed in raftTargets. This begins rafting; it does not steer to shore.",
-      parameters: Type.Object({
-        slot: Type.Integer({ minimum: 0, maximum: 36 }),
-        x: Type.Integer({ minimum: 0, maximum: 1000 }),
-        y: Type.Integer({ minimum: 0, maximum: 1000 }),
-        requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-        idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-      }, { additionalProperties: false }),
-      action: "use_raft",
-      toArgs: params => ({ slot: params.slot, x: params.x, y: params.y }),
-    }));
-  }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "load_building_chest",
+  {
+    // constant mount; per-action admission at execution
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.mount_transport,
+        label: "Mount a Native Horse",
+        description:
+          "Mount an advertised named horse in range; x, y and expectedTargetId must be copied exactly from horseTargets in the most recent observe result. The Mod waits for the native mounting animation to finish before reporting success.",
+        parameters: Type.Object(
+          {
+            x: Type.Integer({ minimum: 0, maximum: 1000 }),
+            y: Type.Integer({ minimum: 0, maximum: 1000 }),
+            expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+            requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          },
+          { additionalProperties: false },
+        ),
+        action: "mount_transport",
+        toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+      }),
     );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("load_building_chest", registration.descriptor)
-    ) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.enter_mine,
+        label: "Enter the Mine",
+        description:
+          "Enter the mine through the live entrance tile OR descend the ladder tile inside a shaft; x, y and expectedTargetId must be copied exactly from mineEntranceTargets in the most recent observe result. The ladder descends exactly one level, derived from the live shaft. This uses normal game progression and does not accept a level selector - to choose a floor, use stardew_select_mine_elevator_floor.",
+        parameters: Type.Object(
+          {
+            x: Type.Integer({ minimum: 0, maximum: 1000 }),
+            y: Type.Integer({ minimum: 0, maximum: 1000 }),
+            expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+            requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          },
+          { additionalProperties: false },
+        ),
+        action: "enter_mine",
+        toArgs: (params) => ({ x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+      }),
+    );
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.use_raft,
+        label: "Launch Stardew Raft",
+        description:
+          "Launch the equipped Raft from an adjacent native water tile listed in raftTargets. This begins rafting; it does not steer to shore.",
+        parameters: Type.Object(
+          {
+            slot: Type.Integer({ minimum: 0, maximum: 36 }),
+            x: Type.Integer({ minimum: 0, maximum: 1000 }),
+            y: Type.Integer({ minimum: 0, maximum: 1000 }),
+            requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+            idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          },
+          { additionalProperties: false },
+        ),
+        action: "use_raft",
+        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y }),
+      }),
+    );
+  }
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "load_building_chest");
+    if (registration?.descriptor && isModDescriptorComplete("load_building_chest", registration.descriptor)) {
       const schema = buildCandidateToolSchema("load_building_chest", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2652,14 +2462,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "collect_building_chest_output",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("collect_building_chest_output", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "collect_building_chest_output");
+    if (registration?.descriptor && isModDescriptorComplete("collect_building_chest_output", registration.descriptor)) {
       const schema = buildCandidateToolSchema("collect_building_chest_output", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2674,14 +2480,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "use_warp_item",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("use_warp_item", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "use_warp_item");
+    if (registration?.descriptor && isModDescriptorComplete("use_warp_item", registration.descriptor)) {
       const schema = buildCandidateToolSchema("use_warp_item", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2696,14 +2498,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "pan_ore",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("pan_ore", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "pan_ore");
+    if (registration?.descriptor && isModDescriptorComplete("pan_ore", registration.descriptor)) {
       const schema = buildCandidateToolSchema("pan_ore", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2718,14 +2516,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "claim_mail_attachment",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("claim_mail_attachment", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "claim_mail_attachment");
+    if (registration?.descriptor && isModDescriptorComplete("claim_mail_attachment", registration.descriptor)) {
       const schema = buildCandidateToolSchema("claim_mail_attachment", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2740,14 +2534,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "equip_wearable",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("equip_wearable", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "equip_wearable");
+    if (registration?.descriptor && isModDescriptorComplete("equip_wearable", registration.descriptor)) {
       const schema = buildCandidateToolSchema("equip_wearable", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2757,19 +2547,19 @@ export function createStardewActionTools(
             "Put a wearable Farmhand inventory item into the body slot it belongs to. expectedTargetId must be copied exactly from the wearableTargets entry of the MOST RECENT observe result: it names the BODY slot (hat, shirt, pants, boots, left_ring, right_ring), so a stale id is refused. slot and expectedQualifiedItemId must be copied from the inventoryItemFacts entry of that same result: that is the pack slot holding the item to wear. A repeat of the same equip is an idempotent success, not an error.",
           parameters: schema,
           action: "equip_wearable",
-          toArgs: (params) => ({ slot: params.slot, expectedQualifiedItemId: params.expectedQualifiedItemId, expectedTargetId: params.expectedTargetId }),
+          toArgs: (params) => ({
+            slot: params.slot,
+            expectedQualifiedItemId: params.expectedQualifiedItemId,
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "unequip_wearable",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("unequip_wearable", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "unequip_wearable");
+    if (registration?.descriptor && isModDescriptorComplete("unequip_wearable", registration.descriptor)) {
       const schema = buildCandidateToolSchema("unequip_wearable", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2784,14 +2574,10 @@ export function createStardewActionTools(
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "dismount_transport",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("dismount_transport", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "dismount_transport");
+    if (registration?.descriptor && isModDescriptorComplete("dismount_transport", registration.descriptor)) {
       const schema = buildCandidateToolSchema("dismount_transport", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2807,14 +2593,10 @@ export function createStardewActionTools(
     }
   }
 
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "place_owned_object",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("place_owned_object", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "place_owned_object");
+    if (registration?.descriptor && isModDescriptorComplete("place_owned_object", registration.descriptor)) {
       const schema = buildCandidateToolSchema("place_owned_object", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2824,19 +2606,21 @@ export function createStardewActionTools(
             "Place a big-craftable the Farmhand owns onto a live lawful tile. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result; the target id names the exact placement candidate, so a stale id is refused rather than placed somewhere else. Only the observed new object on the tile can report success.",
           parameters: schema,
           action: "place_owned_object",
-          toArgs: (params) => ({ x: params.x, y: params.y, slot: params.slot, expectedQualifiedItemId: params.expectedQualifiedItemId, expectedTargetId: params.expectedTargetId }),
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            slot: params.slot,
+            expectedQualifiedItemId: params.expectedQualifiedItemId,
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "remove_placed_item",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("remove_placed_item", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "remove_placed_item");
+    if (registration?.descriptor && isModDescriptorComplete("remove_placed_item", registration.descriptor)) {
       const schema = buildCandidateToolSchema("remove_placed_item", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2846,19 +2630,20 @@ export function createStardewActionTools(
             "Remove a placed object from the world with the tool that can remove it. slot, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. A tool that cannot remove THIS object is refused by name rather than silently doing nothing, and success is the object being GONE from the tile.",
           parameters: schema,
           action: "remove_placed_item",
-          toArgs: (params) => ({ x: params.x, y: params.y, slot: params.slot, expectedTargetId: params.expectedTargetId }),
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            slot: params.slot,
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }
   }
-  { // constant mount; per-action admission at execution
-    const registration = modRegistrations.find(
-      (entry) => entry.actionId === "break_container_source",
-    );
-    if (
-      registration?.descriptor &&
-      isModDescriptorComplete("break_container_source", registration.descriptor)
-    ) {
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "break_container_source");
+    if (registration?.descriptor && isModDescriptorComplete("break_container_source", registration.descriptor)) {
       const schema = buildCandidateToolSchema("break_container_source", registration.descriptor);
       tools.push(
         makeGameActionTool({
@@ -2868,7 +2653,12 @@ export function createStardewActionTools(
             "Break a breakable container on the map, such as a crate or barrel, with the tool in the named slot. slot, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. Success is the container being GONE and its drops accounted for, not the tool's return value.",
           parameters: schema,
           action: "break_container_source",
-          toArgs: (params) => ({ x: params.x, y: params.y, slot: params.slot, expectedTargetId: params.expectedTargetId }),
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            slot: params.slot,
+            expectedTargetId: params.expectedTargetId,
+          }),
         }),
       );
     }
@@ -2888,15 +2678,11 @@ export function createStardewActionTools(
       parameters: Type.Object({}),
       execute: async () => {
         const snapshot = integration.state.snapshot;
-        if (!integration.state.connected || snapshot === null)
-          return receiptResult(null, "integration_not_ready");
+        if (!integration.state.connected || snapshot === null) return receiptResult(null, "integration_not_ready");
         const active = snapshot.activeExecution ?? null;
         if (active === null) return receiptResult(null, "no_active_execution");
         if (active.cancelSafe !== true)
-          return receiptResult(
-            null,
-            `action_past_cancel_point: phase=${active.phase ?? "unknown"};cancel_safe=false`,
-          );
+          return receiptResult(null, `action_past_cancel_point: phase=${active.phase ?? "unknown"};cancel_safe=false`);
         try {
           // The Mod's own gate keys on this reason code, so the player STOP and the worker's teardown keep their
           // semantics while a MODEL stop can be refused.
@@ -2926,55 +2712,54 @@ async function executeGameAction(
   callerIds: Readonly<{ requestId?: string; idempotencyKey?: string }>,
 ) {
   const snapshot = integration.state.snapshot;
-  if (!integration.state.connected || snapshot === null)
-    return receiptResult(null, "integration_not_ready");
-  const currentCapabilities = integration.state.capabilities.filter(
-    (capability) => snapshot.capabilities.includes(capability),
+  if (!integration.state.connected || snapshot === null) return receiptResult(null, "integration_not_ready");
+  const currentCapabilities = integration.state.capabilities.filter((capability) =>
+    snapshot.capabilities.includes(capability),
   );
-  if (!currentCapabilities.includes(action))
-    return receiptResult(null, "capability_not_declared");
+  if (!currentCapabilities.includes(action)) return receiptResult(null, "capability_not_declared");
   if (
-    !visibleActionsFromModCatalog(
-      integration.state.catalogRegistrations ?? [],
-      currentCapabilities,
-      policy,
-    ).some((entry) => entry.actionId === action)
+    !visibleActionsFromModCatalog(integration.state.catalogRegistrations ?? [], currentCapabilities, policy).some(
+      (entry) => entry.actionId === action,
+    )
   )
     return receiptResult(null, "action_policy_denied");
 
-  // The shared wrapper owns identity, revision, and deadline construction;
-  // tool closures contribute only an action literal plus typed args.
+  // The shared wrapper owns identity, revision, and deadline construction; tool closures contribute only an action
+  // literal plus typed args.
+  //
+  // The deadline is the ACTION's own budget when the Mod publishes one: `advance_day`'s watchdog is 600s because a
+  // night waits on other players, the save and the day start, and a hard-coded 30s made it time out by construction
+  // (measured 2026-10-17). The 30s default stays for every action that publishes no watchdog, and the Mod's budget
+  // is clamped to the bridge's own maximum so neither side can be handed an unbounded wait.
+  const publishedWatchdogMs = integration.state.catalogRegistrations?.find(
+    (registration) => registration.actionId === action,
+  )?.descriptor?.watchdogMs;
+  const deadlineBudgetMs =
+    typeof publishedWatchdogMs === "number" && Number.isSafeInteger(publishedWatchdogMs) && publishedWatchdogMs > 0
+      ? Math.min(publishedWatchdogMs, MAX_DISPATCH_DEADLINE_MS)
+      : DEFAULT_DISPATCH_DEADLINE_MS;
   const request: ExecutionRequest = {
     requestId: callerIds.requestId ?? randomUUID(),
     idempotencyKey: callerIds.idempotencyKey ?? randomUUID(),
     action,
     args,
     expectedRevision: snapshot.revision,
-    deadlineMs: Date.now() + 30_000,
+    deadlineMs: Date.now() + deadlineBudgetMs,
   };
   const invalid = validateExecutionRequest(request, snapshot);
   if (invalid !== null) return receiptResult(null, invalid);
   try {
-    return receiptResult(
-      await executeBridge(integration, dispatchAdmissionFactory, request),
-      null,
-    );
+    return receiptResult(await executeBridge(integration, dispatchAdmissionFactory, request), null);
   } catch (error) {
     const reasonCode =
-      error instanceof Error
-        ? error.message.replace(/^bridge_rejected:/, "")
-        : "bridge_execute_failed";
+      error instanceof Error ? error.message.replace(/^bridge_rejected:/, "") : "bridge_execute_failed";
     // Whether the native write happened is the one fact the caller needs and
     // cannot infer from a flat "not created". executeBridge tags the failure
     // with the phase it failed in, so the message can say which it was: a
     // refusal before any write, or a write whose outcome is unknown. The audit
     // that motivated this saw the Agent read "not created" for an action the
     // world had already performed, invent a cause, and re-dispatch it.
-    return receiptResult(
-      null,
-      reasonCode,
-      error instanceof Error ? writePhaseOf(error) : "write_unknown",
-    );
+    return receiptResult(null, reasonCode, error instanceof Error ? writePhaseOf(error) : "write_unknown");
   }
 }
 
@@ -3061,8 +2846,7 @@ function receiptResult(
       {
         type: "text" as const,
         text:
-          (receipt === null ? failureText : JSON.stringify(receipt)) +
-          (remedy === null ? "" : `\n${remedy.guidance}`),
+          (receipt === null ? failureText : JSON.stringify(receipt)) + (remedy === null ? "" : `\n${remedy.guidance}`),
       },
     ],
     details: {

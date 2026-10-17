@@ -154,7 +154,14 @@ public sealed record FarmhandActionDescriptorWire(
     string Effect,
     FarmhandActionPostconditionWire Postcondition,
     string? NativeBinding = null,
-    FarmhandActionObservationBindingDescriptorWire? SceneTarget = null
+    FarmhandActionObservationBindingDescriptorWire? SceneTarget = null,
+    // The Mod's OWN watchdog for this action, in milliseconds: hang protection it already owns
+    // (`FarmhandActionDescriptor.WatchdogMs`; the lifecycle actions deliberately carry 600s because a night waits
+    // on other players, the save, and the day start). Published so the Host can size a dispatch deadline the way
+    // the action was designed to be waited on, instead of one hard-coded number for every action - measured
+    // 2026-10-17: `advance_day` was dispatched with a 30s deadline against a 600s watchdog, so it timed out by
+    // construction and the failure read as the companion being unable to sleep.
+    long? WatchdogMs = null
 );
 
 public sealed record FarmhandActionRegistrationWire(

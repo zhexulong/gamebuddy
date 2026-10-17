@@ -30,21 +30,41 @@ export type Scope = Readonly<{
 
 export type BodyCanonicalValue = Readonly<
   | { type: "integer" | "string" | "boolean"; canonicalValue: string }
-  | { type: "destination_selector"; destination: Readonly<{ kind: "label"; label: string } | { kind: "ref"; ref: string }> }
+  | {
+      type: "destination_selector";
+      destination: Readonly<{ kind: "label"; label: string } | { kind: "ref"; ref: string }>;
+    }
 >;
 export type FarmhandPolicyIdentity = Readonly<{ value: string; capabilityRevision: number }>;
 export type BodyPolicyIdentity = Readonly<{ value: string; capabilityRevision: number }>;
-export type BodyExecutionBinding = Readonly<{ programId: string; nodeId: string; nodeAttempt: number; requestId: string; idempotencyKey: string; executionId: string }>;
+export type BodyExecutionBinding = Readonly<{
+  programId: string;
+  nodeId: string;
+  nodeAttempt: number;
+  requestId: string;
+  idempotencyKey: string;
+  executionId: string;
+}>;
 export type BodyNodeAdmissionChallenge = Readonly<{
-  programId: string; nodeId: string; nodeAttempt: number; admissionAttempt: number;
-  stopEpoch: number; catalogRevision: number; policyIdentity: BodyPolicyIdentity; actionId: string;
+  programId: string;
+  nodeId: string;
+  nodeAttempt: number;
+  admissionAttempt: number;
+  stopEpoch: number;
+  catalogRevision: number;
+  policyIdentity: BodyPolicyIdentity;
+  actionId: string;
   canonicalBoundArgs: Readonly<Record<string, BodyCanonicalValue>>;
-  derivedResourceClaims: Readonly<Record<string, string>>; deadlineMs: number;
+  derivedResourceClaims: Readonly<Record<string, string>>;
+  deadlineMs: number;
 }>;
-export type BodyNodeAdmissionGrant = BodyNodeAdmissionChallenge & Readonly<{
-  grantId: string; attachmentGeneration: string; policyRevision: string;
-  executionBinding: BodyExecutionBinding | null;
-}>;
+export type BodyNodeAdmissionGrant = BodyNodeAdmissionChallenge &
+  Readonly<{
+    grantId: string;
+    attachmentGeneration: string;
+    policyRevision: string;
+    executionBinding: BodyExecutionBinding | null;
+  }>;
 export type BodyNodeAdmissionResult =
   | (BodyNodeAdmissionGrant & Readonly<{ result: "granted" }>)
   | (BodyNodeAdmissionChallenge & Readonly<{ result: "rejected"; code: string }>)
@@ -53,7 +73,6 @@ export type BodyNodeAdmissionResult =
 export type BodyNodeAdmissionChallengeHandler = (
   challenge: BodyNodeAdmissionChallenge,
 ) => Promise<BodyNodeAdmissionResult> | BodyNodeAdmissionResult;
-
 
 export type Envelope<TType extends string, TPayload> = Readonly<{
   protocolVersion: number;
@@ -112,28 +131,28 @@ export type Snapshot = Readonly<{
   stamina: number;
   health: number;
   actionable: boolean;
-   capabilities: readonly string[];
-   catalogRevision: number;
-   enabledActionIds: readonly string[];
-/** Older Mod snapshots may omit fields added after the initial bridge contract. */
-currentTool?: string | null;
-inventorySlots?: number;
-/**
- * The persistent native exhaustion flag. While set, Farmer's day-update
- * restores only half of MaxStamina the next morning, so this is the agent's
- * own accrued consequence, not a transient read. Required on every Mod snapshot:
- * while it was optional an absent field was indistinguishable from a real false,
- * so the projection reported "not exhausted" to the Agent for a Mod that simply
- * did not send it. The world-not-ready snapshot sends false.
- */
-exhausted: boolean;
+  capabilities: readonly string[];
+  catalogRevision: number;
+  enabledActionIds: readonly string[];
+  /** Older Mod snapshots may omit fields added after the initial bridge contract. */
+  currentTool?: string | null;
+  inventorySlots?: number;
+  /**
+   * The persistent native exhaustion flag. While set, Farmer's day-update
+   * restores only half of MaxStamina the next morning, so this is the agent's
+   * own accrued consequence, not a transient read. Required on every Mod snapshot:
+   * while it was optional an absent field was indistinguishable from a real false,
+   * so the projection reported "not exhausted" to the Agent for a Mod that simply
+   * did not send it. The world-not-ready snapshot sends false.
+   */
+  exhausted: boolean;
   /** The World Model’s disposition for this snapshot’s tick: which of idle / modal / event / pass_out /
    * transient holds the body. `actorDispositionDetail` names the modal class or transient kind when the kind
    * carries one. Published so a planner can see WHAT is holding the actor, not only that it is held. */
   actorDispositionKind?: string;
   actorDispositionDetail?: string | null;
   actorDispositionActionOwned?: boolean;
-activeExecution?: ActiveExecution | null;
+  activeExecution?: ActiveExecution | null;
   /** Exact current Mod BCP-47 presentation locale; required on every Mod snapshot. */
   presentationLocale: string;
   /**
@@ -193,8 +212,14 @@ activeExecution?: ActiveExecution | null;
     stack: number;
   }>[];
   /** Nearby native item drops available through Debris.collect. */
-  itemTargets?: readonly Readonly<{ targetId: string; x: number; y: number; qualifiedItemId: string;
-    displayName: string; stack: number }>[];
+  itemTargets?: readonly Readonly<{
+    targetId: string;
+    x: number;
+    y: number;
+    qualifiedItemId: string;
+    displayName: string;
+    stack: number;
+  }>[];
   /** Exact live Watering Can facts for a bounded refill request. */
   wateringCanFacts?: readonly Readonly<{
     slot: number;
@@ -216,7 +241,14 @@ activeExecution?: ActiveExecution | null;
   bushTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number }>[];
   fruitTreeTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number }>[];
   shakeTreeTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number }>[];
-  pedestalTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; qualifiedItemId: string; stack: number }>[];
+  pedestalTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    qualifiedItemId: string;
+    stack: number;
+  }>[];
   fenceGateTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; isOpen: boolean }>[];
   /** Nearby ready, ordinary Grab crops available through native Crop.harvest. */
   harvestTargets?: readonly Readonly<{
@@ -229,7 +261,14 @@ activeExecution?: ActiveExecution | null;
     regrowsAfterHarvest: boolean;
   }>[];
   /** Nearby empty HoeDirt targets paired with a live inventory seed slot. */
-  seedTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; qualifiedItemId: string; displayName: string }>[];
+  seedTargets?: readonly Readonly<{
+    targetId: string;
+    slot: number;
+    x: number;
+    y: number;
+    qualifiedItemId: string;
+    displayName: string;
+  }>[];
   /** Nearby ground HoeDirt targets paired with a live fertilizer slot. */
   fertilizerTargets?: readonly Readonly<{
     targetId: string;
@@ -417,15 +456,43 @@ activeExecution?: ActiveExecution | null;
     health: number;
   }>[];
   /** Nearby open plantable tiles paired with an owned wild-tree sapling slot (plant_sapling). */
-  treeSaplingTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; qualifiedItemId: string; displayName: string }>[];
+  treeSaplingTargets?: readonly Readonly<{
+    targetId: string;
+    slot: number;
+    x: number;
+    y: number;
+    qualifiedItemId: string;
+    displayName: string;
+  }>[];
   /** Nearby Weed objects cuttable by an equipped scythe (cut_weeds). */
   weedTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; health: number }>[];
   /** Nearby Grass tufts (TerrainFeature) cuttable by an equipped scythe (cut_grass); grassType 1/7 drops Hay into a silo, 6 drops rare items. */
-  grassTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; grassType: number; numberOfWeeds: number }>[];
+  grassTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    grassType: number;
+    numberOfWeeds: number;
+  }>[];
   /** Nearby live Casks available to clear_cask. */
-  caskTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; hasHeldObject: boolean; heldQualifiedItemId: string | null }>[];
+  caskTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    hasHeldObject: boolean;
+    heldQualifiedItemId: string | null;
+  }>[];
   mannequinTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number }>[];
-  signTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; hasDisplayItem: boolean; displayQualifiedItemId: string | null }>[];
+  signTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    hasDisplayItem: boolean;
+    displayQualifiedItemId: string | null;
+  }>[];
   siloTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; hay: number }>[];
   lanternSlots?: readonly Readonly<{ slot: number; isOn: boolean; fuelLeft: number }>[];
   /** Nearby ready Scythe-method crops harvestable by an equipped scythe (scythe_crop). */
@@ -532,14 +599,31 @@ activeExecution?: ActiveExecution | null;
   /** Nearby empty native AnimalHouse Trough tiles paired with an owned Hay slot. Placement does not prove an animal has eaten. */
   feedTroughTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; hayStack: number }>[];
   /** Nearby player-owned ordinary Chests with a storable item in the Farmhand inventory (chest_store). */
-  chestStoreTargets?: readonly Readonly<{ targetId: string; x: number; y: number; slot: number; qualifiedItemId: string;
-    displayName: string; stack: number }>[];
+  chestStoreTargets?: readonly Readonly<{
+    targetId: string;
+    x: number;
+    y: number;
+    slot: number;
+    qualifiedItemId: string;
+    displayName: string;
+    stack: number;
+  }>[];
   /** Nearby player-owned ordinary Chests holding an item retrievable into the Farmhand inventory (chest_retrieve). */
-  chestRetrieveTargets?: readonly Readonly<{ targetId: string; x: number; y: number; qualifiedItemId: string;
-    displayName: string; stack: number }>[];
+  chestRetrieveTargets?: readonly Readonly<{
+    targetId: string;
+    x: number;
+    y: number;
+    qualifiedItemId: string;
+    displayName: string;
+    stack: number;
+  }>[];
   /** Bounded live inventory facts, currently published only for animal-product output rereads. */
-  inventoryItemFacts?: readonly Readonly<{ slot: number; qualifiedItemId: string;
-    displayName: string; stack: number }>[];
+  inventoryItemFacts?: readonly Readonly<{
+    slot: number;
+    qualifiedItemId: string;
+    displayName: string;
+    stack: number;
+  }>[];
   /** Owned, ordinary edible inventory items available through the native eat path. */
   foodTargets?: readonly Readonly<{
     slot: number;
@@ -550,18 +634,30 @@ activeExecution?: ActiveExecution | null;
     isDrink: boolean;
   }>[];
   /** The current Farm's single native Shipping Bin paired with one shippable inventory slot (ship_item). */
-  shippingBinTargets?: readonly Readonly<{ targetId: string; x: number; y: number; slot: number; qualifiedItemId: string;
-    displayName: string; stack: number }>[];
+  shippingBinTargets?: readonly Readonly<{
+    targetId: string;
+    x: number;
+    y: number;
+    slot: number;
+    qualifiedItemId: string;
+    displayName: string;
+    stack: number;
+  }>[];
   /** Learned crafting recipes, each under the exact expectedTargetId craft_item accepts. */
   craftingRecipeTargets?: readonly Readonly<{ targetId: string; displayName: string; ingredientsAvailable: boolean }>[];
   /** Learned cooking recipes, each under the exact expectedTargetId cook_recipe accepts. */
   cookingRecipeTargets?: readonly Readonly<{ targetId: string; displayName: string; ingredientsAvailable: boolean }>[];
   /** Live cooking stations (vanilla kitchen action tile or a placed (BC)278 cookout kit) on the current map. */
-  cookingStationTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
-    stationKind: "kitchen" | "cookout_kit" }>[];
-   /** Available native minecart rides from a station on the current map, as
-    * advertised for the `ride_minecart` action. */
-   /** Floors the mine elevator offers right now. The Mod derives them from the live
+  cookingStationTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    stationKind: "kitchen" | "cookout_kit";
+  }>[];
+  /** Available native minecart rides from a station on the current map, as
+   * advertised for the `ride_minecart` action. */
+  /** Floors the mine elevator offers right now. The Mod derives them from the live
    * lowest level reached; a floor outside this list is refused on the game thread. */
   /** Shops whose owner is eligible AND standing in the actor's current location. The
    * owner tile is published so the Agent can walk into reach itself; this action
@@ -584,49 +680,94 @@ activeExecution?: ActiveExecution | null;
     isCurrentFloor: boolean;
     isMineEntrance: boolean;
   }>[];
-  minecartTargets?: readonly Readonly<{ targetId: string; networkId: string; destinationId: string;
-     displayName: string; price: number; stationX: number; stationY: number; targetLocation: string;
-     targetTileX: number; targetTileY: number }>[];
-   /** Adjacent native water tiles where the equipped Raft can be launched. */
-   raftTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
-   horseTargets?: readonly Readonly<{ targetId: string; x: number; y: number; name: string }>[];
-   mineEntranceTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
-   /** Warp obelisks the actor can reach. `route` names which native path reaches it (a
-    * Data/Buildings obelisk building, or the island farm obelisk tile) and the opaque id
-    * carries it, so an island-tile target can never be replayed against a building. */
-   /** A building's animal door. `isOpen` is published because the action's postcondition is that the
+  minecartTargets?: readonly Readonly<{
+    targetId: string;
+    networkId: string;
+    destinationId: string;
+    displayName: string;
+    price: number;
+    stationX: number;
+    stationY: number;
+    targetLocation: string;
+    targetTileX: number;
+    targetTileY: number;
+  }>[];
+  /** Adjacent native water tiles where the equipped Raft can be launched. */
+  raftTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
+  horseTargets?: readonly Readonly<{ targetId: string; x: number; y: number; name: string }>[];
+  mineEntranceTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
+  /** Warp obelisks the actor can reach. `route` names which native path reaches it (a
+   * Data/Buildings obelisk building, or the island farm obelisk tile) and the opaque id
+   * carries it, so an island-tile target can never be replayed against a building. */
+  /** A building's animal door. `isOpen` is published because the action's postcondition is that the
    * state FLIPPED, and a target whose identity ignores its state cannot be verified. */
-  animalDoorTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
-    buildingType: string; isOpen: boolean }>[];
+  animalDoorTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    buildingType: string;
+    isOpen: boolean;
+  }>[];
 
   /** Built fish ponds that currently HOLD fish. `occupants` is how many fish the action would eject
    * and `fishType` is what they are, because the fish land on the ground for the Agent to collect - a
    * count alone does not say whether they are what the errand wanted. An empty pond is never published,
    * since it has nothing to clear. */
-  fishPondTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
-    buildingType: string; occupants: number; fishType: string }>[];
+  fishPondTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    buildingType: string;
+    occupants: number;
+    fishType: string;
+  }>[];
 
   /** One object the world-object lane can act on at a world tile, plus the backpack slot that
    * acts. `kind` is what the live object IS for this lane ('placement_candidate',
    * 'removable_object', 'non_removable_object', 'breakable_container'); `slot` is the backpack
    * slot the named action must act through, or -1 when the actor owns no tool for it. */
-  worldObjectTargets?: readonly Readonly<{ targetId: string; kind: string; location: string; x: number;
-    y: number; slot: number; qualifiedItemId: string; displayName: string }>[];
+  worldObjectTargets?: readonly Readonly<{
+    targetId: string;
+    kind: string;
+    location: string;
+    x: number;
+    y: number;
+    slot: number;
+    qualifiedItemId: string;
+    displayName: string;
+  }>[];
   /** One farm-building fact the build_farm_building caller can name. `kind` is what the fact IS
    * for this lane: 'build_site' is a free footprint the named building type could go on now (the
    * structure does not exist yet, so `buildingId` is the literal 'none' and `daysOfConstructionLeft`
    * is -1), and 'built' is a building already standing in the current location, carrying its durable
    * id and construction days. `buildCost` and `buildDays` are the type's own Data/Buildings facts -
    * what the commission charges and how long it takes. */
-  farmBuildingTargets?: readonly Readonly<{ targetId: string; kind: string; location: string; x: number;
-    y: number; buildingType: string; displayName: string; buildCost: number; buildDays: number;
-    buildingId: string; daysOfConstructionLeft: number }>[];
+  farmBuildingTargets?: readonly Readonly<{
+    targetId: string;
+    kind: string;
+    location: string;
+    x: number;
+    y: number;
+    buildingType: string;
+    displayName: string;
+    buildCost: number;
+    buildDays: number;
+    buildingId: string;
+    daysOfConstructionLeft: number;
+  }>[];
   /** The day's posted help-wanted quests the actor can name, and whether today's has already been
    * accepted. `acceptedDailyQuest` is the world flag the accept turns true, so a quest is never
    * offered twice; `questType` is the native `Quest.questType`. */
   dailyQuestTargets?: readonly Readonly<{ targetId: string; questType: number; title: string }>[];
   acceptedDailyQuest?: boolean;
-  specialOrderTargets?: readonly Readonly<{ targetId: string; questKey: string; orderType: string; generationSeed: number }>[];
+  specialOrderTargets?: readonly Readonly<{
+    targetId: string;
+    questKey: string;
+    orderType: string;
+    generationSeed: number;
+  }>[];
   activeSpecialOrderKeys?: readonly string[];
   museumRewardTargets?: readonly Readonly<{ targetId: string; location: string; rewardCount: number }>[];
   /** The sewing-machine targets this actor can act on right now: the pair of backpack slots and the
@@ -636,26 +777,74 @@ activeExecution?: ActiveExecution | null;
   /** One placed chest the actor can repaint right now, with the colour it already carries. Published only
    * while `color_placed_object` is advertised. */
   colorTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; color: string }>[];
-  tailoringTargets?: readonly Readonly<{ targetId: string; kind: string; leftSlot: number; rightSlot: number; leftQualifiedItemId: string; rightQualifiedItemId: string; outputQualifiedItemId: string; garmentColour: string | null; garmentName: string | null }>[];
+  tailoringTargets?: readonly Readonly<{
+    targetId: string;
+    kind: string;
+    leftSlot: number;
+    rightSlot: number;
+    leftQualifiedItemId: string;
+    rightQualifiedItemId: string;
+    outputQualifiedItemId: string;
+    garmentColour: string | null;
+    garmentName: string | null;
+  }>[];
   /** One body slot's occupant, if any. `bodySlot` is the slot a request names; the occupant fields
    * say what is really there, which is what makes a stale request detectable and what an unequip moves. */
-  wearableTargets?: readonly Readonly<{ targetId: string; bodySlot: string; occupantQualifiedItemId: string | null; occupantDisplayName: string | null }>[];
+  wearableTargets?: readonly Readonly<{
+    targetId: string;
+    bodySlot: string;
+    occupantQualifiedItemId: string | null;
+    occupantDisplayName: string | null;
+  }>[];
   /** A held warp totem and the destination the totem ITSELF names. */
-  warpItemTargets?: readonly Readonly<{ slot: number; qualifiedItemId: string; displayName: string; stack: number; destination: string; destinationX: number; destinationY: number }>[];
+  warpItemTargets?: readonly Readonly<{
+    slot: number;
+    qualifiedItemId: string;
+    displayName: string;
+    stack: number;
+    destination: string;
+    destinationX: number;
+    destinationY: number;
+  }>[];
   /** The location's live ore-pan point; the game owns at most one per location. */
   panSites?: readonly Readonly<{ x: number; y: number }>[];
   /** One mailbox tile, with the number of letters waiting. */
-  mailboxTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; pendingCount: number }>[];
-   /** A building's own declared chest (Data/Buildings -> BuildingData.Chests). `branch` is the native
+  mailboxTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    pendingCount: number;
+  }>[];
+  /** A building's own declared chest (Data/Buildings -> BuildingData.Chests). `branch` is the native
    * branch the chest takes (`load` or `collect`; the Chest type is never published, because it can
    * only open a container menu) and `stackCount`/`itemCount` are the LIVE chest's own counts:
    * collect auto-collects exactly one stack and load moves whole `RequiredCount` quanta, so a target
    * whose identity ignored them could not be used to decide whether a call can succeed. */
-  buildingChestTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number;
-    buildingType: string; chestId: string; branch: "load" | "collect"; stackCount: number;
-    itemCount: number; loadInputSlot?: number; loadInputQualifiedItemId?: string; loadInputStack?: number }>[];
-  obeliskTargets?: readonly Readonly<{ targetId: string; route: string; location: string; x: number;
-     y: number; displayName: string; destination: string; forceDismount: boolean }>[];
+  buildingChestTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    buildingType: string;
+    chestId: string;
+    branch: "load" | "collect";
+    stackCount: number;
+    itemCount: number;
+    loadInputSlot?: number;
+    loadInputQualifiedItemId?: string;
+    loadInputStack?: number;
+  }>[];
+  obeliskTargets?: readonly Readonly<{
+    targetId: string;
+    route: string;
+    location: string;
+    x: number;
+    y: number;
+    displayName: string;
+    destination: string;
+    forceDismount: boolean;
+  }>[];
 }>;
 
 /** Mod-local player policy is summarized as live capabilities, not bearer tokens. */
@@ -672,7 +861,6 @@ export type ExecutionRequest = Readonly<{
     | "select_mine_elevator_floor"
     | "ride_bus"
     | "withdraw_silo_hay"
-
     | "place_owned_object"
     | "remove_placed_item"
     | "break_container_source"
@@ -747,7 +935,7 @@ export type ExecutionRequest = Readonly<{
     | "ship_item"
     | "water_pet_bowl"
     | "dismiss_modal"
-| "answer_dialogue"
+    | "answer_dialogue"
     | "water_slime_hutch_trough"
     | "harvest_bush"
     | "harvest_fruit_tree"
@@ -785,7 +973,20 @@ export type ObserveSceneRequest = Readonly<{ radius?: number }>;
 
 export type ObserveSceneAffordance = Readonly<{
   ref: string;
-  kind: "npc" | "chest" | "crop" | "tree" | "animal" | "forage" | "door" | "machine" | "water_source" | "weed" | "stone" | "debris" | "artifact_spot";
+  kind:
+    | "npc"
+    | "chest"
+    | "crop"
+    | "tree"
+    | "animal"
+    | "forage"
+    | "door"
+    | "machine"
+    | "water_source"
+    | "weed"
+    | "stone"
+    | "debris"
+    | "artifact_spot";
   name: string;
   distance: number;
   direction: "North" | "South" | "East" | "West" | "CurrentTile";
@@ -1067,6 +1268,15 @@ export type ActionRegistrationDescriptor = Readonly<{
   evidenceSchema?: string | Readonly<Record<string, unknown>>;
   nativeBinding?: string;
   canonicalCodec?: string;
+  /**
+   * The Mod's OWN watchdog for this action, in milliseconds: hang protection it already owns (`WatchdogMs` on the
+   * Mod's descriptor; the lifecycle actions carry 600s because a night waits on other players, the save and the day
+   * start). Published so a dispatch deadline can be sized the way the action was designed to be waited on, instead
+   * of one hard-coded number for every action - measured 2026-10-17: `advance_day` went out with a 30s deadline
+   * against a 600s watchdog, so it timed out by construction and the failure read as the companion being unable to
+   * sleep.
+   */
+  watchdogMs?: number;
   postcondition?: string | Readonly<{ name: string }>;
 }>;
 
@@ -1079,12 +1289,8 @@ export type ActionRegistration = Readonly<{
   descriptor?: ActionRegistrationDescriptor;
 }>;
 
-
 /** Typed destination selector accepted by the C# Body Program wire contract. */
-type BodyProgramDestinationSelector = Readonly<
-  | { kind: "label"; label: string }
-  | { kind: "ref"; ref: string }
->;
+type BodyProgramDestinationSelector = Readonly<{ kind: "label"; label: string } | { kind: "ref"; ref: string }>;
 /** Exact Host runtime value. Scalar kinds retain canonicalValue; destination_selector retains its typed object payload. */
 type BodyProgramRuntimeValue =
   | Readonly<{ type: "integer" | "string" | "boolean"; canonicalValue: string }>
@@ -1180,7 +1386,10 @@ export type BridgeMessage =
   | Envelope<"observe_scene_request", ObserveSceneRequest>
   | Envelope<"observe_scene_result", ObserveSceneResult>
   | Envelope<"snapshot", Snapshot>
-  | Envelope<"catalog_update", Readonly<{ catalogRevision: number; policyIdentity: FarmhandPolicyIdentity; enabledActionIds: readonly string[] }>>
+  | Envelope<
+      "catalog_update",
+      Readonly<{ catalogRevision: number; policyIdentity: FarmhandPolicyIdentity; enabledActionIds: readonly string[] }>
+    >
   | Envelope<"execution_request", ExecutionRequest>
   | Envelope<"body_node_admission_challenge", BodyNodeAdmissionChallenge>
   | Envelope<"body_node_admission_grant", BodyNodeAdmissionGrant>
@@ -1190,7 +1399,10 @@ export type BridgeMessage =
   | Envelope<"companion_presentation_request", CompanionPresentationRequest>
   | Envelope<"system_notice_request", SystemNoticeRequest>
   | Envelope<"system_notice_receipt", SystemNoticeReceipt>
-  | Envelope<"companion_presentation_receipt", Readonly<{ expressionId: string; revision: number; presentationEpoch: number }>>
+  | Envelope<
+      "companion_presentation_receipt",
+      Readonly<{ expressionId: string; revision: number; presentationEpoch: number }>
+    >
   | Envelope<"player_control_receipt", PlayerControlReceipt>
   | Envelope<"execution_receipt", ExecutionReceipt>
   | Envelope<"program_submit", BodyProgramCandidateRequest>
@@ -1205,11 +1417,37 @@ export type BridgeMessage =
   | Envelope<"world_fact", WorldFactPayload>;
 
 const BRIDGE_MESSAGE_TYPES = [
-  "hello", "hello_ack", "observe_request", "navigation_read_request", "navigation_read_result", "observe_scene_request", "observe_scene_result", "snapshot", "catalog_update",
-  "execution_request", "body_node_admission_challenge", "body_node_admission_grant", "body_node_admission_result", "execution_receipt_query", "cancel_request", "companion_presentation_request", "system_notice_request",
-  "system_notice_receipt", "companion_presentation_receipt", "player_control_receipt", "execution_receipt",
-  "program_submit", "program_submit_result", "program_status", "program_status_result",
-  "program_events", "program_events_result", "error", "semantic_event", "lifecycle", "world_fact",
+  "hello",
+  "hello_ack",
+  "observe_request",
+  "navigation_read_request",
+  "navigation_read_result",
+  "observe_scene_request",
+  "observe_scene_result",
+  "snapshot",
+  "catalog_update",
+  "execution_request",
+  "body_node_admission_challenge",
+  "body_node_admission_grant",
+  "body_node_admission_result",
+  "execution_receipt_query",
+  "cancel_request",
+  "companion_presentation_request",
+  "system_notice_request",
+  "system_notice_receipt",
+  "companion_presentation_receipt",
+  "player_control_receipt",
+  "execution_receipt",
+  "program_submit",
+  "program_submit_result",
+  "program_status",
+  "program_status_result",
+  "program_events",
+  "program_events_result",
+  "error",
+  "semantic_event",
+  "lifecycle",
+  "world_fact",
 ] as const;
 
 const SNAPSHOT_KEYS = [
@@ -1267,13 +1505,13 @@ const SNAPSHOT_KEYS = [
   "treeStumpTargets",
   "treeSaplingTargets",
   "weedTargets",
-    "grassTargets",
-    "caskTargets",
-    "mannequinTargets",
-    "signTargets",
-    "siloTargets",
-    "lanternSlots",
-    "scytheCropTargets",
+  "grassTargets",
+  "caskTargets",
+  "mannequinTargets",
+  "signTargets",
+  "siloTargets",
+  "lanternSlots",
+  "scytheCropTargets",
   "npcRelationshipTargets",
   "villagerWhereabouts",
   "harvestWhereabouts",
@@ -1315,13 +1553,10 @@ const SNAPSHOT_KEYS = [
   "panSites",
   "mailboxTargets",
   "weather",
-    "raftTargets",
-    "horseTargets",
-    "mineEntranceTargets",
-
+  "raftTargets",
+  "horseTargets",
+  "mineEntranceTargets",
 ] as const;
-
-
 
 export function newEnvelope<
   TType extends BridgeMessage["type"],
@@ -1403,8 +1638,16 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
   if (envelopeError !== null) return envelopeError;
   const message = value as BridgeMessage;
   const payload = message.payload as Record<string, unknown>;
-  if (message.type === "body_node_admission_challenge" || message.type === "body_node_admission_grant" || message.type === "body_node_admission_result") {
-    try { serializeBounded(message); } catch (error) { return error instanceof Error ? error.message : "message_not_serializable"; }
+  if (
+    message.type === "body_node_admission_challenge" ||
+    message.type === "body_node_admission_grant" ||
+    message.type === "body_node_admission_result"
+  ) {
+    try {
+      serializeBounded(message);
+    } catch (error) {
+      return error instanceof Error ? error.message : "message_not_serializable";
+    }
   }
   switch (message.type) {
     case "hello":
@@ -1423,9 +1666,9 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
       ]) &&
         isOpaqueId(payload.sessionId) &&
         isStringArray(payload.capabilities) &&
-         isNonNegativeSafeInteger(payload.catalogRevision) &&
-         isFarmhandPolicyIdentity(payload.policyIdentity) &&
-         isUniqueOpaqueIdArray(payload.enabledActionIds) &&
+        isNonNegativeSafeInteger(payload.catalogRevision) &&
+        isFarmhandPolicyIdentity(payload.policyIdentity) &&
+        isUniqueOpaqueIdArray(payload.enabledActionIds) &&
         isBcp47Locale(payload.presentationLocale) &&
         isValidActionRegistrations(payload.registrations) &&
         isValidRuntimeAttestation(payload.runtimeRole, payload.launchGeneration)
@@ -1548,13 +1791,20 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
     case "program_submit_result":
       return validateBodyProgramSubmitResult(payload);
     case "program_status":
-      return hasExactKeys(payload, ["programId"]) && isOpaqueId(payload.programId) ? null : "invalid_body_program_request";
+      return hasExactKeys(payload, ["programId"]) && isOpaqueId(payload.programId)
+        ? null
+        : "invalid_body_program_request";
     case "program_status_result":
       return validateBodyProgramStatusResult(payload);
     case "program_events":
-      return hasExactKeys(payload, ["programId", "cursor", "pageSize"]) && isOpaqueId(payload.programId) &&
-        isNonNegativeSafeInteger(payload.cursor) && Number.isSafeInteger(payload.pageSize) &&
-        (payload.pageSize as number) >= 1 && (payload.pageSize as number) <= 32 ? null : "invalid_body_program_request";
+      return hasExactKeys(payload, ["programId", "cursor", "pageSize"]) &&
+        isOpaqueId(payload.programId) &&
+        isNonNegativeSafeInteger(payload.cursor) &&
+        Number.isSafeInteger(payload.pageSize) &&
+        (payload.pageSize as number) >= 1 &&
+        (payload.pageSize as number) <= 32
+        ? null
+        : "invalid_body_program_request";
     case "program_events_result":
       return validateBodyProgramEventsResult(payload);
     case "error":
@@ -1579,15 +1829,54 @@ export function validateBodyNodeAdmissionPayload(value: unknown, grant = false):
 
 function validateBodyNodeAdmissionResult(value: Record<string, unknown>): string | null {
   if (value.result === "granted") {
-    if (!hasExactKeys(value, ["result", "programId", "nodeId", "nodeAttempt", "admissionAttempt", "stopEpoch", "catalogRevision", "policyIdentity", "actionId", "canonicalBoundArgs", "derivedResourceClaims", "deadlineMs", "grantId", "attachmentGeneration", "policyRevision", "executionBinding"]))
+    if (
+      !hasExactKeys(value, [
+        "result",
+        "programId",
+        "nodeId",
+        "nodeAttempt",
+        "admissionAttempt",
+        "stopEpoch",
+        "catalogRevision",
+        "policyIdentity",
+        "actionId",
+        "canonicalBoundArgs",
+        "derivedResourceClaims",
+        "deadlineMs",
+        "grantId",
+        "attachmentGeneration",
+        "policyRevision",
+        "executionBinding",
+      ])
+    )
       return "invalid_body_node_admission_result";
     const { result: _result, ...grant } = value;
     return validateBodyNodeAdmissionGrant(grant);
   }
   if (value.result === "rejected" || value.result === "unavailable") {
-    if (!hasExactKeys(value, ["result", "code", "programId", "nodeId", "nodeAttempt", "admissionAttempt", "stopEpoch", "catalogRevision", "policyIdentity", "actionId", "canonicalBoundArgs", "derivedResourceClaims", "deadlineMs"]))
+    if (
+      !hasExactKeys(value, [
+        "result",
+        "code",
+        "programId",
+        "nodeId",
+        "nodeAttempt",
+        "admissionAttempt",
+        "stopEpoch",
+        "catalogRevision",
+        "policyIdentity",
+        "actionId",
+        "canonicalBoundArgs",
+        "derivedResourceClaims",
+        "deadlineMs",
+      ])
+    )
       return "invalid_body_node_admission_result";
-    if (typeof value.code !== "string" || !isReasonCode(value.code) || (value.result === "unavailable" && value.code !== "admission_unavailable"))
+    if (
+      typeof value.code !== "string" ||
+      !isReasonCode(value.code) ||
+      (value.result === "unavailable" && value.code !== "admission_unavailable")
+    )
       return "invalid_body_node_admission_result";
     const { result: _result, code: _code, ...challenge } = value;
     return validateBodyNodeAdmissionChallenge(challenge);
@@ -1596,52 +1885,162 @@ function validateBodyNodeAdmissionResult(value: Record<string, unknown>): string
 }
 
 function validateBodyNodeAdmissionChallenge(value: Record<string, unknown>, grant = false): string | null {
-  const base = ["programId","nodeId","nodeAttempt","admissionAttempt","stopEpoch","catalogRevision","policyIdentity","actionId","canonicalBoundArgs","derivedResourceClaims","deadlineMs"];
+  const base = [
+    "programId",
+    "nodeId",
+    "nodeAttempt",
+    "admissionAttempt",
+    "stopEpoch",
+    "catalogRevision",
+    "policyIdentity",
+    "actionId",
+    "canonicalBoundArgs",
+    "derivedResourceClaims",
+    "deadlineMs",
+  ];
   if (grant) base.push("grantId", "attachmentGeneration", "policyRevision", "executionBinding");
-  if (!hasExactKeys(value, base) || !isOpaqueId(value.programId) || !isOpaqueId(value.nodeId) || !isOpaqueId(value.actionId)) return "invalid_body_node_admission_challenge";
-  if (!["nodeAttempt","admissionAttempt"].every(k => isPositiveSafeInteger(value[k]) && (value[k] as number) <= 2_147_483_647) || !["stopEpoch","catalogRevision"].every(k => isNonNegativeSafeInteger(value[k])) || !isPositiveSafeInteger(value.deadlineMs)) return "invalid_body_node_admission_challenge";
-  if (!isRecord(value.policyIdentity) || !hasExactKeys(value.policyIdentity,["value","capabilityRevision"]) || !isAdmissionOpaque(value.policyIdentity.value) || !isNonNegativeSafeInteger(value.policyIdentity.capabilityRevision) || !isRecord(value.canonicalBoundArgs) || !isRecord(value.derivedResourceClaims)) return "invalid_body_node_admission_challenge";
-  return Object.keys(value.derivedResourceClaims).length <= 16 && Object.keys(value.canonicalBoundArgs).length <= 32 && Object.entries(value.derivedResourceClaims).every(([k,v])=>isAdmissionMapKey(k)&&isOpaqueId(v)) && Object.entries(value.canonicalBoundArgs).every(([k,v])=>isAdmissionMapKey(k)&&isBodyCanonicalValue(v)) ? null : "invalid_body_node_admission_challenge";
+  if (
+    !hasExactKeys(value, base) ||
+    !isOpaqueId(value.programId) ||
+    !isOpaqueId(value.nodeId) ||
+    !isOpaqueId(value.actionId)
+  )
+    return "invalid_body_node_admission_challenge";
+  if (
+    !["nodeAttempt", "admissionAttempt"].every(
+      (k) => isPositiveSafeInteger(value[k]) && (value[k] as number) <= 2_147_483_647,
+    ) ||
+    !["stopEpoch", "catalogRevision"].every((k) => isNonNegativeSafeInteger(value[k])) ||
+    !isPositiveSafeInteger(value.deadlineMs)
+  )
+    return "invalid_body_node_admission_challenge";
+  if (
+    !isRecord(value.policyIdentity) ||
+    !hasExactKeys(value.policyIdentity, ["value", "capabilityRevision"]) ||
+    !isAdmissionOpaque(value.policyIdentity.value) ||
+    !isNonNegativeSafeInteger(value.policyIdentity.capabilityRevision) ||
+    !isRecord(value.canonicalBoundArgs) ||
+    !isRecord(value.derivedResourceClaims)
+  )
+    return "invalid_body_node_admission_challenge";
+  return Object.keys(value.derivedResourceClaims).length <= 16 &&
+    Object.keys(value.canonicalBoundArgs).length <= 32 &&
+    Object.entries(value.derivedResourceClaims).every(([k, v]) => isAdmissionMapKey(k) && isOpaqueId(v)) &&
+    Object.entries(value.canonicalBoundArgs).every(([k, v]) => isAdmissionMapKey(k) && isBodyCanonicalValue(v))
+    ? null
+    : "invalid_body_node_admission_challenge";
 }
 function validateBodyNodeAdmissionGrant(value: Record<string, unknown>): string | null {
-  const err = validateBodyNodeAdmissionChallenge(value, true); if (err) return "invalid_body_node_admission_grant";
-  if (!hasExactKeys(value,["programId","nodeId","nodeAttempt","admissionAttempt","stopEpoch","catalogRevision","policyIdentity","actionId","canonicalBoundArgs","derivedResourceClaims","deadlineMs","grantId","attachmentGeneration","policyRevision","executionBinding"]) || !isOpaqueId(value.grantId) || !isAdmissionOpaque(value.attachmentGeneration) || !isAdmissionOpaque(value.policyRevision)) return "invalid_body_node_admission_grant";
+  const err = validateBodyNodeAdmissionChallenge(value, true);
+  if (err) return "invalid_body_node_admission_grant";
+  if (
+    !hasExactKeys(value, [
+      "programId",
+      "nodeId",
+      "nodeAttempt",
+      "admissionAttempt",
+      "stopEpoch",
+      "catalogRevision",
+      "policyIdentity",
+      "actionId",
+      "canonicalBoundArgs",
+      "derivedResourceClaims",
+      "deadlineMs",
+      "grantId",
+      "attachmentGeneration",
+      "policyRevision",
+      "executionBinding",
+    ]) ||
+    !isOpaqueId(value.grantId) ||
+    !isAdmissionOpaque(value.attachmentGeneration) ||
+    !isAdmissionOpaque(value.policyRevision)
+  )
+    return "invalid_body_node_admission_grant";
   const binding = value.executionBinding;
-  return binding === null || (isRecord(binding) && hasExactKeys(binding, ["programId", "nodeId", "nodeAttempt", "requestId", "idempotencyKey", "executionId"])
-    && binding.programId === value.programId && binding.nodeId === value.nodeId && binding.nodeAttempt === value.nodeAttempt
-    && isOpaqueId(binding.requestId) && isOpaqueId(binding.idempotencyKey) && isOpaqueId(binding.executionId)) ? null : "invalid_body_node_admission_grant";
+  return binding === null ||
+    (isRecord(binding) &&
+      hasExactKeys(binding, ["programId", "nodeId", "nodeAttempt", "requestId", "idempotencyKey", "executionId"]) &&
+      binding.programId === value.programId &&
+      binding.nodeId === value.nodeId &&
+      binding.nodeAttempt === value.nodeAttempt &&
+      isOpaqueId(binding.requestId) &&
+      isOpaqueId(binding.idempotencyKey) &&
+      isOpaqueId(binding.executionId))
+    ? null
+    : "invalid_body_node_admission_grant";
 }
 function isFarmhandPolicyIdentity(value: unknown): value is FarmhandPolicyIdentity {
-  return isRecord(value) && hasExactKeys(value, ["value", "capabilityRevision"]) &&
-    typeof value.value === "string" && /^[0-9a-f]{32}$/iu.test(value.value) &&
-    isPositiveSafeInteger(value.capabilityRevision);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["value", "capabilityRevision"]) &&
+    typeof value.value === "string" &&
+    /^[0-9a-f]{32}$/iu.test(value.value) &&
+    isPositiveSafeInteger(value.capabilityRevision)
+  );
 }
 
 function isAdmissionMapKey(value: unknown): value is string {
   return isOpaqueId(value) && value !== "__proto__";
 }
 function isAdmissionOpaque(value: unknown): value is string {
-  return typeof value === "string" && value.length >= 1 && value.length <= 4096 && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 4096 &&
+    !/[\u0000-\u001f\u007f-\u009f]/u.test(value)
+  );
 }
 function isBodyCanonicalValue(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (value.type === "destination_selector") {
     const destination = value.destination;
-    return hasExactKeys(value, ["type", "destination"]) && isRecord(destination) && (
-      (hasExactKeys(destination, ["kind", "label"]) && destination.kind === "label" && typeof destination.label === "string"
-        && destination.label.length >= 1 && destination.label.length <= 128 && destination.label.trim().length > 0 && destination.label.normalize("NFC") === destination.label)
-      || (hasExactKeys(destination, ["kind", "ref"]) && destination.kind === "ref" && typeof destination.ref === "string" && /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/u.test(destination.ref)));
+    return (
+      hasExactKeys(value, ["type", "destination"]) &&
+      isRecord(destination) &&
+      ((hasExactKeys(destination, ["kind", "label"]) &&
+        destination.kind === "label" &&
+        typeof destination.label === "string" &&
+        destination.label.length >= 1 &&
+        destination.label.length <= 128 &&
+        destination.label.trim().length > 0 &&
+        destination.label.normalize("NFC") === destination.label) ||
+        (hasExactKeys(destination, ["kind", "ref"]) &&
+          destination.kind === "ref" &&
+          typeof destination.ref === "string" &&
+          /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/u.test(destination.ref)))
+    );
   }
-  if (!hasExactKeys(value, ["type", "canonicalValue"]) || typeof value.canonicalValue !== "string" || value.canonicalValue.length > 512) return false;
+  if (
+    !hasExactKeys(value, ["type", "canonicalValue"]) ||
+    typeof value.canonicalValue !== "string" ||
+    value.canonicalValue.length > 512
+  )
+    return false;
   if (value.type === "string") return true;
   if (value.type === "boolean") return value.canonicalValue === "true" || value.canonicalValue === "false";
   if (value.type !== "integer" || !/^(?:0|-?[1-9][0-9]*)$/u.test(value.canonicalValue)) return false;
   const integer = BigInt(value.canonicalValue);
   return integer >= -9223372036854775808n && integer <= 9223372036854775807n;
 }
-function isPositiveSafeInteger(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) > 0; }
+function isPositiveSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) > 0;
+}
 
-const OBSERVE_SCENE_KINDS = new Set(["npc", "chest", "crop", "tree", "animal", "forage", "door", "machine", "water_source", "weed", "stone", "debris", "artifact_spot"]);
+const OBSERVE_SCENE_KINDS = new Set([
+  "npc",
+  "chest",
+  "crop",
+  "tree",
+  "animal",
+  "forage",
+  "door",
+  "machine",
+  "water_source",
+  "weed",
+  "stone",
+  "debris",
+  "artifact_spot",
+]);
 const OBSERVE_SCENE_DIRECTIONS = new Set(["North", "South", "East", "West", "CurrentTile"]);
 const OBSERVE_SCENE_TRUNCATION_REASONS = new Set(["maximum_affordances", "payload_limit", "ground_limit"]);
 const SCENE_GROUND_KINDS = new Set(["grass", "dirt", "stone", "wood", "other"]);
@@ -1654,18 +2053,33 @@ const MAXIMUM_SCENE_GROUND_EXCEPTIONS = 12;
  */
 function validateObserveSceneGround(value: unknown): boolean {
   if (value === null) return true;
-  if (!isRecord(value) ||
-      !hasExactKeys(value, ["dominantKind", "dominantTileCount", "scannedTileCount", "exceptions", "omittedExceptionTileCount"])) return false;
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "dominantKind",
+      "dominantTileCount",
+      "scannedTileCount",
+      "exceptions",
+      "omittedExceptionTileCount",
+    ])
+  )
+    return false;
   if (typeof value.dominantKind !== "string" || !SCENE_GROUND_KINDS.has(value.dominantKind)) return false;
   if (!Number.isSafeInteger(value.dominantTileCount) || (value.dominantTileCount as number) < 0) return false;
   if (!Number.isSafeInteger(value.scannedTileCount) || (value.scannedTileCount as number) < 0) return false;
   if ((value.dominantTileCount as number) > (value.scannedTileCount as number)) return false;
-  if (!Number.isSafeInteger(value.omittedExceptionTileCount) || (value.omittedExceptionTileCount as number) < 0) return false;
+  if (!Number.isSafeInteger(value.omittedExceptionTileCount) || (value.omittedExceptionTileCount as number) < 0)
+    return false;
   if (!Array.isArray(value.exceptions) || value.exceptions.length > MAXIMUM_SCENE_GROUND_EXCEPTIONS) return false;
-  return value.exceptions.every((tile) => isRecord(tile) &&
-    hasExactKeys(tile, ["tileX", "tileY", "kind"]) &&
-    Number.isSafeInteger(tile.tileX) && Number.isSafeInteger(tile.tileY) &&
-    typeof tile.kind === "string" && SCENE_GROUND_KINDS.has(tile.kind));
+  return value.exceptions.every(
+    (tile) =>
+      isRecord(tile) &&
+      hasExactKeys(tile, ["tileX", "tileY", "kind"]) &&
+      Number.isSafeInteger(tile.tileX) &&
+      Number.isSafeInteger(tile.tileY) &&
+      typeof tile.kind === "string" &&
+      SCENE_GROUND_KINDS.has(tile.kind),
+  );
 }
 
 export function isValidObserveSceneRequest(value: unknown): value is ObserveSceneRequest {
@@ -1678,50 +2092,80 @@ export function isValidObserveSceneResult(value: unknown): value is ObserveScene
 
 function validateObserveSceneRequest(value: Record<string, unknown>): string | null {
   if (hasExactKeys(value, [])) return null;
-  return hasExactKeys(value, ["radius"]) && Number.isSafeInteger(value.radius) &&
-    (value.radius as number) >= 0 && (value.radius as number) <= 30
+  return hasExactKeys(value, ["radius"]) &&
+    Number.isSafeInteger(value.radius) &&
+    (value.radius as number) >= 0 &&
+    (value.radius as number) <= 30
     ? null
     : "invalid_observe_scene_request";
 }
 
 function validateObserveSceneResult(value: Record<string, unknown>): string | null {
-  if (!hasExactKeys(value, ["observationId", "currentLocation", "currentRegion", "affordances", "summary", "partial", "truncatedReason", "ground"]) ||
-      !isOpaqueId(value.observationId) ||
-      !boundedSceneText(value.currentLocation, 128) || !boundedSceneText(value.currentRegion, 128) ||
-      !boundedSceneText(value.summary, 512) || typeof value.partial !== "boolean" ||
-      !Array.isArray(value.affordances) || value.affordances.length > 20 ||
-      (value.partial
-        ? typeof value.truncatedReason !== "string" || !OBSERVE_SCENE_TRUNCATION_REASONS.has(value.truncatedReason)
-        : value.truncatedReason !== null) ||
-      !validateObserveSceneGround(value.ground))
+  if (
+    !hasExactKeys(value, [
+      "observationId",
+      "currentLocation",
+      "currentRegion",
+      "affordances",
+      "summary",
+      "partial",
+      "truncatedReason",
+      "ground",
+    ]) ||
+    !isOpaqueId(value.observationId) ||
+    !boundedSceneText(value.currentLocation, 128) ||
+    !boundedSceneText(value.currentRegion, 128) ||
+    !boundedSceneText(value.summary, 512) ||
+    typeof value.partial !== "boolean" ||
+    !Array.isArray(value.affordances) ||
+    value.affordances.length > 20 ||
+    (value.partial
+      ? typeof value.truncatedReason !== "string" || !OBSERVE_SCENE_TRUNCATION_REASONS.has(value.truncatedReason)
+      : value.truncatedReason !== null) ||
+    !validateObserveSceneGround(value.ground)
+  )
     return "invalid_observe_scene_result";
   const refs = new Set<string>();
   return value.affordances.every((affordance) => {
     // `reachable` is OPTIONAL and tri-state: `false` is a measured no, ABSENT or null is undecided (nobody checked),
     // and a `null` may never read as `false`. Presence changes the exact-key set, so it is decided before that check.
     const allowReachable = affordance.reachable !== undefined;
-    if (!isRecord(affordance) ||
-        !hasExactKeys(
-          affordance,
-          allowReachable
-            ? ["ref", "kind", "name", "distance", "direction", "actionHint", "reachable"]
-            : ["ref", "kind", "name", "distance", "direction", "actionHint"],
-        ) ||
-        !isSceneReference(affordance.ref) || typeof affordance.kind !== "string" || !OBSERVE_SCENE_KINDS.has(affordance.kind) ||
-        !boundedSceneText(affordance.name, 128) || !Number.isSafeInteger(affordance.distance) ||
-        (affordance.distance as number) < 0 || (affordance.distance as number) > 30 ||
-        typeof affordance.direction !== "string" || !OBSERVE_SCENE_DIRECTIONS.has(affordance.direction) ||
-        (affordance.actionHint !== null && !boundedSceneText(affordance.actionHint, 160)) ||
-        (allowReachable && affordance.reachable !== null && typeof affordance.reachable !== "boolean") ||
-        refs.has(affordance.ref))
+    if (
+      !isRecord(affordance) ||
+      !hasExactKeys(
+        affordance,
+        allowReachable
+          ? ["ref", "kind", "name", "distance", "direction", "actionHint", "reachable"]
+          : ["ref", "kind", "name", "distance", "direction", "actionHint"],
+      ) ||
+      !isSceneReference(affordance.ref) ||
+      typeof affordance.kind !== "string" ||
+      !OBSERVE_SCENE_KINDS.has(affordance.kind) ||
+      !boundedSceneText(affordance.name, 128) ||
+      !Number.isSafeInteger(affordance.distance) ||
+      (affordance.distance as number) < 0 ||
+      (affordance.distance as number) > 30 ||
+      typeof affordance.direction !== "string" ||
+      !OBSERVE_SCENE_DIRECTIONS.has(affordance.direction) ||
+      (affordance.actionHint !== null && !boundedSceneText(affordance.actionHint, 160)) ||
+      (allowReachable && affordance.reachable !== null && typeof affordance.reachable !== "boolean") ||
+      refs.has(affordance.ref)
+    )
       return false;
     refs.add(affordance.ref as string);
     return true;
-  }) ? null : "invalid_observe_scene_result";
+  })
+    ? null
+    : "invalid_observe_scene_result";
 }
 
 function boundedSceneText(value: unknown, maximumLength: number): value is string {
-  return typeof value === "string" && value.length >= 1 && value.length <= maximumLength && !/[\u0000-\u001f\u007f\u0080-\u009f]/u.test(value);
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= maximumLength &&
+    !/[\u0000-\u001f\u007f\u0080-\u009f]/u.test(value)
+  );
 }
 
 function isSceneReference(value: unknown): value is string {
@@ -1755,38 +2199,63 @@ function validateNavigationReadResult(value: Record<string, unknown>): string | 
   if (!hasExactKeys(value, keys) || !isReasonCode(value.reason)) return "invalid_navigation_read_result";
   if (value.status === "succeeded") {
     return value.reason === "world_map_observed" &&
-      Array.isArray(value.entries) && value.entries.length <= 20 && value.entries.every(isNavigationWorldMapEntry) &&
+      Array.isArray(value.entries) &&
+      value.entries.length <= 20 &&
+      value.entries.every(isNavigationWorldMapEntry) &&
       (value.nextCursor === null || isOpaqueId(value.nextCursor)) &&
-      value.candidates === null && value.destination === null && value.unlockState === null
-      ? null : "invalid_navigation_read_result";
+      value.candidates === null &&
+      value.destination === null &&
+      value.unlockState === null
+      ? null
+      : "invalid_navigation_read_result";
   }
   if (value.status === "resolved") {
-    return (value.reason === "exact_current_locale" || value.reason === "exact_fallback_locale" || value.reason === "exact_alias") &&
-      value.entries === null && value.nextCursor === null && value.candidates === null &&
-      isNavigationSelector(value.destination) && value.unlockState === "unknown"
-      ? null : "invalid_navigation_read_result";
+    return (value.reason === "exact_current_locale" ||
+      value.reason === "exact_fallback_locale" ||
+      value.reason === "exact_alias") &&
+      value.entries === null &&
+      value.nextCursor === null &&
+      value.candidates === null &&
+      isNavigationSelector(value.destination) &&
+      value.unlockState === "unknown"
+      ? null
+      : "invalid_navigation_read_result";
   }
   if (value.status === "candidates") {
     return (value.reason === "ambiguous_exact" || value.reason === "fuzzy_match") &&
-      value.entries === null && value.nextCursor === null && Array.isArray(value.candidates) &&
-      value.candidates.length >= 1 && value.candidates.length <= 3 && value.candidates.every(isNavigationSearchCandidate) &&
-      value.destination === null && value.unlockState === null
-      ? null : "invalid_navigation_read_result";
+      value.entries === null &&
+      value.nextCursor === null &&
+      Array.isArray(value.candidates) &&
+      value.candidates.length >= 1 &&
+      value.candidates.length <= 3 &&
+      value.candidates.every(isNavigationSearchCandidate) &&
+      value.destination === null &&
+      value.unlockState === null
+      ? null
+      : "invalid_navigation_read_result";
   }
   const validTerminal =
     (value.status === "not_found" && value.reason === "destination_not_found") ||
     (value.status === "invalid" && value.reason === "destination_search_invalid") ||
     (value.status === "blocked" && isReasonCode(value.reason));
-  return validTerminal && value.entries === null && value.nextCursor === null && value.candidates === null &&
-    value.destination === null && value.unlockState === null
-    ? null : "invalid_navigation_read_result";
+  return validTerminal &&
+    value.entries === null &&
+    value.nextCursor === null &&
+    value.candidates === null &&
+    value.destination === null &&
+    value.unlockState === null
+    ? null
+    : "invalid_navigation_read_result";
 }
 
 function isExecutionNavigationDestinationSelector(value: unknown): boolean {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
   return value.kind === "label"
     ? hasExactKeys(value, ["kind", "label"]) && isBoundedNonEmptyString(value.label, 128)
-    : value.kind === "ref" && hasExactKeys(value, ["kind", "ref"]) && typeof value.ref === "string" && /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref);
+    : value.kind === "ref" &&
+        hasExactKeys(value, ["kind", "ref"]) &&
+        typeof value.ref === "string" &&
+        /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref);
 }
 
 function isNavigationSelector(value: unknown): value is NavigationSelector {
@@ -1797,18 +2266,25 @@ function isNavigationSelector(value: unknown): value is NavigationSelector {
 }
 
 function isNavigationWorldMapEntry(value: unknown): value is NavigationWorldMapEntry {
-  return isRecord(value) && hasExactKeys(value, ["label", "contextLabel", "nodeRef", "destination"]) &&
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["label", "contextLabel", "nodeRef", "destination"]) &&
     isBoundedNonEmptyString(value.label, 128) &&
     (value.contextLabel === null || isBoundedNonEmptyString(value.contextLabel, 128)) &&
     (value.nodeRef === null || isOpaqueId(value.nodeRef)) &&
-    (value.destination === null || isNavigationSelector(value.destination));
+    (value.destination === null || isNavigationSelector(value.destination))
+  );
 }
 
 function isNavigationSearchCandidate(value: unknown): value is NavigationSearchCandidate {
-  return isRecord(value) && hasExactKeys(value, ["label", "contextLabel", "destination", "unlockState"]) &&
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["label", "contextLabel", "destination", "unlockState"]) &&
     isBoundedNonEmptyString(value.label, 128) &&
     (value.contextLabel === null || isBoundedNonEmptyString(value.contextLabel, 128)) &&
-    isNavigationSelector(value.destination) && value.unlockState === "unknown";
+    isNavigationSelector(value.destination) &&
+    value.unlockState === "unknown"
+  );
 }
 
 function isBoundedNonEmptyString(value: unknown, maxLength: number): value is string {
@@ -1816,7 +2292,6 @@ function isBoundedNonEmptyString(value: unknown, maxLength: number): value is st
 }
 
 export function validateExecutionRequest(value: unknown, snapshot: Snapshot, nowMs = Date.now()): string | null {
-
   const worldObjectArgsVerdict = validateWorldObjectActionArgs(value);
   if (worldObjectArgsVerdict !== null) return worldObjectArgsVerdict;
   if (
@@ -1830,45 +2305,44 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "navigate_to_destination" &&
     value.action !== "equip_tool" &&
     value.action !== "travel" &&
-     value.action !== "ride_minecart" &&
-     value.action !== "ride_bus" &&
-     value.action !== "withdraw_silo_hay" &&
-     value.action !== "use_obelisk" &&
-     value.action !== "toggle_animal_door" &&
-     value.action !== "clear_fish_pond" &&
+    value.action !== "ride_minecart" &&
+    value.action !== "ride_bus" &&
+    value.action !== "withdraw_silo_hay" &&
+    value.action !== "use_obelisk" &&
+    value.action !== "toggle_animal_door" &&
+    value.action !== "clear_fish_pond" &&
     value.action !== "accept_daily_quest" &&
-     value.action !== "accept_special_order" &&
-     value.action !== "claim_museum_reward" &&
-     value.action !== "redeem_prize_ticket" &&
-     value.action !== "tailor_clothing" &&
-     value.action !== "dye_clothing_with_item" &&
-     value.action !== "color_placed_object" &&
-     value.action !== "build_farm_building" &&
-     value.action !== "send_multiplayer_chat" &&
-     value.action !== "name_entity" &&
-
-     value.action !== "place_owned_object" &&
-     value.action !== "remove_placed_item" &&
-     value.action !== "break_container_source" &&
-     value.action !== "use_warp_item" &&
-     value.action !== "pan_ore" &&
-     value.action !== "claim_mail_attachment" &&
-     value.action !== "load_building_chest" &&
-     value.action !== "collect_building_chest_output" &&
-     value.action !== "shop_purchase" &&
-     value.action !== "select_mine_elevator_floor" &&
-     value.action !== "use_raft" &&
-     value.action !== "mount_transport" &&
-     value.action !== "enter_mine" &&
-     value.action !== "enter_exit" &&
+    value.action !== "accept_special_order" &&
+    value.action !== "claim_museum_reward" &&
+    value.action !== "redeem_prize_ticket" &&
+    value.action !== "tailor_clothing" &&
+    value.action !== "dye_clothing_with_item" &&
+    value.action !== "color_placed_object" &&
+    value.action !== "build_farm_building" &&
+    value.action !== "send_multiplayer_chat" &&
+    value.action !== "name_entity" &&
+    value.action !== "place_owned_object" &&
+    value.action !== "remove_placed_item" &&
+    value.action !== "break_container_source" &&
+    value.action !== "use_warp_item" &&
+    value.action !== "pan_ore" &&
+    value.action !== "claim_mail_attachment" &&
+    value.action !== "load_building_chest" &&
+    value.action !== "collect_building_chest_output" &&
+    value.action !== "shop_purchase" &&
+    value.action !== "select_mine_elevator_floor" &&
+    value.action !== "use_raft" &&
+    value.action !== "mount_transport" &&
+    value.action !== "enter_mine" &&
+    value.action !== "enter_exit" &&
     value.action !== "till_soil" &&
     value.action !== "pickup_forage" &&
     value.action !== "pickup_item" &&
     value.action !== "water_crop" &&
     value.action !== "water_pet_bowl" &&
-     value.action !== "dismiss_modal" &&
-     value.action !== "answer_dialogue" &&
-     value.action !== "water_slime_hutch_trough" &&
+    value.action !== "dismiss_modal" &&
+    value.action !== "answer_dialogue" &&
+    value.action !== "water_slime_hutch_trough" &&
     value.action !== "refill_watering_can" &&
     value.action !== "harvest_crop" &&
     value.action !== "plant_seed" &&
@@ -1899,14 +2373,14 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "chest_retrieve" &&
     value.action !== "chop_stump" &&
     value.action !== "plant_sapling" &&
-     value.action !== "cut_weeds" &&
-     value.action !== "cut_grass" &&
-     value.action !== "clear_cask" &&
-     value.action !== "dress_mannequin" &&
-     value.action !== "set_sign_display" &&
-     value.action !== "deposit_silo_hay" &&
-     value.action !== "toggle_tool_light" &&
-     value.action !== "scythe_crop" &&
+    value.action !== "cut_weeds" &&
+    value.action !== "cut_grass" &&
+    value.action !== "clear_cask" &&
+    value.action !== "dress_mannequin" &&
+    value.action !== "set_sign_display" &&
+    value.action !== "deposit_silo_hay" &&
+    value.action !== "toggle_tool_light" &&
+    value.action !== "scythe_crop" &&
     value.action !== "interact_npc_with_item" &&
     value.action !== "craft_item" &&
     value.action !== "cook_recipe" &&
@@ -1948,36 +2422,50 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   // named hold (WorldModel.HoldReasonCode) plus the facts its countermeasure needs.
   if (!snapshot.capabilities.includes(value.action)) return "capability_not_declared";
   if (value.action === "move_to_tile") {
-    if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
+    if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_target_tile";
   } else if (value.action === "navigate_to_destination") {
     if (!hasExactKeys(value.args, ["destination"])) return "invalid_args";
-    
+
     if (!isExecutionNavigationDestinationSelector(value.args.destination)) return "invalid_navigation_destination";
   } else if (value.action === "equip_tool") {
     if (!hasExactKeys(value.args, ["tool"])) return "invalid_args";
-    
+
     if (!isToolSelector(value.args.tool)) return "invalid_tool_selector";
   } else if (value.action === "travel") {
-    if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
+
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_warp_source";
   } else if (value.action === "use_raft") {
     const args = value.args;
     if (!hasExactKeys(args, ["slot", "x", "y"])) return "invalid_args";
     if (!isToolSlot(args.slot) || !isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_raft_target";
     const targets = snapshot.raftTargets;
-    if (!Array.isArray(targets) || !targets.some(target => target.x === args.x && target.y === args.y)) return "invalid_raft_target";
+    if (!Array.isArray(targets) || !targets.some((target) => target.x === args.x && target.y === args.y))
+      return "invalid_raft_target";
   } else if (value.action === "mount_transport") {
     const mountArgs = value.args;
     if (!hasExactKeys(mountArgs, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(mountArgs.x) || !isTileCoordinate(mountArgs.y) || !isOpaqueId(mountArgs.expectedTargetId)) return "invalid_horse_target";
-    if (!snapshot.horseTargets?.some(target => target.targetId === mountArgs.expectedTargetId && target.x === mountArgs.x && target.y === mountArgs.y)) return "invalid_horse_target";
+    if (!isTileCoordinate(mountArgs.x) || !isTileCoordinate(mountArgs.y) || !isOpaqueId(mountArgs.expectedTargetId))
+      return "invalid_horse_target";
+    if (
+      !snapshot.horseTargets?.some(
+        (target) =>
+          target.targetId === mountArgs.expectedTargetId && target.x === mountArgs.x && target.y === mountArgs.y,
+      )
+    )
+      return "invalid_horse_target";
   } else if (value.action === "enter_mine") {
     const mineArgs = value.args;
     if (!hasExactKeys(mineArgs, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(mineArgs.x) || !isTileCoordinate(mineArgs.y) || !isOpaqueId(mineArgs.expectedTargetId)) return "invalid_mine_entrance";
-    if (!snapshot.mineEntranceTargets?.some(target => target.targetId === mineArgs.expectedTargetId && target.x === mineArgs.x && target.y === mineArgs.y)) return "invalid_mine_entrance";
+    if (!isTileCoordinate(mineArgs.x) || !isTileCoordinate(mineArgs.y) || !isOpaqueId(mineArgs.expectedTargetId))
+      return "invalid_mine_entrance";
+    if (
+      !snapshot.mineEntranceTargets?.some(
+        (target) => target.targetId === mineArgs.expectedTargetId && target.x === mineArgs.x && target.y === mineArgs.y,
+      )
+    )
+      return "invalid_mine_entrance";
   } else if (value.action === "ride_minecart") {
     // The station tile plus one exact published ride. Both x/y and the opaque
     // selector are mandatory: unlike `travel`, there is no "plain" form, so a
@@ -1997,7 +2485,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     // purse on the game thread, so nothing here needs to model pricing or stock.
     if (!hasExactKeys(value.args, ["expectedTargetId", "expectedQualifiedItemId", "quantity"])) return "invalid_args";
     if (!isOpaqueId(value.args.expectedTargetId)) return "invalid_shop_target";
-    if (typeof value.args.expectedQualifiedItemId !== "string" || value.args.expectedQualifiedItemId.length === 0) return "invalid_expected_item";
+    if (typeof value.args.expectedQualifiedItemId !== "string" || value.args.expectedQualifiedItemId.length === 0)
+      return "invalid_expected_item";
     if (!Number.isSafeInteger(value.args.quantity) || (value.args.quantity as number) < 1) return "invalid_quantity";
   } else if (
     value.action === "withdraw_silo_hay" ||
@@ -2021,7 +2510,6 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     // branch above - refused every request the Mod would have accepted, so the action was advertised
     // and could never execute.
     if (!hasExactKeys(value.args, ["expectedTargetId"])) return "invalid_execution_request";
-
   } else if (value.action === "accept_special_order" || value.action === "claim_museum_reward") {
     // The offer's / reward set's identity ALONE. Neither projection publishes a tile, and the Mod's own
     // wire parser pins exactly { expectedTargetId } for both (BridgeProtocol.ExecutionArgumentProperties),
@@ -2045,9 +2533,15 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     // The Data/Buildings type id, the top-left footprint tile and the opaque site id. The Mod
     // re-resolves the type against Game1.buildingData and the site against the LIVE world.
     if (!hasExactKeys(value.args, ["buildingType", "x", "y", "expectedTargetId"])) return "invalid_execution_request";
-    if (typeof value.args.buildingType !== "string" || value.args.buildingType.length === 0 || value.args.buildingType.length > 128) return "invalid_build_building_type";
+    if (
+      typeof value.args.buildingType !== "string" ||
+      value.args.buildingType.length === 0 ||
+      value.args.buildingType.length > 128
+    )
+      return "invalid_build_building_type";
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_build_site";
-    if (typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId)) return "invalid_build_target";
+    if (typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId))
+      return "invalid_build_target";
   } else if (value.action === "collect_building_chest_output") {
     // All four take the shared { x, y, expectedTargetId } shape and no slot.
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
@@ -2065,7 +2559,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     // the game thread, so this only checks the shape.
     if (!hasExactKeys(value.args, ["slot", "expectedQualifiedItemId"])) return "invalid_execution_request";
     if (!Number.isSafeInteger(value.args.slot) || (value.args.slot as number) < 0) return "invalid_warp_item_slot";
-    if (typeof value.args.expectedQualifiedItemId !== "string" || value.args.expectedQualifiedItemId.length === 0) return "invalid_expected_item";
+    if (typeof value.args.expectedQualifiedItemId !== "string" || value.args.expectedQualifiedItemId.length === 0)
+      return "invalid_expected_item";
   } else if (value.action === "load_building_chest") {
     // load_building_chest carries a required `slot` on top of that shape: the native Load branch
     // reads who.ActiveObject (the HELD item, i.e. Items[CurrentToolIndex]), not "some item in the
@@ -2089,30 +2584,31 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     // client-supplied target to validate, so the args must be exactly empty.
     if (!hasExactKeys(value.args, [])) return "invalid_args";
   } else if (value.action === "enter_exit") {
-    if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
+
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_door_target";
   } else if (value.action === "till_soil") {
-    if (!hasExactKeys(value.args, ["x","y"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
+
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_soil_target";
   } else if (value.action === "pickup_forage") {
-    if (!hasExactKeys(value.args, ["x","y","expectedQualifiedItemId","expectedTargetId","sceneTarget"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget"]))
+      return "invalid_args";
+
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
       typeof value.args.expectedQualifiedItemId !== "string" ||
       value.args.expectedQualifiedItemId.length === 0 ||
       value.args.expectedQualifiedItemId.length > 128 ||
-       typeof value.args.expectedTargetId !== "string" ||
-       !isOpaqueId(value.args.expectedTargetId) ||
-       !isObservationBindingV1(value.args.sceneTarget)
-     )
-       return "invalid_forage_target";
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId) ||
+      !isObservationBindingV1(value.args.sceneTarget)
+    )
+      return "invalid_forage_target";
   } else if (value.action === "pickup_item") {
-    if (!hasExactKeys(value.args, ["x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -2124,8 +2620,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_item_target";
   } else if (value.action === "refill_watering_can") {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -2136,8 +2632,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_refill_watering_can_target";
   } else if (value.action === "water_crop") {
-    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -2146,7 +2642,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_crop_target";
   } else if (value.action === "water_pet_bowl") {
-    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -2155,12 +2651,17 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_pet_bowl_target";
   } else if (value.action === "dismiss_modal") {
-     if (!hasExactKeys(value.args, [])) return "invalid_args";
-   } else if (value.action === "answer_dialogue") {
-     if (!hasExactKeys(value.args, ["responseKey"])) return "invalid_args";
-     if (typeof value.args.responseKey !== "string" || value.args.responseKey.length < 1 || value.args.responseKey.length > 128) return "invalid_response_key";
-   } else if (value.action === "water_slime_hutch_trough") {
-    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
+    if (!hasExactKeys(value.args, [])) return "invalid_args";
+  } else if (value.action === "answer_dialogue") {
+    if (!hasExactKeys(value.args, ["responseKey"])) return "invalid_args";
+    if (
+      typeof value.args.responseKey !== "string" ||
+      value.args.responseKey.length < 1 ||
+      value.args.responseKey.length > 128
+    )
+      return "invalid_response_key";
+  } else if (value.action === "water_slime_hutch_trough") {
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -2169,8 +2670,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_slime_hutch_trough_target";
   } else if (value.action === "harvest_crop") {
-    if (!hasExactKeys(value.args, ["x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -2182,8 +2683,9 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_harvest_target";
   } else if (value.action === "plant_seed") {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
+      return "invalid_args";
+
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -2197,8 +2699,9 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_seed_target";
   } else if (value.action === "fertilize_tile") {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
+      return "invalid_args";
+
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -2216,8 +2719,9 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action === "place_crab_pot" ||
     value.action === "bait_crab_pot"
   ) {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
+      return "invalid_args";
+
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -2234,8 +2738,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
           ? "invalid_bait_crab_pot_target"
           : "invalid_crab_pot_target";
   } else if (value.action === "clear_debris") {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
@@ -2245,8 +2749,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_debris_target";
   } else if (value.action === "machine_inspect") {
-    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -2255,8 +2759,9 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_machine_target";
   } else if (value.action === "machine_load") {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
+      return "invalid_args";
+
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -2268,8 +2773,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_machine_load_target";
   } else if (value.action === "machine_collect_output") {
-    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !hasOnlyKeys(value.args, ["x", "y", "expectedTargetId"]) ||
       !isTileCoordinate(value.args.x) ||
@@ -2279,8 +2784,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_machine_collect_target";
   } else if (value.action === "npc_relationship") {
-    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -2292,7 +2797,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     // The NPC family's shared shape: the opaque family target id names the villager and
     // x/y is only the published tile the walk leg heads for. The Mod re-resolves the person
     // from the id on the game thread, so there is nothing else to model here.
-    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -2300,12 +2805,11 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_npc_talk_target";
-
   } else if (value.action === "equip_wearable") {
     // The wearable family's shape: an opaque body-slot target id, the backpack slot the item comes
     // from, and that item's wire identity. The Mod re-resolves the slot and its occupant on the
     // game thread, so there is nothing else to model here.
-    if (!hasExactKeys(value.args, ["slot","expectedQualifiedItemId","expectedTargetId"])) return "invalid_args";
+    if (!hasExactKeys(value.args, ["slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
     if (
       !isToolSlot(value.args.slot) ||
       typeof value.args.expectedQualifiedItemId !== "string" ||
@@ -2317,7 +2821,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   } else if (value.action === "unequip_wearable") {
     // No item id: the item is whatever the named body slot already holds, and `slot` is the EMPTY
     // backpack slot the removed wearable must land in.
-    if (!hasExactKeys(value.args, ["slot","expectedTargetId"])) return "invalid_args";
+    if (!hasExactKeys(value.args, ["slot", "expectedTargetId"])) return "invalid_args";
     if (
       !isToolSlot(value.args.slot) ||
       typeof value.args.expectedTargetId !== "string" ||
@@ -2328,8 +2832,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     // No arguments at all: the subject is the actor's own mount and its readiness is native state.
     if (!hasExactKeys(value.args, [])) return "invalid_args";
   } else if (value.action === "pet_animal") {
-    if (!hasExactKeys(value.args, ["x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -2338,8 +2842,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_pet_target";
   } else if (value.action === "collect_animal_product") {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
@@ -2349,8 +2853,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_animal_product_target";
   } else if (value.action === "feed_animal") {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
@@ -2360,8 +2864,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_feed_trough_target";
   } else if (value.action === "break_rock_source") {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -2372,8 +2876,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_break_rock_source_target";
   } else if (value.action === "dig_artifact_spot") {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -2384,8 +2888,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_dig_artifact_spot_target";
   } else if (value.action === "clear_hoedirt") {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -2396,8 +2900,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_clear_hoedirt_target";
   } else if (value.action === "chop_tree_source") {
-    if (!hasExactKeys(value.args, ["slot","x","y","expectedTargetId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
+
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
@@ -2408,8 +2912,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_chop_tree_source_target";
   } else if (value.action === "use_item") {
-    if (!hasExactKeys(value.args, ["slot","expectedQualifiedItemId"])) return "invalid_args";
-    
+    if (!hasExactKeys(value.args, ["slot", "expectedQualifiedItemId"])) return "invalid_args";
+
     if (
       !isToolSlot(value.args.slot) ||
       typeof value.args.expectedQualifiedItemId !== "string" ||
@@ -2419,16 +2923,21 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       return "invalid_item_use_target";
   } else if (value.action === "express_emote") {
     if (!hasExactKeys(value.args, ["emote"])) return "invalid_args";
-    
+
     if (typeof value.args.emote !== "string" || value.args.emote.length === 0 || value.args.emote.length > 64)
       return "invalid_emote";
   } else if (value.action === "face_direction") {
     if (!hasExactKeys(value.args, ["direction"])) return "invalid_args";
-    
-    if (typeof value.args.direction !== "string" || value.args.direction.length === 0 || value.args.direction.length > 64)
+
+    if (
+      typeof value.args.direction !== "string" ||
+      value.args.direction.length === 0 ||
+      value.args.direction.length > 64
+    )
       return "invalid_direction";
   } else if (value.action === "chest_store" || value.action === "chest_retrieve") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
+      return "invalid_args";
     if (
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
@@ -2441,15 +2950,38 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       return "invalid_chest_target";
   } else if (value.action === "clear_cask") {
     if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-    if (!isToolSlot(value.args.slot) || !isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y) || typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId))
+    if (
+      !isToolSlot(value.args.slot) ||
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
       return "invalid_cask_target";
-  } else if (value.action === "dress_mannequin" || value.action === "set_sign_display" || value.action === "deposit_silo_hay") {
+  } else if (
+    value.action === "dress_mannequin" ||
+    value.action === "set_sign_display" ||
+    value.action === "deposit_silo_hay"
+  ) {
     if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-    if (!isToolSlot(value.args.slot) || !isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y) || typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId)) return "invalid_facility_target";
+    if (
+      !isToolSlot(value.args.slot) ||
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_facility_target";
   } else if (value.action === "toggle_tool_light") {
     if (!hasExactKeys(value.args, ["slot", "x", "y"])) return "invalid_args";
-    if (!isToolSlot(value.args.slot) || !isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_lantern_slot";
-  } else if (value.action === "chop_stump" || value.action === "cut_weeds" || value.action === "cut_grass" || value.action === "scythe_crop") {
+    if (!isToolSlot(value.args.slot) || !isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y))
+      return "invalid_lantern_slot";
+  } else if (
+    value.action === "chop_stump" ||
+    value.action === "cut_weeds" ||
+    value.action === "cut_grass" ||
+    value.action === "scythe_crop"
+  ) {
     if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
     if (
       !isToolSlot(value.args.slot) ||
@@ -2460,7 +2992,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_tool_target";
   } else if (value.action === "plant_sapling") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
+      return "invalid_args";
     if (
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
@@ -2472,7 +3005,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_sapling_target";
   } else if (value.action === "interact_npc_with_item") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
+      return "invalid_args";
     if (
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
@@ -2497,7 +3031,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_crab_pot_target";
   } else if (value.action === "ship_item") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
+      return "invalid_args";
     if (
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
@@ -2508,9 +3043,18 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_ship_target";
-  } else if (["harvest_bush", "harvest_fruit_tree", "shake_tree", "take_pedestal_item", "toggle_fence_gate"].includes(value.action)) {
+  } else if (
+    ["harvest_bush", "harvest_fruit_tree", "shake_tree", "take_pedestal_item", "toggle_fence_gate"].includes(
+      value.action,
+    )
+  ) {
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y) || typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId))
+    if (
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
       return `invalid_${value.action}_target`;
   } else if (value.action === "advance_day") {
     // No client-supplied target: the bed and the ready state are native facts.
@@ -2528,12 +3072,21 @@ export function serializeBounded(value: unknown): string {
   }
   if (json === undefined) throw new Error("message_not_serializable");
   if (Buffer.byteLength(json, "utf8") > MAX_MESSAGE_BYTES) throw new Error("message_too_large");
-  if (isRecord(value) && (value.type === "body_node_admission_challenge" || value.type === "body_node_admission_grant" || value.type === "body_node_admission_result")) {
+  if (
+    isRecord(value) &&
+    (value.type === "body_node_admission_challenge" ||
+      value.type === "body_node_admission_grant" ||
+      value.type === "body_node_admission_result")
+  ) {
     const serialized = JSON.parse(json) as Record<string, unknown>;
     const envelopeError = validateEnvelope(serialized, serialized.scope as Scope, serialized.timestampMs as number);
-    const payloadError = !isRecord(serialized.payload) ? "invalid_payload" : serialized.type === "body_node_admission_grant"
-      ? validateBodyNodeAdmissionGrant(serialized.payload) : serialized.type === "body_node_admission_result"
-        ? validateBodyNodeAdmissionResult(serialized.payload) : validateBodyNodeAdmissionChallenge(serialized.payload);
+    const payloadError = !isRecord(serialized.payload)
+      ? "invalid_payload"
+      : serialized.type === "body_node_admission_grant"
+        ? validateBodyNodeAdmissionGrant(serialized.payload)
+        : serialized.type === "body_node_admission_result"
+          ? validateBodyNodeAdmissionResult(serialized.payload)
+          : validateBodyNodeAdmissionChallenge(serialized.payload);
     if (envelopeError || payloadError) throw new Error(envelopeError ?? payloadError!);
   }
   return json;
@@ -2701,7 +3254,11 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     if (typeof value.actorDispositionKind !== "string") return "invalid_snapshot:actorDispositionKind";
     if (!["idle", "modal", "event", "pass_out", "transient"].includes(value.actorDispositionKind))
       return `invalid_snapshot:actorDispositionKind:${value.actorDispositionKind}`;
-    if (value.actorDispositionDetail !== undefined && value.actorDispositionDetail !== null && typeof value.actorDispositionDetail !== "string")
+    if (
+      value.actorDispositionDetail !== undefined &&
+      value.actorDispositionDetail !== null &&
+      typeof value.actorDispositionDetail !== "string"
+    )
       return "invalid_snapshot:actorDispositionDetail";
     if (value.actorDispositionActionOwned !== undefined && typeof value.actorDispositionActionOwned !== "boolean")
       return "invalid_snapshot:actorDispositionActionOwned";
@@ -2716,7 +3273,8 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   if (!isNonNegativeSafeInteger(value.dayOfMonth) || value.dayOfMonth > 28) return "invalid_snapshot:dayOfMonth";
   if (!isNonNegativeSafeInteger(value.seasonIndex) || value.seasonIndex > 3) return "invalid_snapshot:seasonIndex";
   if (!isNonNegativeSafeInteger(value.year)) return "invalid_snapshot:year";
-  if (value.weather !== undefined && value.weather !== null && !isWeatherToken(value.weather)) return "invalid_snapshot:weather";
+  if (value.weather !== undefined && value.weather !== null && !isWeatherToken(value.weather))
+    return "invalid_snapshot:weather";
   if (value.currentTool !== undefined && value.currentTool !== null && typeof value.currentTool !== "string")
     return "invalid_snapshot:currentTool";
   if (value.inventorySlots !== undefined && !Number.isSafeInteger(value.inventorySlots))
@@ -2742,7 +3300,9 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   // "accepted" sentinel, the bridge's guard discarded that, and the operator saw a bare
   // `invalid_snapshot` naming nothing. Keys are schema names, so naming them leaks no player data.
   if (!hasOnlyKeys(value, SNAPSHOT_KEYS)) {
-    const unexpected = Object.keys(value).filter((key) => !(SNAPSHOT_KEYS as readonly string[]).includes(key)).sort();
+    const unexpected = Object.keys(value)
+      .filter((key) => !(SNAPSHOT_KEYS as readonly string[]).includes(key))
+      .sort();
     if (unexpected.length > 0) return `invalid_snapshot:unexpected_keys:${unexpected.join(",")}`;
     return "invalid_snapshot:missing_required_key";
   }
@@ -2810,54 +3370,54 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
 }
 
 function validateExecutionRequestEnvelope(value: Record<string, unknown>): string | null {
-  return hasExactKeys(value, ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"]) &&
+  return (hasExactKeys(value, ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"]) &&
     isOpaqueId(value.requestId) &&
     isOpaqueId(value.idempotencyKey) &&
-       value.action === "clear_fish_pond" ||
-       value.action === "build_farm_building" ||
-       value.action === "send_multiplayer_chat" ||
-      value.action === "name_entity" ||
-       value.action === "accept_daily_quest" ||
-       value.action === "accept_special_order" ||
-       value.action === "claim_museum_reward" ||
-       value.action === "redeem_prize_ticket" ||
-       value.action === "tailor_clothing" ||
-       value.action === "dye_clothing_with_item" ||
-       value.action === "color_placed_object" ||
-      value.action === "place_owned_object" ||
-      value.action === "remove_placed_item" ||
-      value.action === "break_container_source" ||
-      value.action === "equip_wearable" ||
-      value.action === "unequip_wearable" ||
-      value.action === "dismount_transport" ||
-      value.action === "load_building_chest" ||
-      value.action === "collect_building_chest_output" ||
-      value.action === "use_warp_item" ||
-      value.action === "pan_ore" ||
-      value.action === "claim_mail_attachment" ||
-    (value.action === "move_to_tile" ||
+    value.action === "clear_fish_pond") ||
+    value.action === "build_farm_building" ||
+    value.action === "send_multiplayer_chat" ||
+    value.action === "name_entity" ||
+    value.action === "accept_daily_quest" ||
+    value.action === "accept_special_order" ||
+    value.action === "claim_museum_reward" ||
+    value.action === "redeem_prize_ticket" ||
+    value.action === "tailor_clothing" ||
+    value.action === "dye_clothing_with_item" ||
+    value.action === "color_placed_object" ||
+    value.action === "place_owned_object" ||
+    value.action === "remove_placed_item" ||
+    value.action === "break_container_source" ||
+    value.action === "equip_wearable" ||
+    value.action === "unequip_wearable" ||
+    value.action === "dismount_transport" ||
+    value.action === "load_building_chest" ||
+    value.action === "collect_building_chest_output" ||
+    value.action === "use_warp_item" ||
+    value.action === "pan_ore" ||
+    value.action === "claim_mail_attachment" ||
+    ((value.action === "move_to_tile" ||
       value.action === "navigate_to_destination" ||
       value.action === "equip_tool" ||
       value.action === "travel" ||
-       value.action === "ride_minecart" ||
+      value.action === "ride_minecart" ||
       value.action === "select_mine_elevator_floor" ||
       value.action === "shop_purchase" ||
-       value.action === "ride_bus" ||
-    value.action === "withdraw_silo_hay" ||
-    value.action === "use_obelisk" ||
-    value.action === "toggle_animal_door" ||
-       value.action === "use_raft" ||
-       value.action === "mount_transport" ||
-       value.action === "enter_mine" ||
-       value.action === "enter_exit" ||
+      value.action === "ride_bus" ||
+      value.action === "withdraw_silo_hay" ||
+      value.action === "use_obelisk" ||
+      value.action === "toggle_animal_door" ||
+      value.action === "use_raft" ||
+      value.action === "mount_transport" ||
+      value.action === "enter_mine" ||
+      value.action === "enter_exit" ||
       value.action === "till_soil" ||
       value.action === "pickup_forage" ||
       value.action === "pickup_item" ||
       value.action === "water_crop" ||
       value.action === "water_pet_bowl" ||
-       value.action === "dismiss_modal" ||
-       value.action === "answer_dialogue" ||
-       value.action === "water_slime_hutch_trough" ||
+      value.action === "dismiss_modal" ||
+      value.action === "answer_dialogue" ||
+      value.action === "water_slime_hutch_trough" ||
       value.action === "refill_watering_can" ||
       value.action === "harvest_crop" ||
       value.action === "plant_seed" ||
@@ -2886,13 +3446,13 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "chop_stump" ||
       value.action === "plant_sapling" ||
       value.action === "cut_weeds" ||
-       value.action === "cut_grass" ||
-       value.action === "clear_cask" ||
-       value.action === "dress_mannequin" ||
-       value.action === "set_sign_display" ||
-       value.action === "deposit_silo_hay" ||
-       value.action === "toggle_tool_light" ||
-       value.action === "scythe_crop" ||
+      value.action === "cut_grass" ||
+      value.action === "clear_cask" ||
+      value.action === "dress_mannequin" ||
+      value.action === "set_sign_display" ||
+      value.action === "deposit_silo_hay" ||
+      value.action === "toggle_tool_light" ||
+      value.action === "scythe_crop" ||
       value.action === "interact_npc_with_item" ||
       value.action === "craft_item" ||
       value.action === "cook_recipe" ||
@@ -2904,11 +3464,11 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "take_pedestal_item" ||
       value.action === "toggle_fence_gate" ||
       value.action === "advance_day") &&
-    isRecord(value.args) &&
-    Object.keys(value.args).length <= 8 &&
-    Number.isSafeInteger(value.expectedRevision) &&
-    typeof value.deadlineMs === "number" &&
-    Number.isFinite(value.deadlineMs)
+      isRecord(value.args) &&
+      Object.keys(value.args).length <= 8 &&
+      Number.isSafeInteger(value.expectedRevision) &&
+      typeof value.deadlineMs === "number" &&
+      Number.isFinite(value.deadlineMs))
     ? null
     : "invalid_execution_request";
 }
@@ -2931,7 +3491,8 @@ function validateWorldObjectActionArgs(value: unknown): string | null {
     if (!hasExactKeys(args, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
     if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_placement_tile";
     if (!isToolSlot(args.slot)) return "invalid_placement_slot";
-    if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0) return "invalid_placement_item";
+    if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0)
+      return "invalid_placement_item";
   } else {
     // Removing a placed item and breaking a container both take the tile, the tool slot and the
     // opaque object target, and nothing else.
@@ -2956,12 +3517,13 @@ function validateReceipt(value: Record<string, unknown>): string | null {
     EXECUTION_STATES.includes(value.state as ExecutionState) &&
     isReasonCode(value.reasonCode) &&
     Number.isSafeInteger(value.revision) &&
-    (value.evidence === null || isRecord(value.evidence))
-    &&
+    (value.evidence === null || isRecord(value.evidence)) &&
     (value.ownerKind === undefined || (typeof value.ownerKind === "string" && value.ownerKind.length <= 128)) &&
     (value.interruptible === undefined || typeof value.interruptible === "boolean") &&
     (!("observation" in value) || value.observation === null || validateLocalObservation(value.observation) === null) &&
-    (!("piggybackedScene" in value) || value.piggybackedScene === null || validateObserveSceneResult(value.piggybackedScene as Record<string, unknown>) === null) &&
+    (!("piggybackedScene" in value) ||
+      value.piggybackedScene === null ||
+      validateObserveSceneResult(value.piggybackedScene as Record<string, unknown>) === null) &&
     (!("nativeNotices" in value) || value.nativeNotices === null || isNativeNotices(value.nativeNotices))
     ? null
     : "invalid_receipt";
@@ -2987,7 +3549,10 @@ function isNativeNotices(value: unknown): value is readonly string[] {
 }
 
 export function validateLocalObservation(value: unknown): string | null {
-  if (!isRecord(value) || !hasExactKeys(value, ["location", "tileX", "tileY", "facing", "inGameTime", "playerNearby", "revision"])) {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["location", "tileX", "tileY", "facing", "inGameTime", "playerNearby", "revision"])
+  ) {
     return "invalid_local_observation";
   }
   return typeof value.location === "string" &&
@@ -3085,57 +3650,98 @@ export function isWorldFactMessage(value: unknown): value is Envelope<"world_fac
 }
 
 export function validateBodyProgramCandidateRequest(value: Record<string, unknown>): string | null {
-  if (!hasExactKeys(value, ["programId", "nodes"]) || !isOpaqueId(value.programId) || !Array.isArray(value.nodes) || value.nodes.length < 1 || value.nodes.length > MAX_BODY_PROGRAM_NODES)
+  if (
+    !hasExactKeys(value, ["programId", "nodes"]) ||
+    !isOpaqueId(value.programId) ||
+    !Array.isArray(value.nodes) ||
+    value.nodes.length < 1 ||
+    value.nodes.length > MAX_BODY_PROGRAM_NODES
+  )
     return "invalid_body_program_request";
   return value.nodes.every(isBodyProgramNode) ? null : "invalid_body_program_request";
 }
 
 function isBodyProgramNode(value: unknown): boolean {
-  if (!isRecord(value) || !hasExactKeys(value, ["nodeId", "actionId", "arguments", "dependsOn", "bindings"]) ||
-    !isOpaqueId(value.nodeId) || !isOpaqueId(value.actionId) || !isRecord(value.arguments) || !hasUniqueKeys(value.arguments) ||
-    !Array.isArray(value.dependsOn) || value.dependsOn.length > 8 || !value.dependsOn.every(isOpaqueId) ||
-    !isRecord(value.bindings) || !hasUniqueKeys(value.bindings) || Object.keys(value.bindings).length > MAX_BODY_PROGRAM_BINDINGS_PER_NODE)
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["nodeId", "actionId", "arguments", "dependsOn", "bindings"]) ||
+    !isOpaqueId(value.nodeId) ||
+    !isOpaqueId(value.actionId) ||
+    !isRecord(value.arguments) ||
+    !hasUniqueKeys(value.arguments) ||
+    !Array.isArray(value.dependsOn) ||
+    value.dependsOn.length > 8 ||
+    !value.dependsOn.every(isOpaqueId) ||
+    !isRecord(value.bindings) ||
+    !hasUniqueKeys(value.bindings) ||
+    Object.keys(value.bindings).length > MAX_BODY_PROGRAM_BINDINGS_PER_NODE
+  )
     return false;
-  return Object.entries(value.arguments).every(([name, argument]) => isOpaqueId(name) && isBodyProgramRuntimeValue(argument)) &&
-    Object.entries(value.bindings).every(([name, binding]) => isOpaqueId(name) && isBodyProgramFactReference(binding));
+  return (
+    Object.entries(value.arguments).every(
+      ([name, argument]) => isOpaqueId(name) && isBodyProgramRuntimeValue(argument),
+    ) &&
+    Object.entries(value.bindings).every(([name, binding]) => isOpaqueId(name) && isBodyProgramFactReference(binding))
+  );
 }
 function isBodyProgramRuntimeValue(value: unknown): boolean {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   if (value.type === "destination_selector")
     return hasExactKeys(value, ["type", "destination"]) && isBodyProgramDestinationSelector(value.destination);
-  return (value.type === "integer" || value.type === "string" || value.type === "boolean") &&
+  return (
+    (value.type === "integer" || value.type === "string" || value.type === "boolean") &&
     hasExactKeys(value, ["type", "canonicalValue"]) &&
-    typeof value.canonicalValue === "string" && value.canonicalValue.length <= 512;
+    typeof value.canonicalValue === "string" &&
+    value.canonicalValue.length <= 512
+  );
 }
 /** Mirrors the C# IsValidBodyProgramSelector: scalar labels are trimmed, run ids are canonical 26-char navigation refs. */
 function isBodyProgramDestinationSelector(value: unknown): value is BodyProgramDestinationSelector {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
-  if (value.kind === "label")
-    return hasExactKeys(value, ["kind", "label"]) && isBodyProgramSelectorLabel(value.label);
+  if (value.kind === "label") return hasExactKeys(value, ["kind", "label"]) && isBodyProgramSelectorLabel(value.label);
   if (value.kind === "ref")
-    return hasExactKeys(value, ["kind", "ref"]) &&
-      typeof value.ref === "string" && /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref);
+    return (
+      hasExactKeys(value, ["kind", "ref"]) &&
+      typeof value.ref === "string" &&
+      /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref)
+    );
   return false;
 }
 function isBodyProgramSelectorLabel(value: unknown): value is string {
   // Mirrors the C# ReadPlayerText FormC gate: only already-canonicalized NFC labels are exchangeable.
-  return typeof value === "string" && value.length >= 1 && value.length <= 128 &&
-    value === value.trim() && value.trim().length > 0 && value.normalize("NFC") === value;
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 128 &&
+    value === value.trim() &&
+    value.trim().length > 0 &&
+    value.normalize("NFC") === value
+  );
 }
 function isBodyProgramFactReference(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["nodeId", "factName"]) && isOpaqueId(value.nodeId) && isOpaqueId(value.factName);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["nodeId", "factName"]) &&
+    isOpaqueId(value.nodeId) &&
+    isOpaqueId(value.factName)
+  );
 }
 export function validateBodyProgramVerificationResult(value: Record<string, unknown>): string | null {
   return hasExactKeys(value, ["accepted", "catalogRevision", "diagnostics"]) &&
     typeof value.accepted === "boolean" &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
-    Array.isArray(value.diagnostics) && value.diagnostics.length <= 64 && value.diagnostics.every(isBodyProgramDiagnostic)
-    ? null : "invalid_body_program_result";
+    Array.isArray(value.diagnostics) &&
+    value.diagnostics.length <= 64 &&
+    value.diagnostics.every(isBodyProgramDiagnostic)
+    ? null
+    : "invalid_body_program_result";
 }
 export function validateBodyProgramSubmitResult(value: Record<string, unknown>): string | null {
-  if (!hasExactKeys(value, ["code", "verification", "snapshot"]) ||
+  if (
+    !hasExactKeys(value, ["code", "verification", "snapshot"]) ||
     !isBodyProgramSubmitCode(value.code) ||
-    validateBodyProgramVerificationResult(value.verification as Record<string, unknown>) !== null)
+    validateBodyProgramVerificationResult(value.verification as Record<string, unknown>) !== null
+  )
     return "invalid_body_program_result";
   const code = value.code;
   const verification = value.verification as Readonly<{ accepted: boolean }>;
@@ -3150,22 +3756,33 @@ export function validateBodyProgramSubmitResult(value: Record<string, unknown>):
   return null;
 }
 export function validateBodyProgramStatusResult(value: Record<string, unknown>): string | null {
-  if (!hasExactKeys(value, ["code", "snapshot"]) || !isBodyProgramQueryCode(value.code)) return "invalid_body_program_result";
+  if (!hasExactKeys(value, ["code", "snapshot"]) || !isBodyProgramQueryCode(value.code))
+    return "invalid_body_program_result";
   return value.code === "found"
-    ? (isBodyProgramStatusSnapshot(value.snapshot) ? null : "invalid_body_program_result")
-    : (value.snapshot === null ? null : "invalid_body_program_result");
+    ? isBodyProgramStatusSnapshot(value.snapshot)
+      ? null
+      : "invalid_body_program_result"
+    : value.snapshot === null
+      ? null
+      : "invalid_body_program_result";
 }
 export function validateBodyProgramEventsResult(value: Record<string, unknown>): string | null {
-  if (!hasExactKeys(value, ["programId", "code", "events", "nextCursor", "highWater"]) ||
-    !isOpaqueId(value.programId) || !isBodyProgramQueryCode(value.code) ||
-    !Array.isArray(value.events) || value.events.length > 32 ||
-    !isNonNegativeSafeInteger(value.nextCursor) || !isNonNegativeSafeInteger(value.highWater) ||
-    (value.code !== "found" && value.events.length !== 0))
+  if (
+    !hasExactKeys(value, ["programId", "code", "events", "nextCursor", "highWater"]) ||
+    !isOpaqueId(value.programId) ||
+    !isBodyProgramQueryCode(value.code) ||
+    !Array.isArray(value.events) ||
+    value.events.length > 32 ||
+    !isNonNegativeSafeInteger(value.nextCursor) ||
+    !isNonNegativeSafeInteger(value.highWater) ||
+    (value.code !== "found" && value.events.length !== 0)
+  )
     return "invalid_body_program_result";
   return value.events.every(isBodyProgramEvent) &&
     value.events.every((event) => event.programId === value.programId && event.cursor <= (value.highWater as number)) &&
     (value.events.length === 0 || hasExactPageContinuation(value.events as unknown[], value.nextCursor as number))
-    ? null : "invalid_body_program_result";
+    ? null
+    : "invalid_body_program_result";
 }
 function hasExactPageContinuation(events: readonly unknown[], nextCursor: number): boolean {
   if (events.length === 0) return true;
@@ -3177,44 +3794,87 @@ function hasExactPageContinuation(events: readonly unknown[], nextCursor: number
   return nextCursor === (events[events.length - 1] as BodyProgramEvent).cursor;
 }
 function isBodyProgramEvent(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt"]) &&
-    isNonNegativeSafeInteger(value.cursor) && isOpaqueId(value.programId) && isReasonCode(value.kind) &&
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt"]) &&
+    isNonNegativeSafeInteger(value.cursor) &&
+    isOpaqueId(value.programId) &&
+    isReasonCode(value.kind) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
     (value.nodeId === null || isOpaqueId(value.nodeId)) &&
-    (value.nodeAttempt === null || isNonNegativeInt32(value.nodeAttempt));
+    (value.nodeAttempt === null || isNonNegativeInt32(value.nodeAttempt))
+  );
 }
 function isBodyProgramSubmitCode(value: unknown): boolean {
-  return value === "accepted" || value === "rejected" || value === "idempotent" || value === "conflict" ||
-    value === "persistence_failure" || value === "quarantined";
+  return (
+    value === "accepted" ||
+    value === "rejected" ||
+    value === "idempotent" ||
+    value === "conflict" ||
+    value === "persistence_failure" ||
+    value === "quarantined"
+  );
 }
 function isBodyProgramQueryCode(value: unknown): boolean {
   return value === "found" || value === "not_found" || value === "invalid_input";
 }
 function isBodyProgramDiagnostic(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["severity", "code", "nodeId", "path", "message"]) &&
-    value.severity === "error" && isReasonCode(value.code) &&
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["severity", "code", "nodeId", "path", "message"]) &&
+    value.severity === "error" &&
+    isReasonCode(value.code) &&
     (value.nodeId === null || isOpaqueId(value.nodeId)) &&
-    typeof value.path === "string" && typeof value.message === "string";
+    typeof value.path === "string" &&
+    typeof value.message === "string"
+  );
 }
 function isBodyProgramStatusSnapshot(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["programId", "state", "catalogRevision", "stopEpoch", "eventHighWater", "nodes"]) &&
-    isOpaqueId(value.programId) && isBodyProgramState(value.state) &&
-    isNonNegativeSafeInteger(value.catalogRevision) && isNonNegativeSafeInteger(value.stopEpoch) &&
-    isNonNegativeSafeInteger(value.eventHighWater) && Array.isArray(value.nodes) && value.nodes.length <= MAX_BODY_PROGRAM_NODES &&
-    value.nodes.every(isBodyProgramNodeStatus);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["programId", "state", "catalogRevision", "stopEpoch", "eventHighWater", "nodes"]) &&
+    isOpaqueId(value.programId) &&
+    isBodyProgramState(value.state) &&
+    isNonNegativeSafeInteger(value.catalogRevision) &&
+    isNonNegativeSafeInteger(value.stopEpoch) &&
+    isNonNegativeSafeInteger(value.eventHighWater) &&
+    Array.isArray(value.nodes) &&
+    value.nodes.length <= MAX_BODY_PROGRAM_NODES &&
+    value.nodes.every(isBodyProgramNodeStatus)
+  );
 }
 function isBodyProgramNodeStatus(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["nodeId", "state", "nodeAttempt", "admissionAttempt"]) &&
-    isOpaqueId(value.nodeId) && isBodyProgramNodeState(value.state) &&
-    isNonNegativeInt32(value.nodeAttempt) && isNonNegativeInt32(value.admissionAttempt);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["nodeId", "state", "nodeAttempt", "admissionAttempt"]) &&
+    isOpaqueId(value.nodeId) &&
+    isBodyProgramNodeState(value.state) &&
+    isNonNegativeInt32(value.nodeAttempt) &&
+    isNonNegativeInt32(value.admissionAttempt)
+  );
 }
 function isBodyProgramState(value: unknown): boolean {
-  return value === "active" || value === "succeeded" || value === "failed" || value === "cancelled" ||
-    value === "recovery_required" || value === "quarantined";
+  return (
+    value === "active" ||
+    value === "succeeded" ||
+    value === "failed" ||
+    value === "cancelled" ||
+    value === "recovery_required" ||
+    value === "quarantined"
+  );
 }
 function isBodyProgramNodeState(value: unknown): boolean {
-  return value === "pending" || value === "awaiting_host_admission" || value === "host_admitted" || value === "running" ||
-    value === "succeeded" || value === "failed" || value === "cancelled" || value === "recovery_required" || value === "rejected";
+  return (
+    value === "pending" ||
+    value === "awaiting_host_admission" ||
+    value === "host_admitted" ||
+    value === "running" ||
+    value === "succeeded" ||
+    value === "failed" ||
+    value === "cancelled" ||
+    value === "recovery_required" ||
+    value === "rejected"
+  );
 }
 function hasUniqueKeys(value: Record<string, unknown>): boolean {
   return Object.keys(value).length <= 32;
@@ -3339,7 +3999,7 @@ function isToolSlotFact(value: unknown): boolean {
 function isForageTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack","displayName"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -3359,7 +4019,7 @@ function isForageTargetFact(value: unknown): boolean {
 function isItemTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack","displayName"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -3431,7 +4091,7 @@ function isSlimeHutchTroughTargetFact(value: unknown): boolean {
 function isCropTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "cropId","displayName"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "cropId", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -3447,7 +4107,15 @@ function isCropTargetFact(value: unknown): boolean {
 function isHarvestTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "cropId", "qualifiedHarvestItemId", "displayName", "regrowsAfterHarvest"]) &&
+    hasExactKeys(value, [
+      "targetId",
+      "x",
+      "y",
+      "cropId",
+      "qualifiedHarvestItemId",
+      "displayName",
+      "regrowsAfterHarvest",
+    ]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -3467,7 +4135,7 @@ function isHarvestTargetFact(value: unknown): boolean {
 function isWoodFenceTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId","displayName"]) &&
+    hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -3495,7 +4163,9 @@ function isWoodFenceResultTargetFact(value: unknown): boolean {
       "isFence",
       "isGate",
       "health",
-      "maxHealth","displayName"]) &&
+      "maxHealth",
+      "displayName",
+    ]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -3519,7 +4189,7 @@ function isWoodFenceResultTargetFact(value: unknown): boolean {
 function isCrabPotTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId","displayName"]) &&
+    hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId", "displayName"]) &&
     isCrabPotCore(value) &&
     typeof value.displayName === "string" &&
     value.displayName.length > 0 &&
@@ -3536,7 +4206,9 @@ function isCrabPotCollectTargetFact(value: unknown): boolean {
       "y",
       "qualifiedItemId",
       "outputQualifiedItemId",
-      "outputStack","displayName"]) &&
+      "outputStack",
+      "displayName",
+    ]) &&
     typeof value.targetId === "string" &&
     /^collect_crab_pot_[a-f0-9]{16}$/u.test(value.targetId) &&
     typeof value.location === "string" &&
@@ -3568,7 +4240,9 @@ function isCrabPotResultTargetFact(value: unknown): boolean {
       "ownerId",
       "offsetX",
       "offsetY",
-      "overlayTiles","displayName"]) &&
+      "overlayTiles",
+      "displayName",
+    ]) &&
     isCrabPotCore(value) &&
     typeof value.ownerId === "number" &&
     Number.isSafeInteger(value.ownerId) &&
@@ -3604,7 +4278,9 @@ function isBaitCrabPotTargetFact(value: unknown): boolean {
       "qualifiedItemId",
       "baitQualifiedItemId",
       "ownerId",
-      "baitStack","displayName"]) &&
+      "baitStack",
+      "displayName",
+    ]) &&
     isCrabPotCore(value) &&
     value.baitQualifiedItemId === "(O)685" &&
     typeof value.ownerId === "string" &&
@@ -3630,7 +4306,7 @@ function isCrabPotCore(value: Record<string, unknown>): boolean {
 function isSeedTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId","displayName"]) &&
+    hasExactKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -3681,7 +4357,7 @@ function isDebrisTargetFact(value: unknown): boolean {
 function isArtifactSpotTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasOnlyKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId","displayName"]) &&
+    hasOnlyKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -3732,7 +4408,7 @@ function isArtifactSpotResultTargetFact(value: unknown): boolean {
 function isRockSourceTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId", "health","displayName"]) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId", "health", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -3770,7 +4446,9 @@ function isMachineTargetFact(value: unknown): boolean {
       "loadInputSlot",
       "loadInputQualifiedItemId",
       "loadInputStack",
-      "collectOutputReady","displayName"]) &&
+      "collectOutputReady",
+      "displayName",
+    ]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -3884,7 +4562,7 @@ function isTreeStumpTargetFact(value: unknown): boolean {
 function isTreeSaplingTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId","displayName"]) &&
+    hasExactKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -3937,53 +4615,135 @@ function isGrassTargetFact(value: unknown): boolean {
 }
 
 function isPedestalTargetFact(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId", "stack"]) &&
-    isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 &&
-    isTileCoordinate(value.x) && isTileCoordinate(value.y) && typeof value.qualifiedItemId === "string" && value.qualifiedItemId.length > 0 && value.qualifiedItemId.length <= 128 &&
-    Number.isSafeInteger(value.stack) && (value.stack as number) > 0 && (value.stack as number) <= 999;
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId", "stack"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.qualifiedItemId === "string" &&
+    value.qualifiedItemId.length > 0 &&
+    value.qualifiedItemId.length <= 128 &&
+    Number.isSafeInteger(value.stack) &&
+    (value.stack as number) > 0 &&
+    (value.stack as number) <= 999
+  );
 }
 
 function isFenceGateTargetFact(value: unknown): boolean {
-  return isBushTargetFact({ targetId: value && isRecord(value) ? value.targetId : null, location: value && isRecord(value) ? value.location : null, x: value && isRecord(value) ? value.x : null, y: value && isRecord(value) ? value.y : null }) && isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y", "isOpen"]) && typeof value.isOpen === "boolean";
+  return (
+    isBushTargetFact({
+      targetId: value && isRecord(value) ? value.targetId : null,
+      location: value && isRecord(value) ? value.location : null,
+      x: value && isRecord(value) ? value.x : null,
+      y: value && isRecord(value) ? value.y : null,
+    }) &&
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "isOpen"]) &&
+    typeof value.isOpen === "boolean"
+  );
 }
 
 function isBushTargetFact(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y"]) &&
-    isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 &&
-    isTileCoordinate(value.x) && isTileCoordinate(value.y);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y)
+  );
 }
 
 function isCaskTargetFact(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y", "hasHeldObject", "heldQualifiedItemId"]) &&
-    isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 &&
-    isTileCoordinate(value.x) && isTileCoordinate(value.y) && typeof value.hasHeldObject === "boolean" &&
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "hasHeldObject", "heldQualifiedItemId"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.hasHeldObject === "boolean" &&
     // A cask that claims to hold an object must name it. A name without the
     // flag is tolerated: discovery reads the held object directly (the fixture
     // and the runner disagree on whether an empty cask may carry a stray id).
     !(value.hasHeldObject === true && value.heldQualifiedItemId === null) &&
-    (value.heldQualifiedItemId === null || (typeof value.heldQualifiedItemId === "string" && value.heldQualifiedItemId.length > 0 && value.heldQualifiedItemId.length <= 128));
+    (value.heldQualifiedItemId === null ||
+      (typeof value.heldQualifiedItemId === "string" &&
+        value.heldQualifiedItemId.length > 0 &&
+        value.heldQualifiedItemId.length <= 128))
+  );
 }
 
 function isFacilityTargetFact(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y"]) && isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 && isTileCoordinate(value.x) && isTileCoordinate(value.y);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y)
+  );
 }
 
 function isSignTargetFact(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y", "hasDisplayItem", "displayQualifiedItemId"]) && isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 && isTileCoordinate(value.x) && isTileCoordinate(value.y) && typeof value.hasDisplayItem === "boolean" && (value.displayQualifiedItemId === null || (typeof value.displayQualifiedItemId === "string" && value.displayQualifiedItemId.length > 0 && value.displayQualifiedItemId.length <= 128));
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "hasDisplayItem", "displayQualifiedItemId"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.hasDisplayItem === "boolean" &&
+    (value.displayQualifiedItemId === null ||
+      (typeof value.displayQualifiedItemId === "string" &&
+        value.displayQualifiedItemId.length > 0 &&
+        value.displayQualifiedItemId.length <= 128))
+  );
 }
 
 function isSiloTargetFact(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["targetId", "location", "x", "y", "hay"]) && isOpaqueId(value.targetId) && typeof value.location === "string" && value.location.length > 0 && value.location.length <= 256 && isTileCoordinate(value.x) && isTileCoordinate(value.y) && Number.isSafeInteger(value.hay) && (value.hay as number) >= 0;
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "hay"]) &&
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    Number.isSafeInteger(value.hay) &&
+    (value.hay as number) >= 0
+  );
 }
 
 function isLanternSlotFact(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["slot", "isOn", "fuelLeft"]) && isToolSlot(value.slot) && typeof value.isOn === "boolean" && Number.isSafeInteger(value.fuelLeft) && (value.fuelLeft as number) >= 0 && (value.fuelLeft as number) <= 100;
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["slot", "isOn", "fuelLeft"]) &&
+    isToolSlot(value.slot) &&
+    typeof value.isOn === "boolean" &&
+    Number.isSafeInteger(value.fuelLeft) &&
+    (value.fuelLeft as number) >= 0 &&
+    (value.fuelLeft as number) <= 100
+  );
 }
 
 function isScytheCropTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "location", "x", "y", "cropId", "qualifiedHarvestItemId","displayName"]) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "cropId", "qualifiedHarvestItemId", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -4001,7 +4761,6 @@ function isScytheCropTargetFact(value: unknown): boolean {
     value.displayName.length <= 128
   );
 }
-
 
 function isNpcRelationshipTargetFact(value: unknown): boolean {
   return (
@@ -4089,7 +4848,12 @@ function isHarvestWhereaboutsFact(value: unknown): boolean {
 function isWeatherToken(value: unknown): boolean {
   return (
     typeof value === "string" &&
-    (value === "sunny" || value === "rain" || value === "snow" || value === "lightning" || value === "debris" || value === "unknown")
+    (value === "sunny" ||
+      value === "rain" ||
+      value === "snow" ||
+      value === "lightning" ||
+      value === "debris" ||
+      value === "unknown")
   );
 }
 
@@ -4123,7 +4887,9 @@ function isAnimalProductTargetFact(value: unknown): boolean {
       "animalType",
       "qualifiedProduceItemId",
       "toolKind",
-      "produceStack","displayName"]) &&
+      "produceStack",
+      "displayName",
+    ]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -4162,7 +4928,7 @@ function isFeedTroughTargetFact(value: unknown): boolean {
 function isChestStoreTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "slot", "qualifiedItemId", "stack","displayName"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "slot", "qualifiedItemId", "stack", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -4182,7 +4948,7 @@ function isChestStoreTargetFact(value: unknown): boolean {
 function isChestRetrieveTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack","displayName"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -4201,7 +4967,7 @@ function isChestRetrieveTargetFact(value: unknown): boolean {
 function isShippingBinTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "slot", "qualifiedItemId", "stack","displayName"]) &&
+    hasExactKeys(value, ["targetId", "x", "y", "slot", "qualifiedItemId", "stack", "displayName"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -4246,22 +5012,54 @@ function isCookingStationTargetFact(value: unknown): boolean {
 }
 
 function isRaftTargetFact(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y"]) &&
-    typeof value.targetId === "string" && /^raft_[a-f0-9]{16}$/u.test(value.targetId) &&
-    isTileCoordinate(value.x) && isTileCoordinate(value.y);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y"]) &&
+    typeof value.targetId === "string" &&
+    /^raft_[a-f0-9]{16}$/u.test(value.targetId) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y)
+  );
 }
 
 function isHorseTargetFact(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y", "name"]) && typeof value.targetId === "string" && /^horse_[a-f0-9]{16}$/u.test(value.targetId) && isTileCoordinate(value.x) && isTileCoordinate(value.y) && typeof value.name === "string" && value.name.length > 0 && value.name.length <= 64;
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y", "name"]) &&
+    typeof value.targetId === "string" &&
+    /^horse_[a-f0-9]{16}$/u.test(value.targetId) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.name === "string" &&
+    value.name.length > 0 &&
+    value.name.length <= 64
+  );
 }
 function isMineEntranceTargetFact(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y"]) && typeof value.targetId === "string" && /^mine_entrance_[a-f0-9]{16}$/u.test(value.targetId) && isTileCoordinate(value.x) && isTileCoordinate(value.y);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y"]) &&
+    typeof value.targetId === "string" &&
+    /^mine_entrance_[a-f0-9]{16}$/u.test(value.targetId) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y)
+  );
 }
 
 function isShopTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "shopId", "ownerName", "location", "ownerTileX", "ownerTileY", "ownerInReach", "stockCount", "stockItemIds"]) &&
+    hasExactKeys(value, [
+      "targetId",
+      "shopId",
+      "ownerName",
+      "location",
+      "ownerTileX",
+      "ownerTileY",
+      "ownerInReach",
+      "stockCount",
+      "stockItemIds",
+    ]) &&
     typeof value.targetId === "string" &&
     isOpaqueId(value.targetId) &&
     typeof value.shopId === "string" &&
@@ -4274,9 +5072,9 @@ function isShopTargetFact(value: unknown): boolean {
     typeof value.ownerInReach === "boolean" &&
     typeof value.stockCount === "number" &&
     Number.isSafeInteger(value.stockCount) &&
-    value.stockCount >= 0
-    && isStringArray(value.stockItemIds)
-    && (value.stockItemIds as readonly string[]).length <= 16
+    value.stockCount >= 0 &&
+    isStringArray(value.stockItemIds) &&
+    (value.stockItemIds as readonly string[]).length <= 16
   );
 }
 
@@ -4319,29 +5117,36 @@ function isWearableTargetFact(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   // A missing optional member must be allowed: the Mod omits nulls on the wire.
-  return hasExactKeys(record, ["targetId","bodySlot","occupantQualifiedItemId","occupantDisplayName"]);
+  return hasExactKeys(record, ["targetId", "bodySlot", "occupantQualifiedItemId", "occupantDisplayName"]);
 }
 
 function isWarpItemTargetFact(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   // A missing optional member must be allowed: the Mod omits nulls on the wire.
-  return hasExactKeys(record, ["slot","qualifiedItemId","displayName","stack","destination","destinationX","destinationY"]);
+  return hasExactKeys(record, [
+    "slot",
+    "qualifiedItemId",
+    "displayName",
+    "stack",
+    "destination",
+    "destinationX",
+    "destinationY",
+  ]);
 }
 
 function isPanSiteFact(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   // A missing optional member must be allowed: the Mod omits nulls on the wire.
-  return hasExactKeys(record, ["x","y"]);
+  return hasExactKeys(record, ["x", "y"]);
 }
-
 
 function isMailboxTargetFact(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   // A missing optional member must be allowed: the Mod omits nulls on the wire.
-  return hasExactKeys(record, ["targetId","location","x","y","pendingCount"]);
+  return hasExactKeys(record, ["targetId", "location", "x", "y", "pendingCount"]);
 }
 /** The world-object lane's projection. Every member is always written (the Mod omits nulls,
  * which is why `kind`, `slot`, `qualifiedItemId` and `displayName` are required here), and a
@@ -4442,7 +5247,17 @@ function isTailoringTargetFact(value: unknown): boolean {
     isRecord(value) &&
     // The two garment fields are OPTIONAL: the bridge omits null members, so a craft target carries neither, and
     // `hasExactKeys` would refuse a value with fewer keys than it lists (that refusal was the live failure).
-    hasOnlyKeys(value, ["targetId", "kind", "leftSlot", "rightSlot", "leftQualifiedItemId", "rightQualifiedItemId", "outputQualifiedItemId", "garmentColour", "garmentName"]) &&
+    hasOnlyKeys(value, [
+      "targetId",
+      "kind",
+      "leftSlot",
+      "rightSlot",
+      "leftQualifiedItemId",
+      "rightQualifiedItemId",
+      "outputQualifiedItemId",
+      "garmentColour",
+      "garmentName",
+    ]) &&
     typeof value.targetId !== "undefined" &&
     typeof value.kind !== "undefined" &&
     typeof value.leftSlot !== "undefined" &&
@@ -4545,7 +5360,9 @@ function isBuildingChestTargetFact(value: unknown): boolean {
     (value.loadInputStack === undefined ||
       value.loadInputStack === null ||
       (Number.isSafeInteger(value.loadInputStack) && (value.loadInputStack as number) >= 1)) &&
-    ((value.loadInputSlot === undefined && value.loadInputQualifiedItemId === undefined && value.loadInputStack === undefined) ||
+    ((value.loadInputSlot === undefined &&
+      value.loadInputQualifiedItemId === undefined &&
+      value.loadInputStack === undefined) ||
       (isToolSlot(value.loadInputSlot) &&
         isBoundedNonEmptyString(value.loadInputQualifiedItemId, 128) &&
         Number.isSafeInteger(value.loadInputStack) &&
@@ -4617,9 +5434,10 @@ function isMinecartTargetFact(value: unknown): boolean {
   );
 }
 
-function isInventoryItemFact(value: unknown): boolean {  return (
+function isInventoryItemFact(value: unknown): boolean {
+  return (
     isRecord(value) &&
-    hasExactKeys(value, ["slot", "qualifiedItemId", "stack","displayName"]) &&
+    hasExactKeys(value, ["slot", "qualifiedItemId", "stack", "displayName"]) &&
     isToolSlot(value.slot) &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
@@ -4637,7 +5455,7 @@ function isInventoryItemFact(value: unknown): boolean {  return (
 function isFoodTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["slot", "qualifiedItemId", "stack", "edibility", "isDrink","displayName"]) &&
+    hasExactKeys(value, ["slot", "qualifiedItemId", "stack", "edibility", "isDrink", "displayName"]) &&
     isToolSlot(value.slot) &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
@@ -4785,6 +5603,7 @@ const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   "evidenceSchema",
   "nativeBinding",
   "canonicalCodec",
+  "watchdogMs",
   "postcondition",
 ] as const;
 
@@ -4804,8 +5623,14 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
         if (!arg.enum.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;
       }
       if ("boundedEnumValues" in arg && arg.boundedEnumValues !== undefined) {
-        if (!Array.isArray(arg.boundedEnumValues) || arg.boundedEnumValues.length === 0 || arg.boundedEnumValues.length > 128) return false;
-        if (!arg.boundedEnumValues.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;
+        if (
+          !Array.isArray(arg.boundedEnumValues) ||
+          arg.boundedEnumValues.length === 0 ||
+          arg.boundedEnumValues.length > 128
+        )
+          return false;
+        if (!arg.boundedEnumValues.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64))
+          return false;
       }
     }
   }
@@ -4823,12 +5648,22 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
   }
 
   if ("sceneTarget" in value && value.sceneTarget !== undefined) {
-    if (!isRecord(value.sceneTarget) || !hasExactKeys(value.sceneTarget, ["type", "version", "required", "requiredProperties"]) ||
-        typeof value.sceneTarget.type !== "string" || value.sceneTarget.type.length === 0 || value.sceneTarget.type.length > 64 ||
-        typeof value.sceneTarget.version !== "number" || !Number.isSafeInteger(value.sceneTarget.version) || value.sceneTarget.version < 1 ||
-        typeof value.sceneTarget.required !== "boolean" || !Array.isArray(value.sceneTarget.requiredProperties) ||
-        value.sceneTarget.requiredProperties.length > 16 ||
-        !value.sceneTarget.requiredProperties.every((property) => typeof property === "string" && /^[a-z][a-zA-Z0-9_]{0,63}$/.test(property)))
+    if (
+      !isRecord(value.sceneTarget) ||
+      !hasExactKeys(value.sceneTarget, ["type", "version", "required", "requiredProperties"]) ||
+      typeof value.sceneTarget.type !== "string" ||
+      value.sceneTarget.type.length === 0 ||
+      value.sceneTarget.type.length > 64 ||
+      typeof value.sceneTarget.version !== "number" ||
+      !Number.isSafeInteger(value.sceneTarget.version) ||
+      value.sceneTarget.version < 1 ||
+      typeof value.sceneTarget.required !== "boolean" ||
+      !Array.isArray(value.sceneTarget.requiredProperties) ||
+      value.sceneTarget.requiredProperties.length > 16 ||
+      !value.sceneTarget.requiredProperties.every(
+        (property) => typeof property === "string" && /^[a-z][a-zA-Z0-9_]{0,63}$/.test(property),
+      )
+    )
       return false;
   }
 
@@ -4861,21 +5696,38 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
   }
 
   if ("nativeBinding" in value && value.nativeBinding !== undefined) {
-    if (typeof value.nativeBinding !== "string" || value.nativeBinding.length === 0 || value.nativeBinding.length > 128) return false;
+    if (typeof value.nativeBinding !== "string" || value.nativeBinding.length === 0 || value.nativeBinding.length > 128)
+      return false;
   }
 
   if ("canonicalCodec" in value && value.canonicalCodec !== undefined) {
-    if (typeof value.canonicalCodec !== "string" || value.canonicalCodec.length === 0 || value.canonicalCodec.length > 128) return false;
+    if (
+      typeof value.canonicalCodec !== "string" ||
+      value.canonicalCodec.length === 0 ||
+      value.canonicalCodec.length > 128
+    )
+      return false;
   }
 
   if ("postcondition" in value && value.postcondition !== undefined) {
     if (typeof value.postcondition === "string") {
       if (value.postcondition.length === 0 || value.postcondition.length > 128) return false;
     } else if (isRecord(value.postcondition)) {
-      if (typeof value.postcondition.name !== "string" || value.postcondition.name.length === 0 || value.postcondition.name.length > 128) return false;
+      if (
+        typeof value.postcondition.name !== "string" ||
+        value.postcondition.name.length === 0 ||
+        value.postcondition.name.length > 128
+      )
+        return false;
     } else {
       return false;
     }
+  }
+
+  if ("watchdogMs" in value && value.watchdogMs !== undefined) {
+    // A positive, JavaScript-safe integer: the value becomes a deadline, so a negative or fractional one would be a
+    // request that can never be waited on.
+    if (!Number.isSafeInteger(value.watchdogMs) || (value.watchdogMs as number) <= 0) return false;
   }
 
   return true;
@@ -4886,15 +5738,23 @@ function isValidActionRegistrations(value: unknown): boolean {
   const seen = new Set<string>();
   for (const item of value) {
     if (!isRecord(item)) return false;
-    const allowedKeys = "descriptor" in item
-      ? ["actionId", "familyId", "identityVersion", "lifecycle", "kind", "descriptor"]
-      : ["actionId", "familyId", "identityVersion", "lifecycle", "kind"];
+    const allowedKeys =
+      "descriptor" in item
+        ? ["actionId", "familyId", "identityVersion", "lifecycle", "kind", "descriptor"]
+        : ["actionId", "familyId", "identityVersion", "lifecycle", "kind"];
     if (!hasExactKeys(item, allowedKeys)) return false;
     if (!isOpaqueId(item.actionId) || !isOpaqueId(item.familyId)) return false;
-    if (typeof item.identityVersion !== "number" || !Number.isSafeInteger(item.identityVersion) || item.identityVersion < 1) return false;
-    if (item.lifecycle !== "published" && item.lifecycle !== "live_verified" && item.lifecycle !== "experimental") return false;
+    if (
+      typeof item.identityVersion !== "number" ||
+      !Number.isSafeInteger(item.identityVersion) ||
+      item.identityVersion < 1
+    )
+      return false;
+    if (item.lifecycle !== "published" && item.lifecycle !== "live_verified" && item.lifecycle !== "experimental")
+      return false;
     if (item.kind !== "execution" && item.kind !== "read_only") return false;
-    if ("descriptor" in item && (item.descriptor === undefined || !isValidActionDescriptor(item.descriptor))) return false;
+    if ("descriptor" in item && (item.descriptor === undefined || !isValidActionDescriptor(item.descriptor)))
+      return false;
     if (seen.has(item.actionId)) return false;
     seen.add(item.actionId);
   }

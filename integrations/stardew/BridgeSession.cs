@@ -252,7 +252,10 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
                                  sceneTarget.Version,
                                  sceneTarget.Required,
                                  sceneTarget.RequiredProperties)
-                             : null)
+                             : null,
+                         // The Mod's own watchdog for this action, so the Host can wait as long as the action
+                         // was designed to be waited on (see the wire record).
+                         descriptor.WatchdogMs)
                      : null)).ToArray(),
             this.runtimeAttestation.RuntimeRole,
             this.runtimeAttestation.LaunchGeneration));
