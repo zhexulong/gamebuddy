@@ -1,5 +1,6 @@
 import { MoreHorizontal, type LucideIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState, type Ref } from "react";
+import { CompanionAvatar } from "./CompanionAvatar";
 
 /**
  * The shared application bar (design/26 §4.1, design/104 §2).
@@ -44,6 +45,13 @@ export type AppBarProps = Readonly<{
   brandMark: string;
   brandLabel: string;
   companionName: string;
+  /**
+   * The companion's own opaque roster handle, which is also the address of her
+   * picture: the same `CompanionAvatar` every other surface draws her with, so a
+   * companion who has one is never a letter in the bar while she is a face in the
+   * conversation. `null` for a bar with no companion at all.
+   */
+  companionHandle: string | null;
   /** Localized status word: online, or the turn state while one is in flight. */
   statusLabel: string;
   /** `progress` adds the pulsing accent dot a running turn already implies. */
@@ -63,19 +71,18 @@ export function AppBar({
   brandMark,
   brandLabel,
   companionName,
+  companionHandle,
   statusLabel,
   statusTone = "idle",
   entries,
   fold,
 }: AppBarProps) {
-  // The monogram is derived from the name, never a decorative symbol
-  // (design/26 §4.1); an unnamed companion falls back to the brand mark. The
-  // first character is taken by code point, not by UTF-16 unit: a name starting
-  // with an emoji or an extension-area character must not render half a
-  // surrogate pair as a replacement glyph.
-  const monogram = (
-    (Array.from(companionName.trim())[0] ?? "") || (Array.from(brandMark)[0] ?? "")
-  ).toUpperCase();
+  // The monogram is derived from the name as before (design/26 §4.1): the first
+  // character by code point, not by UTF-16 unit, so a name starting with an emoji
+  // or an extension-area character is never half a surrogate pair - and an unnamed
+  // companion falls back to the brand mark, which is a name this bar already has.
+  // `CompanionAvatar` owns the picture-or-monogram choice itself.
+  const avatarName = companionName.trim().length === 0 ? brandMark : companionName.trim();
 
   const foldAt = fold?.from ?? entries.length;
   const visibleEntries = entries.slice(0, foldAt);
@@ -149,9 +156,7 @@ export function AppBar({
       </div>
 
       <div className="app-bar-companion">
-        <span className="avatar avatar-small" aria-hidden="true">
-          {monogram}
-        </span>
+        <CompanionAvatar handle={companionHandle} name={avatarName} className="avatar-small" />
         <span className="app-bar-title">{companionName}</span>
         {/* One polite live region announces the connection/turn status once
             (design/26 §7.3); `role="status"` is that region. The word is a child
@@ -188,11 +193,7 @@ export function AppBar({
             >
               <MoreHorizontal size={18} aria-hidden="true" />
             </button>
-            <div
-              className="app-bar-more-menu"
-              id={morePanelId}
-              {...(moreOpen ? { "data-open": "true" as const } : {})}
-            >
+            <div className="app-bar-more-menu" id={morePanelId} {...(moreOpen ? { "data-open": "true" as const } : {})}>
               {foldedEntries.map((entry) =>
                 renderEntry({
                   ...entry,

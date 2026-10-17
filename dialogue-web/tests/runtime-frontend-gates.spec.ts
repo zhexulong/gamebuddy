@@ -1274,8 +1274,20 @@ test("gate 12: the monogram is one whole character for an astral name", async ({
   await mountShell(page, {
     root: composedRoot({ companionName: "🌙 Luna", transcript: [{ role: "companion", text: "Hello." }] }),
   });
-  const barMonogram = await page.locator(".app-bar-companion .avatar").innerText();
-  const bubbleInitial = await page.locator("li.message.companion .avatar").innerText();
+  // Both plates are `CompanionAvatar`: her picture where the Host serves one, her
+  // monogram where it does not, in one element because a 404 and a decode failure
+  // are the same player-visible fact. This spec serves no
+  // `/assets/companions/<handle>/…` at all, so both plates fall back to the monogram
+  // - which is the property under test. Reading it once it is painted keeps the
+  // assertion about the character rather than about how long a 404 took: the AppBar
+  // is chrome that mounts in the first frame, so its plate was still the (textless)
+  // picture when the read happened, while the bubble's had already fallen back.
+  const barAvatar = page.locator(".app-bar-companion .avatar");
+  const bubbleAvatar = page.locator("li.message.companion .avatar");
+  await expect(barAvatar).toHaveText("🌙");
+  await expect(bubbleAvatar).toHaveText("🌙");
+  const barMonogram = await barAvatar.innerText();
+  const bubbleInitial = await bubbleAvatar.innerText();
   record(
     "gate-12",
     `AppBar monogram ${JSON.stringify(barMonogram)} (${Array.from(barMonogram).length} code point(s)); bubble initial ${JSON.stringify(bubbleInitial)}`,

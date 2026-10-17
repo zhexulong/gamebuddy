@@ -1086,6 +1086,7 @@ export function ComposedReferenceGameApp() {
             brandMark={labels().appMark}
             brandLabel={labels().appName}
             companionName={view.session.snapshot.chat.companion.name}
+            companionHandle={view.session.snapshot.chat.companion.handle}
             statusLabel={turnInFlight ? labels().generating : labels().online}
             statusTone={turnInFlight ? "progress" : "idle"}
             entries={[
