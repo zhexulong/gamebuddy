@@ -82,17 +82,16 @@ public sealed class MultiDayPlaySessionFixtureTests
     [Fact]
     public void TheGivenKeepsTheFatigueAssertionReachableWithMaxedSkills()
     {
-        // With every skill maxed the tools cost meaningfully less energy, so an ordinary morning may never reach a
-        // low-stamina threshold and the fatigue/self-heal assertion would become untestable. The construction is a
-        // direct stamina write (the same technique the attach-time fixtures already use) below the runner's low
-        // threshold and well above the -15 pass-out floor - the game's own energy economy stays untouched.
+        // The scenario must NOT write stamina at all.
+        //
+        // An earlier version armed 12 points "so the fatigue/self-heal assertion stays reachable", but that
+        // threshold belongs to a DIFFERENT scenario (`native_stamina_recovery_v1`, which arms its own low stamina),
+        // and nothing in the multi-day run reads it: two independent reviews found the write had no reader, and its
+        // only effect was making an early pass-out more likely. The pin is inverted so a scenario-only write with no
+        // assertion behind it cannot come back silently.
         string source = ReadMultiDayGivenSource();
-        source.Should().Contain("private const float LowMorningStamina = 12f;");
-        source.Should().Contain("player.stamina = LowMorningStamina;");
-        source.Should().Contain("fixture_native_local_multi_day_stamina_not_armed");
-        source.Should().Contain("stamina={player.stamina}");
-        // 12 is above the native pass-out floor, so the actor is tired rather than collapapsed.
-        source.Should().NotContain("player.stamina = -15");
+        source.Should().NotContain("LowMorningStamina");
+        source.Should().NotContain("player.stamina =");
     }
 
     [Fact]

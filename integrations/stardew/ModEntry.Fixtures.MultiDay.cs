@@ -15,12 +15,10 @@ public sealed partial class ModEntry
     /// `getSkillNumberFromName`), and the same five that gate the mastery hint (Game1.cs:9135).
     /// </summary>
     private static readonly string[] PinnedSkills = { "Farming", "Fishing", "Foraging", "Mining", "Combat" };
-
     /// <summary>
     /// The morning stamina the multi-day Given arms, chosen from the same range the attach-time fixtures use:
     /// below the runner's low-stamina threshold, and well above the -15 pass-out floor.
     /// </summary>
-    private const float LowMorningStamina = 12f;
 
     /// <summary>
     /// The composed world must let the companion WALK between the places its day uses: home, the bin, and the field
@@ -55,6 +53,13 @@ public sealed partial class ModEntry
             && tile.Y >= 0
             && tile.X < layer.LayerWidth
             && tile.Y < layer.LayerHeight
+            // The fixture's OWN placements count as blockers. Asking only the engine's walkability made this
+            // assertion near self-proving: the start was CHOSEN for reaching the door, and a prop the fixture
+            // itself dropped on the door-field route would have been invisible to the probe certifying that route
+            // (found by review). With objects and terrain features included, the check is about the world that
+            // exists when the companion wakes up.
+            && !farm.objects.ContainsKey(new Vector2(tile.X, tile.Y))
+            && !farm.terrainFeatures.ContainsKey(new Vector2(tile.X, tile.Y))
             && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y));
 
         // The other place the day needs: the tile the actor stands on to use the shipping bin. A farm where home and
@@ -227,15 +232,11 @@ public sealed partial class ModEntry
         bool masteryHintAlreadyArmed = player.mailReceived.Contains("gotMasteryHint");
         bool masteryCaveVisited = player.locationsVisited.Contains("MasteryCave");
 
-        // (4c) Low morning stamina: the fatigue/self-heal assertion has to stay reachable.
-        //
-        // With every skill maxed the tools cost meaningfully less energy, so an ordinary morning may never reach a
-        // low-stamina threshold and the assertion would become untestable. The construction is the same one the
-        // attach-time fixtures already use (a direct stamina write, below the runner's low threshold and well above
-        // the -15 pass-out floor) rather than a changed energy economy: the game's own rules stay untouched.
-        player.stamina = LowMorningStamina;
-        if (player.stamina != LowMorningStamina)
-            throw new InvalidOperationException("fixture_native_local_multi_day_stamina_not_armed");
+        // NOTE: this Given deliberately writes NO stamina. An earlier version armed 12 points "so the
+        // fatigue/self-heal assertion stays reachable", but the threshold it named lives in a DIFFERENT scenario
+        // (`native_stamina_recovery_v1`, which arms its own low stamina) and nothing in the multi-day run reads
+        // it - two independent reviews found the write had no reader, and it only made an early pass-out more
+        // likely. A scenario-only accommodation with no assertion behind it does not belong in the world.
 
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log(
