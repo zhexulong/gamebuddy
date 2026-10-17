@@ -126,6 +126,11 @@ test("desktop bootstrap helper fails closed on an invalid composed surface or ma
     const result = await runWireFixture(scenario, options);
     assert.equal(result.acknowledgement, undefined);
     assert.deepEqual(result.requests, []);
+    // The CI-only admission probe rides BEFORE the bare message whenever the child catches a
+    // bootstrap refusal, so a CI log names the root-admission facts instead of only 'unavailable'.
+    // The bare message stays the LAST line, which is what the assertion below and
+    // verify-self-contained-generation's stderr.trim() both depend on.
+    assert.match(result.stderr, /(?:^|\n)wire_admission_probe:localappdata=[a-z_]+;localappdata_is_fixture=(?:true|false);program=[a-z_+]+;data=[a-z_+]+;operational=[a-z_+]+;presentation=[a-z_+]+\nwire_admission_deep:[a-z0-9_,]+\n(?:(?:^|\n)[^\n]+\n)*desktop_runtime_bootstrap_unavailable\n$/);
     assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable\n$/);
   }
 });
@@ -465,6 +470,7 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
       bootstrapUrl: pathToFileURL(join(moduleDirectory, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.js")).href,
       compositionUrl: pathToFileURL(join(moduleDirectory, "composition", "desktop-host-composition.js")).href,
       platformUrl: pathToFileURL(join(moduleDirectory, "composition", "stardew", "stardew-guardian-platform.js")).href,
+      inspectorUrl: pathToFileURL(join(moduleDirectory, "windows-reparse-inspector", "index.js")).href,
       guardianInstanceId,
       attemptId,
       approvedExecutable: "C:\\Program Files\\GameBuddy\\roles\\RoleRootFixture.exe",
@@ -491,6 +497,15 @@ async function runWireFixture(scenario: "success" | "recovery-success" | "recove
       recoveryLeaseName: "Local\\GameBuddy-Lease-1",
       recoveryBindingRevision: "88888888-8888-4888-8888-888888888888",
       modOutcome: options.modOutcome,
+      // The admission probe reports the roots the child actually received, so the fixture carries them
+      // plus the root the child's LOCALAPPDATA must equal, rather than the child re-deriving a shape.
+      rootLayout: {
+        probeRoot: fixtureRoot,
+        programRoot: rootLayout.programRoot,
+        dataRoot: rootLayout.dataRoot,
+        operationalRoot: rootLayout.operationalRoot,
+        presentationRoot: rootLayout.presentationRoot,
+      },
     };
     await writeFile(workerPath, wireFixtureWorkerSource);
     // The shutdown-request scenarios exercise the IPC channel: the parent asks
@@ -803,6 +818,76 @@ const { runDesktopHostBootstrap } = await import(fixture.bootstrapUrl);
 try {
   await runDesktopHostBootstrap(fixture.moduleDirectory);
 } catch (error) {
+  // CI-only diagnostic. Ten of this fixture's cases pass on a developer machine and fail on the CI
+  // runner with desktop_runtime_bootstrap_unavailable, whose only source is the root-layout
+  // admission. That admission reads LOCALAPPDATA, the four root spellings and each root's physical
+  // chain, so report exactly those bounded facts - a shape token per path, never a path - BEFORE
+  // the bare message. The bare message stays the LAST line, so every consumer that reads it as one
+  // bounded code (assert.match(...$), verify-self-contained-generation's stderr.trim()) is unaffected.
+  const sepChar = String.fromCharCode(92);
+  const shapeOf = (value) =>
+    typeof value !== "string" || value.length === 0
+      ? "absent"
+      : !/^[A-Za-z]:/.test(value)
+        ? "not_a_drive_path"
+        : value.endsWith(sepChar + "AppData" + sepChar + "Local")
+          ? "appdata_local"
+          : "other_drive_path";
+  const kindOf = async (value) => {
+    try {
+      const { lstatSync } = await import("node:fs");
+      const info = lstatSync(value);
+      return (info.isDirectory() ? "dir" : info.isFile() ? "file" : "other") + (info.isSymbolicLink() ? "+link" : "");
+    } catch (probeError) {
+      return "stat_" + String((probeError && probeError.code) || "failed").toLowerCase();
+    }
+  };
+  const wireLayout = fixture.rootLayout;
+  process.stderr.write(
+    "wire_admission_probe:" +
+      [
+        "localappdata=" + shapeOf(process.env.LOCALAPPDATA),
+        "localappdata_is_fixture=" + (process.env.LOCALAPPDATA === wireLayout.probeRoot),
+        "program=" + (await kindOf(wireLayout.programRoot)),
+        "data=" + (await kindOf(wireLayout.dataRoot)),
+        "operational=" + (await kindOf(wireLayout.operationalRoot)),
+        "presentation=" + (await kindOf(wireLayout.presentationRoot)),
+      ].join(";") +
+      "\\n",
+  );
+  // The deep probe: the shallow shapes above cannot distinguish a clean tree from one whose
+  // roots fail the physical chain or security checks, which is the only remaining source of
+  // this refusal. It drives the SAME compiled native inspector the product drives, over the
+  // same roots, and reports the first predicate that refuses - still as bounded tokens.
+  try {
+    const inspectorModule = await import(fixture.inspectorUrl);
+    const { createPublishedWindowsReparseInspector, inspectWindowsPathIdentityChain, inspectWindowsPathSecurity } = inspectorModule;
+    const deepInspector = await createPublishedWindowsReparseInspector(fixture.moduleDirectory);
+    const deepRoots = [wireLayout.programRoot, wireLayout.dataRoot, wireLayout.operationalRoot, wireLayout.presentationRoot];
+    const chains = await Promise.all(deepRoots.map((root) => inspectWindowsPathIdentityChain(deepInspector, root)));
+    const securities = await Promise.all(deepRoots.map((root) => inspectWindowsPathSecurity(deepInspector, root)));
+    const expectedChain = (value) => value.slice(3).split(sepChar).length + 1;
+    const volume = chains[0]?.at(-1)?.volumeIdentity;
+    const deepFindings = [];
+    if (volume === undefined) deepFindings.push("volume_missing");
+    chains.forEach((chain, index) => {
+      if (chain.length !== expectedChain(deepRoots[index])) deepFindings.push("chain_length_" + index);
+      if (chain.some((entry) => entry.objectKind !== "directory")) deepFindings.push("chain_kind_" + index);
+      const reparseAt = chain.findIndex((entry) => entry.isReparsePoint);
+      if (reparseAt >= 0) deepFindings.push("chain_reparse_" + index + "_" + reparseAt);
+      if (chain.at(-1)?.volumeIdentity !== volume) deepFindings.push("chain_volume_" + index);
+    });
+    securities.forEach((security, index) => {
+      if (!security.currentUserOwner) deepFindings.push("security_owner_" + index);
+      if (security.objectKind !== "directory") deepFindings.push("security_kind_" + index);
+      if (security.isReparsePoint) deepFindings.push("security_reparse_" + index);
+      if (security.volumeIdentity !== volume) deepFindings.push("security_volume_" + index);
+      if (security.fileId !== chains[index]?.at(-1)?.fileId) deepFindings.push("security_fileid_" + index);
+    });
+    process.stderr.write("wire_admission_deep:" + (deepFindings.length === 0 ? "clean" : deepFindings.join(",")) + "\\n");
+  } catch (deepError) {
+    process.stderr.write("wire_admission_deep:threw_" + String((deepError && deepError.name) || "unknown").toLowerCase() + "\\n");
+  }
   process.stderr.write(String((error instanceof Error ? error.message : error) ?? "desktop_runtime_bootstrap_unavailable") + "\\n");
   process.exit(1);
 }

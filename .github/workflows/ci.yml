@@ -115,19 +115,22 @@ jobs:
       - run: pnpm --filter @gamebuddy/dialogue-web test:artifact
       - name: Install the frontend journeys' Chromium
         run: pnpm --dir dialogue-web exec playwright install --with-deps chromium
-      # Bisect of the 2026-10-16 mounted hang. `test:mounted` wraps the whole suite
-      # in the probe's single `spawnSync` child with inherited stdio, so a stall
-      # inside it yields one log line and no diagnosis (it ran 106 and 50 minutes
-      # across two runs with identical single-line output, while the same command
-      # is green locally in 1.8m). This bare run isolates Playwright from the
-      # probe: a hang here names Playwright/the dev server, a pass here with a
-      # hang below names the probe's spawn layer. Bounded, so either answer is a
-      # named failure instead of a silent hour.
-      - name: Bisect - bare Playwright, one journey
-        timeout-minutes: 10
-        run: pnpm --dir dialogue-web exec playwright test tests/app-bar-status-narrow.spec.ts --project=chromium --workers=1
       - run: pnpm --filter @gamebuddy/dialogue-web test:mounted
         timeout-minutes: 25
+      # The host suite's compiled-test bootstrap mints fixed Windows helper pairs
+      # and REFUSES to run without them: `compiled-test-bootstrap.mjs` imports
+      # `createBuildWindowsStaleLockReclaimer()`, which throws
+      # `windows_stale_lock_reclaimer_unavailable` when `native/**/.dist` is
+      # absent - measured as `pnpm test`'s first failure once the mounted hang was
+      # fixed and this step finally executed (the job had never reached it before).
+      # These are the same two builders, in the same order, that
+      # release-windows.yml runs before its own `pnpm --dir host test`; the SDK
+      # comes from global.json, exactly as that job's setup-dotnet does.
+      - run: node host/scripts/build-windows-stale-lock-reclaimer.mjs
+      - run: node host/scripts/build-windows-reparse-inspector.mjs
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
       - run: pnpm test
       # The composed runtime's launch contract: the environment block the launcher hands the Host child
       # (including the embedded-runtime declaration the background historian is gated on) and the session

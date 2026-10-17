@@ -173,6 +173,15 @@ function releaseMountedLock() {
 }
 
 async function holdMountedLock() {
+  // `mkdirSync(recursive: false)` needs the PARENT to exist. `packageRoot` is a
+  // checkout, but `packageRoot/.tmp` is ignored and untracked, so on a fresh
+  // clone it does not exist - and its ENOENT was caught by the loop below,
+  // misread as an unreadable stale lock, "cleaned" with a no-op rmSync and
+  // retried with NO sleep. That is an unbounded busy loop that writes nothing:
+  // measured in CI as `test:mounted` printing one line and then hanging for 106
+  // and 50 minutes. Creating the parent first makes the lock the small atomic
+  // act it was meant to be (EEXIST is the only expected failure).
+  mkdirSync(dirname(MOUNT_LOCK_DIR), { recursive: true });
   const deadline = Date.now() + MOUNT_LOCK_TIMEOUT_MS;
   for (;;) {
     try {
@@ -192,6 +201,7 @@ async function holdMountedLock() {
         } catch {
           /* another holder is removing it; the loop retries */
         }
+        await sleep(250);
         continue;
       }
       const waited = Math.round((Date.now() - owner.startedAtMs) / 1000);
