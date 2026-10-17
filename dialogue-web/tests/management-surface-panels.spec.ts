@@ -1150,6 +1150,12 @@ test("the newly created Chat's card takes the list's own measure", async ({ page
   const surface = page.getByTestId("chats-surface");
   await expect(surface).toBeVisible();
   await surface.getByRole("button", { name: "New Chat", exact: true }).click();
+  // Wait for the card creation renders before measuring it: the click resolves as
+  // soon as it is dispatched, while the create is an awaited request followed by a
+  // library re-read and the switch to the new Chat. Measuring straight after the
+  // click reads whichever state the last frame happened to be in - which is how
+  // this measured a list row (max-width `none`) instead of the created card.
+  await expect(surface.locator(".chat-item-card", { hasText: "New Chat" })).toBeVisible();
 
   const measured = await surface.evaluate((root) => {
     // The created card is the one that is not a list row.

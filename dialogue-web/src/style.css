@@ -3083,13 +3083,28 @@
   [data-connection-list],
   .voice-device-selector,
   .model-profile-editor {
+    width: 100%;
     max-width: var(--management-form-measure);
+    margin-inline: auto;
   }
   /* The Chats surface's list and its newly created card read one measure: the
      card is a row of the list, so the rule is shared rather than restated. */
   .chat-list,
   .chat-item-card:not([data-testid]) {
+    width: 100%;
     max-width: var(--management-form-measure);
+    margin-inline: auto;
+  }
+
+  /* The Memory panel's own column. It had no measure at all, so every block in it
+     spanned the region: at 1440x900 the notebook was 1408 px wide with its heading
+     and its own refresh control 1360 px apart, and the item list and the authoring
+     block stretched the same way. One measure on the section centres all of them,
+     and the blocks that are cards keep their own insets. */
+  .tavern-memory-section {
+    width: 100%;
+    max-width: var(--management-form-measure);
+    margin-inline: auto;
   }
 
   /* The stacks that are not a card carry a card's own inset, so a field in a card
@@ -3182,25 +3197,31 @@
   }
 
   /* The management panels - Chats, Characters, Settings, Memory - are stocks of
-   rows and forms, not one column of prose, so they keep the whole region and the
-   *content* takes the form measure, centred.
+   rows and forms, not one column of prose, so the **region** keeps the whole
+   surface and each **block** that reads as one column takes the form measure and
+   centres itself in that region.
 
-   Centring is the half that was missing. Measured at 1440x900 on the product
-   before this: the Chats list was 640 px against a left edge of 16, so every row
-   ended 768 px short of the region's right edge - a 640-wide column hugging one
-   side of a 1408-wide region, which reads as a broken layout rather than as a
-   measure; and the Memory notebook had no measure at all, so its heading sat at
-   x=16 while its own refresh control sat at x=1380, a card 1408 px wide holding
-   two short lines. The measure is the product's own `--management-form-measure`,
-   which the settings stacks and the chat list already read, so one measure now
-   covers the panel instead of each block carrying its own copy.
+   Which box carries the measure is not cosmetic: the region stays wide on purpose
+   - it is the scroll container and the background the panel is drawn on - and
+   three existing assertions pin exactly that (`management-surface-panels.spec.ts`
+   "the desktop panel is the wide surface", measuring `> 1200 px` at 1440x900).
+   Shrinking the region to the measure instead moves every block at once, but it
+   also moves the region, which is a different property that other work depends on.
 
-   The Characters roster keeps the region on purpose: it is a grid of cards and
-   the width is what gives it its columns. */
+   The half that was actually missing was the **centring**: every block already
+   read the measure but sat on the region's left edge, so at 1440x900 the Chats list
+   was a 640 px column 768 px short of the right edge, and the Memory panel's blocks
+   had no measure at all - its own heading at x=16 while its refresh control sat at
+   x=1380, a card 1408 px wide holding two short lines. Both are fixed where each
+   belongs: the block, with `margin-inline: auto` - and each such block keeps
+   `width: 100%`, because these blocks are items of a flex column
+   (`.surface-content` is `display: flex; flex-direction: column`) and an `auto`
+   inline margin **disables** the cross-axis stretch: without the explicit width the
+   list and the card shrink to their content (measured: the Chats list 640 -> 264 px,
+   the new Chat's card 360 px, which also broke the "the card is the list's own
+   measure" invariant these two share). */
   .surface-panel .surface-content {
     width: 100%;
-    max-width: var(--management-form-measure);
-    margin-inline: auto;
   }
 
   /* The conversation is a surface like the others, but its transcript scrolls

@@ -942,53 +942,112 @@ const PANEL_COLUMNS = [
 
 const FORM_MEASURE_PX = 640;
 
+/**
+ * The measure-carrying blocks, one per panel that has them. The gate asserts the
+ * property (each column reads the measure and sits centred in a wide region),
+ * not a mechanism: shrinking the region itself would move every block at once,
+ * but the region is the panel's own surface and three existing assertions pin it
+ * as the wide one (`management-surface-panels.spec.ts` "the desktop panel is the
+ * wide surface"). Both halves are asserted here now.
+ */
+const MEASURED_BLOCKS = [
+  ".chat-list",
+  ".chat-item-card",
+  ".tavern-memory-section",
+  ".memory-notebook",
+  ".connection-form",
+  ".voice-device-selector",
+  ".model-profile-editor",
+] as const;
+
 async function measurePanelColumn(page: Page, testId: string) {
-  return await page.evaluate((id) => {
-    const surface = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-    if (surface === null) return null;
-    const content = surface.querySelector<HTMLElement>(".surface-content");
-    if (content === null) return null;
-    const region = surface.getBoundingClientRect();
-    const box = content.getBoundingClientRect();
-    const widest = [...content.querySelectorAll<HTMLElement>("*")].reduce(
-      (best, node) => Math.max(best, node.getBoundingClientRect().width),
-      0,
-    );
-    return {
-      regionWidth: Math.round(region.width),
-      contentWidth: Math.round(box.width),
-      leftDead: Math.round(box.left - region.left),
-      rightDead: Math.round(region.right - box.right),
-      widestDescendant: Math.round(widest),
-      contentOverflow: content.scrollWidth - content.clientWidth,
-    };
-  }, testId);
+  return await page.evaluate(
+    ({ id, blocks }) => {
+      const surface = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+      if (surface === null) return null;
+      const content = surface.querySelector<HTMLElement>(".surface-content");
+      if (content === null) return null;
+      const region = surface.getBoundingClientRect();
+      const columns = [...content.querySelectorAll<HTMLElement>(blocks.join(","))]
+        .filter((node) => node.getBoundingClientRect().width > 0)
+        .map((node) => {
+          const box = node.getBoundingClientRect();
+          return {
+            className: node.className.toString().split(" ")[0] ?? "",
+            width: Math.round(box.width),
+            leftDead: Math.round(box.left - region.left),
+            rightDead: Math.round(region.right - box.right),
+          };
+        });
+      return {
+        regionWidth: Math.round(region.width),
+        columns,
+        contentOverflow: content.scrollWidth - content.clientWidth,
+      };
+    },
+    { id: testId, blocks: [...MEASURED_BLOCKS] },
+  );
 }
 
 test("the management panels read one centred column, so no panel hugs an edge", async ({ page }) => {
   await mountShell(page);
+  // The Chats panel's own column is its list, so the state has to carry one: an
+  // empty library renders the empty-state block instead and the panel would have
+  // nothing measured in it.
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        chats: [
+          {
+            handle: "B".repeat(42) + "A",
+            title: "A durable chat",
+            status: "active",
+            managementRevision: 1,
+            isSelected: true,
+            updatedAtMs: 1_760_000_000_000,
+            preview: "The parsnips took.",
+          },
+        ],
+      }),
+    ),
+  );
   await page.setViewportSize({ width: 1440, height: 900 });
 
   for (const { id, nav } of PANEL_COLUMNS) {
     await page.getByRole("button", { name: nav, exact: true }).click();
     await expect(page.getByTestId(id)).toBeVisible();
-    const measured = await measurePanelColumn(page, id);
+    // Each panel reads its content from the Host, so the column exists only once
+    // that read has landed: measure after it, or the gate reads a loading surface
+    // and finds no column at all (which is how it first reported `columns: []`).
+    await expect(page.locator(`[data-testid="${id}"] .surface-content > *`).first()).toBeVisible();
+    await expect(page.locator(`[data-testid="${id}"] .surface-content .empty-subtle, [data-testid="${id}"] .surface-content .chat-list, [data-testid="${id}"] .surface-content .tavern-memory-section, [data-testid="${id}"] .surface-content .connection-form`).first()).toBeVisible();
+    // A panel re-reads its library on every change (and a re-read briefly renders
+    // the loading state, which has no list), so the column is measured once it is
+    // there rather than once the click returned.
+    let measured = await measurePanelColumn(page, id);
+    for (let attempt = 0; attempt < 20 && measured !== null && measured.columns.length === 0; attempt += 1) {
+      await page.waitForTimeout(100);
+      measured = await measurePanelColumn(page, id);
+    }
     console.log(`[panel-column ${id}] ${JSON.stringify(measured)}`);
-    expect(measured, `${id} renders a content column`).not.toBeNull();
-    const column = measured!;
-    expect(
-      column.contentWidth,
-      `${id}'s content takes the form measure, not the whole ${column.regionWidth} px region`,
-    ).toBeLessThanOrEqual(FORM_MEASURE_PX);
-    expect(
-      Math.abs(column.leftDead - column.rightDead),
-      `${id} centres its column (left ${column.leftDead}, right ${column.rightDead})`,
-    ).toBeLessThanOrEqual(2);
-    expect(
-      column.widestDescendant,
-      `${id} has no block wider than its own column (${column.widestDescendant} vs ${column.contentWidth})`,
-    ).toBeLessThanOrEqual(column.contentWidth + 1);
-    expect(column.contentOverflow, `${id} does not scroll sideways`).toBe(0);
+    expect(measured, `${id} renders a content region`).not.toBeNull();
+    const panel = measured!;
+    // The region is the panel's own surface and stays wide: this is the invariant
+    // that made centring the region the wrong lever.
+    expect(panel.regionWidth, `${id} is the wide surface at 1440`).toBeGreaterThan(1200);
+    expect(panel.columns.length, `${id} has at least one measured column`).toBeGreaterThan(0);
+    for (const column of panel.columns) {
+      expect(
+        column.width,
+        `${id} ${column.className} takes the form measure, not the whole ${panel.regionWidth} px region`,
+      ).toBeLessThanOrEqual(FORM_MEASURE_PX);
+      expect(
+        Math.abs(column.leftDead - column.rightDead),
+        `${id} ${column.className} centres its column (left ${column.leftDead}, right ${column.rightDead})`,
+      ).toBeLessThanOrEqual(2);
+    }
+    expect(panel.contentOverflow, `${id} does not scroll sideways`).toBe(0);
   }
 });
 

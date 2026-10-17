@@ -123,6 +123,11 @@ async function stubShell(
           title: `词条 ${index}`,
           keys: ["料理", "做饭", "黑莓脆皮乐", "土豆饼", "绿茶"],
           constant: false,
+          // The client mirror validates the entry exactly, and the body is part of
+          // that shape (the Host renders it through the macro table before sending
+          // it). A fixture without it is rejected whole, and the section then renders
+          // nothing at all - which is what this stub did until the shape grew.
+          content: `第 ${index} 条正文。`,
         })),
       }),
     ),
