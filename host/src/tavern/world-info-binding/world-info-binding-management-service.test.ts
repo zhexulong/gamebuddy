@@ -1,15 +1,14 @@
 /**
  * Current product fact, so no reader has to rediscover it:
  *
- * every fresh Chat is created already settled on the companion's OWN card book
- * (`gamebuddy-worldbook-default-companion`, a `world_book`-family binding), and
- * the single binding slot cannot hold a `managed_world_info` desired binding
- * over it (`chat-thread-store.ts` `writeWorldInfoBinding` refuses a mixed
- * source family). So a managed bind cannot take the slot today, and the mounted
- * World Info panel renders an Attach that cannot succeed. This file's tests that
- * bind a managed item therefore establish that precondition through the public
- * store/coordinator seams first; see also the collision test at the bottom and
- * `.pi/tools/binding-fixture-progress.md`.
+ * a Chat has TWO World Info slots that coexist. The companion slot holds her OWN
+ * Card book (`gamebuddy-worldbook-default-companion`, a `world_book`-family
+ * binding, seeded at creation, always applied, never attachable or detachable from
+ * the World Info panel). The managed slot is the player's attached library item and
+ * is what this service's projection and Attach/Detach govern; a managed bind on a
+ * fresh Chat therefore succeeds while her book stays applied, and the two slots can
+ * never share a source family (`chat-thread-store.ts` `writeWorldInfoBinding`).
+ * See also `.pi/tools/binding-fixture-progress.md`.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -130,7 +129,7 @@ const mountPreamble = `
   const { createMountedTurnTransitionAuthority } = await import(new URL("./chat-thread-store.mounted-turn-transition.internal.js", storeUrl).href);
   const settleMounted = async () => {
     const settledState = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    await applyMounted(settledState.thread.worldBookBinding, settledState.thread.appliedWorldBookBinding);
+    await applyMounted(settledState.thread.managedWorldInfoBinding, settledState.thread.appliedManagedWorldInfoBinding);
   };
   const applyMounted = async (binding, expectedOldAppliedBinding) => {
     const transition = createMountedTurnTransitionAuthority();
@@ -221,7 +220,7 @@ test("mounted binding service binds and unbinds the exact immutable revision wit
     // applied revision through the acknowledged world-info binding seam so
     // the browser lifecycle under test observes desired != applied.
     const durable = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    await applyMounted(durable.thread.worldBookBinding, undefined);
+    await applyMounted(durable.thread.managedWorldInfoBinding, undefined);
     const staleBind = await code(() => service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: initialItem.handle }));
     const afterBindRead = await service.read();
     const unbind = await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: afterBindRead.revision, sourceHandle: null });
@@ -232,12 +231,12 @@ test("mounted binding service binds and unbinds the exact immutable revision wit
       initialItem,
       bind,
       selectedItem,
-      durableBinding: durable.thread.worldBookBinding,
-      appliedBinding: durableAfterUnbind.thread.appliedWorldBookBinding,
+      durableBinding: durable.thread.managedWorldInfoBinding,
+      appliedBinding: durableAfterUnbind.thread.appliedManagedWorldInfoBinding,
       staleBind,
       afterBindRead,
       unbind,
-      durableAfterUnbindBinding: durableAfterUnbind.thread.worldBookBinding,
+      durableAfterUnbindBinding: durableAfterUnbind.thread.managedWorldInfoBinding,
       afterUnbindRead,
       protective: { rawIds: [lease.chatThreadId, lease.chatSurfaceSessionId, "thread_02", "surface_02", "companion_01", "continuity_01"] },
     }));
@@ -302,6 +301,7 @@ test("mounted binding service binds and unbinds the exact immutable revision wit
 
 test("mounted binding service reports pending after changing World Info behind a durable transcript", async () => {
   const results = await mounted(`
+    const before = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
     const first = await service.read();
     const item = first.items[0];
     const bind = await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: item.handle });
@@ -310,15 +310,16 @@ test("mounted binding service reports pending after changing World Info behind a
     // The pending desired binding is retained behind the transcript; the
     // coordinator establishes applied only through the acknowledged seam.
     const boundDurable = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    await applyMounted(boundDurable.thread.worldBookBinding, undefined);
+    await applyMounted(boundDurable.thread.managedWorldInfoBinding, undefined);
     const lockedUnbind = await code(() => service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: lockedRead.revision, sourceHandle: null }));
     const durableAfterLock = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
     process.stdout.write(JSON.stringify({
       lockedRead,
       lockedUnbind,
+      beforeMessages: before.messages.length,
       durableAfterLockMessages: durableAfterLock.messages.length,
-       durableAfterLockBinding: durableAfterLock.thread.worldBookBinding,
-       durableAfterLockAppliedBinding: durableAfterLock.thread.appliedWorldBookBinding,
+       durableAfterLockBinding: durableAfterLock.thread.managedWorldInfoBinding,
+       durableAfterLockAppliedBinding: durableAfterLock.thread.appliedManagedWorldInfoBinding,
     }));
     await service.close();
     await lease.close();
@@ -326,7 +327,9 @@ test("mounted binding service reports pending after changing World Info behind a
   `);
   assert.equal((results.lockedRead as { state: string }).state, "pending");
   assert.equal((results.lockedUnbind as { ok: boolean }).ok, true);
-  assert.equal(results.durableAfterLockMessages, 1);
+  // The card's greeting opening plus the one accepted player line: the append added
+  // exactly the player's message and nothing else moved.
+  assert.equal(results.durableAfterLockMessages, (results.beforeMessages as number) + 1);
   const binding = results.durableAfterLockBinding as
     | { source: string; publicTitle: string; revision: number }
     | undefined;
@@ -415,14 +418,9 @@ test("mounted binding service serves the library write half through the exact pr
 
 test("mounted binding service refuses a removal or rename of an item the mounted Chat binds", async () => {
   const results = await mounted(`
-    // A freshly mounted Chat may already carry a default world_book applied
-    // binding, and a managed binding cannot replace another source family.
-    // Clear both through the public store/coordinator seams so the exact case
-    // under test - a mounted Chat bound to a managed library item - exists.
-    const s0 = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    await store().setWorldBookBinding({ chatThreadId: lease.chatThreadId, chatSurfaceSessionId: lease.chatSurfaceSessionId, companionId: "companion_01", continuityId: "continuity_01", expectedUpdatedAtMs: s0.thread.updatedAtMs });
-    const s1 = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    await applyMounted(undefined, s1.thread.appliedWorldBookBinding);
+    // A fresh Chat carries the companion's own book in HER slot; the managed slot is
+    // free, so binding a managed library item needs no prior clearing - the two
+    // layers coexist and neither displaces the other.
     const first = await service.read();
     await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: first.items[0].handle });
     const boundRead = await service.read();
@@ -449,22 +447,12 @@ test("mounted binding service refuses a removal or rename of an item the mounted
   assert.equal((results.final as { items: readonly unknown[] }).items.length, 0);
 });
 
-test("mounted binding service cannot take the binding slot with a managed item while the companion's own book is applied", async () => {
-  // CURRENT BEHAVIOR, pinned only so the collision cannot be rediscovered
-  // silently - NOT a claim that the refusal is desirable. A fresh Chat is
-  // created already settled on the companion's own card book, and the single
-  // binding slot refuses a managed desired binding over a `world_book` applied
-  // one. The World Info panel's projection says "none"/nothing selected while
-  // that book is what the turn's authored context actually carries, so its
-  // Attach cannot succeed. This test must be REVISED when the slot decision
-  // lands - whether her book belongs in the binding slot at all (a separate
-  // default channel or a second slot) or whether a managed bind displaces it.
-  // Decision thread and full evidence: `.pi/tools/binding-fixture-progress.md`.
+test("mounted binding service binds a managed item on a fresh Chat while the companion's own book stays applied in her slot", async () => {
   const results = await mounted(`
     const first = await service.read();
     const attempted = await code(() => service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: first.items[0].handle }));
     const durable = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    process.stdout.write(JSON.stringify({ firstState: first.state, firstSelectedCount: first.items.filter((item) => item.selected).length, firstItemTitle: first.items[0].title, attempted, durableBinding: durable.thread.worldBookBinding, durableApplied: durable.thread.appliedWorldBookBinding, durableMessages: durable.messages.length }));
+    process.stdout.write(JSON.stringify({ firstState: first.state, firstSelectedCount: first.items.filter((item) => item.selected).length, firstItemTitle: first.items[0].title, attempted, durableManaged: durable.thread.managedWorldInfoBinding, durableManagedApplied: durable.thread.appliedManagedWorldInfoBinding, durableCompanion: durable.thread.companionWorldBookBinding, durableCompanionApplied: durable.thread.appliedCompanionWorldBookBinding, durableMessages: durable.messages.length }));
     await service.close();
     await lease.close();
     await authority.close();
@@ -472,13 +460,60 @@ test("mounted binding service cannot take the binding slot with a managed item w
   assert.equal(results.firstState, "none");
   assert.equal(results.firstSelectedCount, 0);
   assert.equal(results.firstItemTitle, "Pelican Town");
-  assert.equal((results.attempted as { error: string }).error, "world_info_binding_conflict");
-  const durableBinding = results.durableBinding as { worldBookId: string; revision: number; provenance: string };
-  assert.equal(durableBinding.worldBookId, "gamebuddy-worldbook-default-companion");
-  assert.equal(durableBinding.revision, 1);
-  assert.equal(durableBinding.provenance, "reviewed-import");
-  assert.equal("source" in (durableBinding as Record<string, unknown>), false);
-  assert.deepEqual(results.durableApplied, results.durableBinding);
+  // The managed bind takes the managed slot: the projection reports it pending
+  // until the coordinator acknowledges the applied revision, exactly as it does
+  // for a settled Chat.
+  const attempted = results.attempted as { ok: boolean; value: { state: string } };
+  assert.equal(attempted.ok, true);
+  assert.equal(attempted.value.state, "pending");
+  const durableManaged = results.durableManaged as { source: string; publicTitle: string; revision: number };
+  assert.equal(durableManaged.source, "managed_world_info");
+  assert.equal(durableManaged.publicTitle, "Pelican Town");
+  assert.equal(durableManaged.revision, 1);
+  // Layer 1 is untouched: her own book is still the companion slot's binding,
+  // desired and applied alike.
+  const durableCompanion = results.durableCompanion as { worldBookId: string; revision: number; provenance: string };
+  assert.equal(durableCompanion.worldBookId, "gamebuddy-worldbook-default-companion");
+  assert.equal(durableCompanion.revision, 1);
+  assert.equal(durableCompanion.provenance, "reviewed-import");
+  assert.equal("source" in (durableCompanion as Record<string, unknown>), false);
+  assert.deepEqual(results.durableCompanionApplied, results.durableCompanion);
+  assert.equal(results.durableManagedApplied, undefined);
+  assert.equal(results.durableMessages, 1);
+});
+
+test("the managed slot still refuses a mixed desired/applied source family", async () => {
+  // The two layers no longer share a slot; the guard that refused a mixed-family
+  // replacement is exactly as strong, and now fires only inside a slot. This
+  // fixture sets the pair mixed on purpose: a desired binding of the companion's
+  // own family over the managed slot's applied managed revision.
+  const results = await mounted(`
+    const s0 = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    const companionBinding = s0.thread.companionWorldBookBinding;
+    const first = await service.read();
+    await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: first.items[0].handle });
+    const staged = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    await applyMounted(staged.thread.managedWorldInfoBinding, undefined);
+    const applied = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    const attempted = await code(() => store().setManagedWorldInfoBinding({ chatThreadId: lease.chatThreadId, chatSurfaceSessionId: lease.chatSurfaceSessionId, companionId: "companion_01", continuityId: "continuity_01", expectedUpdatedAtMs: applied.thread.updatedAtMs, binding: companionBinding }));
+    const after = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    process.stdout.write(JSON.stringify({ attempted, stagedApplied: applied.thread.appliedManagedWorldInfoBinding, durableManaged: after.thread.managedWorldInfoBinding, durableManagedApplied: after.thread.appliedManagedWorldInfoBinding, durableCompanion: after.thread.companionWorldBookBinding, durableMessages: after.messages.length }));
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+  assert.equal((results.attempted as { error: string }).error, "world_info_binding_mismatch");
+  // Fail closed without a durable write: the managed slot keeps exactly the
+  // revision it had, and her book is where it was.
+  const applied = results.stagedApplied as { source: string; publicTitle: string };
+  assert.equal(applied.source, "managed_world_info");
+  assert.equal(applied.publicTitle, "Pelican Town");
+  const durableManaged = results.durableManaged as { source: string; publicTitle: string };
+  assert.equal(durableManaged.source, "managed_world_info");
+  assert.equal(durableManaged.publicTitle, "Pelican Town");
+  assert.deepEqual(results.durableManagedApplied, results.stagedApplied);
+  const durableCompanion = results.durableCompanion as { worldBookId: string };
+  assert.equal(durableCompanion.worldBookId, "gamebuddy-worldbook-default-companion");
   assert.equal(results.durableMessages, 1);
 });
 
@@ -515,7 +550,7 @@ test("mounted binding service scopes source handles to the exact current project
     const staleHandleOnNewRevision = await code(() => service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: second.revision, sourceHandle: first.items[0].handle }));
     const fresh = await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: second.revision, sourceHandle: second.items[0].handle });
     const durable = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    process.stdout.write(JSON.stringify({ first, second, staleRevision, staleHandleOnNewRevision, fresh, durableBinding: durable.thread.worldBookBinding, firstRevision: first.revision, secondRevision: second.revision }));
+    process.stdout.write(JSON.stringify({ first, second, staleRevision, staleHandleOnNewRevision, fresh, durableBinding: durable.thread.managedWorldInfoBinding, firstRevision: first.revision, secondRevision: second.revision }));
     await service.close();
     await lease.close();
     await authority.close();
@@ -556,21 +591,22 @@ test("mounted binding service rechecks the coordinator lease after bindExact and
     const first = await guardedService.read();
     const attempted = await code(() => guardedService.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: first.items[0].handle }));
     const durable = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    process.stdout.write(JSON.stringify({ attempted, beforeBinding: before.thread.worldBookBinding, beforeMessages: before.messages.length, durableBinding: durable.thread.worldBookBinding, durableMessages: durable.messages.length, firstItemHandle: first.items[0].handle }));
+    process.stdout.write(JSON.stringify({ attempted, beforeManaged: before.thread.managedWorldInfoBinding, beforeCompanion: before.thread.companionWorldBookBinding, beforeMessages: before.messages.length, durableManaged: durable.thread.managedWorldInfoBinding, durableCompanion: durable.thread.companionWorldBookBinding, durableMessages: durable.messages.length, firstItemHandle: first.items[0].handle }));
     await guardedService.close();
     await service.close();
     await authority.close();
   `);
   assert.equal((results.attempted as { error: string }).error, "world_info_binding_service_unavailable");
-  // A fresh Chat starts settled on the companion's own card book, so this
-  // refusal's force is "no durable write", not "no binding": the slot must still
-  // hold exactly her book, carry no managed binding, and gain no message.
-  const beforeBinding = results.beforeBinding as { worldBookId: string; revision: number; provenance: string };
-  assert.equal(beforeBinding.worldBookId, "gamebuddy-worldbook-default-companion");
-  assert.equal(beforeBinding.revision, 1);
-  assert.equal(beforeBinding.provenance, "reviewed-import");
-  assert.deepEqual(results.durableBinding, results.beforeBinding);
-  assert.equal("source" in (results.durableBinding as Record<string, unknown>), false);
+  // A fresh Chat starts with her book in the companion slot, so this refusal's force
+  // is "no durable write": the companion slot must still hold exactly her book, the
+  // managed slot must stay empty, and no message may be added.
+  assert.equal(results.beforeManaged, undefined);
+  assert.equal(results.durableManaged, undefined);
+  const beforeCompanion = results.beforeCompanion as { worldBookId: string; revision: number; provenance: string };
+  assert.equal(beforeCompanion.worldBookId, "gamebuddy-worldbook-default-companion");
+  assert.equal(beforeCompanion.revision, 1);
+  assert.equal(beforeCompanion.provenance, "reviewed-import");
+  assert.deepEqual(results.durableCompanion, results.beforeCompanion);
   assert.equal(results.beforeMessages, 1);
   assert.equal(results.durableMessages, results.beforeMessages);
 });
@@ -599,7 +635,7 @@ test("mounted binding service rejects a mutation superseded by a concurrent read
     resolveRelease();
     const attempted = await code(() => pending);
     const durable = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    process.stdout.write(JSON.stringify({ firstRevision: first.revision, supersedingRevision: superseding.revision, attempted, beforeBinding: before.thread.worldBookBinding, beforeMessages: before.messages.length, durableBinding: durable.thread.worldBookBinding, durableMessages: durable.messages.length }));
+    process.stdout.write(JSON.stringify({ firstRevision: first.revision, supersedingRevision: superseding.revision, attempted, beforeManaged: before.thread.managedWorldInfoBinding, beforeCompanion: before.thread.companionWorldBookBinding, beforeMessages: before.messages.length, durableManaged: durable.thread.managedWorldInfoBinding, durableCompanion: durable.thread.companionWorldBookBinding, durableMessages: durable.messages.length }));
     await guardedService.close();
     await service.close();
     await lease.close();
@@ -611,14 +647,15 @@ test("mounted binding service rejects a mutation superseded by a concurrent read
   assert.notEqual(supersedingRevision, firstRevision);
   // The captured projection A was superseded while the mutation awaited the
   // resolver: the mutation must fail closed without any durable write. A fresh
-  // Chat is already settled on her card book, so the force is "byte-identical
-  // slot and message count", not "no binding".
+  // Chat keeps her book in her own slot and the managed slot empty, so the force is
+  // "byte-identical durable state and message count", not "no binding at all".
   assert.equal(attempted.ok, false);
   assert.equal(attempted.error, "world_info_binding_conflict");
-  const beforeBinding = results.beforeBinding as { worldBookId: string; revision: number; provenance: string };
-  assert.equal(beforeBinding.worldBookId, "gamebuddy-worldbook-default-companion");
-  assert.deepEqual(results.durableBinding, results.beforeBinding);
-  assert.equal("source" in (results.durableBinding as Record<string, unknown>), false);
+  assert.equal(results.beforeManaged, undefined);
+  assert.equal(results.durableManaged, undefined);
+  const beforeCompanion = results.beforeCompanion as { worldBookId: string };
+  assert.equal(beforeCompanion.worldBookId, "gamebuddy-worldbook-default-companion");
+  assert.deepEqual(results.durableCompanion, results.beforeCompanion);
   assert.equal(results.beforeMessages, 1);
   assert.equal(results.durableMessages, results.beforeMessages);
 });
@@ -660,11 +697,11 @@ test("mounted binding service propagates lease teardown observed during exact se
     const first = await service.read();
     await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: first.items[0].handle });
     const durableBefore = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    const durableHasBinding = durableBefore.thread.worldBookBinding !== undefined;
+    const durableHasBinding = durableBefore.thread.managedWorldInfoBinding !== undefined;
     // Only the coordinator adapter may mint applied state. Establish the
     // applied revision so the read's exact-selection path resolves against
     // retained history instead of short-circuiting on an absent applied.
-    await applyMounted(durableBefore.thread.worldBookBinding, undefined);
+    await applyMounted(durableBefore.thread.managedWorldInfoBinding, undefined);
     let resolveEntered;
     let resolveRelease;
     const historyEntered = new Promise((resolve) => { resolveEntered = resolve; });
@@ -711,11 +748,15 @@ test("mounted binding service settles a pristine bind immediately when the coord
   process.env.GAMEBUDDY_MOUNT_SETTLE = "1";
   try {
     const results = await mounted(`
+      // Pristine means MESSAGE-LESS, and the seeded default companion opens on its
+      // greeting: clear the opening through the public store seam so the exact case
+      // under test - a pristine bind with the settle entry wired - exists.
+      await store().commitOpening(lease.chatThreadId, "blank");
       const first = await service.read();
       const item = first.items[0];
       const bind = await service.setBinding({ apiVersion: 1, selectionGeneration: generation, expectedRevision: first.revision, sourceHandle: item.handle });
       const durable = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-      process.stdout.write(JSON.stringify({ bindState: bind.state, bindSelected: bind.items[0].selected, bindPending: bind.items[0].pending, applied: durable.thread.appliedWorldBookBinding }));
+      process.stdout.write(JSON.stringify({ bindState: bind.state, bindSelected: bind.items[0].selected, bindPending: bind.items[0].pending, applied: durable.thread.appliedManagedWorldInfoBinding }));
       await service.close();
       await lease.close();
       await authority.close();

@@ -237,13 +237,15 @@ async function constructChat(
   }
 }
 
-async function release(input: Readonly<{
-  first?: PreparedChat;
-  second?: PreparedChat;
-  content?: ReturnType<typeof createManifestDerivedInitialChatExactContentPort>;
-  threads?: ReturnType<typeof createChatThreadStore>;
-  root: string;
-}>): Promise<void> {
+async function release(
+  input: Readonly<{
+    first?: PreparedChat;
+    second?: PreparedChat;
+    content?: ReturnType<typeof createManifestDerivedInitialChatExactContentPort>;
+    threads?: ReturnType<typeof createChatThreadStore>;
+    root: string;
+  }>,
+): Promise<void> {
   input.first?.prepared.closeChatThreadStore();
   input.second?.prepared.closeChatThreadStore();
   await input.first?.binding.close();
@@ -297,7 +299,7 @@ test("a Chat created through the product's New Chat carries the card's scenario 
       "the new Chat's durable thread must bind the companion's own scenario, not only its opening",
     );
     assert.equal(
-      secondThread.thread.worldBookBinding !== undefined,
+      secondThread.thread.companionWorldBookBinding !== undefined,
       true,
       "the new Chat's durable thread must bind the companion's own world book",
     );
@@ -374,7 +376,7 @@ test("New Chat keeps an explicitly named selection instead of defaulting to the 
       "a caller that names its own scenario keeps it; the companion's own is neither added nor substituted",
     );
     assert.equal(
-      created.thread.worldBookBinding !== undefined,
+      created.thread.companionWorldBookBinding !== undefined,
       true,
       "the companion's own world book is still the default for a Chat that names none",
     );
@@ -402,7 +404,11 @@ test("a companion without a card binds nothing rather than inventing content", a
       [],
       "no scenario is invented for a companion that has no card",
     );
-    assert.equal(created.thread.worldBookBinding, undefined, "no world book is invented for a companion with no card");
+    assert.equal(
+      created.thread.companionWorldBookBinding,
+      undefined,
+      "no world book is invented for a companion with no card",
+    );
   } finally {
     threads.close?.();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

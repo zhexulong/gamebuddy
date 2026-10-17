@@ -12,6 +12,7 @@ import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import {
   materializeTavernAuthoredStableCatalog,
   type TavernAuthoredContextCatalog,
+  type TavernCompanionWorldBookSource,
 } from "../tavern/catalog-service.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
@@ -146,18 +147,21 @@ async function buildExactChatRuntimeConstruction(
         freshState.thread.profileCanonicalHash !== freshProfileMetadata.canonicalHash
       )
         throw new Error("chat_runtime_exact_content_unavailable");
-      const desiredBinding = freshState.thread.worldBookBinding;
-      const effectiveBinding =
-        mode === "desired" || sameWorldInfoBinding(desiredBinding, freshState.thread.appliedWorldBookBinding)
-          ? desiredBinding
-          : freshState.thread.appliedWorldBookBinding;
+      // Layer 1 (the companion's own book) is part of who she is and is always applied;
+      // only layer 2, the attached managed item, has a desired/applied pair to reconcile.
+      const companionBinding = freshState.thread.companionWorldBookBinding;
+      const desiredManaged = freshState.thread.managedWorldInfoBinding;
+      const effectiveManaged =
+        mode === "desired" || sameWorldInfoBinding(desiredManaged, freshState.thread.appliedManagedWorldInfoBinding)
+          ? desiredManaged
+          : freshState.thread.appliedManagedWorldInfoBinding;
       const materializationThread =
-        sameWorldInfoBinding(effectiveBinding, desiredBinding) &&
-        sameWorldInfoBinding(effectiveBinding, freshState.thread.appliedWorldBookBinding)
+        sameWorldInfoBinding(effectiveManaged, desiredManaged) &&
+        sameWorldInfoBinding(effectiveManaged, freshState.thread.appliedManagedWorldInfoBinding)
           ? freshState.thread
           : Object.freeze({
               ...freshState.thread,
-              ...(effectiveBinding === undefined ? {} : { worldBookBinding: effectiveBinding }),
+              ...(effectiveManaged === undefined ? {} : { managedWorldInfoBinding: effectiveManaged }),
             });
       const macros = macroTable({ char: freshProfile.identity.name, locale: presentationLocale });
       return await materializeTavernAuthoredStableCatalog(
@@ -176,11 +180,14 @@ async function buildExactChatRuntimeConstruction(
           }),
         }),
         macros,
-        effectiveBinding === undefined
-          ? undefined
-          : "source" in effectiveBinding
-            ? await managedWorldInfoResolver.resolve(effectiveBinding)
-            : await resolveBoundWorldBookSource(effectiveBinding, paths.runtimeCwd, macros),
+        Object.freeze({
+          ...(companionBinding === undefined
+            ? {}
+            : { companionWorldBook: await resolveBoundWorldBookSource(companionBinding, paths.runtimeCwd, macros) }),
+          ...(effectiveManaged === undefined
+            ? {}
+            : { managedWorldInfo: await managedWorldInfoResolver.resolve(effectiveManaged) }),
+        }),
       );
     } catch {
       throw new Error("chat_runtime_exact_content_unavailable");
@@ -296,25 +303,23 @@ function assertExactPermit(execution: ChatRuntimeBindingExecution, permit: Produ
  */
 /**
  * Resolves a native (non-managed) WorldBookBinding — the bound worldbook.json
- * the reviewed import wrote into the runtime root — into the always-on
+ * the reviewed import wrote into the runtime root — into layer 1's always-on
  * `lorebook_constant` materialization input. The on-disk book must EXACTLY
- * match the thread binding (id/revision/hash): a drifted or manually edited
- * book refuses construction instead of silently materializing stale content,
- * mirroring the managed World Info hash gate.
+ * match the companion slot's binding (id/revision/hash): a drifted or manually
+ * edited book refuses construction instead of silently materializing stale
+ * content, mirroring the managed World Info hash gate.
  *
  * `constant: true` entries are reviewed always-on background and ride in the
  * stable lorebook_constant source (Tier 2 m[0]); the thread that carries this
  * binding is the one the reviewed import wrote for (see
- * `initial-chat-exact-content-port.ts`, which defaults a new thread's binding to
- * the companion's own book). The keyword-gated entries are deliberately NOT
- * forwarded: Magic Context binds the volatile channel per turn, so publishing
- * entry-keyed candidates from a per-session catalog makes every turn refuse.
+ * `initial-chat-exact-content-port.ts`, which seeds a new thread's companion
+ * slot with the companion's own book).
  */
 async function resolveBoundWorldBookSource(
   binding: import("../tavern/chat-thread-store.js").TavernStableWorldBookBinding,
   runtimeCwd: string,
   macros: MacroTable,
-): Promise<import("../tavern/catalog-service.js").TavernWorldInfoSource> {
+): Promise<TavernCompanionWorldBookSource> {
   let book;
   try {
     book = await readWorldBook(join(runtimeCwd, "worldbook.json"));

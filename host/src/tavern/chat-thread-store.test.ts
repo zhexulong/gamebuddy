@@ -539,18 +539,18 @@ test("World Info desired edits preserve applied revision, pending unbind is dura
       companionId: "companion_01",
       continuityId: "continuity_01",
       chatSurfaceSessionId: "surface_01",
-      worldBookBinding: revision1,
+      managedWorldInfoBinding: revision1,
       opening: "blank",
     });
     let state = await s.resumeThread("thread_01", "surface_01");
-    assert.deepEqual(state.thread.worldBookBinding, revision1);
-    assert.deepEqual(state.thread.appliedWorldBookBinding, revision1);
+    assert.deepEqual(state.thread.managedWorldInfoBinding, revision1);
+    assert.deepEqual(state.thread.appliedManagedWorldInfoBinding, revision1);
     state = await s.appendPlayer("thread_01", {
       messageId: "player_01",
       text: "active turn",
       occurredAtMs: Date.now(),
     });
-    state = await s.setWorldBookBinding!({
+    state = await s.setManagedWorldInfoBinding!({
       chatThreadId: "thread_01",
       chatSurfaceSessionId: "surface_01",
       companionId: "companion_01",
@@ -558,8 +558,8 @@ test("World Info desired edits preserve applied revision, pending unbind is dura
       expectedUpdatedAtMs: state.thread.updatedAtMs,
       binding: revision2,
     });
-    assert.deepEqual(state.thread.worldBookBinding, revision2);
-    assert.deepEqual(state.thread.appliedWorldBookBinding, revision1);
+    assert.deepEqual(state.thread.managedWorldInfoBinding, revision2);
+    assert.deepEqual(state.thread.appliedManagedWorldInfoBinding, revision1);
     await assert.rejects(
       () =>
         import("./chat-thread-store.js").then(({ acceptMountedPlayerMessage }) =>
@@ -584,15 +584,15 @@ test("World Info desired edits preserve applied revision, pending unbind is dura
         ),
       /context_unavailable/,
     );
-    state = await s.setWorldBookBinding!({
+    state = await s.setManagedWorldInfoBinding!({
       chatThreadId: "thread_01",
       chatSurfaceSessionId: "surface_01",
       companionId: "companion_01",
       continuityId: "continuity_01",
       expectedUpdatedAtMs: state.thread.updatedAtMs,
     });
-    assert.equal(state.thread.worldBookBinding, undefined);
-    assert.deepEqual(state.thread.appliedWorldBookBinding, revision1);
+    assert.equal(state.thread.managedWorldInfoBinding, undefined);
+    assert.deepEqual(state.thread.appliedManagedWorldInfoBinding, revision1);
     s.close?.();
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -624,11 +624,11 @@ test("coordinator-branded World Info acknowledgement applies only the exact desi
       companionId: "companion_01",
       continuityId: "continuity_01",
       chatSurfaceSessionId: "surface_01",
-      worldBookBinding: revision1,
+      managedWorldInfoBinding: revision1,
       opening: "blank",
     });
     let state = await s.resumeThread("thread_01", "surface_01");
-    await s.setWorldBookBinding!({
+    await s.setManagedWorldInfoBinding!({
       chatThreadId: "thread_01",
       chatSurfaceSessionId: "surface_01",
       companionId: "companion_01",
@@ -648,7 +648,7 @@ test("coordinator-branded World Info acknowledgement applies only the exact desi
       binding: revision2,
       expectedOldAppliedBinding: revision1,
     });
-    assert.deepEqual(state.thread.appliedWorldBookBinding, revision2);
+    assert.deepEqual(state.thread.appliedManagedWorldInfoBinding, revision2);
     await assert.rejects(
       () =>
         acknowledgeMountedWorldInfoBinding({
@@ -670,6 +670,124 @@ test("coordinator-branded World Info acknowledgement applies only the exact desi
     operation.revoke();
     authority.revoke();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+// A live v4 root holds ONE binding row per thread; v5 splits it into one row per
+// slot. The fixture below builds the real current root and then re-shapes ONLY the
+// one table v5 changed (plus the recorded version), which is exactly the difference
+// a live v4 root has, so the migration is exercised against a real old-shaped file.
+test("a v4 root keeps the companion's own book and the attached managed item across the slot migration", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-world-info-migration-");
+  const key = createHash("sha256").update(["player_01", "companion_01", "continuity_01"].join("\u001f")).digest("hex");
+  const companionRevision = Object.freeze({
+    worldBookId: "gamebuddy-worldbook-default-companion",
+    revision: 1,
+    canonicalHash: "d".repeat(64),
+    provenance: "reviewed-import" as const,
+  });
+  const managedRevision: TavernStableManagedWorldInfoBinding = Object.freeze({
+    source: "managed_world_info",
+    publicTitle: "Pelican Town",
+    revision: 3,
+    canonicalHash: "c".repeat(64),
+  });
+  try {
+    const s = createChatThreadStore(root, key);
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit({
+      chatThreadId: "thread_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatSurfaceSessionId: "surface_01",
+      companionWorldBookBinding: companionRevision,
+      managedWorldInfoBinding: managedRevision,
+      opening: "blank",
+    });
+    s.close?.();
+    const dbPath = join(root, "tavern", "v3", "continuities", key, "tavern.sqlite");
+    const oldShape = new DatabaseSync(dbPath);
+    oldShape.exec(`
+      ALTER TABLE tavern_thread_world_info_bindings RENAME TO tavern_thread_world_info_bindings_v5;
+      CREATE TABLE tavern_thread_world_info_bindings (
+        thread_id TEXT PRIMARY KEY REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
+        source TEXT NOT NULL CHECK(source IN ('world_book', 'managed_world_info')),
+        world_book_id TEXT,
+        public_title TEXT,
+        revision INTEGER CHECK(revision IS NULL OR revision > 0),
+        canonical_hash TEXT,
+        provenance TEXT,
+        applied_revision INTEGER CHECK(applied_revision IS NULL OR applied_revision > 0),
+        applied_canonical_hash TEXT,
+        applied_public_title TEXT,
+        applied_world_book_id TEXT,
+        CHECK(
+          (
+            (
+              source = 'world_book'
+              AND public_title IS NULL
+              AND provenance IN ('authored', 'st-card-import', 'reviewed-import')
+              AND (world_book_id IS NOT NULL OR applied_world_book_id IS NOT NULL)
+            )
+            OR
+            (
+              source = 'managed_world_info'
+              AND world_book_id IS NULL
+              AND provenance IS NULL
+              AND (public_title IS NOT NULL OR applied_public_title IS NOT NULL)
+            )
+          )
+          AND ((revision IS NOT NULL AND canonical_hash IS NOT NULL) OR (revision IS NULL AND canonical_hash IS NULL))
+          AND (
+            (
+              applied_revision IS NULL
+              AND applied_canonical_hash IS NULL
+              AND applied_public_title IS NULL
+              AND applied_world_book_id IS NULL
+            )
+            OR (
+              applied_revision IS NOT NULL
+              AND applied_canonical_hash IS NOT NULL
+              AND (
+                (source = 'managed_world_info' AND applied_public_title IS NOT NULL AND applied_world_book_id IS NULL)
+                OR (source = 'world_book' AND applied_public_title IS NULL AND applied_world_book_id IS NOT NULL)
+              )
+            )
+          )
+        )
+      );
+      INSERT INTO tavern_thread_world_info_bindings (
+        thread_id, source, world_book_id, public_title, revision, canonical_hash, provenance,
+        applied_revision, applied_canonical_hash, applied_public_title, applied_world_book_id
+      )
+      SELECT
+        thread_id,
+        CASE slot WHEN 'companion' THEN 'world_book' ELSE 'managed_world_info' END,
+        world_book_id, public_title, revision, canonical_hash, provenance,
+        applied_revision, applied_canonical_hash, applied_public_title, applied_world_book_id
+      FROM tavern_thread_world_info_bindings_v5;
+      DROP TABLE tavern_thread_world_info_bindings_v5;
+      PRAGMA user_version = 4;
+    `);
+    oldShape.close();
+
+    const migrated = createChatThreadStore(root, key);
+    const state = await migrated.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(state.thread.companionWorldBookBinding, companionRevision);
+    assert.deepEqual(state.thread.appliedCompanionWorldBookBinding, companionRevision);
+    assert.deepEqual(state.thread.managedWorldInfoBinding, managedRevision);
+    assert.deepEqual(state.thread.appliedManagedWorldInfoBinding, managedRevision);
+    migrated.close?.();
+    const inspected = new DatabaseSync(dbPath);
+    const version = (inspected.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+    const slots = (
+      inspected.prepare("SELECT slot FROM tavern_thread_world_info_bindings ORDER BY slot").all() as any[]
+    ).map((row) => row.slot);
+    inspected.close();
+    assert.equal(version, 5);
+    assert.deepEqual(slots, ["companion", "managed"]);
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

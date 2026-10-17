@@ -89,7 +89,7 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
       chatSurfaceSessionId: "surface",
       companionId: "companion",
       continuityId: "continuity",
-      worldBookBinding: exact.binding,
+      managedWorldInfoBinding: exact.binding,
       opening: "blank",
     });
     const catalog = await materializeTavernAuthoredStableCatalog(
@@ -104,7 +104,7 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
         profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
       },
       TEST_MACROS,
-      exact,
+      { managedWorldInfo: exact },
     );
     assert.deepEqual(
       catalog.stableSources.map((source) => source.kind),
@@ -132,7 +132,7 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
             profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
           },
           TEST_MACROS,
-          { ...exact, content: `${exact.content}tampered` },
+          { managedWorldInfo: { ...exact, content: `${exact.content}tampered` } },
         ),
       /tavern_stable_context_worldbook_binding_mismatch/,
     );
@@ -150,7 +150,7 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
             profile: { profileId: "profile-drift", revision: 1, canonicalHash: "a".repeat(64) },
           },
           TEST_MACROS,
-          exact,
+          { managedWorldInfo: exact },
         ),
       /tavern_stable_context_binding_mismatch/,
     );
@@ -168,7 +168,7 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
             profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
           },
           TEST_MACROS,
-          { ...exact, binding: { ...exact.binding, canonicalHash: "b".repeat(64) } },
+          { managedWorldInfo: { ...exact, binding: { ...exact.binding, canonicalHash: "b".repeat(64) } } },
         ),
       /tavern_stable_context_worldbook_binding_mismatch/,
     );
@@ -219,7 +219,7 @@ test("stable World Info excludes constants from volatile sources and matches vol
       chatSurfaceSessionId: "surface",
       companionId: "companion",
       continuityId: "continuity",
-      worldBookBinding: exact.binding,
+      managedWorldInfoBinding: exact.binding,
       opening: "blank",
     });
     const catalog = await materializeTavernAuthoredStableCatalog(
@@ -234,7 +234,7 @@ test("stable World Info excludes constants from volatile sources and matches vol
         profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
       },
       TEST_MACROS,
-      exact,
+      { managedWorldInfo: exact },
     );
     assert.ok(catalog.stableSources[0]!.budgetTokens <= 2_048);
     assert.match(catalog.stableSources[0]!.content, /Always Town/);
@@ -279,7 +279,7 @@ test("stable World Info falls back to Overview when constant content exceeds the
       chatSurfaceSessionId: "surface",
       companionId: "companion",
       continuityId: "continuity",
-      worldBookBinding: exact.binding,
+      managedWorldInfoBinding: exact.binding,
       opening: "blank",
     });
     const catalog = await materializeTavernAuthoredStableCatalog(
@@ -294,7 +294,7 @@ test("stable World Info falls back to Overview when constant content exceeds the
         profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
       },
       TEST_MACROS,
-      exact,
+      { managedWorldInfo: exact },
     );
     assert.ok(catalog.stableSources[0]!.budgetTokens <= 2_048);
     assert.match(catalog.stableSources[0]!.content, /Large Lore/);
@@ -584,7 +584,7 @@ test("native WorldBookBinding materializes constant entries into lorebook_consta
       chatSurfaceSessionId: "surface",
       companionId: "companion",
       continuityId: "continuity",
-      worldBookBinding: binding,
+      companionWorldBookBinding: binding,
       opening: "blank",
     });
     const catalog = await materializeTavernAuthoredStableCatalog(
@@ -600,10 +600,12 @@ test("native WorldBookBinding materializes constant entries into lorebook_consta
       },
       TEST_MACROS,
       {
-        binding,
-        alwaysOnPremise: book.alwaysOnPremise,
-        constantEntries: book.entries.filter((entry) => entry.constant === true),
-        keywordEntries: book.entries.filter((entry) => entry.constant !== true),
+        companionWorldBook: {
+          binding,
+          alwaysOnPremise: book.alwaysOnPremise,
+          constantEntries: book.entries.filter((entry) => entry.constant === true),
+          keywordEntries: book.entries.filter((entry) => entry.constant !== true),
+        },
       },
     );
     const stable = catalog.stableSources.find((source) => source.kind === "lorebook_constant");

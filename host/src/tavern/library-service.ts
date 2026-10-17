@@ -75,7 +75,7 @@ type NewChatRequest = Readonly<{
   personaId?: string;
   scenarioId?: string;
   dialogueExamplesId?: string;
-  worldBookBinding?: TavernStableWorldBookBinding;
+  companionWorldBookBinding?: TavernStableWorldBookBinding;
   /**
    * An omitted opening means the companion's own greeting: the reviewed card's `first_mes` became
    * the greeting record's default variant at provisioning, so a card-provisioned companion HAS an
@@ -203,9 +203,10 @@ export function createTavernLibraryService(
       // The companion's own reviewed world book, for a Chat that names none: the Chat
       // surface materializes only what the thread binds, so a card-provisioned
       // companion used to carry its backdrop into the first Chat and lose it in every
-      // Chat the player opened afterwards.
-      const worldBookBinding =
-        input.worldBookBinding ?? (await resolveCompanionOwnWorldBookBinding(paths.runtimeCwd));
+      // Chat the player opened afterwards. It seeds the companion slot, which the
+      // managed World Info panel can neither fill nor clear.
+      const companionWorldBookBinding =
+        input.companionWorldBookBinding ?? (await resolveCompanionOwnWorldBookBinding(paths.runtimeCwd));
       const opening =
         input.opening === undefined
           ? ((await resolveCompanionOwnOpening(store, paths.companionRoot, profile.revision, scenario)) ?? "blank")
@@ -226,7 +227,7 @@ export function createTavernLibraryService(
         ...(persona === undefined ? {} : { personaId: persona.personaId }),
         ...(scenario === undefined ? {} : { scenarioId: scenario.scenarioId }),
         stableArtifactBindings,
-        ...(worldBookBinding === undefined ? {} : { worldBookBinding }),
+        ...(companionWorldBookBinding === undefined ? {} : { companionWorldBookBinding }),
         opening,
       };
       return threadCreation.createExplicit(request);
@@ -272,15 +273,17 @@ export type TavernOpeningVariantProjection = Readonly<{
  * `ChatThreadStore.commitOpening` and the existing `greeting_variant_id` record, and returns the
  * committed variant's position so every caller projects the same fact.
  */
-export async function commitGreetingOpeningVariant(input: Readonly<{
-  store: TavernArtifactStore;
-  threads: ChatThreadStore;
-  paths: TavernPaths;
-  chatThreadId: string;
-  chatSurfaceSessionId: string;
-  direction?: "prev" | "next";
-  targetIndex?: number;
-}>): Promise<Readonly<{ state: ChatThreadState; variant: TavernOpeningVariantProjection }>> {
+export async function commitGreetingOpeningVariant(
+  input: Readonly<{
+    store: TavernArtifactStore;
+    threads: ChatThreadStore;
+    paths: TavernPaths;
+    chatThreadId: string;
+    chatSurfaceSessionId: string;
+    direction?: "prev" | "next";
+    targetIndex?: number;
+  }>,
+): Promise<Readonly<{ state: ChatThreadState; variant: TavernOpeningVariantProjection }>> {
   if ((input.direction === undefined) === (input.targetIndex === undefined))
     throw new Error("invalid_chat_opening_request");
   const state = await input.threads.resumeThread(input.chatThreadId, input.chatSurfaceSessionId);

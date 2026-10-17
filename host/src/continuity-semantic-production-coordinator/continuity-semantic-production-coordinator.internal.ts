@@ -568,7 +568,8 @@ async function ensureCurrentAuthoredContext(
   refreshPromise = (async () => {
     const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
     if (!record.active) throw new SemanticProductionCoordinatorError("context_unavailable");
-    if (sameBindingForCoordinator(state.thread.worldBookBinding, state.thread.appliedWorldBookBinding)) return;
+    if (sameBindingForCoordinator(state.thread.managedWorldInfoBinding, state.thread.appliedManagedWorldInfoBinding))
+      return;
     if (
       (state.turnLedger !== null && !isTerminalTurnStatusForCoordinator(state.turnLedger.status)) ||
       record.activePrompt !== undefined
@@ -593,7 +594,7 @@ async function ensureCurrentAuthoredContext(
       throw new SemanticProductionCoordinatorError("context_unavailable");
     if (!record.active) throw new SemanticProductionCoordinatorError("context_unavailable");
     // The desired binding must remain unchanged across the replacement.
-    if (!sameBindingForCoordinator(after.thread.worldBookBinding, state.thread.worldBookBinding))
+    if (!sameBindingForCoordinator(after.thread.managedWorldInfoBinding, state.thread.managedWorldInfoBinding))
       throw new SemanticProductionCoordinatorError("context_unavailable");
     const operationAuthority = record.transitionAuthority.mintOperation();
     try {
@@ -606,10 +607,12 @@ async function ensureCurrentAuthoredContext(
         continuityId: manifest.principal.continuityId,
         chatThreadId: record.chatThreadId,
         chatSurfaceSessionId: record.chatSurfaceSessionId,
-        ...(after.thread.worldBookBinding === undefined ? {} : { binding: after.thread.worldBookBinding }),
-        ...(state.thread.appliedWorldBookBinding === undefined
+        ...(after.thread.managedWorldInfoBinding === undefined
           ? {}
-          : { expectedOldAppliedBinding: state.thread.appliedWorldBookBinding }),
+          : { binding: after.thread.managedWorldInfoBinding }),
+        ...(state.thread.appliedManagedWorldInfoBinding === undefined
+          ? {}
+          : { expectedOldAppliedBinding: state.thread.appliedManagedWorldInfoBinding }),
       });
     } finally {
       operationAuthority.revoke();

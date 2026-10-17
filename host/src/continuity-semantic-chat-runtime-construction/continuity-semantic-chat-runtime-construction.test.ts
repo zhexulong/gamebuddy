@@ -91,11 +91,12 @@ async function fixture(options: FixtureOptions = {}) {
     manifest,
     ownerProof: Object.freeze({ processId: 42, creationTime100ns: "123456" }),
   });
-  let worldBookBinding: import("../tavern/chat-thread-store.js").TavernStableWorldInfoBinding | undefined;
+  let companionWorldBookBinding: import("../tavern/chat-thread-store.js").TavernStableWorldBookBinding | undefined;
+  let managedWorldInfoBinding: import("../tavern/chat-thread-store.js").TavernStableManagedWorldInfoBinding | undefined;
   if (options.worldInfo !== undefined) {
     const repository = createWorldInfoManagementRepository(runtimeRoot);
     const created = await repository.create(options.worldInfo);
-    worldBookBinding = await createManagedWorldInfoBindingResolver(repository).bindExact(
+    managedWorldInfoBinding = await createManagedWorldInfoBindingResolver(repository).bindExact(
       options.worldInfo.publicTitle,
       options.worldInfo.selectedRevision ?? created.revision,
     );
@@ -115,14 +116,14 @@ async function fixture(options: FixtureOptions = {}) {
     await copyFile(options.ownWorldBookPath, bookPath);
     const book = await readWorldBook(bookPath);
     const metadata = worldBookMetadata(book);
-    worldBookBinding = Object.freeze({
+    companionWorldBookBinding = Object.freeze({
       worldBookId: book.worldBookId,
       revision: metadata.revision,
       canonicalHash: metadata.canonicalHash,
       // Required by the store's validator: a native binding carries its provenance (the reviewed card import
       // is "reviewed-import"; omitting it fails with `invalid_tavern_worldbook_binding`).
       provenance: "reviewed-import" as const,
-    }) as never;
+    });
   }
   const threads = createChatThreadStore(runtimeRoot, identityKey(principal));
   const profile = Object.freeze({
@@ -170,7 +171,8 @@ async function fixture(options: FixtureOptions = {}) {
     chatSurfaceSessionId: "chat_session_01",
     companionId: principal.companionId,
     continuityId: principal.continuityId,
-    ...(worldBookBinding === undefined ? {} : { worldBookBinding }),
+    ...(companionWorldBookBinding === undefined ? {} : { companionWorldBookBinding }),
+    ...(managedWorldInfoBinding === undefined ? {} : { managedWorldInfoBinding }),
     ...(scenarioBinding === undefined
       ? {}
       : { scenarioId: scenarioBinding.sourceId, stableArtifactBindings: [scenarioBinding] }),

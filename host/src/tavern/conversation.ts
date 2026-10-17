@@ -51,7 +51,8 @@ export type TavernConversationBinding = Readonly<{
   continuityId: string;
   chatSurfaceSessionId: string;
   stableArtifactBindings?: readonly TavernStableArtifactBinding[];
-  worldBookBinding?: TavernStableWorldBookBinding;
+  /** The companion slot: her own Card book, the only binding creation seeds directly. */
+  companionWorldBookBinding?: TavernStableWorldBookBinding;
 }>;
 
 /** A semantic catalog record contains only the exact content binding, never paths or transcript data. */

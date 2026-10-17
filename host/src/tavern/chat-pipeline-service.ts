@@ -47,7 +47,7 @@ import {
   createChatThreadStore,
   DEFAULT_WORLDBOOK_SCAN_DEPTH,
   type FailedTurn,
-  type TavernStableWorldInfoBinding,
+  type TavernStableWorldBookBinding,
 } from "./chat-thread-store.js";
 import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import { createPlayerTurnAcceptor } from "./player-turn-acceptance.js";
@@ -236,8 +236,8 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
    * here so a rebound or replaced book can never widen this mount's window.
    */
   const scanDepthByBinding = new Map<string, number>();
-  const worldBookScanDepth = async (binding: TavernStableWorldInfoBinding | undefined): Promise<number> => {
-    if (binding === undefined || "source" in binding) return DEFAULT_WORLDBOOK_SCAN_DEPTH;
+  const worldBookScanDepth = async (binding: TavernStableWorldBookBinding | undefined): Promise<number> => {
+    if (binding === undefined) return DEFAULT_WORLDBOOK_SCAN_DEPTH;
     const key = `${binding.worldBookId}\u001f${binding.revision}\u001f${binding.canonicalHash}`;
     const cached = scanDepthByBinding.get(key);
     if (cached !== undefined) return cached;
@@ -323,7 +323,7 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
         // keyword planted a turn earlier never reached its entry.
         const boundedTail = boundedVisibleTail(
           before.messages,
-          await worldBookScanDepth(before.thread.worldBookBinding),
+          await worldBookScanDepth(before.thread.companionWorldBookBinding),
         );
         const duplicate = before.idempotency.some((record) => record.key === idempotencyKey);
         const accepted = await accept.accept(

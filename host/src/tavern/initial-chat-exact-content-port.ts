@@ -131,22 +131,25 @@ export function createManifestDerivedInitialChatExactContentPort(
           request.scenarioId === undefined
             ? await resolveCompanionOwnScenario(artifacts, tavernPaths.companionRoot)
             : undefined;
-        const binding = request.worldBookBinding ?? (await resolveCompanionOwnWorldBookBinding(runtimePaths.runtimeCwd));
+        const companionWorldBookBinding =
+          request.companionWorldBookBinding ?? (await resolveCompanionOwnWorldBookBinding(runtimePaths.runtimeCwd));
         const opening =
           request.opening ??
-          (await resolveCompanionOwnOpening(artifacts, tavernPaths.companionRoot, profile.revision, scenario?.artifact));
+          (await resolveCompanionOwnOpening(
+            artifacts,
+            tavernPaths.companionRoot,
+            profile.revision,
+            scenario?.artifact,
+          ));
         return inner.createExplicit({
           ...request,
           ...(scenario === undefined
             ? {}
             : {
                 scenarioId: scenario.artifact.scenarioId,
-                stableArtifactBindings: Object.freeze([
-                  ...(request.stableArtifactBindings ?? []),
-                  scenario.binding,
-                ]),
+                stableArtifactBindings: Object.freeze([...(request.stableArtifactBindings ?? []), scenario.binding]),
               }),
-          ...(binding === undefined ? {} : { worldBookBinding: binding }),
+          ...(companionWorldBookBinding === undefined ? {} : { companionWorldBookBinding }),
           opening: opening ?? "blank",
         });
       },

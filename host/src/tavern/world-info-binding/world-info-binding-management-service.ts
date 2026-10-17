@@ -12,7 +12,6 @@ import {
 import {
   type ChatThreadState,
   type TavernStableManagedWorldInfoBinding,
-  type TavernStableWorldInfoBinding,
   createChatThreadStore,
   ExactThreadSurfaceMismatchError,
 } from "../chat-thread-store.js";
@@ -152,8 +151,8 @@ export function createWorldInfoBindingManagementService(
   if (!identifier(lease.chatThreadId) || !identifier(lease.chatSurfaceSessionId)) throw unavailable();
 
   const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
-  const setWorldBookBinding = store.setWorldBookBinding;
-  if (setWorldBookBinding === undefined) throw unavailable();
+  const setManagedWorldInfoBinding = store.setManagedWorldInfoBinding;
+  if (setManagedWorldInfoBinding === undefined) throw unavailable();
   const resolver = createManagedWorldInfoBindingResolver(repository);
   let currentProjection: ProjectionMapping | null = null;
 
@@ -207,7 +206,7 @@ export function createWorldInfoBindingManagementService(
       // updatedAtMs and the current binding fingerprint equal the mapped
       // values; otherwise the browser acts on a superseded projection.
       if (state.thread.updatedAtMs !== projection.updatedAtMs) throw conflict();
-      if (fingerprintFor(state.thread.worldBookBinding) !== projection.fingerprint) throw conflict();
+      if (fingerprintFor(state.thread.managedWorldInfoBinding) !== projection.fingerprint) throw conflict();
 
       let binding: TavernStableManagedWorldInfoBinding | undefined;
       if (command.sourceHandle !== null) {
@@ -232,7 +231,7 @@ export function createWorldInfoBindingManagementService(
       // worldbook I/O.
       assertLeaseAfterDurableRead();
       assertProjectionCurrent(projection);
-      const updated = await setWorldBookBinding({
+      const updated = await setManagedWorldInfoBinding({
         chatThreadId: lease.chatThreadId,
         chatSurfaceSessionId: lease.chatSurfaceSessionId,
         companionId: manifest.principal.companionId,
@@ -392,6 +391,11 @@ export function createWorldInfoBindingManagementService(
    * Reopens exactly `lease.chatThreadId` + `lease.chatSurfaceSessionId`,
    * verifies the companion/continuity tuple, lists the public repository
    * catalog, and mints fresh opaque handles for one state projection.
+   *
+   * This projection, and the Attach/Detach commands it drives, govern LAYER 2
+   * ONLY: the Chat's attached managed World Info item. Layer 1 - the companion's
+   * own Card book - is her identity, is always applied, and is deliberately not
+   * attachable or detachable from this panel; it has no items and no handles here.
    */
   async function projectFrom(state: ChatThreadState): Promise<WorldInfoStateV1> {
     validateThread(state);
@@ -407,14 +411,9 @@ export function createWorldInfoBindingManagementService(
       if (isLeaseUnavailable(error)) throw error;
       projections = null;
     }
-    const pending = !sameBinding(state.thread.worldBookBinding, state.thread.appliedWorldBookBinding);
-    const selectedBinding =
-      state.thread.appliedWorldBookBinding !== undefined &&
-      "source" in state.thread.appliedWorldBookBinding &&
-      state.thread.appliedWorldBookBinding.source === "managed_world_info"
-        ? state.thread.appliedWorldBookBinding
-        : null;
-    const fingerprint = fingerprintFor(state.thread.worldBookBinding);
+    const pending = !sameBinding(state.thread.managedWorldInfoBinding, state.thread.appliedManagedWorldInfoBinding);
+    const selectedBinding = state.thread.appliedManagedWorldInfoBinding ?? null;
+    const fingerprint = fingerprintFor(state.thread.managedWorldInfoBinding);
     const revision = mintHandle(new Set());
     const seen = new Set<string>([revision]);
     const sources = new Map<string, SourceMapping>();
@@ -542,32 +541,24 @@ export function createWorldInfoBindingManagementService(
    */
   function assertItemNotInUse(state: ChatThreadState, publicTitle: string): void {
     if (
-      bindsManagedTitle(state.thread.worldBookBinding, publicTitle) ||
-      bindsManagedTitle(state.thread.appliedWorldBookBinding, publicTitle)
+      bindsManagedTitle(state.thread.managedWorldInfoBinding, publicTitle) ||
+      bindsManagedTitle(state.thread.appliedManagedWorldInfoBinding, publicTitle)
     )
       throw new Error("world_info_in_use");
   }
 }
 
 function sameBinding(
-  a: TavernStableWorldInfoBinding | undefined,
-  b: TavernStableWorldInfoBinding | undefined,
+  a: TavernStableManagedWorldInfoBinding | undefined,
+  b: TavernStableManagedWorldInfoBinding | undefined,
 ): boolean {
   if (a === undefined || b === undefined) return a === b;
-  if ("source" in a && "source" in b)
-    return a.publicTitle === b.publicTitle && a.revision === b.revision && a.canonicalHash === b.canonicalHash;
-  if (!("source" in a) && !("source" in b))
-    return a.worldBookId === b.worldBookId && a.revision === b.revision && a.canonicalHash === b.canonicalHash;
-  return false;
+  return a.publicTitle === b.publicTitle && a.revision === b.revision && a.canonicalHash === b.canonicalHash;
 }
 
-function fingerprintFor(binding: TavernStableWorldInfoBinding | undefined): string {
+function fingerprintFor(binding: TavernStableManagedWorldInfoBinding | undefined): string {
   if (binding === undefined) return "none";
-  if ("source" in binding) {
-    const managed = binding;
-    return `managed:${managed.publicTitle}:${managed.revision}:${managed.canonicalHash}`;
-  }
-  return `worldbook:${binding.worldBookId}:${binding.revision}:${binding.canonicalHash}`;
+  return `managed:${binding.publicTitle}:${binding.revision}:${binding.canonicalHash}`;
 }
 
 function summarize(value: string): string | null {
@@ -638,8 +629,8 @@ function rethrowLibraryError(error: unknown): Error {
 }
 
 /** The managed variant is the only binding variant that resolves against the managed library. */
-function bindsManagedTitle(binding: TavernStableWorldInfoBinding | undefined, publicTitle: string): boolean {
-  return binding !== undefined && "source" in binding && binding.publicTitle === publicTitle;
+function bindsManagedTitle(binding: TavernStableManagedWorldInfoBinding | undefined, publicTitle: string): boolean {
+  return binding !== undefined && binding.publicTitle === publicTitle;
 }
 
 function identifier(value: unknown): value is string {

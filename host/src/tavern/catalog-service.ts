@@ -48,7 +48,7 @@ export type TavernAuthoredContextCatalog = Readonly<{
     selectiveLogic?: 0 | 1 | 2 | 3;
   }>[];
 }>;
-type TavernAlwaysOnWorldBookSource = Readonly<{
+export type TavernCompanionWorldBookSource = Readonly<{
   binding: TavernStableWorldBookBinding;
   alwaysOnPremise: string;
   /** Reviewed always-on entries (card `constant: true`); ride the stable source. */
@@ -57,8 +57,21 @@ type TavernAlwaysOnWorldBookSource = Readonly<{
   keywordEntries?: readonly Readonly<{ entryId: string; title: string; content: string; keys?: readonly string[] }>[];
 }>;
 /** Managed World Info is source-aware and uses exact repository revision content. */
-type TavernManagedWorldInfoSource = Readonly<{ binding: TavernStableManagedWorldInfoBinding; content: string }>;
-export type TavernWorldInfoSource = TavernAlwaysOnWorldBookSource | TavernManagedWorldInfoSource;
+export type TavernManagedWorldInfoSource = Readonly<{
+  binding: TavernStableManagedWorldInfoBinding;
+  content: string;
+}>;
+type TavernWorldInfoSource = TavernCompanionWorldBookSource | TavernManagedWorldInfoSource;
+/**
+ * The two World Info layers one Chat turn assembles. They coexist and neither
+ * displaces the other: layer 1 is the companion's own reviewed Card book - part
+ * of who she is, always applied - and layer 2 is the managed library item this
+ * Chat attached, which the World Info panel's Attach/Detach governs.
+ */
+export type TavernWorldInfoLayers = Readonly<{
+  companionWorldBook?: TavernCompanionWorldBookSource;
+  managedWorldInfo?: TavernManagedWorldInfoSource;
+}>;
 
 /** Conservative ceiling for Host-owned immutable stable source material. */
 const TAVERN_STABLE_CONTEXT_MAX_TOKENS = 2_048;
@@ -70,6 +83,15 @@ const TAVERN_STABLE_CONTEXT_MAX_TOKENS = 2_048;
  * an explicit empty tombstone rather than invented sources. Authored text is
  * rendered through the run's macro table, so no `{{user}}`/`{{char}}` placeholder
  * is published as the companion's own context.
+ *
+ * Both World Info layers materialize here when their source is supplied. Layer 1
+ * (the companion's own book) is emitted first, so its position and total order key
+ * never depend on whether the player attached anything; layer 2 (the attached
+ * managed item) follows. There is no per-layer budget: both share the single
+ * Tier-2 stable ceiling this assembly already enforced for its one world-info
+ * source. Keyword-gated entries of either layer become volatile candidates and
+ * keep the per-turn key matching in
+ * `selectAuthoredContextVolatileSourceRefs` (chat-thread-store.ts).
  */
 export async function materializeTavernAuthoredStableCatalog(
   paths: TavernPaths,
@@ -77,9 +99,9 @@ export async function materializeTavernAuthoredStableCatalog(
   thread: ChatThread,
   binding: TavernStableContextBinding,
   macros: MacroTable,
-  worldInfoSource?: TavernWorldInfoSource,
+  layers: TavernWorldInfoLayers = {},
 ): Promise<TavernAuthoredContextCatalog> {
-  return materializeTavernAuthoredContextCatalog(paths, store, thread, binding, macros, worldInfoSource);
+  return materializeTavernAuthoredContextCatalog(paths, store, thread, binding, macros, layers);
 }
 
 export async function materializeTavernAuthoredContextCatalog(
@@ -88,7 +110,7 @@ export async function materializeTavernAuthoredContextCatalog(
   thread: ChatThread,
   binding: TavernStableContextBinding,
   macros: MacroTable,
-  worldInfoSource?: TavernWorldInfoSource,
+  layers: TavernWorldInfoLayers = {},
 ): Promise<TavernAuthoredContextCatalog> {
   if (
     thread.companionId !== paths.companionId ||
@@ -101,23 +123,8 @@ export async function materializeTavernAuthoredContextCatalog(
     binding.profile.canonicalHash !== thread.profileCanonicalHash
   )
     throw new Error("tavern_stable_context_binding_mismatch");
-  if ((thread.worldBookBinding === undefined) !== (worldInfoSource === undefined))
-    throw new Error("tavern_stable_context_worldbook_binding_mismatch");
-  // The content this source will PUBLISH is `deriveStableWorldInfoContent`, not the
-  // raw premise: a reviewed card import lands its backdrop as the book's constant
-  // entries and writes an empty `alwaysOnPremise` (`new-companion-service.ts`), so
-  // gating on the premise alone refused every turn of a card-provisioned companion -
-  // the book was bound, the entries were on disk, and the materialization failed
-  // closed before it ever reached them. A book with neither a premise nor any
-  // always-on entry still has no publishable content and is still refused here.
-  if (
-    worldInfoSource !== undefined &&
-    (!sameWorldInfoBinding(thread.worldBookBinding!, worldInfoSource.binding) ||
-      !validSourceContent(deriveStableWorldInfoContent(worldInfoSource)) ||
-      ("source" in worldInfoSource.binding &&
-        hash(worldInfoContent(worldInfoSource)) !== worldInfoSource.binding.canonicalHash))
-  )
-    throw new Error("tavern_stable_context_worldbook_binding_mismatch");
+  assertWorldInfoLayer(thread.companionWorldBookBinding, layers.companionWorldBook);
+  assertWorldInfoLayer(thread.managedWorldInfoBinding, layers.managedWorldInfo);
   const selectedBindings = thread.stableArtifactBindings ?? [];
   if (
     (thread.personaId !== undefined &&
@@ -172,37 +179,30 @@ export async function materializeTavernAuthoredContextCatalog(
       ),
     );
   }
-  if (worldInfoSource !== undefined) {
-    const sourceId =
-      "source" in worldInfoSource.binding
-        ? managedWorldInfoSourceId(worldInfoSource.binding)
-        : worldInfoSource.binding.worldBookId;
-    const provenance =
-      "source" in worldInfoSource.binding
-        ? `managed-world-info/${worldInfoSource.binding.publicTitle}/revision/${worldInfoSource.binding.revision}/canonical/${worldInfoSource.binding.canonicalHash}`
-        : `worldbook/${worldInfoSource.binding.worldBookId}/revision/${worldInfoSource.binding.revision}/canonical/${worldInfoSource.binding.canonicalHash}/provenance/${worldInfoSource.binding.provenance}`;
-    const stableWorldInfoContent = deriveStableWorldInfoContent(worldInfoSource);
-    sources.push(
-      source(
-        "lorebook_constant",
-        sourceId,
-        worldInfoSource.binding.revision,
-        worldInfoSource.binding.canonicalHash,
-        stableWorldInfoContent,
-        String(sources.length + 1).padStart(4, "0"),
-        provenance,
-      ),
-    );
-  }
+  const companionConstant =
+    layers.companionWorldBook === undefined
+      ? undefined
+      : stableWorldInfoSource(layers.companionWorldBook, String(sources.length + 1).padStart(4, "0"));
+  if (companionConstant !== undefined) sources.push(companionConstant);
+  const managedConstant =
+    layers.managedWorldInfo === undefined
+      ? undefined
+      : stableWorldInfoSource(layers.managedWorldInfo, String(sources.length + 1).padStart(4, "0"));
+  if (managedConstant !== undefined) sources.push(managedConstant);
   const budgetTokens = sources.reduce((total, item) => total + item.budgetTokens, 0);
   if (budgetTokens > TAVERN_STABLE_CONTEXT_MAX_TOKENS) throw new Error("tavern_stable_context_oversize");
-  const volatileSources =
-    worldInfoSource === undefined
-      ? Object.freeze([])
-      : deriveVolatileWorldInfoSources(
-          worldInfoSource,
-          sources.find((item) => item.kind === "lorebook_constant")?.sourceId ?? "world-info",
-        );
+  // Per-turn candidates of BOTH layers ride one selection list, so their total order
+  // keys must stay one strictly increasing sequence: layer 1 is numbered first and
+  // layer 2 continues after it. Each keeps its own trigger keys.
+  const companionVolatile =
+    layers.companionWorldBook === undefined
+      ? []
+      : deriveVolatileWorldInfoSources(layers.companionWorldBook, companionConstant!.sourceId, 0);
+  const managedVolatile =
+    layers.managedWorldInfo === undefined
+      ? []
+      : deriveVolatileWorldInfoSources(layers.managedWorldInfo, managedConstant!.sourceId, companionVolatile.length);
+  const volatileSources = Object.freeze([...companionVolatile, ...managedVolatile]);
   const body = {
     version: "gamebuddy-authored-context-catalog/v2" as const,
     scope: binding,
@@ -215,6 +215,55 @@ export async function materializeTavernAuthoredContextCatalog(
     stableSources: Object.freeze(sources),
     volatileSources: Object.freeze(volatileSources),
   });
+}
+/**
+ * The content a layer will PUBLISH is `deriveStableWorldInfoContent`, not the raw
+ * premise: a reviewed card import lands its backdrop as the book's constant entries
+ * and writes an empty `alwaysOnPremise` (`new-companion-service.ts`), so gating on
+ * the premise alone refused every turn of a card-provisioned companion - the book
+ * was bound, the entries were on disk, and the materialization failed closed before
+ * it ever reached them. A book with neither a premise nor any always-on entry still
+ * has no publishable content and is still refused here. A thread binding and a layer
+ * source are all-or-nothing together, per layer.
+ */
+function assertWorldInfoLayer(
+  threadBinding: TavernStableWorldInfoBinding | undefined,
+  layer: TavernWorldInfoSource | undefined,
+): void {
+  if ((threadBinding === undefined) !== (layer === undefined))
+    throw new Error("tavern_stable_context_worldbook_binding_mismatch");
+  if (layer === undefined) return;
+  if (
+    !sameWorldInfoBinding(threadBinding!, layer.binding) ||
+    !validSourceContent(deriveStableWorldInfoContent(layer)) ||
+    ("source" in layer.binding && hash(worldInfoContent(layer)) !== layer.binding.canonicalHash)
+  )
+    throw new Error("tavern_stable_context_worldbook_binding_mismatch");
+}
+/** One layer's always-on content as its own `lorebook_constant` stable source. */
+function stableWorldInfoSource(
+  layer: TavernWorldInfoSource,
+  totalOrderKey: string,
+): TavernAuthoredContextCatalog["stableSources"][number] {
+  if ("content" in layer)
+    return source(
+      "lorebook_constant",
+      managedWorldInfoSourceId(layer.binding),
+      layer.binding.revision,
+      layer.binding.canonicalHash,
+      deriveStableWorldInfoContent(layer),
+      totalOrderKey,
+      `managed-world-info/${layer.binding.publicTitle}/revision/${layer.binding.revision}/canonical/${layer.binding.canonicalHash}`,
+    );
+  return source(
+    "lorebook_constant",
+    layer.binding.worldBookId,
+    layer.binding.revision,
+    layer.binding.canonicalHash,
+    deriveStableWorldInfoContent(layer),
+    totalOrderKey,
+    `worldbook/${layer.binding.worldBookId}/revision/${layer.binding.revision}/canonical/${layer.binding.canonicalHash}/provenance/${layer.binding.provenance}`,
+  );
 }
 function source(
   kind: "persona" | "scenario" | "dialogue_examples" | "lorebook_constant",
@@ -319,9 +368,15 @@ function boundedWorldInfoOverview(content: string): string {
 function isRecord(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
+/**
+ * One layer's keyword-gated entries as per-turn candidates. `ordinalOffset` is the
+ * number of candidates the layers before this one already contributed, so the
+ * combined list keeps ONE strictly increasing total order key sequence.
+ */
 function deriveVolatileWorldInfoSources(
   sourceValue: TavernWorldInfoSource,
   parentSourceId: string,
+  ordinalOffset: number,
 ): TavernAuthoredContextCatalog["volatileSources"] {
   // NATIVE WorldBook first: a companion's own book IS parseable JSON, so a JSON-parse-first order would
   // send it down the managed-World-Info branch and never reach the keyword entries at all. That ordering
@@ -347,7 +402,7 @@ function deriveVolatileWorldInfoSources(
             canonicalHash: hash(content),
             content,
             budgetTokens: Math.ceil(content.length / 4),
-            totalOrderKey: String(index + 1).padStart(4, "0"),
+            totalOrderKey: String(ordinalOffset + index + 1).padStart(4, "0"),
             provenance: `tavern-world-book-entry/${sourceId}/revision/${revision}/canonical/${canonical}`,
             // The card's own trigger words when it has them; the title is only a fallback.
             selectionKeys: Object.freeze(
@@ -416,7 +471,7 @@ function deriveVolatileWorldInfoSources(
           canonicalHash: hash(content),
           content,
           budgetTokens: Math.ceil(content.length / 4),
-          totalOrderKey: String(index + 1).padStart(4, "0"),
+          totalOrderKey: String(ordinalOffset + index + 1).padStart(4, "0"),
           provenance,
           selectionKeys: Object.freeze([...selectionKeys]),
           ...(secondaryKeys !== undefined ? { secondaryKeys: Object.freeze([...secondaryKeys]) } : {}),

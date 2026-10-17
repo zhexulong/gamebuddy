@@ -14,7 +14,7 @@ import {
  * append-only messages, swipe variants, and turn lifecycle; it neither reads
  * Pi/Magic Context state nor implements message edit/branch or any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 4 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 5 as const;
 export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
@@ -71,10 +71,22 @@ export type ChatThread = Readonly<{
   scenarioId?: string;
   /** Exact immutable source records; no source may be resolved as latest. */
   stableArtifactBindings?: readonly TavernStableArtifactBinding[];
-  /** Desired exact World Info revision; edits never rewrite accepted plans. */
-  worldBookBinding?: TavernStableWorldInfoBinding;
-  /** Exact revision known to be published on the mounted Chat catalog. */
-  appliedWorldBookBinding?: TavernStableWorldInfoBinding;
+  /**
+   * Layer 1, the companion's own reviewed Card book: part of who she is, so it is
+   * always applied and is never displaced by anything the player attaches. The
+   * World Info panel cannot attach or detach it.
+   */
+  companionWorldBookBinding?: TavernStableWorldBookBinding;
+  /** The companion slot's applied revision; written together with it, never edited apart. */
+  appliedCompanionWorldBookBinding?: TavernStableWorldBookBinding;
+  /**
+   * Layer 2, the managed library item this Chat attached. Desired exact revision;
+   * edits never rewrite accepted plans. This slot alone is what the World Info
+   * panel's Attach/Detach governs.
+   */
+  managedWorldInfoBinding?: TavernStableManagedWorldInfoBinding;
+  /** Exact managed revision known to be published on the mounted Chat catalog. */
+  appliedManagedWorldInfoBinding?: TavernStableManagedWorldInfoBinding;
   /** Exact continuity-ledger Chat session this thread is attached to. */
   chatSurfaceSessionId: string;
   createdAtMs: number;
@@ -598,7 +610,10 @@ export type CreateChatThreadRequest = Readonly<{
   personaId?: string;
   scenarioId?: string;
   stableArtifactBindings?: readonly TavernStableArtifactBinding[];
-  worldBookBinding?: TavernStableWorldInfoBinding;
+  /** Layer 1: the companion's own Card book, seeded by the creation seams. */
+  companionWorldBookBinding?: TavernStableWorldBookBinding;
+  /** Layer 2: a managed library item the creation call already attaches. */
+  managedWorldInfoBinding?: TavernStableManagedWorldInfoBinding;
   opening: "blank" | Readonly<{ messageId: string; text: string; source: GreetingSource }>;
 }>;
 
@@ -691,8 +706,13 @@ export type ChatThreadStore = Readonly<{
       cancelledAtMs: number;
     }>,
   ): Promise<ChatThreadState>;
-  /** Desired WorldBook binding mutation with optimistic revision guard. */
-  setWorldBookBinding?(
+  /**
+   * Desired mutation of the Chat's attached managed World Info item (layer 2),
+   * with an optimistic revision guard. The managed slot owns exactly one source
+   * family, so a binding that names another family is refused here rather than
+   * written: layer 1 is the companion's own book and has no setter.
+   */
+  setManagedWorldInfoBinding?(
     input: Readonly<{
       chatThreadId: string;
       chatSurfaceSessionId: string;
@@ -1160,10 +1180,80 @@ export class ExactThreadSurfaceMismatchError extends Error {
   }
 }
 
+/**
+ * The two World Info slots. A slot owns exactly one source family: `companion` is
+ * the companion's own reviewed Card book, `managed` is the library's Managed
+ * World Info item the player attaches. Desired and applied live in the same row,
+ * so a slot can never hold two families and the two layers never displace each
+ * other.
+ */
+type WorldInfoSlot = "companion" | "managed";
+
+const WORLD_INFO_BINDINGS_TABLE_V5 = `
+    CREATE TABLE tavern_thread_world_info_bindings (
+      thread_id TEXT NOT NULL REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
+      slot TEXT NOT NULL CHECK(slot IN ('companion', 'managed')),
+      world_book_id TEXT,
+      public_title TEXT,
+      revision INTEGER CHECK(revision IS NULL OR revision > 0),
+      canonical_hash TEXT,
+      provenance TEXT,
+      applied_revision INTEGER CHECK(applied_revision IS NULL OR applied_revision > 0),
+      applied_canonical_hash TEXT,
+      applied_public_title TEXT,
+      applied_world_book_id TEXT,
+      PRIMARY KEY(thread_id, slot),
+      CHECK(
+        (
+          (
+            slot = 'companion'
+            AND public_title IS NULL
+            AND applied_public_title IS NULL
+            AND provenance IN ('authored', 'st-card-import', 'reviewed-import')
+            AND (world_book_id IS NOT NULL OR applied_world_book_id IS NOT NULL)
+          )
+          OR
+          (
+            slot = 'managed'
+            AND world_book_id IS NULL
+            AND applied_world_book_id IS NULL
+            AND provenance IS NULL
+            AND (public_title IS NOT NULL OR applied_public_title IS NOT NULL)
+          )
+        )
+        AND ((revision IS NOT NULL AND canonical_hash IS NOT NULL) OR (revision IS NULL AND canonical_hash IS NULL))
+        AND (
+          (
+            applied_revision IS NULL
+            AND applied_canonical_hash IS NULL
+            AND applied_public_title IS NULL
+            AND applied_world_book_id IS NULL
+          )
+          OR (
+            applied_revision IS NOT NULL
+            AND applied_canonical_hash IS NOT NULL
+            AND (
+              (slot = 'managed' AND applied_public_title IS NOT NULL AND applied_world_book_id IS NULL)
+              OR (slot = 'companion' AND applied_public_title IS NULL AND applied_world_book_id IS NOT NULL)
+            )
+          )
+        )
+      )
+    );
+`;
+
 function initSchema(db: DatabaseSync): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   const version = Number(versionRow?.user_version ?? 0);
+  if (version === CHAT_THREAD_SCHEMA_VERSION) {
+    assertNormalizedSchema(db);
+    return;
+  }
+  // v4 held ONE binding row per thread, keyed by source family. v5 splits it into
+  // one row per slot. The old row's family names the slot it belongs to, so the
+  // companion's book and an attached managed item both survive the upgrade.
   if (version === 4) {
+    migrateWorldInfoBindingsToSlots(db);
     assertNormalizedSchema(db);
     return;
   }
@@ -1275,53 +1365,7 @@ function initSchema(db: DatabaseSync): void {
       PRIMARY KEY(thread_id, kind)
     );
 
-    CREATE TABLE tavern_thread_world_info_bindings (
-      thread_id TEXT PRIMARY KEY REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
-      source TEXT NOT NULL CHECK(source IN ('world_book', 'managed_world_info')),
-      world_book_id TEXT,
-      public_title TEXT,
-      revision INTEGER CHECK(revision IS NULL OR revision > 0),
-      canonical_hash TEXT,
-      provenance TEXT,
-      applied_revision INTEGER CHECK(applied_revision IS NULL OR applied_revision > 0),
-      applied_canonical_hash TEXT,
-      applied_public_title TEXT,
-      applied_world_book_id TEXT,
-      CHECK(
-        (
-          (
-            source = 'world_book'
-            AND public_title IS NULL
-            AND provenance IN ('authored', 'st-card-import', 'reviewed-import')
-            AND (world_book_id IS NOT NULL OR applied_world_book_id IS NOT NULL)
-          )
-          OR
-          (
-            source = 'managed_world_info'
-            AND world_book_id IS NULL
-            AND provenance IS NULL
-            AND (public_title IS NOT NULL OR applied_public_title IS NOT NULL)
-          )
-        )
-        AND ((revision IS NOT NULL AND canonical_hash IS NOT NULL) OR (revision IS NULL AND canonical_hash IS NULL))
-        AND (
-          (
-            applied_revision IS NULL
-            AND applied_canonical_hash IS NULL
-            AND applied_public_title IS NULL
-            AND applied_world_book_id IS NULL
-          )
-          OR (
-            applied_revision IS NOT NULL
-            AND applied_canonical_hash IS NOT NULL
-            AND (
-              (source = 'managed_world_info' AND applied_public_title IS NOT NULL AND applied_world_book_id IS NULL)
-              OR (source = 'world_book' AND applied_public_title IS NULL AND applied_world_book_id IS NOT NULL)
-            )
-          )
-        )
-      )
-    );
+${WORLD_INFO_BINDINGS_TABLE_V5}
 
     CREATE TABLE tavern_turns (
       turn_id TEXT PRIMARY KEY,
@@ -1456,8 +1500,34 @@ function initSchema(db: DatabaseSync): void {
     CREATE INDEX idx_tavern_idempotency_turn
       ON tavern_chat_submit_idempotency(turn_id);
   `);
-  db.exec("PRAGMA user_version = 4");
+  db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
   assertNormalizedSchema(db);
+}
+
+/**
+ * Rebuilds the one changed table for a live v4 root: the single row per thread
+ * becomes one row per slot. Every old row's `source` family names the slot it
+ * moves into (`world_book` -> `companion`, `managed_world_info` -> `managed`),
+ * so no durable binding is dropped and the companion's book keeps reaching the
+ * mounted Chat catalog.
+ */
+function migrateWorldInfoBindingsToSlots(db: DatabaseSync): void {
+  db.exec(`
+    ALTER TABLE tavern_thread_world_info_bindings RENAME TO tavern_thread_world_info_bindings_v4;
+    ${WORLD_INFO_BINDINGS_TABLE_V5}
+    INSERT INTO tavern_thread_world_info_bindings (
+      thread_id, slot, world_book_id, public_title, revision, canonical_hash, provenance,
+      applied_revision, applied_canonical_hash, applied_public_title, applied_world_book_id
+    )
+    SELECT
+      thread_id,
+      CASE source WHEN 'world_book' THEN 'companion' ELSE 'managed' END,
+      world_book_id, public_title, revision, canonical_hash, provenance,
+      applied_revision, applied_canonical_hash, applied_public_title, applied_world_book_id
+    FROM tavern_thread_world_info_bindings_v4;
+    DROP TABLE tavern_thread_world_info_bindings_v4;
+    PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION};
+  `);
 }
 
 function assertNormalizedSchema(db: DatabaseSync): void {
@@ -1510,6 +1580,10 @@ function assertNormalizedSchema(db: DatabaseSync): void {
   );
   if (["turn_id", "target_message_id", "anchor_message_id"].some((column) => !variantColumns.has(column)))
     throw new Error("chat_thread_schema_mismatch");
+  const bindingColumns = new Set(
+    (db.prepare("PRAGMA table_info(tavern_thread_world_info_bindings)").all() as any[]).map((column) => column.name),
+  );
+  if (!bindingColumns.has("slot") || bindingColumns.has("source")) throw new Error("chat_thread_schema_mismatch");
 }
 
 function runInTransaction<T>(db: DatabaseSync, fn: () => T): T {
@@ -1669,12 +1743,21 @@ export function createChatThreadStore(
           binding.revision,
           binding.canonicalHash,
         );
-      if (profileAwareRequest.worldBookBinding)
+      if (profileAwareRequest.companionWorldBookBinding)
         writeWorldInfoBinding(
           db,
           profileAwareRequest.chatThreadId,
-          profileAwareRequest.worldBookBinding,
-          profileAwareRequest.worldBookBinding,
+          "companion",
+          profileAwareRequest.companionWorldBookBinding,
+          profileAwareRequest.companionWorldBookBinding,
+        );
+      if (profileAwareRequest.managedWorldInfoBinding)
+        writeWorldInfoBinding(
+          db,
+          profileAwareRequest.chatThreadId,
+          "managed",
+          profileAwareRequest.managedWorldInfoBinding,
+          profileAwareRequest.managedWorldInfoBinding,
         );
       for (const message of initialMessages) insertMessage(db, profileAwareRequest.chatThreadId, message);
       db.prepare(
@@ -1987,13 +2070,16 @@ export function createChatThreadStore(
       });
     },
 
-    async setWorldBookBinding(input): Promise<ChatThreadState> {
+    async setManagedWorldInfoBinding(input): Promise<ChatThreadState> {
       assertId("chatThreadId", input.chatThreadId);
       assertId("chatSurfaceSessionId", input.chatSurfaceSessionId);
       assertId("companionId", input.companionId);
       assertId("continuityId", input.continuityId);
       assertTimestamp(input.expectedUpdatedAtMs);
-      if (input.binding !== undefined) freezeStableWorldBookBinding(input.binding);
+      // Shape only: the managed slot's own source family is enforced by
+      // writeWorldInfoBinding, so a caller naming the companion's family is
+      // refused there instead of overwriting her book.
+      if (input.binding !== undefined) freezeStableWorldInfoBinding(input.binding);
       return withDb((db) => {
         const current = readStateFromDb(db, input.chatThreadId);
         if (
@@ -2009,8 +2095,9 @@ export function createChatThreadStore(
         writeWorldInfoBinding(
           db,
           input.chatThreadId,
-          input.binding ? freezeStableWorldBookBinding(input.binding) : undefined,
-          current.thread.appliedWorldBookBinding,
+          "managed",
+          input.binding ? freezeStableWorldInfoBinding(input.binding) : undefined,
+          current.thread.appliedManagedWorldInfoBinding,
         );
         db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(
           updatedAt,
@@ -2192,7 +2279,8 @@ export function createChatThreadStore(
         });
       }
       validateAuthoredContextPreparation(input.authoredContextPreparation);
-      if (!sameBinding(thread.worldBookBinding, thread.appliedWorldBookBinding)) throw new Error("context_unavailable");
+      if (!sameBinding(thread.managedWorldInfoBinding, thread.appliedManagedWorldInfoBinding))
+        throw new Error("context_unavailable");
       if (
         current.turnLedger !== null &&
         current.turnLedger.status !== "completed" &&
@@ -2322,15 +2410,15 @@ export function createChatThreadStore(
       if (current.turnLedger !== null && !isTerminalTurnStatus(current.turnLedger.status))
         throw new Error("context_unavailable");
       if (
-        !sameBinding(thread.worldBookBinding, input.binding) ||
-        !sameBinding(thread.appliedWorldBookBinding, input.expectedOldAppliedBinding)
+        !sameBinding(thread.managedWorldInfoBinding, input.binding) ||
+        !sameBinding(thread.appliedManagedWorldInfoBinding, input.expectedOldAppliedBinding)
       )
         throw new Error("chat_thread_worldbook_applied_conflict");
-      writeWorldInfoBinding(db, input.chatThreadId, thread.worldBookBinding, input.binding);
+      writeWorldInfoBinding(db, input.chatThreadId, "managed", thread.managedWorldInfoBinding, input.binding);
       const readBack = readStateFromDb(db, input.chatThreadId);
       if (
-        !sameBinding(readBack.thread.worldBookBinding, input.binding) ||
-        !sameBinding(readBack.thread.appliedWorldBookBinding, input.binding)
+        !sameBinding(readBack.thread.managedWorldInfoBinding, input.binding) ||
+        !sameBinding(readBack.thread.appliedManagedWorldInfoBinding, input.binding)
       )
         throw new Error("chat_thread_worldbook_applied_readback_mismatch");
       return readBack;
@@ -2663,41 +2751,19 @@ function rowToThread(db: DatabaseSync, row: any): ChatThread {
       canonicalHash: binding.canonical_hash,
     })),
   );
-  const world = db
+  const worldSlots = db
     .prepare("SELECT * FROM tavern_thread_world_info_bindings WHERE thread_id = ?")
-    .get(row.thread_id) as any;
-  const worldBookBinding: TavernStableWorldInfoBinding | undefined =
-    !world || world.revision == null
-      ? undefined
-      : world.source === "managed_world_info"
-        ? freezeStableWorldBookBinding({
-            source: "managed_world_info",
-            publicTitle: world.public_title,
-            revision: world.revision,
-            canonicalHash: world.canonical_hash,
-          })
-        : freezeStableWorldBookBinding({
-            worldBookId: world.world_book_id,
-            revision: world.revision,
-            canonicalHash: world.canonical_hash,
-            provenance: world.provenance,
-          });
-  const appliedWorldBookBinding: TavernStableWorldInfoBinding | undefined =
-    !world || world.applied_revision == null
-      ? undefined
-      : world.source === "managed_world_info"
-        ? freezeStableWorldBookBinding({
-            source: "managed_world_info",
-            publicTitle: world.applied_public_title,
-            revision: world.applied_revision,
-            canonicalHash: world.applied_canonical_hash,
-          })
-        : freezeStableWorldBookBinding({
-            worldBookId: world.applied_world_book_id,
-            revision: world.applied_revision,
-            canonicalHash: world.applied_canonical_hash,
-            provenance: world.provenance,
-          });
+    .all(row.thread_id) as any[];
+  const companionSlot = worldSlots.find((slot) => slot.slot === "companion");
+  const managedSlot = worldSlots.find((slot) => slot.slot === "managed");
+  const companionWorldBookBinding =
+    companionSlot === undefined ? undefined : worldBookBindingFromRow(companionSlot, false);
+  const appliedCompanionWorldBookBinding =
+    companionSlot === undefined ? undefined : worldBookBindingFromRow(companionSlot, true);
+  const managedWorldInfoBinding =
+    managedSlot === undefined ? undefined : managedWorldInfoBindingFromRow(managedSlot, false);
+  const appliedManagedWorldInfoBinding =
+    managedSlot === undefined ? undefined : managedWorldInfoBindingFromRow(managedSlot, true);
   return freezeThread({
     schemaVersion: CHAT_THREAD_SCHEMA_VERSION,
     chatThreadId: row.thread_id,
@@ -2709,8 +2775,10 @@ function rowToThread(db: DatabaseSync, row: any): ChatThread {
     ...(row.persona_id ? { personaId: row.persona_id } : {}),
     ...(row.scenario_id ? { scenarioId: row.scenario_id } : {}),
     stableArtifactBindings,
-    ...(worldBookBinding ? { worldBookBinding } : {}),
-    ...(appliedWorldBookBinding ? { appliedWorldBookBinding } : {}),
+    ...(companionWorldBookBinding ? { companionWorldBookBinding } : {}),
+    ...(appliedCompanionWorldBookBinding ? { appliedCompanionWorldBookBinding } : {}),
+    ...(managedWorldInfoBinding ? { managedWorldInfoBinding } : {}),
+    ...(appliedManagedWorldInfoBinding ? { appliedManagedWorldInfoBinding } : {}),
     chatSurfaceSessionId: row.chat_surface_session_id,
     createdAtMs: row.created_at_ms,
     updatedAtMs: row.updated_at_ms,
@@ -2804,23 +2872,32 @@ function replaceOpeningMessage(db: DatabaseSync, threadId: string, message: Chat
   if (message) insertMessage(db, threadId, message);
 }
 
+/**
+ * Replaces one durable World Info slot. A slot owns exactly one source family:
+ * `companion` is the companion's own reviewed Card book, `managed` is the
+ * library item the player attaches. A desired/applied pair that mixes families,
+ * or a binding of a family the slot does not own, is refused before any SQLite
+ * mutation; the other slot's row is never touched.
+ */
 function writeWorldInfoBinding(
   db: DatabaseSync,
   threadId: string,
+  slot: WorldInfoSlot,
   binding: TavernStableWorldInfoBinding | undefined,
   applied: TavernStableWorldInfoBinding | undefined,
 ): void {
-  db.prepare("DELETE FROM tavern_thread_world_info_bindings WHERE thread_id = ?").run(threadId);
+  if (binding && applied && worldInfoFamily(binding) !== worldInfoFamily(applied))
+    throw new Error("world_info_binding_mismatch");
+  const family = worldInfoFamily(binding ?? applied);
+  if (family !== undefined && family !== (slot === "companion" ? "world_book" : "managed_world_info"))
+    throw new Error("world_info_binding_mismatch");
+  db.prepare("DELETE FROM tavern_thread_world_info_bindings WHERE thread_id = ? AND slot = ?").run(threadId, slot);
   if (binding === undefined && applied === undefined) return;
-  // Desired and applied must share a source family; mixed-family replacement is
-  // not a valid projection and is rejected before SQLite mutation.
-  const shape = binding ?? applied!;
-  if (binding && applied && "source" in binding !== "source" in applied) throw new Error("world_info_binding_mismatch");
-  if ("source" in shape) {
+  if (family === "managed_world_info") {
     const desired = binding && "source" in binding ? binding : undefined;
     const appliedManaged = applied && "source" in applied ? applied : undefined;
     db.prepare(
-      "INSERT INTO tavern_thread_world_info_bindings (thread_id, source, public_title, revision, canonical_hash, applied_public_title, applied_revision, applied_canonical_hash) VALUES (?, 'managed_world_info', ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO tavern_thread_world_info_bindings (thread_id, slot, public_title, revision, canonical_hash, applied_public_title, applied_revision, applied_canonical_hash) VALUES (?, 'managed', ?, ?, ?, ?, ?, ?)",
     ).run(
       threadId,
       desired?.publicTitle ?? null,
@@ -2834,7 +2911,7 @@ function writeWorldInfoBinding(
     const desired = binding && !("source" in binding) ? binding : undefined;
     const appliedWorld = applied && !("source" in applied) ? applied : undefined;
     db.prepare(
-      "INSERT INTO tavern_thread_world_info_bindings (thread_id, source, world_book_id, revision, canonical_hash, provenance, applied_world_book_id, applied_revision, applied_canonical_hash) VALUES (?, 'world_book', ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO tavern_thread_world_info_bindings (thread_id, slot, world_book_id, revision, canonical_hash, provenance, applied_world_book_id, applied_revision, applied_canonical_hash) VALUES (?, 'companion', ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       threadId,
       desired?.worldBookId ?? null,
@@ -2846,6 +2923,13 @@ function writeWorldInfoBinding(
       appliedWorld?.canonicalHash ?? null,
     );
   }
+}
+
+function worldInfoFamily(
+  binding: TavernStableWorldInfoBinding | undefined,
+): "world_book" | "managed_world_info" | undefined {
+  if (binding === undefined) return undefined;
+  return "source" in binding ? "managed_world_info" : "world_book";
 }
 
 function persistTurn(db: DatabaseSync, threadId: string, ledger: ChatTurnLedger): void {
@@ -3313,7 +3397,9 @@ function validateCreate(request: CreateChatThreadRequest): void {
   if (request.personaId !== undefined) assertId("personaId", request.personaId);
   if (request.scenarioId !== undefined) assertId("scenarioId", request.scenarioId);
   freezeStableArtifactBindings(request.stableArtifactBindings ?? []);
-  if (request.worldBookBinding !== undefined) freezeStableWorldBookBinding(request.worldBookBinding);
+  if (request.companionWorldBookBinding !== undefined)
+    freezeCompanionWorldBookBinding(request.companionWorldBookBinding);
+  if (request.managedWorldInfoBinding !== undefined) freezeManagedWorldInfoBinding(request.managedWorldInfoBinding);
   normalizeOpening(request.opening);
 }
 
@@ -4546,15 +4632,25 @@ function freezeThread(thread: ChatThread): ChatThread {
     managementRevision: validateManagementRevision(thread.managementRevision),
     ...(trashRestoreStatus === undefined ? {} : { trashRestoreStatus }),
     stableArtifactBindings: freezeStableArtifactBindings(thread.stableArtifactBindings ?? []),
-    ...(thread.worldBookBinding === undefined
+    ...(thread.companionWorldBookBinding === undefined
       ? {}
       : {
-          worldBookBinding: freezeStableWorldBookBinding(thread.worldBookBinding),
+          companionWorldBookBinding: freezeCompanionWorldBookBinding(thread.companionWorldBookBinding),
         }),
-    ...(thread.appliedWorldBookBinding === undefined
+    ...(thread.appliedCompanionWorldBookBinding === undefined
       ? {}
       : {
-          appliedWorldBookBinding: freezeStableWorldBookBinding(thread.appliedWorldBookBinding),
+          appliedCompanionWorldBookBinding: freezeCompanionWorldBookBinding(thread.appliedCompanionWorldBookBinding),
+        }),
+    ...(thread.managedWorldInfoBinding === undefined
+      ? {}
+      : {
+          managedWorldInfoBinding: freezeManagedWorldInfoBinding(thread.managedWorldInfoBinding),
+        }),
+    ...(thread.appliedManagedWorldInfoBinding === undefined
+      ? {}
+      : {
+          appliedManagedWorldInfoBinding: freezeManagedWorldInfoBinding(thread.appliedManagedWorldInfoBinding),
         }),
     openingSelection:
       thread.openingSelection.kind === "blank"
@@ -4600,8 +4696,8 @@ function validateWorldInfoApplyInput(input: MountedWorldInfoApplyInput): void {
   assertId("chatSurfaceSessionId", input.chatSurfaceSessionId);
   assertId("companionId", input.companionId);
   assertId("continuityId", input.continuityId);
-  if (input.binding !== undefined) freezeStableWorldBookBinding(input.binding);
-  if (input.expectedOldAppliedBinding !== undefined) freezeStableWorldBookBinding(input.expectedOldAppliedBinding);
+  if (input.binding !== undefined) freezeStableWorldInfoBinding(input.binding);
+  if (input.expectedOldAppliedBinding !== undefined) freezeStableWorldInfoBinding(input.expectedOldAppliedBinding);
 }
 
 function sameBinding(
@@ -4621,7 +4717,8 @@ function sameBinding(
   return false;
 }
 
-function freezeStableWorldBookBinding(value: unknown): TavernStableWorldInfoBinding {
+/** The union validator, for a boundary that does not yet know which slot a binding names. */
+function freezeStableWorldInfoBinding(value: unknown): TavernStableWorldInfoBinding {
   if (!isRecord(value) || !isRevision(value.revision) || !isHash(value.canonicalHash))
     throw new Error("invalid_tavern_worldbook_binding");
   if ("source" in value && value.source === "managed_world_info") {
@@ -4646,6 +4743,44 @@ function freezeStableWorldBookBinding(value: unknown): TavernStableWorldInfoBind
     revision: value.revision,
     canonicalHash: value.canonicalHash,
     provenance: value.provenance,
+  });
+}
+
+/** Layer 1's family: the companion's own reviewed Card book metadata. */
+function freezeCompanionWorldBookBinding(value: unknown): TavernStableWorldBookBinding {
+  const binding = freezeStableWorldInfoBinding(value);
+  if ("source" in binding) throw new Error("invalid_tavern_worldbook_binding");
+  return binding;
+}
+
+/** Layer 2's family: the managed library item addressed by its public title. */
+function freezeManagedWorldInfoBinding(value: unknown): TavernStableManagedWorldInfoBinding {
+  const binding = freezeStableWorldInfoBinding(value);
+  if (!("source" in binding)) throw new Error("invalid_tavern_worldbook_binding");
+  return binding;
+}
+
+/** Reads one slot's desired (false) or applied (true) revision, or nothing when it holds none. */
+function worldBookBindingFromRow(row: any, applied: boolean): TavernStableWorldBookBinding | undefined {
+  const revision = applied ? row.applied_revision : row.revision;
+  if (revision == null) return undefined;
+  return freezeCompanionWorldBookBinding({
+    worldBookId: applied ? row.applied_world_book_id : row.world_book_id,
+    revision,
+    canonicalHash: applied ? row.applied_canonical_hash : row.canonical_hash,
+    provenance: row.provenance,
+  });
+}
+
+/** Reads one slot's desired (false) or applied (true) managed revision, or nothing when it holds none. */
+function managedWorldInfoBindingFromRow(row: any, applied: boolean): TavernStableManagedWorldInfoBinding | undefined {
+  const revision = applied ? row.applied_revision : row.revision;
+  if (revision == null) return undefined;
+  return freezeManagedWorldInfoBinding({
+    source: "managed_world_info",
+    publicTitle: applied ? row.applied_public_title : row.public_title,
+    revision,
+    canonicalHash: applied ? row.applied_canonical_hash : row.canonical_hash,
   });
 }
 
