@@ -6,9 +6,7 @@ import {
   type ComposedReferenceGameBrowserLifecycleActivationBindingSink,
   type ComposedReferenceGameBrowserReadContext,
 } from "../composed-reference-game-browser.js";
-import {
-  createReferencePipelineDialogueWebDelegatedHandler,
-} from "../reference-pipeline-dialogue-web.delegated.js";
+import { createReferencePipelineDialogueWebDelegatedHandler } from "../reference-pipeline-dialogue-web.delegated.js";
 import {
   createTavernManagementDialogueWebDelegatedHandler,
   type TavernManagementDelegatedHandler,
@@ -39,6 +37,7 @@ import {
   type TavernStaticArtifactIdentity,
   verifyTavernStaticArtifact,
 } from "./static-artifact/index.js";
+import { ownsCompanionAvatarRequest, type CompanionAvatarRequestHandler } from "./companion-avatar/face.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 
@@ -55,9 +54,7 @@ const COMPOSED_REFERENCE_GAME_BROWSER_ARTIFACT_IDENTITY: TavernStaticArtifactIde
 export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
   profile: ComposedReferenceGameBrowserProfile;
   bootstrapToken: string;
-  readGame?: (
-    context: ComposedReferenceGameBrowserReadContext,
-  ) => Promise<GameBrowserStateV1>;
+  readGame?: (context: ComposedReferenceGameBrowserReadContext) => Promise<GameBrowserStateV1>;
   referenceStateFacade: ReferencePipelineStateFacade;
   pipelineService?: ChatPipelineService;
   eventStream?: ChatEventStream;
@@ -75,6 +72,13 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
   management?: Omit<TavernManagementDelegatedOptions, "capability">;
   artifactRoot: string;
   inspector?: WindowsReparseInspectorCapability;
+  /**
+   * The runtime asset face for companion avatars. When absent, nothing under
+   * `/assets/companions/` is served at all - the frozen build tree owns the
+   * whole `/assets/` space and answers 404 there, which is the honest state for
+   * a Host that was given no avatar read.
+   */
+  companionAvatar?: CompanionAvatarRequestHandler;
   lifecycleActivationBindingSink?: ComposedReferenceGameBrowserLifecycleActivationBindingSink;
 }>;
 
@@ -103,9 +107,7 @@ export async function startComposedReferenceGameStaticShellComposition(
     options.inspector,
   );
   const staticHandler = createTavernStaticArtifactRequestHandler(artifact);
-  const readChat = async (
-    context: ComposedReferenceGameBrowserReadContext,
-  ): Promise<TavernStateSnapshotV1> =>
+  const readChat = async (context: ComposedReferenceGameBrowserReadContext): Promise<TavernStateSnapshotV1> =>
     projectComposedChatSnapshot(options, context);
   const composedHandler = createComposedReferenceGameBrowserRequestHandler({
     profile: options.profile,
@@ -116,9 +118,7 @@ export async function startComposedReferenceGameStaticShellComposition(
     options.lifecycleActivationBindingSink.activate === undefined
       ? {}
       : {
-          gameActivate: async (
-            admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-          ): Promise<void> => {
+          gameActivate: async (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<void> => {
             // The owner's private activation snapshot stops here: the browser learns the
             // staged state from the game state projection, not from a lifecycle DTO.
             await options.lifecycleActivationBindingSink!.activate!(admission);
@@ -126,7 +126,11 @@ export async function startComposedReferenceGameStaticShellComposition(
         }),
     ...(options.lifecycleActivationBindingSink?.setupPlayerHost === undefined
       ? {}
-      : { gameSetup: options.lifecycleActivationBindingSink.setupPlayerHost.bind(options.lifecycleActivationBindingSink) }),
+      : {
+          gameSetup: options.lifecycleActivationBindingSink.setupPlayerHost.bind(
+            options.lifecycleActivationBindingSink,
+          ),
+        }),
     ...(options.lifecycleActivationBindingSink?.launchPlayerHost === undefined
       ? {}
       : {
@@ -142,13 +146,23 @@ export async function startComposedReferenceGameStaticShellComposition(
       : { gameStop: options.lifecycleActivationBindingSink.stopGame.bind(options.lifecycleActivationBindingSink) }),
     ...(options.lifecycleActivationBindingSink?.disconnectGame === undefined
       ? {}
-      : { gameDisconnect: options.lifecycleActivationBindingSink.disconnectGame.bind(options.lifecycleActivationBindingSink) }),
+      : {
+          gameDisconnect: options.lifecycleActivationBindingSink.disconnectGame.bind(
+            options.lifecycleActivationBindingSink,
+          ),
+        }),
     ...(options.lifecycleActivationBindingSink?.endgameGame === undefined
       ? {}
-      : { gameEndgame: options.lifecycleActivationBindingSink.endgameGame.bind(options.lifecycleActivationBindingSink) }),
+      : {
+          gameEndgame: options.lifecycleActivationBindingSink.endgameGame.bind(options.lifecycleActivationBindingSink),
+        }),
     ...(options.lifecycleActivationBindingSink?.reopenActionAuthority === undefined
       ? {}
-      : { gameReopen: options.lifecycleActivationBindingSink.reopenActionAuthority.bind(options.lifecycleActivationBindingSink) }),
+      : {
+          gameReopen: options.lifecycleActivationBindingSink.reopenActionAuthority.bind(
+            options.lifecycleActivationBindingSink,
+          ),
+        }),
     // The composed wire command is strictly session-less; the coordinator resume
     // seam is session-keyed (GameSessionResumeCommandV1). Without a session
     // handle on the wire the coordinator resolves no registered world binding
@@ -171,32 +185,52 @@ export async function startComposedReferenceGameStaticShellComposition(
     ...(options.lifecycleActivationBindingSink?.createGameSession === undefined
       ? {}
       : {
-          gameCreate: options.lifecycleActivationBindingSink.createGameSession.bind(options.lifecycleActivationBindingSink),
+          gameCreate: options.lifecycleActivationBindingSink.createGameSession.bind(
+            options.lifecycleActivationBindingSink,
+          ),
         }),
     ...(options.lifecycleActivationBindingSink?.cancelResume === undefined
       ? {}
       : {
-          gameResumeCancel: options.lifecycleActivationBindingSink.cancelResume.bind(options.lifecycleActivationBindingSink),
+          gameResumeCancel: options.lifecycleActivationBindingSink.cancelResume.bind(
+            options.lifecycleActivationBindingSink,
+          ),
         }),
     ...(options.lifecycleActivationBindingSink?.gameDiscovery === undefined
       ? {}
-      : { gameDiscovery: Object.freeze({
-          read: options.lifecycleActivationBindingSink.gameDiscovery.read.bind(options.lifecycleActivationBindingSink.gameDiscovery),
-          confirm: options.lifecycleActivationBindingSink.gameDiscovery.confirm.bind(options.lifecycleActivationBindingSink.gameDiscovery),
-          retry: options.lifecycleActivationBindingSink.gameDiscovery.retry.bind(options.lifecycleActivationBindingSink.gameDiscovery),
-          cancel: options.lifecycleActivationBindingSink.gameDiscovery.cancel.bind(options.lifecycleActivationBindingSink.gameDiscovery),
-          manualPicker: options.lifecycleActivationBindingSink.gameDiscovery.manualPicker.bind(options.lifecycleActivationBindingSink.gameDiscovery),
-        }) }),
+      : {
+          gameDiscovery: Object.freeze({
+            read: options.lifecycleActivationBindingSink.gameDiscovery.read.bind(
+              options.lifecycleActivationBindingSink.gameDiscovery,
+            ),
+            confirm: options.lifecycleActivationBindingSink.gameDiscovery.confirm.bind(
+              options.lifecycleActivationBindingSink.gameDiscovery,
+            ),
+            retry: options.lifecycleActivationBindingSink.gameDiscovery.retry.bind(
+              options.lifecycleActivationBindingSink.gameDiscovery,
+            ),
+            cancel: options.lifecycleActivationBindingSink.gameDiscovery.cancel.bind(
+              options.lifecycleActivationBindingSink.gameDiscovery,
+            ),
+            manualPicker: options.lifecycleActivationBindingSink.gameDiscovery.manualPicker.bind(
+              options.lifecycleActivationBindingSink.gameDiscovery,
+            ),
+          }),
+        }),
     ...(options.lifecycleActivationBindingSink === undefined ||
     (options.lifecycleActivationBindingSink.readCabinChoices === undefined &&
       options.lifecycleActivationBindingSink.confirmCabinChoice === undefined)
       ? {}
       : options.lifecycleActivationBindingSink.readCabinChoices !== undefined &&
-        options.lifecycleActivationBindingSink.confirmCabinChoice !== undefined
+          options.lifecycleActivationBindingSink.confirmCabinChoice !== undefined
         ? {
             stardewCabins: Object.freeze({
-              read: options.lifecycleActivationBindingSink.readCabinChoices.bind(options.lifecycleActivationBindingSink),
-              confirm: options.lifecycleActivationBindingSink.confirmCabinChoice.bind(options.lifecycleActivationBindingSink),
+              read: options.lifecycleActivationBindingSink.readCabinChoices.bind(
+                options.lifecycleActivationBindingSink,
+              ),
+              confirm: options.lifecycleActivationBindingSink.confirmCabinChoice.bind(
+                options.lifecycleActivationBindingSink,
+              ),
             }),
           }
         : (() => {
@@ -239,23 +273,16 @@ export async function startComposedReferenceGameStaticShellComposition(
     declaresRoute(managementProfile, method, pathname) &&
     !declaresRoute(options.profile.tavernProfile, method, pathname);
   try {
-    options.lifecycleActivationBindingSink?.bindBrowserAdmissionIssuer(
-      composedHandler.lifecycleActivationIssuer,
-    );
+    options.lifecycleActivationBindingSink?.bindBrowserAdmissionIssuer(composedHandler.lifecycleActivationIssuer);
   } catch (bindError) {
     const cleanup = await Promise.allSettled([
       composedHandler.close(),
       referenceHandler.close(),
       managementHandler?.close(),
     ]);
-    const cleanupErrors = cleanup.flatMap((result) =>
-      result.status === "rejected" ? [result.reason] : []
-    );
+    const cleanupErrors = cleanup.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
     if (cleanupErrors.length > 0) {
-      throw new AggregateError(
-        [bindError, ...cleanupErrors],
-        "composed_reference_game_lifecycle_bind_cleanup_failed",
-      );
+      throw new AggregateError([bindError, ...cleanupErrors], "composed_reference_game_lifecycle_bind_cleanup_failed");
     }
     throw bindError;
   }
@@ -277,6 +304,11 @@ export async function startComposedReferenceGameStaticShellComposition(
       managementHandler?.handle(request, response, origin);
     } else if (pathname.startsWith("/api/tavern/")) {
       referenceHandler.handle(request, response, origin);
+    } else if (options.companionAvatar !== undefined && ownsCompanionAvatarRequest(request.url)) {
+      // The runtime avatar face owns exactly `/assets/companions/`, which the
+      // frozen build tree could only ever 404. The ownership test reads the RAW
+      // url, the same string the face itself reads.
+      options.companionAvatar.handle(request, response);
     } else {
       staticHandler.handle(request, response);
     }
@@ -321,16 +353,10 @@ export async function startComposedReferenceGameStaticShellComposition(
  * dispatcher behind this classification still validates the exact handle shape
  * and answers 404 for anything it does not own.
  */
-function declaresRoute(
-  profile: ComposedTavernProfile,
-  method: string | undefined,
-  pathname: string,
-): boolean {
+function declaresRoute(profile: ComposedTavernProfile, method: string | undefined, pathname: string): boolean {
   return TavernBrowserContractV1.routes.some(
     (route) =>
-      profile.routeIds.includes(route.routeId) &&
-      route.method === method &&
-      pathMatchesRoute(route.path, pathname),
+      profile.routeIds.includes(route.routeId) && route.method === method && pathMatchesRoute(route.path, pathname),
   );
 }
 
@@ -340,9 +366,7 @@ function pathMatchesRoute(routePath: string, pathname: string): boolean {
   return (
     expected.length === actual.length &&
     expected.every((segment, index) =>
-      segment.startsWith(":")
-        ? actual[index] !== undefined && actual[index] !== ""
-        : segment === actual[index],
+      segment.startsWith(":") ? actual[index] !== undefined && actual[index] !== "" : segment === actual[index],
     )
   );
 }
@@ -415,10 +439,7 @@ async function projectComposedChatSnapshot(
     // answered `unauthorized`, so the launch could only report that it did not open.
     // Projected only when a Host voice surface is attached; absent means no mic icon.
     ...(state.voice === null ? {} : { voice: state.voice }),
-    eventStream:
-      tavernProfile.routeIds.includes("events") && state.eventStream !== null
-        ? state.eventStream
-        : null,
+    eventStream: tavernProfile.routeIds.includes("events") && state.eventStream !== null ? state.eventStream : null,
   };
   if (
     !TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check(snapshot) ||

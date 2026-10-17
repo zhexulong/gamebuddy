@@ -45,7 +45,13 @@ const ASSET_MIMES = new Set<TavernStaticArtifactAsset["mime"]>([
 const verifiedEntryHtml = new WeakMap<VerifiedTavernStaticArtifact, Buffer>();
 const verifiedInspectors = new WeakMap<VerifiedTavernStaticArtifact, WindowsReparseInspectorCapability | undefined>();
 
-const SECURITY_HEADERS = Object.freeze({
+/**
+ * The security headers every Tavern HTTP face sends. Exported so the runtime
+ * avatar face sends the same set rather than its own, drifting copy: what a
+ * browser is allowed to do with the shell's bytes and with a companion's
+ * picture is one policy, not two.
+ */
+export const SECURITY_HEADERS = Object.freeze({
   "Content-Security-Policy":
     "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; connect-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'",
   "X-Content-Type-Options": "nosniff",

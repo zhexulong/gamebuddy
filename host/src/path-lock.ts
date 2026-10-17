@@ -121,9 +121,13 @@ export type AtomicWriteFileDependencies = Readonly<{
  * Creates a single-file atomic writer through a caller-held path lock. The
  * temporary is created exclusively and removed only when its captured identity
  * still proves ownership. Callers must hold withPathLock for the target.
+ *
+ * `content` is a string (written UTF-8) or raw bytes: the durable artifacts this
+ * writes are mostly JSON, but a companion's avatar is a picture, and a picture
+ * that went through a text encoding would not be the file the player chose.
  */
 export function createAtomicWriteFile(dependencies: AtomicWriteFileDependencies) {
-  return async (path: string, content: string, containmentRoot?: string): Promise<void> => {
+  return async (path: string, content: string | Uint8Array, containmentRoot?: string): Promise<void> => {
     const target = resolve(path);
     const temporary = `${target}.${process.pid}.${dependencies.randomUUID()}.tmp`;
     let owner: OwnedFile | undefined;
@@ -131,7 +135,7 @@ export function createAtomicWriteFile(dependencies: AtomicWriteFileDependencies)
     try {
       await dependencies.verifySafePathBoundary(target, containmentRoot);
       try {
-        await dependencies.writeFile(temporary, content, { encoding: "utf8", flag: "wx" });
+        await dependencies.writeFile(temporary, content, { flag: "wx" });
       } catch (error) {
         // An exclusive-create collision proves this invocation never owned the
         // pre-existing temporary. Other write failures may occur after creation,

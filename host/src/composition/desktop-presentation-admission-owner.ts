@@ -5,6 +5,8 @@ import { identityProfileMetadata, readIdentityProfile } from "../identity-profil
 import { projectCompanionVoice, updateMountedCompanionVoice } from "../tavern/companion-voice-service.js";
 import { projectRenderedCompanionWorldBook } from "../tavern/companion-world-book-service.js";
 import { createCompanionProfileService } from "../tavern/companion-profile-service.js";
+import { createCompanionAvatarService, type CompanionAvatarService } from "../tavern/companion-avatar/index.js";
+import { createCompanionAvatarRequestHandler } from "../tavern/companion-avatar/face.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
 import { identityKey } from "../runtime.js";
 
@@ -198,6 +200,13 @@ type TavernManagementDomains = Readonly<
     worldInfoService: WorldInfoBindingManagementService;
     modelProfileStore: ModelProfileStore;
     playerPreferenceStore: PlayerPreferenceStore;
+    /**
+     * The companion's own picture, read through the roster's handles. Built here
+     * beside `resolveCompanion` (the only reverse map), but served by the
+     * composition shell's own `/assets/companions/` face rather than by any
+     * management route - it is not a JSON operation.
+     */
+    companionAvatarService: CompanionAvatarService;
     /** Present only when the shared semantic authority supplied the ADR 0009 selection capability. */
     chatSelectProvisioner?: TavernManagementDialogueWebOptions["chatSelectProvisioner"];
   }
@@ -405,6 +414,11 @@ function createTavernManagementDomains(
     locale: () => resolveCompanionLocale(manifest.runtimeRoot),
     resolveCompanion: companionForHandle,
   });
+  const companionAvatarService = createCompanionAvatarService({
+    runtimeRoot: manifest.runtimeRoot,
+    playerId: manifest.principal.playerId,
+    resolveCompanion: companionForHandle,
+  });
   const newCompanionProvisioner = Object.freeze({
     async create(name: string) {
       // The provisioner mints a new Host-owned identity namespace; the browser
@@ -546,6 +560,7 @@ function createTavernManagementDomains(
       companionVoiceService,
       companionWorldBookService,
       companionProfileService,
+      companionAvatarService,
       newCompanionProvisioner,
       newChatProvisioner,
       ...(chatSelectProvisioner === undefined ? {} : { chatSelectProvisioner }),
@@ -599,8 +614,17 @@ export async function startDesktopPresentationAdmission(
    * Closes every service one lane built, in reverse creation order: the
    * management domains and the connection service first, then the Chat pipeline
    * service, then the state facade they project through.
+   *
+   * It takes only the members it drains, so a lane that failed to finish
+   * constructing can be drained without inventing the members it never built.
    */
-  const drainChatLane = async (target: ChatLane): Promise<void> => {
+  const drainChatLane = async (
+    target: Readonly<{
+      owned: readonly { close(): Promise<void> }[];
+      pipelineService: ChatPipelineService;
+      referenceStateFacade: ReferencePipelineStateFacade;
+    }>,
+  ): Promise<void> => {
     for (let index = target.owned.length - 1; index >= 0; index -= 1) {
       try {
         await target.owned[index]!.close();
@@ -653,7 +677,7 @@ export async function startDesktopPresentationAdmission(
         worldInfoService,
         input.chatSelection,
       );
-      const { chatSelectProvisioner, ...domainsWithoutSelection } = domains;
+      const { chatSelectProvisioner, companionAvatarService, ...domainsWithoutSelection } = domains;
       owned.push(...domainOwned);
       // The connection service owns the player's provider/model/credential
       // selection for the exact mounted Chat runtime. ADR-0010 makes a connection
@@ -686,10 +710,11 @@ export async function startDesktopPresentationAdmission(
         referenceStateFacade,
         pipelineService,
         management,
+        companionAvatarService,
         owned: Object.freeze(owned),
       });
     } catch (error) {
-      await drainChatLane({ referenceStateFacade, pipelineService, management: Object.freeze({}), owned });
+      await drainChatLane({ referenceStateFacade, pipelineService, owned });
       throw error;
     }
   }
@@ -733,6 +758,13 @@ export async function startDesktopPresentationAdmission(
     close: async () => undefined,
   });
   const stableManagementOptions = createStableManagementOptions(currentLane);
+  // The avatar face, mounted on the shell's own `/assets/companions/` path space.
+  // It resolves through whichever lane is current, exactly like the management
+  // options: a turn-level Chat switch replaces the mounted lease, and with it the
+  // per-mount handles that name a companion.
+  const companionAvatar = createCompanionAvatarRequestHandler(
+    Object.freeze({ read: (handle: string) => currentLane().companionAvatarService.read(handle) }),
+  );
   let server: Awaited<ReturnType<typeof startComposedReferenceGameStaticShellComposition>>;
   try {
     server = await startComposedReferenceGameStaticShellComposition({
@@ -758,6 +790,7 @@ export async function startDesktopPresentationAdmission(
       // drafts, Memory, World Info, Settings, Characters, Persona/Scenario/
       // Greeting and card-import routes under /api/tavern/v1/ from them.
       management: stableManagementOptions,
+      companionAvatar,
     });
   } catch (error) {
     // No listener exists yet; the lane this admission just built is the only
@@ -791,6 +824,8 @@ type ChatLane = Readonly<{
   referenceStateFacade: ReferencePipelineStateFacade;
   pipelineService: ChatPipelineService;
   management: Omit<TavernManagementDelegatedOptions, "capability">;
+  /** Served by the shell's own asset face, so it rides the lane rather than `management`. */
+  companionAvatarService: CompanionAvatarService;
   owned: readonly { close(): Promise<void> }[];
 }>;
 
