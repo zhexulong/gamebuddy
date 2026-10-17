@@ -1,7 +1,7 @@
 {
   "note": "Diagnostic print sites per production host/src file. Update deliberately, in its own commit, when a new bounded operational record is added.",
-  "revision": "10cb6feb",
-  "total": 20,
+  "revision": "b68b4322",
+  "total": 21,
   "counts": {
     "bootstrap/entry/desktop-host-entry.internal.ts": 1,
     "composition/companion-session-reflection.ts": 1,
@@ -10,7 +10,7 @@
     "host-service.ts": 1,
     "main.ts": 1,
     "runtime-core.internal.ts": 5,
-    "stardew-integration-launcher-body-program.internal.ts": 2,
+    "stardew-integration-launcher-body-program.internal.ts": 3,
     "tavern/chat-pipeline-service.ts": 1,
     "tavern/memory-management/memory-management.ts": 2,
     "tavern/p4-provider-start-execution.ts": 1,
