@@ -434,6 +434,13 @@ test("item 7: the choose-file trigger is the width of its label, not the panel's
  * The renderer is the transcript's (`MarkdownMessage`), so the opening's `*beat*`
  * delimiters are consumed by the parse instead of printed: the card must carry
  * the opening's words with no asterisk left in front of the player.
+ *
+ * The card is the **refused** case's own screen. Creation now selects the new Chat
+ * (the surface lands in the conversation it just made), so a player who lands back
+ * on the list is one whose switch the mounted turn refused - and then this card is
+ * the acknowledgement of what was created, which is why it must stay small enough
+ * not to fill the list's first screen. The happy path is its own journey
+ * ("creating a Chat lands in it").
  */
 const LONG_OPENING = [
   "*The porch lantern is still lit when she comes out, and the morning has that",
@@ -462,6 +469,11 @@ test("item 8: one long opening does not fill the whole Chats card", async ({ pag
         opening: LONG_OPENING,
       }),
     ),
+  );
+  // The switch the creation asks for is refused, so the player stays on the list
+  // with the card - the case this test measures.
+  await page.route("**/api/tavern/v1/chat/select", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, status: "turn_in_flight" })),
   );
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);

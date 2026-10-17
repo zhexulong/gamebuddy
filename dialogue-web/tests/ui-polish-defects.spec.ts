@@ -991,3 +991,84 @@ test("the management panels read one centred column, so no panel hugs an edge", 
     expect(column.contentOverflow, `${id} does not scroll sideways`).toBe(0);
   }
 });
+
+/**
+ * Creating a Chat lands the player in it.
+ *
+ * The failure this pins: "New Chat" created a conversation and left the player on
+ * the list, so the surface they had just made was one they still had to find and
+ * click - a conversation not started. Creation now issues the **same** selection a
+ * row click makes (the panel shares one `requestSelection`), and the shell's own
+ * switch path adopts the mount and moves the region, so the created Chat's opening
+ * is what the player is reading when the request settles.
+ *
+ * The assertions cover the whole gesture rather than the call: the surface shown is
+ * the conversation, the transcript carries the created Chat's own opening, and the
+ * request that moved it is the Host's own `chat.select` for the handle the Host
+ * returned from creation (not an identity composed here).
+ */
+test("creating a Chat lands in it, with its own opening already read", async ({ page }) => {
+  const createdHandle = "N".repeat(42) + "A";
+  const opening = "灶上温着粥，你先坐。";
+  // The surface's own words are read in the product's English catalogue here, so
+  // the journey names the control the way the catalogue does.
+  await mountShell(page, { locale: "en" });
+  let selected: string | null = null;
+  await page.route(/\/api\/tavern\/v1\/chats(\?|$)/, (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, chats: [] })),
+  );
+  await page.route("**/api/tavern/v1/chats", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        chat: {
+          handle: createdHandle,
+          title: null,
+          status: "active",
+          managementRevision: 1,
+          isSelected: false,
+          updatedAtMs: 1_760_000_000_000,
+          preview: opening,
+        },
+        opening,
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/chat/select", async (route) => {
+    const body = route.request().postDataJSON() as { chatHandle?: string };
+    selected = body.chatHandle ?? null;
+    await route.fulfill(jsonOk({ apiVersion: 1, status: "switched" }));
+  });
+  // The adopted snapshot is the created Chat, which is what makes the opening the
+  // conversation's own first message.
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill(
+      jsonOk({
+        ...composedRoot(),
+        chat: {
+          ...composedRoot().chat,
+          selection: { chatHandle: createdHandle, generation: 1, stateRevision: createdHandle },
+          chat: {
+            ...composedRoot().chat.chat,
+            title: null,
+            transcript: [
+              { handle: createdHandle, role: "companion", text: opening, locale: "und", order: 0, revision: 1 },
+            ],
+          },
+        },
+      }),
+    ),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  await expect(page.getByTestId("chats-surface")).toBeVisible();
+  await page.getByRole("button", { name: "New Chat", exact: true }).click();
+
+  // The region is the conversation, not the list it was created from.
+  const chat = page.getByTestId("chat-surface");
+  await expect(chat).toBeVisible();
+  await expect(page.getByTestId("chats-surface")).toHaveCount(0);
+  await expect(chat.locator(".message-list")).toContainText(opening);
+  // …and the move was the Host's own selection of the handle it minted.
+  await expect.poll(() => selected).toBe(createdHandle);
+});

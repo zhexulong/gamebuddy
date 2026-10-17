@@ -314,9 +314,12 @@ export function ChatsSurfacePanel({
 
   /**
    * New Chat (design/26 §4.4): one creation at a time, then the durable list is re-read, so the
-   * panel only ever shows Chats the store actually holds. The created Chat is NOT the mounted
-   * one, so this claims creation only - never that the running conversation switched - and a
-   * rejected creation leaves the list re-read from the authority.
+   * panel only ever shows Chats the store actually holds. Creation is followed by the **same**
+   * selection a row click makes: a conversation the player has just created and then has to find in
+   * the list and click again is a conversation they have not started, and the surface already knows
+   * how to land in one (`onChatSwitched` adopts the mount and moves the region). The creation itself
+   * claims only that the Chat exists - the switch is what moves the player, and it is reported only
+   * when the mounted identity really changed.
    */
   const createChat = (): void => {
     if (creating) return;
@@ -326,7 +329,13 @@ export function ChatsSurfacePanel({
         const result = await api.createChat({ apiVersion: 1, selectionGeneration }, csrfToken);
         setCreated(result.opening === null ? null : { opening: result.opening });
         await reread();
-        report({ kind: "success", text: labels.success });
+        // The created Chat's own handle, from the Host's own read-back - never an
+        // identity composed here.
+        const selected = await requestSelection(result.chat.handle);
+        report({
+          kind: "success",
+          text: selected === "in_flight" ? labels.chatSelectTurnNotAbortable : labels.success,
+        });
       } catch (error) {
         // A rejection may still hide a committed creation, so the authoritative
         // list is re-read BEFORE the failure is reported.
@@ -348,29 +357,41 @@ export function ChatsSurfacePanel({
    * the runtime deliberately stayed where it was, and the recorded selection is durable. A bounded
    * refusal (`selection_conflict`) re-reads the durable list before it is reported.
    */
-  const selectChat = (handle: string): void => {
-    if (selectAvailable === false || selecting !== null) return;
+  /**
+   * One selection request, shared by the row click and by creation.
+   *
+   * It returns what actually happened rather than reporting it, because the two callers may claim
+   * different things: a click may say it switched, while creation must still say the Chat was made
+   * when the mounted turn refused to move. `turn_in_flight` is the one refusal that leaves the
+   * mount exactly where it was - the recorded selection is durable either way.
+   */
+  const requestSelection = async (handle: string): Promise<"switched" | "in_flight" | "mounted"> => {
     // The mounted Chat is not a switch: the Host has nothing to switch to and no selection may be
     // admitted. The click is still the player choosing that conversation, so the mount is told to
     // show it - a silent no-op would leave the one gesture the row's title offers unanswered.
     if (handle === currentChatHandle) {
       onMountedChatChosen?.();
-      return;
+      return "mounted";
     }
+    const result = await api.selectChat({ apiVersion: 1, selectionGeneration, chatHandle: handle }, csrfToken);
+    await reread();
+    if (result.status === "turn_in_flight") return "in_flight";
+    // The mounted identity itself changed, so the shell must replace its session from the new
+    // snapshot and restart its live cursor on the target conversation.
+    onChatSwitched?.();
+    return "switched";
+  };
+
+  const selectChat = (handle: string): void => {
+    if (selectAvailable === false || selecting !== null) return;
     setSelecting(handle);
     void (async () => {
       try {
-        const result = await api.selectChat({ apiVersion: 1, selectionGeneration, chatHandle: handle }, csrfToken);
-        await reread();
-        if (result.status === "turn_in_flight") {
-          // The mounted conversation could not be switched under its current turn, so it has not
-          // moved; the recorded selection is durable either way.
+        const outcome = await requestSelection(handle);
+        if (outcome === "in_flight") {
           report({ kind: "success", text: labels.chatSelectTurnNotAbortable });
           return;
         }
-        // The mounted identity itself changed, so the shell must replace its session from the new
-        // snapshot and restart its live cursor on the target conversation.
-        onChatSwitched?.();
         report({ kind: "success", text: labels.chatSelectSwitchedNotice });
       } catch (error) {
         await reread();
