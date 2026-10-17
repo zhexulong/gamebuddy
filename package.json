@@ -232,7 +232,9 @@
     "test:stardew-dialogue-autonomy": "node --test tools/check-stardew-dialogue-autonomy.test.mjs",
     "test:stardew-completion-evidence": "cd host && bun test src/stardew-completion-evidence-coverage.test.ts",
     "test:stardew-native-local-runner-entry": "node --test tools/stardew-native-local-runner-entry.test.mjs",
-    "test:stardew-clear-fish-pond-runner": "node --test tools/run-stardew-native-local-player-clear-fish-pond-smoke.test.mjs"
+    "test:stardew-clear-fish-pond-runner": "node --test tools/run-stardew-native-local-player-clear-fish-pond-smoke.test.mjs",
+    "check:live-run-isolation": "node tools/check-live-run-isolation.mjs",
+    "test:windows-process-tree": "node --test tools/lib/windows-process-tree.test.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",

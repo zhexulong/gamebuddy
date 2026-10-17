@@ -2,39 +2,48 @@ import { readFile } from "node:fs/promises";
 import { prepareNativeLocalPlayerFixture } from "./lib/stardew-native-local-player-fixture.mjs";
 
 const values = parseArguments(process.argv.slice(2));
-console.log(
-  JSON.stringify(
-    await prepareNativeLocalPlayerFixture({
-      root: required(values, "--root"),
-      modsPath: required(values, "--mods-path"),
-      releaseDir: required(values, "--release-dir"),
-      saveName: required(values, "--save-name"),
-      backupName: required(values, "--backup-name"),
-      timeoutSeconds: values.has("--timeout-seconds") ? Number(required(values, "--timeout-seconds")) : undefined,
-      action: values.get("--action"),
-      binding: JSON.parse(await readFile(required(values, "--binding-path"), "utf8")),
-      stardewSaveRoot: values.get("--stardew-save-root"),
-      sleepModalProbe: values.has("--sleep-modal-probe-mode")
-        ? {
-            Enable: true,
-            Mode: required(values, "--sleep-modal-probe-mode"),
-            EvidencePath: required(values, "--sleep-modal-probe-evidence"),
-            TimeoutSeconds: 60,
-            SettleFrameBudget: 240,
-          }
-        : undefined,
-      sleepLifecycle: values.has("--sleep-lifecycle-evidence")
-        ? {
-            Enable: true,
-            EvidencePath: required(values, "--sleep-lifecycle-evidence"),
-            TimeoutSeconds: 180,
-            SettleFrameBudget: 240,
-            ReadyBarrierFrameBudget: 3600,
-          }
-        : undefined,
-    }),
-  ),
-);
+try {
+  process.stdout.write(
+    `${JSON.stringify(
+      await prepareNativeLocalPlayerFixture({
+        root: required(values, "--root"),
+        modsPath: required(values, "--mods-path"),
+        releaseDir: required(values, "--release-dir"),
+        saveName: required(values, "--save-name"),
+        backupName: required(values, "--backup-name"),
+        timeoutSeconds: values.has("--timeout-seconds") ? Number(required(values, "--timeout-seconds")) : undefined,
+        action: values.get("--action"),
+        binding: JSON.parse(await readFile(required(values, "--binding-path"), "utf8")),
+        stardewSaveRoot: values.get("--stardew-save-root"),
+        sleepModalProbe: values.has("--sleep-modal-probe-mode")
+          ? {
+              Enable: true,
+              Mode: required(values, "--sleep-modal-probe-mode"),
+              EvidencePath: required(values, "--sleep-modal-probe-evidence"),
+              TimeoutSeconds: 60,
+              SettleFrameBudget: 240,
+            }
+          : undefined,
+        sleepLifecycle: values.has("--sleep-lifecycle-evidence")
+          ? {
+              Enable: true,
+              EvidencePath: required(values, "--sleep-lifecycle-evidence"),
+              TimeoutSeconds: 180,
+              SettleFrameBudget: 240,
+              ReadyBarrierFrameBudget: 3600,
+            }
+          : undefined,
+      }),
+    )}\n`,
+  );
+} catch (error) {
+  // A refusal is a NAMED outcome, not a crash. The reason code IS the contract callers branch on, and an
+  // uncaught throw buried it under a Node stack - so a caller (and the isolation gate) had to parse a stack to
+  // read a name it was given.
+  const reasonCode = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`prepare_refused:${reasonCode}\n`);
+  process.exitCode = 1;
+}
 
 function parseArguments(args) {
   if (args.length % 2 !== 0) throw new Error("invalid_native_local_fixture_arguments");
