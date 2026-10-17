@@ -24,9 +24,8 @@
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
 
-/** The engine's own season order, and the day count each season has. */
-export const SEASON_NAMES = Object.freeze(["spring", "summer", "fall", "winter"]);
-export const DAYS_PER_SEASON = 28;
+/** The engine's own day count per season, used by the calendar cross-check below. */
+const DAYS_PER_SEASON = 28;
 
 /** The bounded window this corpus is willing to call a baseline. */
 export const MINIMUM_BASELINE_DAYS = 2;
