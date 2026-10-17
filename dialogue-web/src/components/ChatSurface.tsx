@@ -19,6 +19,7 @@ export function ChatSurface({
   transcript,
   preview,
   companionName,
+  companionHandle,
   chatTitle,
   labels,
   pending,
@@ -41,6 +42,8 @@ export function ChatSurface({
   transcript: readonly BrowserMessageV1[];
   preview: Readonly<{ turnHandle: string; text: string }> | null;
   companionName: string;
+  /** The mounted companion's own roster handle: how her picture is addressed. */
+  companionHandle: string | null;
   chatTitle: string | null;
   labels: Messages;
   /** The chat mutation in flight and the message it belongs to, if any. */
@@ -78,6 +81,7 @@ export function ChatSurface({
         transcript={transcript}
         preview={preview}
         companionName={companionName}
+        companionHandle={companionHandle}
         chatTitle={chatTitle}
         labels={labels}
         pending={pending}

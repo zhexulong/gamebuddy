@@ -131,6 +131,7 @@ async function fixture() {
   const state: TavernManagementState = {
     selection: { chatHandle: handleOf(first), generation: 1, stateRevision: opaqueHandle("state-revision") },
     companionDisplayName: "Mira",
+    companionHandle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA",
     title: null,
     transcript: [],
     draft: { revision: 0, text: null },

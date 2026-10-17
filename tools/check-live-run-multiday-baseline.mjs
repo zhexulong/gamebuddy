@@ -124,10 +124,21 @@ function fixtureChecks() {
       "unclosable_menu_stops_by_name",
       () =>
         assessMultiDayBaseline({
-          dayRecords: [day({ menus: [{ menuType: "LevelUpMenu", decision: "blocked" }] }), day({ day: 2 })],
+          dayRecords: [day({ menus: [{ menuType: "LetterViewerMenu", decision: "blocked" }] }), day({ day: 2 })],
           daysRequested: 2,
         }),
-      "night_raised_unclosable_menu:LevelUpMenu",
+      "night_raised_unclosable_menu:LetterViewerMenu",
+    ],
+    [
+      // The level-up path: red without the product's own resolution, and red when the recorded choice is a
+      // branch (a milestone is the companion's decision, so a harness that picked one decided for it).
+      "level_up_menu_needs_the_products_own_resolution",
+      () =>
+        assessMultiDayBaseline({
+          dayRecords: [day({ menus: [{ menuType: "LevelUpMenu", decision: "respond_level_up" }] }), day({ day: 2 })],
+          daysRequested: 2,
+        }),
+      "level_up_menu_not_resolved",
     ],
     [
       "next_day_needs_farm_work",

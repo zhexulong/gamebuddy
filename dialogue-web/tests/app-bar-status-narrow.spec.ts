@@ -42,7 +42,7 @@ const composedRoot = {
     navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
     selection: { chatHandle: handle, generation: 1, stateRevision: handle },
     chat: {
-      companion: { name: "琥珀" },
+      companion: { name: "琥珀", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
       title: null,
       transcript: [],
       draft: { revision: 0, present: false },

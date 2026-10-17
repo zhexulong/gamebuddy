@@ -328,6 +328,7 @@ function runningTurnFacade(): Readonly<{ facade: TavernManagementStateFacade; re
   const state: TavernManagementState = {
     selection: { chatHandle: HANDLE, generation: 1, stateRevision: HANDLE },
     companionDisplayName: "Mira",
+    companionHandle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA",
     title: "Farm Chat",
     transcript: [],
     draft: { revision: 0, text: null },

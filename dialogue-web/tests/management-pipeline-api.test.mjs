@@ -51,7 +51,7 @@ function snapshot(worldInfoValue = worldInfo()) {
     navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
     selection: { chatHandle: HANDLE, generation: 1, stateRevision: HANDLE },
     chat: {
-      companion: { name: "Mira" },
+      companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
       title: null,
       transcript: [],
       draft: { revision: 0, present: false },

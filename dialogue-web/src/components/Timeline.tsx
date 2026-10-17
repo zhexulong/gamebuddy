@@ -16,6 +16,7 @@ function isAtBottom(element: HTMLElement): boolean {
 export function Timeline({
   transcript,
   companionName,
+  companionHandle,
   chatTitle,
   labels,
   preview = null,
@@ -28,6 +29,8 @@ export function Timeline({
   transcript: readonly BrowserMessageV1[];
   preview?: Readonly<{ turnHandle: string; text: string }> | null;
   companionName: string;
+  /** The mounted companion's own roster handle: how her picture is addressed. */
+  companionHandle: string | null;
   chatTitle: string | null;
   labels: {
     chatTranscript: string;
@@ -215,6 +218,7 @@ export function Timeline({
               key={message.handle}
               message={message}
               companionName={companionName}
+              companionHandle={companionHandle}
               playerLabel={labels.you}
               labels={labels}
               pending={pending !== null && pending.handle === message.handle ? pending.kind : null}
@@ -236,6 +240,7 @@ export function Timeline({
                 revision: 0,
               })}
               companionName={companionName}
+              companionHandle={companionHandle}
               playerLabel={labels.you}
               labels={labels}
               streaming
@@ -268,6 +273,7 @@ export function Timeline({
               revision: 0,
             })}
             companionName={companionName}
+            companionHandle={companionHandle}
             playerLabel={labels.you}
             labels={labels}
             waitingNote={labels.chatSending}

@@ -532,7 +532,7 @@ export type TavernStateSnapshotV1 = Readonly<{
   navigation: readonly unknown[];
   selection: Readonly<{ chatHandle: string; generation: number; stateRevision: string }> | null;
   chat: Readonly<{
-    companion: Readonly<{ name: string }>;
+    companion: Readonly<{ name: string; handle: string }>;
     title: string | null;
     transcript: readonly BrowserMessageV1[];
     draft: Readonly<{ revision: number; present: boolean }>;
@@ -1125,7 +1125,7 @@ const SNAPSHOT_BUILD_KEYS = ["browserContract", "profileId"] as const;
 const SNAPSHOT_BROWSER_SESSION_KEYS = ["expiresAtMs"] as const;
 const SNAPSHOT_SELECTION_KEYS = ["chatHandle", "generation", "stateRevision"] as const;
 const SNAPSHOT_CHAT_KEYS = ["companion", "title", "transcript", "draft", "turn", "worldInfo"] as const;
-const CHAT_COMPANION_KEYS = ["name"] as const;
+const CHAT_COMPANION_KEYS = ["name", "handle"] as const;
 const CHAT_DRAFT_KEYS = ["revision", "present"] as const;
 const MEMORY_KEYS = ["readAvailable", "mutationAvailable", "projectionRevision"] as const;
 const MEMORY_ITEM_KEYS = ["handle", "title", "content", "category", "status", "origin", "pinned"] as const;
@@ -1964,7 +1964,8 @@ function isChat(value: unknown): boolean {
   if (
     !isRecord(value.companion) ||
     !hasExactKeys(value.companion, CHAT_COMPANION_KEYS) ||
-    !isLengthBoundedString(value.companion.name, 1, 256)
+    !isLengthBoundedString(value.companion.name, 1, 256) ||
+    !isOpaqueHandle(value.companion.handle)
   )
     return false;
   if (value.title !== null && !isLengthBoundedString(value.title, 0, 256)) return false;

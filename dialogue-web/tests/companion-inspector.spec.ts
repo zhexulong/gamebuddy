@@ -45,7 +45,7 @@ const composedRoot = {
     navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
     selection: { chatHandle: currentHandle, generation: 1, stateRevision: currentHandle },
     chat: {
-      companion: { name: "Mira" },
+      companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
       title: null,
       transcript: [],
       draft: { revision: 0, present: false },

@@ -21,10 +21,15 @@ function world(
 ) {
   const observed = [];
   const dismissals = [];
+  const levelUpCalls = [];
   let index = 0;
-  return {
+  const scripted = {
     observed,
     dismissals,
+    levelUpCalls,
+    // Scripted by the test: `ordinary` means the menu is a level the watcher may confirm, otherwise it is a
+    // milestone the watcher must leave to the companion.
+    levelUp: { ordinary: true },
     async observe() {
       const snapshot = snapshots[Math.min(index, snapshots.length - 1)];
       observed.push(snapshot);
@@ -35,7 +40,24 @@ function world(
       dismissals.push(menuType);
       return dismissOutcome;
     },
+    async respondLevelUp() {
+      levelUpCalls.push(scripted.levelUp.ordinary ? "confirm" : "refused");
+      return scripted.levelUp.ordinary
+        ? {
+            receipt: { state: "succeeded", reasonCode: "level_up_resolved" },
+            reasonCode: null,
+            choice: "confirm",
+            levelUp: { skill: 0, level: 2 },
+          }
+        : {
+            receipt: null,
+            reasonCode: "level_up_requires_companion_choice:0@5",
+            choice: null,
+            levelUp: { skill: 0, level: 5 },
+          };
+    },
   };
+  return scripted;
 }
 
 const free = (dayOfMonth) => ({
@@ -68,11 +90,11 @@ test("the night is not crossed while a menu still holds the actor, even if the c
   assert.equal(outcome.menus[0].dismissReceipt.reasonCode, "modal_dismissed");
 });
 
-test("a menu the product must not close stops the run by name instead of timing out", () => {
-  assert.deepEqual(decideHeldMenu("LevelUpMenu"), {
+test("a menu with no audited handling stops the run by name instead of timing out", () => {
+  assert.deepEqual(decideHeldMenu("LetterViewerMenu"), {
     kind: "blocked",
-    menuType: "LevelUpMenu",
-    reasonCode: "actor_held_by_unclosable_menu:LevelUpMenu",
+    menuType: "LetterViewerMenu",
+    reasonCode: "actor_held_by_unclosable_menu:LetterViewerMenu",
   });
   assert.equal(decideHeldMenu("SaveGameMenu").kind, "wait");
   assert.equal(decideHeldMenu("DialogueBox").kind, "wait");
@@ -82,6 +104,39 @@ test("a menu the product must not close stops the run by name instead of timing 
   assert.equal(readHeldMenu({ actorDispositionKind: "modal", actorDispositionDetail: "" }), "unknown");
   assert.equal(readHeldMenu({ actorDispositionKind: "idle" }), null);
   assert.equal(readHeldMenu(null), null);
+});
+
+test("the level-up menu is RESOLVED, not dismissed and not stopped", async () => {
+  // An ACTIVE LevelUpMenu grants its perk when it closes, so it has no pure-cancel path: it needs
+  // `respond_level_up`. An ordinary level has exactly one legal value, so the watcher may pass `confirm`
+  // without taking a decision for the companion; a milestone is stopped by name instead.
+  assert.equal(decideHeldMenu("LevelUpMenu").kind, "respond_level_up");
+  const scripted = world([held("LevelUpMenu", 7), free(7)]);
+  scripted.levelUp = { ordinary: true };
+  const outcome = await watchRollover(scripted, { dayBefore: 6, timeoutMs: 600_000, ...instant });
+  assert.equal(outcome.crossed, true);
+  assert.deepEqual(scripted.dismissals, []);
+  assert.deepEqual(scripted.levelUpCalls, ["confirm"]);
+  assert.equal(outcome.menus[0].respondChoice, "confirm");
+  assert.equal(outcome.menus[0].respondReasonCode, null);
+});
+
+test("a milestone level-up is the companion's decision, so the watcher stops by name", async () => {
+  const scripted = world([held("LevelUpMenu", 7)]);
+  scripted.levelUp = { ordinary: false };
+  const outcome = await watchRollover(scripted, { dayBefore: 6, timeoutMs: 600_000, ...instant });
+  assert.equal(outcome.crossed, false);
+  assert.equal(outcome.reasonCode, "level_up_requires_companion_choice:0@5");
+  assert.deepEqual(scripted.dismissals, []);
+  // It asked once and reported; it did NOT retry into a loop.
+  assert.equal(scripted.levelUpCalls.length, 1);
+});
+
+test("a menu the product must not close is stopped before any dismissal is attempted", async () => {
+  const scripted = world([held("LetterViewerMenu", 7)]);
+  const outcome = await watchRollover(scripted, { dayBefore: 6, timeoutMs: 600_000, ...instant });
+  assert.equal(outcome.reasonCode, "actor_held_by_unclosable_menu:LetterViewerMenu");
+  assert.deepEqual(scripted.dismissals, []);
 });
 
 test("a hold the Mod itself reports is named, never dismissed", async () => {
@@ -97,10 +152,10 @@ test("a hold the Mod itself reports is named, never dismissed", async () => {
   assert.deepEqual(classifyActorHold({ actorDispositionKind: "idle" }), { hold: null, reasonCode: null });
 });
 
-test("the unclosable menu is stopped before any dismissal is attempted", async () => {
-  const scripted = world([held("LevelUpMenu", 7)]);
+test("the unclosable menu is stopped after a false menu type was reported", async () => {
+  const scripted = world([held("LetterViewerMenu", 7)]);
   const outcome = await watchRollover(scripted, { dayBefore: 6, timeoutMs: 600_000, ...instant });
-  assert.equal(outcome.reasonCode, "actor_held_by_unclosable_menu:LevelUpMenu");
+  assert.equal(outcome.reasonCode, "actor_held_by_unclosable_menu:LetterViewerMenu");
   assert.deepEqual(scripted.dismissals, []);
 });
 

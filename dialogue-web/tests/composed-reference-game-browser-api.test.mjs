@@ -38,7 +38,7 @@ function chatSnapshot() {
     navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
     selection: { chatHandle: HANDLE, generation: 1, stateRevision: HANDLE },
     chat: {
-      companion: { name: "Mira" },
+      companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
       title: "Exact Chat",
       transcript: [],
       draft: { revision: 0, present: false },

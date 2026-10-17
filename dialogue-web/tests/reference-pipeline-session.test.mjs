@@ -23,7 +23,7 @@ function makeSnapshot(overrides = {}) {
     navigation: [],
     selection: { chatHandle: "chat-handle-1", generation: 3, stateRevision: "state-rev-1" },
     chat: {
-      companion: { name: "Mira" },
+      companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
       title: null,
       transcript: [],
       draft: { revision: 7, present: true },

@@ -677,6 +677,15 @@ public sealed class BridgeExecutionArgs
     public string? Emote { get; init; }
     public string? Direction { get; init; }
     public string? ResponseKey { get; init; }
+    /// <summary>Which native level-up response to apply (respond_level_up): `confirm` settles an ordinary
+    /// level through the menu's own `okButtonClicked`, and `branch_a`/`branch_b` are the left/right profession
+    /// the menu offers at levels 5 and 10. There is no default branch: the pair the game offers at level 10
+    /// depends on the level-5 choice, so picking one here would take a decision that belongs to the companion.</summary>
+    public string? Choice { get; init; }
+    /// <summary>The `(skill, level)` pair the caller believes the displayed LevelUpMenu is about. The Mod refuses
+    /// unless the menu's own pair matches, so a persistent save write cannot be applied to the wrong level-up.</summary>
+    public int? ExpectedSkill { get; init; }
+    public int? ExpectedLevel { get; init; }
     /// <summary>One chat line's text (send_multiplayer_chat). The native ingress is a single
     /// 896-px line, so the value is bounded by the Mod's own maximum rather than by this type.</summary>
     public string? Text { get; init; }

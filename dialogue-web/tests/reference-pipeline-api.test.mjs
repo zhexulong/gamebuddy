@@ -74,7 +74,7 @@ function snapshot(overrides = {}) {
       navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
       selection: { chatHandle: HANDLE, generation: 3, stateRevision: HANDLE },
       chat: {
-        companion: { name: "Mira" },
+        companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
         title: null,
         transcript: [message],
         draft: { revision: 7, present: true },

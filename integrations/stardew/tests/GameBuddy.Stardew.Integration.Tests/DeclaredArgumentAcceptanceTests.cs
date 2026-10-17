@@ -146,6 +146,9 @@ public sealed class DeclaredArgumentAcceptanceTests
         string? responseKey = null;
         string? text = null;
         string? buildingType = null;
+        string? choice = null;
+        int? expectedSkill = null;
+        int? expectedLevel = null;
         BridgeNavigationDestinationSelector? destination = null;
 
         foreach ((string name, string value) in declared)
@@ -168,6 +171,10 @@ public sealed class DeclaredArgumentAcceptanceTests
                 case "responseKey": responseKey = effective; break;
                 case "text": text = effective; break;
                 case "buildingType": buildingType = effective; break;
+                // The level-up response: the closed set plus the pair the Mod validates against the menu.
+                case "choice": choice = effective; break;
+                case "expectedSkill": expectedSkill = int.Parse(effective); break;
+                case "expectedLevel": expectedLevel = int.Parse(effective); break;
                 case "destination":
                     // The only label-shaped combination the converter accepts carries the label
                     // and no ref; the invalid case sends both.
@@ -201,6 +208,9 @@ public sealed class DeclaredArgumentAcceptanceTests
             ResponseKey = responseKey,
             Text = text,
             BuildingType = buildingType,
+            Choice = choice,
+            ExpectedSkill = expectedSkill,
+            ExpectedLevel = expectedLevel,
             Destination = destination,
             // A descriptor declaring a scene binding must receive a well-formed one: the
             // acceptance layer validates it as its own contract member, so omitting it fails

@@ -80,7 +80,7 @@ function composedRoot(options: RootOptions = {}) {
       navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
       selection: { chatHandle, generation: 1, stateRevision: chatHandle },
       chat: {
-        companion: { name: "Mira" },
+        companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
         title: null,
         transcript: options.transcript ?? [],
         draft: { revision: 0, present: false },

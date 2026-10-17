@@ -64,7 +64,7 @@ function composedRoot(overrides: GameProjectionOverrides = {}) {
       navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
       selection: { chatHandle: handle, generation: 1, stateRevision: handle },
       chat: {
-        companion: { name: "Mira" },
+        companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
         title: "Reference Game Chat",
         transcript: [
           { handle: "D".repeat(42) + "A", role: "companion", text: "The morning light comes over the ridge.", locale: "en", order: 0, revision: 1 },

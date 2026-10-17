@@ -1154,6 +1154,15 @@ const MULTIDAY_CROSSINGS = (() => {
 function accomplishedSince(startIndex) {
   const accomplished = new Set();
   for (const entry of actionTrace.slice(startIndex)) {
+    // A day that only walked, looked around, posed and slept has NOT produced farm work, and for the
+    // multi-day rule that is the difference between a loop and one rollover. Without this filter the day's own
+    // `advance_day` (whose terminal is `day_advanced`, a registered gate) always landed in the set - so
+    // `next_day_produced_no_farm_work` could never fire and "the companion kept working" was unprovable
+    // (measured 2026-10-17: the rule's own producer made it unreachable).
+    if (NON_ACCOMPLISHMENT_ACTIONS.has(entry.action)) continue;
+    // The task's own progress reports are not work either.
+    if (entry.action === "advance_day" || entry.action === "dismiss_modal" || entry.action === "respond_level_up")
+      continue;
     const expected = STARDEW_PUBLISHED_ACTION_GATES.find((gate) => gate.actionId === entry.action)?.terminalReasonCode;
     if (expected === undefined) continue;
     const terminal = factLog.find(
@@ -1249,8 +1258,89 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     return Object.freeze({ terminal: null, after: await observeQuietly(), menus: [], reasonCode: neverStarted });
   }
   const dayBefore = client.state?.snapshot?.dayOfMonth;
+  /**
+   * Settle the level-up menu the rollover raised, with the ONE choice that takes no decision.
+   *
+   * This is NOT the same permission as dismissing `ShippingMenu`. An active `LevelUpMenu` grants its perk when
+   * it closes, so it needs `respond_level_up`; and while an ORDINARY level has exactly one legal value
+   * (`confirm`), a MILESTONE (5/10) is a permanent part of the companion's growth path, so a proxy choosing a
+   * branch would be the harness deciding for it. A milestone is therefore reported by name and the run stops -
+   * the multi-day Given pins the five skills at 10 precisely so one cannot arise.
+   *
+   * The pair comes from the Mod's own refusal for this menu: `dismiss_modal` genuinely cannot close it, and its
+   * refusal publishes `pending_level_ups=N;level_up=<skill>@<level>` from `Farmer.newLevels`. Reading the pair
+   * from that receipted statement keeps the harness out of the snapshot protocol; projecting the pending pair
+   * into the snapshot is the better home for it (the boundary card requires exactly that for the companion), and
+   * this is the interim while the action is being proven live.
+   */
+  const respondLevelUp = async () => {
+    const probe = await world.dismiss("LevelUpMenu");
+    const evidence = String(probe?.receipt?.evidence ?? probe?.receipt?.evidenceDetail ?? "");
+    const pairs = [...evidence.matchAll(/level_up=(\d+)@(\d+)/gu)].map((match) => ({
+      skill: Number.parseInt(match[1], 10),
+      level: Number.parseInt(match[2], 10),
+    }));
+    if (pairs.length === 0) {
+      return Object.freeze({ receipt: null, reasonCode: "level_up_pair_not_published", choice: null, levelUp: null });
+    }
+    const levelUp = pairs[0];
+    // A milestone is the companion's own decision, so the harness refuses to take it.
+    if (levelUp.level === 5 || levelUp.level === 10) {
+      return Object.freeze({
+        receipt: probe?.receipt ?? null,
+        reasonCode: `level_up_requires_companion_choice:${String(levelUp.skill)}@${String(levelUp.level)}`,
+        choice: null,
+        levelUp,
+      });
+    }
+    const requestId = `multiday_level_up_${String(day)}_${String(Date.now())}`;
+    try {
+      const accepted = await client.execute({
+        requestId,
+        idempotencyKey: `${requestId}_idem`,
+        action: "respond_level_up",
+        args: { choice: "confirm", expectedSkill: levelUp.skill, expectedLevel: levelUp.level },
+      });
+      const deadline = Date.now() + MULTIDAY_DISMISS_TIMEOUT_MS;
+      for (;;) {
+        const terminal = factLog.find(
+          (fact) =>
+            fact.type === "execution_receipt" &&
+            fact.requestId === accepted?.requestId &&
+            TERMINAL_STATES.has(fact.state),
+        );
+        if (terminal !== undefined) {
+          return Object.freeze({
+            receipt: terminal,
+            choice: "confirm",
+            levelUp,
+            reasonCode:
+              terminal.state === "succeeded" && terminal.reasonCode === "level_up_resolved"
+                ? null
+                : `level_up_not_resolved:${String(terminal.state)}/${String(terminal.reasonCode)}`,
+          });
+        }
+        if (Date.now() >= deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return Object.freeze({
+        receipt: null,
+        choice: "confirm",
+        levelUp,
+        reasonCode: "level_up_not_resolved:terminal_not_observed",
+      });
+    } catch (error) {
+      return Object.freeze({
+        receipt: null,
+        choice: "confirm",
+        levelUp,
+        reasonCode: `level_up_not_resolved:${String(error?.message ?? error).slice(0, 160)}`,
+      });
+    }
+  };
   const world = {
     observe: observeQuietly,
+    respondLevelUp,
     dismiss: async (menuType) => {
       const requestId = `multiday_dismiss_${String(day)}_${String(Date.now())}`;
       try {
@@ -2022,7 +2112,15 @@ try {
   // baseline's rules hold over what was observed. The judgement comes from `assessMultiDayBaseline` rather
   // than from a second set of checks here: a gate and a runner that each decide what "crossed the day" means
   // is how a run comes to pass one and red the other.
-  const multidayRoutinePassed = SCENARIO === "multiday_routine" ? multidayOutcome?.assessment?.ok === true : true;
+  const multidayRoutinePassed =
+    SCENARIO === "multiday_routine"
+      ? // The baseline's own judgement PLUS the closing session's shape. A run whose last turn was truncated, that
+        // never spoke, or that produced nothing but the rollover is not a companion that kept playing across days -
+        // `morning_routine` already refuses a truncated session (`sessionVerdict === "completed"`), and the
+        // multi-day scenario is the one that most needs the same bar, because its baseline can be satisfied by
+        // nights alone (measured 2026-10-17: a review found a truncated multi-day run could report `passed`).
+        multidayOutcome?.assessment?.ok === true && sessionTurns.length > 0 && sessionVerdict === "completed"
+      : true;
   // The audit the rung exists for: what it could do, what the system stopped, and
   // what it never tried. `notAttempted` is read from the live advertised
   // capability surface (what the Agent could actually see during THIS run), never

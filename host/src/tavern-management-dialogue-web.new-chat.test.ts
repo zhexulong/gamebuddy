@@ -206,6 +206,7 @@ async function fixture(withCreate: boolean, options: Readonly<{ withCompanionArt
       stateRevision: opaqueHandle("state-revision"),
     },
     companionDisplayName: "Mira",
+    companionHandle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA",
     title: null,
     transcript: [],
     draft: { revision: 0, text: null },

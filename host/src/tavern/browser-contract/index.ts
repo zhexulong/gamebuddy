@@ -1363,7 +1363,15 @@ export const TavernStateSnapshotV1Schema = strictObject({
   chat: Type.Union([
     Type.Null(),
     strictObject({
-      companion: strictObject({ name: Type.String({ minLength: 1, maxLength: 256 }) }),
+      companion: strictObject({
+        name: Type.String({ minLength: 1, maxLength: 256 }),
+        /**
+         * The opaque handle the roster handed out for the mounted companion, so
+         * the transcript addresses her picture exactly the way every other
+         * companion-addressed read does. Never a durable companion id.
+         */
+        handle: OpaqueHandle,
+      }),
       title: Type.Union([Type.String({ maxLength: 256 }), Type.Null()]),
       transcript: Type.Array(BrowserMessageV1Schema),
       draft: strictObject({ revision: Revision, present: Type.Boolean() }),

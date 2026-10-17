@@ -48,6 +48,7 @@ const eventStream = createChatEventStream();
 const state: ReferencePipelineState = Object.freeze({
   selection: Object.freeze({ chatHandle: handle, generation: 1, stateRevision: handle }),
   companionDisplayName: "Companion",
+  companionHandle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA",
   title: "Delegated Chat",
   transcript: Object.freeze([]),
   draft: Object.freeze({ revision: 4, text: "draft" }),

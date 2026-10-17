@@ -58,7 +58,7 @@ function composedRoot(options: Readonly<{ transcript?: readonly Message[]; title
       navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
       selection: { chatHandle: handle, generation: 1, stateRevision: handle },
       chat: {
-        companion: { name: "Mira" },
+        companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
         title: options.title ?? null,
         transcript: transcript.map((message, index) => ({
           handle: message.role === "player" ? playerMessageHandle + String(index) : openedMessageHandle + String(index),

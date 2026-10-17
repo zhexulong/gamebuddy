@@ -30,6 +30,7 @@ const state: ReferencePipelineState = Object.freeze({
     stateRevision: handle,
   }),
   companionDisplayName: "Companion",
+  companionHandle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA",
   title: "Reference Chat",
   transcript: Object.freeze([]),
   draft: Object.freeze({ revision: 4, text: "draft" }),
@@ -316,7 +317,7 @@ test("reference handler exposes the exact seven-route profile and starts after r
     };
     assert.deepEqual(snapshot.operations, state.operations);
     assert.deepEqual(snapshot.chat, {
-      companion: { name: "Companion" },
+      companion: { name: "Companion", handle: `${"D".repeat(42)}A` },
       title: "Reference Chat",
       transcript: [],
       draft: { revision: 4, present: true },

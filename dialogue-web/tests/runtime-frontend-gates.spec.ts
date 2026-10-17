@@ -118,7 +118,7 @@ function composedRoot(options: FixtureOptions = {}) {
       navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
       selection: { chatHandle: handle, generation: 1, stateRevision: handle },
       chat: {
-        companion: { name: options.companionName ?? "Mira" },
+        companion: { name: options.companionName ?? "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
         title: options.title === undefined ? "Gate Chat" : options.title,
         transcript: transcript.map((message, index) => ({
           handle: handleFor(index),

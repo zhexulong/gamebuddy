@@ -63,7 +63,7 @@ export async function sendProjectedSnapshot(
     navigation: profile.navigationItemIds.map(navigationItem),
     selection: state.selection,
     chat: {
-      companion: { name: state.companionDisplayName },
+      companion: { name: state.companionDisplayName, handle: state.companionHandle },
       title: state.title,
       transcript: [...state.transcript],
       draft: {

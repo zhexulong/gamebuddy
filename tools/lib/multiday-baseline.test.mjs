@@ -41,6 +41,10 @@ const MENU = (overrides = {}) => ({
   decision: overrides.decision ?? "dismiss",
   dismissReceipt: overrides.dismissReceipt ?? { state: "succeeded", reasonCode: "modal_dismissed" },
   dismissReasonCode: overrides.dismissReasonCode ?? null,
+  // The level-up path's own fields, carried through when a case sets them.
+  respondReceipt: overrides.respondReceipt ?? null,
+  respondReasonCode: overrides.respondReasonCode ?? null,
+  respondChoice: overrides.respondChoice ?? null,
 });
 
 /** One day record of a healthy run: night crossed, the settlement menu closed by the product. */
@@ -175,10 +179,62 @@ test("the settlement menu must be closed by the product, with its own receipt", 
 
   // A menu the product must NOT close stops the night by name instead of timing out.
   const unclosable = assessMultiDayBaseline({
-    dayRecords: [DAY({ menus: [MENU({ menuType: "LevelUpMenu", decision: "blocked" }), MENU()] }), DAY({ day: 2 })],
+    dayRecords: [
+      DAY({ menus: [MENU({ menuType: "LetterViewerMenu", decision: "blocked" }), MENU()] }),
+      DAY({ day: 2 }),
+    ],
     daysRequested: 2,
   });
-  assert.ok(codes(unclosable).includes("night_raised_unclosable_menu:LevelUpMenu"));
+  assert.ok(codes(unclosable).includes("night_raised_unclosable_menu:LetterViewerMenu"));
+});
+
+test("a level-up menu is red unless the product resolved it, and never by a branch the harness picked", () => {
+  // A rollover CAN raise a level-up menu. The baseline accepts it only with the product's own
+  // `level_up_resolved` receipt, and only when the recorded choice is the one that takes no decision: a
+  // milestone branch in the record would be the harness choosing the companion's growth path.
+  const unresolved = assessMultiDayBaseline({
+    dayRecords: [DAY({ menus: [MENU({ menuType: "LevelUpMenu", decision: "respond_level_up" })] }), DAY({ day: 2 })],
+    daysRequested: 2,
+  });
+  assert.ok(codes(unresolved).some((code) => code.startsWith("level_up_menu_not_resolved")));
+
+  const resolved = assessMultiDayBaseline({
+    dayRecords: [
+      DAY({
+        menus: [
+          MENU({
+            menuType: "LevelUpMenu",
+            decision: "respond_level_up",
+            respondReceipt: { state: "succeeded", reasonCode: "level_up_resolved" },
+            respondReasonCode: null,
+            respondChoice: "confirm",
+          }),
+        ],
+      }),
+      DAY({ day: 2 }),
+    ],
+    daysRequested: 2,
+  });
+  assert.deepEqual(codes(resolved), []);
+
+  const branched = assessMultiDayBaseline({
+    dayRecords: [
+      DAY({
+        menus: [
+          MENU({
+            menuType: "LevelUpMenu",
+            decision: "respond_level_up",
+            respondReceipt: { state: "succeeded", reasonCode: "level_up_resolved" },
+            respondReasonCode: null,
+            respondChoice: "branch_a",
+          }),
+        ],
+      }),
+      DAY({ day: 2 }),
+    ],
+    daysRequested: 2,
+  });
+  assert.ok(codes(branched).includes("level_up_branch_chosen_by_harness:branch_a"));
 });
 
 test("the day after a night must still produce the companion's own farm work", () => {

@@ -55,7 +55,7 @@ const composedRoot = {
     navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
     selection: { chatHandle: currentHandle, generation: 1, stateRevision: currentHandle },
     chat: {
-      companion: { name: "Mira" },
+      companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
       title: null,
       transcript: [],
       draft: { revision: 0, present: false },
@@ -331,7 +331,9 @@ test("a companion an import created is not the one in play, and the surface stat
   const marks = await section.evaluate((node) => {
     const rows = [...node.querySelectorAll("[data-companion-entry]")];
     return rows.map((row) => ({
-      name: row.querySelector("[data-companion-inspect]")?.textContent?.trim() ?? "",
+      // The row's name element, not the control's whole text: the control also carries
+      // her monogram, which is decoration rather than part of her name.
+      name: row.querySelector("[data-companion-entry-name]")?.textContent?.trim() ?? "",
       marked: row.querySelector("em.companion-current-badge")?.textContent?.trim() ?? null,
       markWidth: Math.round(
         row.querySelector("em.companion-current-badge")?.getBoundingClientRect().width ?? 0,

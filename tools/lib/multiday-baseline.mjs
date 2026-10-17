@@ -34,6 +34,12 @@ export const MAXIMUM_BASELINE_DAYS = 3;
 /** Menus the product's own `dismiss_modal` closes as a pure cancel (`ShippingMenu` is the one a rollover raises). */
 export const DISMISSIBLE_ROLLOVER_MENUS = Object.freeze(["ShippingMenu"]);
 
+/**
+ * The one rollover menu with NO pure-cancel path: an active `LevelUpMenu` grants its perk when it closes
+ * (`LevelUpMenu.cs:629-635`), so it is settled by `respond_level_up`, never by `dismiss_modal`.
+ */
+export const LEVEL_UP_MENU = "LevelUpMenu";
+
 /** Menus a rollover can legitimately raise and that must be waited for, not closed. */
 export const WAIT_ROLLOVER_MENUS = Object.freeze(["SaveGameMenu", "DialogueBox", "ReadyCheckDialog"]);
 
@@ -157,8 +163,29 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     const menus = Array.isArray(record.menus) ? record.menus : [];
     const dismissible = menus.filter((menu) => DISMISSIBLE_ROLLOVER_MENUS.includes(menu?.menuType));
     for (const menu of menus) {
+      if (menu?.menuType === LEVEL_UP_MENU) {
+        // A rollover CAN raise a level-up menu, and it is settled by `respond_level_up` rather than by a
+        // dismiss: the menu has no pure-cancel path. An ordinary level is resolved with the one legal value
+        // (`confirm`), and a MILESTONE must not be resolved by anyone but the companion - so a record that
+        // carries one without a receipt is red, and a receipted `confirm` is only acceptable when the receipt
+        // itself says the menu was ordinary.
+        const receipt = menu.respondReceipt ?? null;
+        if (receipt?.reasonCode !== "level_up_resolved" || receipt?.state !== "succeeded") {
+          violations.push(
+            violation(`level_up_menu_not_resolved:${String(menu.respondReasonCode ?? "no_receipt")}`, `${where}.menus`),
+          );
+          continue;
+        }
+        if (menu.respondChoice !== "confirm") {
+          // A branch chosen by the harness is the harness deciding the companion's growth path.
+          violations.push(
+            violation(`level_up_branch_chosen_by_harness:${String(menu.respondChoice)}`, `${where}.menus`),
+          );
+        }
+        continue;
+      }
       if (!DISMISSIBLE_ROLLOVER_MENUS.includes(menu?.menuType) && !WAIT_ROLLOVER_MENUS.includes(menu?.menuType)) {
-        // A menu the product must not close (LevelUpMenu above all) stops the night; the baseline
+        // A menu the product must not close (one with no audited handling) stops the night; the baseline
         // cannot claim a cross-day loop while one was raised.
         violations.push(violation(`night_raised_unclosable_menu:${String(menu?.menuType)}`, `${where}.menus`));
       }
@@ -218,6 +245,8 @@ const CHECKED_RULES = Object.freeze([
   "night_saved_edge_not_observed",
   "night_day_started_edge_not_observed",
   "night_raised_unclosable_menu",
+  "level_up_menu_not_resolved",
+  "level_up_branch_chosen_by_harness",
   "shipping_menu_not_dismissed",
   "next_day_produced_no_farm_work",
   "baseline_days_crossed_below_minimum",

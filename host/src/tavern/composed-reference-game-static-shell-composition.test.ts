@@ -100,6 +100,7 @@ function fakeReadState() {
   return {
     selection: Object.freeze({ chatHandle: handle, generation: 1, stateRevision: handle }),
     companionDisplayName: "Mira",
+    companionHandle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA",
     title: "Exact Chat",
     transcript: Object.freeze([
       Object.freeze({

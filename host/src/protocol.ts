@@ -1020,6 +1020,7 @@ export type ExecutionRequest = Readonly<{
     | "water_pet_bowl"
     | "dismiss_modal"
     | "answer_dialogue"
+    | "respond_level_up"
     | "water_slime_hutch_trough"
     | "harvest_bush"
     | "harvest_fruit_tree"
@@ -2740,6 +2741,21 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       value.args.responseKey.length > 128
     )
       return "invalid_response_key";
+  } else if (value.action === "respond_level_up") {
+    // The pair is the binding, so the Host refuses an unshaped request before it can reach the Mod: a persistent
+    // save write must not be dispatchable without naming the level-up it is for.
+    if (!hasExactKeys(value.args, ["choice", "expectedSkill", "expectedLevel"])) return "invalid_args";
+    if (
+      typeof value.args.choice !== "string" ||
+      !["confirm", "branch_a", "branch_b"].includes(value.args.choice) ||
+      !Number.isSafeInteger(value.args.expectedSkill) ||
+      (value.args.expectedSkill as number) < 0 ||
+      (value.args.expectedSkill as number) > 5 ||
+      !Number.isSafeInteger(value.args.expectedLevel) ||
+      (value.args.expectedLevel as number) < 1 ||
+      (value.args.expectedLevel as number) > 10
+    )
+      return "invalid_level_up_choice";
   } else if (value.action === "water_slime_hutch_trough") {
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
     if (

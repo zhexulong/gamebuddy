@@ -15,6 +15,12 @@ namespace GameBuddy.Stardew.Handlers;
 /// the enter_exit door-gate refusal uses. Question dialogues are refused:
 /// answering those is answer_dialogue's future seam (design 7.4.2), and a
 /// closeDialogue on a question box would skip the native answer lifecycle.
+///
+/// `respond_level_up` joins the same profile for the same reason: the menu it
+/// settles is the actor's working precondition. It is NOT a dismiss channel -
+/// an active LevelUpMenu grants its perk when it closes
+/// (LevelUpMenu.cs:629-635), and a profession choice writes the save - so it
+/// has its own action, its own arguments and its own terminal.
 /// </summary>
 internal sealed class ModalActionHandler : IFarmhandActionHandler
 {
@@ -31,6 +37,7 @@ internal sealed class ModalActionHandler : IFarmhandActionHandler
         {
             "dismiss_modal" => this.executions.RequestLocalDismissModal(request, ledger),
             "answer_dialogue" => this.executions.RequestLocalAnswerDialogue(request, ledger),
+            "respond_level_up" => this.executions.RequestLocalRespondLevelUp(request, ledger),
             _ => new LocalExecutionReceipt(
                 Guid.NewGuid().ToString("N"),
                 request.RequestId,

@@ -56,9 +56,22 @@ public static class FarmhandActionCatalog
     });
 
     public static readonly IReadOnlyList<string> DirectionEnum = Array.AsReadOnly(new[]
-    {
-        "up", "right", "down", "left"
-    });
+        {
+            "up", "right", "down", "left"
+        });
+
+    /// <summary>
+    /// The two ways a displayed <c>LevelUpMenu</c> can be settled, plus the ordinary confirmation.
+    ///
+    /// <c>confirm</c> is legal only for an ordinary level and <c>branch_a</c>/<c>branch_b</c> only for a
+    /// profession milestone; the Mod refuses the other pairings by name. There is deliberately no "pick the
+    /// first branch" value: which professions level 10 offers depends on the level-5 choice
+    /// (<c>LevelUpMenu.cs:428-436</c>), so a default would decide the companion's growth path for it.
+    /// </summary>
+    public static readonly IReadOnlyList<string> LevelUpChoiceEnum = Array.AsReadOnly(new[]
+        {
+            "confirm", "branch_a", "branch_b"
+        });
 
     /// <summary>Semantic tool selector for equip_tool/v2. Mod resolves a canonical
     /// category to the deterministically best owned item; slot stays private.</summary>
@@ -259,13 +272,36 @@ public static class FarmhandActionCatalog
         "write",
         "modal_dismissed",
         "DialogueBox.closeDialogue"), FarmhandActionLifecycle.LiveVerified),
-        E("answer_dialogue", "modal_handling", FarmhandActionHandlerGroup.Modal, new FarmhandActionDescriptor(
-            new[] { new FarmhandActionArgument("responseKey", "string") },
-            new Dictionary<string, string>(),
-            EmbodiedActorResource,
-            "write",
-            "answer_dialogue_answered",
-            "GameLocation.answerDialogue"), FarmhandActionLifecycle.LiveVerified),
+            E("answer_dialogue", "modal_handling", FarmhandActionHandlerGroup.Modal, new FarmhandActionDescriptor(
+                new[] { new FarmhandActionArgument("responseKey", "string") },
+                new Dictionary<string, string>(),
+                EmbodiedActorResource,
+                "write",
+                "answer_dialogue_answered",
+                "GameLocation.answerDialogue"), FarmhandActionLifecycle.LiveVerified),
+            // respond_level_up settles the pending level-up the actor is being shown: an ordinary level through
+            // the menu's own `okButtonClicked` (LevelUpMenu.cs:637-643), or one of the two profession branches at
+            // levels 5/10, which the engine only offers inside a mouse handler (:485-506) - a public call sequence,
+            // the same shape color_placed_object and ride_minecart accepted.
+            //
+            // It is NOT dismiss_modal: an ACTIVE LevelUpMenu grants its perk when it closes
+            // (cleanupBeforeExit -> okButtonClicked, :629-635), so the menu has no pure-cancel path, and the
+            // profession branch writes `Farmer.professions` (a persisted, synced field).
+            //
+            // `choice` is the game's own input domain and `expectedSkill`/`expectedLevel` are the binding: the Mod
+            // refuses unless the displayed menu is about that exact pair.
+            E("respond_level_up", "modal_handling", FarmhandActionHandlerGroup.Modal, new FarmhandActionDescriptor(
+                new[]
+                {
+                    new FarmhandActionArgument("choice", "string", LevelUpChoiceEnum),
+                    new FarmhandActionArgument("expectedSkill", "integer"),
+                    new FarmhandActionArgument("expectedLevel", "integer"),
+                },
+                new Dictionary<string, string>(),
+                EmbodiedActorResource,
+                "write",
+                "level_up_resolved",
+                "LevelUpMenu.okButtonClicked"), FarmhandActionLifecycle.LiveVerified),
         // M2 cross-day lifecycle wiring. The catalog contract
         // (single_player_sleep_and_advance_day / end_day_with_all_players_ready)
         // is coordinated, but the AI's own share of it is one bounded native

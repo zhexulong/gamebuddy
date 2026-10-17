@@ -95,7 +95,7 @@ export type TavernStateSnapshotV1 = Readonly<{
   navigation: readonly unknown[];
   selection: Readonly<{ chatHandle: string; generation: number; stateRevision: string }> | null;
   chat: Readonly<{
-    companion: Readonly<{ name: string }>;
+    companion: Readonly<{ name: string; handle: string }>;
     title: string | null;
     transcript: readonly BrowserMessageV1[];
     draft: Readonly<{ revision: number; present: boolean }>;

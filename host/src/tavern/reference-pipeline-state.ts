@@ -54,6 +54,8 @@ export type ReferencePipelineState = Readonly<{
     stateRevision: string;
   }>;
   companionDisplayName: string;
+  /** The mounted companion's own opaque roster handle: how her picture is addressed. */
+  companionHandle: string;
   title: string | null;
   transcript: readonly BrowserMessageV1[];
   draft: Readonly<{ revision: number; text: string | null }>;
@@ -230,6 +232,7 @@ function project(
       stateRevision: projection.selectionStateRevision,
     }),
     companionDisplayName,
+    companionHandle: projection.projectCompanionHandle(state.thread.companionId),
     title: state.thread.title ?? null,
     transcript,
     draft: Object.freeze({ revision: state.draft.revision, text: state.draft.text }),

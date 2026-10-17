@@ -37,7 +37,7 @@ const SURFACE = "^dialogue-web/src/components/[^/]*Surface\\.tsx$";
 const SURFACE_SUPPORT =
   "^dialogue-web/src/((game-(lifecycle-controls|presentation)|composed-problem-view|pi-settings-model)\\.ts|components/(CharacterCardImport|CharactersPanel|CharactersSurfacePanel|CompanionInspectorDrawer|GameDiagnosticsDisclosure|GameStatePanel|StardewInstallationDiscovery|SurfaceModelSettings|composed-reference-game-view|management-panels|management-surface-panels|character-domain-labels|memory-notebook-labels|png-character-card|turn-failure-text)\\.tsx?)$";
 const SHARED_UI =
-  "^dialogue-web/src/(components/(MessageBubble|Timeline|ProblemView|SkipLink|Composer|MarkdownMessage|SurfaceView|AppBar|ContextDrawer)\\.tsx|components/drawers/ChatsDrawer\\.tsx)$";
+  "^dialogue-web/src/(components/(MessageBubble|Timeline|CompanionAvatar|ProblemView|SkipLink|Composer|MarkdownMessage|SurfaceView|AppBar|ContextDrawer)\\.tsx|components/drawers/ChatsDrawer\\.tsx)$";
 const SHARED = "^dialogue-web/src/(i18n|types)\\.ts$";
 
 module.exports = {

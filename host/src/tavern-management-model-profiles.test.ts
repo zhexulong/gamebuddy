@@ -45,6 +45,7 @@ test.after(() => {
 const state: TavernManagementState = {
   selection: { chatHandle: handle, generation: 1, stateRevision: handle },
   companionDisplayName: "Mira",
+  companionHandle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA",
   title: "Farm Chat",
   transcript: [],
   draft: { revision: 0, text: null },

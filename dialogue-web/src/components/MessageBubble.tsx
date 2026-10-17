@@ -2,6 +2,7 @@ import { memo } from "react";
 import { ChevronLeft, ChevronRight, LoaderCircle, RefreshCw } from "lucide-react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
+import { CompanionAvatar } from "./CompanionAvatar";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 /**
@@ -70,6 +71,7 @@ function swipePosition(label: string): string {
 export const MessageBubble = memo(function MessageBubble({
   message,
   companionName,
+  companionHandle,
   playerLabel,
   onSwipe,
   onRegenerate,
@@ -82,6 +84,8 @@ export const MessageBubble = memo(function MessageBubble({
 }: {
   message: BrowserMessageV1;
   companionName: string;
+  /** The mounted companion's own roster handle: how her picture is addressed. */
+  companionHandle: string | null;
   playerLabel: string;
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate?: (messageHandle: string) => void;
@@ -133,7 +137,6 @@ export const MessageBubble = memo(function MessageBubble({
 }) {
   const isPlayer = message.role === "player";
   const authorName = isPlayer ? playerLabel : companionName;
-  const initial = (Array.from(authorName)[0] ?? "").toUpperCase();
   const swipeInfo = message.swipeInfo;
   const openingVariant = message.openingVariant;
   const busy = pending !== null;
@@ -166,10 +169,15 @@ export const MessageBubble = memo(function MessageBubble({
     >
       {/* The avatar is the row's first child on both sides, and the player's
           row is mirrored by `flex-direction: row-reverse` (style.css): the
-          monogram ends up outside the bubble, hugging the outer boundary. */}
-      <div className="avatar avatar-small" aria-hidden="true">
-        {initial}
-      </div>
+          monogram ends up outside the bubble, hugging the outer boundary. The
+          companion's side carries her real picture when the Host has one;
+          everything else about the element - size, plate, `aria-hidden` - is the
+          monogram it already was. */}
+      <CompanionAvatar
+        handle={isPlayer ? null : companionHandle}
+        name={authorName}
+        className="avatar-small"
+      />
       <div className="message-body">
         {/* The author line belongs to the companion only. The player's own
             monogram already sits at the row's edge, so printing the same name

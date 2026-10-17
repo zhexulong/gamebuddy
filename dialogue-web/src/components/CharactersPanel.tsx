@@ -10,6 +10,7 @@ import type {
 } from "../management-pipeline-api";
 import { problemTextWithCode } from "../management-pipeline-api";
 import { CharacterCardImport } from "./CharacterCardImport";
+import { CompanionAvatar } from "./CompanionAvatar";
 import { CompanionInspectorDrawer, type InspectedCompanion } from "./CompanionInspectorDrawer";
 import { characterLabels } from "./character-domain-labels";
 
@@ -381,7 +382,11 @@ export function CharactersPanel({
                         setInspected({ handle: entry.handle, name: entry.name, isCurrent: entry.isCurrent });
                       }}
                     >
-                      {entry.name}
+                      <CompanionAvatar handle={entry.handle} name={entry.name} className="avatar-small" />
+                      {/* The row's own name, in its own element: the monogram beside it is
+                          decoration, so the control's text is not the companion's name and a
+                          reader that wants the name must not have to subtract a glyph. */}
+                      <span data-companion-entry-name>{entry.name}</span>
                     </button>
                     {entry.isCurrent && <em className="companion-current-badge">{labels.companionCurrent}</em>}
                   </li>

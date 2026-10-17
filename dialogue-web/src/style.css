@@ -448,6 +448,18 @@
     font-size: 12px;
   }
 
+  /* A companion's real picture, inside the monogram's own plate: the plate keeps
+   the row's geometry whether a picture is there or not, so a roster that gains
+   pictures and one that has none do not lay out differently. `object-fit: cover`
+   crops rather than squashes a card's own aspect ratio. */
+  .avatar-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: inherit;
+  }
+
   .app-bar-actions {
     display: flex;
     align-items: center;
@@ -2669,6 +2681,7 @@
     display: flex;
     flex: 1 1 auto;
     align-items: center;
+    gap: 10px;
     min-height: 44px;
     padding: 0;
     background-color: transparent;

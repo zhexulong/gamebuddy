@@ -19,6 +19,7 @@
 
 import {
   DISMISSIBLE_ROLLOVER_MENUS,
+  LEVEL_UP_MENU,
   MAXIMUM_BASELINE_DAYS,
   MINIMUM_BASELINE_DAYS,
   WAIT_ROLLOVER_MENUS,
@@ -46,13 +47,23 @@ export function readHeldMenu(snapshot) {
  * `wait` is for engine- or action-owned modals that exit on their own (`SaveGameMenu` is the day-end
  * save; `DialogueBox` is the native sleep prompt the lifecycle itself answers; `ReadyCheckDialog` is the
  * shared-world barrier). `dismiss` is the one a rollover raises and the product's own action closes.
- * Anything else stops the run BY NAME, which above all means `LevelUpMenu`: it is deliberately not
- * dismissible because closing it writes the level perk.
+ *
+ * `respond_level_up` is the third shape, and it is NOT the same as `dismiss`: an ACTIVE `LevelUpMenu`
+ * grants its perk when it closes (`LevelUpMenu.cs:629-635`), so it has no pure-cancel path - it needs
+ * `respond_level_up`. For an ORDINARY level there is exactly one legal value (`confirm`), so the watcher
+ * can pass it without taking a decision on the companion's behalf, the same division of labour that lets
+ * it dismiss `ShippingMenu` while the companion is blocked inside `advance_day`.
+ *
+ * A MILESTONE (5/10) is the case NO proxy may take: the two branches are a permanent part of the
+ * companion's growth path, so choosing one here would be the harness deciding for it. That is reported by
+ * name instead, and a scenario that cannot afford the stop must exclude milestones in its declared Given
+ * (the multi-day Given pins the five skills at 10 for exactly this reason).
  */
 export function decideHeldMenu(menuType) {
   if (menuType === null) return Object.freeze({ kind: "none", menuType: null });
   if (WAIT_ROLLOVER_MENUS.includes(menuType)) return Object.freeze({ kind: "wait", menuType });
   if (DISMISSIBLE_ROLLOVER_MENUS.includes(menuType)) return Object.freeze({ kind: "dismiss", menuType });
+  if (menuType === LEVEL_UP_MENU) return Object.freeze({ kind: "respond_level_up", menuType });
   return Object.freeze({ kind: "blocked", menuType, reasonCode: `actor_held_by_unclosable_menu:${menuType}` });
 }
 
@@ -104,6 +115,25 @@ export async function watchRollover(
     if (decision.kind === "blocked") return Object.freeze({ crossed: false, reasonCode: decision.reasonCode, menus });
     const hold = classifyActorHold(snapshot);
     if (hold.reasonCode !== null) return Object.freeze({ crossed: false, reasonCode: hold.reasonCode, menus });
+
+    if (decision.kind === "respond_level_up") {
+      // The ordinary/milestone split is the whole point: `confirm` takes no decision, a branch would.
+      // The world decides which one this is; a milestone comes back named and stops the run.
+      const sent = attempts.get(menuType) ?? 0;
+      if (sent >= MAX_DISMISS_ATTEMPTS) {
+        return Object.freeze({ crossed: false, reasonCode: `rollover_level_up_not_resolved:${menuType}`, menus });
+      }
+      attempts.set(menuType, sent + 1);
+      const outcome = await world.respondLevelUp();
+      const entry = menus.find((candidate) => candidate.menuType === menuType);
+      entry.respondReceipt = outcome?.receipt ?? null;
+      entry.respondReasonCode = outcome?.reasonCode ?? null;
+      entry.respondChoice = outcome?.choice ?? null;
+      entry.levelUp = outcome?.levelUp ?? null;
+      if (outcome?.reasonCode !== null && outcome?.reasonCode !== undefined) {
+        return Object.freeze({ crossed: false, reasonCode: outcome.reasonCode, menus });
+      }
+    }
 
     if (decision.kind === "dismiss") {
       const sent = attempts.get(menuType) ?? 0;

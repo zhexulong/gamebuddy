@@ -1156,6 +1156,7 @@ export function ComposedReferenceGameApp() {
                 transcript={view.session.snapshot.chat.transcript}
                 preview={preview}
                 companionName={view.session.snapshot.chat.companion.name}
+                companionHandle={view.session.snapshot.chat.companion.handle}
                 chatTitle={view.session.snapshot.chat.title}
                 labels={labels()}
                 pending={chatMutation}

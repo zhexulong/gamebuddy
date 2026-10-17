@@ -37,7 +37,7 @@ const chat = {
   navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
   selection: { chatHandle: handle, generation: 1, stateRevision: handle },
   chat: {
-    companion: { name: "Mira" },
+    companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
     title: "Reference Game Chat",
     transcript: [],
     draft: { revision: 4, present: false },
@@ -419,6 +419,16 @@ test("gate 3 (touch floor, mutation): a planted 20 px control on the Chats surfa
  * ones out of the visual flow (`clip-path: inset(50%)`) are excluded by the same
  * explicit rule the touch floor uses: they are not a label the player reads.
  *
+ * Text inside an `aria-hidden` subtree is excluded by that same rule, and this is the
+ * case that revealed it: a roster row is a control carrying a decorative monogram
+ * beside the companion's name (`CompanionAvatar`), and the two sit in one flex row at
+ * different type sizes, so their text rects differ by a couple of pixels. Counting the
+ * glyph as label text reported a wrap no player sees - and it made the mutation case
+ * below fail *before* its plant, which is how a decorative glyph starts hiding a real
+ * wrap instead of being ignored. `aria-hidden` is the author's own statement that the
+ * subtree is not the label; text a player reads is never hidden that way, so nothing
+ * the player reads stops being measured.
+ *
  * Widths: 1440 px and 400 px. A label that only fits on one line because the window
  * is wide is the defect, not the rule.
  */
@@ -441,7 +451,10 @@ async function wrappedLabels(
         let hasText = false;
         let textNode = walker.nextNode();
         while (textNode !== null) {
-          if ((textNode.textContent ?? "").trim().length > 0) {
+          // Decoration is not a label: an `aria-hidden` subtree is the author saying so,
+          // and the name beside it is what the player reads.
+          const decoration = textNode.parentElement?.closest('[aria-hidden="true"]') ?? null;
+          if (decoration === null && (textNode.textContent ?? "").trim().length > 0) {
             hasText = true;
             range.selectNodeContents(textNode);
             for (const rect of range.getClientRects()) tops.add(Math.round(rect.top));

@@ -62,6 +62,7 @@ const fakeChatFacade = Object.freeze({
     Object.freeze({
       selection: Object.freeze({ chatHandle: handle, generation: 1, stateRevision: handle }),
       companionDisplayName: "Mira",
+      companionHandle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA",
       title: "Exact Chat",
       transcript: Object.freeze([]),
       draft: Object.freeze({ revision: 1, text: null }),

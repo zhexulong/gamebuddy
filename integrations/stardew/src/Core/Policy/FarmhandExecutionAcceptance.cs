@@ -77,7 +77,10 @@ public static class FarmhandExecutionAcceptance
         bool leftSlot = args.LeftSlot is not null;
         bool colorSelection = args.ColorSelection is not null;
         bool rightSlot = args.RightSlot is not null;
-        bool text = args.Text is not null;
+    bool text = args.Text is not null;
+    bool choice = args.Choice is not null;
+    bool expectedSkill = args.ExpectedSkill.HasValue;
+    bool expectedLevel = args.ExpectedLevel.HasValue;
         return x == HasArgument(descriptor, "x")
             && y == HasArgument(descriptor, "y")
             && slot == HasArgument(descriptor, "slot")
@@ -94,7 +97,10 @@ public static class FarmhandExecutionAcceptance
             && buildingType == HasArgument(descriptor, "buildingType")
             && leftSlot == HasArgument(descriptor, "leftSlot")
             && rightSlot == HasArgument(descriptor, "rightSlot")
-            && colorSelection == HasArgument(descriptor, "colorSelection");
+            && colorSelection == HasArgument(descriptor, "colorSelection")
+        && choice == HasArgument(descriptor, "choice")
+        && expectedSkill == HasArgument(descriptor, "expectedSkill")
+        && expectedLevel == HasArgument(descriptor, "expectedLevel");
     }
 
     private static bool HasArgument(FarmhandActionDescriptor descriptor, string name) =>
@@ -133,6 +139,15 @@ public static class FarmhandExecutionAcceptance
         "tool" => !string.IsNullOrWhiteSpace(args.Tool) && argument.Enum is { } toolEnum
             && toolEnum.Any(value => string.Equals(value, args.Tool, StringComparison.Ordinal)),
         "responseKey" => !string.IsNullOrWhiteSpace(args.ResponseKey) && args.ResponseKey.Length <= 128,
+        // The level-up response. `choice` is the game's own closed set (the descriptor carries it as an Enum, the
+        // same shape emote/direction/tool use); the pair is the BINDING, so both halves are bounded to the values
+        // the engine can actually put in `Farmer.newLevels` - skills 0..5 (luck included: its level can be lost and
+        // regained) and levels 1..10. A pair outside those bounds is refused here rather than reaching the handler,
+        // where it could only be rejected after admitting the request.
+        "choice" => !string.IsNullOrWhiteSpace(args.Choice) && argument.Enum is { } choiceEnum
+            && choiceEnum.Any(value => string.Equals(value, args.Choice, StringComparison.Ordinal)),
+        "expectedSkill" => args.ExpectedSkill is int expectedSkillValue && expectedSkillValue >= 0 && expectedSkillValue <= 5,
+        "expectedLevel" => args.ExpectedLevel is int expectedLevelValue && expectedLevelValue >= 1 && expectedLevelValue <= 10,
         // A declared quantity is a positive count. The descriptor decides whether an action
         // takes one; this only bounds it. Mirroring Object.cs: no action may ask for zero or
         // a negative amount, and the ceiling keeps a single request from being absurd.

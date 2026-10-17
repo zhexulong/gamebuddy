@@ -30,7 +30,7 @@ const chat = {
   navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
   selection: { chatHandle: handle, generation: 1, stateRevision: handle },
   chat: {
-    companion: { name: "Mira" },
+    companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
     title: "Reference Game Chat",
     transcript: [
       {
