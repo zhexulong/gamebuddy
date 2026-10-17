@@ -61,8 +61,12 @@ test("the failure dump is built from the bridge's own facts and the trace's own 
   assert.match(SOURCE, /const failure = failed\n?\s*\? buildFailureSnapshot\(\{/);
   assert.match(
     SOURCE,
-    /const repro = failed \? buildReproPlan\(\{ actionTrace, turn: actionTrace\.length, slot, scenario \}\) : null;/,
+    /const repro = failed\n?\s*\? buildReproPlan\(\{[\s\S]{0,300}?slot,\n\s*scenario,\n\s*\/\/ The nights this run had already crossed[\s\S]{0,200}?crossings: multidayOutcome\?\.crossings \?\? 0,/,
   );
+  // ...and the plan must say what it can reach: a failure after a night cannot be re-entered by a day-level
+  // replay, and the contract refuses a repro that does not state its reach.
+  assert.match(SOURCE, /const repro = failed/);
+  assert.match(SOURCE, /crossings: multidayOutcome\?\.crossings \?\? 0,/);
   // The manifest may only omit the window probes for the headless window mode, and it has to say so.
   assert.match(SOURCE, /reason: process\.env\.GAMEBUDDY_GPU === undefined \? "headless_environment" : null,/);
 });

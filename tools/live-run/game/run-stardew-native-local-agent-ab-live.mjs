@@ -2612,7 +2612,17 @@ async function writeRunBundle({ capture, result, scenario, runtimeRoot, actionTr
       })
     : null;
   const slot = snapshot?.slot ?? process.env.GAMEBUDDY_DAY_START_SLOT ?? null;
-  const repro = failed ? buildReproPlan({ actionTrace, turn: actionTrace.length, slot, scenario }) : null;
+  const repro = failed
+    ? buildReproPlan({
+        actionTrace,
+        turn: actionTrace.length,
+        slot,
+        scenario,
+        // The nights this run had already crossed. A failure after any of them cannot be re-entered by the
+        // day-level command, and the plan says so instead of offering a command that cannot arrive.
+        crossings: multidayOutcome?.crossings ?? 0,
+      })
+    : null;
   const bundle = {
     schemaVersion: 1,
     run: {
