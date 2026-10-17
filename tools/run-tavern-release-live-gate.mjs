@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -11,10 +12,7 @@ import {
 } from "./check-tavern-release-prerequisites.mjs";
 
 import { NARRATIVE_RUN_FAILURE_CODES, prepareReportTarget, writeReport } from "./run-tavern-narrative-gate.mjs";
-import {
-  MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS,
-  readMountedTavernManagementProfile,
-} from "./lib/tavern-mounted-operation-vocabulary.mjs";
+import { readMountedTavernManagementProfile } from "./lib/tavern-mounted-operation-vocabulary.mjs";
 
 export { CHAT_TAVERN_LIVE_PROFILE, DEFAULT_TAVERN_RELEASE_PROFILE };
 
@@ -117,77 +115,58 @@ const COMPOSED_TAVERN_PROFILE_KEYS = Object.freeze([
   "operationIds",
   "navigationItemIds",
 ]);
-const OPERATION_ROUTE_IDS = Object.freeze({
-  "draft.save": "draft.save",
-  "draft.discard": "draft.discard",
-  "chat.rename": "chat.rename",
-  "chat.submit": "chat.submit",
-  "chat.cancel": "chat.cancel",
-  "chat.submission_status": "chat.submission_status",
-  "memory.mutate": "memory.mutate",
-  "world-info.bind": "world-info.bind",
-  // Every settings surface the mounted tavern management profile declares is
-  // served through the route of the same id. The connection surface and its
-  // siblings are listed explicitly so a profile that declares a settings
-  // operation the gate does not know still fails membership rather than
-  // passing unnoticed.
-  // Every settings surface the mounted tavern management profile declares is
-  // served through the route of the same id. The connection surface and its
-  // siblings are listed explicitly so a profile that declares a settings
-  // operation the gate does not know still fails membership rather than
-  // passing unnoticed. The same holds for the Characters surface
-  // (design/28 §2): companion/persona/scenario/greeting/retention operations
-  // are declared in the mounted vocabulary, so they are folded in here by
-  // derivation instead of a fourth hand-maintained copy.
-  "settings.voice.read": "settings.voice.read",
-  "settings.voice.consent": "settings.voice.consent",
-  "settings.voice.devices": "settings.voice.devices",
-  ...Object.fromEntries(
-    MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter((id) => id.startsWith("settings.")).map((id) => [id, id]),
+/**
+ * The browser contract's own route table: `routeId`, plus the `operationId` that route binds.
+ * It is read out of `host/src/tavern/browser-contract/index.ts`, because the CONTRACT is the
+ * authority for which routes exist and which operation each serves - not this gate, and not the
+ * mounted profile this gate validates.
+ *
+ * Both sets used to be written out here by hand and drifted exactly as this file's own history
+ * predicted: `CONTRACT_ROUTE_IDS` never learned `chat.opening`/`chat.create`/`chat.select`, so
+ * the validator rejected the REAL mounted profile with `mounted_profile_routeIds_members`, which
+ * is indistinguishable from a genuine regression. Part of it was worse than a stale copy: it was
+ * folded out of the mounted profile's OWN operation vocabulary, so "is this route declared?" was
+ * answered, in part, by the very profile being checked.
+ *
+ * A derivation that cannot find the table fails closed rather than validating against nothing.
+ */
+const CONTRACT_SOURCE = fileURLToPath(new URL("../host/src/tavern/browser-contract/index.ts", import.meta.url));
+function readContractRouteTable() {
+  const source = readFileSync(CONTRACT_SOURCE, "utf8");
+  const descriptors = [];
+  // One descriptor is one `route({ ... })` object literal whose own `routeId` is its first field.
+  // Splitting on the helper's call form scopes both reads to a single route, so a descriptor can
+  // never bind its neighbour's `operationId`, and an unanchored table throws instead of matching
+  // nothing (a silently empty derivation would validate every profile against the empty set).
+  for (const descriptor of source.split("route({").slice(1)) {
+    const routeId = /^\s*routeId:\s*"([a-z][a-z0-9._-]*)"/u.exec(descriptor);
+    if (routeId === null) throw new Error("browser_contract_route_table_unanchored");
+    const operationId = /operationId:\s*"([a-z][a-z0-9._-]*)"/u.exec(descriptor);
+    descriptors.push(Object.freeze({ routeId: routeId[1], operationId: operationId?.[1] }));
+  }
+  if (descriptors.length < 20) throw new Error("browser_contract_route_table_unreadable");
+  return Object.freeze(descriptors);
+}
+const CONTRACT_ROUTE_TABLE = readContractRouteTable();
+const CONTRACT_ROUTE_IDS = new Set(CONTRACT_ROUTE_TABLE.map((descriptor) => descriptor.routeId));
+/** Operation id -> the route the contract binds it to; a route with no `operationId` serves none. */
+const OPERATION_ROUTE_IDS = Object.freeze(
+  Object.fromEntries(
+    CONTRACT_ROUTE_TABLE.filter((descriptor) => descriptor.operationId !== undefined).map((descriptor) => [
+      descriptor.operationId,
+      descriptor.routeId,
+    ]),
   ),
-  ...Object.fromEntries(
-    MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter((id) => !id.startsWith("settings.") && !id.startsWith("chat.")).map((id) => [id, id]),
-  ),
-  ...Object.fromEntries(
-    MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter((id) => id.startsWith("chat.") && !["chat.rename", "chat.submit", "chat.cancel"].includes(id)).map((id) => [id, id]),
-  ),
-});
-const CONTRACT_ROUTE_IDS = new Set([
-  "bootstrap",
-  "state.read",
-  "draft.read",
-  "draft.save",
-  "draft.discard",
-  "chat.submit",
-  "chat.submission_status",
-  "chat.list",
-  "chat.rename",
-  "chat.cancel",
-  "memory.read",
-  "memory.mutate",
-  "world-info.read",
-  "world-info.bind",
-  // The settings surfaces are part of the mounted tavern management profile
-  // (host/src/tavern/browser-contract/index.ts). Without them here the gate
-  // rejected the real production profile it is meant to validate.
-  "settings.voice.read",
-  "settings.voice.consent",
-  "settings.voice.devices",
-  ...MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter((id) => id.startsWith("settings.")),
-  // The Characters and retention surfaces (companion.*, persona.*, scenario.*,
-  // greeting.*, chat.archive/restore/trash) come from the same mounted
-  // vocabulary; a route the vocabulary declares is a route the gate knows.
-  ...MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS.filter(
-    (id) => !id.startsWith("settings.") && !id.startsWith("chat."),
-  ),
-  "chat.archive",
-  "chat.restore",
-  "chat.trash",
-  "events",
-]);
-const CONTRACT_NAVIGATION_ITEM_IDS = new Set(["chat", "memory", "characters"]);;
+);
+const CONTRACT_NAVIGATION_ITEM_IDS = new Set(["chat", "memory", "characters"]);
 const PROFILE_IDENTITY_MAPPING_KEYS = Object.freeze(["schema_version", "profile", "operations"]);
-const PROFILE_ID_HASH_MAPPING_KEYS = Object.freeze(["schema_version", "profile_id", "profile_hash", "release_tier", "operations"]);
+const PROFILE_ID_HASH_MAPPING_KEYS = Object.freeze([
+  "schema_version",
+  "profile_id",
+  "profile_hash",
+  "release_tier",
+  "operations",
+]);
 const PROFILE_ID_HASH_WITHOUT_TIER_MAPPING_KEYS = Object.freeze([
   "schema_version",
   "profile_id",
@@ -208,7 +187,12 @@ function opaque(value) {
 }
 
 function plainRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
 }
 
 function exactKeys(value, expected) {
@@ -389,7 +373,7 @@ export function validateMountedProfileOperationEvidence({ mountedProfile, operat
     );
   } else if (hashIdentity) {
     check(
-      (idIdentity &&
+      idIdentity &&
         (exactKeys(mapping, PROFILE_ID_HASH_MAPPING_KEYS) ||
           exactKeys(mapping, PROFILE_ID_HASH_WITHOUT_TIER_MAPPING_KEYS)) &&
         typeof mapping.profile_id === "string" &&
@@ -398,7 +382,7 @@ export function validateMountedProfileOperationEvidence({ mountedProfile, operat
         profileValid &&
         mapping.profile_id === mountedProfile?.profileId &&
         (mapping.release_tier === undefined || mapping.release_tier === mountedProfile?.releaseTier) &&
-        mapping.profile_hash === canonicalProfileHash(mountedProfile)),
+        mapping.profile_hash === canonicalProfileHash(mountedProfile),
       "mounted_profile_operation_evidence_profile",
       "mounted_composed_tavern_profile_operation_to_evidence_mapping_profile_mismatch",
       checks,
@@ -471,7 +455,9 @@ export function validateMountedProfileOperationEvidence({ mountedProfile, operat
       const authority = mounted[field];
       check(
         Array.isArray(authority)
-          ? Array.isArray(supplied) && supplied.length === authority.length && authority.every((id, i) => supplied[i] === id)
+          ? Array.isArray(supplied) &&
+              supplied.length === authority.length &&
+              authority.every((id, i) => supplied[i] === id)
           : supplied === authority,
         "mounted_profile_operation_evidence_mounted_surface",
         "mounted_composed_tavern_profile_operation_to_evidence_mapping_profile_not_the_mounted_profile",
@@ -636,8 +622,7 @@ function projectPositionEvidence(kind, value) {
     const entry = value[key];
     if (type === "boolean" && typeof entry === "boolean") projected[key] = entry;
     else if (type === "count" && Number.isSafeInteger(entry) && entry >= 0) projected[key] = entry;
-    else if (type === "code" && typeof entry === "string" && POSITION_EVIDENCE_CODE.test(entry))
-      projected[key] = entry;
+    else if (type === "code" && typeof entry === "string" && POSITION_EVIDENCE_CODE.test(entry)) projected[key] = entry;
   }
   return Object.freeze(projected);
 }
@@ -727,7 +712,8 @@ export async function runNarrativeProcess({ role, reportPath, kind = role, spawn
         settle({
           role,
           state: "blocked",
-          reasonCode: signal === null && code === 0 ? "narrative_report_missing" : "narrative_runner_exit_without_report",
+          reasonCode:
+            signal === null && code === 0 ? "narrative_report_missing" : "narrative_runner_exit_without_report",
         });
         return;
       }
@@ -814,11 +800,9 @@ export async function runTavernReleaseLiveGate({
   // same position - so this is the second, independent statement of the same
   // requirement, and it is the one a relabelling cannot produce.
   const runPositions = new Set(runEvidence.map((run) => run.position));
-  const runsReportDistinctPositions =
-    runPositions.size === NARRATIVE_RUN_PLAN.length && !runPositions.has(undefined);
+  const runsReportDistinctPositions = runPositions.size === NARRATIVE_RUN_PLAN.length && !runPositions.has(undefined);
   const runsReportTheirOwnKind = runEvidence.every((run) => run.kind === run.role);
-  const runsComplete =
-    runEvidence.every(genuineRunEvidence) && runsShareIdentity && runsReportDistinctPositions;
+  const runsComplete = runEvidence.every(genuineRunEvidence) && runsShareIdentity && runsReportDistinctPositions;
   if (runEvidence.every(genuineRunEvidence) && !runsShareIdentity) {
     checks.push({
       id: "narrative_run_artifact_identity",
