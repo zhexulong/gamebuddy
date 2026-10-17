@@ -1,6 +1,6 @@
 {
   "note": "Store-opening source lines per committed host/src test file. Update deliberately, in its own commit; a file with no entry has an allowance of zero.",
-  "revision": "10cb6feb",
+  "revision": "c9fbb7ce",
   "files": 30,
   "openings": {
     "continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.test.ts": 1,
@@ -23,7 +23,7 @@
     "tavern/chat-thread-store.connection-lifetime.test.ts": 7,
     "tavern/chat-thread-store.presentation.test.ts": 1,
     "tavern/chat-thread-store.route-ownership.test.ts": 4,
-    "tavern/chat-thread-store.test.ts": 9,
+    "tavern/chat-thread-store.test.ts": 13,
     "tavern/companion-voice-service.test.ts": 1,
     "tavern/default-companion-seed.test.ts": 1,
     "tavern/initial-chat-exact-content-port.test.ts": 2,

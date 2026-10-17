@@ -16,7 +16,15 @@ jobs:
     # 2026-10-16: `test:mounted` hung for 106 minutes with an empty log (its
     # first real execution - earlier gates had always been red), while the
     # identical command finishes locally in 1.8m.
-    timeout-minutes: 60
+    #
+    # Sized on the WORK, not on that hazard. Measured 2026-10-17: the job spends
+    # ~20 minutes on the 43 steps before `pnpm test` (including the 3.4-minute
+    # mounted zone, the native builds and the C# restore), and the host suite
+    # itself runs 45-60 minutes locally - so a 60-minute job bound would cut a
+    # healthy run at the last step. The hazard it guards is still bounded at the
+    # step that has it (`test:mounted`, 25 minutes), which is the tighter and
+    # more meaningful limit.
+    timeout-minutes: 120
     steps:
       # vendor/magic-context and vendor/pi-koe are git submodules (d8bf059,
       # 00e7640) and the steps below install and build inside both. A fresh
@@ -142,7 +150,10 @@ jobs:
       # deliberately refuses the npm bun.ps1 shim on PATH (fixed argv cannot execute it), so a bare
       # `bun` on PATH is not enough. Measured as `test_dependency_bun_executable_unset` when this
       # step finally executed - it never had before, because the knip gate died ahead of it.
+      # Bounded generously, on the measured work (45-60 minutes locally): the whole host suite runs
+      # here, and a step timeout is what keeps a future stall inside this step nameable.
       - run: pnpm test
+        timeout-minutes: 90
         env:
           GAMEBUDDY_BUN_EXECUTABLE: ${{ steps.bun.outputs.bun-path }}
       # The composed runtime's launch contract: the environment block the launcher hands the Host child
