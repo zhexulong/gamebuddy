@@ -3181,6 +3181,28 @@
     margin: 0 auto;
   }
 
+  /* The management panels - Chats, Characters, Settings, Memory - are stocks of
+   rows and forms, not one column of prose, so they keep the whole region and the
+   *content* takes the form measure, centred.
+
+   Centring is the half that was missing. Measured at 1440x900 on the product
+   before this: the Chats list was 640 px against a left edge of 16, so every row
+   ended 768 px short of the region's right edge - a 640-wide column hugging one
+   side of a 1408-wide region, which reads as a broken layout rather than as a
+   measure; and the Memory notebook had no measure at all, so its heading sat at
+   x=16 while its own refresh control sat at x=1380, a card 1408 px wide holding
+   two short lines. The measure is the product's own `--management-form-measure`,
+   which the settings stacks and the chat list already read, so one measure now
+   covers the panel instead of each block carrying its own copy.
+
+   The Characters roster keeps the region on purpose: it is a grid of cards and
+   the width is what gives it its columns. */
+  .surface-panel .surface-content {
+    width: 100%;
+    max-width: var(--management-form-measure);
+    margin-inline: auto;
+  }
+
   /* The conversation is a surface like the others, but its transcript scrolls
    above a composer that stays at the bottom, so it manages its own scrolling. */
   .surface-conversation .surface-content {
@@ -4607,13 +4629,11 @@
      row's own action icons at its tail. The surface lays its content out at the
      whole panel width, which put the title's text and its first action icon
      1152 px apart at 1440x900 (the audit's `~1300 px` reads the same geometry on
-     a shorter title): one row read as two unrelated ends. The list takes the
-     management surface's own measure here; the transcript keeps its reading
-     measure (`.surface-conversation`), which is the conversation's and not this
-     list's. */
-  .chat-list {
-    max-width: var(--management-form-measure);
-  }
+     a shorter title): one row read as two unrelated ends. The list no longer
+     carries a measure of its own - `.surface-panel .surface-content` takes the
+     management measure for the whole panel and centres it, so the list, the card
+     above it and the rows all sit on the one column (and the transcript keeps its
+     reading measure, which is the conversation's and not this list's). */
   /* ==========================================================================
    The press beat: one state, one token, every control the product ships
 

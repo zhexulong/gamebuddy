@@ -32,6 +32,7 @@ export function MemorySurface({
       title={labels.memoryPanel}
       testId="memory-surface"
       icon={Brain}
+      className="surface-panel"
       restoreFocusTo={restoreFocusTo}
     >
       <MemorySurfacePanel api={api} csrfToken={csrfToken} labels={labels} locale={locale} />

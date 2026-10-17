@@ -34,6 +34,7 @@ export function SettingsSurface({
       title={labels.settingsPanel}
       testId="settings-surface"
       icon={Settings}
+      className="surface-panel"
       restoreFocusTo={restoreFocusTo}
     >
       <SettingsSurfacePanel

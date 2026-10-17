@@ -919,3 +919,75 @@ test("defect 7: a held control answers with the product's own press beat, and re
   ).toBe("none");
   expect(reduced.held.y - reduced.rest.y, "and the control does not move").toBe(0);
 });
+
+/**
+ * What each management panel's own content column measures, and where it sits.
+ *
+ * The failure this pins: the panels kept the whole region while only *some* of
+ * their blocks carried the form measure, so at 1440x900 the Chats list was a
+ * 640 px column against the left edge with 768 px of empty region beside it, and
+ * the Memory notebook had no measure at all - a 1408 px card whose own heading
+ * and refresh control sat 1360 px apart. The measure and the *centring* are one
+ * property: a column hugging one edge of a wide region reads as a broken layout,
+ * not as a measure.
+ *
+ * The Characters roster is deliberately not in this list: it is a grid of cards,
+ * and the region's width is what gives it its columns.
+ */
+const PANEL_COLUMNS = [
+  { id: "chats-surface", nav: "会话" },
+  { id: "settings-surface", nav: "设置" },
+  { id: "memory-surface", nav: "记忆" },
+] as const;
+
+const FORM_MEASURE_PX = 640;
+
+async function measurePanelColumn(page: Page, testId: string) {
+  return await page.evaluate((id) => {
+    const surface = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    if (surface === null) return null;
+    const content = surface.querySelector<HTMLElement>(".surface-content");
+    if (content === null) return null;
+    const region = surface.getBoundingClientRect();
+    const box = content.getBoundingClientRect();
+    const widest = [...content.querySelectorAll<HTMLElement>("*")].reduce(
+      (best, node) => Math.max(best, node.getBoundingClientRect().width),
+      0,
+    );
+    return {
+      regionWidth: Math.round(region.width),
+      contentWidth: Math.round(box.width),
+      leftDead: Math.round(box.left - region.left),
+      rightDead: Math.round(region.right - box.right),
+      widestDescendant: Math.round(widest),
+      contentOverflow: content.scrollWidth - content.clientWidth,
+    };
+  }, testId);
+}
+
+test("the management panels read one centred column, so no panel hugs an edge", async ({ page }) => {
+  await mountShell(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  for (const { id, nav } of PANEL_COLUMNS) {
+    await page.getByRole("button", { name: nav, exact: true }).click();
+    await expect(page.getByTestId(id)).toBeVisible();
+    const measured = await measurePanelColumn(page, id);
+    console.log(`[panel-column ${id}] ${JSON.stringify(measured)}`);
+    expect(measured, `${id} renders a content column`).not.toBeNull();
+    const column = measured!;
+    expect(
+      column.contentWidth,
+      `${id}'s content takes the form measure, not the whole ${column.regionWidth} px region`,
+    ).toBeLessThanOrEqual(FORM_MEASURE_PX);
+    expect(
+      Math.abs(column.leftDead - column.rightDead),
+      `${id} centres its column (left ${column.leftDead}, right ${column.rightDead})`,
+    ).toBeLessThanOrEqual(2);
+    expect(
+      column.widestDescendant,
+      `${id} has no block wider than its own column (${column.widestDescendant} vs ${column.contentWidth})`,
+    ).toBeLessThanOrEqual(column.contentWidth + 1);
+    expect(column.contentOverflow, `${id} does not scroll sideways`).toBe(0);
+  }
+});

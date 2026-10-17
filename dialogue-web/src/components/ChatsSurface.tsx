@@ -54,7 +54,13 @@ export function ChatsSurface({
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   return (
-    <SurfaceView title={labels.chatsPanel} testId="chats-surface" icon={MessagesSquare} restoreFocusTo={restoreFocusTo}>
+    <SurfaceView
+      title={labels.chatsPanel}
+      testId="chats-surface"
+      icon={MessagesSquare}
+      className="surface-panel"
+      restoreFocusTo={restoreFocusTo}
+    >
       <ChatsSurfacePanel
         api={api}
         csrfToken={csrfToken}
