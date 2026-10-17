@@ -54,7 +54,12 @@ test("event pump steers player input and attaches the latest snapshot", async ()
 test("event pump serializes a bounded context projection without replacing authoritative fact payload", async () => {
   const pump = new CompanionEventPump();
   const authoritativePayload = { revision: 7, activeExecution: { requestId: "request_secret" } };
-  const contextProjection = Object.freeze({ schema: "gamebuddy-game-snapshot-projection/v1", available: true, snapshotRevision: 7, text: "bounded" });
+  const contextProjection = Object.freeze({
+    schema: "gamebuddy-game-snapshot-projection/v1",
+    available: true,
+    snapshotRevision: 7,
+    text: "bounded",
+  });
   pump.enqueueFact({
     source: "stardew_mod",
     kind: "snapshot",
@@ -308,7 +313,10 @@ test("event pump clear revokes an in-flight rejected fact delivery and preserves
   const batch = JSON.parse(delivered[0] ?? "{}") as {
     worldFacts: Array<{ eventId: string; payload: { value: string } }>;
   };
-  assert.deepEqual(batch.worldFacts.map((fact) => [fact.eventId, fact.payload.value]), [["fresh_event", "fresh"]]);
+  assert.deepEqual(
+    batch.worldFacts.map((fact) => [fact.eventId, fact.payload.value]),
+    [["fresh_event", "fresh"]],
+  );
   assert.equal(pump.pendingCount, 0);
 });
 
@@ -394,6 +402,63 @@ test("event pump classifies terminal receipt overflow separately from all nonter
       kind,
     );
   }
+});
+
+test("event pump keeps a long run's PROGRESS observations from filling the pending window", () => {
+  // Measured 2026-10-17 on a real multi-day run: one agent turn (70 assistant messages, ~350s) made the Mod
+  // publish 129 per-tile observations, each with its OWN correlationId, and they filled the 128-entry window -
+  // so the pump threw and the bridge closed mid-run. The receipt half of the same traffic is already
+  // latest-only, so the semantic half must be too.
+  const pump = new CompanionEventPump();
+  for (let index = 0; index < 500; index++) {
+    pump.enqueueFact({
+      source: "stardew_mod",
+      kind: "semantic_event",
+      correlationId: `route_progress_${index}`,
+      executionId: "exec-one",
+      revision: index + 1,
+      payload: { kind: "route_progress" },
+    });
+  }
+  // Thousands of observations of ONE execution are one slot, so nothing overflowed.
+  assert.equal(pump.pendingCount, 1);
+
+  // The actor-level kind has no execution to key on, so it collapses onto its own kind.
+  for (let index = 0; index < 200; index++) {
+    pump.enqueueFact({
+      source: "stardew_mod",
+      kind: "semantic_event",
+      correlationId: `body_idle_${index}`,
+      revision: index + 1,
+      payload: { kind: "body_idle" },
+    });
+  }
+  assert.equal(pump.pendingCount, 2);
+
+  // An OUTCOME semantic event is NOT progress: dropping one would hide an execution that already ended, so it
+  // keeps its own slot and can still report an overflow honestly.
+  for (let index = 0; index < 128; index++) {
+    pump.enqueueFact({
+      source: "stardew_mod",
+      kind: "semantic_event",
+      correlationId: `settled_${index}`,
+      executionId: `exec-${index}`,
+      revision: 1,
+      payload: { kind: "execution_settled_succeeded" },
+    });
+  }
+  assert.throws(
+    () =>
+      pump.enqueueFact({
+        source: "stardew_mod",
+        kind: "semantic_event",
+        correlationId: "settled_overflow",
+        executionId: "exec-overflow",
+        revision: 1,
+        payload: { kind: "execution_settled_succeeded" },
+      }),
+    /event_pump_event_overflow/,
+  );
 });
 
 test("event pump rejects Host-local data that attempts to impersonate Mod authority", () => {

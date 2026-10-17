@@ -134,7 +134,18 @@ export class CompanionEventPump {
     // Stable world-fact identity is the Mod eventId; correlationId is only a
     // transport-scoped routing label. Same eventId/different correlationId is
     // one fact, while distinct eventIds never collapse.
-    const key = fact.kind === "world_fact" ? worldFactKey(fact) : fact.correlationId;
+    //
+    // A PROGRESS semantic event collapses onto the thing it is progressing: its execution when it names one, or
+    // its kind when it does not (`body_idle` describes the actor, not an execution). The Mod mints a fresh
+    // correlationId per event, so keying these by correlationId gave every per-tile observation its own slot -
+    // and one long agent turn's 129 route observations filled the 128-entry window, which closed the bridge
+    // mid-run (measured 2026-10-17). Collapsing them is what the receipt half of the same traffic already does.
+    const key =
+      fact.kind === "world_fact"
+        ? worldFactKey(fact)
+        : isProgressSemanticEvent(fact)
+          ? progressSemanticEventKey(fact)
+          : fact.correlationId;
     if (!destination.has(key) && destination.size >= limit) {
       throw new Error(
         fact.kind === "execution_receipt" && isTerminalExecutionFact(fact)
@@ -281,8 +292,29 @@ function isMeaningfulProgressFact(fact: WorldFact): boolean {
   );
 }
 
+/**
+ * Semantic-event kinds that are PROGRESS, not outcomes: per-tile route advance, the start of an execution, and
+ * the actor falling idle. They describe a moving state, so only the latest one matters.
+ *
+ * Measured 2026-10-17 on a real multi-day run: one long agent turn (70 assistant messages, ~350s) made the Mod
+ * publish 129 such observations, each with its OWN freshly-minted correlationId, and they filled the 128-entry
+ * pending window - so the pump threw and the bridge closed mid-run. The receipt counterpart of exactly this
+ * traffic is already latest-only (see `isMeaningfulProgressFact`); a semantic event describing the same progress
+ * must be treated the same way, or a long session is indistinguishable from a flood.
+ *
+ * The settled/invalidated kinds are deliberately NOT here: those are outcomes, and dropping one would hide an
+ * execution that already ended.
+ */
+function isProgressSemanticEvent(fact: WorldFact): boolean {
+  return (
+    fact.kind === "semantic_event" &&
+    typeof fact.payload.kind === "string" &&
+    ["execution_started", "route_progress", "body_idle"].includes(fact.payload.kind)
+  );
+}
+
 function isHeldFact(fact: WorldFact): boolean {
-  return fact.kind === "snapshot" || isMeaningfulProgressFact(fact);
+  return fact.kind === "snapshot" || isMeaningfulProgressFact(fact) || isProgressSemanticEvent(fact);
 }
 
 function isTerminalExecutionFact(fact: WorldFact): boolean {
@@ -300,6 +332,17 @@ function isTerminalExecutionFact(fact: WorldFact): boolean {
       "uncertain",
     ].includes(fact.payload.state)
   );
+}
+
+/**
+ * The slot a PROGRESS semantic event occupies: the newest observation of that execution (or of the actor itself)
+ * supersedes every earlier one. Deliberately NOT the correlationId, which the Mod mints fresh per event.
+ */
+function progressSemanticEventKey(fact: WorldFact): string {
+  const executionId = fact.executionId;
+  return typeof executionId === "string" && executionId.length > 0
+    ? `progress:${executionId}`
+    : `progress:${String(fact.payload.kind)}`;
 }
 
 function factEventId(fact: WorldFact): string {
