@@ -118,13 +118,28 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         }
         else if (!IsDismissibleOperationModalType(modalType))
         {
-            // Anything unaudited stays refused rather than guessed at.
+            // Anything unaudited stays refused rather than guessed at - and the refusal NAMES the menu's own
+            // content when it is the one menu a multi-day run is built to avoid.
+            //
+            // `LevelUpMenu` pushes one perk choice per entry in `player.newLevels` (Game1.cs:9130-9134) and is
+            // correctly not dismissible, so a run that meets one can only stop. Measured 2026-10-17 on run g9: the
+            // first night crossed (calendar day 5 -> 6), the new day opened with `menu=LevelUpMenu`, and every
+            // refusal said only `modal_type=LevelUpMenu;dismissible=false` - no skill, no level, no count, so there
+            // was no way to tell WHICH level-up had been missed.
+            //
+            // The menu's own skill/level fields are private and are not worth reaching for: `Farmer.newLevels` is
+            // public and still holds the entries the menu was pushed from (it is cleared when a perk is CHOSEN), so
+            // it names the same fact without touching a private field.
+            string levelUpDetail = modal is LevelUpMenu
+                ? $";pending_level_ups={actor.newLevels.Count}"
+                    + string.Concat(actor.newLevels.Select(entry => $";level_up={entry.X}@{entry.Y}"))
+                : string.Empty;
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,
                 ExecutionState.Rejected,
                 "modal_not_dismissible",
-                $"modal_type={modalType};dismissible=false");
+                $"modal_type={modalType};dismissible=false{levelUpDetail}");
         }
         else if (!modal.readyToClose())
         {
