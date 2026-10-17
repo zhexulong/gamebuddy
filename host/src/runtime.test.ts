@@ -1,40 +1,21 @@
 import assert from "node:assert/strict";
-import {
-  access,
-  mkdtemp,
-  readdir,
-  realpath,
-  readFile,
-  stat,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdtemp, readdir, realpath, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { before } from "node:test";
 import { createServer, type Server, type Socket } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
-import {
-  defineTool,
-} from "@earendil-works/pi-coding-agent";
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import {
-  DEFAULT_IDENTITY_PROFILE,
-  identityProfileHash,
-} from "./identity-profile.js";
+import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
 import { GAMEPLAY_SUBAGENT_MODEL_CONFIG } from "./gameplay-task-subagent.js";
-import {
-  createIntegrationActionCatalog,
-  type GameIntegrationAdapter,
-} from "./game-integration-adapter.js";
+import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { KnowledgeBundle } from "./knowledge.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import type { ActionRegistration, ExecutionReceipt, Scope, Snapshot } from "./protocol.js";
-import {
-  actionRegistryRevision,
-  type CompanionRunManifest,
-} from "./run-manifest.js";
+import { actionRegistryRevision, type CompanionRunManifest } from "./run-manifest.js";
 import {
   companionStatusTool,
   createCompanionRuntime,
@@ -190,8 +171,7 @@ async function withAuthenticatedStardew(
     state.enabledActionIds ??
     state.capabilities.filter((capability) =>
       state.catalogRegistrations.some(
-        (registration) =>
-          registration.actionId === capability && registration.kind === "execution",
+        (registration) => registration.actionId === capability && registration.kind === "execution",
       ),
     );
   const pipeName = `gamebuddy_runtime_suite_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -360,10 +340,7 @@ test("opaque identity keys partition contexts without display names", () => {
 
   assert.match(first, /^[a-f0-9]{64}$/);
   assert.notEqual(first, second);
-  assert.throws(
-    () => identityKey({ ...identity, playerId: "Player One" }),
-    /opaque identifier/,
-  );
+  assert.throws(() => identityKey({ ...identity, playerId: "Player One" }), /opaque identifier/);
 });
 
 test("runtime paths stay outside the repository workspace", async () => {
@@ -392,29 +369,17 @@ test("continuity identity is stable across surfaces while legacy game identities
       continuityId: "continuity_02",
     }),
   );
-  assert.notEqual(
-    identityKey(identity),
-    identityKey({ ...identity, saveId: "save_02" }),
-  );
+  assert.notEqual(identityKey(identity), identityKey({ ...identity, saveId: "save_02" }));
 });
 
 test("offline runtime exposes only its deterministic Companion status tool", async () => {
   const tool = companionStatusTool;
-  const result = await tool.execute(
-    "test-call",
-    {},
-    new AbortController().signal,
-    () => {},
-    {} as never,
-  );
+  const result = await tool.execute("test-call", {}, new AbortController().signal, () => {}, {} as never);
 
   assert.deepEqual(PHASE_0B_ALLOWED_TOOL_NAMES, ["companion_status"]);
   const firstContent = result.content[0];
   assert.equal(firstContent?.type, "text");
-  assert.match(
-    firstContent?.type === "text" ? firstContent.text : "",
-    /"connected":false/,
-  );
+  assert.match(firstContent?.type === "text" ? firstContent.text : "", /"connected":false/);
 });
 
 test("mounted Companion status reports live integration facts without inferring success", async () => {
@@ -455,30 +420,16 @@ test("mounted Companion status reports live integration facts without inferring 
         {} as never,
       );
       assert.equal((result.details as { connected: boolean }).connected, true);
-      assert.deepEqual(
-        (result.details as { capabilities: readonly string[] }).capabilities,
-        ["equip_tool"],
-      );
-      assert.equal(
-        (result.details as { snapshotRevision: number }).snapshotRevision,
-        9,
-      );
-      assert.equal(
-        (result.details as { latestReceiptState: string }).latestReceiptState,
-        "accepted",
-      );
-      assert.doesNotMatch(
-        result.content[0]?.type === "text" ? result.content[0].text : "",
-        /succeeded/,
-      );
+      assert.deepEqual((result.details as { capabilities: readonly string[] }).capabilities, ["equip_tool"]);
+      assert.equal((result.details as { snapshotRevision: number }).snapshotRevision, 9);
+      assert.equal((result.details as { latestReceiptState: string }).latestReceiptState, "accepted");
+      assert.doesNotMatch(result.content[0]?.type === "text" ? result.content[0].text : "", /succeeded/);
     },
   );
 });
 
 test("runtime mounts a fake integration through the module port", async () => {
-  const root = await mkdtemp(
-    join(await canonicalTemporaryRoot(), "gamebuddy-fake-integration-runtime-"),
-  );
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-fake-integration-runtime-"));
   const entries = [{ actionId: "activate_console" }];
   const registrations = [
     {
@@ -508,11 +459,7 @@ test("runtime mounts a fake integration through the module port", async () => {
       // Model of execution-time admission (the real executeGameAction): the
       // mounted tool stays mounted when the capability leaves, and the call
       // returns a structured rejected receipt instead of the tool vanishing.
-      if (
-        !(
-          integrationState as { capabilities: readonly string[] }
-        ).capabilities.includes("activate_console")
-      )
+      if (!(integrationState as { capabilities: readonly string[] }).capabilities.includes("activate_console"))
         return {
           content: [
             {
@@ -526,9 +473,7 @@ test("runtime mounts a fake integration through the module port", async () => {
           details: { receiptJson: "" },
         };
       return {
-        content: [
-          { type: "text" as const, text: `activated:${params.consoleId}` },
-        ],
+        content: [{ type: "text" as const, text: `activated:${params.consoleId}` }],
         details: {
           receiptJson: JSON.stringify({
             requestId: "request_01",
@@ -557,10 +502,7 @@ test("runtime mounts a fake integration through the module port", async () => {
     parsePolicy: (value: unknown) => value as never,
     actorId: () => identity.playerId,
     assertIdentityBinding: (_connection, boundIdentity) => {
-      if (
-        boundIdentity.companionId !== identity.companionId
-      )
-        throw new Error("integration_identity_binding_mismatch");
+      if (boundIdentity.companionId !== identity.companionId) throw new Error("integration_identity_binding_mismatch");
     },
     worldScope: () => null,
     createToolSet: ({ dispatchAdmissionFactory }) => ({
@@ -578,8 +520,7 @@ test("runtime mounts a fake integration through the module port", async () => {
     }),
     status: (connection) => ({
       connected: true,
-      capabilities: (connection.state as { capabilities: readonly string[] })
-        .capabilities,
+      capabilities: (connection.state as { capabilities: readonly string[] }).capabilities,
       capabilityRevision: 1,
       snapshotRevision: 1,
       latestReceiptState: null,
@@ -588,8 +529,7 @@ test("runtime mounts a fake integration through the module port", async () => {
     readState: (connection) => ({
       connected: true,
       sessionId: "arcade_session_01",
-      capabilities: (connection.state as { capabilities: readonly string[] })
-        .capabilities,
+      capabilities: (connection.state as { capabilities: readonly string[] }).capabilities,
       registrations,
       capabilityRevision: 1,
       snapshotRevision: 1,
@@ -600,8 +540,7 @@ test("runtime mounts a fake integration through the module port", async () => {
     }),
     cancelExecution: () => "not_supported",
     parseReceipt: () => null,
-    actionIdForToolName: (toolName) =>
-      toolName === "arcade_activate_console" ? "activate_console" : null,
+    actionIdForToolName: (toolName) => (toolName === "arcade_activate_console" ? "activate_console" : null),
     isCancellationTool: () => false,
   };
   const integrationState = { capabilities: ["activate_console"], registrations };
@@ -613,17 +552,12 @@ test("runtime mounts a fake integration through the module port", async () => {
   } as never;
   const runtime = await createCompanionRuntime(identity, root, integration);
   try {
-    assert.deepEqual(
-      runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
-      ["arcade_activate_console", "companion_status"],
-    );
-    const manifest = JSON.parse(
-      await readFile(runtime.paths.runManifestPath, "utf8"),
-    ) as CompanionRunManifest;
-    assert.equal(
-      manifest.actionRegistryRevision,
-      actionRegistryRevision(registrations),
-    );
+    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [
+      "arcade_activate_console",
+      "companion_status",
+    ]);
+    const manifest = JSON.parse(await readFile(runtime.paths.runManifestPath, "utf8")) as CompanionRunManifest;
+    assert.equal(manifest.actionRegistryRevision, actionRegistryRevision(registrations));
     assert.doesNotMatch(JSON.stringify(manifest.mountedTools), /stardew_/);
 
     // A live capability loss no longer withdraws the mounted surface: the
@@ -631,13 +565,11 @@ test("runtime mounts a fake integration through the module port", async () => {
     // snapshot churn. Admission moves to execution time, which rejects the
     // call with a structured receipt instead of hiding the tool.
     integrationState.capabilities = [];
-    assert.deepEqual(
-      runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
-      ["arcade_activate_console", "companion_status"],
-    );
-    const withdrawn = runtime.session.agent.state.tools.find(
-      (tool) => tool.name === "arcade_activate_console",
-    );
+    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [
+      "arcade_activate_console",
+      "companion_status",
+    ]);
+    const withdrawn = runtime.session.agent.state.tools.find((tool) => tool.name === "arcade_activate_console");
     assert.ok(withdrawn);
     const withdrawnResult = await withdrawn.execute(
       "withdrawal_check",
@@ -646,9 +578,7 @@ test("runtime mounts a fake integration through the module port", async () => {
       () => undefined,
     );
     assert.match(
-      withdrawnResult.content[0]?.type === "text"
-        ? withdrawnResult.content[0].text
-        : "",
+      withdrawnResult.content[0]?.type === "text" ? withdrawnResult.content[0].text : "",
       /capability_not_declared/,
     );
   } finally {
@@ -673,12 +603,7 @@ test("runtime rejects a mounted integration whose save identity does not match",
     },
     async (mod) => {
       await assert.rejects(
-        () =>
-          createCompanionRuntime(
-            { ...identity, saveId: "save_02" },
-            root,
-            mod.connection,
-          ),
+        () => createCompanionRuntime({ ...identity, saveId: "save_02" }, root, mod.connection),
         /integration_identity_binding_mismatch/,
       );
     },
@@ -714,8 +639,7 @@ test("generic runtime keeps an explicit game surface when the Host construction 
         assert.match(runtime.session.systemPrompt, /\[Character: GameBuddy Companion\]/);
         assert.equal(
           runtime.session.agent.state.tools.some(
-            (tool) =>
-              tool.name === "companion_text" || tool.name === "companion_speak",
+            (tool) => tool.name === "companion_text" || tool.name === "companion_speak",
           ),
           false,
         );
@@ -743,9 +667,17 @@ test("Chat surface never creates a gameplay subagent even when enabled with inte
       // registers it. The "never creates a gameplay subagent" invariant needs
       // only an integration, a model config, and an explicit chat surface.
       const runtime = await createCompanionRuntime(
-        identity, root, mod.connection,
-        GAMEPLAY_SUBAGENT_MODEL_CONFIG, undefined, undefined, true, undefined,
-        "chat_surface_subagent_01", undefined, "chat",
+        identity,
+        root,
+        mod.connection,
+        GAMEPLAY_SUBAGENT_MODEL_CONFIG,
+        undefined,
+        undefined,
+        true,
+        undefined,
+        "chat_surface_subagent_01",
+        undefined,
+        "chat",
       );
       try {
         assert.equal(runtime.gameplaySubagent, undefined);
@@ -785,13 +717,29 @@ test("Chat surface runtime is a pure native-content dialogue surface with no mou
 
 test("public Game runtime cannot mount Body Program tools while the internal materialized path mounts exactly its frozen closure set", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-fixed-tools-"));
-  const registrations = [{ actionId: "activate_console", familyId: "arcade", identityVersion: 1, lifecycle: "published" as const, kind: "execution" as const }];
+  const registrations = [
+    {
+      actionId: "activate_console",
+      familyId: "arcade",
+      identityVersion: 1,
+      lifecycle: "published" as const,
+      kind: "execution" as const,
+    },
+  ];
   const policy = Object.freeze({ policyVersion: 1 as const, deniedActions: [], deniedFamilies: [] });
-  const fixedTools = Object.freeze([
-     "stardew_submit_action_program",
-    "stardew_action_program_status",
-    "stardew_action_program_events",
-  ].map((name) => Object.freeze(defineTool({ name, label: name, description: name, parameters: Type.Object({}), execute: async () => ({ content: [], details: {} }) }))));
+  const fixedTools = Object.freeze(
+    ["stardew_submit_action_program", "stardew_action_program_status", "stardew_action_program_events"].map((name) =>
+      Object.freeze(
+        defineTool({
+          name,
+          label: name,
+          description: name,
+          parameters: Type.Object({}),
+          execute: async () => ({ content: [], details: {} }),
+        }),
+      ),
+    ),
+  );
   const connection = {
     scope: Object.freeze({ integrationId: "test-arcade" }),
     executionGate: { executable: true },
@@ -806,28 +754,68 @@ test("public Game runtime cannot mount Body Program tools while the internal mat
       worldScope: () => null,
       createToolSet: () => ({ observation: [], actions: [], knowledge: [] }),
       knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }),
-      status: () => ({ connected: true, capabilities: [], capabilityRevision: 1, snapshotRevision: 1, latestReceiptState: null, latestReasonCode: null }),
-      readState: () => ({ connected: true, sessionId: "session_01", capabilities: [], registrations, capabilityRevision: 1, snapshotRevision: 1, activeExecution: null, latestReceipt: null, latestReasonCode: null }),
+      status: () => ({
+        connected: true,
+        capabilities: [],
+        capabilityRevision: 1,
+        snapshotRevision: 1,
+        latestReceiptState: null,
+        latestReasonCode: null,
+      }),
+      readState: () => ({
+        connected: true,
+        sessionId: "session_01",
+        capabilities: [],
+        registrations,
+        capabilityRevision: 1,
+        snapshotRevision: 1,
+        activeExecution: null,
+        latestReceipt: null,
+        latestReasonCode: null,
+      }),
       cancelExecution: () => "not_supported",
       parseReceipt: () => null,
       actionIdForToolName: () => null,
       isCancellationTool: () => false,
     },
   } as unknown as GameConnection;
-  const publicRuntime = await createGameCompanionRuntime(identity, join(root, "public"), connection, "game_public_01", undefined, undefined, {
-    gameplaySubagentEnabled: false,
-    disableMagicContextMemory: true,
-    hostBindingFactory: () => undefined,
-  });
-  const materializedRuntime = await createMaterializedGameCompanionRuntime(identity, join(root, "internal"), connection, "game_internal_01", undefined, undefined, {
-    gameplaySubagentEnabled: false,
-    disableMagicContextMemory: true,
-    hostBindingFactory: () => undefined,
-  }, Object.freeze({ fixedTools, resolvedPolicy: policy }));
+  const publicRuntime = await createGameCompanionRuntime(
+    identity,
+    join(root, "public"),
+    connection,
+    "game_public_01",
+    undefined,
+    undefined,
+    {
+      gameplaySubagentEnabled: false,
+      disableMagicContextMemory: true,
+      hostBindingFactory: () => undefined,
+    },
+  );
+  const materializedRuntime = await createMaterializedGameCompanionRuntime(
+    identity,
+    join(root, "internal"),
+    connection,
+    "game_internal_01",
+    undefined,
+    undefined,
+    {
+      gameplaySubagentEnabled: false,
+      disableMagicContextMemory: true,
+      hostBindingFactory: () => undefined,
+    },
+    Object.freeze({ fixedTools, resolvedPolicy: policy }),
+  );
   try {
     assert.deepEqual(publicRuntime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status"]);
-    assert.deepEqual(materializedRuntime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", ...fixedTools.map((tool) => tool.name)].sort());
-    assert.deepEqual(fixedTools.map((tool) => tool.name), ["stardew_submit_action_program", "stardew_action_program_status", "stardew_action_program_events"]);
+    assert.deepEqual(
+      materializedRuntime.session.agent.state.tools.map((tool) => tool.name).sort(),
+      ["companion_status", ...fixedTools.map((tool) => tool.name)].sort(),
+    );
+    assert.deepEqual(
+      fixedTools.map((tool) => tool.name),
+      ["stardew_submit_action_program", "stardew_action_program_status", "stardew_action_program_events"],
+    );
   } finally {
     publicRuntime.session.dispose();
     materializedRuntime.session.dispose();
@@ -836,20 +824,115 @@ test("public Game runtime cannot mount Body Program tools while the internal mat
 
 test("fixed Game tools fail closed unless frozen, unique, and non-colliding", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-fixed-tool-rejections-"));
-  const tool = defineTool({ name: "stardew_external_probe", label: "x", description: "x", parameters: Type.Object({}), execute: async () => ({ content: [], details: {} }) });
-  const connection = { scope: { integrationId: "test-arcade" }, executionGate: { executable: true }, state: {}, module: { descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" }, actionCatalog: createIntegrationActionCatalog([]), defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] }, parsePolicy: (value: unknown) => value as never, actorId: () => identity.playerId, assertIdentityBinding: () => undefined, worldScope: () => null, createToolSet: () => ({ observation: [], actions: [], knowledge: [] }), knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }), status: () => ({ connected: true, capabilities: [], capabilityRevision: 1, snapshotRevision: 1, latestReceiptState: null, latestReasonCode: null }), readState: () => ({ connected: true, sessionId: "session_01", capabilities: [], registrations: [], capabilityRevision: 1, snapshotRevision: 1, activeExecution: null, latestReceipt: null, latestReasonCode: null }), cancelExecution: () => "not_supported", parseReceipt: () => null, actionIdForToolName: () => null, isCancellationTool: () => false } } as unknown as GameConnection;
-  const options = { gameplaySubagentEnabled: false, disableMagicContextMemory: true as const, hostBindingFactory: () => undefined };
-  await assert.rejects(() => createMaterializedGameCompanionRuntime(identity, join(root, "mutable"), connection, "game_mutable_01", undefined, undefined, options, { fixedTools: [tool], resolvedPolicy: connection.module.defaultPolicy }), /fixed_runtime_tools_must_be_frozen/);
+  const tool = defineTool({
+    name: "stardew_external_probe",
+    label: "x",
+    description: "x",
+    parameters: Type.Object({}),
+    execute: async () => ({ content: [], details: {} }),
+  });
+  const connection = {
+    scope: { integrationId: "test-arcade" },
+    executionGate: { executable: true },
+    state: {},
+    module: {
+      descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" },
+      actionCatalog: createIntegrationActionCatalog([]),
+      defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
+      parsePolicy: (value: unknown) => value as never,
+      actorId: () => identity.playerId,
+      assertIdentityBinding: () => undefined,
+      worldScope: () => null,
+      createToolSet: () => ({ observation: [], actions: [], knowledge: [] }),
+      knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }),
+      status: () => ({
+        connected: true,
+        capabilities: [],
+        capabilityRevision: 1,
+        snapshotRevision: 1,
+        latestReceiptState: null,
+        latestReasonCode: null,
+      }),
+      readState: () => ({
+        connected: true,
+        sessionId: "session_01",
+        capabilities: [],
+        registrations: [],
+        capabilityRevision: 1,
+        snapshotRevision: 1,
+        activeExecution: null,
+        latestReceipt: null,
+        latestReasonCode: null,
+      }),
+      cancelExecution: () => "not_supported",
+      parseReceipt: () => null,
+      actionIdForToolName: () => null,
+      isCancellationTool: () => false,
+    },
+  } as unknown as GameConnection;
+  const options = {
+    gameplaySubagentEnabled: false,
+    disableMagicContextMemory: true as const,
+    hostBindingFactory: () => undefined,
+  };
+  await assert.rejects(
+    () =>
+      createMaterializedGameCompanionRuntime(
+        identity,
+        join(root, "mutable"),
+        connection,
+        "game_mutable_01",
+        undefined,
+        undefined,
+        options,
+        { fixedTools: [tool], resolvedPolicy: connection.module.defaultPolicy },
+      ),
+    /fixed_runtime_tools_must_be_frozen/,
+  );
   const duplicate = Object.freeze([Object.freeze(tool), Object.freeze({ ...tool })]);
-  await assert.rejects(() => createMaterializedGameCompanionRuntime(identity, join(root, "duplicate"), connection, "game_duplicate_01", undefined, undefined, options, { fixedTools: duplicate, resolvedPolicy: connection.module.defaultPolicy }), /fixed_runtime_tool_name_collision/);
-  const collision = Object.freeze([Object.freeze(defineTool({ name: "companion_status", label: "x", description: "x", parameters: Type.Object({}), execute: async () => ({ content: [], details: {} }) }))]);
-  await assert.rejects(() => createMaterializedGameCompanionRuntime(identity, join(root, "collision"), connection, "game_collision_01", undefined, undefined, options, { fixedTools: collision, resolvedPolicy: connection.module.defaultPolicy }), /runtime_tool_name_collision/);
+  await assert.rejects(
+    () =>
+      createMaterializedGameCompanionRuntime(
+        identity,
+        join(root, "duplicate"),
+        connection,
+        "game_duplicate_01",
+        undefined,
+        undefined,
+        options,
+        { fixedTools: duplicate, resolvedPolicy: connection.module.defaultPolicy },
+      ),
+    /fixed_runtime_tool_name_collision/,
+  );
+  const collision = Object.freeze([
+    Object.freeze(
+      defineTool({
+        name: "companion_status",
+        label: "x",
+        description: "x",
+        parameters: Type.Object({}),
+        execute: async () => ({ content: [], details: {} }),
+      }),
+    ),
+  ]);
+  await assert.rejects(
+    () =>
+      createMaterializedGameCompanionRuntime(
+        identity,
+        join(root, "collision"),
+        connection,
+        "game_collision_01",
+        undefined,
+        undefined,
+        options,
+        { fixedTools: collision, resolvedPolicy: connection.module.defaultPolicy },
+      ),
+    /runtime_tool_name_collision/,
+  );
 });
 
 test("formal Preview Game composition does not load Magic Context", async () => {
-  const root = await mkdtemp(
-    join(await canonicalTemporaryRoot(), "gamebuddy-preview-no-magic-context-"),
-  );
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-preview-no-magic-context-"));
   await withAuthenticatedStardew(
     {
       sessionId: "session_01",
@@ -875,18 +958,10 @@ test("formal Preview Game composition does not load Magic Context", async () => 
       try {
         assert.deepEqual(runtime.extensions, []);
         await assert.rejects(
-          access(
-            join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"),
-          ),
-          (error: unknown) =>
-            typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            error.code === "ENOENT",
+          access(join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc")),
+          (error: unknown) => typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT",
         );
-        const manifest = JSON.parse(
-          await readFile(runtime.paths.runManifestPath, "utf8"),
-        ) as CompanionRunManifest;
+        const manifest = JSON.parse(await readFile(runtime.paths.runManifestPath, "utf8")) as CompanionRunManifest;
         assert.equal(manifest.featureFlags.magicContextMemoryEnabled, false);
         assert.equal(
           typeof runtime.recoverStardewExecutionReceipts,
@@ -913,9 +988,7 @@ test("a Game runtime attachment without a model configuration gets only the unkn
   // the observable proof that provider networking stays off. A model
   // configuration is therefore not an enhancement of a Game session: without
   // one the session exists but can never reach a provider.
-  const root = await mkdtemp(
-    join(await canonicalTemporaryRoot(), "gamebuddy-game-model-configuration-"),
-  );
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-game-model-configuration-"));
   const registrations = [
     {
       actionId: "activate_console",
@@ -940,9 +1013,7 @@ test("a Game runtime attachment without a model configuration gets only the unkn
         version: "fixture-v1",
         toolNamePrefix: "arcade_",
       }),
-      actionCatalog: createIntegrationActionCatalog([
-        { actionId: "activate_console" },
-      ]),
+      actionCatalog: createIntegrationActionCatalog([{ actionId: "activate_console" }]),
       defaultPolicy: policy,
       parsePolicy: (value: unknown) => value as typeof policy,
       actorId: () => identity.playerId,
@@ -1029,33 +1100,15 @@ test("a Game runtime attachment without a model configuration gets only the unkn
     // No provider entry, therefore `allowModelNetwork: false`.
     await assert.rejects(
       access(join(withoutModel.paths.agentDir, "models.json")),
-      (error: unknown) =>
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ENOENT",
+      (error: unknown) => typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT",
     );
 
-    assert.equal(
-      withModel.session.agent.state.model?.provider,
-      DEFAULT_COMPANION_MODEL_CONFIG.provider,
-    );
-    assert.equal(
-      withModel.session.agent.state.model?.id,
-      DEFAULT_COMPANION_MODEL_CONFIG.modelId,
-    );
-    assert.equal(
-      withModel.session.agent.state.thinkingLevel,
-      DEFAULT_COMPANION_MODEL_CONFIG.thinkingLevel,
-    );
-    const presentManifest = JSON.parse(
-      await readFile(withModel.paths.runManifestPath, "utf8"),
-    ) as CompanionRunManifest;
+    assert.equal(withModel.session.agent.state.model?.provider, DEFAULT_COMPANION_MODEL_CONFIG.provider);
+    assert.equal(withModel.session.agent.state.model?.id, DEFAULT_COMPANION_MODEL_CONFIG.modelId);
+    assert.equal(withModel.session.agent.state.thinkingLevel, DEFAULT_COMPANION_MODEL_CONFIG.thinkingLevel);
+    const presentManifest = JSON.parse(await readFile(withModel.paths.runManifestPath, "utf8")) as CompanionRunManifest;
     assert.deepEqual(presentManifest.model, DEFAULT_COMPANION_MODEL_CONFIG);
-    assert.match(
-      await readFile(join(withModel.paths.agentDir, "models.json"), "utf8"),
-      /cpa-oai/,
-    );
+    assert.match(await readFile(join(withModel.paths.agentDir, "models.json"), "utf8"), /cpa-oai/);
   } finally {
     withoutModel.session.dispose();
     withModel.session.dispose();
@@ -1069,9 +1122,7 @@ test("a Game runtime attachment without a model configuration gets only the unkn
 // (gateIntegrationTool), so the case mounts with the live gate and then revokes
 // it: the mounted action closure must refuse rather than trust itself.
 test("Stardew action tools fail closed when the launcher execution gate is revoked", async () => {
-  const root = await mkdtemp(
-    join(await canonicalTemporaryRoot(), "gamebuddy-runtime-no-execution-gate-"),
-  );
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-runtime-no-execution-gate-"));
   await withAuthenticatedStardew(
     {
       sessionId: "session_01",
@@ -1093,14 +1144,10 @@ test("Stardew action tools fail closed when the launcher execution gate is revok
     async (mod) => {
       const runtime = await createCompanionRuntime(identity, root, mod.connection);
       try {
-        const equip = runtime.session.agent.state.tools.find(
-          (tool) => tool.name === "stardew_equip_tool",
-        );
+        const equip = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_equip_tool");
         assert.ok(equip, "the action tool mounts while the launcher gate is live");
         assert.equal(
-          runtime.session.agent.state.tools.some(
-            (tool) => tool.name === "stardew_observe",
-          ),
+          runtime.session.agent.state.tools.some((tool) => tool.name === "stardew_observe"),
           true,
         );
         // A revoked launcher gate is never a legacy admission path.
@@ -1153,9 +1200,7 @@ test("runtime composes a ledger admission before mounting and executing a live S
       });
       const runtime = await createCompanionRuntime(identity, root, mod.connection);
       try {
-        const equip = runtime.session.agent.state.tools.find(
-          (tool) => tool.name === "stardew_equip_tool",
-        );
+        const equip = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_equip_tool");
         assert.ok(equip);
         const result = await equip.execute(
           "runtime-admission-equip",
@@ -1167,14 +1212,9 @@ test("runtime composes a ledger admission before mounting and executing a live S
           new AbortController().signal,
         );
         assert.equal(executeWrites, 1);
-        assert.match(
-          result.content[0]?.type === "text" ? result.content[0].text : "",
-          /execution_equip_01/,
-        );
+        assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /execution_equip_01/);
         assert.equal(
-          runtime.session.agent.state.tools.some(
-            (tool) => tool.name === "stardew_cancel_active_execution",
-          ),
+          runtime.session.agent.state.tools.some((tool) => tool.name === "stardew_cancel_active_execution"),
           false,
         );
       } finally {
@@ -1201,74 +1241,71 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
         // capability snapshots no longer add or withdraw a tool (admission moved
         // to execution time), so a disconnected or empty snapshot mounts the
         // same names a fully capable one does.
-        assert.deepEqual(
-          runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
-          [
-            "companion_status",
-            "stardew_bait_crab_pot",
-            "stardew_break_rock_source",
-            "stardew_chest_retrieve",
-            "stardew_chest_store",
-            "stardew_chop_stump",
-            "stardew_chop_tree_source",
-            "stardew_clear_cask",
-            "stardew_clear_debris",
-            "stardew_clear_hoedirt",
-            "stardew_collect_animal_product",
-            "stardew_collect_crab_pot_output",
-            "stardew_cook_recipe",
-            "stardew_craft_item",
-            "stardew_cut_grass",
-            "stardew_cut_weeds",
-            "stardew_deposit_silo_hay",
-            "stardew_dig_artifact_spot",
-            "stardew_dress_mannequin",
-            "stardew_enter_exit",
-            "stardew_enter_mine",
-            "stardew_equip_tool",
-            "stardew_execution_status",
-            "stardew_feed_animal",
-            "stardew_fertilize_tile",
-            "stardew_find_destination",
-            "stardew_harvest_bush",
-            "stardew_harvest_crop",
-            "stardew_harvest_fruit_tree",
-            "stardew_inspect_world_map",
-            "stardew_interaction_catalog",
-            "stardew_machine_collect_output",
-            "stardew_machine_inspect",
-            "stardew_machine_load",
-            "stardew_mount_transport",
-            "stardew_move_to_tile",
-            "stardew_navigate_to_destination",
-            "stardew_npc_relationship",
-            "stardew_observe",
-            "stardew_pickup_forage",
-            "stardew_pickup_item",
-            "stardew_place_crab_pot",
-            "stardew_place_wood_fence",
-            "stardew_plant_sapling",
-            "stardew_plant_seed",
-            "stardew_read_scene",
-            "stardew_refill_watering_can",
-            "stardew_scythe_crop",
-            "stardew_search_interactions",
-            "stardew_set_sign_display",
-            "stardew_shake_tree",
-            "stardew_ship_item",
-            "stardew_stop_action",
-            "stardew_take_pedestal_item",
-            "stardew_till_soil",
-            "stardew_toggle_fence_gate",
-            "stardew_toggle_tool_light",
-            "stardew_travel",
-            "stardew_use_item",
-            "stardew_use_raft",
-            "stardew_water_crop",
-            "stardew_water_pet_bowl",
-            "stardew_water_slime_hutch_trough",
-          ],
-        );
+        assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [
+          "companion_status",
+          "stardew_bait_crab_pot",
+          "stardew_break_rock_source",
+          "stardew_chest_retrieve",
+          "stardew_chest_store",
+          "stardew_chop_stump",
+          "stardew_chop_tree_source",
+          "stardew_clear_cask",
+          "stardew_clear_debris",
+          "stardew_clear_hoedirt",
+          "stardew_collect_animal_product",
+          "stardew_collect_crab_pot_output",
+          "stardew_cook_recipe",
+          "stardew_craft_item",
+          "stardew_cut_grass",
+          "stardew_cut_weeds",
+          "stardew_deposit_silo_hay",
+          "stardew_dig_artifact_spot",
+          "stardew_dress_mannequin",
+          "stardew_enter_exit",
+          "stardew_enter_mine",
+          "stardew_equip_tool",
+          "stardew_execution_status",
+          "stardew_feed_animal",
+          "stardew_fertilize_tile",
+          "stardew_find_destination",
+          "stardew_harvest_bush",
+          "stardew_harvest_crop",
+          "stardew_harvest_fruit_tree",
+          "stardew_inspect_world_map",
+          "stardew_interaction_catalog",
+          "stardew_machine_collect_output",
+          "stardew_machine_inspect",
+          "stardew_machine_load",
+          "stardew_mount_transport",
+          "stardew_move_to_tile",
+          "stardew_navigate_to_destination",
+          "stardew_npc_relationship",
+          "stardew_observe",
+          "stardew_pickup_forage",
+          "stardew_pickup_item",
+          "stardew_place_crab_pot",
+          "stardew_place_wood_fence",
+          "stardew_plant_sapling",
+          "stardew_plant_seed",
+          "stardew_read_scene",
+          "stardew_refill_watering_can",
+          "stardew_scythe_crop",
+          "stardew_search_interactions",
+          "stardew_set_sign_display",
+          "stardew_shake_tree",
+          "stardew_ship_item",
+          "stardew_stop_action",
+          "stardew_take_pedestal_item",
+          "stardew_till_soil",
+          "stardew_toggle_fence_gate",
+          "stardew_toggle_tool_light",
+          "stardew_travel",
+          "stardew_use_item",
+          "stardew_use_raft",
+          "stardew_water_crop",
+          "stardew_water_pet_bowl",
+          "stardew_water_slime_hutch_trough",
+        ]);
       } finally {
         runtime.session.dispose();
       }
@@ -1277,19 +1314,13 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
 });
 
 test("runtime materializes the optional gameplay subagent without exposing its tools to the parent by default", async () => {
-  const offlineRoot = await mkdtemp(
-    join(await canonicalTemporaryRoot(), "gamebuddy-gameplay-subagent-offline-"),
-  );
-  const delegatedRoot = await mkdtemp(
-    join(await canonicalTemporaryRoot(), "gamebuddy-gameplay-subagent-enabled-"),
-  );
+  const offlineRoot = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-gameplay-subagent-offline-"));
+  const delegatedRoot = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-gameplay-subagent-enabled-"));
   const config = GAMEPLAY_SUBAGENT_MODEL_CONFIG;
   const offline = await createCompanionRuntime(identity, offlineRoot);
   try {
     assert.equal(
-      offline.session.agent.state.tools.some(
-        (tool) => tool.name === "delegate_game_task",
-      ),
+      offline.session.agent.state.tools.some((tool) => tool.name === "delegate_game_task"),
       false,
     );
   } finally {
@@ -1315,22 +1346,16 @@ test("runtime materializes the optional gameplay subagent without exposing its t
       try {
         assert.ok(delegated.gameplaySubagent);
         assert.deepEqual(delegated.gameplaySubagent.modelConfig, config);
-        const manifest = JSON.parse(
-          await readFile(delegated.paths.runManifestPath, "utf8"),
-        );
+        const manifest = JSON.parse(await readFile(delegated.paths.runManifestPath, "utf8"));
         assert.deepEqual(manifest.model, GAMEPLAY_SUBAGENT_MODEL_CONFIG);
         assert.deepEqual(manifest.gameplaySubagentModel, config);
         assert.equal(
-          delegated.session.agent.state.tools.some(
-            (tool) => tool.name === "delegate_game_task",
-          ),
+          delegated.session.agent.state.tools.some((tool) => tool.name === "delegate_game_task"),
           true,
         );
         assert.deepEqual(
           delegated.session.agent.state.tools
-            .filter(
-              (tool) => tool.name.includes("speak") || tool.name.includes("text"),
-            )
+            .filter((tool) => tool.name.includes("speak") || tool.name.includes("text"))
             .map((tool) => tool.name),
           [],
         );
@@ -1344,9 +1369,7 @@ test("runtime materializes the optional gameplay subagent without exposing its t
 });
 
 test("gameplay subagent composition fails closed without a mounted game model config", async () => {
-  const root = await mkdtemp(
-    join(await canonicalTemporaryRoot(), "gamebuddy-gameplay-subagent-no-model-"),
-  );
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-gameplay-subagent-no-model-"));
   await withAuthenticatedStardew(
     {
       sessionId: "session_01",
@@ -1356,16 +1379,7 @@ test("gameplay subagent composition fails closed without a mounted game model co
     },
     async (mod) => {
       await assert.rejects(
-        () =>
-          createCompanionRuntime(
-            identity,
-            root,
-            mod.connection,
-            undefined,
-            undefined,
-            undefined,
-            true,
-          ),
+        () => createCompanionRuntime(identity, root, mod.connection, undefined, undefined, undefined, true),
         /gameplay_subagent_requires_model_and_integration/,
       );
     },
@@ -1409,11 +1423,7 @@ test("runtime mounts Host-owned version-bound knowledge only when explicitly con
     async (mod) => {
       const runtime = await createCompanionRuntime(identity, root, mod.connection);
       try {
-        assert.ok(
-          runtime.session.agent.state.tools.some(
-            (tool) => tool.name === "stardew_game_knowledge",
-          ),
-        );
+        assert.ok(runtime.session.agent.state.tools.some((tool) => tool.name === "stardew_game_knowledge"));
       } finally {
         runtime.session.dispose();
       }
@@ -1424,10 +1434,7 @@ test("runtime mounts Host-owned version-bound knowledge only when explicitly con
 
 test("runtime resolves Magic Context from the Host-declared package dependency", () => {
   const entry = resolveMagicContextExtensionEntry();
-  assert.match(
-    entry,
-    /@cortexkit[\\/]pi-magic-context[\\/]dist[\\/]index\.js$/,
-  );
+  assert.match(entry, /@cortexkit[\\/]pi-magic-context[\\/]dist[\\/]index\.js$/);
   assert.doesNotMatch(entry, /(?:^|[\\/])vendor(?:[\\/]|$)/);
 });
 
@@ -1439,11 +1446,57 @@ test("the recorded Magic Context runtime identity is the loaded artifact's own v
   // read its own version there.
   const entry = resolveMagicContextExtensionEntry();
   const packageRoot = join(dirname(entry), "..");
-  const artifact = JSON.parse(
-    await readFile(join(packageRoot, "package.json"), "utf8"),
-  ) as { name: string; version: string };
+  const artifact = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")) as {
+    name: string;
+    version: string;
+  };
   assert.equal(artifact.name, "@cortexkit/pi-magic-context");
   assert.equal(RUNTIME_PACKAGE_VERSIONS.magicContext, artifact.version);
+});
+
+test("the loaded Magic Context extension cannot see the Host's authored-context publication", async () => {
+  // PINNED CURRENT TRUTH, measured on a real Chat turn (live run
+  // 6a936d00066f78e2808f16cc, generation g-mvcz5ktz-36908): the durable plan for
+  // every turn carried both the always-on `lorebook_constant` and the keyword-gated
+  // `lorebook_entry` rows the player's words matched (`tavern.sqlite`
+  // `tavern_turn_context_plans` / `_volatile_sources`), yet the provider-bound
+  // `session_meta.cached_m0_bytes` was `<session-history></session-history>` and
+  // `cached_m1_bytes` the empty `session-history-since` placeholder - no
+  // `<gamebuddy-authored-context>`, no `<gamebuddy-volatile-context>`. The entries
+  // are SELECTED and never DELIVERED, for the always-on entry as much as for the
+  // keyword-gated ones.
+  //
+  // The stop is not the selection hop. Magic Context keeps the publication in a
+  // process-local map (`authoredRenderer`) inside `gamebuddy-stable-context-source`,
+  // and the published artifact carries TWO separately built copies of that module:
+  // the Host imports `./tavern` (publish + the per-turn volatile bind) while Pi
+  // loads the package root as the extension (the reader that fills `m[0]`/`m[1]`).
+  // The writer's map is therefore never the reader's map. `runtime-core.internal.ts`
+  // already names this boundary for the embedded historian (`jiti` loads the
+  // extension with `moduleCache: false`, so any second import is a second instance)
+  // and crosses it with a `Symbol.for` slot on `globalThis`; the authored-context
+  // registry has no such channel.
+  //
+  // When a fix gives the two sides one registry (or one shared bundle copy), this
+  // assertion must be replaced by a DELIVERY assertion - the rendered
+  // `<gamebuddy-volatile-context>` / `<gamebuddy-authored-context>` block reaching
+  // the provider-bound bytes - and not merely relaxed.
+  const extensionEntry = resolveMagicContextExtensionEntry();
+  const tavernEntry = fileURLToPath(import.meta.resolve("@cortexkit/pi-magic-context/tavern"));
+  const packageRoot = join(dirname(extensionEntry), "..");
+  assert.equal(tavernEntry.startsWith(packageRoot), true);
+  assert.notEqual(tavernEntry, extensionEntry);
+  const extensionBundle = await readFile(extensionEntry, "utf8");
+  const tavernBundle = await readFile(tavernEntry, "utf8");
+  // Each bundle declares its own registry for the same source module...
+  assert.match(extensionBundle, /authoredRenderer = new Map/);
+  assert.match(tavernBundle, /authoredRenderer = new Map/);
+  // ...and each holds only one half of the seam: the binder ships where the Host
+  // publishes, the reader ships where the extension renders the prompt.
+  assert.equal(tavernBundle.includes("__gamebuddyBindAuthoredVolatileTurn"), true);
+  assert.equal(extensionBundle.includes("__gamebuddyBindAuthoredVolatileTurn"), false);
+  assert.equal(extensionBundle.includes("__gamebuddyReadAuthoredVolatileMaterialization"), true);
+  assert.equal(tavernBundle.includes("__gamebuddyReadAuthoredVolatileMaterialization"), false);
 });
 
 test("runtime loads only Magic Context and preserves a session partition", async () => {
@@ -1451,21 +1504,12 @@ test("runtime loads only Magic Context and preserves a session partition", async
   const runtime = await createCompanionRuntime(identity, root);
 
   try {
-    assert.deepEqual(
-      runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
-      ["companion_status"],
-    );
+    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status"]);
     assert.equal(runtime.extensions.length, 1);
-    assert.equal(
-      runtime.extensions[0] ?? "",
-      resolveMagicContextExtensionEntry(),
-    );
+    assert.equal(runtime.extensions[0] ?? "", resolveMagicContextExtensionEntry());
 
     const config = JSON.parse(
-      await readFile(
-        join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"),
-        "utf8",
-      ),
+      await readFile(join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"), "utf8"),
     );
     assert.equal(config.embedding.provider, "off");
     assert.equal(MAGIC_CONTEXT_HISTORIAN_ENABLED, true);
@@ -1474,10 +1518,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
       config.historian.model,
       `${DEFAULT_COMPANION_MODEL_CONFIG.provider}/${DEFAULT_COMPANION_MODEL_CONFIG.modelId}`,
     );
-    assert.equal(
-      config.historian.thinking_level,
-      DEFAULT_COMPANION_MODEL_CONFIG.thinkingLevel,
-    );
+    assert.equal(config.historian.thinking_level, DEFAULT_COMPANION_MODEL_CONFIG.thinkingLevel);
     // Owner ruling C4: the historian is tool-less by upstream's default, so the Host no longer writes
     // `disallowed_tools` at all - the key survived only as a no-op, and `expand_tools` stays off.
     assert.equal("disallowed_tools" in config.historian, false);
@@ -1489,14 +1530,12 @@ test("runtime loads only Magic Context and preserves a session partition", async
       config.dreamer.model,
       `${DEFAULT_COMPANION_MODEL_CONFIG.provider}/${DEFAULT_COMPANION_MODEL_CONFIG.modelId}`,
     );
-    assert.equal(
-      config.dreamer.thinking_level,
-      DEFAULT_COMPANION_MODEL_CONFIG.thinkingLevel,
-    );
+    assert.equal(config.dreamer.thinking_level, DEFAULT_COMPANION_MODEL_CONFIG.thinkingLevel);
     const dreamerSchedules = Object.fromEntries(
-      Object.entries(
-        config.dreamer.tasks as Record<string, { schedule: string }>,
-      ).map(([task, value]) => [task, value.schedule]),
+      Object.entries(config.dreamer.tasks as Record<string, { schedule: string }>).map(([task, value]) => [
+        task,
+        value.schedule,
+      ]),
     );
     assert.deepEqual(dreamerSchedules, {
       "classify-memories": "0 6 * * *",
@@ -1513,23 +1552,15 @@ test("runtime loads only Magic Context and preserves a session partition", async
       "refresh-primers": "",
     });
     assert.equal(config.system_prompt_injection.enabled, false);
-    assert.equal(
-      runtime.session.systemPrompt.includes("## Magic Context"),
-      false,
-    );
+    assert.equal(runtime.session.systemPrompt.includes("## Magic Context"), false);
     assert.equal(runtime.session.systemPrompt.includes("ctx_memory"), false);
     assert.equal(config.memory.domain, MAGIC_CONTEXT_MEMORY_DOMAIN);
     assert.equal(config.memory.enabled, MAGIC_CONTEXT_MEMORY_ENABLED);
     assert.equal(config.memory.auto_promote, false);
     assert.equal(MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED, false);
-    assert.equal(
-      config.memory.auto_search.enabled,
-      MAGIC_CONTEXT_RECALL_ENABLED,
-    );
+    assert.equal(config.memory.auto_search.enabled, MAGIC_CONTEXT_RECALL_ENABLED);
     assert.equal(MAGIC_CONTEXT_RECALL_ENABLED, false);
-    const manifest = JSON.parse(
-      await readFile(runtime.paths.runManifestPath, "utf8"),
-    ) as CompanionRunManifest;
+    const manifest = JSON.parse(await readFile(runtime.paths.runManifestPath, "utf8")) as CompanionRunManifest;
     assert.deepEqual(manifest.featureFlags, {
       gameplaySubagent: false,
       magicContextMemoryDomain: MAGIC_CONTEXT_MEMORY_DOMAIN,
@@ -1537,24 +1568,14 @@ test("runtime loads only Magic Context and preserves a session partition", async
       magicContextAutoPromoteEnabled: false,
       magicContextAutoSearchEnabled: false,
     });
-    await access(
-      join(
-        runtime.paths.runtimeCwd,
-        "data",
-        "cortexkit",
-        "magic-context",
-        "context.db",
-      ),
-    );
+    await access(join(runtime.paths.runtimeCwd, "data", "cortexkit", "magic-context", "context.db"));
 
     const sessionFile = runtime.session.sessionFile;
     assert.match(sessionFile ?? "", /\.jsonl$/);
     assert.ok(sessionFile);
     runtime.sessionManager.appendMessage({
       role: "user",
-      content: [
-        { type: "text", text: "Player conversation persistence sentinel." },
-      ],
+      content: [{ type: "text", text: "Player conversation persistence sentinel." }],
       timestamp: Date.now(),
     });
     runtime.sessionManager.appendCustomMessageEntry(
@@ -1565,9 +1586,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
     );
     runtime.sessionManager.appendMessage({
       role: "assistant",
-      content: [
-        { type: "text", text: "Phase 0B todo/session persistence sentinel." },
-      ],
+      content: [{ type: "text", text: "Phase 0B todo/session persistence sentinel." }],
       api: "openai-completions",
       provider: "test",
       model: "test-model",
@@ -1594,29 +1613,18 @@ test("runtime loads only Magic Context and preserves a session partition", async
     assert.equal(resumed.session.sessionFile, runtime.session.sessionFile);
     const resumedEntries = JSON.stringify(resumed.session.messages);
     assert.match(resumedEntries, /Player conversation persistence sentinel\./);
-    assert.match(
-      resumedEntries,
-      /Phase 0B todo\/session persistence sentinel\./,
-    );
+    assert.match(resumedEntries, /Phase 0B todo\/session persistence sentinel\./);
     assert.match(resumedEntries, /gamebuddy_test_event/);
-    assert.deepEqual(
-      resumed.session.agent.state.tools.map((tool) => tool.name).sort(),
-      ["companion_status"],
-    );
+    assert.deepEqual(resumed.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status"]);
   } finally {
     resumed.session.dispose();
   }
 
-  const otherSave = await createCompanionRuntime(
-    { ...identity, saveId: "save_02" },
-    root,
-  );
+  const otherSave = await createCompanionRuntime({ ...identity, saveId: "save_02" }, root);
   try {
     assert.notEqual(otherSave.session.sessionFile, runtime.session.sessionFile);
     assert.equal(
-      JSON.stringify(otherSave.session.messages).includes(
-        "Player conversation persistence sentinel.",
-      ),
+      JSON.stringify(otherSave.session.messages).includes("Player conversation persistence sentinel."),
       false,
     );
     assert.notEqual(otherSave.paths.runtimeCwd, runtime.paths.runtimeCwd);
@@ -1636,24 +1644,8 @@ test("concurrent runtime bootstraps retain separate Magic Context data roots", a
   ]);
   try {
     assert.notEqual(first.paths.runtimeCwd, second.paths.runtimeCwd);
-    await access(
-      join(
-        first.paths.runtimeCwd,
-        "data",
-        "cortexkit",
-        "magic-context",
-        "context.db",
-      ),
-    );
-    await access(
-      join(
-        second.paths.runtimeCwd,
-        "data",
-        "cortexkit",
-        "magic-context",
-        "context.db",
-      ),
-    );
+    await access(join(first.paths.runtimeCwd, "data", "cortexkit", "magic-context", "context.db"));
+    await access(join(second.paths.runtimeCwd, "data", "cortexkit", "magic-context", "context.db"));
     assert.equal(process.cwd(), cwdBefore);
   } finally {
     first.session.dispose();
@@ -1662,9 +1654,7 @@ test("concurrent runtime bootstraps retain separate Magic Context data roots", a
 });
 
 test("internal Historian fixture override can disable automatic authoring without changing Memory gates", async () => {
-  const root = await mkdtemp(
-    join(await canonicalTemporaryRoot(), "gamebuddy-historian-off-fixture-"),
-  );
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-historian-off-fixture-"));
   const runtime = await createCompanionRuntime(
     identity,
     root,
@@ -1681,17 +1671,11 @@ test("internal Historian fixture override can disable automatic authoring withou
   );
   try {
     const config = JSON.parse(
-      await readFile(
-        join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"),
-        "utf8",
-      ),
+      await readFile(join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"), "utf8"),
     );
     assert.deepEqual(config.historian, { disable: true });
     assert.equal(config.memory.enabled, MAGIC_CONTEXT_MEMORY_ENABLED);
-    assert.equal(
-      config.memory.auto_promote,
-      MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED,
-    );
+    assert.equal(config.memory.auto_promote, MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED);
     assert.equal(config.memory.auto_search.enabled, false);
   } finally {
     runtime.session.dispose();
@@ -1699,9 +1683,7 @@ test("internal Historian fixture override can disable automatic authoring withou
 });
 
 test("public Chat runtime exposes no authored-context publication or capability API", async () => {
-  const root = await mkdtemp(
-    join(await canonicalTemporaryRoot(), "gamebuddy-tavern-authored-context-public-api-"),
-  );
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-tavern-authored-context-public-api-"));
   const tavernIdentity = { ...identity, continuityId: "continuity_01" };
   const runtime = await createCompanionRuntime(
     tavernIdentity,
@@ -1826,29 +1808,16 @@ test("runtime construction failure disposes the Pi session and clears stable pub
 });
 
 test("runtime binds the Host-owned IdentityProfile to Pi system prompt and fails closed on mismatch", async () => {
-  const root = await mkdtemp(
-    join(await canonicalTemporaryRoot(), "gamebuddy-identity-profile-runtime-"),
-  );
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-identity-profile-runtime-"));
   const runtime = await createCompanionRuntime(identity, root);
   try {
     assert.match(runtime.session.systemPrompt, /\[Character: GameBuddy Companion\]/);
-    assert.doesNotMatch(
-      runtime.session.systemPrompt,
-      new RegExp(runtime.identityProfile.canonicalHash),
-    );
-    assert.equal(
-      JSON.stringify(runtime.session.messages).includes(
-        "gamebuddy_companion_identity",
-      ),
-      false,
-    );
+    assert.doesNotMatch(runtime.session.systemPrompt, new RegExp(runtime.identityProfile.canonicalHash));
+    assert.equal(JSON.stringify(runtime.session.messages).includes("gamebuddy_companion_identity"), false);
     const storedProfile = JSON.parse(
       await readFile(runtime.paths.identityProfilePath, "utf8"),
     ) as typeof DEFAULT_IDENTITY_PROFILE & { canonicalHash: string };
-    assert.equal(
-      storedProfile.canonicalHash,
-      identityProfileHash(DEFAULT_IDENTITY_PROFILE),
-    );
+    assert.equal(storedProfile.canonicalHash, identityProfileHash(DEFAULT_IDENTITY_PROFILE));
   } finally {
     runtime.session.dispose();
   }
@@ -1868,20 +1837,12 @@ test("runtime binds the Host-owned IdentityProfile to Pi system prompt and fails
     }),
     "utf8",
   );
-  await assert.rejects(
-    () => createCompanionRuntime(identity, root),
-    /identity_profile_mismatch/,
-  );
+  await assert.rejects(() => createCompanionRuntime(identity, root), /identity_profile_mismatch/);
 
-  const secondRoot = await mkdtemp(
-    join(await canonicalTemporaryRoot(), "gamebuddy-identity-profile-binding-"),
-  );
+  const secondRoot = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-identity-profile-binding-"));
   const first = await createCompanionRuntime(identity, secondRoot);
   const bindingPath = first.paths.identityProfileBindingPath;
   first.session.dispose();
   await unlink(bindingPath);
-  await assert.rejects(
-    () => createCompanionRuntime(identity, secondRoot),
-    /identity_profile_mismatch/,
-  );
+  await assert.rejects(() => createCompanionRuntime(identity, secondRoot), /identity_profile_mismatch/);
 });
