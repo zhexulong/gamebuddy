@@ -273,6 +273,7 @@ test("production coordinator exports only the known Game constructor and its saf
     "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
     "createSharedSemanticProductionAuthorityFromDeploymentManifest",
     "isCurrentMountedChatRuntimeLease",
+    "selectMountedSwipeVariant",
     "settleMountedAuthoredContext",
     "stopMountedChatPresentationEpoch",
   ]);
@@ -294,6 +295,7 @@ test("production coordinator exports only the known Game constructor and its saf
     "createSharedSemanticProductionAuthorityFromDeploymentManifest",
     "isCurrentMountedChatRuntimeLease",
     "orchestrateExplicitGameRecovery",
+    "selectMountedSwipeVariant",
     "settleMountedAuthoredContext",
     "startMountedAttempt",
     "stopMountedChatPresentationEpoch",
