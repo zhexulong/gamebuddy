@@ -130,6 +130,46 @@ test("the multi-day prompt is the one that tells the companion to end its own da
   assert.match(watcher, /companion_did_not_sleep/u, "a day without a night is named");
 });
 
+test("the run budget is a harness bound that fits the scenario, not one fixed number", () => {
+  // Measured 2026-10-17 on run m12: with a fixed 10-minute run deadline, the FIRST accepted night consumed the
+  // budget and every later dispatch came back `bridge_connect_deadline_exceeded` - a harness fault that read
+  // exactly like the companion failing, while the Mod's own sleep lifecycle had genuinely started.
+  assert.match(RUNNER, /const RUN_BUDGET_MS = \(\(\) => \{/u);
+  assert.match(RUNNER, /SCENARIO === "multiday_routine" \? 4 \* 60 \* 60 \* 1000 : 600_000/u);
+  assert.match(RUNNER, /const deadline = Date\.now\(\) \+ RUN_BUDGET_MS;/u);
+  // An operator can override it, and the override must be a positive integer rather than anything truthy.
+  assert.match(RUNNER, /const requested = Number\.parseInt\(process\.env\.GAMEBUDDY_RUN_BUDGET_MS \?\? "", 10\);/u);
+  assert.match(RUNNER, /if \(Number\.isInteger\(requested\) && requested > 0\) return requested;/u);
+  // And the doc has to say it is a harness bound, never a product verdict.
+  assert.match(RUNNER, /A harness bound, never a product verdict/u);
+});
+
+test("a day that only reported back is asked again, by the companion's own decision", () => {
+  // Measured 2026-10-17 (run m11): the companion worked six real pieces of farm work in 360s and then reported to
+  // the player. `companion_did_not_sleep` named it correctly, but the harness had never asked again - a day ends
+  // when the companion SLEEPS, so a settled turn that dispatched no `advance_day` has not ended it.
+  assert.match(RUNNER, /const MULTIDAY_SLEEP_ATTEMPTS = \(\(\) => \{/u);
+  assert.match(RUNNER, /export const MULTI_DAY_SLEEP_REMINDER = Object\.freeze\(\{/u);
+  assert.match(RUNNER, /function dispatchedAdvanceDaySince\(startIndex\) \{/u);
+  const dayTurn = RUNNER.slice(RUNNER.indexOf("dayTurn: async (day) => {"), RUNNER.indexOf("nightWatch: (day) =>"));
+  assert.match(dayTurn, /for \(let attempt = 0; attempt < MULTIDAY_SLEEP_ATTEMPTS; attempt \+= 1\) \{/u);
+  assert.match(dayTurn, /if \(dispatchedAdvanceDaySince\(before\)\) break;/u, "a real night stops the reminders");
+  // The reminder is delivered as a PLAYER turn: the night stays the companion's decision, and `advance_day` is
+  // never dispatched by the harness on its behalf.
+  assert.match(dayTurn, /const nudged = await runAgentTurn\(reminder, tools\);/u);
+  assert.doesNotMatch(dayTurn, /action: "advance_day"/u);
+  // Both locales carry the reminder, and it says the two steps the lifecycle actually requires.
+  const reminder = RUNNER.slice(
+    RUNNER.indexOf("export const MULTI_DAY_SLEEP_REMINDER"),
+    RUNNER.indexOf("function dispatchedAdvanceDaySince"),
+  );
+  assert.match(reminder, /zh: "/u);
+  assert.match(reminder, /en: "/u);
+  assert.match(reminder, /上床睡觉/u);
+  assert.match(reminder, /sleep in your bed/u);
+  assert.match(reminder, /advance_day/u);
+});
+
 test("no scenario prompt prescribes a route", () => {
   const prompts = RUNNER.slice(
     RUNNER.indexOf("const SCENARIO_PROMPTS = Object.freeze({"),

@@ -398,7 +398,17 @@ const identity = Object.freeze({
   saveId: config.SaveId,
   worldId: config.WorldId,
 });
-const deadline = Date.now() + 600_000;
+// How long this RUN may last. A harness bound, never a product verdict (design 1432: timeouts belong to the
+// harness). It is scenario-aware because a multi-day crossing genuinely takes hours of game time: with a fixed
+// 10-minute window the FIRST accepted night consumed the budget, and every later dispatch came back
+// `bridge_connect_deadline_exceeded` - a harness fault that read exactly like the companion failing (measured
+// 2026-10-17 on run m12, where the sleep lifecycle had genuinely started).
+const RUN_BUDGET_MS = (() => {
+  const requested = Number.parseInt(process.env.GAMEBUDDY_RUN_BUDGET_MS ?? "", 10);
+  if (Number.isInteger(requested) && requested > 0) return requested;
+  return SCENARIO === "multiday_routine" ? 4 * 60 * 60 * 1000 : 600_000;
+})();
+const deadline = Date.now() + RUN_BUDGET_MS;
 // Startup phase timings. "The live run is slow to start" needs numbers, not
 // impressions: this separates the phases a reader can act on (bridge connect,
 // covenant seed, runtime materialization, agent turn) instead of one total.
@@ -889,7 +899,8 @@ async function runAgentTurn(text, tools) {
   // that still exceeds it does not silently become a completed session: the verdict
   // below refuses to call that `passed`.
   const turnWaitSeconds = Number(
-    process.env.GAMEBUDDY_AGENT_WAIT_SECONDS ?? (SCENARIO === "morning_routine" ? 1800 : 600),
+    process.env.GAMEBUDDY_AGENT_WAIT_SECONDS ??
+      (SCENARIO === "morning_routine" || SCENARIO === "multiday_routine" ? 1800 : 600),
   );
   for (let i = 0; i < turnWaitSeconds; i++) {
     await new Promise((r) => setTimeout(r, 1000));
@@ -1156,7 +1167,30 @@ function accomplishedSince(startIndex) {
   return [...accomplished].sort();
 }
 
-/** A promise with its resolve exposed, for the "has this finished yet" question the night watcher asks. */
+/** How many times one day may be REMINDED that it is not over yet before the run stops waiting. */
+const MULTIDAY_SLEEP_ATTEMPTS = (() => {
+  const requested = Number.parseInt(process.env.GAMEBUDDY_MULTIDAY_SLEEP_ATTEMPTS ?? "2", 10);
+  return Number.isInteger(requested) && requested >= 0 && requested <= 5 ? requested : 2;
+})();
+
+/**
+ * What the companion is told when its turn settled without ending the day.
+ *
+ * A day is over when the companion has SLEPT, so a turn that merely reported back is not the end of it. The
+ * reminder is deliberately a PLAYER turn rather than anything the harness does: the night must stay the
+ * companion's own decision (measured 2026-10-17: run m11 worked six real pieces of farm work in 360s and then
+ * reported to the player, which `companion_did_not_sleep` named correctly - the harness had never asked again).
+ */
+export const MULTI_DAY_SLEEP_REMINDER = Object.freeze({
+  zh: "今天还没结束——先把话先放一放：回农舍屋里，然后上床睡觉（用 advance_day）。明天的事明天再说。",
+  en: "The day is not over yet - hold the report for now: go back inside the farmhouse, then sleep in your bed (use advance_day). Tomorrow can wait until tomorrow.",
+});
+
+/** Did the companion dispatch its own `advance_day` since `startIndex`? */
+function dispatchedAdvanceDaySince(startIndex) {
+  return actionTrace.slice(startIndex).some((entry) => entry.action === "advance_day");
+}
+
 function deferred() {
   let resolve;
   const promise = new Promise((settle) => {
@@ -1726,6 +1760,26 @@ try {
           if (walked.status !== null) status = walked.status;
           agentTurnResult = walked.turn;
           sessionTurns.push(Object.freeze({ goalIndex: day - 1, goal: promptForDay(day), turn: walked.turn, day }));
+          // A day is over when the companion SLEEPS, so a turn that settled without dispatching its own
+          // `advance_day` has not ended the day - it reported back. Asking again is the harness restating the
+          // day's own intent, never starting a night for it: the companion still decides, and a run that never
+          // sleeps is reported as `companion_did_not_sleep` after the bounded retries (measured 2026-10-17).
+          for (let attempt = 0; attempt < MULTIDAY_SLEEP_ATTEMPTS; attempt += 1) {
+            if (dispatchedAdvanceDaySince(before)) break;
+            const reminder = MULTI_DAY_SLEEP_REMINDER[localeKey];
+            const nudged = await runAgentTurn(reminder, tools);
+            if (nudged.status !== null) status = nudged.status;
+            agentTurnResult = nudged.turn;
+            sessionTurns.push(
+              Object.freeze({
+                goalIndex: day - 1,
+                goal: reminder,
+                turn: nudged.turn,
+                day,
+                reminderAttempt: attempt + 1,
+              }),
+            );
+          }
           // The day's own verdict: what it accomplished, read from the receipts its dispatches produced. This is
           // the "the companion kept working" half of the baseline, and it is computed from the trace rather than
           // from the companion's prose.
