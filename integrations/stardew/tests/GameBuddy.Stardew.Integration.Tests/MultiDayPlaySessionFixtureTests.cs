@@ -145,6 +145,24 @@ public sealed class MultiDayPlaySessionFixtureTests
     }
 
     [Fact]
+    public void ThePinnedSkillsArriveWithTheirProfessionsOrTheEngineReOffersThemEveryMorning()
+    {
+        // Measured 2026-10-17 (run g15, from the product's own refusal evidence): pinning all five skills to 10
+        // WITHOUT professions left `pending_level_ups=11` at the next morning, because the engine re-queues a missed
+        // 5/10 choice for every skill that reached it (level_up=0@5;0@10;1@5;1@10;...). Ten milestone menus is not a
+        // world a companion can be asked to play, and it is not the world a mature save has.
+        string source = ReadMultiDayGivenSource();
+        source.Should().Contain("player.professions.Add(levelFiveProfession);");
+        source.Should().Contain("player.professions.Add(levelTenProfession);");
+        source.Should().Contain("int levelFiveProfession = professionSkill * 6;");
+        source.Should().Contain("int levelTenProfession = levelFiveProfession + 2;");
+        source.Should().Contain("fixture_native_local_multi_day_profession_not_granted");
+        // The arm log reports the count, so a run's own log says whether the world carried them.
+        source.Should().Contain("professions={player.professions.Count}");
+        source.Should().Contain("guarantee=skills_pinned_with_their_professions");
+    }
+
+    [Fact]
     public void MultiDayGivenIsAppliedBeforeThePlaySessionAffordances()
     {
         // Order matters: the multi-day Given warps the actor home and pins the clock, and it refuses by

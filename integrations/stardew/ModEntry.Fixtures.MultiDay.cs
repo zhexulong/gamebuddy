@@ -231,6 +231,31 @@ public sealed partial class ModEntry
         if (player.newLevels.Count != 0)
             throw new InvalidOperationException($"fixture_native_local_multi_day_pending_level_up:{player.newLevels.Count}");
 
+        // (4c-ii) The professions those maxed skills imply, or the engine re-offers them EVERY day boundary.
+        //
+        // Measured 2026-10-17 (run g15, from the product's own refusal evidence): pinning all five skills to 10
+        // WITHOUT professions left `pending_level_ups=11` at the next morning - `level_up=0@5;0@10;1@5;1@10;...` -
+        // because the engine re-queues a missed 5/10 choice for every skill that reached it. Ten milestone menus
+        // is not a world a companion can be asked to play through, and it is not the world a mature save has: a
+        // farmer at level 10 has already chosen. So this Given chooses for it, once, as declared state, exactly
+        // the way a real save arrives - and takes the level-up dimension out of the scenario's question, which is
+        // "do days cross".
+        //
+        // The ids are the engine's own: per skill `6*s + 0/1` at level 5 and, at level 10, `+2/+3` when the level-5
+        // choice was `+0`, otherwise `+4/+5` (LevelUpMenu.cs:421-437). Taking the left branch at each milestone is
+        // one coherent, legal character.
+        int professionSkill = 0;
+        foreach (string skill in PinnedSkills)
+        {
+            int levelFiveProfession = professionSkill * 6;
+            int levelTenProfession = levelFiveProfession + 2;
+            player.professions.Add(levelFiveProfession);
+            player.professions.Add(levelTenProfession);
+            if (!player.professions.Contains(levelFiveProfession) || !player.professions.Contains(levelTenProfession))
+                throw new InvalidOperationException($"fixture_native_local_multi_day_profession_not_granted:{skill}");
+            professionSkill += 1;
+        }
+
         // (4d) ONE pending ORDINARY level-up, declared as part of this Given.
         //
         // The world now meets the one menu a real multi-day companion cannot avoid, so the run has to resolve it
@@ -266,7 +291,7 @@ public sealed partial class ModEntry
 
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log(
-            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};time={Game1.timeOfDay};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups={player.newLevels.Count};pending_level_up={(player.newLevels.Count > 0 ? $"{player.newLevels[0].X}@{player.newLevels[0].Y}" : "none")};skills_pinned={string.Join(",", PinnedSkills)}@{10};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;guarantee=one_pending_level_up_is_an_ordinary_level;guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
+            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};time={Game1.timeOfDay};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups={player.newLevels.Count};pending_level_up={(player.newLevels.Count > 0 ? $"{player.newLevels[0].X}@{player.newLevels[0].Y}" : "none")};skills_pinned={string.Join(",", PinnedSkills)}@{10};professions={player.professions.Count};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;guarantee=one_pending_level_up_is_an_ordinary_level;guarantee=skills_pinned_with_their_professions;guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
             LogLevel.Info);
     }
 }
