@@ -436,9 +436,12 @@ test("event pump keeps a long run's PROGRESS observations from filling the pendi
   assert.equal(pump.pendingCount, 2);
 
   // An OUTCOME semantic event is NOT progress: dropping one would hide an execution that already ended, so it
-  // keeps its own slot and can still report an overflow honestly.
+  // keeps its own slot and can still report an overflow honestly. It gets a pump of its own because the two
+  // progress slots above are already held in this one, and this block is about the outcome class alone: 128
+  // outcomes fill the window exactly, and the 129th is the honest overflow.
+  const outcomePump = new CompanionEventPump();
   for (let index = 0; index < 128; index++) {
-    pump.enqueueFact({
+    outcomePump.enqueueFact({
       source: "stardew_mod",
       kind: "semantic_event",
       correlationId: `settled_${index}`,
@@ -449,7 +452,7 @@ test("event pump keeps a long run's PROGRESS observations from filling the pendi
   }
   assert.throws(
     () =>
-      pump.enqueueFact({
+      outcomePump.enqueueFact({
         source: "stardew_mod",
         kind: "semantic_event",
         correlationId: "settled_overflow",
