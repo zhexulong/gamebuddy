@@ -18,6 +18,18 @@ import { resolveTavernPaths } from "../tavern-paths.js";
  * is the companion's own `companionRoot`, derived from her identity exactly as
  * every other companion artifact is, so a handle the roster handed out names at
  * most the one picture belonging to the one companion that handle named.
+ *
+ * **Re-import, and what it leaves behind.** Importing the same card again
+ * provisions a NEW companion: a new identity namespace, hence a new
+ * `companionRoot`, hence a new picture. The previous companion's file is neither
+ * overwritten (nothing is written to a namespace that already exists) nor deleted
+ * - it lives exactly as long as the companion record it belongs to, because the
+ * companion's directory is the unit of deletion and nothing here deletes one. So
+ * no garbage collector is added for this file: a sweep would have to reason about
+ * which companions are still reachable, while the directory already answers that
+ * by existing or not. If a companion-delete operation is ever added, this picture
+ * goes with the directory, and that operation - not this module - owns the
+ * decision. (Nothing deletes a companion root today: the roster has no delete.)
  */
 export const COMPANION_AVATAR_FILE_NAME = "avatar.png" as const;
 
