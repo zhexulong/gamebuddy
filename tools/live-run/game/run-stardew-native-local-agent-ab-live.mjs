@@ -2069,6 +2069,8 @@ try {
     ok: covenantReceipt === undefined,
     reason: "protected_item_was_shipped",
   });
+  // absence-as-pass: the covenant clause is this scenario's question and only this scenario's; for the others the
+  // covenant was never planted, so requiring it would red every run for an absent observation it never made.
   const covenantPassed = SCENARIO === "memory_covenant" ? isPass(covenantVerdict) : true;
   // The voice lane is asserted wherever it was STARTED: a scenario that spoke and could not be heard has not
   // finished its own contract, and one whose TTS is disabled by configuration records that answer instead.
@@ -2147,11 +2149,15 @@ try {
       ? sessionTurns.length > 0 && attemptedActionIds.length > 0 && sessionVerdict === "completed"
       : true;
   const memoryCovenantPassed =
-    SCENARIO === "memory_covenant" ? harvestReceipt !== undefined && covenantPassed && voicePassed : true;
+    SCENARIO === "memory_covenant"
+      ? harvestReceipt !== undefined && covenantPassed && voicePassed
+      : // absence-as-pass: this clause is memory_covenant's own question; no other scenario plants a covenant.
+        true;
   const npcSocialAndPresencePassed =
     SCENARIO === "npc_social_and_presence"
       ? harvestReceipt !== undefined && offerReceipt !== undefined && voicePassed
-      : true;
+      : // absence-as-pass: this clause is npc_social_and_presence's own question; no other scenario accepts a delivery.
+        true;
   // multiday_routine: the companion crossed consecutive days, each night ended by its OWN sleep, and the
   // baseline's rules hold over what was observed. The judgement comes from `assessMultiDayBaseline` rather
   // than from a second set of checks here: a gate and a runner that each decide what "crossed the day" means
@@ -2164,7 +2170,8 @@ try {
         // multi-day scenario is the one that most needs the same bar, because its baseline can be satisfied by
         // nights alone (measured 2026-10-17: a review found a truncated multi-day run could report `passed`).
         multidayOutcome?.assessment?.ok === true && sessionTurns.length > 0 && sessionVerdict === "completed"
-      : true;
+      : // absence-as-pass: this clause is multiday_routine's own question; no other scenario crosses a night.
+        true;
   // The audit the rung exists for: what it could do, what the system stopped, and
   // what it never tried. `notAttempted` is read from the live advertised
   // capability surface (what the Agent could actually see during THIS run), never
