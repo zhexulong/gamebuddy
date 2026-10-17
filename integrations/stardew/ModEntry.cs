@@ -1263,6 +1263,10 @@ public sealed partial class ModEntry : Mod
             {
                 if (this.pathPredicateProbe.Update())
                     this.pathPredicateProbe = null;
+                // Named, because this gate returns BEFORE the bridge drain and the heartbeat: an armed probe that
+                // never completes stops processing every future request while the process stays alive, and silence
+                // is indistinguishable from a frozen world (measured 2026-10-17: a run's Mod log simply stopped).
+                this.LogBlockedTickReasonOnce("the path-predicate probe owns the actor and has not completed");
                 return;
             }
             // The M2 sleep-modal probe owns the actor's route and the (P2)
@@ -1272,6 +1276,7 @@ public sealed partial class ModEntry : Mod
             {
                 if (this.sleepModalProbe.Update())
                     this.sleepModalProbe = null;
+                this.LogBlockedTickReasonOnce("the sleep-modal probe owns the actor and has not completed");
                 return;
             }
             // The single-player cross-day lifecycle is the other exclusive body
@@ -1281,11 +1286,18 @@ public sealed partial class ModEntry : Mod
             {
                 if (this.sleepLifecycle.Update())
                     this.sleepLifecycle = null;
+                this.LogBlockedTickReasonOnce("the cross-day sleep lifecycle owns the actor and has not completed");
                 return;
             }
             this.TryInitializeEmbodiment();
             if (!this.IsConfiguredNativeLocalPlayer(out _, out _))
+            {
+                // The topology gate yields BEFORE the bridge drain and the heartbeat, so a world that stops satisfying
+                // it (a stray server, a second farmer, a scope mismatch) would stop answering every request with no
+                // line saying why. Named here for the same reason the probe gates are.
+                this.LogBlockedTickReasonOnce("this world no longer satisfies the configured native-local player scope");
                 return;
+            }
             this.LogNativeLocalPlayerReadinessIfBlocked();
             ScreenEmbodimentState nativeLocalState = this.GetEmbodimentState();
             this.RefreshFarmhandCapabilityPublication(nativeLocalState, e.Ticks);
