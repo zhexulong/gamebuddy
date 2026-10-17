@@ -1345,9 +1345,21 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (request.ExpectedRevision != this.executions.Revision) { reasonCode = "stale_snapshot"; return false; }
-        long maxDeadlineMs = request.Action == "navigate_to_destination"
-            ? nowMs + (long)TimeSpan.FromMinutes(10).TotalMilliseconds
-            : nowMs + (long)TimeSpan.FromMinutes(1).TotalMilliseconds;
+        // The bound is the ACTION'S OWN published watchdog, which is the same number the Host reads to size the
+        // request's deadline. One authority, both sides.
+        //
+        // The hard-coded split that used to live here - ten minutes for `navigate_to_destination`, one minute for
+        // everything else - could not accept `advance_day` at all: its watchdog is deliberately 600 s, because a
+        // night waits on the other players, the save and the day start, so the Host sent a deadline the Mod refused
+        // by name (`invalid_deadline`) and a multi-day run could never end a day. Measured 2026-10-17 on run g1:
+        // the companion dispatched its own `advance_day` three times and every one was rejected.
+        long? publishedWatchdogMs = FarmhandActionCatalog.Registrations
+            .FirstOrDefault(candidate => string.Equals(candidate.ActionId, request.Action, StringComparison.Ordinal))
+            ?.Descriptor?.WatchdogMs;
+        // An action with no published watchdog keeps the Host's own default, so an unrecognized action is still
+        // bounded rather than unbounded.
+        long boundMs = publishedWatchdogMs is > 0 ? publishedWatchdogMs.Value : (long)TimeSpan.FromMinutes(1).TotalMilliseconds;
+        long maxDeadlineMs = nowMs + boundMs;
         if (request.DeadlineMs < nowMs || request.DeadlineMs > maxDeadlineMs) { reasonCode = "invalid_deadline"; return false; }
         reasonCode = "accepted"; return true;
     }

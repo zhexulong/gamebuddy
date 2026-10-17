@@ -76,14 +76,17 @@ public static class FarmhandActionCatalog
     /// (hang protection, not ETA; watchdog authority decision 2026-09-20).</summary>
     public const long DefaultWatchdogMs = 60_000;
 
-    /// <summary>Action-specific Body Program watchdog for navigate_to_destination,</summary>
-    /// matching its ordinary-pipeline 10-minute deadline ceiling
-    /// (BridgeSession.IsFreshExecutionRequest; action-specific coarse upper bound).</summary>
+    /// <summary>Action-specific Body Program watchdog for navigate_to_destination, matching its own published ceiling.</summary>
     /// <summary>
-    /// The ceiling for an ORDINARY action's declared deadline: one minute. It was a literal inside the shared
-    /// admission's deadline check until the convergence wave, where it turned out to be the reason
-    /// `advance_day` could not converge - a co-op night needs ten. `AdmitExecution` now takes the ceiling as a
-    /// parameter and defaults to this, so the ordinary case stays one minute and the lifecycle says otherwise.
+    /// The ceiling for an ORDINARY action's declared deadline: one minute. It is the FALLBACK for an action whose
+    /// registration publishes no watchdog, and it is the same number the Host uses when it sizes a dispatch deadline
+    /// (`DEFAULT_DISPATCH_DEADLINE_MS`), so the two sides fall back identically.
+    ///
+    /// Both sides otherwise read the action's OWN published watchdog: `BridgeSession.IsFreshExecutionRequest` accepts
+    /// a deadline up to `descriptor.WatchdogMs`, and the Host sizes the deadline from that same number. The two used to
+    /// disagree - the text below records that this ceiling "was the reason `advance_day` could not converge", while
+    /// `IsFreshExecutionRequest` kept its own hard-coded split beside the parameterised ceiling, so a multi-day run's
+    /// own `advance_day` was refused by name (`invalid_deadline`).
     /// </summary>
     public const long OrdinaryActionCeilingMs = 60_000;
 
