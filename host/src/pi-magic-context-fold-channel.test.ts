@@ -12,7 +12,7 @@
  * rather than coerced. The fold itself is proved end to end by `pi-magic-context-chapter-fold.test.ts`.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -60,7 +60,7 @@ function findUserConfig(root: string): Record<string, unknown> {
 async function constructAndReadConfig(
   env: Partial<Record<(typeof CHANNEL_KEYS)[number], string>>,
 ): Promise<Record<string, unknown>> {
-  const root = mkdtempSync(join(tmpdir(), "gamebuddy-fold-channel-"));
+  const root = mkdtempSync(join(realpathSync(tmpdir()), "gamebuddy-fold-channel-"));
   const previous = CHANNEL_KEYS.map((key) => [key, process.env[key]] as const);
   for (const key of CHANNEL_KEYS) delete process.env[key];
   Object.assign(process.env, env);

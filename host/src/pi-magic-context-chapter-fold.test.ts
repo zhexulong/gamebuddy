@@ -116,7 +116,7 @@
  * the failure synchronously and fails the run's exit code.
  */
 import assert from "node:assert/strict";
-import { existsSync, rmSync, writeSync } from "node:fs";
+import { existsSync, realpathSync, rmSync, writeSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -212,7 +212,7 @@ test(
     bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
     let runtime: Awaited<ReturnType<typeof createCompanionRuntime>> | undefined;
     let bodyFailed = false;
-    const root = await mkdtemp(join(tmpdir(), "gamebuddy-chapter-fold-"));
+    const root = await mkdtemp(join(realpathSync(tmpdir()), "gamebuddy-chapter-fold-"));
     // The fixture's own bound on its body, and the reason it exists: a bound imposed from outside is
     // not a failure this test can survive. Node reports `--test-timeout` and then waits for the body,
     // so the run looks stalled for minutes; a runner that does kill the process (the Host suite's
