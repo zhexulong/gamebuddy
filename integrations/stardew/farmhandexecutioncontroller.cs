@@ -535,7 +535,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         /// <summary>
         /// The modal-handling family profile (actions in
-        /// <see cref="ModalActionFamily"/>: answer_dialogue / dismiss_modal).
+    /// <see cref="ModalActionFamily"/>: answer_dialogue / dismiss_modal / respond_level_up).
         /// An open modal (DialogueBox / LetterViewer / ReadyCheck / GameMenu)
         /// is this profile's WORKING PRECONDITION, not an obstacle — unlike the
         /// body-owning profiles it must not be refused while a menu is up, or
@@ -551,12 +551,23 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     /// <summary>
     /// The frozen modal-handling action family admitted through the
-    /// <see cref="AdmissionActionabilityProfile.Modal"/> profile. The concrete
-    /// action identities are finalized by design 7.4.2 (dialogue-internal
-    /// resolution); WIA 2026-10-02 freezes exactly these two stand-ins until
-    /// that design replaces them.
+    /// <see cref="AdmissionActionabilityProfile.Modal"/> profile. The dialogue identities were
+    /// design 7.4.2's to finalize (WIA 2026-10-02 froze those two stand-ins); `respond_level_up`
+    /// joined them with the level-up boundary card, because it answers a menu the same way they do.
     /// </summary>
-    internal static readonly string[] ModalActionFamily = { "answer_dialogue", "dismiss_modal" };
+    /// <summary>
+    /// The frozen modal-handling family: every action whose working precondition IS an open modal.
+    ///
+    /// The family is what makes the Modal admission profile reachable, and that profile is the only one exempt
+    /// from `body_owned` and from the not-actionable check for a menu - so an action that answers a menu and is
+    /// NOT in this list can never be admitted while a menu is up, which is exactly the state it exists for.
+    /// `respond_level_up` joins it for the incident that proved the point: the day-end `LevelUpMenu` is pushed in
+    /// the same window as the settlement menu, it holds `DayStarted` until it is closed, and it can only be closed
+    /// by a request arriving while the cross-day lifecycle owns the body (measured 2026-10-17, run g18: the
+    /// companion walked to its bed, the night was saved, the lifecycle waited in `AwaitingDayStart`, and every
+    /// `respond_level_up` was refused because the family still listed only the two 7.4.2 placeholders).
+    /// </summary>
+    internal static readonly string[] ModalActionFamily = { "answer_dialogue", "dismiss_modal", "respond_level_up" };
 
     /// <summary>
     /// WIA disposition projection for admission (§4.2). Local stand-in for Lane

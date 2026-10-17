@@ -322,9 +322,26 @@ public sealed class ModalAdmissionTests
     [Fact]
     public void ModalActionFamily_IsFrozenToTheDesign742Placeholders()
     {
+        // `respond_level_up` joined the two 7.4.2 stand-ins with the level-up boundary card: it answers an open menu
+        // and takes no body lease, which is what this family means. The list stays explicit and ORDERED, so adding
+        // an action here is a deliberate act rather than a side effect of registering one.
         ExecutionManager.ModalActionFamily.Should().Equal(
-            new[] { "answer_dialogue", "dismiss_modal" },
-            "the exact action identities are design 7.4.2's to finalize; WIA 2026-10-02 freezes these two stand-ins");
+            new[] { "answer_dialogue", "dismiss_modal", "respond_level_up" },
+            "the dialogue identities are design 7.4.2's to finalize; WIA 2026-10-02 froze those two stand-ins and the level-up card added the third");
+    }
+
+    [Fact]
+    public void TheLevelUpResolutionIsAdmittedThroughTheModalProfileWhileAMenuIsUp()
+    {
+        // The incident the family exists for: a day-end `LevelUpMenu` holds `DayStarted`, the cross-day lifecycle owns
+        // the body while it waits, and the only thing that can close the menu is a request that arrives anyway. A
+        // non-modal profile refuses exactly that (a menu is not `Idle`), so the action must be in the family - and the
+        // catalog's own handler group has to agree with the family, or the two vocabularies have drifted.
+        ExecutionManager.ModalActionFamily.Should().Contain("respond_level_up");
+        FarmhandActionCatalog.Registrations
+            .Single((registration) => registration.ActionId == "respond_level_up")
+            .HandlerGroup.Should()
+            .Be(FarmhandActionHandlerGroup.Modal, "the family and the handler group name the same thing");
     }
 
     // ---- helpers -------------------------------------------------------------
