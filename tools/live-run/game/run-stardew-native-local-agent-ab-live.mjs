@@ -28,6 +28,7 @@ import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
 import { assessMultiDayBaseline, MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "../../lib/multiday-baseline.mjs";
+import { chooseLevelUpResolution, parsePendingLevelUps } from "../../lib/level-up-evidence.mjs";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
 import { identityKey } from "../../../host/dist-test/runtime-identity.js";
@@ -1275,24 +1276,19 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
    */
   const respondLevelUp = async () => {
     const probe = await world.dismiss("LevelUpMenu");
-    const evidence = String(probe?.receipt?.evidence ?? probe?.receipt?.evidenceDetail ?? "");
-    const pairs = [...evidence.matchAll(/level_up=(\d+)@(\d+)/gu)].map((match) => ({
-      skill: Number.parseInt(match[1], 10),
-      level: Number.parseInt(match[2], 10),
-    }));
-    if (pairs.length === 0) {
-      return Object.freeze({ receipt: null, reasonCode: "level_up_pair_not_published", choice: null, levelUp: null });
-    }
-    const levelUp = pairs[0];
-    // A milestone is the companion's own decision, so the harness refuses to take it.
-    if (levelUp.level === 5 || levelUp.level === 10) {
+    // The pair, through the pure parse: the evidence is an OBJECT in the fact log, and stringifying it was the
+    // bug that made run g10 stop one step short (it reported `level_up_pair_not_published` while the Mod had
+    // published `level_up=4@6`).
+    const decision = chooseLevelUpResolution(parsePendingLevelUps(probe?.receipt?.evidence ?? probe?.receipt));
+    if (decision.reasonCode !== null) {
       return Object.freeze({
         receipt: probe?.receipt ?? null,
-        reasonCode: `level_up_requires_companion_choice:${String(levelUp.skill)}@${String(levelUp.level)}`,
+        reasonCode: decision.reasonCode,
         choice: null,
-        levelUp,
+        levelUp: decision.levelUp,
       });
     }
+    const levelUp = decision.levelUp;
     const requestId = `multiday_level_up_${String(day)}_${String(Date.now())}`;
     try {
       const accepted = await client.execute({
