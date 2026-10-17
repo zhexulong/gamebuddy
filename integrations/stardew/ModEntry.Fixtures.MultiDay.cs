@@ -23,6 +23,50 @@ public sealed partial class ModEntry
     private const float LowMorningStamina = 12f;
 
     /// <summary>
+    /// The composed world must let the companion reach its own front door, or the day cannot be ended at all.
+    ///
+    /// `advance_day` only begins a night from inside a farmhouse, and the companion has to WALK there: the
+    /// multi-day Given puts the actor home at arm time, but the play-session fixture then moves it to the Farm
+    /// crossroads, so this checks the fact the composed world depends on - that the door's standing spot is in
+    /// the actor's own walkable component - and refuses by name when it is not.
+    ///
+    /// The reachability authority is the SAME probe the refusal receipts publish
+    /// (<see cref="StardewBodyController.AssessReachability"/>), so an arm-time refusal and a mid-run
+    /// `no_native_path` can never disagree about what "reachable" means.
+    /// </summary>
+    private static void AssertNativeLocalMultiDayHomeReachable(Farmer player, Farm farm)
+    {
+        FarmHouse home = Game1.getLocationFromName(player.homeLocation.Value) as FarmHouse
+            ?? throw new InvalidOperationException("fixture_native_local_multi_day_home_missing");
+        Point door = home.getPorchStandingSpot();
+        if (!farm.isTileOnMap(new Vector2(door.X, door.Y)))
+            throw new InvalidOperationException($"fixture_native_local_multi_day_home_door_off_map:{door.X},{door.Y}");
+
+        Point from = new((int)player.Tile.X, (int)player.Tile.Y);
+        var layer = farm.map.Layers[0];
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            from,
+            door,
+            tile => tile.X >= 0
+                && tile.Y >= 0
+                && tile.X < layer.LayerWidth
+                && tile.Y < layer.LayerHeight
+                && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y)),
+            maxVisited: 8000,
+            findClosestReachable: true);
+        // A null verdict means the component exceeded the budget; that is not a world this scenario may arm in
+        // either, because no bounded claim about the way home can be made from it.
+        if (verdict is not { } assessed)
+            throw new InvalidOperationException($"fixture_native_local_multi_day_home_reachability_unknown:from={from.X},{from.Y};door={door.X},{door.Y}");
+        if (assessed.TargetEnclosed)
+        {
+            Point? closest = assessed.ClosestToTarget;
+            throw new InvalidOperationException(
+                $"fixture_native_local_multi_day_home_unreachable:from={from.X},{from.Y};door={door.X},{door.Y};component_tiles={assessed.ComponentTiles};closest={(closest is null ? "none" : $"{closest.Value.X},{closest.Value.Y}")}");
+        }
+    }
+
+    /// <summary>
     /// The multi-day Given (<c>native_multi_day_v1</c>): the one structural unknown
     /// this fixture exists to reach is whether the companion loop can cross several
     /// in-game days in ONE run, so the Given establishes exactly the four facts that

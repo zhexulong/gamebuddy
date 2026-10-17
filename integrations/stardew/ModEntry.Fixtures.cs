@@ -993,8 +993,22 @@ public sealed partial class ModEntry : Mod
                 // itself is not the Given. The fixture performs no sleep and dispatches no action:
                 // production alone ends the night and alone harvests, cuts and plants.
                 InitializeNativeLocalMultiDayFixture(player, farm);
-                InitializeNativeLocalPlaySessionFixture(player, farm);
-                return;
+            InitializeNativeLocalPlaySessionFixture(player, farm);
+            // (c) The composed world must let the companion GO HOME.
+            //
+            // Lane G0's whole point is that the companion ends its own day, and `advance_day` only begins a
+            // night from inside a farmhouse. The multi-day Given puts the actor there at arm time, but the
+            // play-session fixture then moves it to the Farm crossroads and places props - so the composed
+            // world is only usable if the farmhouse is still reachable from where the session starts. Each
+            // given is fine alone; measured 2026-10-17, the composition was not: the actor's cardinal component
+            // was 28 tiles with the door outside it, so eleven `move_to_tile` attempts came back
+            // `no_native_path` and `enter_exit` said `door_out_of_range`, and the night could never begin.
+            //
+            // Refused HERE, by name and with numbers, instead of burning a turn on a world that cannot be
+            // finished. It asserts the DIRECTION? no - it asserts reachability only: how the companion gets home
+            // is still its own decision.
+            AssertNativeLocalMultiDayHomeReachable(player, farm);
+            return;
             }
             if (fixture.FixtureScenario == "native_play_session_v1")
             {

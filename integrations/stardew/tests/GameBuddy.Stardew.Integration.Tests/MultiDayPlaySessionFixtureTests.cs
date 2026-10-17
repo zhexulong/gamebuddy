@@ -96,6 +96,36 @@ public sealed class MultiDayPlaySessionFixtureTests
     }
 
     [Fact]
+    public void TheComposedWorldMustLetTheCompanionReachItsFrontDoor()
+    {
+        // Lane G0 starts with the actor home and the play-session fixture then moves it to the Farm crossroads, so
+        // the composed world is only usable if the farmhouse is STILL reachable from where the session starts.
+        // Each given is fine alone; measured 2026-10-17 the composition was not: the actor's cardinal component
+        // was 28 tiles with the door outside it, eleven move_to_tile attempts came back no_native_path and
+        // enter_exit said door_out_of_range, so the night could never begin and the turn was spent re-aiming.
+        string source = ReadFixtureSource();
+        source.Should().Contain("AssertNativeLocalMultiDayHomeReachable(player, farm);");
+        // ...and it runs AFTER both givens, because it is the composition it checks.
+        int multiDay = source.IndexOf("InitializeNativeLocalMultiDayFixture(player, farm);", StringComparison.Ordinal);
+        int playSession = source.IndexOf("InitializeNativeLocalPlaySessionFixture(player, farm);", multiDay, StringComparison.Ordinal);
+        int assertion = source.IndexOf("AssertNativeLocalMultiDayHomeReachable(player, farm);", playSession, StringComparison.Ordinal);
+        assertion.Should().BeGreaterThan(playSession, "the check is about the composed world");
+
+        string given = ReadMultiDayGivenSource();
+        // The reachability authority is the SAME probe the refusal receipts publish, so an arm-time refusal and a
+        // mid-run `no_native_path` cannot disagree about what reachable means.
+        given.Should().Contain("StardewBodyController.AssessReachability(");
+        given.Should().Contain("home.getPorchStandingSpot()");
+        // Three outcomes, each named: unreachable, unknown (component over budget), and door off map.
+        given.Should().Contain("fixture_native_local_multi_day_home_unreachable:from=");
+        given.Should().Contain("fixture_native_local_multi_day_home_reachability_unknown:from=");
+        given.Should().Contain("fixture_native_local_multi_day_home_door_off_map:");
+        // The refusal carries numbers rather than a verdict, and it says nothing about the ROUTE.
+        given.Should().Contain("component_tiles={assessed.ComponentTiles}");
+        given.Should().Contain("closest=");
+    }
+
+    [Fact]
     public void MultiDayGivenIsAppliedBeforeThePlaySessionAffordances()
     {
         // Order matters: the multi-day Given warps the actor home and pins the clock, and it refuses by
