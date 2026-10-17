@@ -1693,8 +1693,9 @@ test("the Settings surface moves the companion voice persona through the consent
       and re-renders the reply, including a row only the reply lists: catches a
       save that overwrites whatever is current, and a save rendered from the
       panel's own request rather than from the Host's answer;
-    - the delete arms first and sends nothing until it is confirmed: catches a
-      destructive control that fires on the first click;
+    - the delete arms first and sends nothing until it is confirmed, and arming
+      keeps an open editor's draft: catches a destructive control that fires on
+      the first click, and one that discards the player's text on the way;
     - a stale edit and a refused delete each reach the player as their own code:
       catches a refusal collapsed into the panel's one generic sentence;
     - the armed confirmation is its own block under the row's strip, quoted as
@@ -2108,6 +2109,24 @@ test("deleting a World Info item arms first, sends nothing, and names the item i
   await confirm.locator("[data-world-book-confirm-no]").click();
   await expect(confirm).toHaveCount(0);
   expect(library.requests.deletes.length).toBe(0);
+
+  // Arming a destructive control is not a reason to discard what the player has
+  // typed: an open editor keeps its draft while another row's delete is armed.
+  await forest.getByRole("button", { name: "Edit: Cindersap Forest" }).click();
+  const draft = panel.locator("[data-world-book-draft]");
+  await expect(draft).toBeVisible();
+  await draft.locator("#world-book-item-title").fill("Cindersap Forest, again");
+  await town.getByRole("button", { name: "Delete: Pelican Town" }).click();
+  await expect(town.locator("[data-world-book-confirm]")).toBeVisible();
+  await expect(draft).toBeVisible();
+  await expect(draft.locator("#world-book-item-title")).toHaveValue("Cindersap Forest, again");
+  expect(library.requests.deletes.length, "arming still sends nothing").toBe(0);
+  await panel.locator("[data-world-book-cancel]").click();
+  await expect(draft).toHaveCount(0);
+  // Back to a resting row: the arm is answered, never left primed behind the
+  // player while the strip it replaced is hidden.
+  await town.locator("[data-world-book-confirm-no]").click();
+  await expect(town.locator("[data-world-book-confirm]")).toHaveCount(0);
 
   await town.getByRole("button", { name: "Delete: Pelican Town" }).click();
   await town.locator("[data-world-book-confirm-yes]").click();

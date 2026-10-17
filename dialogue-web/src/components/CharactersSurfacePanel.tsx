@@ -435,7 +435,11 @@ function CharacterWorldBookPanel({
           csrfToken,
         );
         setView({ kind: "ready", worldInfo: result });
+        // The item the removal named is gone from the library, so anything this
+        // panel held open on it closes with it: an editor left open on a removed
+        // item would save into `world_info_not_found`.
         if (opened !== null && opened.handle === itemHandle) setOpened(null);
+        if (draft !== null && draft.handle === itemHandle) setDraft(null);
       } catch (error) {
         failure = problemTextWithCode(labels.worldBookDeleteFailed, error);
         setView(await readOnce());
@@ -553,10 +557,7 @@ function CharacterWorldBookPanel({
                       className="small-button"
                       data-world-book-delete
                       aria-label={`${labels.worldBookDelete}: ${item.title}`}
-                      onClick={() => {
-                        setArmed(item.handle);
-                        setDraft(null);
-                      }}
+                      onClick={() => setArmed(item.handle)}
                     >
                       {labels.worldBookDelete}
                     </button>
