@@ -81,7 +81,9 @@ test("ST card application import persists hash-verified inert candidate/report a
     // survive the persistence boundary. Before this assertion the candidate's
     // `only()` allowlist refused `keys` and the whole import died with a bare
     // `invalid_tavern_artifact` — the shipped default card carries `keys`.
-    const candidateJson = JSON.parse(await readFile(tavernImportPath(paths, "import_01", "candidate.json"), "utf8")) as {
+    const candidateJson = JSON.parse(
+      await readFile(tavernImportPath(paths, "import_01", "candidate.json"), "utf8"),
+    ) as {
       artifact: { worldBookCandidates: readonly { keys?: readonly string[] }[] };
     };
     assert.deepEqual(candidateJson.artifact.worldBookCandidates[0]?.keys, ["harvest", "spring"]);
@@ -199,6 +201,46 @@ test("ST card import carries alternate_greetings as reviewed variant fields, exa
     });
     assert.deepEqual((await service.readReview("alt_once_a")).canonicalHash, review.canonicalHash);
     // Fails if alternates are dropped, duplicated on re-import, or carried outside the review gate.
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A staged card always offers **something** for the player to approve.
+ *
+ * This is not a detail of the importer: the browser's import review calls
+ * `character.import.review` only when the staged response lists at least one
+ * profile-eligible field, and then calls `confirm`, which the Host refuses
+ * without a recorded review. So a card whose eligible list came back empty would
+ * turn a legitimate import into a bare failure with no review written - the
+ * shape of defect this suite exists to keep out. Two facts hold it up, and both
+ * are asserted here rather than assumed:
+ *
+ *  - `candidateFromReport` pushes the card's own `name` as
+ *    `profile_eligible_after_explicit_review` unconditionally, however little
+ *    else the card carries;
+ *  - `field()` keeps a field whose text is empty, so an unnamed-in-effect card
+ *    still has a row.
+ */
+test("a staged card always offers at least its own name for review", async () => {
+  const root = await canonicalTestRoot("tavern-st-import-review-");
+  try {
+    const paths = resolveTavernPaths({ root } as never, identity);
+    const service = new StCardImportService(new TavernArtifactStore(root), paths);
+    // The smallest card the ST shape admits: a name and nothing else.
+    const staged = await service.import(
+      "import_min",
+      JSON.stringify({ spec: "chara_card_v3", data: { name: "Only" } }),
+    );
+    const eligible = staged.candidate.artifact.fields
+      .filter((entry) => entry.eligibility === "profile_eligible_after_explicit_review")
+      .map((entry) => entry.field);
+    assert.ok(eligible.length > 0, `a staged card must offer a reviewable field; got ${JSON.stringify(eligible)}`);
+    assert.ok(eligible.includes("name"), `the card's own name is always reviewable; got ${JSON.stringify(eligible)}`);
+    // …and the review the browser would record is accepted by the Host, which is
+    // the half that fails today if the list above were ever empty.
+    await service.recordReview("import_min", { reviewedFields: eligible, approvedAtMs: 1 });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

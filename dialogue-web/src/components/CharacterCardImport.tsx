@@ -202,6 +202,13 @@ export function CharacterCardImport({
     setBusy(true);
     try {
       const report = reportOf(stagedCard);
+      // The staged card always offers at least its own `name` for review - the
+      // Host pushes it unconditionally and keeps a field whose text is empty
+      // (`st-card-import-service.ts:candidateFromReport`, pinned by that module's
+      // own test), so a review is always recordable and this call is always made.
+      // The guard spelling is not what makes the flow safe: the Host refuses a
+      // confirm with no review on file, so a card that ever came back empty would
+      // fail the import here instead of silently creating her without approval.
       if (report.keptFields.length > 0)
         await api.reviewStCardImport(stagedCard.importId, report.keptFields, Date.now(), csrfToken);
       const confirmed = await api.confirmStCardImport(stagedCard.importId, csrfToken);
