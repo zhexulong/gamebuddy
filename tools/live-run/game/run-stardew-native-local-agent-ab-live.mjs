@@ -224,10 +224,11 @@ const SCENARIO_PROMPTS = Object.freeze({
     // "the day is yours to end" is said, because a night the harness chose would be a scripted crossing.
     zh: (day) =>
       `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。今天没有人给你派活——你自己看看周围，想做什么就做什么。` +
-      `做完今天想做的事就回屋上床睡觉（用 advance_day），明天接着来。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+      `做完今天想做的事，**先走进农舍屋里**，然后在床上睡下（advance_day 只在农舍屋内生效，站在外面它会一直等你进屋而不会结束这一天），明天接着来。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
     en: (day) =>
       `It is morning in Stardew Valley (day ${String(day)} in a row for you). Nobody has assigned you anything today - look around and do whatever you think is worth doing. ` +
-      `When you are done for the day, go back inside the farmhouse first and then sleep in your bed (use advance_day); you will pick it up tomorrow. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+      `When you are done for the day, go INSIDE the farmhouse first, and then sleep in your bed there. advance_day only works indoors - called from outside it waits for you to come in and never ends the day. ` +
+      `You will pick it up tomorrow. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
@@ -1182,8 +1183,8 @@ const MULTIDAY_SLEEP_ATTEMPTS = (() => {
  * reported to the player, which `companion_did_not_sleep` named correctly - the harness had never asked again).
  */
 export const MULTI_DAY_SLEEP_REMINDER = Object.freeze({
-  zh: "今天还没结束——先把话先放一放：回农舍屋里，然后上床睡觉（用 advance_day）。明天的事明天再说。",
-  en: "The day is not over yet - hold the report for now: go back inside the farmhouse, then sleep in your bed (use advance_day). Tomorrow can wait until tomorrow.",
+  zh: "今天还没结束——先把话放一放。它只在农舍屋内生效：先进屋，再上床睡下（advance_day）。明天的事明天再说。",
+  en: "The day is not over yet - hold the report for now. It only works indoors: go inside the farmhouse first, then sleep in your bed (advance_day). Tomorrow can wait until tomorrow.",
 });
 
 /** Did the companion dispatch its own `advance_day` since `startIndex`? */

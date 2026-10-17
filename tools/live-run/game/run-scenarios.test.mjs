@@ -112,8 +112,12 @@ test("the multi-day prompt is the one that tells the companion to end its own da
   );
   const at = prompts.indexOf("multiday_routine: Object.freeze({");
   const block = prompts.slice(at, prompts.indexOf("}),", at));
-  assert.match(block, /上床睡觉/u, "the Chinese prompt must say to go to bed");
+  assert.match(block, /睡下/u, "the Chinese prompt must say to go to bed");
   assert.match(block, /sleep in your bed/u, "the English prompt must say to sleep in your bed");
+  // ...and the action's OWN precondition, which the lifecycle enforces by name: it only begins a night from
+  // inside the farmhouse, so a prompt that omits this leaves the companion dispatching a sleep it cannot take.
+  assert.match(block, /只在农舍屋内生效/u, "the Chinese prompt must state the indoor precondition");
+  assert.match(block, /only works indoors/u, "the English prompt must state the indoor precondition");
   // The watcher must not dispatch a night of its own: it reads the receipt of the dispatch the COMPANION made,
   // and its one write is the settlement-menu dismissal.
   const watcher = RUNNER.slice(
@@ -165,7 +169,8 @@ test("a day that only reported back is asked again, by the companion's own decis
   );
   assert.match(reminder, /zh: "/u);
   assert.match(reminder, /en: "/u);
-  assert.match(reminder, /上床睡觉/u);
+  assert.match(reminder, /睡下/u, "the reminder must say to sleep");
+  assert.match(reminder, /只在农舍屋内生效/u, "the reminder must repeat the indoor precondition");
   assert.match(reminder, /sleep in your bed/u);
   assert.match(reminder, /advance_day/u);
 });
