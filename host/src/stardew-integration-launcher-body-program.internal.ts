@@ -1,5 +1,6 @@
 import type { WorldFact } from "./event-pump.js";
 import { projectGameSnapshotContext } from "./snapshot-projection.js";
+import { classifyFactListenerFailure } from "./local-stardew-bridge.js";
 import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
 import {
   type ExecutionWake,
@@ -49,10 +50,7 @@ type StardewConnectionAuthentication = Readonly<{
  * wrappers, and caller-supplied state are distinct objects absent from this
  * map, so every adapter entry point rejects them.
  */
-const authenticatedStardewConnections = new WeakMap<
-  object,
-  StardewConnectionAuthentication
->();
+const authenticatedStardewConnections = new WeakMap<object, StardewConnectionAuthentication>();
 
 /**
  * Construction-private authenticated association. The authenticated Stardew
@@ -62,12 +60,8 @@ const authenticatedStardewConnections = new WeakMap<
  * no production or test module may mint an association outside the exact
  * launch construction.
  */
-function registerAuthenticatedStardewConnection(
-  connection: StardewBridgeConnection,
-  isLive: () => boolean,
-): void {
-  if (authenticatedStardewConnections.has(connection))
-    throw new Error("duplicate_authenticated_stardew_connection");
+function registerAuthenticatedStardewConnection(connection: StardewBridgeConnection, isLive: () => boolean): void {
+  if (authenticatedStardewConnections.has(connection)) throw new Error("duplicate_authenticated_stardew_connection");
   authenticatedStardewConnections.set(connection, { isLive });
 }
 
@@ -78,14 +72,10 @@ function registerAuthenticatedStardewConnection(
  * bridge-closed). Structural copies, caller-state, and self-comparison never
  * appear in the association map and reject before any data is read.
  */
-export function assertAuthenticatedStardewConnection(
-  connection: GameConnection,
-): StardewBridgeConnection {
+export function assertAuthenticatedStardewConnection(connection: GameConnection): StardewBridgeConnection {
   const authentication = authenticatedStardewConnections.get(connection);
   if (authentication === undefined || !authentication.isLive())
-    throw new Error(
-      "stardew_connection_not_authenticated_or_not_live",
-    );
+    throw new Error("stardew_connection_not_authenticated_or_not_live");
   return connection as StardewBridgeConnection;
 }
 
@@ -96,9 +86,7 @@ export type StardewAuthenticatedBodyProgramPort = Readonly<{
   events(request: BodyProgramEventsRequest): Promise<BodyProgramEventsResult>;
 }>;
 
-type BodyNodeAdmissionHandler = (
-  challenge: BodyNodeAdmissionChallenge,
-) => Promise<BodyNodeAdmissionResult>;
+type BodyNodeAdmissionHandler = (challenge: BodyNodeAdmissionChallenge) => Promise<BodyNodeAdmissionResult>;
 
 export type AuthenticatedStardewLaunchPorts = Readonly<{
   presentation: FarmhandPresentationBridge;
@@ -129,8 +117,19 @@ function associateAuthenticatedStardewLaunch(
  */
 export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
   bridge: LocalStardewBridgeClient,
-  identity: Readonly<{ playerId: string; companionId: string; continuityId?: string; saveId?: string; worldId?: string }>,
-  options: Readonly<{ module: GameIntegrationAdapter; expectedPresentationLocale?: string; knowledge?: import("./knowledge.js").KnowledgeBundle; gameVersion?: string }>,
+  identity: Readonly<{
+    playerId: string;
+    companionId: string;
+    continuityId?: string;
+    saveId?: string;
+    worldId?: string;
+  }>,
+  options: Readonly<{
+    module: GameIntegrationAdapter;
+    expectedPresentationLocale?: string;
+    knowledge?: import("./knowledge.js").KnowledgeBundle;
+    gameVersion?: string;
+  }>,
 ): Promise<IntegrationLaunchHandle> {
   if (!(bridge instanceof LocalStardewBridgeClient)) throw new Error("authenticated_stardew_bridge_required");
   if (identity.saveId === undefined || identity.worldId === undefined)
@@ -142,7 +141,7 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
     scope.worldId !== identity.worldId ||
     scope.companionId !== identity.companionId
   ) {
-    bridge.close();
+    bridge.close("stardew_bridge_identity_scope_mismatch");
     throw new Error("stardew_bridge_identity_scope_mismatch");
   }
   const local = options;
@@ -174,20 +173,26 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
     const event = Object.freeze({ state: "disconnected" as const, reasonCode });
     bufferedLifecycle.push(event);
     for (const listener of lifecycleListeners) listener(event);
-    bridge.close();
+    // The launcher's own name for this disconnect, forwarded rather than dropped: see the bridge's `close()`.
+    bridge.close(reasonCode);
   };
   const revoke = (reasonCode: string) => disconnect(reasonCode);
   const deliverFact = (converted: WorldFact, fact: LocalStardewBridgeFact) => {
     try {
       for (const listener of [...factListeners]) listener(converted);
-    } catch {
+    } catch (error) {
+      // WHICH listener rejected WHICH fact kind, and the error's own bounded token. Without this the disconnect is a
+      // bare `fact_listener_failed`, which says nothing about whether the fault is a projection, an event pump, or a
+      // serialization problem (measured 2026-10-17 twice: a multi-day run died 14s in and the artifact could not
+      // say what had thrown).
+      console.error(
+        "STARDEW_FACT_LISTENER_FAILED",
+        JSON.stringify({ factKind: converted.kind, error: classifyFactListenerFailure(error) }),
+      );
       disconnect("fact_listener_failed");
       return;
     }
-    if (
-      fact.type === "semantic_event" &&
-      (fact.payload.kind === "player_input" || fact.payload.kind === "stop_all")
-    ) {
+    if (fact.type === "semantic_event" && (fact.payload.kind === "player_input" || fact.payload.kind === "stop_all")) {
       console.debug("GameBuddy native chat ingress stage=native_chat_adapter_fact_forwarded");
       try {
         bridge.acknowledgePlayerControl(
@@ -217,13 +222,15 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
         invalidated = true;
         publishWake(Object.freeze({ kind: "invalidated", reasonCode: receipt.reasonCode }));
       } else if (isTerminalExecutionState(receipt.state))
-        publishWake(Object.freeze({
-          kind: "terminal",
-          requestId: receipt.requestId,
-          executionId: receipt.executionId,
-          state: receipt.state,
-          reasonCode: receipt.reasonCode,
-        }));
+        publishWake(
+          Object.freeze({
+            kind: "terminal",
+            requestId: receipt.requestId,
+            executionId: receipt.executionId,
+            state: receipt.state,
+            reasonCode: receipt.reasonCode,
+          }),
+        );
     }
     if (!factDeliveryReady) {
       if (fact.type === "snapshot") bootstrapFacts.push(converted);
@@ -239,7 +246,10 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
   try {
     const snapshot = await bridge.observe();
     if (!executionGate.executable) throw new Error("stardew_launch_disconnected");
-    if (local.expectedPresentationLocale !== undefined && snapshot.presentationLocale !== local.expectedPresentationLocale)
+    if (
+      local.expectedPresentationLocale !== undefined &&
+      snapshot.presentationLocale !== local.expectedPresentationLocale
+    )
       throw new Error("stardew_presentation_locale_mismatch");
     const initialFacts = Object.freeze(bootstrapFacts.splice(0));
     if (!initialFacts.some((fact) => fact.kind === "snapshot" && fact.revision === snapshot.revision))
@@ -269,18 +279,24 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
     const connection: StardewBridgeConnection = Object.freeze({
       scope,
       module: local.module,
-      get state() { return bridge.state; },
+      get state() {
+        return bridge.state;
+      },
       knowledge: local.knowledge,
       gameVersion: local.gameVersion,
-      executionWakeSource: { onExecutionWake: (listener: (wake: ExecutionWake) => void) => {
-        executionWakeListeners.add(listener);
-        return () => executionWakeListeners.delete(listener);
-      } },
+      executionWakeSource: {
+        onExecutionWake: (listener: (wake: ExecutionWake) => void) => {
+          executionWakeListeners.add(listener);
+          return () => executionWakeListeners.delete(listener);
+        },
+      },
       executionGate,
       execute: (request: Parameters<typeof bridge.execute>[0]) =>
         executionGate.executable ? bridge.execute(request) : Promise.reject(new Error("integration_not_ready")),
       cancel: (requestId: string, executionId: string, reasonCode: string) =>
-        executionGate.executable ? bridge.cancel(requestId, executionId, reasonCode) : Promise.reject(new Error("integration_not_ready")),
+        executionGate.executable
+          ? bridge.cancel(requestId, executionId, reasonCode)
+          : Promise.reject(new Error("integration_not_ready")),
       observe: () => bridge.observe(),
     });
     // Mint exactly one authenticated association for the exact frozen wrapper
@@ -290,25 +306,26 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
       connection,
       () => executionGate.executable === true && bridge.state.connected,
     );
-    const receiptRecovery: ExactReceiptRecoveryPort | undefined = identity.continuityId === undefined
-      ? undefined
-      : Object.freeze({
-          scope: Object.freeze({
-            product: "stardew" as const,
-            continuityId: identity.continuityId,
-            integrationId: "stardew" as const,
-            saveId: scope.saveId,
-            worldId: scope.worldId,
-          }),
-          bindingIdentity: Object.freeze({
-            product: "stardew" as const,
-            continuityId: identity.continuityId,
-            integrationId: "stardew" as const,
-            saveId: scope.saveId,
-            worldId: scope.worldId,
-          }),
-          queryExecutionReceipt: (query) => bridge.queryExecutionReceipt(query),
-        });
+    const receiptRecovery: ExactReceiptRecoveryPort | undefined =
+      identity.continuityId === undefined
+        ? undefined
+        : Object.freeze({
+            scope: Object.freeze({
+              product: "stardew" as const,
+              continuityId: identity.continuityId,
+              integrationId: "stardew" as const,
+              saveId: scope.saveId,
+              worldId: scope.worldId,
+            }),
+            bindingIdentity: Object.freeze({
+              product: "stardew" as const,
+              continuityId: identity.continuityId,
+              integrationId: "stardew" as const,
+              saveId: scope.saveId,
+              worldId: scope.worldId,
+            }),
+            queryExecutionReceipt: (query) => bridge.queryExecutionReceipt(query),
+          });
     const handle: IntegrationLaunchHandle = Object.freeze({
       connection,
       ...(receiptRecovery === undefined ? {} : { receiptRecovery }),
@@ -374,20 +391,23 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
           },
         })
       : undefined;
-    associateAuthenticatedStardewLaunch(handle, Object.freeze({
-      connection,
-      presentation,
-      ...(bodyProgram === undefined ? {} : { bodyProgram }),
-       bindBodyNodeAdmission: (handler) => bindLocalStardewBridgeBodyNodeAdmission(bridge, handler),
-      isClosed: isLauncherClosed,
-    }));
+    associateAuthenticatedStardewLaunch(
+      handle,
+      Object.freeze({
+        connection,
+        presentation,
+        ...(bodyProgram === undefined ? {} : { bodyProgram }),
+        bindBodyNodeAdmission: (handler) => bindLocalStardewBridgeBodyNodeAdmission(bridge, handler),
+        isClosed: isLauncherClosed,
+      }),
+    );
     return handle;
   } catch (error) {
     executionGate.executable = false;
     removeFact();
     removeLifecycle();
     removeDiagnostic();
-    bridge.close();
+    bridge.close("stardew_launch_handle_construction_failed");
     throw error;
   }
 }
@@ -416,11 +436,40 @@ export function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
         contextProjection: projectGameSnapshotContext(message.payload, message.timestampMs, Date.now()),
       };
     case "execution_receipt":
-      return { source: "stardew_mod", kind: "execution_receipt", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.payload.executionId, revision: message.payload.revision, executionId: message.payload.executionId, requestId: message.payload.requestId, payload: message.payload };
+      return {
+        source: "stardew_mod",
+        kind: "execution_receipt",
+        eventId: message.messageId,
+        occurredAtMs: message.timestampMs,
+        correlationId: message.payload.executionId,
+        revision: message.payload.revision,
+        executionId: message.payload.executionId,
+        requestId: message.payload.requestId,
+        payload: message.payload,
+      };
     case "semantic_event":
-      return { source: "stardew_mod", kind: "semantic_event", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: message.payload.revision, ...(message.payload.activeExecution?.executionId === undefined ? {} : { executionId: message.payload.activeExecution.executionId }), payload: message.payload };
+      return {
+        source: "stardew_mod",
+        kind: "semantic_event",
+        eventId: message.messageId,
+        occurredAtMs: message.timestampMs,
+        correlationId: message.correlationId,
+        revision: message.payload.revision,
+        ...(message.payload.activeExecution?.executionId === undefined
+          ? {}
+          : { executionId: message.payload.activeExecution.executionId }),
+        payload: message.payload,
+      };
     case "lifecycle":
-      return { source: "stardew_mod", kind: "lifecycle", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: 0, payload: message.payload };
+      return {
+        source: "stardew_mod",
+        kind: "lifecycle",
+        eventId: message.messageId,
+        occurredAtMs: message.timestampMs,
+        correlationId: message.correlationId,
+        revision: 0,
+        payload: message.payload,
+      };
     case "world_fact": {
       if (!message.payload.eventId || typeof message.payload.eventId !== "string") {
         throw new Error("invalid_world_fact_event_id");

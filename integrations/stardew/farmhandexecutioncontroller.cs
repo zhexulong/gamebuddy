@@ -85,6 +85,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private long artifactSpotResultRevision;
     private int artifactSpotResultDay;
     private long revision;
+    /// <summary>
+    /// The revision most recently PUBLISHED for each execution, which is what the Host's receipt-order audit
+    /// compares against. Kept beside the mint-time revision rather than derived from it: the mint sites read a
+    /// shared world counter, so two distinct transitions of one execution can legitimately mint the same number
+    /// (see the publish funnel).
+    /// </summary>
+    private readonly Dictionary<string, long> publishedReceiptRevisionByExecutionId = new(StringComparer.Ordinal);
     private int tick;
     private Func<NavigationRuntimeSnapshot?>? navigationRuntimeFactory;
     private LocalNavigateSpec? activeNavigate;
@@ -4521,12 +4528,37 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 this.monitor.Log($"[receipt-durability-marker] request={receipt.RequestId};state={receipt.State};reason={receipt.ReasonCode};code={result.Code};ignored=observational", LogLevel.Trace);
             }
         }
-        this.monitor.Log($"[receipt-publish-marker] request={receipt.RequestId};state={receipt.State};reason={receipt.ReasonCode};revision={receipt.Revision}", LogLevel.Trace);
         if (this.durabilityFailuresByRequestId.Contains(receipt.RequestId))
             return;
-        if (category is not null && !this.navigationExecutionIds.Contains(receipt.ExecutionId))
-            this.AddPublicTrace(category, receipt.ExecutionId, receipt.RequestId);
-        this.receiptPublished?.Invoke(receipt);
+        // ONE delivery funnel, so the published revision is strictly monotonic PER EXECUTION.
+        //
+        // The Host audits receipt order and refuses a same-revision transition whose content differs
+        // (`execution_receipt_replay_rejected:non_monotonic_revision`, receipt-replay.ts:49), because an equal
+        // revision carrying different content is indistinguishable from a rewrite of a settled transition. The
+        // world revision counter it compares against is shared with the action it is about to perform: a mint site
+        // that read `this.revision` AFTER the native mutation announced `Running/tool_approach_completed` at the
+        // same number as the `Succeeded/crop_harvested` that followed, which the Host correctly refused - and a
+        // refused receipt is a fatal transport fault, so it killed the whole run (measured 2026-10-17, three times
+        // on the first multi-day attempts).
+        //
+        // Bumping here rather than at ~120 mint sites is the smallest fix that cannot regress: the aliasing is
+        // inherent to reading a shared counter on both sides of a mutation, and this is the only place every
+        // receipt passes through on its way out. The comparison is against what was PUBLISHED, not against the
+        // mint-time mirror, so a legitimate redelivery of one transition can still be byte-identical - which is
+        // what the Host's own idempotent path expects - while a genuinely new transition is always strictly higher.
+        LocalExecutionReceipt published = receipt;
+        this.publishedReceiptRevisionByExecutionId.TryGetValue(receipt.ExecutionId, out long publishedRevision);
+        if (publishedRevision != 0 && receipt.Revision <= publishedRevision)
+        {
+            this.revision = Math.Max(this.revision, publishedRevision + 1);
+            published = receipt with { Revision = this.revision };
+            this.Remember(published);
+        }
+        this.publishedReceiptRevisionByExecutionId[receipt.ExecutionId] = published.Revision;
+        this.monitor.Log($"[receipt-publish-marker] request={published.RequestId};state={published.State};reason={published.ReasonCode};revision={published.Revision}", LogLevel.Trace);
+        if (category is not null && !this.navigationExecutionIds.Contains(published.ExecutionId))
+            this.AddPublicTrace(category, published.ExecutionId, published.RequestId);
+        this.receiptPublished?.Invoke(published);
     }
 
     /// <summary>

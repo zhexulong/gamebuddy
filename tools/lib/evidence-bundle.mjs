@@ -243,6 +243,30 @@ export function validateEvidenceBundle(bundle, { actionTrace = null } = {}) {
     violations.push(violation("voice_reason_missing", "voice.reasonCode"));
   }
 
+  // Optional, because it is a fact about CROSSINGS: a single-day run has none. When present it must be
+  // well-formed and its judgement must be the baseline's own, so a run cannot report a passing crossing it
+  // never made.
+  if (bundle.multiday !== undefined && bundle.multiday !== null) {
+    const multiday = bundle.multiday;
+    if (!isPlainObject(multiday)) {
+      violations.push(violation("multiday_not_object", "multiday"));
+    } else {
+      if (!Number.isInteger(multiday.crossings) || multiday.crossings < 1) {
+        violations.push(violation("multiday_crossings_invalid", "multiday.crossings"));
+      }
+      if (!isPlainObject(multiday.assessment) || multiday.assessment.state === undefined) {
+        violations.push(violation("multiday_assessment_missing", "multiday.assessment"));
+      } else if (multiday.assessment.state === "passed" && multiday.assessment.ok !== true) {
+        violations.push(violation("multiday_assessment_disagrees_with_its_own_state", "multiday.assessment"));
+      }
+      if (!Array.isArray(multiday.dayRecords)) {
+        violations.push(violation("multiday_day_records_missing", "multiday.dayRecords"));
+      } else if (Number.isInteger(multiday.crossings) && multiday.dayRecords.length !== multiday.crossings) {
+        violations.push(violation("multiday_day_records_disagree_with_crossings", "multiday.dayRecords"));
+      }
+    }
+  }
+
   const failed = isPlainObject(verdict) && verdict.state === "failed";
   if (failed && !isPlainObject(bundle.failure)) {
     violations.push(violation("failure_snapshot_missing", "failure"));
@@ -328,6 +352,12 @@ const CHECKED_OBLIGATIONS = Object.freeze([
   "reclamation_reflection_unknown",
   "voice_playback_unknown",
   "voice_reason_missing",
+  "multiday_not_object",
+  "multiday_crossings_invalid",
+  "multiday_assessment_missing",
+  "multiday_assessment_disagrees_with_its_own_state",
+  "multiday_day_records_missing",
+  "multiday_day_records_disagree_with_crossings",
   "failure_snapshot_missing",
   "failure_field_missing",
   "failure_player_tile_invalid",

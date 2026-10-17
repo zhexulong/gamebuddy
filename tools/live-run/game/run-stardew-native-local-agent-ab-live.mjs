@@ -26,6 +26,9 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
+import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
+import { assessMultiDayBaseline, MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "../../lib/multiday-baseline.mjs";
+import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
 import { identityKey } from "../../../host/dist-test/runtime-identity.js";
 import { dehydrateCompanionSpeech } from "../../../host/dist-test/companion-speech-dehydration.js";
@@ -132,7 +135,7 @@ const LEGACY_SCENARIO_BY_LADDER = Object.freeze({
   5: "memory_covenant",
   6: "morning_routine",
 });
-const SCENARIOS = Object.freeze(["morning_routine", "memory_covenant", "npc_social_and_presence"]);
+const SCENARIOS = Object.freeze(["morning_routine", "memory_covenant", "npc_social_and_presence", "multiday_routine"]);
 const LEGACY_LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? null;
 const SCENARIO = (() => {
   const requested =
@@ -214,6 +217,17 @@ const SCENARIO_PROMPTS = Object.freeze({
   npc_social_and_presence: Object.freeze({
     zh: `今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她需要一颗新鲜花椰菜做菜，希望你能给她带一颗。你农场的地里正好种着一颗已经长好的花椰菜，她今天就在农场附近。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
     en: `Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. There happens to be a fully grown cauliflower in your farm soil, and she is nearby on the farm today. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+  }),
+  multiday_routine: Object.freeze({
+    // Per-day, with the day number in the text: the companion decides its day AND decides when the day is
+    // over, by dispatching its own `advance_day`. The loop never ends a night for it - the prompt is where
+    // "the day is yours to end" is said, because a night the harness chose would be a scripted crossing.
+    zh: (day) =>
+      `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。今天没有人给你派活——你自己看看周围，想做什么就做什么。` +
+      `做完今天想做的事就回屋上床睡觉（用 advance_day），明天接着来。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+    en: (day) =>
+      `It is morning in Stardew Valley (day ${String(day)} in a row for you). Nobody has assigned you anything today - look around and do whatever you think is worth doing. ` +
+      `When you are done for the day, go inside and sleep in your bed (use advance_day); you will pick it up tomorrow. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
@@ -326,6 +340,8 @@ const REQUIRED_FIXTURE_SCENARIO = Object.freeze({
   memory_covenant: "native_strawberry_covenant_v1",
   // One mature cauliflower on the Farm plus a reachable Jodi: the errand needs both the item and the villager.
   npc_social_and_presence: "native_jodi_harvest_deliver_v1",
+  // The multi-day Given AND the play-session affordances: days that pass, and work in each of them.
+  multiday_routine: "native_multi_day_play_session_v1",
 });
 // `morning_routine` asserts nothing about the fixture's shape: the companion decides its own work, so whatever
 // world the operator armed is the world it plays in.
@@ -414,6 +430,20 @@ client.onConnectionFact((fact) => {
   });
   bridgeDisconnections.push(entry);
   console.error("BRIDGE_DISCONNECTED", JSON.stringify(entry));
+});
+// The client's OWN reason for a transport it closed. `local_close` names the symptom; the diagnostic names the
+// protocol fact that rejected a frame, which is what makes a mid-run disconnect diagnosable rather than
+// mysterious (measured 2026-10-17: the pipe ended 15s into the first multi-day run and nothing said why).
+const bridgeDiagnostics = [];
+client.onDiagnostic?.((diagnostic) => {
+  const entry = Object.freeze({
+    stage: diagnostic?.stage ?? null,
+    reasonCode: diagnostic?.reasonCode ?? null,
+    atMs: Date.now(),
+    elapsedMs: Date.now() - phaseTimings.runStartedAtMs,
+  });
+  bridgeDiagnostics.push(entry);
+  console.error("BRIDGE_DIAGNOSTIC", JSON.stringify(entry));
 });
 const factLog = [];
 /** Exact serialized bridge entries already printed, so a contract-legal
@@ -728,8 +758,22 @@ client.onFact((fact) => {
     // progress events (e.g. per-tile `tile_advanced`) differ and still log. Every
     // entry still reaches factLog verbatim; only the log line is deduplicated, so
     // a redelivered receipt cannot read as a second action.
-    const serialized = JSON.stringify(entry);
+    const serialized = (() => {
+      try {
+        return JSON.stringify(entry);
+      } catch (error) {
+        return null;
+      }
+    })();
     factLog.push(entry);
+    if (serialized === null) {
+      // A payload the recorder cannot serialize must not take the SESSION down with it. The bridge treats any
+      // throw from a fact listener as a fatal transport fault and closes it (`fact_listener_failed`), so an
+      // evidence recorder that threw would end the very run it exists to record - measured 2026-10-17: the first
+      // multi-day run reported `fact_listener_failed` with no way to tell it apart from a real protocol fault.
+      console.error("BRIDGE_FACT_UNSERIALIZABLE", JSON.stringify({ type: entry.type, reasonCode: entry.reasonCode }));
+      return;
+    }
     if (!loggedFactLines.has(serialized)) {
       loggedFactLines.add(serialized);
       console.error("BRIDGE_FACT", serialized);
@@ -1069,6 +1113,178 @@ function buildCapabilityAudit({
     advertisedSampleCount,
     advertisedSampleMaxSize,
     advertisedAxisUsable: advertisedSampleCount > 0 && advertised.length > 0,
+  });
+}
+/** How long ONE night's rollover may take before the harness stops watching. A harness bound, not a product verdict. */
+const MULTIDAY_NIGHT_TIMEOUT_MS = 600_000;
+/** How long one `dismiss_modal` may take to reach its terminal before the wait is named. */
+const MULTIDAY_DISMISS_TIMEOUT_MS = 60_000;
+/** How often the night watcher asks the world. It runs only while a night is in flight. */
+const MULTIDAY_POLL_INTERVAL_MS = 250;
+
+const MULTIDAY_CROSSINGS = (() => {
+  const requested = Number.parseInt(process.env.GAMEBUDDY_MULTIDAY_CROSSINGS ?? "2", 10);
+  if (!Number.isInteger(requested) || requested < MINIMUM_BASELINE_DAYS || requested > MAXIMUM_BASELINE_DAYS) {
+    throw new Error(
+      `multiday_crossings_out_of_range:${String(process.env.GAMEBUDDY_MULTIDAY_CROSSINGS)} (expected ${String(MINIMUM_BASELINE_DAYS)}..${String(MAXIMUM_BASELINE_DAYS)})`,
+    );
+  }
+  return requested;
+})();
+
+/**
+ * What one day accomplished, read from the RECEIPTS rather than from the companion's prose.
+ *
+ * The join is the audit's own: an action's dispatch in the trace, its terminal receipt in the fact log, and
+ * the registered success terminal from the published gate table. Counting the dispatch alone would credit an
+ * attempt as work; counting the companion's own summary would credit a claim as work.
+ */
+function accomplishedSince(startIndex) {
+  const accomplished = new Set();
+  for (const entry of actionTrace.slice(startIndex)) {
+    const expected = STARDEW_PUBLISHED_ACTION_GATES.find((gate) => gate.actionId === entry.action)?.terminalReasonCode;
+    if (expected === undefined) continue;
+    const terminal = factLog.find(
+      (fact) =>
+        fact.type === "execution_receipt" &&
+        fact.requestId === entry.requestId &&
+        fact.reasonCode === expected &&
+        (fact.state === "succeeded" || fact.state === "partially_succeeded"),
+    );
+    if (terminal !== undefined) accomplished.add(entry.action);
+  }
+  return [...accomplished].sort();
+}
+
+/** A promise with its resolve exposed, for the "has this finished yet" question the night watcher asks. */
+function deferred() {
+  let resolve;
+  const promise = new Promise((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * Watch the night that the companion's own `advance_day` starts.
+ *
+ * Started at the SAME moment as the day's turn, because the night begins while the Agent is still blocked
+ * inside its tool call. What this adds is the one thing the Agent cannot do for itself: the settlement menu
+ * the rollover raises is observed and closed with the product's own `dismiss_modal`, and the closing receipt is
+ * recorded - so "the menu was cleared" is a product fact rather than an inference from the run having
+ * finished.
+ */
+async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = {}) {
+  const traceStart = actionTrace.length;
+  const observeQuietly = async () => {
+    try {
+      return await client.observe();
+    } catch {
+      // A rollover's fade legitimately refuses an observation for a frame or two; the cached projection is
+      // the current truth in that window.
+      return client.state?.snapshot ?? null;
+    }
+  };
+  // WAIT FOR THE NIGHT TO BEGIN before watching it.
+  //
+  // The night starts when the companion dispatches `advance_day`, which happens somewhere inside its day. A
+  // watcher that started observing from the first second of the day would poll the world at 4 Hz for the whole
+  // turn (measured 2026-10-17: the first multi-day run had the loop observing from t=0, and the bridge closed
+  // 15s in) and would ALSO be unable to tell "the companion has not slept yet" from "the companion will not
+  // sleep". Waiting for the dispatch - bounded, and against the day's own settlement - gives both.
+  const waitForNightToBegin = async () => {
+    let daySettled = false;
+    void dayTurnSettled.then(() => {
+      daySettled = true;
+    });
+    const deadline = Date.now() + MULTIDAY_NIGHT_TIMEOUT_MS;
+    for (;;) {
+      if (bridgeDisconnections.length > 0) {
+        return `night_watched_over_a_dead_bridge:${String(bridgeDisconnections[0]?.reasonCode ?? "unknown")}`;
+      }
+      const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
+      if (dispatched !== undefined) return null;
+      if (daySettled) return "companion_did_not_sleep";
+      if (Date.now() >= deadline) return "companion_did_not_sleep:day_turn_still_running";
+      await new Promise((resolve) => setTimeout(resolve, MULTIDAY_POLL_INTERVAL_MS));
+    }
+  };
+  const neverStarted = await waitForNightToBegin();
+  if (neverStarted !== null) {
+    return Object.freeze({ terminal: null, after: await observeQuietly(), menus: [], reasonCode: neverStarted });
+  }
+  const dayBefore = client.state?.snapshot?.dayOfMonth;
+  const world = {
+    observe: observeQuietly,
+    dismiss: async (menuType) => {
+      const requestId = `multiday_dismiss_${String(day)}_${String(Date.now())}`;
+      try {
+        const accepted = await client.execute({
+          requestId,
+          idempotencyKey: `${requestId}_idem`,
+          action: "dismiss_modal",
+          args: {},
+        });
+        const deadline = Date.now() + MULTIDAY_DISMISS_TIMEOUT_MS;
+        for (;;) {
+          const terminal = factLog.find(
+            (fact) =>
+              fact.type === "execution_receipt" &&
+              fact.requestId === accepted?.requestId &&
+              TERMINAL_STATES.has(fact.state),
+          );
+          if (terminal !== undefined) {
+            return terminal.state === "succeeded" && terminal.reasonCode === "modal_dismissed"
+              ? Object.freeze({ receipt: terminal, reasonCode: null })
+              : Object.freeze({
+                  receipt: terminal,
+                  reasonCode: `menu_not_dismissed:${menuType}:${String(terminal.state)}/${String(terminal.reasonCode)}`,
+                });
+          }
+          if (Date.now() >= deadline) break;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return Object.freeze({ receipt: null, reasonCode: `menu_not_dismissed:${menuType}:terminal_not_observed` });
+      } catch (error) {
+        return Object.freeze({
+          receipt: null,
+          reasonCode: `menu_not_dismissed:${menuType}:${String(error?.message ?? error).slice(0, 160)}`,
+        });
+      }
+    },
+  };
+  const outcome = await watchRollover(world, {
+    dayBefore,
+    timeoutMs: MULTIDAY_NIGHT_TIMEOUT_MS,
+    abort: () =>
+      bridgeDisconnections.length > 0
+        ? `night_watched_over_a_dead_bridge:${String(bridgeDisconnections[0]?.reasonCode ?? "unknown")}`
+        : null,
+  });
+  // The night's own terminal: the receipt of the `advance_day` the COMPANION dispatched during this window.
+  const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
+  const terminal =
+    dispatched === undefined
+      ? null
+      : (factLog.find(
+          (fact) =>
+            fact.type === "execution_receipt" &&
+            fact.requestId === dispatched.requestId &&
+            TERMINAL_STATES.has(fact.state),
+        ) ?? null);
+  if (dispatched === undefined) {
+    return Object.freeze({
+      terminal: null,
+      after: await observeQuietly(),
+      menus: outcome.menus,
+      reasonCode: `night_never_started:${String(outcome.reasonCode ?? "companion_did_not_sleep")}`,
+    });
+  }
+  return Object.freeze({
+    terminal,
+    after: await observeQuietly(),
+    menus: outcome.menus,
+    reasonCode: outcome.reasonCode ?? null,
   });
 }
 
@@ -1440,6 +1656,9 @@ let runtime;
 // of losing them when a later stage throws.
 let agentTurnResult = null;
 let voiceResult = null;
+// The multi-day outcome: the loop's own records plus the baseline's judgement of them. Declared out here so
+// the failure path can report what the run did before it stopped instead of losing the crossings it made.
+let multidayOutcome = null;
 try {
   runtime = await binding.executeWithBinding((bindingToken) =>
     withConsumedBindingExecution(bindingToken, (execution) => {
@@ -1479,21 +1698,74 @@ try {
   // it what to do. What is left states the player's intent and the world's facts, and nothing about the route.
   const prompt =
     process.env.GAMEBUDDY_AGENT_PROMPT ?? SCENARIO_PROMPTS[SCENARIO][COMPANION_LOCALE === "zh-CN" ? "zh" : "en"];
-  // Time origin for chunked-presentation TTFB: the moment the agent turn is
-  // admitted, so the first companion bubble's elapsed time is measured from the
-  // real turn boundary, not from process start.
-  const firstTurn = await runAgentTurn(prompt, tools);
-  let status = firstTurn.status;
-  agentTurnResult = firstTurn.turn;
-  sessionTurns.push(Object.freeze({ goalIndex: 0, goal: prompt, turn: agentTurnResult }));
-  // A self-directed scenario keeps playing: each extra goal is delivered as a NEW player turn
-  // only after the previous one settled, so the session measures a companion
-  // making its own choices across several intents rather than one scripted chain.
-  if (SCENARIO === "morning_routine") {
-    for (const [index, goal] of SESSION_GOALS.entries()) {
-      const next = await runAgentTurn(goal, tools);
-      if (next.status !== null) status = next.status;
-      sessionTurns.push(Object.freeze({ goalIndex: index + 1, goal, turn: next.turn }));
+  const localeKey = COMPANION_LOCALE === "zh-CN" ? "zh" : "en";
+  // The multi-day scenario's per-day prompt is a FUNCTION (it carries the day number), so the single-goal
+  // path below stays a string and only this branch calls it.
+  const promptForDay = (day) => {
+    const entry = SCENARIO_PROMPTS[SCENARIO][localeKey];
+    return typeof entry === "function" ? entry(day) : entry;
+  };
+  let status = null;
+  // The promise the CURRENT day's turn settles on. The night watcher waits on it so "the night has not begun"
+  // and "the companion will not sleep" are different answers instead of one timeout.
+  let dayTurnSettled = Promise.resolve();
+  if (SCENARIO === "multiday_routine") {
+    // Lane G0: the companion runs consecutive days and ends each one itself. The loop's `dayTurn` is an
+    // ordinary agent turn; its `nightWatch` is the rollover observer, because the companion is blocked inside
+    // `advance_day` at exactly the moment the settlement menu is raised.
+    const crossing = await runMultiDayLoop({
+      crossNights: MULTIDAY_CROSSINGS,
+      dayTurn: async (day) => {
+        const before = actionTrace.length;
+        // The night watcher waits for THIS promise to settle before deciding the companion chose not to sleep,
+        // so it can tell "the night has not started" from "there will be no night".
+        const settled = deferred();
+        dayTurnSettled = settled.promise;
+        try {
+          const walked = await runAgentTurn(promptForDay(day), tools);
+          if (walked.status !== null) status = walked.status;
+          agentTurnResult = walked.turn;
+          sessionTurns.push(Object.freeze({ goalIndex: day - 1, goal: promptForDay(day), turn: walked.turn, day }));
+          // The day's own verdict: what it accomplished, read from the receipts its dispatches produced. This is
+          // the "the companion kept working" half of the baseline, and it is computed from the trace rather than
+          // from the companion's prose.
+          return Object.freeze({ accomplishedActionIds: accomplishedSince(before) });
+        } finally {
+          settled.resolve();
+        }
+      },
+      nightWatch: (day) => watchNightRollover(day, { dayTurnSettled }),
+      onDay: (record) =>
+        console.error(
+          "MULTIDAY_NIGHT",
+          JSON.stringify({ day: record.day, menus: record.menus.map((menu) => menu.menuType) }),
+        ),
+    });
+    multidayOutcome = Object.freeze({
+      crossings: crossing.daysCrossed,
+      completed: crossing.completed,
+      reasonCode: crossing.reasonCode,
+      // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
+      assessment: assessMultiDayBaseline({ dayRecords: crossing.dayRecords, daysRequested: crossing.daysCrossed }),
+      dayRecords: crossing.dayRecords,
+    });
+  } else {
+    // Time origin for chunked-presentation TTFB: the moment the agent turn is
+    // admitted, so the first companion bubble's elapsed time is measured from the
+    // real turn boundary, not from process start.
+    const firstTurn = await runAgentTurn(prompt, tools);
+    status = firstTurn.status;
+    agentTurnResult = firstTurn.turn;
+    sessionTurns.push(Object.freeze({ goalIndex: 0, goal: prompt, turn: agentTurnResult }));
+    // A self-directed scenario keeps playing: each extra goal is delivered as a NEW player turn
+    // only after the previous one settled, so the session measures a companion
+    // making its own choices across several intents rather than one scripted chain.
+    if (SCENARIO === "morning_routine") {
+      for (const [index, goal] of SESSION_GOALS.entries()) {
+        const next = await runAgentTurn(goal, tools);
+        if (next.status !== null) status = next.status;
+        sessionTurns.push(Object.freeze({ goalIndex: index + 1, goal, turn: next.turn }));
+      }
     }
   }
   // The voice lane's terminal playback observation for the companion line this run streamed. The gateway
@@ -1691,6 +1963,11 @@ try {
     SCENARIO === "npc_social_and_presence"
       ? harvestReceipt !== undefined && offerReceipt !== undefined && voicePassed
       : true;
+  // multiday_routine: the companion crossed consecutive days, each night ended by its OWN sleep, and the
+  // baseline's rules hold over what was observed. The judgement comes from `assessMultiDayBaseline` rather
+  // than from a second set of checks here: a gate and a runner that each decide what "crossed the day" means
+  // is how a run comes to pass one and red the other.
+  const multidayRoutinePassed = SCENARIO === "multiday_routine" ? multidayOutcome?.assessment?.ok === true : true;
   // The audit the rung exists for: what it could do, what the system stopped, and
   // what it never tried. `notAttempted` is read from the live advertised
   // capability surface (what the Agent could actually see during THIS run), never
@@ -1828,6 +2105,7 @@ try {
       morningRoutinePassed &&
       memoryCovenantPassed &&
       npcSocialAndPresencePassed &&
+      multidayRoutinePassed &&
       contextPassed &&
       contentPassed &&
       worldBookPassed &&
@@ -1847,10 +2125,16 @@ try {
     // off, which `state` alone cannot say.
     sessionVerdict,
     sessionTurnErrors,
+    // The multi-day crossing record, when the scenario crossed days: each night's own terminal and menus, the
+    // work of the day that followed it, and the baseline's judgement of the lot. Absent for every other
+    // scenario, because it is a fact about crossings and not a generic field.
+    multiday: multidayOutcome,
     // Whether the transport itself died mid-run, with the Mod's own reason code and how far in it happened.
     // A `bridge_disconnected` verdict is otherwise unauditable: this says whether the pipe dropped one action in,
     // or before the session had a chance to say anything.
     bridgeDisconnections,
+    // The client's own diagnostics, which name WHICH rejected fact closed a transport it closed itself.
+    bridgeDiagnostics,
     // The session record's own terminal facts (stop reason, whether the turn produced any text, the
     // redacted provider message). Published so a verdict of `turn_failed` is auditable rather than
     // asserted, and so `silent` can be told apart from `nobody could read it`.

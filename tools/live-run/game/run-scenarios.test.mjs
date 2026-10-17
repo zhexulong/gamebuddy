@@ -13,7 +13,7 @@ const RUNNER_PATH = new URL("./run-stardew-native-local-agent-ab-live.mjs", impo
 const RUNNER = readFileSync(RUNNER_PATH, "utf8");
 const LAUNCHER = readFileSync(new URL("./launch-ladder-live.mjs", import.meta.url), "utf8");
 
-const SCENARIOS = ["morning_routine", "memory_covenant", "npc_social_and_presence"];
+const SCENARIOS = ["morning_routine", "memory_covenant", "npc_social_and_presence", "multiday_routine"];
 
 /** The scenario list both entry points declare, so they cannot disagree about what exists. */
 function declaredScenarios(source) {
@@ -72,6 +72,8 @@ test("a scenario refuses a fixture that cannot answer its question", () => {
   assert.match(RUNNER, /const REQUIRED_FIXTURE_SCENARIO = Object\.freeze\(\{/);
   assert.match(RUNNER, /memory_covenant: "native_strawberry_covenant_v1",/);
   assert.match(RUNNER, /npc_social_and_presence: "native_jodi_harvest_deliver_v1",/);
+  // The multi-day scenario needs BOTH halves of its world in one fixture, so it names the composed scenario.
+  assert.match(RUNNER, /multiday_routine: "native_multi_day_play_session_v1",/);
   // morning_routine must NOT be pinned: it decides its own work, so any armed world is a valid world for it.
   assert.doesNotMatch(RUNNER, /morning_routine: "native_/);
   assert.match(RUNNER, /throw new Error\(\s*`scenario_fixture_mismatch: \$\{SCENARIO\} needs/);
@@ -91,13 +93,41 @@ test("every scenario has a prompt in both locales, and none of them is empty", (
     const at = prompts.indexOf(`${scenario}: Object.freeze({`);
     assert.ok(at >= 0, `${scenario} must own a prompt block`);
     const block = prompts.slice(at, prompts.indexOf("}),", at));
-    assert.match(block, /zh: `[^`]{80,}/u, `${scenario} needs a real Chinese prompt`);
-    assert.match(block, /en: `[^`]{80,}/u, `${scenario} needs a real English prompt`);
+    assert.match(block, /zh: `[^`]{80,}|zh: \([a-zA-Z]+\) =>/u, `${scenario} needs a real Chinese prompt`);
+    assert.match(block, /en: `[^`]{80,}|en: \([a-zA-Z]+\) =>/u, `${scenario} needs a real English prompt`);
   }
   // The companion-voice rule and the presence paragraph are shared constants: a prompt that stops asking for
   // them would let the interaction gate fail for a scenario that was never told how to speak.
   assert.match(prompts, /\$\{PRESENCE_PARAGRAPH_ZH\}\$\{COMPANION_VOICE_RULE_ZH\}/u);
   assert.match(prompts, /\$\{PRESENCE_PARAGRAPH_EN\}\$\{COMPANION_VOICE_RULE_EN\}/u);
+});
+
+test("the multi-day prompt is the one that tells the companion to end its own day", () => {
+  // Nobody else ends the night: the loop only watches. So "the day is yours to end" has to be SAID, and it has
+  // to be said in the prompt rather than arranged by the harness, because a night the harness started would be
+  // a scripted crossing rather than the companion's own day.
+  const prompts = RUNNER.slice(
+    RUNNER.indexOf("const SCENARIO_PROMPTS = Object.freeze({"),
+    RUNNER.indexOf("const SESSION_GOALS"),
+  );
+  const at = prompts.indexOf("multiday_routine: Object.freeze({");
+  const block = prompts.slice(at, prompts.indexOf("}),", at));
+  assert.match(block, /上床睡觉/u, "the Chinese prompt must say to go to bed");
+  assert.match(block, /sleep in your bed/u, "the English prompt must say to sleep in your bed");
+  // The watcher must not dispatch a night of its own: it reads the receipt of the dispatch the COMPANION made,
+  // and its one write is the settlement-menu dismissal.
+  const watcher = RUNNER.slice(
+    RUNNER.indexOf("async function watchNightRollover(day"),
+    RUNNER.indexOf("async function startVoiceLane"),
+  );
+  assert.doesNotMatch(watcher, /action: "advance_day"/u, "the watcher must not dispatch a night");
+  assert.match(watcher, /entry\.action === "advance_day"/u, "the watcher reads the companion's own dispatch");
+  assert.match(watcher, /action: "dismiss_modal"/u, "the watcher closes the settlement menu the rollover raises");
+  // The watcher must WAIT for the night to begin rather than observing from the first second of the day: a
+  // watcher that polls the world for the whole turn cannot tell "not yet" from "never", and was measured
+  // observing from t=0 on the first multi-day run.
+  assert.match(watcher, /const waitForNightToBegin = async \(\) => \{/u, "the watcher waits for the night to begin");
+  assert.match(watcher, /companion_did_not_sleep/u, "a day without a night is named");
 });
 
 test("no scenario prompt prescribes a route", () => {

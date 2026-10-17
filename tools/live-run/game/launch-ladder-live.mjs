@@ -50,7 +50,7 @@ const LEGACY_SCENARIO_BY_LADDER = Object.freeze({
   5: "memory_covenant",
   6: "morning_routine",
 });
-const SCENARIOS = Object.freeze(["morning_routine", "memory_covenant", "npc_social_and_presence"]);
+const SCENARIOS = Object.freeze(["morning_routine", "memory_covenant", "npc_social_and_presence", "multiday_routine"]);
 const scenario = (() => {
   const requested = option("scenario", LEGACY_LADDER === null ? null : LEGACY_SCENARIO_BY_LADDER[LEGACY_LADDER]);
   if (!SCENARIOS.includes(requested)) {

@@ -234,6 +234,45 @@ test("the verdict vocabulary is the loop's own, not a second list", () => {
   );
 });
 
+test("a bundle reports a multi-day crossing only when the baseline's own judgement says so", () => {
+  // Optional field: a single-day run has no crossings, so it is absent rather than an empty object. When
+  // present, a run cannot report a passing crossing the baseline did not pass.
+  assert.deepEqual(codesFor(bundle({})), []);
+  const passing = bundle({
+    multiday: {
+      crossings: 2,
+      assessment: { state: "passed", ok: true, violations: [] },
+      dayRecords: [
+        { day: 1, terminal: null, after: null, menus: [], nextDayAccomplishedActionIds: [] },
+        { day: 2, terminal: null, after: null, menus: [], nextDayAccomplishedActionIds: [] },
+      ],
+    },
+  });
+  assert.deepEqual(codesFor(passing), []);
+  assert.ok(
+    codesFor(
+      bundle({
+        multiday: {
+          crossings: 2,
+          assessment: { state: "passed", ok: false, violations: [] },
+          dayRecords: [{}, {}],
+        },
+      }),
+    ).includes("multiday_assessment_disagrees_with_its_own_state"),
+  );
+  assert.ok(
+    codesFor(
+      bundle({ multiday: { crossings: 2, assessment: { state: "passed", ok: true }, dayRecords: [{}] } }),
+    ).includes("multiday_day_records_disagree_with_crossings"),
+  );
+  assert.ok(
+    codesFor(bundle({ multiday: { crossings: 0, assessment: { state: "blocked", ok: false } } })).includes(
+      "multiday_crossings_invalid",
+    ),
+  );
+  assert.ok(codesFor(bundle({ multiday: "two" })).includes("multiday_not_object"));
+});
+
 test("a run directory is validated against what is on disk", async () => {
   const root = mkdtempSync(join(tmpdir(), "evidence-bundle-"));
   try {

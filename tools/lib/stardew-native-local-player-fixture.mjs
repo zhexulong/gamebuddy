@@ -578,6 +578,25 @@ export function fixtureActions(action) {
       "water_crop",
       "ship_item",
     ];
+  // Lane G0: the play-session affordances PLUS the lifecycle actions, because the run must both do farm work
+  // and end its own night. Same override discipline as `play_session`: it is action-keyed in `fixtureScenario`
+  // so the multi-day branch below cannot claim it.
+  if (action === "play_session_multi_day")
+    return [
+      "advance_day",
+      "dismiss_modal",
+      "move_to_tile",
+      "travel",
+      "enter_exit",
+      "observe_scene",
+      "cut_weeds",
+      "cut_grass",
+      "break_rock_source",
+      "harvest_crop",
+      "plant_seed",
+      "water_crop",
+      "ship_item",
+    ];
   if (action === "cut_grass") return ["equip_tool", "cut_grass"];
   // Loop-closure wave (2026-10-04): the 14 lane actions are Experimental until
   // each earns its live gate. Fixture shapes follow the same discipline as
@@ -723,6 +742,11 @@ export function fixtureScenario(actions, action) {
   // exactly that pair) would hijack it and arm the WRONG world — a live run proved
   // it by arming the strawberry fixture for a play session.
   if (action === "play_session") return "native_play_session_v1";
+  // Lane G0 (single-player multi-day baseline). Action-keyed like the others, and it MUST be, because the
+  // action set is the play-session one plus `advance_day`: the multi-day scenario's own `advance_day` branch
+  // would otherwise claim it and arm a world with nothing to do (its only farm fact is one shippable object),
+  // so a multi-day run over it could show that days pass but not that the companion keeps working.
+  if (action === "play_session_multi_day") return "native_multi_day_play_session_v1";
   // Lane G resource-depletion recovery chain: the same water_crop action set plus
   // refill_watering_can, but the fixture must supply an EMPTY can. Without this
   // override the `water_crop` check below would select the charged-can scenario

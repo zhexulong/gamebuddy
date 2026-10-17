@@ -198,6 +198,10 @@ public sealed class NativeLocalPlayerFixtureConfig
         // raises the morning-after ShippingMenu, and no pending level-up. Native-local
         // only (a single-player night is the topology the multi-day gate runs on).
         "native_multi_day_v1",
+        // Lane G0: the multi-day Given above plus the play-session affordances, in ONE world. A multi-day
+        // run needs both halves - days that pass and work worth doing in them - and neither existing
+        // scenario has both, so they are composed here rather than duplicated.
+        "native_multi_day_play_session_v1",
 
     };
 
