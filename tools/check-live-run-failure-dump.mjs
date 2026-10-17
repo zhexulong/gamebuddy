@@ -7,9 +7,9 @@
  *
  * Usage: node tools/check-live-run-failure-dump.mjs
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 import { readEvidenceBundle, writeEvidenceBundle } from "./lib/evidence-bundle.mjs";
@@ -91,10 +91,34 @@ const checks = [];
 const check = (id, ok, detail) =>
   checks.push({ id, status: ok ? "passed" : "failed", ...(detail === undefined ? {} : { detail }) });
 
-function withFixture(name, mutate, run) {
-  const root = mkdtempSync(join(tmpdir(), `gb-failure-dump-${name}-`));
+/**
+ * A scratch root under the repository's own `.tmp/`, NOT the OS temp directory.
+ *
+ * Measured 2026-10-17: this gate began failing with `ENOENT mkdir <fresh mkdtemp root>` - the directory it had just
+ * created was gone by the time the writer opened it, because something else on the machine prunes `%TEMP%/gb-*`
+ * (this repository's own suites create many of those). A gate that a neighbour's cleanup can break is not a gate,
+ * and the project's own rule is that scratch lives in `.tmp/` anyway.
+ */
+const scratchRoot = new URL("../.tmp/", import.meta.url);
+const scratchPath = fileURLToPath(scratchRoot);
+async function withFixture(name, mutate, run) {
+  mkdirSync(scratchPath, { recursive: true });
+  const root = mkdtempSync(join(scratchPath, `gb-failure-dump-${name}-`));
   try {
-    return run(root);
+    // `await` is load-bearing, not style: a sync helper that returned the callback's promise ran the `finally`
+    // BEFORE it settled, so the fixture root was deleted while the callback was still writing into it. Measured
+    // 2026-10-17: the gate failed with `ENOENT mkdir <fresh root>` and passed on the runs where the writer happened
+    // to win the race first.
+    return await run(root);
+  } catch (error) {
+    // A CRASH is not a finding: report the case by name, with the error and whether the fixture directory the
+    // writer was handed still exists, and keep going so the rest of the obligations are still measured.
+    check(
+      `fixture_${name}_completed`,
+      false,
+      `${String(error?.code ?? "")}:${String(error?.message ?? error).slice(0, 160)};root_exists=${String(existsSync(root))}`,
+    );
+    return undefined;
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -212,7 +236,7 @@ async function main() {
   });
 
   // 6. The dry-run entry point runs with no game and reports the same budget the plan derives.
-  const dryRunRoot = mkdtempSync(join(tmpdir(), "gb-failure-dump-dryrun-"));
+  const dryRunRoot = mkdtempSync(join(scratchPath, "gb-failure-dump-dryrun-"));
   try {
     const tracePath = join(dryRunRoot, "actionTrace.jsonl");
     mkdirSync(dryRunRoot, { recursive: true });
@@ -259,7 +283,7 @@ async function main() {
   // 7. The acceleration seam is refused by name until the control run exists: a silent fast path would be
   //    exactly the "replayed at a speed nobody validated" failure this gate is about.
   {
-    const tracePath = join(tmpdir(), `gb-failure-dump-ff-${Date.now()}.jsonl`);
+    const tracePath = join(scratchPath, `gb-failure-dump-ff-${String(Date.now())}.jsonl`);
     writeFileSync(tracePath, `${JSON.stringify(TRACE[0])}\n`, "utf8");
     let failure = "";
     try {

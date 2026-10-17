@@ -18,6 +18,15 @@ import { expectedReplayWallClockMs } from "./replay-clock.mjs";
 
 /** How long one step's terminal may take before the replay calls the step stuck. */
 export const DEFAULT_STEP_TIMEOUT_MS = 120_000;
+/**
+ * The longest deadline a replayed dispatch may ask for.
+ *
+ * The Mod bounds a request's deadline by the ACTION's own published watchdog, whose default is 60 s
+ * (`BodyProgramModels.cs:153`); only the cross-day lifecycle publishes 600 s and only the Host's tool layer
+ * dispatches that. A replay that asks for more than the action's own budget is refused by name
+ * (`invalid_deadline`), so the wait is clamped here instead.
+ */
+export const REPLAY_DISPATCH_DEADLINE_MS = 45_000;
 /** How long the clock gate may wait in total before it calls the recorded moment unreachable. */
 export const DEFAULT_CLOCK_WAIT_MS = 20 * 60 * 1000;
 
@@ -28,6 +37,23 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function currentInGameTime(connection) {
   const timeOfDay = connection?.state?.snapshot?.timeOfDay;
   return isFiniteNumber(timeOfDay) ? String(timeOfDay) : null;
+}
+
+/**
+ * Refresh the cached world state when the connection can observe at all.
+ *
+ * A session client has `observe()`; the offline doubles used by this module's own tests do not, and for them the
+ * cached snapshot IS the world. Refreshing is what makes `expectedRevision` the CURRENT revision rather than the
+ * one the previous step left behind.
+ */
+async function refreshWorld(connection) {
+  if (typeof connection?.observe !== "function") return;
+  try {
+    await connection.observe();
+  } catch {
+    // A refused observation (e.g. the same revision between two dispatches) leaves the cached state in place:
+    // the gate then decides on what is known rather than the replay dying on a read.
+  }
 }
 
 /**
@@ -83,6 +109,13 @@ export async function replayActionTrace({
     if (typeof entry?.action !== "string" || entry.action.length === 0) {
       return Object.freeze({ state: "blocked", reasonCode: "replay_step_action_missing", steps });
     }
+    // Read the world before the gate and before the dispatch, the way an action dispatch must.
+    //
+    // `expectedRevision` is what makes a request admissible: the Mod refuses a stale snapshot, and the Host
+    // validates the field too. Without this the replay could not re-enter a real world at all - the published
+    // "way back" was a command that would be refused (`stale_snapshot`), which is exactly the gap a live run
+    // exposed (2026-10-17). One observation serves both the clock gate and the revision.
+    await refreshWorld(connection);
     const clock = await awaitRecordedGameTime({
       connection,
       recordedInGameTime: entry.inGameTime,
@@ -108,7 +141,16 @@ export async function replayActionTrace({
       onStep(step);
       return Object.freeze({ state: "blocked", reasonCode: clock.reasonCode, step: index, steps });
     }
-    const request = Object.freeze({ requestId: entry.requestId, action: entry.action, args: entry.args });
+    const revision = connection?.state?.snapshot?.revision;
+    const request = Object.freeze({
+      requestId: entry.requestId,
+      action: entry.action,
+      args: entry.args,
+      // The world's own revision, and a deadline inside the action's own budget: both are what the Mod's
+      // `IsFreshExecutionRequest` checks, so a replayed request is admissible for the same reasons a live one is.
+      ...(Number.isSafeInteger(revision) ? { expectedRevision: revision } : {}),
+      deadlineMs: now() + Math.min(stepTimeoutMs, REPLAY_DISPATCH_DEADLINE_MS),
+    });
     const startedAt = now();
     let terminal;
     try {

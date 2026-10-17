@@ -17,7 +17,7 @@ import {
   SEASON_NAMES,
   SINGLE_STEP_ENTRY,
 } from "./failure-dump.mjs";
-import { replayActionTrace } from "./replay-engine.mjs";
+import { REPLAY_DISPATCH_DEADLINE_MS, replayActionTrace } from "./replay-engine.mjs";
 import { decideReplayDispatch } from "./replay-clock.mjs";
 
 const TRACE = [
@@ -113,12 +113,19 @@ test("the same trace completes once the world's own clock arrives", async () => 
     connection.dispatched.map((request) => request.requestId),
     ["req-1", "req-2"],
   );
-  // The request frame is the trace's own, so the replay is byte-comparable with what the run sent.
-  assert.deepEqual(connection.dispatched[1], {
-    requestId: "req-2",
-    action: "water_crop",
-    args: { targetX: 5, targetY: 6 },
-  });
+  // The request frame is the trace's own, PLUS the two fields that make it admissible: the world's current
+  // revision and a deadline inside the action's own budget. Without them the Mod refuses the replayed request
+  // (`stale_snapshot` / `invalid_deadline`) - a live run exposed that the "way back" published by the failure
+  // dump could not actually re-enter a world (2026-10-17).
+  const dispatched = connection.dispatched[1];
+  assert.equal(dispatched.requestId, "req-2");
+  assert.equal(dispatched.action, "water_crop");
+  assert.deepEqual(dispatched.args, { targetX: 5, targetY: 6 });
+  assert.equal(dispatched.expectedRevision, connection.state.snapshot.revision);
+  assert.ok(
+    dispatched.deadlineMs > Date.now() && dispatched.deadlineMs <= Date.now() + REPLAY_DISPATCH_DEADLINE_MS,
+    `deadline must be inside the action's own budget, got ${String(dispatched.deadlineMs)}`,
+  );
 });
 
 test("a step whose receipt disagrees with the trace is a divergence, never a success", async () => {
