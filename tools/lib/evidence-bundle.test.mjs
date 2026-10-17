@@ -97,6 +97,7 @@ const failing = (failureOverrides = {}, reproOverrides = {}) =>
       season: "spring",
       year: 1,
       location: "Town",
+      poseSource: "execution_receipt_observation",
       blockingProperties: ["NPCPassable"],
       collisionLayers: ["Buildings"],
       atMs: 1_700_000_500_000,
@@ -127,14 +128,22 @@ test("a failed run without its snapshot or its replay is not evidence", () => {
   );
   assert.ok(codesFor(failing({}, { command: null })).includes("repro_command_missing"));
   assert.ok(codesFor(failing({}, { expectedWallClockMs: null })).includes("repro_budget_missing"));
-  const incomplete = failing({ playerFacing: undefined });
-  assert.ok(codesFor(incomplete).includes("failure_field_missing"));
+  // Every field the contract requires is individually load-bearing: drop one and it is named.
+  for (const field of ["location", "poseSource", "blockingProperties", "collisionLayers"]) {
+    assert.ok(codesFor(failing({ [field]: undefined })).includes("failure_field_missing"), `${field} must be required`);
+  }
   assert.ok(codesFor(failing({ playerTile: { x: 1 } })).includes("failure_player_tile_invalid"));
   // The replay is repositioned by TIME as well as place: a dump with no game moment cannot be re-entered.
   assert.ok(codesFor(failing({ inGameTime: null })).includes("failure_in_game_time_invalid"));
   assert.ok(codesFor(failing({ day: 30 })).includes("failure_date_invalid"));
   assert.ok(codesFor(failing({ season: "monsoon" })).includes("failure_date_invalid"));
   assert.ok(codesFor(failing({ location: null })).includes("failure_field_missing"));
+  // Facing may be absent (a bare snapshot has none), but the ABSENCE must be named, and a receipt-sourced pose
+  // that lost its facing is a dropped fact rather than an absent one.
+  assert.ok(codesFor(failing({ poseSource: null })).includes("failure_pose_source_unknown"));
+  assert.ok(codesFor(failing({ poseSource: "guessed" })).includes("failure_pose_source_unknown"));
+  assert.ok(codesFor(failing({ playerFacing: null })).includes("failure_facing_missing_from_observation"));
+  assert.deepEqual(codesFor(failing({ playerFacing: null, poseSource: "snapshot_only" })), []);
 });
 
 test("an unmeasured field must say so instead of taking a plausible default", () => {
@@ -261,7 +270,7 @@ test("a bundle that cannot describe its run is refused rather than written", asy
   const root = mkdtempSync(join(tmpdir(), "evidence-bundle-refused-"));
   try {
     await assert.rejects(
-      () => writeEvidenceBundle(root, { bundle: failing({ playerFacing: null }), actionTrace: TRACE }),
+      () => writeEvidenceBundle(root, { bundle: failing({ location: null }), actionTrace: TRACE }),
       /evidence_bundle_invalid:failure_field_missing/u,
     );
   } finally {

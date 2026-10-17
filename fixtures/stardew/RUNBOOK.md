@@ -1698,32 +1698,74 @@ the action under test is the one that selects a floor.
   landing tile) but the native layout may consume and reset it during the warp, so
   it is now observed, never asserted.
 
-## 37. Ladder 6 live: a self-directed play session and the capability audit it produces (2026-10-05, PASSED-with-findings → rung `blocked` on the interaction axis)
+## 37. Scenario runs: three real observations, and the one live run that passed all of them (2026-10-16)
 
-Ladder 6 answers a different question from ladders 0-5. Those accept a scripted
-chain; ladder 6 hands the Agent an **open play goal** in a real save, lets it choose,
-and its output is a per-capability audit: what it could do, what the system stopped,
-and what it never tried (`capabilityAudit`,
-`gamebuddy_stardew_play_session_capability_audit/v1`).
+A run answers one of three questions. The old rung numbers 0-6 are **retired**: they described the order the
+harness learned things in, and two of them were the same Keg errand with different walk lengths.
+
+| scenario | what it observes | fixture it needs | old rung |
+|---|---|---|---|
+| `morning_routine` | the companion runs its own farm day (field work, machines, interruptions) and reports it | any armed world (`native_play_session_v1` is the usual one) | 0/1/3/6 |
+| `memory_covenant` | it honors a standing rule it read from MEMORY: the protected strawberry is never shipped | `native_strawberry_covenant_v1` | 5 |
+| `npc_social_and_presence` | it takes the cauliflower to Jodi, talks to her, and performs its own emotion actions, with the voice lane end to end | `native_jodi_harvest_deliver_v1` | 4 |
+
+`--ladder <n>` is still accepted and translated once by the runner, so an existing command keeps working; new
+commands should name the scenario. Farmer-to-farmer warp sync and accompaniment are **not** any of these: they
+need the second player that only the multiplayer topology has.
+
+**Two preconditions the runner now refuses by name** (both were learned by hitting them):
+
+- **the fixture must match the scenario** (`scenario_fixture_mismatch`). A covenant run on the plain play-session
+  fixture held cauliflowers, so the companion truthfully said it had never planted a strawberry and the covenant
+  clause read as a violation of a rule about a crop that was never in the ground. The fixture IS the question's
+  world; a mismatch answers a different question.
+- **the covenant needs a real continuity**, because the rule must reach the companion through memory and not the
+  prompt. A disposable root has no persisted memory by construction, so the seed is skipped and the clause is not
+  asserted.
+
+**The passing run (`morning_routine`, 2026-10-16).** One player turn; the companion chose its own work and
+reported it:
+
+```text
+RESULT state=passed sessionVerdict=completed
+attempted : move_to_tile, harvest_crop, equip_tool, cut_grass, cut_weeds,
+            navigate_to_destination, ship_item, plant_seed
+succeeded : harvest_crop, equip_tool, cut_grass, cut_weeds, move_to_tile
+blocked   : navigate_to_destination, plant_seed, ship_item
+advertised: 96 actions, advertisedAxisUsable=true, unresolved=[]
+summary   : 收了四颗花椰菜，顺手割了田埂边的杂草和草丛，那几个卡在苗垄里的石头我搬不动，得用镐。
+            西头那块想发货或补种进不去——被翻过的地和杂物围死了，绕不过去。你要不要过去搭把手？
+```
+
+The blocked three are the interesting part and they are consistent with the report: the shipping bin and the
+planting area were genuinely unreachable, which the companion said in its own words. The bundle for that run
+validates (`manifest.json` + `actionTrace.jsonl` + `timeline.jsonl`, `verdict.state=passed`).
+
+**What the same three runs exposed in the harness** (all fixed, each pinned by a test):
+
+- the evidence bundle was assembled **after teardown**, when the bridge had already cleared its snapshot, so every
+  failure dump was all nulls and the contract refused it. The world snapshot and the capability face are now
+  sampled while the bridge is live;
+- the dump knew only the local-observation shape (`tileX/tileY/facing`); a `Snapshot` publishes `location` +
+  `tile:{x,y}` and no facing. Both shapes are accepted, `poseSource` names which one supplied the pose, and a
+  receipt-sourced pose that lost its facing is refused as a dropped fact;
+- the launcher set only `GAMEBUDDY_LADDER_WINDOW_MODE`, so the runner described a hidden run as `visible` and the
+  bundle contract refused it; it never passed the slot either, so no repro command could be published;
+- a disposable root's identity came from the bridge scope, so the second run of a lane reused the first run's
+  principal and refused its own root (`runtime_root_principal_mismatch`);
+- a transport that died mid-run reported as `silent` ("the companion said nothing"). Disconnections are recorded
+  with reason, elapsed time and dispatch count, and `bridge_disconnected` is its own verdict, decided first.
 
 **Recipe (one command; the launcher owns order, fixture transaction and teardown):**
 
 ```powershell
+# morning_routine: any armed world
 node tools/live-run/game/launch-ladder-live.mjs --scenario morning_routine --action play_session --label c
+# memory_covenant: needs the strawberry fixture AND a configured GAMEBUDDY_RUNTIME_ROOT (the rule must come from memory)
+node tools/live-run/game/launch-ladder-live.mjs --scenario memory_covenant --action strawberry_covenant --label c
+# npc_social_and_presence: needs the Jodi fixture
+node tools/live-run/game/launch-ladder-live.mjs --scenario npc_social_and_presence --action jodi_harvest_deliver --label n
 ```
-
-> **The rung numbers are retired** (`--ladder 0..6`). The carrier now runs three **scenarios** and a run is named
-> after the one it ran:
->
-> | scenario | what it observes | old rung |
-> |---|---|---|
-> | `morning_routine` | the companion runs its own farm day (field work, machines, interruptions) and reports it | 0/1/3/6 |
-> | `memory_covenant` | it honors a standing rule it read from MEMORY: the protected strawberry is never shipped | 5 |
-> | `npc_social_and_presence` | it takes the cauliflower to Jodi, talks to her, and performs its own emotion actions, with the voice lane end to end | 4 |
->
-> `--ladder <n>` is still accepted and translated once by the runner, so an existing command keeps working; new
-> commands should name the scenario. Farmer-to-farmer warp sync and accompaniment are **not** any of these: they
-> need the second player that only the multiplayer topology has.
 
 The launcher restores the native template as the disposable working save, prepares the
 `play_session` fixture into the REAL game `Mods` directory ladder runs attach to,

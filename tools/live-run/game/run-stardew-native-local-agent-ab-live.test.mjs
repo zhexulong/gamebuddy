@@ -61,7 +61,7 @@ test("the runner reads the run manifest under the same Game session path the run
 });
 
 test("a disposable runtime root is the explicit fallback and is the only path that writes a model profile", () => {
-  assert.match(RUNNER_SOURCE, /const usesDisposableRoot = configuredRuntimeRoot === undefined/);
+  assert.match(RUNNER_SOURCE, /const usesDisposableRoot = !usesConfiguredRuntimeRoot;/);
   // The gate and the write, in that order, without pinning how the formatter wraps the call.
   const disposableGate = RUNNER_SOURCE.indexOf("if (usesDisposableRoot)");
   const profileWrite = RUNNER_SOURCE.indexOf('"model-profiles.json"');
@@ -464,7 +464,7 @@ test("a repeat run joins the stored continuity instead of being refused by it", 
   // A runtime root's manifest pins the principal that provisioned it and REFUSES
   // any later launch with a different continuity id. Minting a fresh id per run
   // therefore made the second run on a real root fail with
-  // `runtime_root_principal_mismatch` — the opposite of what a ladder is for.
+  // `runtime_root_principal_mismatch` — the opposite of what a live run is for.
   assert.match(RUNNER_SOURCE, /const storedContinuityId = \(\(\) => \{/);
   assert.match(RUNNER_SOURCE, /manifest\?\.principal\?\.continuityId/);
   assert.match(
@@ -472,10 +472,27 @@ test("a repeat run joins the stored continuity instead of being refused by it", 
     /process\.env\.GAMEBUDDY_COMPANION_CONTINUITY_ID \?\? storedContinuityId \?\? `native-agent-\$\{Date\.now\(\)\}`/,
   );
   // The environment still wins, so a deliberate new identity stays possible.
-  assert.match(
-    RUNNER_SOURCE,
-    /if \(typeof configuredRuntimeRoot !== "string" \|\| configuredRuntimeRoot\.length === 0\) return null;/,
+  assert.match(RUNNER_SOURCE, /if \(!usesConfiguredRuntimeRoot\) return null;/);
+});
+
+test("a disposable root's identity belongs to its own run, so a lane can be run twice", () => {
+  // Measured live 2026-10-16: the continuity was derived from the bridge scope alone, so every run of one lane
+  // carried the SAME identity. The first run wrote a manifest with it; the second refused its OWN root with
+  // `runtime_root_principal_mismatch`, naming the same continuity id on both sides of the comparison.
+  // A disposable root does not exist until the run creates it, so the run owns the principal — and the identity
+  // has to be derived from THAT fact, before the principal check reads it.
+  const decision = RUNNER_SOURCE.indexOf("const usesConfiguredRuntimeRoot =");
+  const identity = RUNNER_SOURCE.indexOf("const runContinuityId =");
+  const identityUsed = RUNNER_SOURCE.indexOf("const identity = Object.freeze({");
+  const principalCheck = RUNNER_SOURCE.indexOf("`runtime_root_principal_mismatch: the runtime root was provisioned");
+  assert.ok(decision >= 0 && identity > decision, "the ownership decision must precede the identity");
+  assert.ok(
+    identityUsed > identity && principalCheck > identityUsed,
+    "the principal check must read the derived identity",
   );
+  assert.match(RUNNER_SOURCE, /: `native-agent-\$\{config\.PlayerId\}-\$\{config\.CompanionId\}`;/);
+  // The scope must not decide the principal any more: that is what made two runs of one lane collide.
+  assert.doesNotMatch(RUNNER_SOURCE, /const runContinuityId = usesConfiguredRuntimeRoot[\s\S]{0,200}config\.SaveId/);
 });
 
 /**

@@ -237,7 +237,36 @@ const advertisedActionSamples = new Set();
 // was the second case and looked like the first.
 let advertisedSampleCount = 0;
 let advertisedSampleMaxSize = 0;
+// The LAST world snapshot and the LAST actor pose this run actually observed.
+//
+// Reading `client.state.snapshot` when the bundle is assembled is too late: by then the session has finished and
+// the bridge has cleared its state, so a failure dump built from it is all nulls and the contract refuses it
+// (measured 2026-10-16, and it is the same "sample during the run, not after teardown" rule the capture notes
+// carry). They are therefore kept while the bridge is live — the snapshot whenever the world is read, and the pose
+// from each execution receipt's own local observation (the `Snapshot` shape has no facing: protocol.ts:108-111 vs
+// :896-904). These are declared as hoisted function declarations so the sampler below can use them.
+let lastObservedSnapshot = null;
+let lastObservedPose = null;
+function rememberObservation() {
+  const snapshot = client?.state?.snapshot;
+  if (snapshot !== null && snapshot !== undefined) lastObservedSnapshot = Object.freeze({ ...snapshot });
+  return lastObservedSnapshot;
+}
+function rememberPose(observation) {
+  if (observation === null || observation === undefined) return;
+  lastObservedPose = Object.freeze({
+    location: observation.location,
+    tileX: observation.tileX,
+    tileY: observation.tileY,
+    facing: observation.facing,
+    inGameTime: observation.inGameTime,
+  });
+}
 function sampleAdvertisedActions() {
+  // Sampling the surface is also a natural moment to keep the world snapshot fresh: a run that dispatched nothing
+  // (observed: a `silent` session) still has a snapshot at hello, and a failure dump with no world in it is not
+  // re-enterable.
+  rememberObservation();
   const advertised = client?.state?.snapshot?.capabilities;
   if (!Array.isArray(advertised)) return;
   advertisedSampleCount += 1;
@@ -288,6 +317,26 @@ const PRESENCE_ACTION_VOCABULARY = Object.freeze({
 
 bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 const config = JSON.parse(await readFile(configPath, "utf8"));
+// Each scenario needs a world that can SUPPORT its question, and the fixture is what makes the world. Asking for
+// the wrong fixture does not produce a weaker run, it produces a run whose verdict answers a different question
+// (measured 2026-10-16: `memory_covenant` ran the plain play-session fixture, so the field held cauliflowers - the
+// companion correctly reported it had never planted a strawberry, and the covenant clause read as a violation of a
+// rule about a crop that was never in the ground). Refused by name up front, like a missing bridge precondition.
+const REQUIRED_FIXTURE_SCENARIO = Object.freeze({
+  // The mature strawberry crop plus the native shipping bin: the covenant needs something to protect.
+  memory_covenant: "native_strawberry_covenant_v1",
+  // One mature cauliflower on the Farm plus a reachable Jodi: the errand needs both the item and the villager.
+  npc_social_and_presence: "native_jodi_harvest_deliver_v1",
+});
+// `morning_routine` asserts nothing about the fixture's shape: the companion decides its own work, so whatever
+// world the operator armed is the world it plays in.
+const configuredFixtureScenario = config?.NativeLocalPlayerFixture?.FixtureScenario ?? null;
+const requiredFixtureScenario = REQUIRED_FIXTURE_SCENARIO[SCENARIO] ?? null;
+if (requiredFixtureScenario !== null && configuredFixtureScenario !== requiredFixtureScenario) {
+  throw new Error(
+    `scenario_fixture_mismatch: ${SCENARIO} needs ${requiredFixtureScenario} but the Mod config armed ${String(configuredFixtureScenario)} (pass the matching --action to launch-ladder-live.mjs)`,
+  );
+}
 const scope = Object.freeze({
   integrationId: "stardew",
   saveId: config.SaveId,
@@ -306,8 +355,9 @@ const scope = Object.freeze({
 // root fail with `runtime_root_principal_mismatch` (the first run writes the
 // manifest, the second is refused) — the opposite of what a live run is
 // for. The environment still overrides this for a deliberate new identity.
+const usesConfiguredRuntimeRoot = typeof configuredRuntimeRoot === "string" && configuredRuntimeRoot.length > 0;
 const storedContinuityId = (() => {
-  if (typeof configuredRuntimeRoot !== "string" || configuredRuntimeRoot.length === 0) return null;
+  if (!usesConfiguredRuntimeRoot) return null;
   try {
     const manifest = JSON.parse(readFileSync(join(configuredRuntimeRoot, "manifest.json"), "utf8"));
     const stored = manifest?.principal?.continuityId;
@@ -316,8 +366,16 @@ const storedContinuityId = (() => {
     return null;
   }
 })();
-const runContinuityId =
-  process.env.GAMEBUDDY_COMPANION_CONTINUITY_ID ?? storedContinuityId ?? `native-agent-${Date.now()}`;
+// ONE runtime root = ONE principal, so whether this run OWNS the root has to be decided before anything reads the
+// root's stored identity — the reader above consumes it, and the principal check below compares it.
+//   - a configured root is the operator's durable root: its continuity is whatever the environment or the stored
+//     manifest says, and a mismatch must refuse;
+//   - a disposable root does not exist yet, so this run's own lane config IS the principal. Deriving the
+//     continuity from the bridge scope instead made every run of one lane reuse the previous run's identity and
+//     refuse its own root with runtime_root_principal_mismatch — a self-inflicted refusal, measured 2026-10-16.
+const runContinuityId = usesConfiguredRuntimeRoot
+  ? (process.env.GAMEBUDDY_COMPANION_CONTINUITY_ID ?? storedContinuityId ?? `native-agent-${Date.now()}`)
+  : `native-agent-${config.PlayerId}-${config.CompanionId}`;
 const identity = Object.freeze({
   playerId: config.PlayerId,
   companionId: config.CompanionId,
@@ -342,6 +400,22 @@ const client = await LocalStardewBridgeClient.connect(
   "1.6.15",
 );
 markPhase("bridgeConnectedMs");
+// A transport that dies mid-run must say SO, and say when. This is the one fact the run previously could not
+// report: a session ended with the Agent editing a truthful "the connection went down" line, the trace carried
+// `bridge_disconnected:local_close`, and nothing recorded what the Mod was told or how far into the run it
+// happened (measured 2026-10-16, and twice before on the retired rung-6 runs).
+const bridgeDisconnections = [];
+client.onConnectionFact((fact) => {
+  if (fact?.state !== "disconnected") return;
+  const entry = Object.freeze({
+    reasonCode: fact.reasonCode ?? null,
+    atMs: Date.now(),
+    elapsedMs: Date.now() - phaseTimings.runStartedAtMs,
+    dispatchesSoFar: actionTrace.length,
+  });
+  bridgeDisconnections.push(entry);
+  console.error("BRIDGE_DISCONNECTED", JSON.stringify(entry));
+});
 const factLog = [];
 /** Exact serialized bridge entries already printed, so a contract-legal
  * redelivery of the same transition does not read as a second action. */
@@ -1140,9 +1214,13 @@ const traceClockFields = (clock) => ({
 const originalExecute = client.execute.bind(client);
 client.execute = async (request) => {
   const clock = dispatchClock();
+  // Recorded here because this IS the moment a replay has to return to: the world as the actor saw it right
+  // before it acted. After teardown the bridge has cleared its state, so this is the only chance.
+  rememberObservation();
 
   try {
     const receipt = await originalExecute(request);
+    rememberPose(receipt?.observation);
     const entry = {
       action: request?.action,
       requestId: request?.requestId,
@@ -1187,9 +1265,9 @@ client.programSubmit = async (program) => {
 const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity, {
   module: STARDEW_GAME_INTEGRATION_ADAPTER,
 });
-// The runtime root comes from product configuration when supplied; a disposable
-// temporary root is the explicit operator opt-in (GAMEBUDDY_DISPOSABLE_RUNTIME_ROOT=1).
-const usesDisposableRoot = configuredRuntimeRoot === undefined || configuredRuntimeRoot.length === 0;
+// The runtime root is the operator's durable root when one is configured; otherwise this run OWNS a disposable
+// temporary root (and therefore the principal written into its manifest).
+const usesDisposableRoot = !usesConfiguredRuntimeRoot;
 const root = usesDisposableRoot ? await mkdtemp(join(tmpdir(), "gamebuddy-agent-ab-")) : configuredRuntimeRoot;
 const runtimeRoot = usesDisposableRoot ? join(root, "runtime") : root;
 await mkdir(join(runtimeRoot, "settings"), { recursive: true });
@@ -1587,11 +1665,16 @@ try {
           ? "turn_unsettled"
           : turnFailureReason !== undefined
             ? "turn_failed"
-            : !sessionSpoken
-              ? "silent"
-              : accomplishedActionIds.length > 0
-                ? "completed"
-                : "nothing_accomplished";
+            : // A transport that died mid-run cannot support a behaviour claim: the companion's own line may
+              // simply never have been presented. Without this arm the run reported `silent` - "the companion
+              // said nothing" - for a fault in the pipe (measured 2026-10-16).
+              bridgeDisconnections.length > 0
+              ? "bridge_disconnected"
+              : !sessionSpoken
+                ? "silent"
+                : accomplishedActionIds.length > 0
+                  ? "completed"
+                  : "nothing_accomplished";
   const morningRoutinePassed =
     SCENARIO === "morning_routine"
       ? sessionTurns.length > 0 && attemptedActionIds.length > 0 && sessionVerdict === "completed"
@@ -1706,7 +1789,11 @@ try {
     actionId: entry.action ?? "unknown",
     terminalState: entry.state ?? "failed",
   }));
-  const visibleActionIds = Array.isArray(client.state.snapshot?.capabilities) ? client.state.snapshot.capabilities : [];
+  // The capability face the projection compares promises against is the one SAMPLED during the run, not
+  // `client.state.snapshot` re-read here: after the session ends the bridge has cleared its state, so the
+  // re-read yields an empty face and every real capability would look unavailable (the same defect class that
+  // emptied the capability audit on its first real run).
+  const visibleActionIds = [...advertisedActionSamples];
   const presenceProjection =
     presentationPieces.length > 0
       ? buildPresenceProjection({
@@ -1746,7 +1833,7 @@ try {
     // What the fixture config ASKED for, recorded next to what the run did. A run
     // that armed a different world (a scenario-resolution bug did exactly that) is
     // otherwise invisible in the artifact.
-    configuredFixtureScenario: config?.NativeLocalPlayerFixture?.FixtureScenario ?? null,
+    configuredFixtureScenario,
     sessionTurns,
     // How the SESSION ended, separately from how the actions went: `completed`,
     // `turn_timeout`, `turn_unsettled` or `no_turns`, with the per-turn errors. A
@@ -1754,6 +1841,10 @@ try {
     // off, which `state` alone cannot say.
     sessionVerdict,
     sessionTurnErrors,
+    // Whether the transport itself died mid-run, with the Mod's own reason code and how far in it happened.
+    // A `bridge_disconnected` verdict is otherwise unauditable: this says whether the pipe dropped one action in,
+    // or before the session had a chance to say anything.
+    bridgeDisconnections,
     // The session record's own terminal facts (stop reason, whether the turn produced any text, the
     // redacted provider message). Published so a verdict of `turn_failed` is auditable rather than
     // asserted, and so `silent` can be told apart from `nobody could read it`.
@@ -1821,7 +1912,7 @@ try {
     scenario: SCENARIO,
     runtimeRoot,
     actionTrace,
-    settlement: { snapshot: client.state?.snapshot ?? null, reasonCode: null, component: null },
+    settlement: { snapshot: lastObservedSnapshot, reasonCode: null, component: null },
   });
   // Close the capture: keep the runtime root's evidence, record the result
   // JSON itself, and surface any capture failure on the result.
@@ -1896,7 +1987,7 @@ try {
     scenario: SCENARIO,
     runtimeRoot,
     actionTrace,
-    settlement: { snapshot: client.state?.snapshot ?? null, reasonCode: partialResult.error, component: "runner" },
+    settlement: { snapshot: lastObservedSnapshot, reasonCode: partialResult.error, component: "runner" },
   });
   partialResult.capture = await closeCapture(capture, runtimeRoot, partialResult);
   const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_${SCENARIO}-${Date.now()}.result.json`);
@@ -2056,13 +2147,28 @@ async function closeCapture(capture, runtimeRoot, into) {
 async function writeRunBundle({ capture, result, scenario, runtimeRoot, actionTrace, settlement }) {
   const verdictState = result?.state === "passed" ? "passed" : "failed";
   const failed = verdictState === "failed";
-  const snapshot = settlement?.snapshot ?? client?.state?.snapshot ?? null;
+  // Both halves of "where and when": the snapshot carries the clock and location, the execution receipt's local
+  // observation carries the pose (the snapshot has no facing). Neither can be re-read after teardown.
+  const snapshot = settlement?.snapshot ?? lastObservedSnapshot ?? lastObservedPose ?? null;
+  const pose = lastObservedPose;
   const failure = failed
     ? buildFailureSnapshot({
-        reasonCode: result?.error ?? settlement?.reasonCode ?? `${SCENARIO}_blocked`,
+        reasonCode: result?.error ?? settlement?.reasonCode ?? `${scenario}_blocked`,
         component: settlement?.component ?? "runner",
         step: actionTrace.length,
-        snapshot,
+        // Prefer the pose for tile/location (it is the actor's own last observation), falling back to the
+        // snapshot's tile when no receipt carried one.
+        snapshot:
+          pose === null
+            ? snapshot
+            : {
+                ...snapshot,
+                location: pose.location,
+                tileX: pose.tileX,
+                tileY: pose.tileY,
+                facing: pose.facing,
+                timeOfDay: snapshot?.timeOfDay ?? Number(pose.inGameTime),
+              },
         atMs: Date.now(),
       })
     : null;
@@ -2092,7 +2198,8 @@ async function writeRunBundle({ capture, result, scenario, runtimeRoot, actionTr
     },
     verdict: {
       state: verdictState,
-      reasonCode: result?.error ?? null,
+      // The same reason the failure dump carries, so the two do not disagree about why the run is red.
+      reasonCode: failure?.reasonCode ?? null,
       rubric: {
         broken: Object.entries(result ?? {})
           .filter(([key, value]) => key.endsWith("Passed") && value === false)
@@ -2132,9 +2239,20 @@ async function writeRunBundle({ capture, result, scenario, runtimeRoot, actionTr
     const written = await writeEvidenceBundle(capture.dir, { bundle, timeline, actionTrace });
     return Object.freeze({ state: "written", runDir: written.runDir });
   } catch (error) {
-    // A bundle that cannot be produced is reported by NAME: silently omitting it is how a failed run comes to
-    // look like a run with less evidence instead of a run with a contract defect.
-    return Object.freeze({ state: "refused", reasonCode: String(error instanceof Error ? error.message : error) });
+    // A bundle that cannot be produced is reported by NAME. The reason code alone would not say WHICH fact the
+    // bridge never supplied, so the fields the dump was built from are reported with it.
+    const reasonCode = String(error instanceof Error ? error.message : error);
+    console.error(
+      "EVIDENCE_BUNDLE_REFUSED",
+      JSON.stringify({
+        reasonCode,
+        snapshotFields: snapshot === null ? [] : Object.keys(snapshot).sort(),
+        poseFields: pose === null ? [] : Object.keys(pose).sort(),
+        actionTraceSteps: actionTrace.length,
+        slot,
+      }),
+    );
+    return Object.freeze({ state: "refused", reasonCode });
   }
 }
 

@@ -64,6 +64,24 @@ test("a retired rung number still resolves, but only through the one translation
   assert.equal((LAUNCHER.match(/option\("ladder"/gu) ?? []).length, 1);
 });
 
+test("a scenario refuses a fixture that cannot answer its question", () => {
+  // Measured live 2026-10-16: `memory_covenant` ran the plain play-session fixture, so the field held cauliflowers.
+  // The companion truthfully said it had never planted a strawberry, and the covenant clause then read as a
+  // violation of a rule about a crop that was never in the ground. The fixture is the QUESTION's world, so a
+  // mismatch is refused before the game starts, not discovered in the verdict.
+  assert.match(RUNNER, /const REQUIRED_FIXTURE_SCENARIO = Object\.freeze\(\{/);
+  assert.match(RUNNER, /memory_covenant: "native_strawberry_covenant_v1",/);
+  assert.match(RUNNER, /npc_social_and_presence: "native_jodi_harvest_deliver_v1",/);
+  // morning_routine must NOT be pinned: it decides its own work, so any armed world is a valid world for it.
+  assert.doesNotMatch(RUNNER, /morning_routine: "native_/);
+  assert.match(RUNNER, /throw new Error\(\s*`scenario_fixture_mismatch: \$\{SCENARIO\} needs/);
+  // The check must run before the game is launched, so it sits next to reading the Mod config.
+  const configRead = RUNNER.indexOf("const config = JSON.parse");
+  const fixtureCheck = RUNNER.indexOf("scenario_fixture_mismatch");
+  assert.ok(configRead >= 0 && fixtureCheck > configRead, "the fixture check follows the config read");
+  assert.match(RUNNER, /configuredFixtureScenario,/);
+});
+
 test("every scenario has a prompt in both locales, and none of them is empty", () => {
   const prompts = RUNNER.slice(
     RUNNER.indexOf("const SCENARIO_PROMPTS = Object.freeze({"),
