@@ -1313,13 +1313,21 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
         idempotencyKey: `${requestId}_idem`,
         timeoutMs: MULTIDAY_DISPATCH_TIMEOUT_MS,
       });
-      // Same as the dismiss probe: a refusal is the immediate answer and has no later receipt.
+      // The response may already BE the terminal: a short action settles in one frame, so `succeeded` here is the
+      // outcome, not a refusal (g25 reported `level_up_not_resolved:succeeded/level_up_resolved` because this
+      // branch treated every non-`accepted` state as a refusal). A REFUSAL is a refusal state, and only those fall
+      // through to the wait.
       if (typeof accepted?.state === "string" && accepted.state !== "accepted") {
+        const settled = accepted.state === "succeeded" || accepted.state === "partially_succeeded";
         return Object.freeze({
           receipt: accepted,
           choice: "confirm",
           levelUp,
-          reasonCode: `level_up_not_resolved:${accepted.state}/${String(accepted.reasonCode)}`,
+          reasonCode: settled
+            ? accepted.reasonCode === "level_up_resolved"
+              ? null
+              : `level_up_not_resolved:${accepted.state}/${String(accepted.reasonCode)}`
+            : `level_up_not_resolved:${accepted.state}/${String(accepted.reasonCode)}`,
         });
       }
       const deadline = Date.now() + MULTIDAY_DISMISS_TIMEOUT_MS;
@@ -1381,10 +1389,17 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
         // Polling the fact log for it was the defect on run g15: `rejected` is not in the shared TERMINAL_STATES, so
         // the poll timed out and the probe reported "the pair was never published" while the refusal - carrying
         // `pending_level_ups=11;level_up=4@6;...` - was already in hand.
+        //
+        // The same response can also BE the terminal (a short action settles in one frame), which is a success.
         if (typeof accepted?.state === "string" && accepted.state !== "accepted") {
+          const settled = accepted.state === "succeeded" || accepted.state === "partially_succeeded";
           return Object.freeze({
             receipt: accepted,
-            reasonCode: `menu_not_dismissed:${menuType}:${accepted.state}/${String(accepted.reasonCode)}`,
+            reasonCode: settled
+              ? accepted.reasonCode === "modal_dismissed"
+                ? null
+                : `menu_not_dismissed:${menuType}:${String(accepted.reasonCode)}`
+              : `menu_not_dismissed:${menuType}:${accepted.state}/${String(accepted.reasonCode)}`,
           });
         }
         const deadline = Date.now() + MULTIDAY_DISMISS_TIMEOUT_MS;
