@@ -23,18 +23,19 @@ public sealed partial class ModEntry
     private const float LowMorningStamina = 12f;
 
     /// <summary>
-    /// The composed world must let the companion reach its own front door, or the day cannot be ended at all.
+    /// The composed world must let the companion WALK between the places its day uses: home, the bin, and the field
+    /// it works - all in one walkable component, or the day cannot be ended at all.
     ///
-    /// `advance_day` only begins a night from inside a farmhouse, and the companion has to WALK there: the
-    /// multi-day Given puts the actor home at arm time, but the play-session fixture then moves it to the Farm
-    /// crossroads, so this checks the fact the composed world depends on - that the door's standing spot is in
-    /// the actor's own walkable component - and refuses by name when it is not.
+    /// `advance_day` only begins a night from inside a farmhouse and the companion has to walk there, so the composed
+    /// world is only usable if the farmhouse is reachable from where the session works. The multi-day Given puts the
+    /// actor home at arm time; the play-session fixture then moves it to the Farm and places props, which is where the
+    /// composition can break a world that each given is fine on its own.
     ///
     /// The reachability authority is the SAME probe the refusal receipts publish
     /// (<see cref="StardewBodyController.AssessReachability"/>), so an arm-time refusal and a mid-run
     /// `no_native_path` can never disagree about what "reachable" means.
     /// </summary>
-    private static void AssertNativeLocalMultiDayHomeReachable(Farmer player, Farm farm)
+    private void AssertNativeLocalMultiDayHomeReachable(Farmer player, Farm farm)
     {
         FarmHouse home = Game1.getLocationFromName(player.homeLocation.Value) as FarmHouse
             ?? throw new InvalidOperationException("fixture_native_local_multi_day_home_missing");
@@ -72,22 +73,39 @@ public sealed partial class ModEntry
             throw new InvalidOperationException(
                 $"fixture_native_local_multi_day_bin_standing_tile_missing:bin={bin.tileX.Value},{bin.tileY.Value}");
         Point binStandingTile = new((int)binTile.X, (int)binTile.Y);
+
+        // AND the session's own field must be in that same piece. This is the fact `g4` was missing: the actor's
+        // cardinal component was 28 tiles with the door outside it, so eleven `move_to_tile` attempts came back
+        // `no_native_path`, `navigate_to_destination` said `topology=unreachable`, and the companion spent the rest
+        // of its turn re-aiming at a world it could not walk out of. Checking home↔bin alone would not have caught
+        // it: both are engine geometry, while the FIELD is where the fixture's own props go.
+        if (this.nativeLocalPlaySessionStartTile is not { } fieldTile)
+            throw new InvalidOperationException("fixture_native_local_multi_day_play_session_start_tile_unrecorded");
+        Point field = new((int)fieldTile.X, (int)fieldTile.Y);
+
+        AssertReachable(door, binStandingTile, Walkable, "bin");
+        AssertReachable(door, field, Walkable, "field");
+    }
+
+    /// <summary>Refuse by name and with numbers when the Farm's door cannot reach one of the day's places.</summary>
+    private static void AssertReachable(Point door, Point target, Func<Point, bool> walkable, string what)
+    {
         ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
             door,
-            binStandingTile,
-            Walkable,
+            target,
+            walkable,
             maxVisited: 8000,
             findClosestReachable: true);
         if (verdict is not { } assessed)
         {
             throw new InvalidOperationException(
-                $"fixture_native_local_multi_day_home_reachability_unknown:door={door.X},{door.Y};bin={binStandingTile.X},{binStandingTile.Y}");
+                $"fixture_native_local_multi_day_home_reachability_unknown:what={what};door={door.X},{door.Y};target={target.X},{target.Y}");
         }
         if (assessed.TargetEnclosed)
         {
             Point? closest = assessed.ClosestToTarget;
             throw new InvalidOperationException(
-                $"fixture_native_local_multi_day_home_unreachable:door={door.X},{door.Y};bin={binStandingTile.X},{binStandingTile.Y};component_tiles={assessed.ComponentTiles};closest={(closest is null ? "none" : $"{closest.Value.X},{closest.Value.Y}")}");
+                $"fixture_native_local_multi_day_home_unreachable:what={what};door={door.X},{door.Y};target={target.X},{target.Y};component_tiles={assessed.ComponentTiles};closest={(closest is null ? "none" : $"{closest.Value.X},{closest.Value.Y}")}");
         }
     }
 

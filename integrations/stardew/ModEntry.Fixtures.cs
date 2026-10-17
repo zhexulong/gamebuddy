@@ -3343,6 +3343,9 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // map origin made the session spend its turns walking to them.
         Vector2 startTile = FindNativeLocalPlaySessionStartTile(farm)
             ?? throw new InvalidOperationException("fixture_native_local_play_session_start_tile_missing");
+        // Recorded for the composed world's reachability assertion: the tile the session actually starts on, not one
+        // re-derived after the props exist (a re-scan skips occupied tiles and would answer a different question).
+        this.nativeLocalPlaySessionStartTile = startTile;
         Vector2? standingTile = null;
         for (int index = 0; index < 2; index += 1)
         {

@@ -123,6 +123,14 @@ public sealed partial class ModEntry : Mod
     private bool hostAutomationFixtureReadinessPublished;
     private bool nativeLocalPlayerFixtureStarted;
     private bool nativeLocalPlayerFixtureInitialized;
+    /// <summary>
+    /// The Farm tile the play session starts the actor on, remembered so the composed multi-day world can assert
+    /// that its field is part of the same walkable area as the farmhouse.
+    ///
+    /// Re-deriving it after the props are placed would answer a different question (the scan skips occupied tiles),
+    /// so the fixture records the tile it actually used.
+    /// </summary>
+    private Vector2? nativeLocalPlaySessionStartTile;
     private bool nativeLocalPlayerFixtureTerminal;
     private long nativeLocalPlayerFixtureDeadlineUnixMs;
     private long nativeLocalPlayerFixtureLastReadinessLogUnixMs;

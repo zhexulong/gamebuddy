@@ -121,15 +121,25 @@ public sealed class MultiDayPlaySessionFixtureTests
         // coordinate refused every world (component_tiles=22 around the bed, measured on run g5).
         given.Should().NotContain("Point from = new((int)player.Tile.X");
         given.Should().Contain("FindNativeLocalShippingBinStandingTile(farm, bin)");
-        // Four outcomes, each named: unreachable, unknown (component over budget), door off map, and a bin with no
-        // standing tile at all.
-        given.Should().Contain("fixture_native_local_multi_day_home_unreachable:door=");
-        given.Should().Contain("fixture_native_local_multi_day_home_reachability_unknown:door=");
-        given.Should().Contain("fixture_native_local_multi_day_home_door_off_map:");
-        given.Should().Contain("fixture_native_local_multi_day_bin_standing_tile_missing:");
         // The refusal carries numbers rather than a verdict, and it says nothing about the ROUTE.
         given.Should().Contain("component_tiles={assessed.ComponentTiles}");
         given.Should().Contain("closest=");
+        given.Should().Contain("what={what}");
+        // Four outcomes, each named: unreachable, unknown (component over budget), door off map, and a bin with no
+        // standing tile at all.
+        given.Should().Contain("fixture_native_local_multi_day_home_unreachable:what=");
+        given.Should().Contain("fixture_native_local_multi_day_home_reachability_unknown:what=");
+        given.Should().Contain("fixture_native_local_multi_day_home_door_off_map:");
+        given.Should().Contain("fixture_native_local_multi_day_bin_standing_tile_missing:");
+        // BOTH places the day needs are checked, and the field is one of them: checking home-bin alone would not
+        // have caught g4, because both are engine geometry while the FIELD is where the fixture's own props go.
+        given.Should().Contain("AssertReachable(door, binStandingTile, Walkable, \"bin\");");
+        given.Should().Contain("AssertReachable(door, field, Walkable, \"field\");");
+        given.Should().Contain("this.nativeLocalPlaySessionStartTile is not { } fieldTile");
+        // The session's start tile is the one it actually used, not one re-derived after the props exist.
+        File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModEntry.Fixtures.cs")))
+            .Should()
+            .Contain("this.nativeLocalPlaySessionStartTile = startTile;");
     }
 
     [Fact]
