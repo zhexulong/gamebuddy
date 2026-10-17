@@ -38,6 +38,15 @@ export type WorldInfoManagementRepository = Readonly<{
   list(): Promise<readonly PublicWorldInfoProjection[]>;
   detail(publicTitle: string): Promise<PublicWorldInfoProjection | null>;
   update(publicTitle: string, request: UpdateWorldInfoRequest): Promise<PublicWorldInfoProjection>;
+  /**
+   * Removes the item's entry from the catalog so it is no longer listed or
+   * bindable. The immutable revision files under `revisions/<handle>/<n>.json`
+   * are deliberately retained: they are the history, and a Chat bound to an
+   * exact revision reads that revision, so delete means "no longer in the
+   * library", never "erase an artifact a conversation may be holding". There is
+   * no cascade: no revision is deleted, no binding or Chat is touched.
+   */
+  delete(publicTitle: string): Promise<void>;
   history(publicTitle: string): Promise<readonly PublicWorldInfoProjection[]>;
   validateCreateRequest(value: unknown): asserts value is CreateWorldInfoRequest;
 }>;
@@ -150,6 +159,17 @@ export function createWorldInfoManagementRepository(runtimeRoot: string): WorldI
         );
         await writeCatalog(root, catalogPath, { schemaVersion: 1, artifacts });
         return project(readBack);
+      });
+    },
+    async delete(publicTitle) {
+      validateTitle(publicTitle);
+      await withCatalog(root, catalogPath, async (catalog) => {
+        const index = catalog.artifacts.findIndex((item) => item.publicTitle === publicTitle);
+        if (index === -1) throw new Error("world_info_not_found");
+        // Only the catalog entry is removed; the revision files stay because a
+        // binding pins an exact revision that this item's Chat still reads.
+        const artifacts = catalog.artifacts.filter((_, itemIndex) => itemIndex !== index);
+        await writeCatalog(root, catalogPath, { schemaVersion: 1, artifacts });
       });
     },
     async history(publicTitle) {
@@ -343,7 +363,9 @@ function validateArtifact(value: unknown): ManagedArtifact {
       (entry.constant !== undefined && typeof entry.constant !== "boolean") ||
       (entry.secondaryKeys !== undefined && !keysValue(entry.secondaryKeys)) ||
       (entry.selectiveLogic !== undefined &&
-        !(typeof entry.selectiveLogic === "number" && ([0, 1, 2, 3] as readonly number[]).includes(entry.selectiveLogic)))
+        !(
+          typeof entry.selectiveLogic === "number" && ([0, 1, 2, 3] as readonly number[]).includes(entry.selectiveLogic)
+        ))
     )
       throw new Error("invalid_world_info_request");
     return Object.freeze({

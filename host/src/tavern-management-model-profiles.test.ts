@@ -127,6 +127,18 @@ const worldInfoService: WorldInfoBindingManagementService = Object.freeze({
   async setBinding() {
     return worldInfoState;
   },
+  async detail() {
+    throw new Error("unused_world_info_detail");
+  },
+  async create() {
+    throw new Error("unused_world_info_create");
+  },
+  async update() {
+    throw new Error("unused_world_info_update");
+  },
+  async delete() {
+    throw new Error("unused_world_info_delete");
+  },
   async close() {},
 });
 
@@ -306,7 +318,10 @@ test("the profiles read is a browser-session read of both surfaces plus the ship
       shipped,
     );
     assert.ok(shipped.includes("gpt-5.6-luna"));
-    assert.equal(profiles.recommendedModels.every((model) => model.providerLabel.length > 0), true);
+    assert.equal(
+      profiles.recommendedModels.every((model) => model.providerLabel.length > 0),
+      true,
+    );
     // The projection carries no credential and no endpoint fact.
     for (const forbidden of ["apiKey", "key", "baseUrl", "endpoint", "token", "secret"]) {
       assert.equal(result.raw.toLowerCase().includes(forbidden.toLowerCase()), false, forbidden);
@@ -319,38 +334,53 @@ test("a model id outside the shipped catalog round-trips through the authenticat
     // Cross-origin and missing-CSRF writes are refused before any store write.
     assert.equal(
       (
-        await request("PUT", "/api/tavern/v1/settings/profiles", { "sec-fetch-site": "cross-site" }, {
-          apiVersion: 1,
-          surface: "game",
-          expectedRevision: 0,
-          modelId: "qwen2.5-coder:7b",
-          thinkingLevel: "xhigh",
-        })
+        await request(
+          "PUT",
+          "/api/tavern/v1/settings/profiles",
+          { "sec-fetch-site": "cross-site" },
+          {
+            apiVersion: 1,
+            surface: "game",
+            expectedRevision: 0,
+            modelId: "qwen2.5-coder:7b",
+            thinkingLevel: "xhigh",
+          },
+        )
       ).status,
       401,
     );
     await bootstrap();
     assert.equal(
       (
-        await request("PUT", "/api/tavern/v1/settings/profiles", { "x-csrf-token": "" }, {
-          apiVersion: 1,
-          surface: "game",
-          expectedRevision: 0,
-          modelId: "qwen2.5-coder:7b",
-          thinkingLevel: "xhigh",
-        })
+        await request(
+          "PUT",
+          "/api/tavern/v1/settings/profiles",
+          { "x-csrf-token": "" },
+          {
+            apiVersion: 1,
+            surface: "game",
+            expectedRevision: 0,
+            modelId: "qwen2.5-coder:7b",
+            thinkingLevel: "xhigh",
+          },
+        )
       ).status,
       403,
     );
 
     const localModelId = "qwen2.5-coder:7b";
-    const updated = await request("PUT", "/api/tavern/v1/settings/profiles", {}, {
-      apiVersion: 1,
-      surface: "game",
-      expectedRevision: 0,
-      modelId: localModelId,
-      thinkingLevel: "xhigh",
-    });
+    const updated = await request(
+      "PUT",
+      "/api/tavern/v1/settings/profiles",
+      {},
+      {
+        apiVersion: 1,
+        surface: "game",
+        expectedRevision: 0,
+        modelId: localModelId,
+        thinkingLevel: "xhigh",
+      },
+    );
     assert.equal(updated.status, 200);
     const profiles = updated.body as ProfilesBody;
     assert.equal(profiles.game.modelId, localModelId);
@@ -375,23 +405,33 @@ test("a model id outside the shipped catalog round-trips through the authenticat
 test("a stale revision and a malformed model id are rejected without changing the profile", async () => {
   await withHandler({}, async (profilesPath, request, bootstrap) => {
     await bootstrap();
-    const conflict = await request("PUT", "/api/tavern/v1/settings/profiles", {}, {
-      apiVersion: 1,
-      surface: "chat",
-      expectedRevision: 7,
-      modelId: "deepseek-v4-flash",
-      thinkingLevel: "high",
-    });
+    const conflict = await request(
+      "PUT",
+      "/api/tavern/v1/settings/profiles",
+      {},
+      {
+        apiVersion: 1,
+        surface: "chat",
+        expectedRevision: 7,
+        modelId: "deepseek-v4-flash",
+        thinkingLevel: "high",
+      },
+    );
     assert.equal(conflict.status, 409);
     assert.equal((conflict.body as { code: string }).code, "settings_revision_conflict");
 
-    const malformed = await request("PUT", "/api/tavern/v1/settings/profiles", {}, {
-      apiVersion: 1,
-      surface: "chat",
-      expectedRevision: 0,
-      modelId: "has space",
-      thinkingLevel: "high",
-    });
+    const malformed = await request(
+      "PUT",
+      "/api/tavern/v1/settings/profiles",
+      {},
+      {
+        apiVersion: 1,
+        surface: "chat",
+        expectedRevision: 0,
+        modelId: "has space",
+        thinkingLevel: "high",
+      },
+    );
     assert.equal(malformed.status, 400);
     assert.equal((malformed.body as { code: string }).code, "invalid_request");
 
@@ -403,13 +443,18 @@ test("a profile that advertises no profile route answers 404 instead of inventin
   await withHandler({ profile: profileWithoutModelProfiles }, async (_path, request, bootstrap) => {
     await bootstrap();
     assert.equal((await request("GET", "/api/tavern/v1/settings/profiles")).status, 404);
-    const write = await request("PUT", "/api/tavern/v1/settings/profiles", {}, {
-      apiVersion: 1,
-      surface: "chat",
-      expectedRevision: 0,
-      modelId: "deepseek-v4-flash",
-      thinkingLevel: "high",
-    });
+    const write = await request(
+      "PUT",
+      "/api/tavern/v1/settings/profiles",
+      {},
+      {
+        apiVersion: 1,
+        surface: "chat",
+        expectedRevision: 0,
+        modelId: "deepseek-v4-flash",
+        thinkingLevel: "high",
+      },
+    );
     assert.equal(write.status, 404);
     assert.equal((write.body as { code: string }).code, "profile_operation_unavailable");
   });

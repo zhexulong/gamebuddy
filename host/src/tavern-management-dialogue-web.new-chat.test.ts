@@ -272,6 +272,18 @@ async function fixture(withCreate: boolean, options: Readonly<{ withCompanionArt
     async setBinding() {
       return { state: "none" as const, revision: opaqueHandle("world-info"), items: [] };
     },
+    async detail() {
+      throw new Error("unused_world_info_detail");
+    },
+    async create() {
+      throw new Error("unused_world_info_create");
+    },
+    async update() {
+      throw new Error("unused_world_info_update");
+    },
+    async delete() {
+      throw new Error("unused_world_info_delete");
+    },
     async close() {},
   });
   const page = await startTavernManagementDialogueWebServer({

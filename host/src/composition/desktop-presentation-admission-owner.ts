@@ -788,7 +788,7 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
     "discardDraft",
   ],
   memoryService: ["read", "mutate"],
-  worldInfoService: ["read", "setBinding"],
+  worldInfoService: ["read", "setBinding", "detail", "create", "update", "delete"],
   connectionService: ["read", "create", "test", "activate", "selectModel", "remove"],
   libraryService: ["listCompanions"],
   companionVoiceService: ["read", "update"],

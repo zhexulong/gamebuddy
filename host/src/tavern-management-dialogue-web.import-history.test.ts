@@ -96,6 +96,18 @@ function worldInfoService(): WorldInfoBindingManagementService {
     async setBinding() {
       return worldInfoState;
     },
+    async detail() {
+      throw new Error("unused_world_info_detail");
+    },
+    async create() {
+      throw new Error("unused_world_info_create");
+    },
+    async update() {
+      throw new Error("unused_world_info_update");
+    },
+    async delete() {
+      throw new Error("unused_world_info_delete");
+    },
     async close() {
       // no-op
     },

@@ -17,7 +17,9 @@ import {
   ExactThreadSurfaceMismatchError,
 } from "../chat-thread-store.js";
 import type {
+  CreateWorldInfoRequest,
   PublicWorldInfoProjection,
+  UpdateWorldInfoRequest,
   WorldInfoManagementRepository,
 } from "../world-info-management/world-info-management.js";
 import { createManagedWorldInfoBindingResolver } from "./managed-world-info-binding.js";
@@ -50,15 +52,51 @@ export type SetWorldInfoBindingCommandV1 = Readonly<{
   sourceHandle: string | null;
 }>;
 /**
- * Host-owned binding service for the mounted tavern_management World Info
- * lane. It exposes only browser-safe opaque facts: no store, resolver,
- * mapping, root, lease, source title lookup, timestamp or canonical hash
- * escapes. `bindExact` is the only resolver entry and `setWorldBookBinding`
- * is the only durable mutation.
+ * Library item addressing inside the exact current opaque projection. Both
+ * `expectedRevision` and `itemHandle` are the opaque values minted by the last
+ * validated state projection; a raw title, storage revision number, handle or
+ * canonical hash is never expressible here, and a handle from any other
+ * projection always conflicts.
+ */
+export type WorldInfoItemCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  expectedRevision: string;
+  itemHandle: string;
+}>;
+/** New-item authoring command. `item` is the validated content; `expectedRevision` is the opaque projection handle the browser read. */
+export type WorldInfoCreateCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  expectedRevision: string;
+  item: CreateWorldInfoRequest;
+}>;
+/**
+ * Content update of one exact library item. The top-level `expectedRevision` is
+ * the opaque projection handle; `item.expectedRevision` is the library's own
+ * optimistic revision number.
+ */
+export type WorldInfoUpdateCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  expectedRevision: string;
+  itemHandle: string;
+  item: UpdateWorldInfoRequest;
+}>;
+/**
+ * Host-owned management service for the mounted tavern_management World Info
+ * lane. The read/bind half exposes only browser-safe opaque facts: no store,
+ * resolver, mapping, root, lease, source title lookup, timestamp or canonical
+ * hash escapes. The library half addresses items by the same opaque handles and
+ * serves detail/create/update/delete over the managed repository.
  */
 export type WorldInfoBindingManagementService = Readonly<{
   read(): Promise<WorldInfoStateV1>;
   setBinding(command: SetWorldInfoBindingCommandV1): Promise<WorldInfoStateV1>;
+  detail(command: WorldInfoItemCommandV1): Promise<PublicWorldInfoProjection | null>;
+  create(command: WorldInfoCreateCommandV1): Promise<WorldInfoStateV1>;
+  update(command: WorldInfoUpdateCommandV1): Promise<WorldInfoStateV1>;
+  delete(command: WorldInfoItemCommandV1): Promise<WorldInfoStateV1>;
   close(): Promise<void>;
 }>;
 
@@ -235,9 +273,113 @@ export function createWorldInfoBindingManagementService(
     }
   };
 
+  /** Reopens the exact mounted thread and revalidates its companion/continuity tuple before any library mutation. */
+  const currentThreadState = async (): Promise<ChatThreadState> => {
+    const state = await store.resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    assertLeaseAfterDurableRead();
+    validateThread(state);
+    return state;
+  };
+
+  /**
+   * Reads one exact library item's full projection. The item is named by an
+   * opaque handle from the exact current projection, never by a raw title, so a
+   * handle carried from any other projection conflicts before the read.
+   */
+  const detail = async (command: WorldInfoItemCommandV1): Promise<PublicWorldInfoProjection | null> => {
+    assertOpen();
+    validateItemCommand(command);
+    if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+    const projection = currentProjection;
+    if (projection === null || projection.revisionHandle !== command.expectedRevision) throw conflict();
+    const source = projection.sources.get(command.itemHandle);
+    if (source === undefined) throw conflict();
+    try {
+      const artifact = await repository.detail(source.publicTitle);
+      assertLeaseAfterDurableRead();
+      return artifact;
+    } catch (error) {
+      throw rethrowLibraryError(error);
+    }
+  };
+
+  /**
+   * Creates a new library item from the caller's content. The repository
+   * revalidates it and refuses a duplicate title; the freshly listed library is
+   * then re-projected so the caller receives handles for the new item.
+   */
+  const create = async (command: WorldInfoCreateCommandV1): Promise<WorldInfoStateV1> => {
+    assertOpen();
+    validateProjectionCommand(command);
+    if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+    const projection = currentProjection;
+    if (projection === null || projection.revisionHandle !== command.expectedRevision) throw conflict();
+    try {
+      const state = await currentThreadState();
+      await repository.create(command.item);
+      assertLeaseAfterDurableRead();
+      return await projectFrom(state);
+    } catch (error) {
+      throw rethrowLibraryError(error);
+    }
+  };
+
+  /**
+   * Replaces one exact library item's content. `item.expectedRevision` is the
+   * library's own CAS revision. Renaming an item the mounted Chat is bound to is
+   * refused, because a managed binding resolves the item by its public title.
+   */
+  const update = async (command: WorldInfoUpdateCommandV1): Promise<WorldInfoStateV1> => {
+    assertOpen();
+    validateItemCommand(command);
+    if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+    const projection = currentProjection;
+    if (projection === null || projection.revisionHandle !== command.expectedRevision) throw conflict();
+    const source = projection.sources.get(command.itemHandle);
+    if (source === undefined) throw conflict();
+    try {
+      const state = await currentThreadState();
+      if (command.item.publicTitle !== source.publicTitle) assertItemNotInUse(state, source.publicTitle);
+      await repository.update(source.publicTitle, command.item);
+      assertLeaseAfterDurableRead();
+      return await projectFrom(state);
+    } catch (error) {
+      throw rethrowLibraryError(error);
+    }
+  };
+
+  /**
+   * Removes one exact library item from the catalog. The immutable revision
+   * files stay on disk: they are the item's history and a Chat bound to an exact
+   * revision reads that revision, so this is a library removal, never an artifact
+   * erase. An item the mounted Chat is bound to is refused.
+   */
+  const remove = async (command: WorldInfoItemCommandV1): Promise<WorldInfoStateV1> => {
+    assertOpen();
+    validateItemCommand(command);
+    if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+    const projection = currentProjection;
+    if (projection === null || projection.revisionHandle !== command.expectedRevision) throw conflict();
+    const source = projection.sources.get(command.itemHandle);
+    if (source === undefined) throw conflict();
+    try {
+      const state = await currentThreadState();
+      assertItemNotInUse(state, source.publicTitle);
+      await repository.delete(source.publicTitle);
+      assertLeaseAfterDurableRead();
+      return await projectFrom(state);
+    } catch (error) {
+      throw rethrowLibraryError(error);
+    }
+  };
+
   return Object.freeze({
     read,
     setBinding,
+    detail,
+    create,
+    update,
+    delete: remove,
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
@@ -355,6 +497,24 @@ export function createWorldInfoBindingManagementService(
   }
 
   function validateCommand(command: SetWorldInfoBindingCommandV1): void {
+    validateProjectionCommand(command);
+    if (
+      command.sourceHandle !== null &&
+      (typeof command.sourceHandle !== "string" || !isOpaqueHandle(command.sourceHandle))
+    )
+      throw conflict();
+  }
+
+  /**
+   * Every library command carries the opaque projection handle and the exact
+   * selection generation it was read at. This shape/format check is the
+   * service's own boundary, independent of the browser contract's schema.
+   */
+  function validateProjectionCommand(command: {
+    apiVersion: 1;
+    selectionGeneration: number;
+    expectedRevision: string;
+  }): void {
     if (command === null || typeof command !== "object" || Array.isArray(command)) throw conflict();
     if (command.apiVersion !== TAVERN_BROWSER_API_VERSION) throw conflict();
     if (
@@ -364,18 +524,40 @@ export function createWorldInfoBindingManagementService(
     )
       throw conflict();
     if (typeof command.expectedRevision !== "string") throw conflict();
+  }
+
+  function validateItemCommand(command: WorldInfoItemCommandV1): void {
+    validateProjectionCommand(command);
+    if (typeof command.itemHandle !== "string" || !isOpaqueHandle(command.itemHandle)) throw conflict();
+  }
+
+  /**
+   * Refuses a removal or rename that would strand a binding the mounted Chat
+   * still reads. Only the mounted Chat's own managed binding is knowable on this
+   * surface: bindings are per-thread rows in the Chat store and this service
+   * holds exactly one mounted lease, so a different Chat bound to the same title
+   * cannot be answered without a durable binding index. The exactly knowable
+   * case - the conversation this service serves - is refused with
+   * `world_info_in_use`.
+   */
+  function assertItemNotInUse(state: ChatThreadState, publicTitle: string): void {
     if (
-      command.sourceHandle !== null &&
-      (typeof command.sourceHandle !== "string" || !isOpaqueHandle(command.sourceHandle))
+      bindsManagedTitle(state.thread.worldBookBinding, publicTitle) ||
+      bindsManagedTitle(state.thread.appliedWorldBookBinding, publicTitle)
     )
-      throw conflict();
+      throw new Error("world_info_in_use");
   }
 }
 
-function sameBinding(a: TavernStableWorldInfoBinding | undefined, b: TavernStableWorldInfoBinding | undefined): boolean {
+function sameBinding(
+  a: TavernStableWorldInfoBinding | undefined,
+  b: TavernStableWorldInfoBinding | undefined,
+): boolean {
   if (a === undefined || b === undefined) return a === b;
-  if ("source" in a && "source" in b) return a.publicTitle === b.publicTitle && a.revision === b.revision && a.canonicalHash === b.canonicalHash;
-  if (!("source" in a) && !("source" in b)) return a.worldBookId === b.worldBookId && a.revision === b.revision && a.canonicalHash === b.canonicalHash;
+  if ("source" in a && "source" in b)
+    return a.publicTitle === b.publicTitle && a.revision === b.revision && a.canonicalHash === b.canonicalHash;
+  if (!("source" in a) && !("source" in b))
+    return a.worldBookId === b.worldBookId && a.revision === b.revision && a.canonicalHash === b.canonicalHash;
   return false;
 }
 
@@ -430,6 +612,34 @@ function rethrowMutationError(error: unknown): Error {
 
 function isStorageError(error: Error): boolean {
   return /storage|sqlite|eio|enoent/i.test(error.message);
+}
+
+/**
+ * Library-mutation error mapping. The repository's own named refusals pass
+ * through so the served surface can name exactly what happened; an invalid
+ * content shape is a plain request error, lease and storage failures keep the
+ * binding mutations' fail-closed shape, and anything else is a reconciliation
+ * conflict rather than a silent success.
+ */
+function rethrowLibraryError(error: unknown): Error {
+  if (!(error instanceof Error)) return unavailable();
+  if (isLeaseUnavailable(error)) return error;
+  if (error.message === "invalid_world_info_request") return new Error("invalid_request");
+  if (
+    error.message === "world_info_in_use" ||
+    error.message === "world_info_not_found" ||
+    error.message === "world_info_already_exists" ||
+    error.message === "world_info_revision_conflict"
+  )
+    return error;
+  if (isStorageError(error)) return storageUnavailable();
+  if (/lease|mount|closed/i.test(error.message)) return unavailable();
+  return conflict();
+}
+
+/** The managed variant is the only binding variant that resolves against the managed library. */
+function bindsManagedTitle(binding: TavernStableWorldInfoBinding | undefined, publicTitle: string): boolean {
+  return binding !== undefined && "source" in binding && binding.publicTitle === publicTitle;
 }
 
 function identifier(value: unknown): value is string {

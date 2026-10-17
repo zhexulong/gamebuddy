@@ -300,6 +300,10 @@ test("mounted management state projects world-info.bind as a strict browser oper
     const worldInfoService = Object.freeze({
       read: async () => ({ state: "none", revision: "A".repeat(43), items: [] }),
       setBinding: async () => { throw new Error("stub_set_binding_unreached"); },
+      detail: async () => { throw new Error("stub_detail_unreached"); },
+      create: async () => { throw new Error("stub_create_unreached"); },
+      update: async () => { throw new Error("stub_update_unreached"); },
+      delete: async () => { throw new Error("stub_delete_unreached"); },
       close: async () => undefined,
     });
     const worldInfoFacade = await createTavernManagementStateFacade(manifest, lease, worldInfoProfile, worldInfoService);

@@ -1245,6 +1245,18 @@ function managementBundle(): ManagementBundle {
       setBinding: async () => {
         throw new Error("unused_bind");
       },
+      detail: async () => {
+        throw new Error("unused_world_info_detail");
+      },
+      create: async () => {
+        throw new Error("unused_world_info_create");
+      },
+      update: async () => {
+        throw new Error("unused_world_info_update");
+      },
+      delete: async () => {
+        throw new Error("unused_world_info_delete");
+      },
       close: async () => undefined,
     }),
     playerPreferenceStore: Object.freeze({

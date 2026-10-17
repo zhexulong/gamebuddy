@@ -511,6 +511,18 @@ test("ADR-0010 Class B: every action the ADR names succeeds with a turn in fligh
         worldInfoBound = command.sourceHandle !== null;
         return worldInfoState();
       },
+      async detail() {
+        throw new Error("unused_world_info_detail");
+      },
+      async create() {
+        throw new Error("unused_world_info_create");
+      },
+      async update() {
+        throw new Error("unused_world_info_update");
+      },
+      async delete() {
+        throw new Error("unused_world_info_delete");
+      },
       async close() {
         // no-op
       },

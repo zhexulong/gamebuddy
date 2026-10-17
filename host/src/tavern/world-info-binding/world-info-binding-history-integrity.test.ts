@@ -4,14 +4,25 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { canonicalHash } from "../artifact-store.js";
 import type { AcceptedTurnAuthoredContextPlan } from "../chat-thread-store.js";
-import type { PublicWorldInfoProjection, WorldInfoManagementRepository } from "../world-info-management/world-info-management.js";
+import type {
+  PublicWorldInfoProjection,
+  WorldInfoManagementRepository,
+} from "../world-info-management/world-info-management.js";
 import { verifyManagedWorldInfoHistoryIntegrity } from "./world-info-binding-history-integrity.js";
 
 const projection: PublicWorldInfoProjection = Object.freeze({
   revision: 2,
   publicTitle: "Pelican Town",
   summary: "The revised town facts.",
-  entries: Object.freeze([{ scope: "setting" as const, publicTitle: "Square", summary: "The town center.", keys: Object.freeze(["square"]), constant: true }]),
+  entries: Object.freeze([
+    {
+      scope: "setting" as const,
+      publicTitle: "Square",
+      summary: "The town center.",
+      keys: Object.freeze(["square"]),
+      constant: true,
+    },
+  ]),
 });
 
 function sourceId(publicTitle: string, revision: number, hash: string): string {
@@ -23,12 +34,27 @@ function sourceId(publicTitle: string, revision: number, hash: string): string {
 
 function repository(history: readonly PublicWorldInfoProjection[]): WorldInfoManagementRepository {
   return Object.freeze({
-    async create() { throw new Error("not_used"); },
-    async list() { return Object.freeze(history); },
-    async detail() { return null; },
-    async update() { throw new Error("not_used"); },
-    async history() { return Object.freeze(history); },
-    validateCreateRequest() { throw new Error("not_used"); },
+    async create() {
+      throw new Error("not_used");
+    },
+    async list() {
+      return Object.freeze(history);
+    },
+    async detail() {
+      return null;
+    },
+    async update() {
+      throw new Error("not_used");
+    },
+    async delete() {
+      throw new Error("not_used");
+    },
+    async history() {
+      return Object.freeze(history);
+    },
+    validateCreateRequest() {
+      throw new Error("not_used");
+    },
   });
 }
 
@@ -56,7 +82,15 @@ test("detached verifier validates opaque managed source against exact retained r
   const result = await verifyManagedWorldInfoHistoryIntegrity(planFor(hash), repository([projection]));
   assert.deepEqual(result, {
     intact: true,
-    facts: [{ sourceId: sourceId("Pelican Town", 2, hash), revision: "2", canonicalHash: hash, present: true, hashMatches: true }],
+    facts: [
+      {
+        sourceId: sourceId("Pelican Town", 2, hash),
+        revision: "2",
+        canonicalHash: hash,
+        present: true,
+        hashMatches: true,
+      },
+    ],
   });
 
   let source: string;

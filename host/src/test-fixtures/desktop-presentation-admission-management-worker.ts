@@ -125,6 +125,18 @@ const fakeWorldInfoService = Object.freeze({
   setBinding: async () => {
     throw new Error("unused_bind");
   },
+  detail: async () => {
+    throw new Error("unused_world_info_detail");
+  },
+  create: async () => {
+    throw new Error("unused_world_info_create");
+  },
+  update: async () => {
+    throw new Error("unused_world_info_update");
+  },
+  delete: async () => {
+    throw new Error("unused_world_info_delete");
+  },
   close: async () => {
     counts.worldInfoClosed += 1;
   },
@@ -181,11 +193,7 @@ async function artifactFixture(withManifest = true): Promise<{ hostArtifactRoot:
   await mkdir(join(root, "assets"), { recursive: true });
   if (withManifest) {
     const script = Buffer.from("console.log('shell');\n", "utf8");
-    await writeFile(
-      join(root, "index.html"),
-      '<!doctype html><script src="/assets/app-abcdef12.js"></script>',
-      "utf8",
-    );
+    await writeFile(join(root, "index.html"), '<!doctype html><script src="/assets/app-abcdef12.js"></script>', "utf8");
     await writeFile(join(root, "assets", "app-abcdef12.js"), script);
     await writeFile(
       join(root, "tavern-browser-artifact-manifest.json"),
@@ -228,41 +236,35 @@ const chatSelectionStub = Object.freeze({
 
 async function main(): Promise<void> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  await mock.module(
-    pathToFileURL(join(moduleDirectory, "..", "tavern", "reference-pipeline-state.js")).href,
-    {
-      namedExports: {
-        createReferencePipelineStateFacade: async (
-          _manifest: unknown,
-          _lease: unknown,
-          profile: { readonly profileId?: string } | undefined,
-          stream: unknown,
-        ) => {
-          if (scenario === "facade-failure") throw constructionFailure;
-          counts.chatFacadeCreated += 1;
-          observedProfileIds.chatFacade = profile?.profileId ?? null;
-          facadeSawSharedStream = stream === eventStream;
-          return fakeChatFacade;
-        },
+  await mock.module(pathToFileURL(join(moduleDirectory, "..", "tavern", "reference-pipeline-state.js")).href, {
+    namedExports: {
+      createReferencePipelineStateFacade: async (
+        _manifest: unknown,
+        _lease: unknown,
+        profile: { readonly profileId?: string } | undefined,
+        stream: unknown,
+      ) => {
+        if (scenario === "facade-failure") throw constructionFailure;
+        counts.chatFacadeCreated += 1;
+        observedProfileIds.chatFacade = profile?.profileId ?? null;
+        facadeSawSharedStream = stream === eventStream;
+        return fakeChatFacade;
       },
     },
-  );
-  await mock.module(
-    pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-pipeline-service.js")).href,
-    {
-      namedExports: {
-        createChatPipelineService: (options: {
-          readonly profile?: { readonly profileId?: string };
-          readonly eventStream?: unknown;
-        }) => {
-          counts.chatServiceCreated += 1;
-          observedProfileIds.chatService = options?.profile?.profileId ?? null;
-          serviceSawSharedStream = options?.eventStream === eventStream;
-          return fakeChatService;
-        },
+  });
+  await mock.module(pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-pipeline-service.js")).href, {
+    namedExports: {
+      createChatPipelineService: (options: {
+        readonly profile?: { readonly profileId?: string };
+        readonly eventStream?: unknown;
+      }) => {
+        counts.chatServiceCreated += 1;
+        observedProfileIds.chatService = options?.profile?.profileId ?? null;
+        serviceSawSharedStream = options?.eventStream === eventStream;
+        return fakeChatService;
       },
     },
-  );
+  });
   await mock.module(
     pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-management", "chat-management-service.js")).href,
     {
@@ -288,12 +290,12 @@ async function main(): Promise<void> {
     },
   );
   await mock.module(
-    pathToFileURL(join(moduleDirectory, "..", "tavern", "world-info-binding", "world-info-binding-management-service.js")).href,
+    pathToFileURL(
+      join(moduleDirectory, "..", "tavern", "world-info-binding", "world-info-binding-management-service.js"),
+    ).href,
     {
       namedExports: {
-        createWorldInfoBindingManagementService: (options: {
-          readonly profile?: { readonly profileId?: string };
-        }) => {
+        createWorldInfoBindingManagementService: (options: { readonly profile?: { readonly profileId?: string } }) => {
           counts.worldInfoCreated += 1;
           observedProfileIds.worldInfo = options?.profile?.profileId ?? null;
           return fakeWorldInfoService;
@@ -301,20 +303,15 @@ async function main(): Promise<void> {
       },
     },
   );
-  await mock.module(
-    pathToFileURL(join(moduleDirectory, "..", "tavern", "connection-service.js")).href,
-    {
-      namedExports: {
-        createTavernConnectionService: (options: {
-          readonly agentDir?: string;
-        }) => {
-          counts.connectionCreated += 1;
-          connectionAgentDir = options?.agentDir ?? null;
-          return fakeConnectionService;
-        },
+  await mock.module(pathToFileURL(join(moduleDirectory, "..", "tavern", "connection-service.js")).href, {
+    namedExports: {
+      createTavernConnectionService: (options: { readonly agentDir?: string }) => {
+        counts.connectionCreated += 1;
+        connectionAgentDir = options?.agentDir ?? null;
+        return fakeConnectionService;
       },
     },
-  );
+  });
   await mock.module(
     pathToFileURL(join(moduleDirectory, "..", "tavern", "world-info-management", "world-info-management.js")).href,
     {
@@ -337,9 +334,7 @@ async function main(): Promise<void> {
     scenario,
     runtimeRoot: "E:/fixture/runtime-root",
   };
-  let admission:
-    | Awaited<ReturnType<typeof startTavernManagementPresentationAdmission>>
-    | undefined;
+  let admission: Awaited<ReturnType<typeof startTavernManagementPresentationAdmission>> | undefined;
   try {
     try {
       admission = await startTavernManagementPresentationAdmission({
