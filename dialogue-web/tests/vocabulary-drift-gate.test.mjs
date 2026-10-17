@@ -1,0 +1,232 @@
+/**
+ * A mirrored vocabulary is the contract's vocabulary, or it is a trap.
+ *
+ * `reference-pipeline-api.ts` and `management-pipeline-api.ts` are hand-written
+ * browser mirrors of `host/src/tavern/browser-contract/index.ts`: the browser bundle
+ * cannot import the contract (no typebox dependency, "no Host package, no runtime
+ * code"), so every closed union is spelled by hand - and every one of them is read by
+ * that module's own exact-shape validator. A mirror narrower than the contract refuses
+ * a value the contract calls legal, and the refusal is an opaque `TavernProtocolError`
+ * that tells the player nothing. That is the defect `problem-code-gate.test.mjs` holds
+ * for `PROBLEM_CODES`; this gate holds it for the rest of the vocabulary.
+ *
+ * The measured drift: `reference-pipeline-api.ts` declared `NAVIGATION_ITEM_IDS` as
+ * `["chat","memory"]` against the contract's `["chat","memory","characters"]`, and
+ * `WORLD_INFO_STATES` as `["none","selected","locked","unavailable"]` against the
+ * contract's `["none","selected","pending","unavailable"]` - a missing member, an
+ * invented one and a second missing one, all three read by `validateSnapshot`.
+ *
+ * Both halves are derived, never listed here: the authority is the contract's own
+ * source (`Type.Union([Type.Literal(...)])`, or one property of a TypeBox schema),
+ * read the way `host/src/opaque-handle-shape-gate.test.ts` reads its declaration, and
+ * the mirror side is the mirror's own `const`. Reading the source rather than
+ * importing is what lets the gate see `NavigationItemId`/`WorldInfoBindingState`,
+ * which the contract does not export.
+ *
+ * Scope, stated honestly:
+ *  - `PROBLEM_CODES`/`TURN_PROBLEM_CODES` are `problem-code.7`'s subject, against a
+ *    wider authority (the contract union plus the router's transport-only
+ *    `payload_too_large`), so they are not repeated here;
+ *  - the `*_KEYS` key allowlists are `contract-mirror-keys-gate.test.mjs`'s subject;
+ *  - `LABEL_KEYS` and `REFERENCE_PIPELINE_OPERATION_IDS` are projections of the
+ *    *profile* the reference client serves (`chat_core`, which declares no
+ *    `world-info.*`/`companion.*` operation), not of the contract's ~50-member unions.
+ *    That wire can never carry a wider label or operation id, so a shorter list there
+ *    is not the narrowed-mirror defect this gate is for. They are named in
+ *    `EXCLUDED_VOCABULARIES` and counted in the diagnostic, so the exclusion is
+ *    visible rather than silent.
+ */
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const WEB = join(REPO, "dialogue-web", "src");
+const CONTRACT = join(REPO, "host", "src", "tavern", "browser-contract", "index.ts");
+
+/** The hand-written browser mirrors whose closed vocabularies must equal the contract's. */
+export const MIRROR_FILES = [
+  join(WEB, "reference-pipeline-api.ts"),
+  join(WEB, "management-pipeline-api.ts"),
+];
+
+/**
+ * Each mirrored vocabulary: the mirror's own declaration name, and the contract
+ * declaration it mirrors. `property` names one property of a TypeBox schema or const;
+ * without it the named const is itself a `Type.Union([Type.Literal(...)])`.
+ */
+export const MIRRORED_VOCABULARIES = [
+  { mirror: "MESSAGE_ROLES", contract: { name: "BrowserMessageV1Schema", property: "role" } },
+  { mirror: "MESSAGE_LOCALES", contract: { name: "BrowserMessageV1Schema", property: "locale" } },
+  { mirror: "TURN_STATES", contract: { name: "BrowserTurnV1Schema", property: "state" } },
+  { mirror: "SUBMIT_DISPOSITIONS", contract: { name: "SubmitResultV1Schema", property: "disposition" } },
+  { mirror: "CANCEL_DISPOSITIONS", contract: { name: "CancelTurnResultV1Schema", property: "disposition" } },
+  { mirror: "STATUS_DISPOSITIONS", contract: { name: "MessageSubmissionStatusV1Schema", property: "disposition" } },
+  { mirror: "OPERATION_AVAILABILITY", contract: { name: "TavernBrowserOperationV1Schema", property: "availability" } },
+  { mirror: "NAVIGATION_ITEM_IDS", contract: { name: "NavigationItemId" } },
+  { mirror: "NAVIGATION_AVAILABILITY", contract: { name: "NavigationItem", property: "availability" } },
+  { mirror: "WORLD_INFO_STATES", contract: { name: "WorldInfoBindingState" } },
+  { mirror: "VOICE_SURFACE_STATES", contract: { name: "TavernVoiceSurfaceStateV1Schema", property: "state" } },
+  { mirror: "EVENT_TYPES", contract: { name: "BrowserEventV1Schema", property: "eventType" } },
+  { mirror: "RESYNC_REASONS", contract: { name: "BrowserEventV1Schema", property: "reason" } },
+  { mirror: "SUBMIT_LOCALES", contract: { name: "SubmitMessageCommandV1Schema", property: "locale" } },
+];
+
+/**
+ * Closed vocabularies the mirrors declare that are deliberately NOT the contract's
+ * whole union: each is the operation/label set of the one profile that client serves.
+ * Named, so the exclusion is a decision rather than an omission.
+ */
+export const EXCLUDED_VOCABULARIES = ["LABEL_KEYS", "REFERENCE_PIPELINE_OPERATION_IDS"];
+
+const SOURCE_CACHE = new Map();
+
+function sourceOf(file) {
+  const cached = SOURCE_CACHE.get(file);
+  if (cached !== undefined) return cached;
+  const sourceFile = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  SOURCE_CACHE.set(file, sourceFile);
+  return sourceFile;
+}
+
+function walk(node, visit) {
+  visit(node);
+  ts.forEachChild(node, (child) => walk(child, visit));
+}
+
+/** Every variable declaration with this name, anywhere in the file. */
+function declarationsNamed(sourceFile, name) {
+  const found = [];
+  walk(sourceFile, (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) found.push(node);
+  });
+  return found;
+}
+
+/** Every property with this name inside a node (`eventType` has one per union arm). */
+function propertiesNamed(node, name) {
+  const found = [];
+  walk(node, (inner) => {
+    if (ts.isPropertyAssignment(inner) && inner.name.getText() === name) found.push(inner);
+  });
+  return found;
+}
+
+/** Every `Type.Literal("...")` argument in a node: the contract's spelling of a member. */
+function literalValues(node) {
+  const found = [];
+  walk(node, (inner) => {
+    if (
+      ts.isCallExpression(inner) &&
+      ts.isPropertyAccessExpression(inner.expression) &&
+      inner.expression.name.text === "Literal" &&
+      inner.arguments.length === 1 &&
+      ts.isStringLiteral(inner.arguments[0])
+    )
+      found.push(inner.arguments[0].text);
+  });
+  return found;
+}
+
+/** Every string literal in a node: the shape a mirror spells a vocabulary in. */
+function stringValues(node) {
+  const found = [];
+  walk(node, (inner) => {
+    if (ts.isStringLiteral(inner) || ts.isNoSubstitutionTemplateLiteral(inner)) found.push(inner.text);
+  });
+  return found;
+}
+
+/** The contract's declared members of one vocabulary, read out of the contract's own source. */
+export function contractVocabulary(locator, contract = CONTRACT) {
+  const sourceFile = sourceOf(contract);
+  const members = new Set();
+  for (const declaration of declarationsNamed(sourceFile, locator.name)) {
+    const scopes = locator.property === undefined ? [declaration] : propertiesNamed(declaration, locator.property);
+    for (const scope of scopes) for (const value of literalValues(scope)) members.add(value);
+  }
+  return members;
+}
+
+/** One mirror's declared members, or `null` when that mirror declares no such const. */
+export function mirrorVocabulary(file, name) {
+  const declarations = declarationsNamed(sourceOf(file), name);
+  if (declarations.length === 0) return null;
+  return new Set(declarations.flatMap((declaration) => stringValues(declaration)));
+}
+
+/**
+ * The two ways a mirror can drift from a derived authority, by member. Pure, so the
+ * mutation test below runs the exact comparison `vocabulary-drift.2` asserts.
+ */
+export function vocabularyDrift(where, mirrored, authority) {
+  return [
+    ...[...authority]
+      .filter((member) => !mirrored.has(member))
+      .map((member) => `${where} does not know declared member ${JSON.stringify(member)}`),
+    ...[...mirrored]
+      .filter((member) => !authority.has(member))
+      .map((member) => `${where} invents a member no contract declares ${JSON.stringify(member)}`),
+  ];
+}
+
+/** The mirror's file name as a finding names it. */
+function mirrorName(file) {
+  return file.replace(/\\/gu, "/").split("/dialogue-web/").pop();
+}
+
+test("vocabulary-drift.1: the contract's declarations are read, not assumed", (t) => {
+  const derived = new Map(MIRRORED_VOCABULARIES.map((entry) => [entry.mirror, contractVocabulary(entry.contract)]));
+  assert.equal(derived.get("NAVIGATION_ITEM_IDS").size, 3, "NavigationItemId is a three-member union");
+  assert.equal(derived.get("WORLD_INFO_STATES").size, 4, "WorldInfoBindingState is a four-member union");
+  assert.equal(derived.get("EVENT_TYPES").size, 5, "BrowserEventV1Schema declares five eventType members");
+  assert.equal(derived.get("RESYNC_REASONS").size, 4, "the resync payload declares four reasons");
+  assert.equal(derived.get("SUBMIT_LOCALES").size, 2, "chat.submit accepts two locales");
+  for (const entry of MIRRORED_VOCABULARIES)
+    assert.ok(derived.get(entry.mirror).size >= 2, `${entry.mirror} derived an empty or single-member union`);
+  const declared = MIRRORED_VOCABULARIES.map((entry) => entry.mirror);
+  for (const file of MIRROR_FILES) {
+    const owned = declared.filter((name) => mirrorVocabulary(file, name) !== null);
+    assert.ok(owned.length >= 5, `${mirrorName(file)} declares only ${owned.length} gated vocabulary/vocabularies`);
+  }
+  t.diagnostic(
+    `vocabulary-drift.1: ${MIRRORED_VOCABULARIES.length} contract vocabulary/vocabularies derived from the contract source; ${MIRROR_FILES.map((file) => `${mirrorName(file)}:${declared.filter((name) => mirrorVocabulary(file, name) !== null).length}`).join(", ")}; excluded by name: ${EXCLUDED_VOCABULARIES.join(", ")}`,
+  );
+});
+
+test("vocabulary-drift.2: every mirror IS the contract's vocabulary, not a stale copy of it", (t) => {
+  const failures = [];
+  let mirrored = 0;
+  for (const file of MIRROR_FILES) {
+    for (const entry of MIRRORED_VOCABULARIES) {
+      const declared = mirrorVocabulary(file, entry.mirror);
+      if (declared === null) continue;
+      mirrored += declared.size;
+      failures.push(...vocabularyDrift(`${mirrorName(file)} ${entry.mirror}`, declared, contractVocabulary(entry.contract)));
+    }
+  }
+  t.diagnostic(
+    `vocabulary-drift.2: ${mirrored} mirrored member(s) across ${MIRROR_FILES.length} mirror(s) checked for equality against ${MIRRORED_VOCABULARIES.length} contract declaration(s), ${failures.length} drifted`,
+  );
+  assert.deepEqual(
+    failures,
+    [],
+    "a mirror that does not know a declared member reads a legal value as protocol corruption",
+  );
+});
+
+test("vocabulary-drift.3 (mutation): a short mirror and an invented member are both reported", (t) => {
+  const authority = contractVocabulary({ name: "NavigationItemId" });
+  const short = new Set([...authority].filter((member) => member !== "characters"));
+  assert.deepEqual(vocabularyDrift("mutation.ts NAVIGATION_ITEM_IDS", short, authority), [
+    'mutation.ts NAVIGATION_ITEM_IDS does not know declared member "characters"',
+  ]);
+  assert.deepEqual(vocabularyDrift("mutation.ts WORLD_INFO_STATES", new Set([...authority, "locked"]), authority), [
+    'mutation.ts WORLD_INFO_STATES invents a member no contract declares "locked"',
+  ]);
+  assert.deepEqual(vocabularyDrift("mutation.ts NAVIGATION_ITEM_IDS", new Set(authority), authority), []);
+  t.diagnostic("vocabulary-drift.3: a missing member and an invented member are each reported by member, not by position");
+});
