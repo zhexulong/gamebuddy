@@ -173,11 +173,7 @@ export const MessageBubble = memo(function MessageBubble({
           companion's side carries her real picture when the Host has one;
           everything else about the element - size, plate, `aria-hidden` - is the
           monogram it already was. */}
-      <CompanionAvatar
-        handle={isPlayer ? null : companionHandle}
-        name={authorName}
-        className="avatar-small"
-      />
+      <CompanionAvatar handle={isPlayer ? null : companionHandle} name={authorName} className="avatar-small" />
       <div className="message-body">
         {/* The author line belongs to the companion only. The player's own
             monogram already sits at the row's edge, so printing the same name
