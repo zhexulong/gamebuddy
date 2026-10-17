@@ -47,7 +47,7 @@
       },
       {
         "name": "gamebuddy:generator-input-lockfile-sha256",
-        "value": "c4541266f5f9d456162e759c34d6267c3fc47dcdd5315c693da8461d1854688e"
+        "value": "392f2348a419526b8b861fcdcb3a6179358f9b84ff147361935b99c700ddc66a"
       }
     ]
   },
@@ -55,7 +55,7 @@
     {
       "type": "library",
       "name": "@anthropic-ai/sdk",
-      "version": "0.91.1",
+      "version": "0.129.0",
       "licenses": [
         {
           "license": {
@@ -72,80 +72,44 @@
     },
     {
       "type": "library",
-      "name": "@aws-crypto/sha256-browser",
-      "version": "5.2.0",
+      "name": "@ast-grep/cli",
+      "version": "0.50.0",
       "licenses": [
         {
           "license": {
-            "id": "Apache-2.0"
+            "id": "MIT"
           }
         }
       ],
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/aws/aws-sdk-js-crypto-helpers/tree/master/packages/sha256-browser"
+          "url": "https://ast-grep.github.io"
         }
       ]
     },
     {
       "type": "library",
-      "name": "@aws-crypto/sha256-js",
-      "version": "5.2.0",
+      "name": "@ast-grep/cli-win32-x64-msvc",
+      "version": "0.50.0",
       "licenses": [
         {
           "license": {
-            "id": "Apache-2.0"
+            "id": "MIT"
           }
         }
       ],
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/aws/aws-sdk-js-crypto-helpers/tree/master/packages/sha256-js"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@aws-crypto/supports-web-crypto",
-      "version": "5.2.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/aws/aws-sdk-js-crypto-helpers/tree/master/packages/supports-web-crypto"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@aws-crypto/util",
-      "version": "5.2.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/aws/aws-sdk-js-crypto-helpers/tree/master/packages/util"
+          "url": "https://github.com/ast-grep/ast-grep#readme"
         }
       ]
     },
     {
       "type": "library",
       "name": "@aws-sdk/client-bedrock-runtime",
-      "version": "3.1048.0",
+      "version": "3.1127.0",
       "licenses": [
         {
           "license": {
@@ -163,7 +127,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/core",
-      "version": "3.977.6",
+      "version": "3.978.1",
       "licenses": [
         {
           "license": {
@@ -181,7 +145,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/credential-provider-env",
-      "version": "3.972.67",
+      "version": "3.972.72",
       "licenses": [
         {
           "license": {
@@ -199,7 +163,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/credential-provider-http",
-      "version": "3.972.69",
+      "version": "3.972.74",
       "licenses": [
         {
           "license": {
@@ -217,7 +181,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/credential-provider-ini",
-      "version": "3.973.12",
+      "version": "3.973.17",
       "licenses": [
         {
           "license": {
@@ -235,7 +199,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/credential-provider-login",
-      "version": "3.972.74",
+      "version": "3.972.79",
       "licenses": [
         {
           "license": {
@@ -253,7 +217,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/credential-provider-node",
-      "version": "3.972.78",
+      "version": "3.972.84",
       "licenses": [
         {
           "license": {
@@ -271,7 +235,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/credential-provider-process",
-      "version": "3.972.67",
+      "version": "3.972.72",
       "licenses": [
         {
           "license": {
@@ -289,7 +253,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/credential-provider-sso",
-      "version": "3.973.11",
+      "version": "3.973.16",
       "licenses": [
         {
           "license": {
@@ -307,7 +271,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/credential-provider-web-identity",
-      "version": "3.972.73",
+      "version": "3.972.78",
       "licenses": [
         {
           "license": {
@@ -325,7 +289,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/eventstream-handler-node",
-      "version": "3.972.31",
+      "version": "3.972.35",
       "licenses": [
         {
           "license": {
@@ -343,7 +307,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/middleware-eventstream",
-      "version": "3.972.26",
+      "version": "3.972.30",
       "licenses": [
         {
           "license": {
@@ -361,7 +325,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/middleware-websocket",
-      "version": "3.972.49",
+      "version": "3.972.54",
       "licenses": [
         {
           "license": {
@@ -379,7 +343,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/nested-clients",
-      "version": "3.997.41",
+      "version": "3.997.46",
       "licenses": [
         {
           "license": {
@@ -397,7 +361,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/signature-v4-multi-region",
-      "version": "3.996.43",
+      "version": "3.996.47",
       "licenses": [
         {
           "license": {
@@ -415,7 +379,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/token-providers",
-      "version": "3.1048.0,3.1103.0",
+      "version": "3.1127.0,3.1138.0",
       "licenses": [
         {
           "license": {
@@ -433,7 +397,7 @@
     {
       "type": "library",
       "name": "@aws-sdk/types",
-      "version": "3.974.2",
+      "version": "3.974.6",
       "licenses": [
         {
           "license": {
@@ -450,26 +414,8 @@
     },
     {
       "type": "library",
-      "name": "@aws-sdk/util-locate-window",
-      "version": "3.965.8",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/util-locate-window"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@aws-sdk/xml-builder",
-      "version": "3.972.37",
+      "version": "3.972.41",
       "licenses": [
         {
           "license": {
@@ -504,8 +450,62 @@
     },
     {
       "type": "library",
-      "name": "@babel/runtime",
+      "name": "@axe-core/playwright",
+      "version": "4.13.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MPL-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/dequelabs/axe-core-npm#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/code-frame",
       "version": "7.29.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://babel.dev/docs/en/next/babel-code-frame"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/helper-validator-identifier",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/babel/babel#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@babel/runtime",
+      "version": "7.29.10",
       "licenses": [
         {
           "license": {
@@ -558,6 +558,42 @@
     },
     {
       "type": "library",
+      "name": "@cacheable/memory",
+      "version": "2.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jaredwray/cacheable#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@cacheable/utils",
+      "version": "2.5.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jaredwray/cacheable#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "@cortexkit/pi-magic-context",
       "version": "",
       "licenses": [
@@ -577,7 +613,7 @@
     {
       "type": "library",
       "name": "@cortexkit/subc-client",
-      "version": "0.4.1",
+      "version": "0.11.1",
       "licenses": [
         {
           "license": {
@@ -589,8 +625,134 @@
     },
     {
       "type": "library",
+      "name": "@csstools/css-calc",
+      "version": "3.4.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/csstools/postcss-plugins/tree/main/packages/css-calc#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@csstools/css-parser-algorithms",
+      "version": "4.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/csstools/postcss-plugins/tree/main/packages/css-parser-algorithms#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@csstools/css-syntax-patches-for-csstree",
+      "version": "1.1.15",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT-0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/csstools/postcss-plugins/tree/main/packages/css-syntax-patches-for-csstree#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@csstools/css-tokenizer",
+      "version": "4.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/csstools/postcss-plugins/tree/main/packages/css-tokenizer#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@csstools/media-query-list-parser",
+      "version": "5.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/csstools/postcss-plugins/tree/main/packages/media-query-list-parser#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@csstools/selector-resolve-nested",
+      "version": "4.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT-0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/csstools/postcss-plugins/tree/main/packages/selector-resolve-nested#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@csstools/selector-specificity",
+      "version": "6.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT-0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/csstools/postcss-plugins/tree/main/packages/selector-specificity#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "@earendil-works/pi-agent-core",
-      "version": "0.84.4",
+      "version": "1.2.0",
       "licenses": [
         {
           "license": {
@@ -608,7 +770,7 @@
     {
       "type": "library",
       "name": "@earendil-works/pi-ai",
-      "version": "0.84.4",
+      "version": "1.2.0",
       "licenses": [
         {
           "license": {
@@ -625,8 +787,8 @@
     },
     {
       "type": "library",
-      "name": "@earendil-works/pi-client",
-      "version": "0.84.4",
+      "name": "@earendil-works/pi-codemode",
+      "version": "1.2.0",
       "licenses": [
         {
           "license": {
@@ -644,7 +806,7 @@
     {
       "type": "library",
       "name": "@earendil-works/pi-coding-agent",
-      "version": "0.84.4",
+      "version": "1.2.0",
       "licenses": [
         {
           "license": {
@@ -661,8 +823,8 @@
     },
     {
       "type": "library",
-      "name": "@earendil-works/pi-protocol",
-      "version": "0.84.4",
+      "name": "@earendil-works/pi-mcp",
+      "version": "1.2.0",
       "licenses": [
         {
           "license": {
@@ -680,7 +842,7 @@
     {
       "type": "library",
       "name": "@earendil-works/pi-telemetry",
-      "version": "0.84.4",
+      "version": "1.2.0",
       "licenses": [
         {
           "license": {
@@ -698,7 +860,7 @@
     {
       "type": "library",
       "name": "@earendil-works/pi-tui",
-      "version": "0.84.4",
+      "version": "1.2.0",
       "licenses": [
         {
           "license": {
@@ -715,62 +877,8 @@
     },
     {
       "type": "library",
-      "name": "@emnapi/core",
-      "version": "2.0.0-alpha.3",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/toyobayashi/emnapi#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@emnapi/runtime",
-      "version": "2.0.0-alpha.3",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/toyobayashi/emnapi#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@emnapi/wasi-threads",
-      "version": "2.0.1",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/toyobayashi/emnapi#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@esbuild/win32-x64",
-      "version": "0.27.7",
+      "version": "0.28.2",
       "licenses": [
         {
           "license": {
@@ -787,8 +895,147 @@
     },
     {
       "type": "library",
+      "name": "@eslint-community/eslint-utils",
+      "version": "4.10.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/eslint-community/eslint-utils#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@eslint-community/regexpp",
+      "version": "4.12.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/eslint-community/regexpp#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@eslint/config-array",
+      "version": "0.23.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/eslint/rewrite/tree/main/packages/config-array#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@eslint/config-helpers",
+      "version": "0.7.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/eslint/rewrite/tree/main/packages/config-helpers#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@eslint/core",
+      "version": "1.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/eslint/rewrite/tree/main/packages/core#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@eslint/object-schema",
+      "version": "3.0.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/eslint/rewrite/tree/main/packages/object-schema#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@eslint/plugin-kit",
+      "version": "0.7.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/eslint/rewrite/tree/main/packages/plugin-kit#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@gamebuddy/voice-protocol",
+      "version": "",
+      "licenses": [
+        {
+          "license": {
+            "id": "Unknown"
+          }
+        }
+      ],
+      "externalReferences": []
+    },
+    {
+      "type": "library",
       "name": "@google/genai",
-      "version": "1.52.0",
+      "version": "2.21.0",
       "licenses": [
         {
           "license": {
@@ -805,26 +1052,8 @@
     },
     {
       "type": "library",
-      "name": "@huggingface/jinja",
-      "version": "0.5.9",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/huggingface/huggingface.js#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@huggingface/tokenizers",
-      "version": "0.1.3",
+      "name": "@humanfs/core",
+      "version": "0.19.2",
       "licenses": [
         {
           "license": {
@@ -835,14 +1064,14 @@
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/huggingface/tokenizers.js#readme"
+          "url": "https://github.com/humanwhocodes/humanfs#readme"
         }
       ]
     },
     {
       "type": "library",
-      "name": "@huggingface/transformers",
-      "version": "4.2.0",
+      "name": "@humanfs/node",
+      "version": "0.16.8",
       "licenses": [
         {
           "license": {
@@ -853,7 +1082,61 @@
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/huggingface/transformers.js#readme"
+          "url": "https://github.com/humanwhocodes/humanfs#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@humanfs/types",
+      "version": "0.15.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/humanwhocodes/humanfs#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@humanwhocodes/module-importer",
+      "version": "1.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/humanwhocodes/module-importer#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@humanwhocodes/retry",
+      "version": "0.4.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/humanwhocodes/retry#readme"
         }
       ]
     },
@@ -878,7 +1161,7 @@
     {
       "type": "library",
       "name": "@img/sharp-win32-x64",
-      "version": "0.35.3",
+      "version": "0.35.5",
       "licenses": [
         {
           "license": {
@@ -1003,8 +1286,8 @@
     },
     {
       "type": "library",
-      "name": "@mariozechner/clipboard",
-      "version": "0.3.9",
+      "name": "@keyv/bigmap",
+      "version": "1.3.1",
       "licenses": [
         {
           "license": {
@@ -1015,14 +1298,14 @@
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/badlogic/clipboard#readme"
+          "url": "https://github.com/jaredwray/keyv"
         }
       ]
     },
     {
       "type": "library",
-      "name": "@mariozechner/clipboard-win32-x64-msvc",
-      "version": "0.3.9",
+      "name": "@keyv/serialize",
+      "version": "1.1.1",
       "licenses": [
         {
           "license": {
@@ -1033,14 +1316,14 @@
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/badlogic/clipboard#readme"
+          "url": "https://github.com/jaredwray/keyv"
         }
       ]
     },
     {
       "type": "library",
-      "name": "@napi-rs/wasm-runtime",
-      "version": "1.2.2",
+      "name": "@nodelib/fs.scandir",
+      "version": "2.1.5",
       "licenses": [
         {
           "license": {
@@ -1051,7 +1334,43 @@
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://napi.rs/"
+          "url": "https://github.com/nodelib/nodelib/tree/master#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@nodelib/fs.stat",
+      "version": "2.0.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/nodelib/nodelib/tree/master#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@nodelib/fs.walk",
+      "version": "1.2.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/nodelib/nodelib/tree/master#readme"
         }
       ]
     },
@@ -1076,7 +1395,7 @@
     {
       "type": "library",
       "name": "@oxc-project/types",
-      "version": "0.142.0,0.147.0",
+      "version": "0.147.0,0.153.0",
       "licenses": [
         {
           "license": {
@@ -1291,26 +1610,8 @@
     },
     {
       "type": "library",
-      "name": "@rolldown/binding-wasm32-wasi",
-      "version": "1.2.1",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://rolldown.rs/"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@rolldown/binding-win32-x64-msvc",
-      "version": "1.2.1",
+      "version": "1.2.13",
       "licenses": [
         {
           "license": {
@@ -1363,8 +1664,26 @@
     },
     {
       "type": "library",
+      "name": "@sindresorhus/merge-streams",
+      "version": "4.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/merge-streams#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "@smithy/core",
-      "version": "3.31.1",
+      "version": "3.35.2",
       "licenses": [
         {
           "license": {
@@ -1382,7 +1701,7 @@
     {
       "type": "library",
       "name": "@smithy/credential-provider-imds",
-      "version": "4.4.16",
+      "version": "4.5.2",
       "licenses": [
         {
           "license": {
@@ -1400,7 +1719,7 @@
     {
       "type": "library",
       "name": "@smithy/fetch-http-handler",
-      "version": "5.6.13",
+      "version": "5.8.0",
       "licenses": [
         {
           "license": {
@@ -1417,26 +1736,8 @@
     },
     {
       "type": "library",
-      "name": "@smithy/is-array-buffer",
-      "version": "2.2.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/awslabs/smithy-typescript/tree/main/packages/is-array-buffer"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@smithy/node-http-handler",
-      "version": "4.7.3,4.9.13",
+      "version": "4.12.1",
       "licenses": [
         {
           "license": {
@@ -1454,7 +1755,7 @@
     {
       "type": "library",
       "name": "@smithy/signature-v4",
-      "version": "5.6.12",
+      "version": "5.7.4",
       "licenses": [
         {
           "license": {
@@ -1472,7 +1773,7 @@
     {
       "type": "library",
       "name": "@smithy/types",
-      "version": "4.16.1",
+      "version": "4.19.0",
       "licenses": [
         {
           "license": {
@@ -1489,44 +1790,8 @@
     },
     {
       "type": "library",
-      "name": "@smithy/util-buffer-from",
-      "version": "2.2.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/awslabs/smithy-typescript/tree/main/packages/util-buffer-from"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@smithy/util-utf8",
-      "version": "2.3.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/awslabs/smithy-typescript/tree/main/packages/util-utf8"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@tybys/wasm-util",
-      "version": "0.10.3",
+      "name": "@stablelib/base64",
+      "version": "1.0.1",
       "licenses": [
         {
           "license": {
@@ -1537,7 +1802,61 @@
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/toyobayashi/wasm-util#readme"
+          "url": "https://github.com/StableLib/stablelib/tree/master/packages/base64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@types/esrecurse",
+      "version": "4.3.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/esrecurse"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@types/estree",
+      "version": "1.0.9",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@types/json-schema",
+      "version": "7.0.15",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/json-schema"
         }
       ]
     },
@@ -1615,6 +1934,204 @@
     },
     {
       "type": "library",
+      "name": "@types/trusted-types",
+      "version": "2.0.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/trusted-types"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@typescript-eslint/eslint-plugin",
+      "version": "8.71.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://typescript-eslint.io/packages/eslint-plugin"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@typescript-eslint/parser",
+      "version": "8.71.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://typescript-eslint.io/packages/parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@typescript-eslint/project-service",
+      "version": "8.71.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://typescript-eslint.io"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@typescript-eslint/scope-manager",
+      "version": "8.71.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://typescript-eslint.io/packages/scope-manager"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@typescript-eslint/tsconfig-utils",
+      "version": "8.71.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://typescript-eslint.io"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@typescript-eslint/type-utils",
+      "version": "8.71.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://typescript-eslint.io"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@typescript-eslint/types",
+      "version": "8.71.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://typescript-eslint.io"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@typescript-eslint/typescript-estree",
+      "version": "8.71.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://typescript-eslint.io/packages/typescript-estree"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@typescript-eslint/utils",
+      "version": "8.71.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://typescript-eslint.io/packages/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@typescript-eslint/visitor-keys",
+      "version": "8.71.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://typescript-eslint.io"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "@vitejs/plugin-react",
       "version": "6.0.5",
       "licenses": [
@@ -1651,8 +2168,98 @@
     },
     {
       "type": "library",
+      "name": "acorn",
+      "version": "8.15.0,8.19.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/acornjs/acorn"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "acorn-jsx",
+      "version": "5.3.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/acornjs/acorn-jsx"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "acorn-jsx-walk",
+      "version": "2.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sderosiaux/acorn-jsx-walk#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "acorn-loose",
+      "version": "8.5.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/acornjs/acorn"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "acorn-walk",
+      "version": "8.3.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/acornjs/acorn"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "adm-zip",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "licenses": [
         {
           "license": {
@@ -1670,7 +2277,7 @@
     {
       "type": "library",
       "name": "agent-base",
-      "version": "7.1.4",
+      "version": "7.1.4,9.0.0",
       "licenses": [
         {
           "license": {
@@ -1688,7 +2295,7 @@
     {
       "type": "library",
       "name": "ai-tokenizer",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "licenses": [
         {
           "license": {
@@ -1701,7 +2308,7 @@
     {
       "type": "library",
       "name": "ajv",
-      "version": "8.17.1",
+      "version": "6.15.0,8.18.0",
       "licenses": [
         {
           "license": {
@@ -1713,6 +2320,114 @@
         {
           "type": "website",
           "url": "https://ajv.js.org"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ansi-regex",
+      "version": "5.0.1,6.4.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/chalk/ansi-regex#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ansi-styles",
+      "version": "4.3.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/chalk/ansi-styles#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "argparse",
+      "version": "2.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "Python-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/nodeca/argparse#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "aria-query",
+      "version": "5.3.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/A11yance/aria-query#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "array-buffer-byte-length",
+      "version": "1.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/array-buffer-byte-length#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "array-includes",
+      "version": "3.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/array-includes#readme"
         }
       ]
     },
@@ -1736,8 +2451,170 @@
     },
     {
       "type": "library",
+      "name": "array.prototype.flat",
+      "version": "1.3.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/Array.prototype.flat#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "array.prototype.flatmap",
+      "version": "1.3.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/Array.prototype.flatMap#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arraybuffer.prototype.slice",
+      "version": "1.0.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/ArrayBuffer.prototype.slice#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ast-types-flow",
+      "version": "0.0.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/kyldvs/ast-types-flow#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "astral-regex",
+      "version": "2.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/kevva/astral-regex#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "async-function",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/async-function#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "available-typed-arrays",
+      "version": "1.0.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/available-typed-arrays#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "axe-core",
+      "version": "4.13.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MPL-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://www.deque.com/axe/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "axobject-query",
+      "version": "4.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/A11yance/axobject-query#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "balanced-match",
-      "version": "4.0.4",
+      "version": "1.0.2,4.0.4",
       "licenses": [
         {
           "license": {
@@ -1790,24 +2667,6 @@
     },
     {
       "type": "library",
-      "name": "boolean",
-      "version": "3.2.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/thenativeweb/boolean#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "bowser",
       "version": "2.14.1",
       "licenses": [
@@ -1827,7 +2686,7 @@
     {
       "type": "library",
       "name": "brace-expansion",
-      "version": "5.0.9",
+      "version": "1.1.21,5.0.12",
       "licenses": [
         {
           "license": {
@@ -1839,6 +2698,24 @@
         {
           "type": "website",
           "url": "https://github.com/juliangruber/brace-expansion#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "braces",
+      "version": "3.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/micromatch/braces"
         }
       ]
     },
@@ -1862,8 +2739,98 @@
     },
     {
       "type": "library",
+      "name": "cacheable",
+      "version": "2.5.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jaredwray/cacheable#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "call-bind",
+      "version": "1.0.9",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/call-bind#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "call-bind-apply-helpers",
+      "version": "1.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/call-bind-apply-helpers#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "call-bound",
+      "version": "1.0.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/call-bound#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "callsites",
+      "version": "3.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/callsites#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "chalk",
-      "version": "5.6.2",
+      "version": "4.1.2,6.0.0",
       "licenses": [
         {
           "license": {
@@ -1875,6 +2842,78 @@
         {
           "type": "website",
           "url": "https://github.com/chalk/chalk#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "color-convert",
+      "version": "2.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/Qix-/color-convert#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "color-name",
+      "version": "1.1.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/colorjs/color-name"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "colord",
+      "version": "2.10.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/omgovich/colord#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "commander",
+      "version": "14.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/tj/commander.js#readme"
         }
       ]
     },
@@ -1898,6 +2937,42 @@
     },
     {
       "type": "library",
+      "name": "concat-map",
+      "version": "0.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/substack/node-concat-map#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cosmiconfig",
+      "version": "9.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/cosmiconfig/cosmiconfig#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "cross-spawn",
       "version": "7.0.6",
       "licenses": [
@@ -1911,6 +2986,60 @@
         {
           "type": "website",
           "url": "https://github.com/moxystudio/node-cross-spawn"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "css-functions-list",
+      "version": "3.3.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/niksy/css-functions-list#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "css-tree",
+      "version": "3.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/csstree/csstree#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cssesc",
+      "version": "3.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://mths.be/cssesc"
         }
       ]
     },
@@ -1934,6 +3063,24 @@
     },
     {
       "type": "library",
+      "name": "damerau-levenshtein",
+      "version": "1.0.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/tad-lispy/node-damerau-levenshtein#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "data-uri-to-buffer",
       "version": "4.0.1",
       "licenses": [
@@ -1952,6 +3099,60 @@
     },
     {
       "type": "library",
+      "name": "data-view-buffer",
+      "version": "1.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/data-view-buffer#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "data-view-byte-length",
+      "version": "1.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/data-view-byte-length#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "data-view-byte-offset",
+      "version": "1.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/data-view-byte-offset#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "debug",
       "version": "4.4.3",
       "licenses": [
@@ -1965,6 +3166,24 @@
         {
           "type": "website",
           "url": "https://github.com/debug-js/debug#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "deep-is",
+      "version": "0.1.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/thlorenz/deep-is#readme"
         }
       ]
     },
@@ -2006,6 +3225,24 @@
     },
     {
       "type": "library",
+      "name": "dependency-cruiser",
+      "version": "17.3.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sverweij/dependency-cruiser"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "detect-libc",
       "version": "2.1.2",
       "licenses": [
@@ -2019,24 +3256,6 @@
         {
           "type": "website",
           "url": "https://github.com/lovell/detect-libc#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "detect-node",
-      "version": "2.1.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/iliakan/detect-node"
         }
       ]
     },
@@ -2060,6 +3279,42 @@
     },
     {
       "type": "library",
+      "name": "dompurify",
+      "version": "3.4.16",
+      "licenses": [
+        {
+          "license": {
+            "id": "(MPL-2.0 OR Apache-2.0)"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/cure53/DOMPurify"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "dunder-proto",
+      "version": "1.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/dunder-proto#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "ecdsa-sig-formatter",
       "version": "1.0.11",
       "licenses": [
@@ -2073,6 +3328,114 @@
         {
           "type": "website",
           "url": "https://github.com/Brightspace/node-ecdsa-sig-formatter#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "emoji-regex",
+      "version": "8.0.0,9.2.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://mths.be/emoji-regex"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "enhanced-resolve",
+      "version": "5.18.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "http://github.com/webpack/enhanced-resolve"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "env-paths",
+      "version": "2.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/env-paths#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "error-ex",
+      "version": "1.3.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/qix-/node-error-ex#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "es-abstract",
+      "version": "1.24.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/es-abstract#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "es-abstract-get",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/es-abstract-get#readme"
         }
       ]
     },
@@ -2114,8 +3477,8 @@
     },
     {
       "type": "library",
-      "name": "es6-error",
-      "version": "4.1.1",
+      "name": "es-object-atoms",
+      "version": "1.1.2",
       "licenses": [
         {
           "license": {
@@ -2126,14 +3489,68 @@
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/bjyoungblood/es6-error"
+          "url": "https://github.com/ljharb/es-object-atoms#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "es-set-tostringtag",
+      "version": "2.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/es-set-tostringtag#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "es-shim-unscopables",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/es-shim-unscopables#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "es-to-primitive",
+      "version": "1.3.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/es-to-primitive#readme"
         }
       ]
     },
     {
       "type": "library",
       "name": "esbuild",
-      "version": "0.27.7",
+      "version": "0.28.2",
       "licenses": [
         {
           "license": {
@@ -2168,6 +3585,96 @@
     },
     {
       "type": "library",
+      "name": "eslint",
+      "version": "10.12.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://eslint.org"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "eslint-plugin-jsx-a11y",
+      "version": "6.10.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jsx-eslint/eslint-plugin-jsx-a11y#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "eslint-scope",
+      "version": "9.1.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/eslint/js/blob/main/packages/eslint-scope/README.md"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "eslint-visitor-keys",
+      "version": "3.4.3,5.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/eslint/js/blob/main/packages/eslint-visitor-keys/README.md"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "espree",
+      "version": "11.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/eslint/js/blob/main/packages/espree/README.md"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "esprima",
       "version": "4.0.1",
       "licenses": [
@@ -2181,6 +3688,78 @@
         {
           "type": "website",
           "url": "http://esprima.org"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "esquery",
+      "version": "1.7.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/estools/esquery/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "esrecurse",
+      "version": "4.3.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/estools/esrecurse"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "estraverse",
+      "version": "5.3.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/estools/estraverse"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "esutils",
+      "version": "2.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/estools/esutils"
         }
       ]
     },
@@ -2240,8 +3819,80 @@
     },
     {
       "type": "library",
+      "name": "fast-glob",
+      "version": "3.3.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/mrmlnc/fast-glob#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fast-json-stable-stringify",
+      "version": "2.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/epoberezkin/fast-json-stable-stringify"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fast-levenshtein",
+      "version": "2.0.6",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/hiddentao/fast-levenshtein#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fast-sha256",
+      "version": "1.3.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Unlicense"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/dchest/fast-sha256-js#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "fast-uri",
-      "version": "3.1.4",
+      "version": "3.1.8",
       "licenses": [
         {
           "license": {
@@ -2253,6 +3904,42 @@
         {
           "type": "website",
           "url": "https://github.com/fastify/fast-uri"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fastest-levenshtein",
+      "version": "1.0.16",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ka-weihe/fastest-levenshtein#README"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fastq",
+      "version": "1.20.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/mcollina/fastq#readme"
         }
       ]
     },
@@ -2312,6 +3999,78 @@
     },
     {
       "type": "library",
+      "name": "file-entry-cache",
+      "version": "11.1.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jaredwray/cacheable#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fill-range",
+      "version": "7.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jonschlinkert/fill-range"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "find-up",
+      "version": "5.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/find-up#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flat-cache",
+      "version": "6.1.23",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jaredwray/cacheable#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "flatbuffers",
       "version": "25.9.23",
       "licenses": [
@@ -2325,6 +4084,42 @@
         {
           "type": "website",
           "url": "https://google.github.io/flatbuffers/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flatted",
+      "version": "3.4.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/WebReflection/flatted#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "for-each",
+      "version": "0.3.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/Raynos/for-each"
         }
       ]
     },
@@ -2366,8 +4161,62 @@
     },
     {
       "type": "library",
+      "name": "function-bind",
+      "version": "1.1.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/Raynos/function-bind"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "function.prototype.name",
+      "version": "1.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/Function.prototype.name#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "functions-have-names",
+      "version": "1.2.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/functions-have-names#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "gaxios",
-      "version": "7.3.0",
+      "version": "7.3.1",
       "licenses": [
         {
           "license": {
@@ -2402,6 +4251,24 @@
     },
     {
       "type": "library",
+      "name": "generator-function",
+      "version": "2.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/TimothyGu/generator-function#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "get-east-asian-width",
       "version": "1.6.0",
       "licenses": [
@@ -2420,8 +4287,62 @@
     },
     {
       "type": "library",
+      "name": "get-intrinsic",
+      "version": "1.3.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/get-intrinsic#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "get-proto",
+      "version": "1.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/get-proto#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "get-symbol-description",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/get-symbol-description#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "get-tsconfig",
-      "version": "4.14.2,4.14.3",
+      "version": "4.14.3",
       "licenses": [
         {
           "license": {
@@ -2438,8 +4359,26 @@
     },
     {
       "type": "library",
+      "name": "glob-parent",
+      "version": "5.1.2,6.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/gulpjs/glob-parent#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "global-agent",
-      "version": "3.0.0",
+      "version": "4.1.3",
       "licenses": [
         {
           "license": {
@@ -2451,6 +4390,60 @@
         {
           "type": "website",
           "url": "https://github.com/gajus/global-agent#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "global-directory",
+      "version": "4.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/global-directory#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "global-modules",
+      "version": "2.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jonschlinkert/global-modules"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "global-prefix",
+      "version": "3.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jonschlinkert/global-prefix"
         }
       ]
     },
@@ -2469,6 +4462,42 @@
         {
           "type": "website",
           "url": "https://github.com/ljharb/System.global#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "globby",
+      "version": "16.2.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/globby#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "globjoin",
+      "version": "0.1.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/amobiz/globjoin"
         }
       ]
     },
@@ -2547,7 +4576,7 @@
     {
       "type": "library",
       "name": "grok-mermaid",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "licenses": [
         {
           "license": {
@@ -2582,6 +4611,42 @@
     },
     {
       "type": "library",
+      "name": "has-bigints",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/has-bigints#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "has-flag",
+      "version": "4.0.0,5.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/has-flag#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "has-property-descriptors",
       "version": "1.0.2",
       "licenses": [
@@ -2595,6 +4660,96 @@
         {
           "type": "website",
           "url": "https://github.com/inspect-js/has-property-descriptors#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "has-proto",
+      "version": "1.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/has-proto#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "has-symbols",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/has-symbols#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "has-tostringtag",
+      "version": "1.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/has-tostringtag#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hashery",
+      "version": "1.5.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jaredwray/hashery#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hasown",
+      "version": "2.0.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/hasOwn#readme"
         }
       ]
     },
@@ -2618,6 +4773,24 @@
     },
     {
       "type": "library",
+      "name": "hookified",
+      "version": "1.15.1,2.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jaredwray/hookified#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "hosted-git-info",
       "version": "9.0.3",
       "licenses": [
@@ -2636,8 +4809,26 @@
     },
     {
       "type": "library",
+      "name": "html-tags",
+      "version": "5.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/html-tags#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "http-proxy-agent",
-      "version": "7.0.2",
+      "version": "9.1.0",
       "licenses": [
         {
           "license": {
@@ -2655,7 +4846,7 @@
     {
       "type": "library",
       "name": "https-proxy-agent",
-      "version": "7.0.6",
+      "version": "7.0.6,9.1.0",
       "licenses": [
         {
           "license": {
@@ -2673,7 +4864,7 @@
     {
       "type": "library",
       "name": "ignore",
-      "version": "7.0.5",
+      "version": "5.3.2,7.0.5,7.0.8",
       "licenses": [
         {
           "license": {
@@ -2685,6 +4876,672 @@
         {
           "type": "website",
           "url": "https://github.com/kaelzhang/node-ignore#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "import-fresh",
+      "version": "3.3.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/import-fresh#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "import-meta-resolve",
+      "version": "4.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/wooorm/import-meta-resolve#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "imurmurhash",
+      "version": "0.1.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jensyt/imurmurhash-js"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ini",
+      "version": "1.3.8,4.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/npm/ini#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "internal-slot",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/internal-slot#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "interpret",
+      "version": "3.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/gulpjs/interpret#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-array-buffer",
+      "version": "3.0.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-array-buffer#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-arrayish",
+      "version": "0.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/qix-/node-is-arrayish#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-async-function",
+      "version": "2.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-async-function#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-bigint",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-bigint#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-boolean-object",
+      "version": "1.2.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-boolean-object#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-callable",
+      "version": "1.2.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-callable#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-core-module",
+      "version": "2.16.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-core-module"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-data-view",
+      "version": "1.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-data-view#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-date-object",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-date-object#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-document.all",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-document.all#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-extglob",
+      "version": "2.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jonschlinkert/is-extglob"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-finalizationregistry",
+      "version": "1.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-finalizationregistry#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-fullwidth-code-point",
+      "version": "3.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/is-fullwidth-code-point#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-generator-function",
+      "version": "1.1.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-generator-function#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-glob",
+      "version": "4.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/micromatch/is-glob"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-installed-globally",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/is-installed-globally#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-map",
+      "version": "2.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-map#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-negative-zero",
+      "version": "2.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-negative-zero"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-number",
+      "version": "7.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jonschlinkert/is-number"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-number-object",
+      "version": "1.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-number-object#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-path-inside",
+      "version": "4.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/is-path-inside#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-regex",
+      "version": "1.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-regex"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-set",
+      "version": "2.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-set#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-shared-array-buffer",
+      "version": "1.0.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-shared-array-buffer#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-string",
+      "version": "1.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-string#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-symbol",
+      "version": "1.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-symbol#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-typed-array",
+      "version": "1.1.15",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-typed-array#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-weakmap",
+      "version": "2.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-weakmap#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-weakref",
+      "version": "1.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-weakref#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is-weakset",
+      "version": "2.0.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/is-weakset#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "isarray",
+      "version": "2.0.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/juliangruber/isarray"
         }
       ]
     },
@@ -2726,6 +5583,78 @@
     },
     {
       "type": "library",
+      "name": "js-tokens",
+      "version": "4.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/lydell/js-tokens#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "js-yaml",
+      "version": "4.3.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/nodeca/js-yaml#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "jscpd",
+      "version": "5.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://jscpd.dev"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "jscpd-windows-x64-msvc",
+      "version": "5.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/kucherenko/jscpd#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "json-bigint",
       "version": "1.0.0",
       "licenses": [
@@ -2739,6 +5668,24 @@
         {
           "type": "website",
           "url": "https://github.com/sidorares/json-bigint#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "json-parse-even-better-errors",
+      "version": "2.3.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/npm/json-parse-even-better-errors#readme"
         }
       ]
     },
@@ -2763,7 +5710,7 @@
     {
       "type": "library",
       "name": "json-schema-traverse",
-      "version": "1.0.0",
+      "version": "0.4.1,1.0.0",
       "licenses": [
         {
           "license": {
@@ -2780,19 +5727,55 @@
     },
     {
       "type": "library",
-      "name": "json-stringify-safe",
-      "version": "5.0.1",
+      "name": "json-stable-stringify-without-jsonify",
+      "version": "1.0.1",
       "licenses": [
         {
           "license": {
-            "id": "ISC"
+            "id": "MIT"
           }
         }
       ],
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/isaacs/json-stringify-safe"
+          "url": "https://github.com/samn/json-stable-stringify"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "json5",
+      "version": "2.2.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "http://json5.org/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "jsx-ast-utils",
+      "version": "3.3.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jsx-eslint/jsx-ast-utils#readme"
         }
       ]
     },
@@ -2834,6 +5817,60 @@
     },
     {
       "type": "library",
+      "name": "keyv",
+      "version": "5.6.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jaredwray/keyv"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "kind-of",
+      "version": "6.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jonschlinkert/kind-of"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "kleur",
+      "version": "3.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/lukeed/kleur#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "knip",
       "version": "6.34.0",
       "licenses": [
@@ -2847,6 +5884,60 @@
         {
           "type": "website",
           "url": "https://knip.dev"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "language-subtag-registry",
+      "version": "0.3.23",
+      "licenses": [
+        {
+          "license": {
+            "id": "CC0-1.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/mattcg/language-subtag-registry"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "language-tags",
+      "version": "1.0.9",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/mattcg/language-tags"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "levn",
+      "version": "0.4.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/gkz/levn"
         }
       ]
     },
@@ -2888,6 +5979,60 @@
     },
     {
       "type": "library",
+      "name": "lines-and-columns",
+      "version": "1.2.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/eventualbuddha/lines-and-columns#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "locate-path",
+      "version": "6.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/locate-path#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lodash.truncate",
+      "version": "4.4.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://lodash.com/"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "long",
       "version": "5.3.2",
       "licenses": [
@@ -2907,7 +6052,7 @@
     {
       "type": "library",
       "name": "lru-cache",
-      "version": "11.5.2",
+      "version": "11.5.3",
       "licenses": [
         {
           "license": {
@@ -2943,7 +6088,7 @@
     {
       "type": "library",
       "name": "marked",
-      "version": "18.0.5",
+      "version": "18.0.11,18.1.0",
       "licenses": [
         {
           "license": {
@@ -2961,7 +6106,7 @@
     {
       "type": "library",
       "name": "matcher",
-      "version": "3.0.0",
+      "version": "4.0.0",
       "licenses": [
         {
           "license": {
@@ -2978,8 +6123,152 @@
     },
     {
       "type": "library",
+      "name": "math-intrinsics",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/math-intrinsics#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "mathml-tag-names",
+      "version": "4.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/wooorm/mathml-tag-names#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "mdn-data",
+      "version": "2.27.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "CC0-1.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://developer.mozilla.org"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "memoize",
+      "version": "10.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/memoize#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "meow",
+      "version": "14.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/meow#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "merge2",
+      "version": "1.4.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/teambition/merge2"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "micromatch",
+      "version": "4.0.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/micromatch/micromatch"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "mimic-function",
+      "version": "5.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/mimic-function#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "minimatch",
-      "version": "10.2.5",
+      "version": "10.2.6",
       "licenses": [
         {
           "license": {
@@ -2991,6 +6280,42 @@
         {
           "type": "website",
           "url": "https://github.com/isaacs/minimatch#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "minimatch",
+      "version": "3.1.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/isaacs/minimatch#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "minimist",
+      "version": "1.2.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/minimistjs/minimist"
         }
       ]
     },
@@ -3015,7 +6340,7 @@
     {
       "type": "library",
       "name": "nanoid",
-      "version": "3.3.16",
+      "version": "3.3.20",
       "licenses": [
         {
           "license": {
@@ -3027,6 +6352,24 @@
         {
           "type": "website",
           "url": "https://github.com/ai/nanoid#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "natural-compare",
+      "version": "1.4.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/litejs/natural-compare-lite#readme"
         }
       ]
     },
@@ -3068,6 +6411,42 @@
     },
     {
       "type": "library",
+      "name": "normalize-path",
+      "version": "3.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jonschlinkert/normalize-path"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "object-inspect",
+      "version": "1.13.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/object-inspect"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "object-keys",
       "version": "1.1.1",
       "licenses": [
@@ -3086,8 +6465,62 @@
     },
     {
       "type": "library",
+      "name": "object.assign",
+      "version": "4.1.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/object.assign#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "object.fromentries",
+      "version": "2.0.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/Object.fromEntries#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "object.values",
+      "version": "1.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/Object.values#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "onnxruntime-common",
-      "version": "1.24.0-dev.20251116-b39e144322,1.24.3",
+      "version": "1.24.0-dev.20251116-b39e144322,1.30.0",
       "licenses": [
         {
           "license": {
@@ -3105,7 +6538,7 @@
     {
       "type": "library",
       "name": "onnxruntime-node",
-      "version": "1.24.3",
+      "version": "1.30.0",
       "licenses": [
         {
           "license": {
@@ -3141,7 +6574,7 @@
     {
       "type": "library",
       "name": "openai",
-      "version": "6.40.0",
+      "version": "7.19.0",
       "licenses": [
         {
           "license": {
@@ -3153,6 +6586,42 @@
         {
           "type": "website",
           "url": "https://github.com/openai/openai-node#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "optionator",
+      "version": "0.9.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/gkz/optionator"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "own-keys",
+      "version": "1.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/own-keys#readme"
         }
       ]
     },
@@ -3194,6 +6663,42 @@
     },
     {
       "type": "library",
+      "name": "p-limit",
+      "version": "3.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/p-limit#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "p-locate",
+      "version": "5.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/p-locate#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "p-retry",
       "version": "4.6.2",
       "licenses": [
@@ -3230,6 +6735,42 @@
     },
     {
       "type": "library",
+      "name": "parent-module",
+      "version": "1.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/parent-module#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "parse-json",
+      "version": "5.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/parse-json#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "partial-json",
       "version": "0.1.7",
       "licenses": [
@@ -3248,6 +6789,24 @@
     },
     {
       "type": "library",
+      "name": "path-exists",
+      "version": "4.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/path-exists#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "path-key",
       "version": "3.1.1",
       "licenses": [
@@ -3261,6 +6820,24 @@
         {
           "type": "website",
           "url": "https://github.com/sindresorhus/path-key#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "path-parse",
+      "version": "1.0.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jbgutierrez/path-parse#readme"
         }
       ]
     },
@@ -3303,7 +6880,7 @@
     {
       "type": "library",
       "name": "picomatch",
-      "version": "4.0.5,4.0.7",
+      "version": "2.3.2,4.0.5,4.0.7",
       "licenses": [
         {
           "license": {
@@ -3374,8 +6951,26 @@
     },
     {
       "type": "library",
+      "name": "possible-typed-array-names",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/possible-typed-array-names#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "postcss",
-      "version": "8.5.25",
+      "version": "8.5.29",
       "licenses": [
         {
           "license": {
@@ -3387,6 +6982,96 @@
         {
           "type": "website",
           "url": "https://postcss.org/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "postcss-safe-parser",
+      "version": "7.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/postcss/postcss-safe-parser#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "postcss-selector-parser",
+      "version": "7.1.6",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/postcss/postcss-selector-parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "postcss-value-parser",
+      "version": "4.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/TrySound/postcss-value-parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "prelude-ls",
+      "version": "1.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "http://preludels.com"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "prompts",
+      "version": "2.4.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/terkelg/prompts#readme"
         }
       ]
     },
@@ -3411,7 +7096,7 @@
     {
       "type": "library",
       "name": "protobufjs",
-      "version": "7.6.5",
+      "version": "7.6.6",
       "licenses": [
         {
           "license": {
@@ -3423,6 +7108,42 @@
         {
           "type": "website",
           "url": "https://protobufjs.github.io/protobuf.js/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "proxy-agent-negotiate",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/TooTallNate/proxy-agents#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "punycode",
+      "version": "2.3.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://mths.be/punycode"
         }
       ]
     },
@@ -3441,6 +7162,42 @@
         {
           "type": "website",
           "url": "https://github.com/dubzzz/pure-rand#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "qified",
+      "version": "0.10.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jaredwray/qified#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "queue-microtask",
+      "version": "1.2.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/feross/queue-microtask"
         }
       ]
     },
@@ -3482,6 +7239,24 @@
     },
     {
       "type": "library",
+      "name": "quickjs-wasi",
+      "version": "3.6.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/vercel-labs/quickjs-wasi#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "react",
       "version": "19.2.8",
       "licenses": [
@@ -3518,6 +7293,78 @@
     },
     {
       "type": "library",
+      "name": "rechoir",
+      "version": "0.8.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/gulpjs/rechoir#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "reflect.getprototypeof",
+      "version": "1.0.10",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/Reflect.getPrototypeOf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "regexp-tree",
+      "version": "0.1.27",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/DmitrySoshnikov/regexp-tree"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "regexp.prototype.flags",
+      "version": "1.5.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/RegExp.prototype.flags#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "require-from-string",
       "version": "2.0.2",
       "licenses": [
@@ -3531,6 +7378,42 @@
         {
           "type": "website",
           "url": "https://github.com/floatdrop/require-from-string#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "resolve",
+      "version": "1.22.12",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/browserify/resolve#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "resolve-from",
+      "version": "4.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/resolve-from#readme"
         }
       ]
     },
@@ -3572,26 +7455,26 @@
     },
     {
       "type": "library",
-      "name": "roarr",
-      "version": "2.15.4",
+      "name": "reusify",
+      "version": "1.1.0",
       "licenses": [
         {
           "license": {
-            "id": "BSD-3-Clause"
+            "id": "MIT"
           }
         }
       ],
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/gajus/roarr#readme"
+          "url": "https://github.com/mcollina/reusify#readme"
         }
       ]
     },
     {
       "type": "library",
       "name": "rolldown",
-      "version": "1.2.1",
+      "version": "1.2.13",
       "licenses": [
         {
           "license": {
@@ -3603,6 +7486,42 @@
         {
           "type": "website",
           "url": "https://rolldown.rs/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "run-parallel",
+      "version": "1.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/feross/run-parallel"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "safe-array-concat",
+      "version": "1.1.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/safe-array-concat#readme"
         }
       ]
     },
@@ -3621,6 +7540,60 @@
         {
           "type": "website",
           "url": "https://github.com/feross/safe-buffer"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "safe-push-apply",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/safe-push-apply#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "safe-regex",
+      "version": "2.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/davisjam/safe-regex"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "safe-regex-test",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/safe-regex-test#readme"
         }
       ]
     },
@@ -3645,7 +7618,7 @@
     {
       "type": "library",
       "name": "semver",
-      "version": "7.8.0,7.8.5",
+      "version": "7.7.3,7.8.5",
       "licenses": [
         {
           "license": {
@@ -3662,26 +7635,8 @@
     },
     {
       "type": "library",
-      "name": "semver-compare",
-      "version": "1.0.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/substack/semver-compare"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "serialize-error",
-      "version": "7.0.1",
+      "version": "8.1.0",
       "licenses": [
         {
           "license": {
@@ -3698,8 +7653,62 @@
     },
     {
       "type": "library",
+      "name": "set-function-length",
+      "version": "1.2.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/set-function-length#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "set-function-name",
+      "version": "2.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/set-function-name#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "set-proto",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/set-proto#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "sharp",
-      "version": "0.35.3",
+      "version": "0.35.5",
       "licenses": [
         {
           "license": {
@@ -3752,8 +7761,80 @@
     },
     {
       "type": "library",
+      "name": "side-channel",
+      "version": "1.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/side-channel#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "side-channel-list",
+      "version": "1.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/side-channel-list#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "side-channel-map",
+      "version": "1.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/side-channel-map#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "side-channel-weakmap",
+      "version": "1.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/side-channel-weakmap#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "signal-exit",
-      "version": "3.0.7",
+      "version": "3.0.7,4.1.0",
       "licenses": [
         {
           "license": {
@@ -3764,14 +7845,68 @@
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/tapjs/signal-exit"
+          "url": "https://github.com/tapjs/signal-exit#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sisteransi",
+      "version": "1.0.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/terkelg/sisteransi#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "slash",
+      "version": "5.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/slash#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "slice-ansi",
+      "version": "4.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/chalk/slice-ansi#readme"
         }
       ]
     },
     {
       "type": "library",
       "name": "smol-toml",
-      "version": "1.8.0",
+      "version": "1.9.1",
       "licenses": [
         {
           "license": {
@@ -3789,7 +7924,7 @@
     {
       "type": "library",
       "name": "source-map-js",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "licenses": [
         {
           "license": {
@@ -3806,19 +7941,163 @@
     },
     {
       "type": "library",
-      "name": "sprintf-js",
-      "version": "1.1.3",
+      "name": "standardwebhooks",
+      "version": "1.1.1",
       "licenses": [
         {
           "license": {
-            "id": "BSD-3-Clause"
+            "id": "MIT"
           }
         }
       ],
       "externalReferences": [
         {
           "type": "website",
-          "url": "https://github.com/alexei/sprintf.js#readme"
+          "url": "https://github.com/standard-webhooks/standard-webhooks/tree/main/libraries/javascript"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "stop-iteration-iterator",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/stop-iteration-iterator#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "string-width",
+      "version": "4.2.3,8.3.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/string-width#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "string.prototype.includes",
+      "version": "2.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://mths.be/includes"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "string.prototype.trim",
+      "version": "1.2.11",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/String.prototype.trim#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "string.prototype.trimend",
+      "version": "1.0.10",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/String.prototype.trimEnd#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "string.prototype.trimstart",
+      "version": "1.0.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/es-shims/String.prototype.trimStart#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "strip-ansi",
+      "version": "6.0.1,7.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/chalk/strip-ansi#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "strip-bom",
+      "version": "3.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/strip-bom#readme"
         }
       ]
     },
@@ -3842,6 +8121,150 @@
     },
     {
       "type": "library",
+      "name": "stylelint",
+      "version": "17.16.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://stylelint.io"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "stylelint-value-no-unknown-custom-properties",
+      "version": "6.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "CC0-1.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/csstools/stylelint-value-no-unknown-custom-properties#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "supports-color",
+      "version": "10.2.2,7.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/chalk/supports-color#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "supports-hyperlinks",
+      "version": "4.6.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/chalk/supports-hyperlinks#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "supports-preserve-symlinks-flag",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/node-supports-preserve-symlinks-flag#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "svg-tags",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/element-io/svg-tags#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "table",
+      "version": "6.9.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/gajus/table#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tapable",
+      "version": "2.3.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/webpack/tapable"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "tinyglobby",
       "version": "0.2.17",
       "licenses": [
@@ -3860,6 +8283,24 @@
     },
     {
       "type": "library",
+      "name": "to-regex-range",
+      "version": "5.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/micromatch/to-regex-range"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "ts-algebra",
       "version": "2.0.0",
       "licenses": [
@@ -3873,6 +8314,60 @@
         {
           "type": "website",
           "url": "https://github.com/ThomasAribart/ts-algebra#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ts-api-utils",
+      "version": "2.5.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/JoshuaKGoldberg/ts-api-utils#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tsconfig-paths",
+      "version": "4.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/dividab/tsconfig-paths#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tsconfig-paths-webpack-plugin",
+      "version": "4.2.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/dividab/tsconfig-paths-webpack-plugin#readme"
         }
       ]
     },
@@ -3914,8 +8409,26 @@
     },
     {
       "type": "library",
+      "name": "type-check",
+      "version": "0.4.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/gkz/type-check"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "type-fest",
-      "version": "0.13.1",
+      "version": "0.20.2",
       "licenses": [
         {
           "license": {
@@ -3933,7 +8446,7 @@
     {
       "type": "library",
       "name": "typebox",
-      "version": "1.1.38,1.3.7,1.3.8",
+      "version": "1.1.38,1.3.27",
       "licenses": [
         {
           "license": {
@@ -3945,6 +8458,78 @@
         {
           "type": "website",
           "url": "https://github.com/sinclairzx81/typebox#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "typed-array-buffer",
+      "version": "1.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/typed-array-buffer#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "typed-array-byte-length",
+      "version": "1.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/typed-array-byte-length#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "typed-array-byte-offset",
+      "version": "1.0.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/typed-array-byte-offset#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "typed-array-length",
+      "version": "1.0.8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/typed-array-length#readme"
         }
       ]
     },
@@ -3968,6 +8553,24 @@
     },
     {
       "type": "library",
+      "name": "typescript-eslint",
+      "version": "8.71.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://typescript-eslint.io/packages/typescript-eslint"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "unbash",
       "version": "4.0.11",
       "licenses": [
@@ -3986,8 +8589,26 @@
     },
     {
       "type": "library",
+      "name": "unbox-primitive",
+      "version": "1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/ljharb/unbox-primitive#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "undici",
-      "version": "8.9.0",
+      "version": "8.10.2",
       "licenses": [
         {
           "license": {
@@ -4017,6 +8638,60 @@
         {
           "type": "website",
           "url": "https://undici.nodejs.org"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "unicorn-magic",
+      "version": "0.4.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/unicorn-magic#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "uri-js",
+      "version": "4.4.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/garycourt/uri-js"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "util-deprecate",
+      "version": "1.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/TooTallNate/util-deprecate"
         }
       ]
     },
@@ -4053,6 +8728,24 @@
         {
           "type": "website",
           "url": "https://github.com/isaacs/walk-up-path#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "watskeburt",
+      "version": "5.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sverweij/watskeburt"
         }
       ]
     },
@@ -4095,7 +8788,7 @@
     {
       "type": "library",
       "name": "which",
-      "version": "2.0.2",
+      "version": "1.3.1,2.0.2",
       "licenses": [
         {
           "license": {
@@ -4112,8 +8805,116 @@
     },
     {
       "type": "library",
+      "name": "which-boxed-primitive",
+      "version": "1.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/which-boxed-primitive#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "which-builtin-type",
+      "version": "1.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/which-builtin-type#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "which-collection",
+      "version": "1.0.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/which-collection#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "which-typed-array",
+      "version": "1.1.24",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/inspect-js/which-typed-array#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "word-wrap",
+      "version": "1.2.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jonschlinkert/word-wrap"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "write-file-atomic",
+      "version": "7.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/npm/write-file-atomic"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "ws",
-      "version": "8.21.3",
+      "version": "8.22.0",
       "licenses": [
         {
           "license": {
@@ -4161,6 +8962,24 @@
         {
           "type": "website",
           "url": "https://github.com/thejoshwolfe/yauzl"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "yocto-queue",
+      "version": "0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/sindresorhus/yocto-queue#readme"
         }
       ]
     },
