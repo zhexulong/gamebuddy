@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { resolve } from "node:path";
 import { launchStardewLiveRun, normalizeLiveRunWindowMode } from "./lib/stardew-live-run.mjs";
+import { listStardewProcessIds } from "./lib/windows-process-tree.mjs";
 
 // One-shot orchestrator for the ladder live run.
 //
@@ -84,5 +85,12 @@ try {
   console.log(resultLine ?? runnerStdout.slice(-2000));
   console.error("RUNNER_LOG", logPath);
 } finally {
-  await game?.close?.();
+  const reclamation = await game?.close?.();
+  // ZERO SURVIVORS IS THE ASSERTION, not an assumption. A launch that reclaimed its owner still leaves the
+  // question open for the game image that owner spawned, and this is what proves the tree was actually reached.
+  // A survivor is REPORTED, never killed by image name: a game process this harness did not launch is not its to
+  // terminate. The next run would otherwise meet it as a busy fixture root with an orphaned transaction, which
+  // reads as an unrelated failure.
+  const survivors = listStardewProcessIds();
+  console.error("PROCESS_RECLAMATION", JSON.stringify({ outcome: reclamation?.outcome ?? "no_launch", survivors }));
 }

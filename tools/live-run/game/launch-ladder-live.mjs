@@ -30,6 +30,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { killProcessTree, listStardewProcessIds } from "../../lib/windows-process-tree.mjs";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "../../lib/stardew-fixture-roots.mjs";
 import { normalizeLiveRunWindowMode } from "../../lib/stardew-live-run.mjs";
 
@@ -95,24 +96,9 @@ const run = (argv, env) =>
     maxBuffer: 32 * 1024 * 1024,
   });
 
-function liveGameProcesses() {
-  try {
-    return execFileSync(
-      "powershell",
-      [
-        "-NoProfile",
-        "-Command",
-        "Get-Process -Name 'StardewModdingAPI','Stardew Valley' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id",
-      ],
-      { encoding: "utf8", timeout: 60_000 },
-    )
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
+// The shared reader (tools/lib/windows-process-tree.mjs): one implementation, and the one used by the
+// zero-survivor assertion below, so "no orphan" is judged by the same code that reports it.
+const liveGameProcesses = () => listStardewProcessIds();
 
 /**
  * A run only starts on a free root: no game, no active transaction. A run that
@@ -251,9 +237,9 @@ const takeoverWatch = setInterval(() => {
     `[abort] fixture transaction taken over by ${owner ?? "a run that removed the lock"} — this session is no longer valid`,
   );
   for (const pid of liveGameProcesses()) {
-    try {
-      execFileSync("taskkill", ["/PID", pid, "/T", "/F"], { encoding: "utf8", timeout: 60_000 });
-    } catch {}
+    // Exact PID, and only the one already-exited status is tolerated. A broad catch here swallowed the failure
+    // this whole step exists to prevent.
+    killProcessTree(pid);
   }
 }, 5_000);
 await new Promise((resolve) => {

@@ -19,6 +19,7 @@
  */
 import { spawn } from "node:child_process";
 import { assertLiveRunArtifactFresh } from "./live-run-artifact-freshness.mjs";
+import { killProcessTree } from "./windows-process-tree.mjs";
 import { readdirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
@@ -83,7 +84,8 @@ export async function launchStardewLiveRun({
 }) {
   if (typeof gamePath !== "string" || !isAbsolute(gamePath)) throw new Error("invalid_live_run_game_path");
   if (typeof modsPath !== "string" || !isAbsolute(modsPath)) throw new Error("invalid_live_run_mods_path");
-  if (typeof pipeName !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(pipeName)) throw new Error("invalid_live_run_pipe_name");
+  if (typeof pipeName !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(pipeName))
+    throw new Error("invalid_live_run_pipe_name");
   // Refuse BEFORE a game process exists. The runner checks this too, but a caller that reaches the runner has
   // already paid for a save load -- measured: a stale artifact refused the run and left the launched game behind.
   await assertLiveRunArtifactFresh();
@@ -114,17 +116,27 @@ export async function launchStardewLiveRun({
   try {
     await Promise.race([waitForPipe(pipeName, timeoutMs), spawnError]);
   } catch (error) {
-    child.kill();
+    killProcessTree(pid);
     throw error;
   }
 
+  const launchedPid = pid;
   return Object.freeze({
     pid,
     pipeName,
     windowMode: mode,
+    /**
+     * Reclaim the launch AND its tree.
+     *
+     * `child.kill()` does not kill a tree on Windows, and the game is a separate image the SMAPI child spawns;
+     * killing the child left `Stardew Valley.exe` running, so the next run found a busy fixture root and an
+     * orphaned transaction (measured repeatedly 2026-10-16/17). The kill is by exact PID via `taskkill /T /F`,
+     * and the result says which of the two happened instead of assuming either.
+     */
     close: () => {
-      if (child.exitCode === null && child.signalCode === null) child.kill();
-      return Promise.resolve();
+      // Always kill the TREE, even when the SMAPI child already exited: its own children may outlive it, which is
+      // exactly the orphan this replaced `child.kill()` for. The outcome distinguishes the two normal cases.
+      return Promise.resolve(Object.freeze({ outcome: killProcessTree(launchedPid) }));
     },
     get _child() {
       return child;
@@ -139,13 +151,32 @@ function parseCli(argv) {
     const argument = argv[index];
     const value = argv[index + 1];
     switch (argument) {
-      case "--print-map": options.printMap = true; break;
-      case "--game-path": options.gamePath = value; index += 1; break;
-      case "--mods-path": options.modsPath = value; index += 1; break;
-      case "--window-mode": options.windowMode = value; index += 1; break;
-      case "--pipe-name": options.pipeName = value; index += 1; break;
-      case "--timeout-ms": options.timeoutMs = Number(value); index += 1; break;
-      case "--detached": options.detached = true; break;
+      case "--print-map":
+        options.printMap = true;
+        break;
+      case "--game-path":
+        options.gamePath = value;
+        index += 1;
+        break;
+      case "--mods-path":
+        options.modsPath = value;
+        index += 1;
+        break;
+      case "--window-mode":
+        options.windowMode = value;
+        index += 1;
+        break;
+      case "--pipe-name":
+        options.pipeName = value;
+        index += 1;
+        break;
+      case "--timeout-ms":
+        options.timeoutMs = Number(value);
+        index += 1;
+        break;
+      case "--detached":
+        options.detached = true;
+        break;
       default:
         if (argument === undefined) break;
         throw new Error(`unknown_argument:${argument}`);
@@ -170,21 +201,29 @@ async function cliMain(argv) {
     return;
   }
   if (options.printMap === true) {
-    const map = Object.fromEntries(WINDOW_MODES.map((mode) => [mode, {
-      style: windowModeToStyle(mode),
-      captureEvidence: shouldCaptureWindowEvidence(mode),
-    }]));
+    const map = Object.fromEntries(
+      WINDOW_MODES.map((mode) => [
+        mode,
+        {
+          style: windowModeToStyle(mode),
+          captureEvidence: shouldCaptureWindowEvidence(mode),
+        },
+      ]),
+    );
     process.stdout.write(`${JSON.stringify({ windowModes: map })}\n`);
     return;
   }
   try {
     const handle = await launchStardewLiveRun({ ...options, detached: options.detached === true });
-    process.stdout.write(`${JSON.stringify({ pid: handle.pid, pipeName: handle.pipeName, windowMode: handle.windowMode, evidenceCaptured: shouldCaptureWindowEvidence(handle.windowMode) })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ pid: handle.pid, pipeName: handle.pipeName, windowMode: handle.windowMode, evidenceCaptured: shouldCaptureWindowEvidence(handle.windowMode) })}\n`,
+    );
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   }
 }
 
-const isCli = process.argv[1] !== undefined && process.argv[1].replaceAll("\\", "/").endsWith("tools/lib/stardew-live-run.mjs");
+const isCli =
+  process.argv[1] !== undefined && process.argv[1].replaceAll("\\", "/").endsWith("tools/lib/stardew-live-run.mjs");
 if (isCli) await cliMain(process.argv.slice(2));
