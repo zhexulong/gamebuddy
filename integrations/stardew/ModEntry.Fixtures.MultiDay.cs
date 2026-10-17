@@ -224,6 +224,25 @@ public sealed partial class ModEntry
         if (player.newLevels.Count != 0)
             throw new InvalidOperationException($"fixture_native_local_multi_day_pending_level_up:{player.newLevels.Count}");
 
+        // (4d) ONE pending ORDINARY level-up, declared as part of this Given.
+        //
+        // The world now meets the one menu a real multi-day companion cannot avoid, so the run has to resolve it
+        // through the product's own `respond_level_up` instead of stopping on it (measured 2026-10-17: the first
+        // run that crossed a night ended `actor_held_by_unclosable_menu:LevelUpMenu`). Two independent reviews
+        // found that a world which can never raise the menu makes the fix unprovable here, so the given arms it on
+        // purpose.
+        //
+        // The pair is combat at level 6: an ORDINARY level (5 and 10 are the profession milestones, which the
+        // engine only offers as a choice), and `getLevelPerk(4, ..)` writes `maxHealth += 5` (LevelUpMenu.cs:663-665),
+        // which is a harmless, permanent, real perk. Combat is already pinned at 10, so nothing the companion does
+        // can raise it into a milestone; the entry itself is synthetic (a real actor would have it from gaining the
+        // level), and it is reported in the arm log rather than hidden.
+        const int PendingLevelUpSkill = 4;
+        const int PendingLevelUpLevel = 6;
+        player.newLevels.Add(new Point(PendingLevelUpSkill, PendingLevelUpLevel));
+        if (player.newLevels.Count != 1)
+            throw new InvalidOperationException($"fixture_native_local_multi_day_pending_level_up_not_armed:{player.newLevels.Count}");
+
         // (4b) The mastery side effect of five maxed skills, recorded rather than left to be discovered.
         //
         // The first rollover adds `gotMasteryHint` to `player.mailReceived` and queues a global message
@@ -240,7 +259,7 @@ public sealed partial class ModEntry
 
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log(
-            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};time={Game1.timeOfDay};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups=0;skills_pinned={string.Join(",", PinnedSkills)}@{10};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;guarantee=no_rollover_pushes_LevelUpMenu;guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
+            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};time={Game1.timeOfDay};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups={player.newLevels.Count};pending_level_up={(player.newLevels.Count > 0 ? $"{player.newLevels[0].X}@{player.newLevels[0].Y}" : "none")};skills_pinned={string.Join(",", PinnedSkills)}@{10};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;guarantee=one_pending_level_up_is_an_ordinary_level;guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
             LogLevel.Info);
     }
 }
