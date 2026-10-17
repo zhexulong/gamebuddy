@@ -2423,6 +2423,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "water_pet_bowl" &&
     value.action !== "dismiss_modal" &&
     value.action !== "answer_dialogue" &&
+    value.action !== "respond_level_up" &&
     value.action !== "water_slime_hutch_trough" &&
     value.action !== "refill_watering_can" &&
     value.action !== "harvest_crop" &&
