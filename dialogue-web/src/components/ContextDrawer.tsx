@@ -60,12 +60,12 @@ export function ContextDrawer({
     };
   }, [restoreFocusTo]);
 
-  const handleKeyDown = (event: {
-    key: string;
-    shiftKey: boolean;
-    preventDefault(): void;
-  }): void => {
+  const handleKeyDown = (event: { key: string; shiftKey: boolean; preventDefault(): void }): void => {
     if (event.key === "Escape") {
+      // Escape belongs to this drawer while it is open: closing it must not also
+      // step the shell back to the conversation, or close the surface it was
+      // opened from - the same ownership the AppBar's folded disclosure takes.
+      event.stopPropagation();
       event.preventDefault();
       onClose();
       return;
@@ -120,13 +120,7 @@ export function ContextDrawer({
               {title}
             </h2>
           </div>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={onClose}
-            title={closeLabel}
-            aria-label={closeLabel}
-          >
+          <button type="button" className="icon-button" onClick={onClose} title={closeLabel} aria-label={closeLabel}>
             <X size={20} aria-hidden="true" />
           </button>
         </div>

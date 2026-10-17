@@ -22,9 +22,12 @@ import { expect, test } from "@playwright/test";
  *  - the import result no longer claims the new companion can be chatted with in
  *    this run, and states the same condition: catches the old sentence surviving
  *    a fix that only touched the list;
- *  - the companions list section renders exactly ONE button (the create control)
- *    and NO interactive element inside a companion entry: catches an "activate"
- *    affordance for a route that does not exist;
+ *  - no element of the roster or of the companion inspector it opens asserts or
+ *    implies SWITCHING the in-play companion, and the inspector's own controls are
+ *    reads: catches an "activate" affordance for a route that does not exist, in
+ *    the row or inside the drawer the row opens;
+ *  - opening the inspector issues reads only (every `/api/tavern/v1/` request it
+ *    makes is a GET): catches an activation disguised as a read affordance;
  *  - after the import the library shows two entries and exactly one current mark,
  *    on the mounted companion and not on the imported one: catches the imported
  *    companion being presented as the one in play.
@@ -106,6 +109,21 @@ async function stubCharacters(
   await page.route("**/api/tavern/v1/companions", (route) => route.fulfill(jsonOk({ apiVersion: 1, companions: library() })));
   await page.route("**/api/tavern/v1/companions/*/worldbook", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, present: false, entries: [] })),
+  );
+  // The inspector's own read. This file is about what the surface PROMISES, not
+  // about what a companion carries (that is `companion-inspector.spec.ts`), so it
+  // answers the honest "she was made without one" shape for every group.
+  await page.route("**/api/tavern/v1/companions/*/profile", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        name: "Mira",
+        persona: { present: false, core: null, interactionStyle: null, expressionStyle: null },
+        scenario: { present: false, name: null, description: null },
+        greetings: { present: false, label: null, variants: [] },
+        worldBook: { apiVersion: 1, present: false, entries: [] },
+      }),
+    ),
   );
   await page.route("**/api/tavern/v1/persona", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, name: null, description: null })),
@@ -199,6 +217,15 @@ async function importCard(page: import("@playwright/test").Page): Promise<void> 
 
 const IN_PLAY_EN =
   "The companion in play is chosen by the start-up configuration — a companion imported or created here is archived safely in your local companion library, and becomes the one in play only when GameBuddy later starts with her.";
+/**
+ * The words a control that claims to SWITCH the in-play companion would have to
+ * use. The rule this file holds is about activation, so it is asserted against the
+ * words the player can act on rather than against the tag a control happens to be:
+ * a read affordance is not an activation affordance.
+ */
+const ACTIVATION_WORDS = /switch|activat|select|set as|choose|enable/i;
+/** The words a control that edits an authored field would have to use. */
+const EDIT_WORDS = /edit|save|delete|clear|remove|create/i;
 const IN_PLAY_ZH =
   "在玩的伙伴由启动配置选定——你在这里导入或创建的伙伴会安全归档到本地伙伴库，只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。";
 const IMPORT_DETAIL_EN =
@@ -226,15 +253,67 @@ test("a companion an import created is not the one in play, and the surface stat
   // The truth about when she can be in play, in the player's own words.
   await expect(section.locator("[data-companion-in-play]")).toHaveText(IN_PLAY_EN);
 
-  // No affordance this Host cannot serve: the section's only button is "Create
-  // companion", and a companion entry carries no interactive element at all.
-  const controls = await section.evaluate((node) => ({
-    buttons: [...node.querySelectorAll("button")].map((button) => button.textContent?.trim() ?? ""),
-    entryInteractives: node.querySelectorAll("[data-companion-entry] button, [data-companion-entry] a, [data-companion-entry] select")
-      .length,
-  }));
-  expect(controls.buttons).toEqual(["Create companion"]);
-  expect(controls.entryInteractives, "a companion entry offers no control the Host cannot serve").toBe(0);
+  // No affordance this Host cannot serve - restated as the rule rather than as the
+  // mechanism it used to have (2026-10-17). This block asserted that the section
+  // held exactly ONE button ("Create companion") and that a companion entry
+  // carried NO interactive element at all. Both were true statements of the rule
+  // "do not fake a control the Host cannot honour" for the surface as it stood,
+  // but the rule is about ACTIVATION, and a read is not an activation: a roster row
+  // is now the way the player READS a companion (it opens the read-only
+  // inspector), so the mechanism had to change while the rule stayed exactly as
+  // strict. What is asserted here is what the player can DO: no control in the
+  // roster, and no control in the inspector, claims to switch, select or activate
+  // the companion in play, and opening the inspector issues reads and nothing else.
+  const requestedMethods: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/tavern/v1/")) requestedMethods.push(request.method());
+  });
+  const rosterControls = await section.evaluate((node) =>
+    [...node.querySelectorAll("[data-companion-entry] button, [data-companion-entry] a, [data-companion-entry] select")].map(
+      (control) => ({
+        label: (control.getAttribute("aria-label") ?? control.textContent ?? "").trim(),
+        isInspect: control.hasAttribute("data-companion-inspect"),
+      }),
+    ),
+  );
+  expect(rosterControls.length, "the roster rows really are being read").toBeGreaterThan(0);
+  expect(
+    rosterControls.map((control) => control.label),
+    "every roster control carries a name the player can read",
+  ).toEqual(rosterControls.map(() => expect.stringMatching(/\S/u)));
+  expect(
+    rosterControls.filter((control) => !control.isInspect),
+    "the only control a roster row carries is the one that opens the inspector",
+  ).toEqual([]);
+  expect(
+    rosterControls.filter((control) => ACTIVATION_WORDS.test(control.label)),
+    "no roster control claims to switch the companion in play",
+  ).toEqual([]);
+
+  // Reachable, and a read: the inspector opens from the row that names her, and
+  // nothing inside it edits or activates anything.
+  const opener = section.locator("[data-companion-entry] [data-companion-inspect]").first();
+  const openerLabel = await opener.getAttribute("aria-label");
+  await opener.click();
+  const drawer = page.getByTestId("companion-inspector");
+  await expect(drawer).toBeVisible();
+  const drawerControls = await drawer.evaluate((node) =>
+    [...node.querySelectorAll("button, a, select, textarea, input")].map((control) =>
+      (control.getAttribute("aria-label") ?? control.textContent ?? "").trim(),
+    ),
+  );
+  console.log(`[companion-inspector] controls=${JSON.stringify(drawerControls)}`);
+  expect(
+    drawerControls.filter((label) => ACTIVATION_WORDS.test(label) || EDIT_WORDS.test(label)),
+    "the inspector contains no control that edits or activates anything",
+  ).toEqual([]);
+  expect([...new Set(requestedMethods)], "opening the inspector reads; it never writes").toEqual(["GET"]);
+
+  // Escape closes it and focus goes back to the row control that opened it.
+  await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  expect(openerLabel).toMatch(/\S/u);
 
   imported = true;
   await importCard(page);
@@ -252,7 +331,7 @@ test("a companion an import created is not the one in play, and the surface stat
   const marks = await section.evaluate((node) => {
     const rows = [...node.querySelectorAll("[data-companion-entry]")];
     return rows.map((row) => ({
-      name: row.querySelector("span")?.textContent?.trim() ?? "",
+      name: row.querySelector("[data-companion-inspect]")?.textContent?.trim() ?? "",
       marked: row.querySelector("em.companion-current-badge")?.textContent?.trim() ?? null,
       markWidth: Math.round(
         row.querySelector("em.companion-current-badge")?.getBoundingClientRect().width ?? 0,
