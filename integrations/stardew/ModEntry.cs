@@ -1287,9 +1287,27 @@ public sealed partial class ModEntry : Mod
         {
             this.TryInitializeNativeLocalPlayerFixture();
             if (this.nativeLocalPlayerFixtureTerminal || !Context.IsWorldReady)
+            {
+                // The cross-day transition is exactly when the engine reports the world as not ready (its fade and
+                // save), and this gate used to yield SILENTLY - so the lane stopped draining the pipe for the whole
+                // transition. That is the same deadlock as the probe gates had, one gate earlier and harder to see:
+                // the day-end `LevelUpMenu` holds `DayStarted`, closing it needs a bridge request, and this return
+                // meant no request was answered. Measured 2026-10-17 (run g21): the Mod's log stopped at
+                // `sleep lifecycle AwaitingEligibility -> WalkingToBed` while the game process stayed at 100% CPU,
+                // and neither side's log said why - because this return has no line either.
+                this.LogBlockedTickReasonOnce(
+                    this.nativeLocalPlayerFixtureTerminal
+                        ? "the native-local player fixture reached its terminal state"
+                        : "the engine reports the world as not ready (a transition is in flight)");
+                this.PumpBridgeWhileBodyOwned();
                 return;
+            }
             if (!this.nativeLocalPlayerFixtureInitialized)
+            {
+                this.LogBlockedTickReasonOnce("the native-local player fixture has not initialized in this world yet");
+                this.PumpBridgeWhileBodyOwned();
                 return;
+            }
             // The path-predicate probe is a one-tick read-only measurement that
             // needs only an idle actor and the post-scenario collision field, so
             // it is consulted before any body owner and never claims the actor.
