@@ -117,6 +117,7 @@ test("service source keeps start/claim private and imports no HTTP/response surf
 
 const mountPreamble = `
   const [serviceUrl, coordinatorUrl, deploymentUrl, storeUrl, runtimeUrl, contractUrl, internalUrl, root, piUrl] = process.argv.slice(1);
+  const bindingsUrl = new URL("../pi-session-variant-branch.internal.js", serviceUrl).href;
   const { writeFile, mkdir } = await import("node:fs/promises");
   const principal = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" };
   const manifestPath = root + "/manifest.json";
@@ -193,6 +194,38 @@ const mountPreamble = `
         await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
         await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
         await scope.transitionPresentation({ operation: "commit_presentation", cancelEpoch: 0, message: { messageId: responseId, text: replyText, occurredAtMs: times[2] }, committedAtMs: times[2] });
+        await scope.transitionPresentation({ operation: "claim_completion", claimedAtMs: times[3] });
+        return await scope.transitionPresentation({ operation: "complete", completedAtMs: times[4] });
+      }),
+    );
+  }
+  /**
+   * One complete turn with Pi's own half of it AND the durable message -> entry binding the live runner
+   * records after its prompt settles: the prompt and the reply are appended to the real mounted
+   * session, the entries this turn produced are resolved with the runner's own
+   * bindSettledPromptEntries, and the two rows they carry are written through the same
+   * coordinator-scoped ingress the runner uses (scope.recordTranscriptEntryBinding). This is what a
+   * single-message delete reads back; without it a row has no name for the entry to omit.
+   */
+  async function driveTurnWithSessionBinding(fx, responseId, promptText, replyText) {
+    const state = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+    const playerRow = [...state.messages].reverse().find((message) => message.kind === "player" && message.text === promptText);
+    if (playerRow === undefined) throw new Error("player_row_unavailable");
+    const bindings = await import(bindingsUrl);
+    return internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
+      internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
+        const session = scope.runtimeSession.session;
+        const entriesBefore = bindings.sessionEntryIds(session);
+        const sessionManager = scope.runtimeSession.sessionManager;
+        sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.now() });
+        sessionManager.appendMessage({ role: "assistant", content: [{ type: "text", text: replyText }] });
+        const times = [await nextTime(), await nextTime(), await nextTime(), await nextTime(), await nextTime()];
+        await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
+        await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
+        await scope.transitionPresentation({ operation: "commit_presentation", cancelEpoch: 0, message: { messageId: responseId, text: replyText, occurredAtMs: times[2] }, committedAtMs: times[2] });
+        const proven = bindings.bindSettledPromptEntries(session, entriesBefore, { playerText: promptText, replyText });
+        const rows = proven.map((binding) => Object.freeze({ messageId: binding.role === "player" ? playerRow.messageId : responseId, entryId: binding.entryId }));
+        await scope.recordTranscriptEntryBinding(rows);
         await scope.transitionPresentation({ operation: "claim_completion", claimedAtMs: times[3] });
         return await scope.transitionPresentation({ operation: "complete", completedAtMs: times[4] });
       }),
@@ -1336,5 +1369,220 @@ test(
     );
     const settledAfterRefusals = output.settledTexts as string[];
     assert.equal(settledAfterRefusals.length, 7);
+  },
+);
+
+/**
+ * The delete's real-root proof, and the one fact that separates it from the rewind: a HOLE.
+ *
+ * Three turns are driven through the real production coordinator mount, each with Pi's own half of
+ * its prompt appended to the mounted session AND the durable message -> entry binding the live runner
+ * records after its prompt settles (the runner's own `bindSettledPromptEntries`, written through the
+ * same coordinator-scoped ingress). The player then deletes the SECOND reply, out of the middle of
+ * the conversation, and three things are asserted on that one run:
+ *
+ *  - the durable transcript the player reads: the named row is gone and every other row is exactly
+ *    where it was - a hole, not a shortened conversation;
+ *  - the model's context, read out of the session JSONL alone, projected with the vendor's own
+ *    renderer and the leaf `SessionManager._buildIndex` would land on (the file's last entry, which
+ *    the appended omission is): it lacks that ONE entry and still carries the entries before and
+ *    after it. This is the assertion a rewind-shaped implementation fails, and the reason a delete
+ *    cannot be proved positionally - there is no tail to match a middle row against;
+ *  - the binding: the row that was removed has none left (it went with the row), and the rows that
+ *    stayed kept theirs.
+ *
+ * Every refusal is named and none of them touched either authority: an unknown handle, a row that is
+ * no longer at the position the browser read, the greeting the Chat opened on, a stale selection
+ * generation, a reply whose turn recorded NO binding (the honest failure while the binding is new),
+ * and a turn that is still being written.
+ */
+test(
+  "a delete leaves a hole in the durable transcript and in the session a mount re-reads",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const { readdir, readFile, stat } = await import("node:fs/promises");
+  const { join: joinPath } = await import("node:path");
+  const { buildSessionProjection } = await import(piUrl);
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  const firstText = "Synthetic player request";
+  const secondText = "A second line the player keeps.";
+  const thirdText = "A third line she answers.";
+  const fourthText = "A fourth line nobody bound.";
+  const first = await service.submitAfterResponseCommit(commandFor(fx, {}), "deleteoneaaaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  await driveTurnWithSessionBinding(fx, "reply_01", firstText, "First synthetic reply.");
+  const second = await service.submitAfterResponseCommit(commandFor(fx, { text: secondText, expectedDraftRevision: 1 }), "deletetwoaaaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 2);
+  await driveTurnWithSessionBinding(fx, "reply_02", secondText, "Second synthetic reply.");
+  const third = await service.submitAfterResponseCommit(commandFor(fx, { text: thirdText, expectedDraftRevision: 2 }), "deletethreeaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 3);
+  await driveTurnWithSessionBinding(fx, "reply_03", thirdText, "Third synthetic reply.");
+
+  /** What the next mount would send the model, read from the session file alone. */
+  const modelTexts = async () => {
+    const leaves = (await readdir(fx.root, { recursive: true })).filter((leaf) => leaf.endsWith(".jsonl"));
+    const files = await Promise.all(leaves.map(async (leaf) => ({ leaf, at: (await stat(joinPath(fx.root, leaf))).mtimeMs })));
+    files.sort((left, right) => right.at - left.at);
+    const entries = (await readFile(joinPath(fx.root, files[0].leaf), "utf8")).split("\\n").filter((line) => line.length > 0).map((line) => JSON.parse(line)).filter((entry) => entry.type !== "session");
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const leafId = entries.length === 0 ? null : entries[entries.length - 1].id;
+    return buildSessionProjection(entries, leafId, byId).messages.map((message) =>
+      Array.isArray(message.content)
+        ? message.content.filter((part) => part.type === "text").map((part) => part.text).join("")
+        : String(message.content),
+    );
+  };
+
+  const handleOf = (id) => fx.lease.browserProjection.projectMessageHandle(id);
+  const beforeState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const modelBefore = await modelTexts();
+  const removedRow = beforeState.messages[4];
+  const deleted = await run(async () => service.delete({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(removedRow.messageId), expectedOrder: 4 }));
+  const afterState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const modelAfter = await modelTexts();
+  const bindingOfRemoved = await fx.store().readTranscriptEntryBinding(fx.lease.chatThreadId, removedRow.messageId);
+  const bindingOfKept = await fx.store().readTranscriptEntryBinding(fx.lease.chatThreadId, beforeState.messages[2].messageId);
+  const attempt = async (overrides) => await run(async () => service.delete({ apiVersion: 1, selectionGeneration: fx.generation, ...overrides }));
+  const refusedUnknown = await attempt({ messageHandle: "A".repeat(43), expectedOrder: 1 });
+  const refusedOrder = await attempt({ messageHandle: handleOf(afterState.messages[1].messageId), expectedOrder: 5 });
+  const refusedOpening = await attempt({ messageHandle: handleOf(afterState.messages[0].messageId), expectedOrder: 0 });
+  const refusedGeneration = await attempt({ messageHandle: handleOf(afterState.messages[1].messageId), expectedOrder: 1, selectionGeneration: fx.generation + 1 });
+
+  // A fourth turn driven WITHOUT the binding: the entry it appended is real, but no durable record
+  // names which row it carries, so the row is refused as exactly that instead of removed by guessing.
+  const fourth = await service.submitAfterResponseCommit(commandFor(fx, { text: fourthText, expectedDraftRevision: 3 }), "deletefouraaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 4);
+  await driveTurnWithSessionPair(fx, "reply_04", fourthText, "Fourth synthetic reply.");
+  const unboundState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const unboundOrder = unboundState.messages.findIndex((message) => message.messageId === "reply_04");
+  const modelBeforeUnbound = await modelTexts();
+  const refusedUnbound = await attempt({ messageHandle: handleOf("reply_04"), expectedOrder: unboundOrder });
+  const modelAfterUnbound = await modelTexts();
+  const unboundTexts = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+
+  // A turn that is not terminal refuses the whole delete: no row leaves the transcript while a reply
+  // is being written from it.
+  const fifth = await service.submitAfterResponseCommit(commandFor(fx, { text: "A fifth line still being answered.", expectedDraftRevision: 4 }), "deletefiveaaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 5);
+  const heldState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const modelBeforeActive = await modelTexts();
+  const refusedTurnActive = await attempt({ messageHandle: handleOf(afterState.messages[1].messageId), expectedOrder: 1 });
+  const modelAfterRefusals = await modelTexts();
+  const settled = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({
+    first, second, third, fourth, fifth, deleted, modelBefore, modelAfter,
+    bindingOfRemoved, bindingOfKept, unboundOrder,
+    refusedUnknown, refusedOrder, refusedOpening, refusedGeneration, refusedUnbound, refusedTurnActive,
+    beforeTexts: beforeState.messages.map((message) => message.text),
+    beforeKinds: beforeState.messages.map((message) => message.kind),
+    afterTexts: afterState.messages.map((message) => message.text),
+    unboundTexts: unboundTexts.messages.map((message) => message.text),
+    heldTexts: heldState.messages.map((message) => message.text),
+    settledTexts: settled.messages.map((message) => message.text),
+    deletedLedgerStatus: afterState.turnLedger === null ? null : afterState.turnLedger.status,
+    heldLedgerStatus: heldState.turnLedger === null ? null : heldState.turnLedger.status,
+    modelBeforeUnbound, modelAfterUnbound, modelBeforeActive, modelAfterRefusals,
+    removedMessageId: removedRow.messageId,
+    startCalls,
+  }));
+`);
+    assert.equal(output.startCalls, 5);
+
+    // The delete's own answer: the protocol version and nothing else. The gap is the result.
+    const deleted = output.deleted as { ok: boolean; value?: { apiVersion: number } };
+    assert.equal(deleted.ok, true, JSON.stringify(output.deleted));
+    assert.equal(deleted.value?.apiVersion, 1);
+    assertNoRawIdentityLeaks(JSON.stringify(output.deleted), [
+      (output as { removedMessageId?: string }).removedMessageId,
+    ]);
+
+    // The durable transcript: the same conversation with ONE row missing, in place. The greeting is
+    // whatever the mounted companion's own greeting set holds, so it is compared to itself.
+    assert.deepEqual(output.beforeKinds as string[], [
+      "opening",
+      "player",
+      "response",
+      "player",
+      "response",
+      "player",
+      "response",
+    ]);
+    assert.deepEqual((output.beforeTexts as string[]).slice(1), [
+      "Synthetic player request",
+      "First synthetic reply.",
+      "A second line the player keeps.",
+      "Second synthetic reply.",
+      "A third line she answers.",
+      "Third synthetic reply.",
+    ]);
+    assert.deepEqual((output.afterTexts as string[]).slice(1), [
+      "Synthetic player request",
+      "First synthetic reply.",
+      "A second line the player keeps.",
+      "A third line she answers.",
+      "Third synthetic reply.",
+    ]);
+    assert.equal((output.afterTexts as string[])[0], (output.beforeTexts as string[])[0]);
+    assert.equal((output.afterTexts as string[]).includes("Second synthetic reply."), false);
+    assert.equal((output.afterTexts as string[]).includes("A third line she answers."), true);
+    // The kept turn is the thread's current one, and the turn whose reply was removed went with it.
+    assert.equal(output.deletedLedgerStatus, "completed");
+
+    // The model's context, read from the session JSONL the next mount would read: that ONE entry is
+    // gone and the entries on either side of it are still there. A rewind-shaped implementation - or
+    // one that appended nothing durable - fails exactly here.
+    assert.deepEqual(output.modelBefore, [
+      "Synthetic player request",
+      "First synthetic reply.",
+      "A second line the player keeps.",
+      "Second synthetic reply.",
+      "A third line she answers.",
+      "Third synthetic reply.",
+    ]);
+    assert.deepEqual(output.modelAfter, [
+      "Synthetic player request",
+      "First synthetic reply.",
+      "A second line the player keeps.",
+      "A third line she answers.",
+      "Third synthetic reply.",
+    ]);
+    assert.equal(
+      JSON.stringify(output.modelAfter).includes("Second synthetic reply."),
+      false,
+      "the deleted entry must not be in the context the next mount derives from the session file",
+    );
+
+    // The binding went with the row it named, and the rows that stayed kept theirs.
+    assert.deepEqual(output.bindingOfRemoved, []);
+    assert.equal((output.bindingOfKept as string[]).length, 1);
+
+    // Every refusal is named, and not one of them touched either authority.
+    const named = (entry: unknown) => (entry as { error?: string }).error ?? "";
+    assert.match(named(output.refusedUnknown), /chat_message_not_found/, JSON.stringify(output.refusedUnknown));
+    assert.match(named(output.refusedOrder), /chat_message_revision_conflict/);
+    assert.match(named(output.refusedOpening), /chat_delete_opening_retained/);
+    assert.match(named(output.refusedGeneration), /chat_pipeline_service_selection_conflict/);
+    assert.match(named(output.refusedUnbound), /chat_delete_binding_unavailable/);
+    assert.match(named(output.refusedTurnActive), /chat_delete_turn_active/);
+    // The refused row is still there, with every other row, and the session did not move.
+    assert.deepEqual(
+      (output.unboundTexts as string[]).slice(0, (output.afterTexts as string[]).length),
+      output.afterTexts,
+    );
+    assert.equal((output.unboundTexts as string[]).includes("Fourth synthetic reply."), true);
+    assert.deepEqual(output.modelAfterUnbound, output.modelBeforeUnbound);
+    assert.deepEqual(output.modelAfterRefusals, output.modelBeforeActive);
+    // The turn that refused the delete is still the one being written, and the refusal left it that
+    // way: nothing was removed while a reply was in flight.
+    assert.equal(output.heldLedgerStatus, "attempt_starting");
+    assert.deepEqual(output.settledTexts, output.heldTexts);
+    // The answer never carried the durable row it removed.
+    assert.equal(typeof (output as { removedMessageId?: string }).removedMessageId, "string");
   },
 );
