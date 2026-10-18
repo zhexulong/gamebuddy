@@ -13,6 +13,7 @@
     "start": "node scripts/start-production-artifact.mjs main.js",
     "start:farmhand-preview": "node scripts/start-production-artifact.mjs farmhand-companion-preview.js",
     "test": "pnpm --dir .. check:host-windows-test-preflight && node scripts/run-test-suite.mjs",
+    "test:sweep": "node scripts/sweep-compiled-tests.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit && node scripts/check-test-typecheck-ratchet.mjs",
     "check:test-typecheck-ratchet": "node scripts/check-test-typecheck-ratchet.mjs",
     "check:production-artifact": "node scripts/check-production-artifact.mjs",

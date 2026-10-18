@@ -6,7 +6,7 @@ import { runBoundedChild } from "./child-process-tool.mjs";
 import { assertTestArtifactFreshness, assertTestArtifactInventory } from "./test-artifact-inventory.mjs";
 import { assertHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
-const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+export const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultTestRoot = resolve(hostRoot, "dist-test");
 const defaultScriptTestRoot = resolve(hostRoot, "scripts");
 const DEFAULT_TEST_BATCH_SIZE = 10;
@@ -85,7 +85,7 @@ const DEFAULT_TEST_CONCURRENCY = machineDefaultConcurrency();
  * hang: measured here, `gameplay-task-subagent.test.js` takes 2s alone and exceeded a 180s budget
  * inside a 4-way batch on a machine already running ~60 other node processes.
  */
-const DEFAULT_TEST_FILE_TIMEOUT_MS = 600_000;
+export const DEFAULT_TEST_FILE_TIMEOUT_MS = 600_000;
 // Windows release CI runs each compiled file in an isolated Node coordinator.
 // The whole suite remains bounded, but 15 minutes cannot accommodate its
 // measured serialized Windows baseline and can shrink a final child below its
