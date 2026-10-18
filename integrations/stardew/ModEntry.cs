@@ -1467,7 +1467,8 @@ public sealed partial class ModEntry : Mod
             }
             this.LogNativeLocalPlayerReadinessIfBlocked();
             ScreenEmbodimentState nativeLocalState = this.GetEmbodimentState();
-            this.RefreshFarmhandCapabilityPublication(nativeLocalState, e.Ticks);
+            this.LogStageOnce("capability_publication");
+        this.RefreshFarmhandCapabilityPublication(nativeLocalState, e.Ticks);
             this.ObserveBridgeGeneration(nativeLocalState);
             this.ObserveNativeChatPipeDeliveries(nativeLocalState);
             this.ObserveNavigationPipeDeliveries(nativeLocalState);
@@ -1489,7 +1490,12 @@ public sealed partial class ModEntry : Mod
         this.LogStageOnce("program_pump", force: nativeLocalState.BodyProgramController is not null);
         nativeLocalState.BodyProgramController?.Update();
         this.LogStageOnce("program_pump_done");
-            this.npcDialoguePager?.Observe(nativeLocalState.BridgeSession);
+            // Every Mod-side step of this lane now prints its own marker, so the LAST line of a frozen log names either the
+        // step that never returned or `idle_between_ticks` - which means the Mod finished its tick and the hang is in
+        // the engine own update, a different investigation entirely.
+        this.LogStageOnce("npc_pager_observe");
+        this.npcDialoguePager?.Observe(nativeLocalState.BridgeSession);
+        this.LogStageOnce("stop_observation");
             this.PublishPendingStopObservation(nativeLocalState);
             this.MarkTickPhase("idle_between_ticks");
             return;
