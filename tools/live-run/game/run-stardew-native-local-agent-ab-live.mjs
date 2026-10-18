@@ -1131,8 +1131,24 @@ function buildCapabilityAudit({
     advertisedAxisUsable: advertisedSampleCount > 0 && advertised.length > 0,
   });
 }
-/** How long ONE night's rollover may take before the harness stops watching. A harness bound, not a product verdict. */
-const MULTIDAY_NIGHT_TIMEOUT_MS = 600_000;
+/**
+ * How long ONE night's rollover may take before the harness stops watching. A harness bound, not a product
+ * verdict - and it has to OUTLIVE the day it is waiting for.
+ *
+ * It was ten minutes, which is shorter than the day turn it runs alongside (`turnWaitSeconds` is 1800 for the
+ * self-directed scenarios). Measured on g39home: 78 actions of real farm work over about ten and a half minutes,
+ * the watcher's own bound expired while the day turn was STILL RUNNING, and the run was recorded as
+ * `companion_did_not_sleep:day_turn_still_running` - a verdict about a day that had not finished making up its
+ * mind, let alone refused to sleep. The watcher already distinguishes the two honest cases: when the day turn
+ * SETTLES with no `advance_day`, it reports `companion_did_not_sleep` at once. This bound only has to sit past
+ * the turn budget, so the run budget stays the hard stop.
+ */
+const MULTIDAY_NIGHT_TIMEOUT_MS = (() => {
+  const requested = Number.parseInt(process.env.GAMEBUDDY_MULTIDAY_NIGHT_TIMEOUT_MS ?? "", 10);
+  if (Number.isInteger(requested) && requested > 0) return requested;
+  // One minute past the 1800s turn budget, so the watcher cannot expire before the turn it accompanies.
+  return 31 * 60 * 1000;
+})();
 /**
  * How long one harness dispatch may take to be admitted, and to reach its terminal.
  *

@@ -836,3 +836,17 @@ test("the turn waiter does not give up five seconds after a program finishes", (
   // The verdict mapping still understands an unsettled turn, which is what makes a genuine one visible.
   assert.match(RUNNER_SOURCE, /entry\.error === "agent_turn_timeout"/u);
 });
+
+test("the night watcher outlives the day turn it accompanies", () => {
+  // Measured on g39home: 78 actions of real farm work, and the watcher's own ten-minute bound expired while the day
+  // turn was still running - so the run was recorded as `companion_did_not_sleep:day_turn_still_running`, a verdict
+  // about a day that had not finished deciding. The bound must sit past the turn budget it runs alongside.
+  assert.match(RUNNER_SOURCE, /const MULTIDAY_NIGHT_TIMEOUT_MS = \(\(\) => \{/u);
+  assert.match(RUNNER_SOURCE, /return 31 \* 60 \* 1000;/u);
+  assert.match(
+    RUNNER_SOURCE,
+    /One minute past the 1800s turn budget, so the watcher cannot expire before the turn it accompanies/u,
+  );
+  // And the honest pair of outcomes still exists: a settled day with no advance_day is named at once.
+  assert.match(RUNNER_SOURCE, /companion_did_not_sleep/u);
+});
