@@ -150,6 +150,11 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   #policyIdentity: FarmhandPolicyIdentity | undefined;
   readonly #acceptedPolicyIdentityValues = new Set<string>();
   #enabledActionIds: readonly string[] | undefined;
+  /**
+   * The Modits own statement that it cannot honour an ActionProgram, read from hello_ack. Null means it did not
+   * say, which the mount gate treats as available (the pre-existing behaviour).
+   */
+  #bodyProgramUnavailableReason: string | null = null;
   #catalogRefresh: Promise<Snapshot> | undefined;
   #catalogRefreshGeneration = 0;
   #latestReceipt: LocalStardewBridgeState["latestReceipt"] = null;
@@ -207,6 +212,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       this.#policyIdentity = undefined;
       this.#acceptedPolicyIdentityValues.clear();
       this.#enabledActionIds = undefined;
+      this.#bodyProgramUnavailableReason = null;
       this.#bodyNodeAdmissionHandler = undefined;
       this.#bodyNodeAdmissionCorrelations.clear();
       bodyNodeAdmissionBinders.delete(this);
@@ -317,6 +323,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       ...(this.#catalogRevision === undefined ? {} : { catalogRevision: this.#catalogRevision }),
       ...(this.#policyIdentity === undefined ? {} : { policyIdentity: this.#policyIdentity }),
       ...(this.#enabledActionIds === undefined ? {} : { enabledActionIds: this.#enabledActionIds }),
+      ...(this.#bodyProgramUnavailableReason === null
+        ? {}
+        : { bodyProgramUnavailableReason: this.#bodyProgramUnavailableReason }),
       snapshot: this.#snapshot,
       latestReceipt: this.#latestReceipt,
       latestReasonCode: this.#latestReasonCode,
@@ -815,6 +824,10 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       this.#capabilities = Object.freeze([...message.payload.capabilities]);
       this.#catalogRegistrations = Object.freeze([...message.payload.registrations]);
       this.#latestReasonCode = null;
+      this.#bodyProgramUnavailableReason =
+        typeof message.payload.bodyProgramUnavailableReason === "string"
+          ? message.payload.bodyProgramUnavailableReason
+          : null;
     } else if (message.type === "body_node_admission_challenge") {
       const bodyNodeAdmissionHandler = this.#bodyNodeAdmissionHandler;
       if (!this.#authenticated || bodyNodeAdmissionHandler === undefined) {

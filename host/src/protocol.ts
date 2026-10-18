@@ -1463,6 +1463,13 @@ export type BridgeMessage =
         registrations: readonly ActionRegistration[];
         runtimeRole: "farmhand_client" | "native_local_fixture" | "unattested";
         launchGeneration: string | null;
+        /**
+         * Why this Mod cannot honour an ActionProgram, when it says so on the ack. Absent means it did not say, which
+         * the mount gate treats as available (the pre-existing behaviour); present means the Host must not mount the
+         * program tools, because advertising a capability the Mod refuses on every call reads as a broken tool rather
+         * than an absent one (measured 2026-10-18).
+         */
+        bodyProgramUnavailableReason?: string | null;
       }>
     >
   | Envelope<"observe_request", Readonly<Record<string, never>>>
@@ -1738,7 +1745,12 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
     case "hello":
       return hasExactKeys(payload, ["token"]) && validToken(payload.token) ? null : "invalid_hello_token";
     case "hello_ack":
-      return hasExactKeys(payload, [
+      // `bodyProgramUnavailableReason` is OPTIONAL, and the two shapes are accepted on purpose: the Mod
+      // serializes it only when it has one, so a session that can honour a program keeps the ack byte-identical
+      // to before (every existing fixture and the golden sequence stay valid), while a session that cannot says so
+      // and the Host refuses to mount the program tools. Two exact-key shapes beat one permissive shape here: an
+      // unknown key is still a defect.
+      return (hasExactKeys(payload, [
         "sessionId",
         "capabilities",
         "catalogRevision",
@@ -1748,7 +1760,20 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         "registrations",
         "runtimeRole",
         "launchGeneration",
-      ]) &&
+      ]) ||
+        hasExactKeys(payload, [
+          "sessionId",
+          "capabilities",
+          "catalogRevision",
+          "policyIdentity",
+          "enabledActionIds",
+          "presentationLocale",
+          "registrations",
+          "runtimeRole",
+          "launchGeneration",
+          "bodyProgramUnavailableReason",
+        ])) &&
+        (payload.bodyProgramUnavailableReason === undefined || isOpaqueId(payload.bodyProgramUnavailableReason)) &&
         isOpaqueId(payload.sessionId) &&
         isStringArray(payload.capabilities) &&
         isNonNegativeSafeInteger(payload.catalogRevision) &&

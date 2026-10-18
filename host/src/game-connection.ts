@@ -1,9 +1,9 @@
 import type { GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { KnowledgeBundle } from "./knowledge.js";
 import type {
-   ActionRegistration,
-   ExecutionReceipt,
-   FarmhandPolicyIdentity,
+  ActionRegistration,
+  ExecutionReceipt,
+  FarmhandPolicyIdentity,
   NavigationReadRequest,
   NavigationReadResult,
   ObserveSceneRequest,
@@ -27,9 +27,16 @@ export type StardewBridgeConnectionState = Readonly<{
    */
   catalogRegistrations?: readonly ActionRegistration[];
   /** Current authenticated Mod availability projection; absent means no action may materialize. */
-   catalogRevision?: number;
-   policyIdentity?: FarmhandPolicyIdentity;
-   enabledActionIds?: readonly string[];
+  catalogRevision?: number;
+  policyIdentity?: FarmhandPolicyIdentity;
+  enabledActionIds?: readonly string[];
+  /**
+   * Why this Mod cannot honour an ActionProgram, when it says so on hello_ack. Published so the Host can project
+   * the capability honestly: mounting the program tools while every submission is refused advertises something the
+   * Mod cannot do (measured 2026-10-18: real submissions, every one refused `body_program_journal_unavailable`).
+   * Absent means the Mod did not say, which is treated as available - the pre-existing behaviour.
+   */
+  bodyProgramUnavailableReason?: string | null;
   snapshot: Snapshot | null;
   latestReceipt: ExecutionReceipt | null;
   latestReasonCode: string | null;

@@ -465,16 +465,23 @@ export function createHostGameRuntimeMaterializer(
         );
         const recoveryContext = createStardewRecoveryBindingContext(execution, recoveryJournal);
         const bodyProgramConsumer = Object.freeze(Object.create(null)) as BodyProgramConsumer;
-        bodyProgramConsumers.set(bodyProgramConsumer, { port: ports.bodyProgram, available: true, active: 0 });
-        const closeFixedTools = createBodyProgramToolCloser(bodyProgramConsumer);
+        // The Mod owns the capability surface (architecture #635), so when it says it cannot honour a program the Host
+        // must not mount one. Measured 2026-10-18: the companion submitted real programs and every submission came
+        // back `body_program_journal_unavailable`, because the journal opened only as far as `RecoveryRequired` and
+        // composed no controller - an advertised capability that could not be honoured, which reads to the model as a
+        // broken tool rather than an absent one.
+        const bodyProgramUnavailableReason =
+          (execution.connection as { state?: { bodyProgramUnavailableReason?: string | null } }).state
+            ?.bodyProgramUnavailableReason ?? null;
+        const bodyProgramMounted = bodyProgramUnavailableReason === null;
+        if (bodyProgramMounted)
+          bodyProgramConsumers.set(bodyProgramConsumer, { port: ports.bodyProgram, available: true, active: 0 });
+        const closeFixedTools = bodyProgramMounted ? createBodyProgramToolCloser(bodyProgramConsumer) : async () => {};
         // Resolve exactly once for this construction; closures and adapter tools
         // share this same object while live state remains freshly read per call.
-        const fixedTools = createBodyProgramTools(
-          bodyProgramConsumer,
-          execution.connection,
-          mountedPolicy,
-          retainedPolicyIdentity,
-        );
+        const fixedTools = bodyProgramMounted
+          ? createBodyProgramTools(bodyProgramConsumer, execution.connection, mountedPolicy, retainedPolicyIdentity)
+          : [];
         const recovery = readStardewRecoveryBindingContext(recoveryContext);
         let constructed: Readonly<{
           runtime: RuntimeSession;

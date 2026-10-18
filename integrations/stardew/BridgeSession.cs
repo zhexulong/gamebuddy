@@ -258,7 +258,8 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
                          descriptor.WatchdogMs)
                      : null)).ToArray(),
             this.runtimeAttestation.RuntimeRole,
-            this.runtimeAttestation.LaunchGeneration));
+            this.runtimeAttestation.LaunchGeneration,
+            this.bodyProgramUnavailableReason));
         reasonCode = "accepted";
         return true;
     }
@@ -1497,7 +1498,29 @@ internal sealed record IdempotentExecution(string Fingerprint, string RequestId,
 internal sealed record IdempotentPresentation(string Fingerprint, BridgeCompanionPresentationReceipt? Receipt, string ReasonCode);
 internal sealed record IdempotentSystemNotice(string Fingerprint, BridgeSystemNoticeReceipt? Receipt, string ReasonCode);
 internal sealed record BridgeHello(string Token);
-internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, long CatalogRevision, FarmhandPolicyIdentityWire PolicyIdentity, IReadOnlyList<string> EnabledActionIds, string PresentationLocale, IReadOnlyList<FarmhandActionRegistrationWire> Registrations, string RuntimeRole, [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)] string? LaunchGeneration);
+internal sealed record BridgeHelloAck(
+    string SessionId,
+    IReadOnlyList<string> Capabilities,
+    long CatalogRevision,
+    FarmhandPolicyIdentityWire PolicyIdentity,
+    IReadOnlyList<string> EnabledActionIds,
+    string PresentationLocale,
+    IReadOnlyList<FarmhandActionRegistrationWire> Registrations,
+    string RuntimeRole,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.Never)] string? LaunchGeneration,
+    /// <summary>
+    /// Why the Mod cannot honour an ActionProgram right now, or null when it can.
+    ///
+    /// Published because the Host MOUNTS the program tools, and mounting them while the Mod refuses every
+    /// submission publishes a capability that cannot be honoured: measured 2026-10-18, the companion submitted real
+    /// programs and every one came back `body_program_journal_unavailable`, in a session where the journal opened
+    /// only as far as `RecoveryRequired` and composed no controller. The owner of the capability surface is the Mod
+    /// (architecture #635), so the Mod says so here and the Host projects it by NOT mounting them.
+    ///
+    /// Serialized only when present: an available route keeps the ack byte-identical to before, so every existing
+    /// wire fixture and golden sequence stays valid.
+    /// </summary>
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? BodyProgramUnavailableReason = null);
 internal sealed record BridgeCatalogUpdate(long CatalogRevision, FarmhandPolicyIdentityWire PolicyIdentity, IReadOnlyList<string> EnabledActionIds);
 internal sealed record BridgeObserveRequest();
 internal sealed record BridgeCancelRequest(string RequestId, string ExecutionId, string CancelId, long CancelEpoch, string ReasonCode);
