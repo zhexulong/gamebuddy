@@ -39,8 +39,12 @@ export function ChatsSurface({
   /** `false` when the mount knows no `chat.select` route is served; the rows are then not selectable. */
   selectAvailable?: boolean;
   onRenamedTitle: () => void;
-  /** Fires after the Host committed an in-process switch to another Chat. */
-  onChatSwitched?: () => void;
+  /**
+   * Fires after the Host committed an in-process switch to another Chat. The opening index is the
+   * opening a creation asked for, if any: only the shell holds the successor mount's selection
+   * generation, so the opening a new Chat starts on is committed there.
+   */
+  onChatSwitched?: (openingTargetIndex?: number) => void;
   /**
    * Fires when the player chose the already-mounted Chat: no selection is admitted,
    * but the shell still shows the conversation the row names.

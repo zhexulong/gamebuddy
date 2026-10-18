@@ -4,6 +4,7 @@ import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { openingVariantWords } from "./opening-variant-labels";
 
 /**
  * The live-streaming caret, inserted into the companion bubble's last block. The
@@ -15,39 +16,11 @@ import { MarkdownMessage } from "./MarkdownMessage";
  */
 const CARET_MARKUP = '<span class="message-caret" aria-hidden="true"></span>';
 
-/**
- * The switcher's own words. The Host publishes the committed variant's position in
- * the greeting set and, whenever the set carried one, the variant's own label -
- * the greeting set's entry name, `Default` or `Alternate N` (the card's own 1-based
- * order, `new-companion-service.ts` `buildGreetingVariants`). That label is the
- * Host's structural spelling, not a player word, so it is translated through the
- * catalogue and a label outside that closed vocabulary is shown as published rather
- * than invented. Both are shown: the label names the opening the player is looking
- * at, the position says how many there are. A set the Host published no label for
- * leaves the position alone.
+/*
+ * The opening switcher's words are the shared greeting-variant vocabulary
+ * (`opening-variant-labels.ts`): the name the Host published for the opening the
+ * player is looking at, plus the position that says how many there are.
  */
-function openingVariantWords(
-  variant: Readonly<{ label: string | null; index: number; count: number }>,
-  labels: Readonly<{ openingVariantDefault: string; openingVariantAlternate: string }>,
-): string {
-  const position = `${variant.index + 1}/${variant.count}`;
-  return variant.label === null ? position : `${openingVariantLabel(variant.label, labels)} ${position}`;
-}
-
-/**
- * The Host's greeting-variant vocabulary (`Default` / `Alternate N`) in player
- * words. The card's own order in the alternate's label is preserved, because that
- * order is what the player sees in the authored opening, not the set position the
- * indicator prints beside it.
- */
-function openingVariantLabel(
-  label: string,
-  labels: Readonly<{ openingVariantDefault: string; openingVariantAlternate: string }>,
-): string {
-  if (label === "Default") return labels.openingVariantDefault;
-  const alternate = /^Alternate (\d+)$/u.exec(label);
-  return alternate === null ? label : labels.openingVariantAlternate.replace("{{index}}", alternate[1]!);
-}
 
 /**
  * The swipe switcher's own words. The Host publishes the position as the plain `1/3`

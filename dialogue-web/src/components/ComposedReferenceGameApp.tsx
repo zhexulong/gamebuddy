@@ -112,6 +112,10 @@ export function ComposedReferenceGameApp() {
   // settlement: the pending record is then cleared and this line says the turn
   // failed rather than silently leaving the composer disabled.
   const [pollFailure, setPollFailure] = useState(false);
+  // A created Chat whose chosen opening could not be committed. The Chat itself is durable and the
+  // player is landed in it either way, so this is the one fact left to state: it opens on the
+  // default opening. It clears when another switch lands.
+  const [openingNotice, setOpeningNotice] = useState<string | null>(null);
   /**
    * The optimistic player message: the text the player just sent, keyed by the idempotency key
    * the send already minted. It is shown until the Host's authoritative transcript for that key
@@ -908,13 +912,22 @@ export function ComposedReferenceGameApp() {
    * selection the app bar's Chat entry makes, history entry included, so Browser
    * Back returns to the Chats list rather than leaving it replaced. A failed
    * read never moves the region: it commits the shell's problem view instead.
+   *
+   * A creation's own opening is committed here, before the player is shown the new
+   * conversation, and only here: `chat.opening` addresses the MOUNTED Chat under
+   * the selection generation of that mount (a settled switch mints a fresh one),
+   * and this read is the only place that generation is known. A refused commit
+   * leaves the Chat durable on the opening it was created with - the player still
+   * lands in it, and the line the surface shows names exactly what did not happen.
    */
-  const handleChatSwitched = (): void => {
+  const handleChatSwitched = (openingTargetIndex?: number): void => {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
     void (async () => {
       try {
-        const root = await composedApiRef.current.readState();
+        setOpeningNotice(null);
+        let root = await composedApiRef.current.readState();
+        if (openingTargetIndex !== undefined) root = await commitChosenOpening(root, openingTargetIndex);
         const draft = await tavernApiRef.current.readDraft();
         adoptMountedChat(root, draft);
         openPanelOf(CHAT_PANEL, chatEntryRef)();
@@ -922,6 +935,33 @@ export function ComposedReferenceGameApp() {
         commit(problemView(error, messages(current.locale)));
       }
     })();
+  };
+
+  /**
+   * Records the opening a creation asked for on the Chat the switch just mounted, and reads the
+   * conversation back so the shell adopts one snapshot carrying it. A refused commit is not a
+   * failed creation: the Chat is durable on the opening it already has, so the read is returned
+   * unchanged and the one fact that did not happen is named on the conversation itself.
+   */
+  const commitChosenOpening = async (
+    root: ComposedReferenceGameBrowserRootV1,
+    openingTargetIndex: number,
+  ): Promise<ComposedReferenceGameBrowserRootV1> => {
+    const selection = root.chat.selection;
+    if (selection === null) {
+      setOpeningNotice(labels().chatCreatedWithDefaultOpening);
+      return root;
+    }
+    try {
+      await managementPipelineApiRef.current.selectOpeningVariant(
+        { apiVersion: 1, selectionGeneration: selection.generation, targetIndex: openingTargetIndex },
+        root.chat.csrfToken,
+      );
+      return await composedApiRef.current.readState();
+    } catch {
+      setOpeningNotice(labels().chatCreatedWithDefaultOpening);
+      return root;
+    }
   };
 
   /**
@@ -1162,7 +1202,7 @@ export function ComposedReferenceGameApp() {
                 labels={labels()}
                 pending={chatMutation}
                 pendingPlayerMessage={pendingOptimisticMessage}
-                notice={pollFailure ? labels().chatFailed : terminalTurnNotice}
+                notice={pollFailure ? labels().chatFailed : (terminalTurnNotice ?? openingNotice)}
                 onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
                 onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
                 onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}

@@ -4880,6 +4880,60 @@
     overflow-wrap: anywhere;
   }
 
+  /* ==========================================================================
+     The New Chat openings chooser
+
+     The companion's own openings, offered before a Chat exists. Each option is
+     one control - a real button, so the keyboard reaches it and Enter picks it -
+     and carries the reading the player chooses on: the opening's own name and the
+     first line of what it says. The first line clamps to two lines, the same
+     recipe the voice band and the Chats rows use, so a long opening cannot grow
+     the option into the drawer.
+     ========================================================================== */
+  .opening-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .opening-option {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+    width: 100%;
+    min-height: var(--touch-target-min);
+    padding: var(--space-3);
+    text-align: left;
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+  }
+
+  .opening-option:hover {
+    border-color: var(--border-strong);
+  }
+
+  .opening-option-name {
+    font-size: 13px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .opening-option-line {
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .tavern-app-shell :is(button, summary):active:not(:disabled) {
       translate: none;

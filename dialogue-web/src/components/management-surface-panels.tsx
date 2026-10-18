@@ -33,10 +33,12 @@
  * `role="status"` banner); when it is absent the panel renders the outcome
  * itself, so the composed shell's surface reports it in place.
  */
-import { Archive, Pencil, Trash2 } from "lucide-react";
+import { Archive, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { type Locale, type Messages } from "../i18n";
+import { ContextDrawer } from "./ContextDrawer";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { openingVariantWords } from "./opening-variant-labels";
 import {
   type ChatTitleV1,
   createManagementPipelineApi,
@@ -128,6 +130,16 @@ function chatListRows(view: ChatListView): readonly ChatListEntry[] {
 }
 
 /**
+ * The opening's first line: a chooser reads what the opening starts with, and the
+ * first line is that sentence without the paragraph the player will read once the
+ * Chat exists.
+ */
+function firstLineOf(text: string): string {
+  const end = text.indexOf("\n");
+  return (end === -1 ? text : text.slice(0, end)).trimEnd();
+}
+
+/**
  * The row's own last-activity stamp: the catalogue's two relative words for today
  * and yesterday, and the platform's own short numeric date beyond them. The
  * granularity is a calendar day, which is the truth the Host records but cannot
@@ -197,8 +209,12 @@ export function ChatsSurfacePanel({
   selectAvailable?: boolean;
   /** Lets the mount fold the validated rename read-back into its own mounted session. */
   onRenamedTitle?: (handle: string, result: ChatTitleV1) => void;
-  /** Fires after the Host committed an in-process switch to another Chat. */
-  onChatSwitched?: () => void;
+  /**
+   * Fires after the Host committed an in-process switch to another Chat. The opening index is the
+   * opening a creation asked for, if any - the shell holds the successor mount's generation, so it
+   * is where that opening is committed (see `createChat`).
+   */
+  onChatSwitched?: (openingTargetIndex?: number) => void;
   /**
    * Fires when the player chose the Chat that is already mounted. That is not a
    * selection - there is nothing to switch to and no `chat/select` is issued - but
@@ -222,6 +238,14 @@ export function ChatsSurfacePanel({
   // greeting message 0 before it claims success, and the created Chat is NOT the mounted one.
   const [created, setCreated] = useState<Readonly<{ opening: string }> | null>(null);
   const [creating, setCreating] = useState(false);
+  // The companion's own greeting set, as `greeting.read` publishes it. `null` is "there is nothing
+  // here to choose" - the companion has no record, the read failed, or she has exactly one opening -
+  // and the New Chat control then stays the single button it has always been: an affordance with one
+  // option is worse than none.
+  const [openings, setOpenings] = useState<readonly Readonly<{ label: string | null; text: string }>[] | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  /** The control that opens the picker; focus returns here when it closes. */
+  const newChatRef = useRef<HTMLButtonElement>(null);
   // The Chat whose switch is in flight. Switching another Chat is a focus transfer, so this is
   // never a refusal: the row stays selectable and this only marks the request that is out, so a
   // click during a generating turn does not look ignored while the Host aborts and switches.
@@ -244,6 +268,25 @@ export function ChatsSurfacePanel({
         if (active) setList(read.chats);
       } catch {
         if (active) setList("error");
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [api]);
+
+  // The companion's own greeting set, from the route that already serves it: the same record a new
+  // Chat opens on and the same set `chat.opening` pages through, so the picker can never name an
+  // opening the Host would not commit. A set with one entry is not a choice, and an unreadable one is
+  // not inventable: both leave the New Chat control exactly as it is.
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const greeting = await api.readGreeting();
+        if (active) setOpenings(greeting.present && greeting.variants.length > 1 ? greeting.variants : null);
+      } catch {
+        if (active) setOpenings(null);
       }
     })();
     return () => {
@@ -320,8 +363,13 @@ export function ChatsSurfacePanel({
    * how to land in one (`onChatSwitched` adopts the mount and moves the region). The creation itself
    * claims only that the Chat exists - the switch is what moves the player, and it is reported only
    * when the mounted identity really changed.
+   *
+   * `openingTargetIndex` is the opening the player picked in the catalogue. It is carried to the
+   * shell rather than committed here: `chat.opening` addresses the MOUNTED Chat under the selection
+   * generation of that mount, and a settled switch is what mounts this Chat and mints its
+   * generation - so the shell, holding the fresh read, is the only caller that can name it.
    */
-  const createChat = (): void => {
+  const createChat = (openingTargetIndex?: number): void => {
     if (creating) return;
     setCreating(true);
     void (async () => {
@@ -331,10 +379,18 @@ export function ChatsSurfacePanel({
         await reread();
         // The created Chat's own handle, from the Host's own read-back - never an
         // identity composed here.
-        const selected = await requestSelection(result.chat.handle);
+        const selected = await requestSelection(result.chat.handle, openingTargetIndex);
+        // The Chat is durable in every outcome; what a chosen opening adds is a second thing that
+        // can fail, and it fails alone: the Chat exists on the default opening, and that is what
+        // the player is told instead of a generic failure.
+        const unset = selected === "in_flight" && openingTargetIndex !== undefined;
         report({
-          kind: "success",
-          text: selected === "in_flight" ? labels.chatSelectTurnNotAbortable : labels.success,
+          kind: unset ? "failure" : "success",
+          text: unset
+            ? labels.chatCreatedWithDefaultOpening
+            : selected === "in_flight"
+              ? labels.chatSelectTurnNotAbortable
+              : labels.success,
         });
       } catch (error) {
         // A rejection may still hide a committed creation, so the authoritative
@@ -364,8 +420,14 @@ export function ChatsSurfacePanel({
    * different things: a click may say it switched, while creation must still say the Chat was made
    * when the mounted turn refused to move. `turn_in_flight` is the one refusal that leaves the
    * mount exactly where it was - the recorded selection is durable either way.
+   *
+   * A committed switch hands the opening the player picked to the shell's own follow-through, which
+   * is the only place that holds the successor mount's selection generation (see `createChat`).
    */
-  const requestSelection = async (handle: string): Promise<"switched" | "in_flight" | "mounted"> => {
+  const requestSelection = async (
+    handle: string,
+    openingTargetIndex?: number,
+  ): Promise<"switched" | "in_flight" | "mounted"> => {
     // The mounted Chat is not a switch: the Host has nothing to switch to and no selection may be
     // admitted. The click is still the player choosing that conversation, so the mount is told to
     // show it - a silent no-op would leave the one gesture the row's title offers unanswered.
@@ -378,7 +440,7 @@ export function ChatsSurfacePanel({
     if (result.status === "turn_in_flight") return "in_flight";
     // The mounted identity itself changed, so the shell must replace its session from the new
     // snapshot and restart its live cursor on the target conversation.
-    onChatSwitched?.();
+    onChatSwitched?.(openingTargetIndex);
     return "switched";
   };
 
@@ -460,10 +522,58 @@ export function ChatsSurfacePanel({
       <SurfaceNotice notice={inline} />
       {createAvailable !== false && (
         <div className="button-group">
-          <button type="button" className="small-button" onClick={createChat} disabled={creating}>
+          {/* One control, two jobs, decided by the catalogue: a companion with openings to choose
+              from gets the picker, and one without gets the same immediate New Chat as before. */}
+          <button
+            ref={newChatRef}
+            type="button"
+            className="small-button"
+            data-testid="new-chat"
+            onClick={() => {
+              if (openings === null) createChat();
+              else setPickerOpen(true);
+            }}
+            disabled={creating}
+          >
             {labels.newChat}
           </button>
         </div>
+      )}
+      {pickerOpen && openings !== null && (
+        <ContextDrawer
+          title={labels.openingPickerTitle}
+          closeLabel={labels.close}
+          onClose={() => setPickerOpen(false)}
+          testId="opening-picker"
+          icon={Sparkles}
+          restoreFocusTo={newChatRef}
+        >
+          <p className="management-settings-hint">{labels.openingPickerHint}</p>
+          <div className="opening-options" role="list" data-testid="opening-picker-list">
+            {openings.map((variant, index) => (
+              // An opening pins to its position in the set: it has no durable id on this wire, the
+              // Host commits it by that very position, and two openings can share a label.
+              <div key={index} role="listitem">
+                <button
+                  type="button"
+                  className="opening-option"
+                  data-testid="opening-option"
+                  onClick={() => {
+                    setPickerOpen(false);
+                    createChat(index);
+                  }}
+                >
+                  <span className="opening-option-name" data-testid="opening-option-name">
+                    {openingVariantWords({ label: variant.label, index, count: openings.length }, labels)}
+                  </span>
+                  <span className="opening-option-line" data-testid="opening-option-line">
+                    {firstLineOf(variant.text)}
+                  </span>
+                </button>
+              </div>
+            ))}
+          </div>
+        </ContextDrawer>
       )}
       {created !== null && (
         <div className="chat-item-card">
