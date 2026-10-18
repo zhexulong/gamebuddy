@@ -5,6 +5,7 @@ import { identityProfileMetadata, readIdentityProfile } from "../identity-profil
 import { projectCompanionVoice, updateMountedCompanionVoice } from "../tavern/companion-voice-service.js";
 import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "../tavern/companion-world-book-service.js";
 import { createCompanionProfileService } from "../tavern/companion-profile-service.js";
+import { createCompanionCardExportService } from "../tavern/companion-card-export-service.js";
 import { createCompanionAvatarService, type CompanionAvatarService } from "../tavern/companion-avatar/index.js";
 import { createCompanionAvatarRequestHandler } from "../tavern/companion-avatar/face.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
@@ -447,6 +448,18 @@ function createTavernManagementDomains(
     locale: () => resolveCompanionLocale(manifest.runtimeRoot),
     resolveCompanion: companionForHandle,
   });
+  /**
+   * The character-card export: the same roster addressing as the inspector, turned
+   * into a standard Tavern V3 card. It reads the companion's own records and writes
+   * nothing, so a player can take her work out and back it up without the export
+   * becoming a second place that owns her data.
+   */
+  const companionCardExportService = createCompanionCardExportService({
+    store: artifactStore,
+    runtimeRoot: manifest.runtimeRoot,
+    playerId: manifest.principal.playerId,
+    resolveCompanion: companionForHandle,
+  });
   const companionAvatarService = createCompanionAvatarService({
     runtimeRoot: manifest.runtimeRoot,
     playerId: manifest.principal.playerId,
@@ -594,6 +607,7 @@ function createTavernManagementDomains(
       companionVoiceService,
       companionWorldBookService,
       companionProfileService,
+      companionCardExportService,
       companionAvatarService,
       newCompanionProvisioner,
       newChatProvisioner,
@@ -887,6 +901,7 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
   companionVoiceService: ["read", "update"],
   companionWorldBookService: ["read", "update"],
   companionProfileService: ["read"],
+  companionCardExportService: ["read"],
   newCompanionProvisioner: ["create"],
   newChatProvisioner: ["create"],
   chatSelectProvisioner: ["select"],
@@ -1000,6 +1015,9 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       // The read-only character inspector appends after the World Info authoring
       // group, in that same canonical order.
       "companion.profile.read",
+      // The card export follows the inspector: a read-only projection of one roster
+      // companion's own records into a standard Tavern V3 card.
+      "companion.card.export",
     ],
     operationIds: [
       "draft.save",
@@ -1048,6 +1066,7 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "world-info.update",
       "world-info.delete",
       "companion.profile.read",
+      "companion.card.export",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds. The

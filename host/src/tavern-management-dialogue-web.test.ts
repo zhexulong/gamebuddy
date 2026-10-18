@@ -19,6 +19,8 @@ import {
 } from "./tavern/browser-contract/index.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
 import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "./tavern/companion-world-book-service.js";
+import { exportCompanionCard } from "./tavern/companion-card-export.js";
+import { decodeStCard } from "./st-card-import.js";
 import { macroTable } from "./tavern/macro-engine.js";
 import { readWorldBook, validateWorldBook, writeWorldBook } from "./worldbook.js";
 import type { MemoryManagementService } from "./tavern/memory-management/memory-management.js";
@@ -2754,4 +2756,194 @@ test("companion.worldbook.update names a companion with no book and a book it ca
   }
   await rm(absent, { recursive: true, force: true });
   await rm(broken, { recursive: true, force: true });
+});
+
+/**
+ * The character-card export route (`companion.card.export`).
+ *
+ * A read, so it is a same-origin browser fetch with NO CSRF header - taking her
+ * work out cannot change her. The exact opaque handle the roster projected
+ * resolves that companion (any listed one, not only the mounted companion), and
+ * each way the Host can refuse is its own bounded code: a handle this mount never
+ * handed out, a record that cannot be read, or a card too large to be imported
+ * back.
+ */
+const tooLargeHandle = "T".repeat(42) + "A";
+const unreadableHandle = "U".repeat(42) + "A";
+const unknownHandle = "Z".repeat(42) + "A";
+const exportRouteGroup = ["companion.card.export"] as const;
+const exportProfile = composeTavernProfile({
+  profileId: "gamebuddy.tavern-management.chat-list-title",
+  releaseTier: "tavern_management",
+  routeIds: [...profile.routeIds, ...exportRouteGroup],
+  operationIds: [...profile.operationIds, ...exportRouteGroup],
+  navigationItemIds: ["chat", "characters"],
+});
+/** The export group on its own, to prove the route's own composition fails closed. */
+const exportOnlyProfile = composeTavernProfile({
+  profileId: "gamebuddy.tavern-management.chat-list-title",
+  releaseTier: "tavern_management",
+  routeIds: [
+    "bootstrap",
+    "state.read",
+    "draft.read",
+    "draft.save",
+    "draft.discard",
+    "chat.list",
+    "chat.rename",
+    "world-info.read",
+    "world-info.bind",
+    "settings.voice.read",
+    "settings.voice.consent",
+    "companion.card.export",
+  ],
+  operationIds: [
+    "draft.save",
+    "draft.discard",
+    "chat.rename",
+    "world-info.bind",
+    "settings.voice.read",
+    "settings.voice.consent",
+    "companion.card.export",
+  ],
+  navigationItemIds: ["chat", "characters"],
+});
+
+function cardExportService(recorder: { reads: string[] }): Readonly<{
+  read(
+    handle: string,
+  ): Promise<Omit<import("./tavern/browser-contract/index.js").CompanionCardExportV1, "apiVersion"> | null>;
+}> {
+  const card = exportCompanionCard({ name: "琥珀", scenario: "你们一起在祖辈留下的农场里开始新的生活。" });
+  return Object.freeze({
+    async read(requested: string) {
+      recorder.reads.push(requested);
+      if (requested === handle) return card;
+      if (requested === tooLargeHandle) throw new Error("companion_card_too_large");
+      if (requested === unreadableHandle) throw new Error("companion_record_unreadable");
+      return null;
+    },
+  });
+}
+
+test("companion.card.export serves a roster companion's card as a session read and names each refusal", async () => {
+  const recorder = { reads: [] as string[] };
+  const server = await startTavernManagementDialogueWebServer({
+    managementStateFacade: facade,
+    managementService: service({ lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 }),
+    worldInfoService: worldInfoService(),
+    playerPreferenceStore: voicePreferenceStore,
+    libraryService: Object.freeze({
+      async listCompanions() {
+        return [{ handle, name: "琥珀", isCurrent: true }];
+      },
+    }),
+    companionCardExportService: cardExportService(recorder),
+    profile: exportProfile,
+    bootstrapToken: token,
+  });
+  try {
+    const origin = server.origin;
+    const bootstrap = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    assert.equal(bootstrap.status, 200);
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const session = { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" };
+    const cardPath = (value: string) => `/api/tavern/v1/companions/${value}/card`;
+
+    // A read: same-origin session only - no CSRF header - and the exact bytes the
+    // Host built come back, which our own decoder accepts.
+    const read = await fetch(`${origin}${cardPath(handle)}`, { headers: session });
+    assert.equal(read.status, 200);
+    const body = (await read.json()) as {
+      apiVersion: number;
+      spec: string;
+      fileName: string;
+      card: string;
+    };
+    assert.equal(body.apiVersion, 1);
+    assert.equal(body.spec, "chara_card_v3");
+    assert.equal(body.fileName, "琥珀.json");
+    assert.equal(decodeStCard(body.card).candidate?.profileCandidate.identity.name, "琥珀");
+    assert.deepEqual(recorder.reads, [handle]);
+
+    // A cross-origin read is refused before the service runs.
+    const crossOrigin = await fetch(`${origin}${cardPath(handle)}`, {
+      headers: { ...session, Origin: `http://127.0.0.1:1` },
+    });
+    assert.equal(crossOrigin.status, 401);
+    // A query the contract does not admit is refused before dispatch.
+    const withQuery = await fetch(`${origin}${cardPath(handle)}?x=1`, { headers: session });
+    assert.equal(withQuery.status, 400);
+
+    // A handle this mount never handed out: the service answers null, and the
+    // route reports a companion that is not there rather than borrowing another.
+    const unknown = await fetch(`${origin}${cardPath(unknownHandle)}`, { headers: session });
+    assert.equal(unknown.status, 404);
+    assert.equal(((await unknown.json()) as { code: string }).code, "companion_not_found");
+
+    // A record that cannot be read is a durable fact, not a retryable outage.
+    const unreadable = await fetch(`${origin}${cardPath(unreadableHandle)}`, { headers: session });
+    assert.equal(unreadable.status, 503);
+    assert.equal(((await unreadable.json()) as { code: string }).code, "companion_record_unreadable");
+
+    // A card too large to import back is its own refusal, not a generic failure.
+    const tooLarge = await fetch(`${origin}${cardPath(tooLargeHandle)}`, { headers: session });
+    assert.equal(tooLarge.status, 409);
+    assert.equal(((await tooLarge.json()) as { code: string }).code, "companion_card_too_large");
+  } finally {
+    await server.close();
+  }
+});
+
+test("the card export route is absent when the profile does not declare it, and composition fails closed without the service", async () => {
+  const recorder = { reads: [] as string[] };
+  // The base management profile does NOT declare `companion.card.export`, so the route
+  // the browser calls is not served even though the service was injected.
+  const server = await startTavernManagementDialogueWebServer({
+    managementStateFacade: facade,
+    managementService: service({ lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 }),
+    worldInfoService: worldInfoService(),
+    playerPreferenceStore: voicePreferenceStore,
+    companionCardExportService: cardExportService(recorder),
+    profile,
+    bootstrapToken: token,
+  });
+  try {
+    const origin = server.origin;
+    const bootstrap = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const refused = await fetch(`${origin}/api/tavern/v1/companions/${handle}/card`, {
+      headers: { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+    });
+    assert.equal(refused.status, 404);
+    assert.equal(((await refused.json()) as { code: string }).code, "profile_operation_unavailable");
+    assert.deepEqual(recorder.reads, []);
+  } finally {
+    await server.close();
+  }
+
+  // A profile that advertises the route without the bound service fails closed at
+  // composition, so the browser is never shown a control the Host cannot serve.
+  // Every other service the profile's routes need is injected, so the only missing
+  // one is the export's own.
+  assert.throws(
+    () =>
+      createTavernManagementDialogueWebRequestHandler({
+        managementStateFacade: facade,
+        managementService: service({ lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 }),
+        worldInfoService: worldInfoService(),
+        playerPreferenceStore: voicePreferenceStore,
+        profile: exportOnlyProfile,
+        bootstrapToken: token,
+      }),
+    /tavern_management_composition_unavailable/,
+  );
 });

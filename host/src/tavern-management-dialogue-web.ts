@@ -15,6 +15,7 @@ import {
   type ChatRetentionCommandV1,
   type CompanionDetailV1,
   type CompanionWorldBookV1,
+  type CompanionCardExportV1,
   type CompanionListV1,
   type CompanionProfileV1,
   type CompanionCharacterVoiceV1,
@@ -241,6 +242,15 @@ const MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES = [
  * inspector the Host cannot serve.
  */
 const MANAGEMENT_COMPANION_PROFILE_ROUTES = ["companion.profile.read"] as const;
+/**
+ * Optional character-card export extension: only a profile that declares this
+ * route mounts the read that turns a roster companion's own records into a
+ * standard Tavern V3 card. It appends after the inspector in the same frozen
+ * canonical order, and like every other option a profile that advertises it
+ * without the bound service fails closed at composition rather than offering a
+ * control the Host cannot serve.
+ */
+const MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES = ["companion.card.export"] as const;
 const bootstrapRequestValidator = Compile(
   (TavernBrowserContractV1.routes.find((route) => route.routeId === "bootstrap")! as { request: TSchema }).request,
 );
@@ -389,6 +399,16 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    */
   companionProfileService?: Readonly<{
     read(handle: string): Promise<CompanionProfileV1 | null>;
+  }>;
+  /**
+   * The character-card export: one roster companion's own records projected into a
+   * standard Tavern V3 card, addressed by the same opaque handle `companion.list`
+   * projected (it resolves any listed companion, like the inspector). Read-only by
+   * construction: there is no write member, so taking a companion out cannot change
+   * her.
+   */
+  companionCardExportService?: Readonly<{
+    read(handle: string): Promise<Omit<CompanionCardExportV1, "apiVersion"> | null>;
   }>;
   /**
    * Host-owned new-companion provisioner. The browser sends a display name
@@ -609,6 +629,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const companionVoiceService = options.companionVoiceService;
   const companionWorldBookService = options.companionWorldBookService;
   const companionProfileService = options.companionProfileService;
+  const companionCardExportService = options.companionCardExportService;
   const newCompanionProvisioner = options.newCompanionProvisioner;
   const newChatProvisioner = options.newChatProvisioner;
   const chatSelectProvisioner = options.chatSelectProvisioner;
@@ -733,6 +754,14 @@ export function createTavernManagementDialogueWebRequestHandler(
     if (companionProfileService === undefined) throw new Error("tavern_management_composition_unavailable");
     if (!profile.operationIds.includes("companion.profile.read"))
       throw new Error("tavern_management_composition_unavailable");
+  }
+  // The card export is the same kind of optional, read-only capability: a profile
+  // that advertises it without the bound read fails closed before dispatch.
+  for (const routeId of MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES) {
+    if (profile.routeIds.includes(routeId)) {
+      if (companionCardExportService === undefined) throw new Error("tavern_management_composition_unavailable");
+      if (!profile.operationIds.includes(routeId)) throw new Error("tavern_management_composition_unavailable");
+    }
   }
   // The reviewed ST-card import routes are mounted only when the exact
   // service, the composition-owned confirm provisioner and the durable history
@@ -1420,6 +1449,32 @@ export function createTavernManagementDialogueWebRequestHandler(
         }
       }
       {
+        const cardHandle = matchCompanionCardExportRoute(request.method, url.pathname);
+        if (cardHandle !== null) {
+          // companion.card.export: one roster companion's own records projected into a
+          // standard Tavern V3 card she can save and re-import. The exact opaque handle the
+          // roster projected resolves to THAT companion, whoever she is (an archived
+          // companion's work is extractable, or the export would only ever reach the one in
+          // play); a handle this mount never handed out is answered by the bound service as
+          // null (404). A read: a same-origin fetch with no CSRF header, and nothing is
+          // written, so taking her work out can never change her.
+          if (url.search !== "" || (await hasRequestBody(request)))
+            return sendProblem(response, 400, "invalid_request");
+          if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+          if (!profile.routeIds.includes("companion.card.export") || companionCardExportService === undefined)
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          const exported = await companionCardExportService.read(cardHandle);
+          if (exported === null) return sendProblem(response, 404, "companion_not_found");
+          const result: CompanionCardExportV1 = Object.freeze({
+            apiVersion: TAVERN_BROWSER_API_VERSION,
+            ...exported,
+          });
+          if (!TavernBrowserValidatorsV1.CompanionCardExportV1Schema.Check(result))
+            throw new Error("companion_card_export_service_unavailable");
+          return sendJson(response, 200, result);
+        }
+      }
+      {
         const voiceHandle = matchCompanionVoiceRoute(request.method, url.pathname);
         if (voiceHandle !== null) {
           // The mounted companion's own performance directive. The exact opaque
@@ -2101,7 +2156,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
   // them, in the frozen canonical order: core, output devices, language,
   // connections, model profiles, companions/personas/retention, card import,
   // new-chat opening, new chat, chat selection, World Info authoring, companion
-  // profile. A partially applied group, an undeclared route or a
+  // profile, card export. A partially applied group, an undeclared route or a
   // reordered list fails closed, so no route is mounted that this dispatcher
   // cannot serve.
   const coreRoutes = withMemory
@@ -2126,6 +2181,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_CHAT_SELECT_ROUTES,
     MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES,
     MANAGEMENT_COMPANION_PROFILE_ROUTES,
+    MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES,
   ] as const;
   const operationGroups = [
     coreOperations,
@@ -2141,6 +2197,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_CHAT_SELECT_ROUTES,
     MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES,
     MANAGEMENT_COMPANION_PROFILE_ROUTES,
+    MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES,
   ] as const;
   if (!isCanonicalGroupSelection(profile.routeIds, routeGroups, coreRoutes)) return false;
   if (!isCanonicalGroupSelection(profile.operationIds, operationGroups, coreOperations)) return false;
@@ -2254,6 +2311,13 @@ function matchCompanionProfileRoute(method: string | undefined, pathname: string
   return match === null ? null : match[1]!;
 }
 
+/** companion.card.export: one roster companion's own records as a standard Tavern V3 card. */
+function matchCompanionCardExportRoute(method: string | undefined, pathname: string): string | null {
+  if (method !== "GET") return null;
+  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})\/card$/.exec(pathname);
+  return match === null ? null : match[1]!;
+}
+
 /** character.import.read: GET the staged candidate's safe review data. */
 function matchImportIdRoute(method: string | undefined, pathname: string): string | null {
   if (method !== "GET") return null;
@@ -2355,6 +2419,10 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "companion_world_book_conflict") return { status: 409, code: "companion_world_book_conflict" };
   if (message === "companion_world_book_absent") return { status: 404, code: "companion_world_book_absent" };
   if (message === "companion_world_book_invalid") return { status: 400, code: "authored_content_invalid" };
+  // A companion's own records that will not fit a Tavern card our import accepts is
+  // a bounded, non-retryable fact about her data, with its own code so the surface
+  // says the export was refused rather than that something failed.
+  if (message === "companion_card_too_large") return { status: 409, code: "companion_card_too_large" };
   // The book was written and the restoring write then failed too, so the threads that
   // still pin the previous revision are the one state a retry cannot fix. It is named
   // rather than reported as a clean storage failure.
@@ -2389,10 +2457,14 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   // answer a retryable 503 for something retrying cannot fix. The raw library vocabulary is
   // recognised here too, so no intermediate layer can re-collapse it on the way out.
   if (
+    message === "companion_record_unreadable" ||
     message === "chat_management_companion_unreadable" ||
     message === "tavern_artifact_unreadable" ||
     message === "invalid_tavern_artifact" ||
     message === "invalid_tavern_companion" ||
+    // A companion's own records that are present and unreadable (her identity profile
+    // among them) are the same kind of durable fact: they cannot be retried into validity.
+    message === "invalid_identity_profile" ||
     // A world book that is present and unreadable is the same kind of fact: the
     // backdrop is durable and cannot be retried into validity.
     message === "companion_world_book_unreadable"

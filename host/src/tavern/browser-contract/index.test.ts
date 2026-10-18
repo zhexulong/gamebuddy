@@ -44,6 +44,7 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "chat.regenerate",
       "chat.rewind",
       "chat.edit",
+      "chat.delete",
       "memory.read",
       "memory.mutate",
       "world-info.read",
@@ -70,6 +71,7 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "companion.worldbook.read",
       "companion.worldbook.update",
       "companion.profile.read",
+      "companion.card.export",
       "companion.create",
       "character.voice.read",
       "character.voice.update",
@@ -229,6 +231,12 @@ test("problem codes and events are closed unions", () => {
     // from the very text the edit would replace.
     "chat_edit_not_player_message",
     "chat_edit_turn_active",
+    // The delete's own three, including the one that is not about the player's choice at all: a row
+    // whose Pi session entry the Host never recorded has no name to omit, and saying so is the honest
+    // answer instead of removing some other entry that happens to sit at the same position.
+    "chat_delete_opening_retained",
+    "chat_delete_turn_active",
+    "chat_delete_binding_unavailable",
   ] as const) {
     assert.equal(TAVERN_BROWSER_PROBLEM_CODES_V1.includes(code), true, code);
     assert.equal(
@@ -1115,6 +1123,20 @@ test("every route freezes the exact security, binding, and success policy matrix
       "application/json",
     ],
     [
+      "chat.delete",
+      "POST",
+      "/api/tavern/v1/messages/delete",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
       "memory.read",
       "GET",
       "/api/tavern/v1/memory",
@@ -1468,6 +1490,20 @@ test("every route freezes the exact security, binding, and success policy matrix
       "companion.profile.read",
       "GET",
       "/api/tavern/v1/companions/:companionHandle/profile",
+      "browser_session",
+      "same-origin",
+      "none",
+      "none",
+      [],
+      ["companionHandle"],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "companion.card.export",
+      "GET",
+      "/api/tavern/v1/companions/:companionHandle/card",
       "browser_session",
       "same-origin",
       "none",

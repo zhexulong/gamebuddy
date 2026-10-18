@@ -135,6 +135,13 @@ const ProblemCode = Type.Union([
   // ever fails with "the conversation could not be changed" about a message the player can see.
   Type.Literal("chat_edit_not_player_message"),
   Type.Literal("chat_edit_turn_active"),
+  // Deleting one message out of the middle of a conversation (`chat.delete`) has its own bounded
+  // vocabulary, and one member of it is the whole reason the operation needed a durable record: the
+  // greeting the Chat opened on, a reply that is still being written, and a row whose model entry the
+  // Host never recorded - the honest answer for every row written before that binding existed.
+  Type.Literal("chat_delete_opening_retained"),
+  Type.Literal("chat_delete_turn_active"),
+  Type.Literal("chat_delete_binding_unavailable"),
   // A durable companion record that is absent, incomplete or unreadable is a data-integrity
   // fact, not a runtime outage: it is bounded and never retryable, so the player is not told
   // to retry something that cannot succeed by retrying.
@@ -161,6 +168,11 @@ const ProblemCode = Type.Union([
   Type.Literal("world_info_already_exists"),
   Type.Literal("world_info_revision_conflict"),
   Type.Literal("world_info_in_use"),
+  // `companion.card.export` refuses by name when a companion's own records will not
+  // fit a Tavern card our import accepts. It is a bounded, non-retryable fact about
+  // her data rather than a runtime outage, so it is not collapsed into
+  // storage/runtime unavailable: the card cannot be made smaller by trying again.
+  Type.Literal("companion_card_too_large"),
 ]);
 
 /**
@@ -722,6 +734,10 @@ const OperationId = Type.Union([
   // The read-only character inspector: one companion's own authored facts, by
   // the roster's own opaque handle.
   Type.Literal("companion.profile.read"),
+  // Export one roster companion's own records as a standard Tavern V2/V3 character
+  // card: the same handle addressing as the inspector, because the whole point is to
+  // take her work out of the product.
+  Type.Literal("companion.card.export"),
   Type.Literal("companion.create"),
   Type.Literal("character.import.stage"),
   Type.Literal("character.import.read"),
@@ -775,6 +791,7 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.companion.worldbook.read"),
   Type.Literal("tavern.operation.companion.worldbook.update"),
   Type.Literal("tavern.operation.companion.profile.read"),
+  Type.Literal("tavern.operation.companion.card.export"),
   Type.Literal("tavern.operation.companion.create"),
   Type.Literal("tavern.operation.character.import.stage"),
   Type.Literal("tavern.operation.character.import.read"),
@@ -1157,6 +1174,23 @@ export const CompanionProfileV1Schema = strictObject({
   scenario: CompanionProfileScenarioV1Schema,
   greetings: CompanionProfileGreetingsV1Schema,
   worldBook: CompanionWorldBookV1Schema,
+});
+/**
+ * One companion's own records exported as a standard Tavern V3 character card.
+ *
+ * `card` is the card's own JSON TEXT - exactly the bytes the browser saves - so
+ * the Host stays the one authority on how a card is serialized and the browser
+ * never re-serializes one the Host built. `fileName` is what the save dialog
+ * offers, and `spec` is the card format's own declared version.
+ *
+ * The text is bounded by the decoder's own JSON input ceiling, so a card this
+ * route returns whole is one the import route accepts.
+ */
+export const CompanionCardExportV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  spec: Type.Literal("chara_card_v3"),
+  fileName: Type.String({ minLength: 1, maxLength: 200 }),
+  card: Type.String({ minLength: 2, maxLength: ST_CARD_DECODER_LIMITS_V1.inputBytesJson }),
 });
 /**
  * The mounted companion's own performance directive, as the durable identity
@@ -1603,6 +1637,30 @@ export const EditMessageResultV1Schema = strictObject({
   message: BrowserMessageV1Schema,
 });
 /**
+ * Deleting one message out of the middle of a conversation (`chat.delete`): the named row leaves the
+ * transcript, the rows after it keep their order, and the model's own session stops carrying exactly
+ * that row's entry - which is the invariant the whole operation exists for, the same one a rewind and
+ * an edit keep. A delete that only removed the bubble would leave the model answering words the player
+ * can no longer read, and one that removed MORE than the named row would be a rewind.
+ *
+ * `expectedOrder` is the transcript position the browser rendered that message at. The transcript is
+ * what the position means, so a row that has moved - because a turn landed between the read and the
+ * click - is refused rather than deleted where the player never saw it.
+ *
+ * The answer carries nothing but the protocol version: unlike a rewind, which has to tell the browser
+ * where the conversation now ends, a delete leaves a gap whose whole point is that the surface must
+ * reread the transcript rather than be told what occupies it.
+ */
+export const DeleteMessageCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  messageHandle: OpaqueHandle,
+  expectedOrder: Revision,
+});
+export const DeleteMessageResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+});
+/**
  * New-chat opening variant choice. The browser names no durable greeting id and no chat id: the
  * mounted companion's own greeting set is resolved by the Host, and the mounted Chat is the one
  * the admission already bound. `targetIndex` is 0-based; `direction` steps from the committed
@@ -1753,6 +1811,9 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_rewind_turn_active",
   "chat_edit_not_player_message",
   "chat_edit_turn_active",
+  "chat_delete_opening_retained",
+  "chat_delete_turn_active",
+  "chat_delete_binding_unavailable",
   "dialogue_busy",
   "connection_not_found",
   "connection_not_ready",
@@ -2031,6 +2092,20 @@ const RouteDescriptors = Object.freeze([
     query: noQuery,
     request: EditMessageCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: EditMessageResultV1Schema },
+  }),
+  route({
+    routeId: "chat.delete",
+    method: "POST",
+    path: "/api/tavern/v1/messages/delete",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: DeleteMessageCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: DeleteMessageResultV1Schema },
   }),
   route({
     routeId: "memory.read",
@@ -2412,6 +2487,20 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CompanionProfileV1Schema },
   }),
   route({
+    routeId: "companion.card.export",
+    method: "GET",
+    path: "/api/tavern/v1/companions/:companionHandle/card",
+    operationId: "companion.card.export",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: CompanionCardExportV1Schema },
+  }),
+  route({
     routeId: "companion.create",
     method: "POST",
     path: "/api/tavern/v1/companions",
@@ -2732,6 +2821,7 @@ export const TavernBrowserContractV1 = Object.freeze({
     CompanionWorldBookV1Schema,
     UpdateCompanionWorldBookCommandV1Schema,
     CompanionProfileV1Schema,
+    CompanionCardExportV1Schema,
     CompanionVoiceV1Schema,
     CompanionCharacterVoiceV1Schema,
     UpdateCompanionVoiceCommandV1Schema,
@@ -2767,6 +2857,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     RewindChatResultV1Schema,
     EditMessageCommandV1Schema,
     EditMessageResultV1Schema,
+    DeleteMessageCommandV1Schema,
+    DeleteMessageResultV1Schema,
     BrowserOpeningVariantV1Schema,
     ChatOpeningCommandV1Schema,
     ChatOpeningResultV1Schema,
@@ -2816,6 +2908,8 @@ export type RewindChatCommandV1 = Static<typeof RewindChatCommandV1Schema>;
 export type RewindChatResultV1 = Static<typeof RewindChatResultV1Schema>;
 export type EditMessageCommandV1 = Static<typeof EditMessageCommandV1Schema>;
 export type EditMessageResultV1 = Static<typeof EditMessageResultV1Schema>;
+export type DeleteMessageCommandV1 = Static<typeof DeleteMessageCommandV1Schema>;
+export type DeleteMessageResultV1 = Static<typeof DeleteMessageResultV1Schema>;
 export type BrowserOpeningVariantV1 = Static<typeof BrowserOpeningVariantV1Schema>;
 export type ChatOpeningCommandV1 = Static<typeof ChatOpeningCommandV1Schema>;
 export type ChatOpeningResultV1 = Static<typeof ChatOpeningResultV1Schema>;
@@ -2916,6 +3010,8 @@ export type CompanionProfileV1 = Readonly<{
   }>;
   worldBook: CompanionWorldBookV1;
 }>;
+/** One companion's records as a standard Tavern V3 card, plus how to save it. */
+export type CompanionCardExportV1 = Static<typeof CompanionCardExportV1Schema>;
 export type TavernConnectionSetupFieldV1 = Static<typeof TavernConnectionSetupFieldV1Schema>;
 export type TavernConnectionApiShapeV1 = Static<typeof TavernConnectionApiShapeV1Schema>;
 export type TavernConnectionThinkingLevelV1 = Static<typeof TavernConnectionThinkingLevelV1Schema>;
@@ -3067,13 +3163,13 @@ const REFERENCE_TAVERN_ROUTE_IDS = [
   "events",
 ] as const;
 /**
- * The optional message-mutation extension of the reference Chat profile: Swipe, Regenerate, Rewind
- * and Edit.
+ * The optional message-mutation extension of the reference Chat profile: Swipe, Regenerate, Rewind,
+ * Edit and Delete.
  *
- * The browser client posts all four from its own message controls, so the dispatcher mounted on the
+ * The browser client posts all five from its own message controls, so the dispatcher mounted on the
  * composed Chat surface must reach them or the player's controls answer 404. They are routes, not
- * operations: the browser gates Regenerate on the `chat.submit` affordance and Swipe/Rewind/Edit on
- * the message's own projection, so the Host projects no `state.operations` row for any of them.
+ * operations: the browser gates Regenerate on the `chat.submit` affordance and Swipe/Rewind/Edit/Delete
+ * on the message's own projection, so the Host projects no `state.operations` row for any of them.
  *
  * Declared as an optional group rather than folded into the core list so every existing reference
  * profile - the standalone handler's own declaration and the API-level test slices - stays a valid
@@ -3086,6 +3182,7 @@ const REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS = [
   "chat.regenerate",
   "chat.rewind",
   "chat.edit",
+  "chat.delete",
 ] as const;
 const REFERENCE_TAVERN_ROUTE_GROUPS = [
   REFERENCE_TAVERN_ROUTE_IDS,
