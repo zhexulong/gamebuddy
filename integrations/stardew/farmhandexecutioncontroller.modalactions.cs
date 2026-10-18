@@ -164,6 +164,40 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         {
             if (modal is DialogueBox dialogueBox)
                 dialogueBox.closeDialogue();
+            else if (modal is ShippingMenu shippingMenu)
+            {
+                // The ONE menu whose close must go through the engine own commit.
+                //
+                // `ShippingMenu` overrides neither `exitThisMenu` nor `cleanupBeforeExit`, so a generic close is
+                // a pure cancel - and the saving lives on its own commit timeline, not on the close path:
+                // `okClicked` (ShippingMenu.cs:690-696) starts the outro, and the outro is what creates
+                // `SaveGameMenu` (ShippingMenu.cs:411-418), which is the menu whose completion runs the save and
+                // raises `Saved` and `DayStarted`. Cancelling it therefore skipped the save entirely. Measured:
+                // every archived Mod log from the multi-day runs has `saveGameMenu=[]`, the night lifecycle then
+                // burns its save budget and moves to `AwaitingDayStart`, and the world is left with an advanced
+                // calendar, the actor still held as `body_owned_by_day_advance`, and every later request refused.
+                MethodInfo? commit = typeof(ShippingMenu).GetMethod(
+                    "okClicked",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                if (commit is null)
+                    return this.RememberTerminal(
+                        request.RequestId,
+                        executionId,
+                        ExecutionState.Rejected,
+                        "modal_commit_path_unavailable",
+                        $"modal_type={modalType};engine_method=okClicked;available=false");
+                commit.Invoke(shippingMenu, null);
+                // The engine completes the close in its own timeline (the outro), so the postcondition here is the
+                // commit having run - not the menu already being gone. Reporting the truth is what lets the night
+                // lifecycle observe `Saved` and `DayStarted` instead of waiting for a save nothing ever started.
+                return this.RememberTerminal(
+                    request.RequestId,
+                    executionId,
+                    ExecutionState.Succeeded,
+                    "modal_dismissed",
+                    $"modal_type={modalType};dismissed=true;clearing=true;close_effect=engine_shipping_commit",
+                    this.TryCreateLocalObservation(actor));
+            }
             else
                 Game1.exitActiveMenu();
         }
