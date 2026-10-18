@@ -785,6 +785,9 @@ test("a v4 root keeps the companion's own book and the attached managed item acr
         applied_revision, applied_canonical_hash, applied_public_title, applied_world_book_id
       FROM tavern_thread_world_info_bindings_v5;
       DROP TABLE tavern_thread_world_info_bindings_v5;
+      -- A genuine v4 root predates the message -> session-entry binding (schema v6), so the fixture drops
+      -- it too: the migration under test has to add it back, not find it already there.
+      DROP TABLE tavern_message_entries;
       PRAGMA user_version = 4;
     `);
     } finally {
@@ -810,7 +813,7 @@ test("a v4 root keeps the companion's own book and the attached managed item acr
       const slots = (
         inspected.prepare("SELECT slot FROM tavern_thread_world_info_bindings ORDER BY slot, thread_id").all() as any[]
       ).map((row) => row.slot);
-      assert.equal(version, 5);
+      assert.equal(version, 6);
       assert.deepEqual(slots, ["companion", "managed"]);
     } finally {
       inspected.close();
@@ -1727,6 +1730,226 @@ test("an edit rewrites the player's own row in place and refuses every row that 
         }),
       /p4_p5_transition_authority_unavailable/,
     );
+  } finally {
+    reopened.close?.();
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A single-row delete is the one Chat mutation that leaves a GAP: everything before the named row and
+ * everything after it stay exactly where they were, and only the turns whose evidence that one row was
+ * go with it (`validateTurnIntegrity` would otherwise expect a row the transcript no longer carries).
+ * The binding the model's own path is resolved through - `tavern_message_entries` - is written by the
+ * provider runner and read back here, and it goes with the row it names.
+ */
+test("a mid-transcript delete removes exactly one row and only the turns that row evidenced", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-delete-");
+  const continuityKey = createHash("sha256")
+    .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
+    .digest("hex");
+  const t0 = Date.now();
+  const s = createChatThreadStore(root, continuityKey, () => t0);
+  const reopened = createChatThreadStore(root, continuityKey, () => t0);
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit(request(opening));
+    const accept = (await import("./chat-thread-store.js")).acceptMountedPlayerMessage;
+    const binding = {
+      runtimeRoot: root,
+      playerId: "player_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      selectionGeneration: 1,
+    };
+    const claimBinding = {
+      ...binding,
+      runtimeBindingDigest: "b".repeat(64),
+      runtimeOwner: {
+        ownerToken: "owner_01",
+        runtimeInstanceId: "inst_01",
+        ownerPid: 1234,
+        ownerProcessStartIdentity: "pid_1234",
+      },
+    };
+    /** One complete turn: accept, claim, arm, run, commit the reply, complete. */
+    const turn = async (ordinal: number, text: string, replyId: string) => {
+      const key = `key${ordinal}`.padEnd(22, "x");
+      const accepted = await accept(binding, {
+        text,
+        locale: "en-US",
+        idempotencyKey: key,
+        expectedDraftRevision: ordinal - 1,
+        authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+      });
+      const claimed = await claimMountedAttempt(claimBinding);
+      const attempt = { ...claimBinding, attemptId: claimed.attempt.attemptId };
+      await transitionMountedProviderStart(attempt, { operation: "arm", observedAtMs: t0 + 1 });
+      await transitionMountedProviderStart(attempt, {
+        operation: "running",
+        statusClass: "success",
+        observedAtMs: t0 + 2,
+      });
+      await transitionMountedPresentation(attempt, {
+        operation: "commit_presentation",
+        cancelEpoch: 1,
+        message: { messageId: replyId, text: `${text} back`, occurredAtMs: t0 + 3 },
+        committedAtMs: t0 + 3,
+      });
+      await transitionMountedPresentation(attempt, { operation: "claim_completion", claimedAtMs: t0 + 4 });
+      await transitionMountedPresentation(attempt, { operation: "complete", completedAtMs: t0 + 5 });
+      return { key, playerId: accepted.messageId, turnId: accepted.turnId };
+    };
+
+    const first = await turn(1, "First line", "reply_01");
+    const second = await turn(2, "Second line", "reply_02");
+    const third = await turn(3, "Third line", "reply_03");
+    const before = await s.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      before.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId, "reply_02", third.playerId, "reply_03"],
+    );
+
+    // The binding the runner records after a turn's prompt settles: the player row is carried by the
+    // prompt's own user entry and the reply row by the assistant entry the presentation committed.
+    await s.recordTranscriptEntryBinding!(testTransitionAuthority.authority, "thread_01", [
+      { messageId: first.playerId, entryId: "entry_p1" },
+      { messageId: "reply_01", entryId: "entry_a1" },
+      { messageId: second.playerId, entryId: "entry_p2" },
+      { messageId: "reply_02", entryId: "entry_a2" },
+      { messageId: third.playerId, entryId: "entry_p3" },
+      { messageId: "reply_03", entryId: "entry_a3" },
+    ]);
+    // It is 1:N: a same-position variant turn appends a NEW reply entry for the same reply row, so the
+    // row is carried by more than one entry over its life and the delete resolves the set against the
+    // session's active path rather than trusting the newest write.
+    await s.recordTranscriptEntryBinding!(testTransitionAuthority.authority, "thread_01", [
+      { messageId: "reply_02", entryId: "entry_a2_variant" },
+      { messageId: "reply_02", entryId: "entry_a2" },
+    ]);
+    assert.deepEqual(await s.readTranscriptEntryBinding!("thread_01", "reply_02"), ["entry_a2", "entry_a2_variant"]);
+    assert.deepEqual(await s.readTranscriptEntryBinding!("thread_01", second.playerId), ["entry_p2"]);
+    // A row this Chat does not carry cannot be given a binding: the row's own foreign key refuses it,
+    // so no binding can outlive the transcript row it names.
+    await assert.rejects(
+      () =>
+        s.recordTranscriptEntryBinding!(testTransitionAuthority.authority, "thread_01", [
+          { messageId: "invented_row", entryId: "entry_invented" },
+        ]),
+      /FOREIGN KEY/i,
+    );
+
+    // The delete: her second reply leaves the middle of the conversation. Everything before it and
+    // everything after it stays, and the second turn's own bookkeeping goes with the reply that was
+    // its only presentation row - while the player line that turn answered stays exactly where it was.
+    const after = await s.deleteTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+      messageId: "reply_02",
+      expectedOrder: 4,
+    });
+    assert.deepEqual(
+      after.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId, third.playerId, "reply_03"],
+    );
+    assert.equal(after.turnLedger?.turnId, third.turnId);
+    assert.equal(after.turnLedger?.status, "completed");
+    assert.deepEqual(
+      after.idempotency.map((record) => record.key),
+      [first.key, third.key],
+    );
+    // The binding went with the row (`ON DELETE CASCADE`), so nothing names a session entry no
+    // transcript row carries any more.
+    assert.deepEqual(await s.readTranscriptEntryBinding!("thread_01", "reply_02"), []);
+    // And the hole is durable across connections, not a projection this process kept.
+    const durable = await reopened.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      durable.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId, third.playerId, "reply_03"],
+    );
+    assert.equal(durable.idempotency.length, 2);
+    const tables = new DatabaseSync(join(root, "tavern", "v3", "continuities", continuityKey, "tavern.sqlite"));
+    try {
+      assert.equal((tables.prepare("SELECT COUNT(*) AS n FROM tavern_turns").get() as any).n, 2);
+      assert.equal((tables.prepare("SELECT COUNT(*) AS n FROM tavern_turn_presentations").get() as any).n, 2);
+      const ordinals = (
+        tables
+          .prepare("SELECT append_ordinal FROM tavern_messages WHERE thread_id = ? ORDER BY append_ordinal")
+          .all("thread_01") as any[]
+      ).map((row) => row.append_ordinal);
+      // The surviving rows keep the ordinals they had: a hole is a gap in the conversation, not a
+      // renumbering that would move every row after it.
+      assert.deepEqual(ordinals, [0, 1, 2, 3, 5, 6]);
+    } finally {
+      tables.close();
+    }
+
+    // Every refusal, and each one leaves the transcript exactly as it was.
+    const held = await s.resumeThread("thread_01", "surface_01");
+    const unchanged = held.messages.map((message) => message.messageId);
+    await assert.rejects(
+      () =>
+        s.deleteTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+          messageId: "missing_01",
+          expectedOrder: 1,
+        }),
+      /chat_message_not_found/,
+    );
+    await assert.rejects(
+      () =>
+        s.deleteTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+          messageId: third.playerId,
+          expectedOrder: 1,
+        }),
+      /chat_message_revision_conflict/,
+    );
+    // The greeting is the row the thread's own opening names.
+    await assert.rejects(
+      () =>
+        s.deleteTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+          messageId: "opening_01",
+          expectedOrder: 0,
+        }),
+      /chat_delete_opening_retained/,
+    );
+    // A turn that has not reached its terminal state refuses the whole delete: no row leaves the
+    // transcript while a reply is being written.
+    const heldTurn = await accept(binding, {
+      text: "Fourth line",
+      locale: "en-US",
+      idempotencyKey: "key4".padEnd(22, "x"),
+      expectedDraftRevision: 3,
+      authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+    });
+    const heldWithTurn = await s.resumeThread("thread_01", "surface_01");
+    await assert.rejects(
+      () =>
+        s.deleteTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+          messageId: "reply_01",
+          expectedOrder: 2,
+        }),
+      /chat_delete_turn_active/,
+    );
+    assert.deepEqual(
+      (await s.resumeThread("thread_01", "surface_01")).messages.map((message) => message.messageId),
+      heldWithTurn.messages.map((message) => message.messageId),
+    );
+    assert.deepEqual(
+      heldWithTurn.messages.slice(0, unchanged.length).map((message) => message.messageId),
+      unchanged,
+    );
+    const revoked = createMountedTurnTransitionAuthority();
+    revoked.revoke();
+    await assert.rejects(
+      () =>
+        s.deleteTranscriptMessage!(revoked.authority, "thread_01", {
+          messageId: first.playerId,
+          expectedOrder: 1,
+        }),
+      /p4_p5_transition_authority_unavailable/,
+    );
+    assert.equal(heldTurn.messageId.length > 0, true);
   } finally {
     reopened.close?.();
     s.close?.();

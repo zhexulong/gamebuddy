@@ -14,7 +14,7 @@ import {
  * append-only messages, swipe variants, and turn lifecycle; it neither reads
  * Pi/Magic Context state nor implements message edit/branch or any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 5 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 6 as const;
 export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
@@ -726,6 +726,43 @@ export type ChatThreadStore = Readonly<{
     input: Readonly<{ messageId: string; expectedOrder: number; text: string }>,
   ): Promise<ChatThreadState>;
   /**
+   * The durable half of a single mid-transcript delete: exactly one row leaves the transcript, and
+   * the rows after it keep their order.
+   *
+   * A rewind drops a suffix; this drops one row out of the middle, so the invariant it has to keep is
+   * different in one place: the transcript is ALLOWED to have a gap (the player asked for it), and
+   * every surviving row stays where it was. What it shares with the rewind is the ledger rule - a
+   * turn whose only evidence this exact row was (its accepted player row, its committed presentation
+   * row, a variant's target or its anchor) cannot outlive it, because `validateTurnIntegrity` would
+   * then expect a row the transcript no longer carries. Refused: a row this Chat does not carry, a
+   * row that is no longer at the position the caller read, the greeting the Chat opened on, and any
+   * turn that has not reached its terminal state.
+   *
+   * Which Pi session entry the row is carried by is NOT this seam's business: that binding is the
+   * model's own (`tavern_message_entries`), and the caller omits the entry before it removes the row.
+   */
+  deleteTranscriptMessage?(
+    authority: MountedTurnTransitionAuthority,
+    chatThreadId: string,
+    input: Readonly<{ messageId: string; expectedOrder: number }>,
+  ): Promise<ChatThreadState>;
+  /**
+   * The Pi entry ids one durable row is carried by, oldest first. Empty for a row that has no
+   * recorded binding - which is the honest answer for every row written before the binding existed.
+   */
+  readTranscriptEntryBinding?(chatThreadId: string, messageId: string): Promise<readonly string[]>;
+  /**
+   * Records which Pi session entries carried one durable row, as the provider runner proved them for
+   * the turn it just ran. Append-only: a variant turn's new reply entry joins the row's binding
+   * rather than replacing it, and the delete resolves the set against the model's active path.
+   * A binding for a row this Chat does not carry is refused by the row's own foreign key.
+   */
+  recordTranscriptEntryBinding?(
+    authority: MountedTurnTransitionAuthority,
+    chatThreadId: string,
+    entries: readonly Readonly<{ messageId: string; entryId: string }>[],
+  ): Promise<void>;
+  /**
    * Ordinary exact-turn Stop mutation. It is intentionally independent from
    * the retired P4/P5 transition authority: the service supplies a current
    * mounted turn/attempt pair, SQLite decides the terminal winner, and the
@@ -1305,10 +1342,47 @@ const WORLD_INFO_BINDINGS_TABLE_V5 = `
     );
 `;
 
+/**
+ * The durable Host-message-id -> Pi-entry-id binding (schema v6).
+ *
+ * Nothing else names the session entry a durable transcript row is carried by, which is why a
+ * mid-transcript delete could not exist before this table: a rewind drops a SUFFIX and can prove
+ * the tail positionally, but omitting one entry in the middle has to name the exact entry the
+ * player pointed at, and everything after it has to stay where it is.
+ *
+ * It is 1:N because one row's model contribution can move: a same-position variant turn appends a
+ * NEW reply entry for the same reply row and branches the old one off the path, so the row is
+ * carried by more than one entry over its life. A delete therefore resolves the binding against the
+ * model's own active path (`SessionManager.getBranch`) rather than trusting the newest write.
+ *
+ * `entry_id` is Pi's own opaque entry id (`SessionManager.appendMessage`'s return value); the row
+ * goes with its message (`ON DELETE CASCADE`), so a delete leaves no stale binding behind.
+ */
+const MESSAGE_ENTRIES_TABLE_V6 = `
+    CREATE TABLE tavern_message_entries (
+      thread_id TEXT NOT NULL REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL CHECK(length(entry_id) > 0),
+      PRIMARY KEY(thread_id, message_id, entry_id),
+      FOREIGN KEY(thread_id, message_id)
+        REFERENCES tavern_messages(thread_id, message_id)
+        ON DELETE CASCADE
+    );
+`;
+
 function initSchema(db: DatabaseSync): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   const version = Number(versionRow?.user_version ?? 0);
   if (version === CHAT_THREAD_SCHEMA_VERSION) {
+    assertNormalizedSchema(db);
+    return;
+  }
+  // v5 recorded no message -> Pi entry binding at all, so a single mid-transcript
+  // delete had no way to name the session entry the row it removes was carried by
+  // and could only guess from a position. v6 adds the binding; nothing else changes.
+  if (version === 5) {
+    db.exec(MESSAGE_ENTRIES_TABLE_V6);
+    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
   }
@@ -1317,6 +1391,7 @@ function initSchema(db: DatabaseSync): void {
   // companion's book and an attached managed item both survive the upgrade.
   if (version === 4) {
     migrateWorldInfoBindingsToSlots(db);
+    db.exec(MESSAGE_ENTRIES_TABLE_V6);
     assertNormalizedSchema(db);
     return;
   }
@@ -1418,6 +1493,8 @@ function initSchema(db: DatabaseSync): void {
         REFERENCES tavern_messages(thread_id, message_id)
         ON DELETE CASCADE
     );
+
+${MESSAGE_ENTRIES_TABLE_V6}
 
     CREATE TABLE tavern_thread_stable_artifact_bindings (
       thread_id TEXT NOT NULL REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
@@ -1598,6 +1675,7 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     "tavern_threads",
     "tavern_messages",
     "tavern_message_swipes",
+    "tavern_message_entries",
     "tavern_thread_stable_artifact_bindings",
     "tavern_thread_world_info_bindings",
     "tavern_turns",
@@ -2214,6 +2292,115 @@ export function createChatThreadStore(
         const readBack = readStateFromDb(db, chatThreadId);
         if (readBack.messages[index]?.text !== input.text) throw new Error("chat_edit_readback_mismatch");
         return readBack;
+      });
+    },
+
+    async deleteTranscriptMessage(authority, chatThreadId, input): Promise<ChatThreadState> {
+      assertMountedTurnTransitionAuthority(authority);
+      assertId("chatThreadId", chatThreadId);
+      assertId("messageId", input.messageId);
+      if (!Number.isSafeInteger(input.expectedOrder) || input.expectedOrder < 0)
+        throw new Error("invalid_chat_delete_order");
+      return withDb((db) => {
+        const current = readStateFromDb(db, chatThreadId);
+        if ((current.thread.lifecycleStatus ?? "active") !== "active")
+          throw new Error("chat_thread_lifecycle_not_active");
+        const index = current.messages.findIndex((message) => message.messageId === input.messageId);
+        if (index < 0) throw new Error("chat_message_not_found");
+        if (index !== input.expectedOrder) throw new Error("chat_message_revision_conflict");
+        const target = current.messages[index]!;
+        // The greeting is the row the thread's own opening names, and the row the exchange above it is
+        // read against; there is no conversation to leave a hole in.
+        if (target.kind === "opening") throw new Error("chat_delete_opening_retained");
+        const ledger = current.turnLedger;
+        if (ledger !== null && !isTerminalLedger(ledger)) throw new Error("chat_delete_turn_active");
+        // A turn survives only while every row it names survives, exactly as it does for a rewind:
+        // its own `message_id` is the accepted player row - or, for a same-position variant turn, an
+        // opaque identity that names no row - so a variant turn is judged by the reply it re-generated
+        // and the player line it answered. Here the doomed set is the turns naming THIS one row, not a
+        // suffix: the rows on either side of the hole are untouched, and so is every other turn.
+        const doomedTurnIds = (
+          db
+            .prepare(
+              `SELECT t.turn_id AS turn_id, t.message_id AS message_id,
+                      v.target_message_id AS variant_target_id, v.anchor_message_id AS variant_anchor_id,
+                      p.message_id AS presentation_id
+                 FROM tavern_turns t
+                 LEFT JOIN tavern_turn_variants v ON v.turn_id = t.turn_id
+                 LEFT JOIN tavern_turn_presentations p ON p.turn_id = t.turn_id
+                WHERE t.thread_id = ?`,
+            )
+            .all(chatThreadId) as any[]
+        )
+          .filter(
+            (row) =>
+              row.message_id === input.messageId ||
+              row.variant_target_id === input.messageId ||
+              row.variant_anchor_id === input.messageId ||
+              row.presentation_id === input.messageId,
+          )
+          .map((row) => row.turn_id as string);
+        // The idempotency record references its turn with ON DELETE RESTRICT, so it goes first; the
+        // turn's own attempts, observations, presentations and context plans cascade from it.
+        for (const turnId of doomedTurnIds)
+          db.prepare("DELETE FROM tavern_chat_submit_idempotency WHERE thread_id = ? AND turn_id = ?").run(
+            chatThreadId,
+            turnId,
+          );
+        for (const turnId of doomedTurnIds) db.prepare("DELETE FROM tavern_turns WHERE turn_id = ?").run(turnId);
+        // The row's own binding goes with it (`ON DELETE CASCADE`), so the row cannot leave a binding
+        // behind that names a session entry no transcript row is carried by any more.
+        db.prepare("DELETE FROM tavern_messages WHERE thread_id = ? AND message_id = ?").run(
+          chatThreadId,
+          input.messageId,
+        );
+        // The current-turn pointer may have named exactly the turn this row was the evidence for. The
+        // newest survivor takes it back - clearing first, because the partial unique index allows one
+        // current turn per thread - so no idempotency record outlives the ledger that reads it.
+        db.prepare("UPDATE tavern_turns SET is_current = 0 WHERE thread_id = ?").run(chatThreadId);
+        db.prepare(
+          `UPDATE tavern_turns SET is_current = 1
+            WHERE turn_id = (SELECT turn_id FROM tavern_turns WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1)`,
+        ).run(chatThreadId);
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(now(), chatThreadId);
+        // The read-back is the assertion: it re-runs the same opening, message and ledger integrity
+        // checks every other read runs, so a hole that left a row its ledger still expects - or an
+        // order the surviving rows cannot read - rolls this whole transaction back instead of
+        // committing a disagreement.
+        const readBack = readStateFromDb(db, chatThreadId);
+        if (readBack.messages.length !== current.messages.length - 1) throw new Error("chat_delete_readback_mismatch");
+        return readBack;
+      });
+    },
+
+    async readTranscriptEntryBinding(chatThreadId, messageId): Promise<readonly string[]> {
+      assertId("chatThreadId", chatThreadId);
+      assertId("messageId", messageId);
+      return withDb((db) =>
+        Object.freeze(
+          (
+            db
+              .prepare(
+                "SELECT entry_id FROM tavern_message_entries WHERE thread_id = ? AND message_id = ? ORDER BY rowid",
+              )
+              .all(chatThreadId, messageId) as any[]
+          ).map((row) => row.entry_id as string),
+        ),
+      );
+    },
+
+    async recordTranscriptEntryBinding(authority, chatThreadId, entries): Promise<void> {
+      assertMountedTurnTransitionAuthority(authority);
+      assertId("chatThreadId", chatThreadId);
+      for (const entry of entries) {
+        assertId("messageId", entry.messageId);
+        assertId("entryId", entry.entryId);
+      }
+      return withDb((db) => {
+        const insert = db.prepare(
+          "INSERT OR IGNORE INTO tavern_message_entries (thread_id, message_id, entry_id) VALUES (?, ?, ?)",
+        );
+        for (const entry of entries) insert.run(chatThreadId, entry.messageId, entry.entryId);
       });
     },
 
