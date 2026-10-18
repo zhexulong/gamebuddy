@@ -524,11 +524,18 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         // Fresh reads only: the pair left `newLevels`, the branch is the one that was chosen and never the other,
         // and the menu is no longer active (it leaves the screen on its own next update, `LevelUpMenu.cs:416-419`).
+        //
+        // All three conjuncts are PUBLISHED, because they ARE the success condition: `pair_settled` is the pair's
+        // removal from `newLevels` (the same `RemoveWhere` `RemoveLevelFromLevelList` performs, `LevelUpMenu.cs:645-648`),
+        // `profession_settled` is the branch write landing on the chosen profession and not the other card, and
+        // `menu_closed` is the menu's own flag. A receipt that published neither of the first two left the reader to
+        // infer them from `remaining_new_levels`, which names a COUNT and cannot say which entry left - so the two
+        // facts a caller must judge this action by were the producer's private word rather than a readable fact.
         bool pairSettled = !actor.newLevels.Contains(new Point(menuPair.Skill, menuPair.Level));
         bool professionSettled = !isProfession
             || (actor.professions.Contains(chosenProfession) && !actor.professions.Contains(otherProfession));
         string evidence =
-            $"modal_type=LevelUpMenu;skill={menuPair.Skill};level={menuPair.Level};is_profession={isProfession.ToString().ToLowerInvariant()};chosen_profession={(isProfession ? chosenProfession.ToString() : "none")};remaining_new_levels={actor.newLevels.Count};menu_closed={(!menu.isActive).ToString().ToLowerInvariant()}";
+            $"modal_type=LevelUpMenu;skill={menuPair.Skill};level={menuPair.Level};is_profession={isProfession.ToString().ToLowerInvariant()};chosen_profession={(isProfession ? chosenProfession.ToString() : "none")};remaining_new_levels={actor.newLevels.Count};menu_closed={(!menu.isActive).ToString().ToLowerInvariant()};pair_settled={pairSettled.ToString().ToLowerInvariant()};profession_settled={professionSettled.ToString().ToLowerInvariant()}";
         if (pairSettled && professionSettled && !menu.isActive)
         {
             return this.RememberTerminal(
