@@ -2056,3 +2056,29 @@ test("action tools fail closed without runtime-owned dispatch admission", () => 
   } as MoveCapableIntegration;
   assert.deepEqual(createStardewActionTools(integration, undefined), []);
 });
+
+test("a failed observation refresh is named in the CONTENT, not hidden in details", async () => {
+  // Measured 2026-10-18 (run g43cross): between three 60-second action timeouts the Agent called stardew_observe, the
+  // refresh timed out, and it received an ordinary-looking snapshot from revision 383 - so it kept acting on stale
+  // coordinates and amplified the cascade. The failure was present only in details.refreshError, which the model does
+  // not read as a fact about the world. A refresh that FAILED while the connection is still attached is exactly the
+  // deadlock signal, and it has to appear where the model looks.
+  const snapshot = { revision: 383, location: "Farm", tileX: 50, tileY: 26 };
+  const integration = {
+    state: { connected: true, snapshot, latestReasonCode: null, latestReceipt: null },
+    observe: async () => {
+      throw new Error("bridge_response_timeout");
+    },
+  };
+  const tools = createStardewObservationTools(integration as never);
+  const observe = tools.find((tool) => tool.name === "stardew_observe");
+  assert.ok(observe !== undefined);
+  const result = await observe.execute({}, {} as never);
+  const text = result.content[0].text;
+  assert.match(text, /STALE SNAPSHOT/u, "the content must say the snapshot could not be refreshed");
+  assert.match(text, /bridge_response_timeout/u, "and it must name why");
+  assert.equal(result.details.refresh, "cached");
+  assert.equal(result.details.reasonCode, "available_cached_after_failed_refresh");
+  // The data is still there, so a reader that understood the warning can use it.
+  assert.match(text, /383/u);
+});

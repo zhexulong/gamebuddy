@@ -156,18 +156,32 @@ export function createStardewObservationTools(
       const unavailableText = disconnected
         ? `No live Stardew connection: ${unavailableReason}. The bridge is not attached, so the world cannot be observed and actions cannot be issued — do not keep retrying; report the state to the player instead.`
         : `No authoritative Stardew snapshot is available: ${unavailableReason}. The connection is up but the world is not observable yet${refreshError === null ? "" : ` (last refresh failed: ${refreshError})`}; retry only after the world state changes, not in a tight loop.`;
+      // A FAILED refresh is not the same as "no refresh", and serving the cached snapshot as if it were current hides a
+      // deadlock: the connection is still up, the request timed out, and the world may have stopped advancing.
+      // Measured 2026-10-18 (run g43cross): between three 60-second action timeouts the Agent called this tool, the
+      // refresh failed, and it received a perfectly ordinary-looking snapshot from revision 383 - so it kept acting on
+      // stale coordinates and amplified the cascade, with the failure visible only in `details.refreshError`. The
+      // content now names it, and the reasonCode does too.
+      const staleAfterFailedRefresh = available && refresh === "cached" && refreshError !== null;
+      const staleText = `STALE SNAPSHOT: the fresh observation FAILED (${refreshError}) while the connection is still attached, so the world may have stopped advancing. Do not treat these coordinates as current - re-observe or report the state to the player instead of acting on them. Last known snapshot: ${JSON.stringify(snapshot)}`;
       return {
         content: [
           {
             type: "text" as const,
-            text: available ? JSON.stringify(snapshot) : unavailableText,
+            text: available ? (staleAfterFailedRefresh ? staleText : JSON.stringify(snapshot)) : unavailableText,
           },
         ],
         details: {
           available,
           refresh,
           refreshError,
-          reasonCode: available ? (refresh === "fresh" ? "available_fresh" : "available_cached") : unavailableReason,
+          reasonCode: available
+            ? refresh === "fresh"
+              ? "available_fresh"
+              : staleAfterFailedRefresh
+                ? "available_cached_after_failed_refresh"
+                : "available_cached"
+            : unavailableReason,
           snapshotJson: available ? JSON.stringify(snapshot) : null,
         },
       };
