@@ -28,6 +28,7 @@ import {
   preflightTestArtifact,
   runDiscoveredTests,
 } from "./run-tests.mjs";
+import { resolve as resolvePath } from "node:path";
 
 /** Causes the suite reports for a child that died of transport or budget, not of an assertion. */
 const ENVIRONMENTAL_CAUSES = /ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|ERR_[A-Z_]+|test_file_timeout/u;
@@ -35,20 +36,24 @@ const ENVIRONMENTAL_CAUSES = /ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|ERR_[A-Z_]
 const ASSERTION_CAUSES = /AssertionError|ERR_ASSERTION|Expected values to be strictly equal|not ok \d+/u;
 
 function usage() {
-  return "usage: node host/scripts/sweep-compiled-tests.mjs [--concurrency N] [--timeout-ms N] [--file <substring>] [--verbose]";
+  return "usage: node host/scripts/sweep-compiled-tests.mjs [--phase compiled|scripts|all] [--concurrency N] [--timeout-ms N] [--file <substring>] [--verbose]";
 }
 
 function parseArguments(argv) {
   const options = {
     concurrency: machineDefaultConcurrency(),
     timeoutMs: DEFAULT_TEST_FILE_TIMEOUT_MS,
+    phase: "all",
     filter: undefined,
     verbose: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     const value = argv[index + 1];
-    if (flag === "--concurrency") {
+    if (flag === "--phase") {
+      options.phase = value;
+      index += 1;
+    } else if (flag === "--concurrency") {
       options.concurrency = Number(value);
       index += 1;
     } else if (flag === "--timeout-ms") {
@@ -65,6 +70,8 @@ function parseArguments(argv) {
   }
   if (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1)
     throw new Error(`invalid_concurrency: ${usage()}`);
+  if (!["all", "compiled", "scripts"].includes(options.phase))
+    throw new Error(`invalid_phase: ${usage()}`);
   if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1000)
     throw new Error(`invalid_timeout_ms: ${usage()}`);
   return options;
@@ -108,17 +115,31 @@ export function summarizeChildOutput(output) {
   };
 }
 
+/**
+ * The two phases the suite runs, discovered the way each phase discovers them: compiled files under
+ * `dist-test`, script files under `scripts/`. `--phase` picks one; the default is both, because a
+ * sweep that silently covers half the tree is the failure mode this tool exists to remove.
+ */
+async function discoveredFilesFor(phase) {
+  if (phase === "compiled") return await discoverTestFiles(undefined, ".test.js");
+  if (phase === "scripts") return await discoverTestFiles(resolvePath(hostRoot, "scripts"), ".test.mjs");
+  return [
+    ...(await discoveredFilesFor("compiled")),
+    ...(await discoveredFilesFor("scripts")),
+  ];
+}
+
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   // The artifact preflight is the runner's: a sweep of a half-built tree would report the missing
   // modules as failures in whichever files happened to need them.
   await preflightTestArtifact();
-  const discovered = await discoverTestFiles();
+  const discovered = await discoveredFilesFor(options.phase);
   const files = options.filter === undefined ? discovered : discovered.filter((file) => file.includes(options.filter));
   if (files.length === 0) throw new Error(`no compiled test file matched: ${options.filter ?? "(all)"}`);
 
   console.log(
-    `host_test_sweep_start:files=${files.length}:concurrency=${options.concurrency}:timeout_ms=${options.timeoutMs}`,
+    `host_test_sweep_start:phase=${options.phase}:files=${files.length}:concurrency=${options.concurrency}:timeout_ms=${options.timeoutMs}`,
   );
   const failures = [];
   const slow = [];
