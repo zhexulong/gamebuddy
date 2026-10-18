@@ -71,6 +71,24 @@ async function workingTreeAsset(name: string): Promise<unknown> {
   return JSON.parse(await readFile(join(presetDirectory(), name), "utf8"));
 }
 
+/** The COMMITTED bytes of one preset asset, read from git at HEAD. */
+function committedBytes(name: string): Buffer {
+  const spec = `HEAD:assets/tavern/presets/default-companion/${name}`;
+  try {
+    return execFileSync("git", ["show", spec], { cwd: repositoryRoot() });
+  } catch (error) {
+    throw new Error(
+      `committed_asset_unreadable: git could not show ${spec} (${error instanceof Error ? error.message : String(error)}); ` +
+        "reading the file on disk here would compare the working tree against itself",
+    );
+  }
+}
+
+/** The WORKING TREE's bytes of one preset asset. */
+async function workingTreeBytes(name: string): Promise<Buffer> {
+  return readFile(join(presetDirectory(), name));
+}
+
 /** What the product converter produces for a given card + world book. */
 function convertedPreset(card: unknown, rawBook: unknown) {
   const preview = previewStCard(card, "gamebuddy.companion.default");
@@ -96,7 +114,13 @@ function convertedPreset(card: unknown, rawBook: unknown) {
   return { profile, worldBook, scenario, greetings };
 }
 
-function assertPresetMatches(expected: ReturnType<typeof convertedPreset>): void {
+/**
+ * Every field the compiled module carries is a copy of a file in the preset
+ * directory, so each one is compared against the source the caller read: a stale
+ * copy of ANY of them - persona, book, scenario, openings, picture - is the same
+ * defect this file exists to catch.
+ */
+function assertPresetMatches(expected: ReturnType<typeof convertedPreset>, avatarBase64: string): void {
   assert.deepEqual(DEFAULT_COMPANION_PRESET.profile, expected.profile);
   assert.deepEqual(DEFAULT_COMPANION_PRESET.worldBook, expected.worldBook);
   // The card's scenario is not profile text (the decoder keeps it candidate-only),
@@ -104,13 +128,17 @@ function assertPresetMatches(expected: ReturnType<typeof convertedPreset>): void
   // because `default-companion-seed.ts` installs the durable scenario record from it.
   assert.deepEqual(DEFAULT_COMPANION_PRESET.scenario, expected.scenario);
   assert.deepEqual(DEFAULT_COMPANION_PRESET.greetings, expected.greetings);
+  // Her picture travels the same way and carries the same anti-drift rule: the
+  // base64 the generated module holds must be the file's own bytes, or a fresh
+  // root would seed a picture the owner never approved.
+  assert.equal(DEFAULT_COMPANION_PRESET.avatarBase64, avatarBase64);
 }
 
 test("the shipped compiled preset equals the product converter's output for the COMMITTED card", () => {
   const card = committedAsset("card.json") as { data: { scenario: string } };
   const expected = convertedPreset(card, committedAsset("worldbook.json"));
   assert.equal(expected.profile.identity.name, "琥珀");
-  assertPresetMatches(expected);
+  assertPresetMatches(expected, committedBytes("avatar.png").toString("base64"));
   // The card's own scenario travels with the compiled preset verbatim — it is the
   // value the fresh-root seed turns into the companion's durable scenario record.
   assert.equal(DEFAULT_COMPANION_PRESET.scenario, card.data.scenario);
@@ -145,7 +173,10 @@ test("the committed card's system_prompt is carried into the shipped profile as 
 });
 
 test("the shipped compiled preset also matches the WORKING-TREE card and world book (editing-time check, not committed parity)", async () => {
-  assertPresetMatches(convertedPreset(await workingTreeAsset("card.json"), await workingTreeAsset("worldbook.json")));
+  assertPresetMatches(
+    convertedPreset(await workingTreeAsset("card.json"), await workingTreeAsset("worldbook.json")),
+    (await workingTreeBytes("avatar.png")).toString("base64"),
+  );
 });
 
 test("the card's declared scan_depth rides the compiled preset into its worldBook.scanDepth", () => {

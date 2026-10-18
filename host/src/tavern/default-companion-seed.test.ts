@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,6 +16,13 @@ import { canonicalTestRoot } from "../test-support/canonical-test-root.test-supp
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
+import {
+  COMPANION_AVATAR_FILE_NAME,
+  MAX_COMPANION_AVATAR_BYTES,
+  companionAvatarPath,
+  createCompanionAvatarService,
+  isCompletePngFile,
+} from "./companion-avatar/index.js";
 import { DEFAULT_COMPANION_PRESET } from "./default-companion-preset.js";
 import { seedDefaultCompanionIntoFreshRuntimeRoot } from "./default-companion-seed.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
@@ -222,6 +230,91 @@ test("the seeded companion's scenario reaches the browser with its macros render
     const stored = await durable.read();
     assert.ok(stored !== null);
     assert.equal(stored.description, DEFAULT_COMPANION_PRESET.scenario);
+  } finally {
+    await release(root);
+  }
+});
+
+// The preset's picture travels the same road as her profile: the compiled preset
+// carries it (base64, because a generated module cannot hold binary) and the seed
+// writes it where the avatar face reads. These two tests are the two facts that
+// must never be confused - "she has a picture and it is the owner's file" and
+// "her picture was present and refused by name".
+test("a preset carrying a picture puts it on her companion root, where the avatar face reads it", async () => {
+  const root = await canonicalTestRoot("default-companion-seed-avatar-");
+  try {
+    await seedDefaultCompanionIntoFreshRuntimeRoot(identity, root);
+    const paths = resolveRuntimePaths(identity, root);
+    const tavernPaths = resolveTavernPaths(paths, identity);
+    // The bytes are the owner's own `assets/tavern/presets/default-companion/avatar.png`
+    // (the drift test proves that half); here they must decide where the picture landed.
+    assert.ok(DEFAULT_COMPANION_PRESET.avatarBase64 !== undefined);
+    const expected = Buffer.from(DEFAULT_COMPANION_PRESET.avatarBase64, "base64");
+    assert.ok(isCompletePngFile(expected), "the preset's picture must itself be a picture");
+    assert.deepEqual(await readFile(join(tavernPaths.companionRoot, COMPANION_AVATAR_FILE_NAME)), expected);
+    // The file being there is not the claim; the face the shell mounts serving it is.
+    const handle = `${"D".repeat(42)}A`;
+    const service = createCompanionAvatarService({
+      runtimeRoot: root,
+      playerId: identity.playerId,
+      async resolveCompanion(candidate) {
+        return candidate === handle
+          ? Object.freeze({ companionId: identity.companionId, continuityId: identity.continuityId! })
+          : null;
+      },
+    });
+    const read = await service.read(handle);
+    assert.equal(read?.state, "present");
+    assert.deepEqual(read?.state === "present" ? read.bytes : undefined, expected);
+    // A handle the roster projects nothing for is a different answer again.
+    assert.equal(await service.read(`${"E".repeat(42)}A`), null);
+  } finally {
+    await release(root);
+  }
+});
+
+test("a preset picture that is present and unusable is refused by name, and seeds nothing", async () => {
+  const root = await canonicalTestRoot("default-companion-seed-avatar-refused-");
+  try {
+    const paths = resolveRuntimePaths(identity, root);
+    const avatarPath = companionAvatarPath(root, identity.playerId, {
+      companionId: identity.companionId,
+      continuityId: identity.continuityId!,
+    });
+    const withAvatar = (avatarBase64: string) => Object.freeze({ ...DEFAULT_COMPANION_PRESET, avatarBase64 });
+
+    // A JSON card renamed `.png`: the bytes are a card, not a picture.
+    await assert.rejects(
+      seedDefaultCompanionIntoFreshRuntimeRoot(
+        identity,
+        root,
+        withAvatar(Buffer.from('{"spec":"chara_card_v3","data":{"name":"Rin"}}', "utf8").toString("base64")),
+      ),
+      /default_companion_avatar_malformed/u,
+    );
+    // Over the avatar module's OWN ceiling is the other named refusal - not the
+    // same word for both, and not a companion seeded without a picture.
+    await assert.rejects(
+      seedDefaultCompanionIntoFreshRuntimeRoot(
+        identity,
+        root,
+        withAvatar(Buffer.alloc(MAX_COMPANION_AVATAR_BYTES + 1).toString("base64")),
+      ),
+      /default_companion_avatar_too_large/u,
+    );
+    // Both refusals happen before the first durable write, so nothing half-seeded
+    // is left behind for the next open to read as a companion.
+    assert.equal(existsSync(paths.identityProfilePath), false);
+    assert.equal(existsSync(avatarPath), false);
+
+    // A preset that carries NO picture is an ordinary state, and seeds normally
+    // with no avatar file: absence is not the same fact as a refusal. This is the
+    // shape a preset directory with no `avatar.png` compiles to.
+    const { avatarBase64: _picture, ...withoutPicture } = DEFAULT_COMPANION_PRESET;
+    const outcome = await seedDefaultCompanionIntoFreshRuntimeRoot(identity, root, withoutPicture);
+    assert.equal(outcome.seeded, true);
+    assert.equal(existsSync(paths.identityProfilePath), true);
+    assert.equal(existsSync(avatarPath), false);
   } finally {
     await release(root);
   }
