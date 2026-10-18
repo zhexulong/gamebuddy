@@ -915,7 +915,7 @@ async function runAgentTurn(text, tools) {
       ["succeeded", "failed", "recovery_required", "cancelled"].includes(status.snapshot?.state)
     )
       break;
-    if (i % 10 === 0)
+    if (i % 10 === 0) {
       console.error(
         JSON.stringify({
           seconds: i,
@@ -924,6 +924,14 @@ async function runAgentTurn(text, tools) {
           revision: client.state.snapshot?.revision,
         }),
       );
+      // The world itself is the thing to watch: the Mod's heartbeat is per tick, so its absence means the game thread
+      // stopped reaching the Mod - not a slow action, and not something the turn budget should wait out.
+      const liveness = sampleModHeartbeat();
+      if (liveness.silentMs >= MOD_HEARTBEAT_STALL_MS) {
+        worldStallReason = `world_stopped_advancing:silent_ms=${String(liveness.silentMs)}:last_heartbeat=${liveness.line}`;
+        break;
+      }
+    }
     const quick = await Promise.race([agentTurn, Promise.resolve(null)]);
     if (quick !== null) {
       turn = quick;
@@ -1922,6 +1930,16 @@ let voiceResult = null;
 // The multi-day outcome: the loop's own records plus the baseline's judgement of them. Declared out here so
 // the failure path can report what the run did before it stopped instead of losing the crossings it made.
 let multidayOutcome = null;
+/**
+ * Set when the MOD stopped advancing while a turn was running, and why.
+ *
+ * The wait loop below is where a freeze actually manifests: the companion's tool call never returns, so nothing
+ * settles, and the loop used to spin out its whole budget (1800 s for a self-directed scenario) while printing an
+ * unchanged `revision`. Measured 2026-10-18 (g54program): the Mod's heartbeat and the stage marker both stopped at
+ * 00:30:52 with `stage=executions_update` on the last line, and the harness kept counting to 680 s with `revision:
+ * 319` before the run was killed. The night watcher had a liveness check; the turn waiter did not.
+ */
+let worldStallReason = null;
 // The run's own narrative judgement, made once before the verdict and published in the bundle. Declared out here so
 // the failure path can report it too (the catch may run before the verdict block).
 let historianRubricOutcome = null;
@@ -2207,24 +2225,26 @@ try {
   const sessionSpoken = SCENARIO !== "morning_routine" || spokeToPlayer;
 
   const sessionVerdict =
-    sessionTurns.length === 0
-      ? "no_turns"
-      : unsettledSessionTurns.some((entry) => entry.error === "agent_turn_timeout")
-        ? "turn_timeout"
-        : unsettledSessionTurns.length > 0
-          ? "turn_unsettled"
-          : turnFailureReason !== undefined
-            ? "turn_failed"
-            : // A transport that died mid-run cannot support a behaviour claim: the companion's own line may
-              // simply never have been presented. Without this arm the run reported `silent` - "the companion
-              // said nothing" - for a fault in the pipe (measured 2026-10-16).
-              bridgeDisconnections.length > 0
-              ? "bridge_disconnected"
-              : sessionSpoken
-                ? accomplishedActionIds.length > 0
-                  ? "completed"
-                  : "nothing_accomplished"
-                : "silent";
+    worldStallReason !== null
+      ? "world_stopped_advancing"
+      : sessionTurns.length === 0
+        ? "no_turns"
+        : unsettledSessionTurns.some((entry) => entry.error === "agent_turn_timeout")
+          ? "turn_timeout"
+          : unsettledSessionTurns.length > 0
+            ? "turn_unsettled"
+            : turnFailureReason !== undefined
+              ? "turn_failed"
+              : // A transport that died mid-run cannot support a behaviour claim: the companion's own line may
+                // simply never have been presented. Without this arm the run reported `silent` - "the companion
+                // said nothing" - for a fault in the pipe (measured 2026-10-16).
+                bridgeDisconnections.length > 0
+                ? "bridge_disconnected"
+                : sessionSpoken
+                  ? accomplishedActionIds.length > 0
+                    ? "completed"
+                    : "nothing_accomplished"
+                  : "silent";
   const morningRoutinePassed =
     SCENARIO === "morning_routine"
       ? sessionTurns.length > 0 && attemptedActionIds.length > 0 && sessionVerdict === "completed"
@@ -2449,6 +2469,9 @@ try {
     // redacted provider message). Published so a verdict of `turn_failed` is auditable rather than
     // asserted, and so `silent` can be told apart from `nobody could read it`.
     agentTurnOutcome,
+    // Named when the world stopped rather than the turn finishing: the turn never settles in that case, so without
+    // this the verdict could only say `turn_unsettled` and the freeze would have to be inferred from a log gap.
+    worldStallReason,
     attemptedActionIds,
     succeededActionIds,
     // Present for every scenario; the self-directed one treats silence as its own outcome.
