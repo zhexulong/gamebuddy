@@ -213,10 +213,10 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
  * child is awaited before this returns, so a batch cannot report success (or a
  * failure) while one of its children is still running.
  */
-async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite }) {
-  const failures = new Array(batch.length);
-  let nextIndex = 0;
-  let stopped = false;
+  async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite, keepGoing = false, retryEnvironmental = true }) {
+    const failures = new Array(batch.length);
+    let nextIndex = 0;
+    let stopped = false;
   // One backslash, so a Windows path is normalized exactly once: the literal had been written
   // with two, which matches nothing, so every path this produces kept its backslashes (messages
   // and heartbeat labels alike). `exclusiveGroupsFor` always wrote it correctly, which is why the
@@ -226,9 +226,9 @@ async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFi
     const path = batch[index];
     const fileRemainingMs = deadlineMs - now();
     if (fileRemainingMs < 100) {
-      failures[index] = { error: runnerError("test_suite_timeout", suite) };
-      stopped = true;
-      return;
+        failures[index] = { path, error: runnerError("test_suite_timeout", suite) };
+        stopped = true;
+        return;
     }
     // A file gets its own budget, not the suite's remaining deadline. A test that
     // never resolves is not a slow test - it is a run that never reports anything,
@@ -253,12 +253,16 @@ async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFi
       // message carries its bounded output after the first newline, and without it a budget
       // expiry is a name and a number with no clue what the file was doing when it was killed.
       const childOutput = message.includes("\n") ? message.slice(message.indexOf("\n")) : "";
-      failures[index] = {
-        error: message.startsWith("test_supervisor_timeout:")
-          ? runnerError("test_file_timeout", `${relativePath(path)}:budget_ms=${budgetMs}${childOutput}`)
-          : error,
-      };
-      stopped = true;
+        failures[index] = {
+          path,
+          error: message.startsWith("test_supervisor_timeout:")
+            ? runnerError("test_file_timeout", `${relativePath(path)}:budget_ms=${budgetMs}${childOutput}`)
+            : error,
+        };
+        // A batch stops at its first failure unless the caller asked to see everything. The
+        // remaining files in the batch are still run under `--keep-going`, which exists because
+        // this machine's environmental failures were costing whole batches of information.
+        if (!keepGoing) stopped = true;
     }
   };
   // Files that contend on one machine-global resource run one at a time and only after the
@@ -276,15 +280,57 @@ async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFi
   const workers = [];
   for (let index = 0; index < Math.min(concurrency, ordinaryIndexes.length); index++) workers.push(worker());
   await Promise.all(workers);
-  for (const index of exclusiveIndexes) {
-    if (stopped) break;
-    await runOne(index);
+    for (const index of exclusiveIndexes) {
+      if (stopped) break;
+      await runOne(index);
+    }
+    // A failure that is the machine's - no assertion in the child's output, and a named transport or
+    // budget cause - gets ONE retry, and it gets it here, after both pools have drained, so the
+    // retry really is the file alone. Anything else, and anything that fails again, is a failure.
+    if (retryEnvironmental) {
+      for (const [index, failure] of failures.entries()) {
+        if (failure === undefined || !isEnvironmentalFailure(failure.error)) continue;
+        const path = batch[index];
+        const label = relativePath(path);
+        const retryRemainingMs = deadlineMs - now();
+        console.error(`host_test_suite_file_retry:suite=${batchLabel}:file=${label}:reason=environmental`);
+        if (retryRemainingMs < 100) {
+          console.error(`host_test_suite_file_retry_skipped:suite=${batchLabel}:file=${label}:reason=suite_deadline`);
+          continue;
+        }
+        try {
+          await run([path], { timeoutMs: Math.min(retryRemainingMs, perFileMs) });
+          console.error(`host_test_suite_file_retry_outcome:suite=${batchLabel}:file=${label}:outcome=passed`);
+          failures[index] = undefined;
+        } catch (error) {
+          // The second failure is what the run reports, and it keeps the child's own message: a
+          // retry that fails for a different reason is that reason.
+          console.error(`host_test_suite_file_retry_outcome:suite=${batchLabel}:file=${label}:outcome=failed`);
+          failures[index] = { path, error };
+        }
+      }
+    }
+    // Report the earliest-launched failure so the batch stays deterministic
+    // instead of surfacing whichever child happened to lose the race.
+    return failures.filter((failure) => failure !== undefined);
   }
-  // Report the earliest-launched failure so the batch stays deterministic
-  // instead of surfacing whichever child happened to lose the race.
-  for (const failure of failures) {
-    if (failure !== undefined) throw failure.error;
-  }
+
+/**
+ * Causes that mean the machine rather than the code, for the one bounded retry below.
+ *
+ * The rule is deliberately two-sided: a child whose output carries an assertion failure is NEVER
+ * environmental, whatever else it printed, and a retry is bounded to one attempt - so a cause that
+ * persists still fails the run. This exists because this machine resets loopback sockets under load
+ * (a file that failed a batch with `read ECONNRESET` passed 10/10 on its own), and without it one
+ * such file hides every batch after it.
+ */
+const ENVIRONMENTAL_FAILURE_CAUSES = /ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|ERR_[A-Z_]+/u;
+const ASSERTION_FAILURE_CAUSES = /AssertionError|ERR_ASSERTION|Expected values to be strictly|not ok \d+/u;
+
+/** Whether a batch failure is the machine's, by the rule above - and never a child that asserted. */
+export function isEnvironmentalFailure(error) {
+  const text = error instanceof Error ? error.message : String(error);
+  return !ASSERTION_FAILURE_CAUSES.test(text) && ENVIRONMENTAL_FAILURE_CAUSES.test(text);
 }
 
 /**
@@ -309,6 +355,8 @@ export async function runTestBatches(paths, {
   concurrency = DEFAULT_TEST_CONCURRENCY,
   timeoutMs = DEFAULT_TEST_SUITE_TIMEOUT_MS,
   perFileMs = DEFAULT_TEST_FILE_TIMEOUT_MS,
+  keepGoing = false,
+  retryEnvironmental = true,
   run = runDiscoveredTests,
   now = Date.now,
 } = {}) {
@@ -318,13 +366,43 @@ export async function runTestBatches(paths, {
   if (!Number.isSafeInteger(perFileMs) || perFileMs < 100) throw runnerError("invalid_test_file_timeout", String(perFileMs));
   const batches = chunkTestFiles(paths, batchSize);
   const deadlineMs = now() + timeoutMs;
+  const allFailures = [];
   for (const [index, batch] of batches.entries()) {
     const remainingMs = deadlineMs - now();
     if (remainingMs < 100) throw runnerError("test_suite_timeout", suite);
     const batchLabel = `${suite}:batch=${index + 1}/${batches.length}`;
     console.error(`host_test_suite_batch_start:suite=${batchLabel}:files=${batch.length}:paths=${batchFilesForLog(batch)}:remaining_ms=${remainingMs}`);
-    await runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite });
+    const failures = await runBatchFiles({
+      batch,
+      batchLabel,
+      concurrency,
+      deadlineMs,
+      perFileMs,
+      run,
+      now,
+      suite,
+      keepGoing,
+      retryEnvironmental,
+    });
+    if (failures.length === 0) continue;
+    allFailures.push(...failures);
+    // Without `--keep-going` the first failing batch still ends the run, and it ends it with the
+    // child's own error rather than a summary: the message a reader needs is the one the failing
+    // test produced, and that is what tonight's earlier fix to this function protects.
+    if (!keepGoing) throw failures[0].error;
+    console.error(
+      `host_test_suite_batch_failed:suite=${batchLabel}:files=${failures
+        .map((failure) => relative(hostRoot, failure.path).replaceAll("\\", "/"))
+        .join(",")}:keeping_going=true`,
+    );
   }
+  if (allFailures.length > 0)
+    throw runnerError(
+      "test_suite_failed",
+      `${allFailures.length} file(s): ${allFailures
+        .map((failure) => relative(hostRoot, failure.path).replaceAll("\\", "/"))
+        .join(", ")}`,
+    );
 }
 
 /**
@@ -365,6 +443,9 @@ export async function runCompiledTests({
     DEFAULT_TEST_FILE_TIMEOUT_MS,
     "invalid_test_file_timeout",
   ),
+  // `--keep-going` runs every batch and reports every failing file instead of stopping at the first
+  // failing batch. The default stays as it was: nothing here becomes lax by accident.
+  keepGoing = process.argv.includes("--keep-going"),
 } = {}) {
   if (!Number.isSafeInteger(batchSize) || batchSize < 1) throw runnerError("invalid_test_batch_size", String(batchSize));
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw runnerError("invalid_test_concurrency", String(concurrency));
@@ -385,6 +466,7 @@ export async function runCompiledTests({
     batchSize,
     concurrency,
     perFileMs,
+    keepGoing,
   });
 }
 

@@ -4,7 +4,17 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import test from "node:test";
-import { chunkTestFiles, discoverTestFiles, exclusiveGroupsFor, machineDefaultConcurrency, preflightTestArtifact, runCompiledTests, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
+import {
+  chunkTestFiles,
+  discoverTestFiles,
+  exclusiveGroupsFor,
+  isEnvironmentalFailure,
+  machineDefaultConcurrency,
+  preflightTestArtifact,
+  runCompiledTests,
+  runDiscoveredTests,
+  runTestBatches,
+} from "./run-tests.mjs";
 import { assertTestArtifactFreshness, assertTestArtifactInventory, writeTestArtifactInventory } from "./test-artifact-inventory.mjs";
 
 // A real file path, under the Host root, shaped like the ones `discoverTestFiles` hands the
@@ -586,3 +596,97 @@ test("degrades honestly when an artifact predates the inventory", async () => wi
   await writeFile(join(root, "runtime.test.js"), "");
   assert.deepEqual(await assertTestArtifactInventory({ outputRoot: root }), { status: "absent" });
 }));
+
+/**
+ * `--keep-going` and the one bounded retry, both because this machine's environmental failures were
+ * costing whole batches of information: the suite stops at the first failing batch, and a file that
+ * failed a batch with `read ECONNRESET` passed 10/10 on its own. The injected `run` is what makes
+ * these deterministic - waiting for a real socket reset would be a flaky test of a flaky cause.
+ */
+test("keep-going reports every failing file instead of the first batch's", async () => {
+  const paths = ["a.test.js", "b.test.js", "c.test.js"];
+  const calls = [];
+  await assert.rejects(
+    runTestBatches(paths, {
+      suite: "fixture",
+      batchSize: 1,
+      timeoutMs: 10_000,
+      retryEnvironmental: false,
+      run: async (batch) => {
+        calls.push(batch[0]);
+        if (batch[0] !== "b.test.js") throw new Error(`test_runner_failed:code=1:signal=none\nAssertionError: ${batch[0]}`);
+      },
+    }),
+    /test_runner_failed/u,
+  );
+  assert.deepEqual(calls, ["a.test.js"], "without keep-going the run ends at the first failing batch");
+
+  const keptCalls = [];
+  await assert.rejects(
+    runTestBatches(paths, {
+      suite: "fixture",
+      batchSize: 1,
+      timeoutMs: 10_000,
+      keepGoing: true,
+      retryEnvironmental: false,
+      run: async (batch) => {
+        keptCalls.push(batch[0]);
+        if (batch[0] !== "b.test.js") throw new Error(`test_runner_failed:code=1:signal=none\nAssertionError: ${batch[0]}`);
+      },
+    }),
+    /test_suite_failed:2 file\(s\): a\.test\.js, c\.test\.js/u,
+  );
+  assert.deepEqual(keptCalls, ["a.test.js", "b.test.js", "c.test.js"], "keep-going runs the later batches too");
+});
+
+test("an environmental failure is retried once, alone, and a second failure still fails", async () => {
+  const calls = [];
+  await runTestBatches(["flaky.test.js"], {
+    suite: "fixture",
+    batchSize: 1,
+    timeoutMs: 10_000,
+    run: async () => {
+      calls.push(1);
+      if (calls.length === 1)
+        throw new Error("test_runner_failed:code=1:signal=none\n[cause]: Error: read ECONNRESET");
+    },
+  });
+  assert.equal(calls.length, 2, "the retry runs the file a second time");
+
+  const persistent = [];
+  await assert.rejects(
+    runTestBatches(["always-reset.test.js"], {
+      suite: "fixture",
+      batchSize: 1,
+      timeoutMs: 10_000,
+      run: async () => {
+        persistent.push(1);
+        throw new Error("test_runner_failed:code=1:signal=none\n[cause]: Error: read ECONNRESET");
+      },
+    }),
+    /test_runner_failed/u,
+  );
+  assert.equal(persistent.length, 2, "exactly one retry, never a loop");
+});
+
+test("a child that asserted is never retried and never called environmental", async () => {
+  const calls = [];
+  await assert.rejects(
+    runTestBatches(["asserted.test.js"], {
+      suite: "fixture",
+      batchSize: 1,
+      timeoutMs: 10_000,
+      run: async () => {
+        calls.push(1);
+        // The same transport cause in the same output, beside an assertion: the assertion wins.
+        throw new Error(
+          "test_runner_failed:code=1:signal=none\nAssertionError [ERR_ASSERTION]: expected 1\n[cause]: Error: read ECONNRESET",
+        );
+      },
+    }),
+    /AssertionError/u,
+  );
+  assert.equal(calls.length, 1, "an assertion failure is the code's, and is reported as it arrived");
+  assert.equal(isEnvironmentalFailure(new Error("AssertionError: x\nECONNRESET")), false);
+  assert.equal(isEnvironmentalFailure(new Error("test_runner_failed:code=1\n[cause]: read ECONNRESET")), true);
+});
