@@ -157,17 +157,41 @@ async function prepareTestDependencies() {
 }
 
 export async function main() {
-  await withTestArtifactLock(async () => {
-    await prepareTestDependencies();
-    // Use the internal implementation: the public build:test wrapper acquires
-    // this same lock for standalone callers and would otherwise self-deadlock.
-    await import("./build-test-artifact-locked.mjs");
-    await runCompiledTests();
+  // `--keep-going` means every phase runs and every failing file is reported, not just the first
+  // phase's. Without it each phase keeps its own fail-fast throw, exactly as before.
+  const keepGoing = process.argv.includes("--keep-going");
+  const phaseFailures = [];
+  const runPhase = async (phase) => {
+    try {
+      await phase();
+    } catch (error) {
+      if (!keepGoing) throw error;
+      phaseFailures.push(error);
+    }
+  };
+
+  await runPhase(async () => {
+    await withTestArtifactLock(async () => {
+      await prepareTestDependencies();
+      // Use the internal implementation: the public build:test wrapper acquires
+      // this same lock for standalone callers and would otherwise self-deadlock.
+      await import("./build-test-artifact-locked.mjs");
+      await runCompiledTests();
+    });
   });
 
   // Script-level tests include lock protocol tests that intentionally invoke
   // public package scripts. They must run after the outer artifact lock closes.
-  if (process.env.GAMEBUDDY_HOST_TEST_COMPILED_ONLY !== "1") await runScriptTests();
+  if (process.env.GAMEBUDDY_HOST_TEST_COMPILED_ONLY !== "1") await runPhase(runScriptTests);
+
+  if (phaseFailures.length > 0) {
+    // Every phase ran; this is the aggregate. Each phase's own message already names its files, and
+    // the per-batch lines above carry each file's own reason.
+    const messages = phaseFailures.map((error) => (error instanceof Error ? error.message : String(error)));
+    throw new Error(
+      `${messages.join("\n")}\nhost_test_suite_all_phases_ran:phases=${phaseFailures.length}`,
+    );
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

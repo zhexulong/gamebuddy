@@ -149,9 +149,7 @@ function manifest(root: string): string {
  */
 function slotReleaseProof(holderHandle: string): ProductionGameSessionWorldBindingSlotReleaseProof {
   return Object.freeze({
-    verdict: mintGameSessionWorldBindingSlotLeaseVerdict(
-      productionGameSessionWorldBindingSlotLeaseVerdict.holderGone,
-    ),
+    verdict: mintGameSessionWorldBindingSlotLeaseVerdict(productionGameSessionWorldBindingSlotLeaseVerdict.holderGone),
     holderHandle,
   });
 }
@@ -273,6 +271,10 @@ test("production coordinator exports only the known Game constructor and its saf
     "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
     "createSharedSemanticProductionAuthorityFromDeploymentManifest",
     "isCurrentMountedChatRuntimeLease",
+    // The mounted-Chat mutations, in the order the surface lists them: a rewind belongs to the same
+    // family as the swipe and the authored-context settle - it mutates the mounted Chat under the
+    // lease - which is why it is on the surface rather than internal to the pipeline service.
+    "rewindMountedChatTranscript",
     "selectMountedSwipeVariant",
     "settleMountedAuthoredContext",
     "stopMountedChatPresentationEpoch",
@@ -295,6 +297,7 @@ test("production coordinator exports only the known Game constructor and its saf
     "createSharedSemanticProductionAuthorityFromDeploymentManifest",
     "isCurrentMountedChatRuntimeLease",
     "orchestrateExplicitGameRecovery",
+    "rewindMountedChatTranscript",
     "selectMountedSwipeVariant",
     "settleMountedAuthoredContext",
     "startMountedAttempt",
@@ -503,9 +506,18 @@ test(
     try {
       const manifestPath = manifest(root);
       const deployment = await loadHostDeploymentManifest(manifestPath);
-      shared = await internalCoordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest(deployment, "fresh");
+      shared = await internalCoordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest(
+        deployment,
+        "fresh",
+      );
       assert.deepEqual(Object.keys(shared).sort(), ["chat", "close", "game"]);
-      assert.deepEqual(Object.keys(shared.chat).sort(), ["authority", "close", "requestChatSelection", "startChatRuntime", "startMountedChatRuntime"]);
+      assert.deepEqual(Object.keys(shared.chat).sort(), [
+        "authority",
+        "close",
+        "requestChatSelection",
+        "startChatRuntime",
+        "startMountedChatRuntime",
+      ]);
       assert.equal(Object.keys(shared.chat).includes("readChatCatalog"), false);
       // Closing the Game projection must never close the shared Chat projection
       // or its provision/mutex/broker; the Chat runtime authority stays open and
@@ -550,16 +562,16 @@ test(
           "failClose",
           "failEnter",
           "failGameSessionCreation",
-           "listResumableGameSessions",
-           "markGameSessionWorldBindingTerminal",
-           "prepareClose",
+          "listResumableGameSessions",
+          "markGameSessionWorldBindingTerminal",
+          "prepareClose",
           "prepareEnter",
-           "readGameSessionMetadata",
-           "readGameSessionWorldBinding",
-           "readGameSessionWorldBindingSlotHolder",
-           "recoverDeadOwner",
-           "registerGameSessionWorldBinding",
-           "releaseGameSessionWorldBindingSlot",
+          "readGameSessionMetadata",
+          "readGameSessionWorldBinding",
+          "readGameSessionWorldBindingSlotHolder",
+          "recoverDeadOwner",
+          "registerGameSessionWorldBinding",
+          "releaseGameSessionWorldBindingSlot",
         ]);
         const facts = Object.freeze({
           world: Object.freeze({ integrationId: "stardew", saveId: "save_01", worldId: "world_01" }),
@@ -616,9 +628,7 @@ test(
   { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
   async () => {
     const root = canonicalTestRootSync("semantic-known-game-metadata-");
-    let game:
-      | Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>>
-      | undefined;
+    let game: Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>> | undefined;
     try {
       const manifestPath = manifest(root);
       const deployment = await loadHostDeploymentManifest(manifestPath);
@@ -642,25 +652,25 @@ test(
           continuityIdentityId: principal.continuityId,
         }),
       );
-       assert.equal(idempotent.gameSessionId, created.gameSessionId);
-       assert.equal(idempotent.status, "pending");
-       const binding = await game.registerGameSessionWorldBinding(
-         Object.freeze({
-           gameSessionId: created.gameSessionId,
-           integrationId: "stardew",
-           bindingRef: "opaque_world_ref",
-           operationId: "binding_01",
-           holderHandle: "holder_binding_01",
-         }),
-       );
-       assert.equal(binding.status, "registered");
-       assert.deepEqual(
-         await game.readGameSessionWorldBinding(
-           Object.freeze({ gameSessionId: created.gameSessionId, integrationId: "stardew" }),
-         ),
-         binding,
-       );
-       const read = await game.readGameSessionMetadata(Object.freeze({ gameSessionId: created.gameSessionId }));
+      assert.equal(idempotent.gameSessionId, created.gameSessionId);
+      assert.equal(idempotent.status, "pending");
+      const binding = await game.registerGameSessionWorldBinding(
+        Object.freeze({
+          gameSessionId: created.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: "opaque_world_ref",
+          operationId: "binding_01",
+          holderHandle: "holder_binding_01",
+        }),
+      );
+      assert.equal(binding.status, "registered");
+      assert.deepEqual(
+        await game.readGameSessionWorldBinding(
+          Object.freeze({ gameSessionId: created.gameSessionId, integrationId: "stardew" }),
+        ),
+        binding,
+      );
+      const read = await game.readGameSessionMetadata(Object.freeze({ gameSessionId: created.gameSessionId }));
       assert.deepEqual(read, created);
       assert.equal(await game.readGameSessionMetadata(Object.freeze({ gameSessionId: "session_absent" })), null);
       const completed = await game.completeGameSessionBinding(
@@ -1159,9 +1169,7 @@ test(
   { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
   async () => {
     const root = canonicalTestRootSync("semantic-known-game-slot-");
-    let game:
-      | Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>>
-      | undefined;
+    let game: Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>> | undefined;
     try {
       const deployment = await loadHostDeploymentManifest(manifest(root));
       const chat = await internalCoordinator.createFreshSemanticProductionAuthorityFromDeploymentManifest(deployment);
@@ -1283,9 +1291,7 @@ test(
   { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
   async () => {
     const root = canonicalTestRootSync("semantic-known-game-slot-refusals-");
-    let game:
-      | Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>>
-      | undefined;
+    let game: Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>> | undefined;
     try {
       const deployment = await loadHostDeploymentManifest(manifest(root));
       const chat = await internalCoordinator.createFreshSemanticProductionAuthorityFromDeploymentManifest(deployment);

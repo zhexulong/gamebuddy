@@ -697,4 +697,15 @@ test("a child that asserted is never retried and never called environmental", as
     ),
     true,
   );
+  // The runner's own budget kill is the machine's too: it is the relabel applied when the SUPERVISOR
+  // killed a child for its budget, and a batch's budget is shortened by the suite deadline. The
+  // two-sided rule still protects the code's failures - a kill whose captured output carries an
+  // assertion is not retried.
+  assert.equal(isEnvironmentalFailure(new Error("test_file_timeout:x.test.js:budget_ms=600000")), true);
+  assert.equal(
+    isEnvironmentalFailure(
+      new Error("test_file_timeout:x.test.js:budget_ms=600000\n✖ drops the bound\nAssertionError: expected 1"),
+    ),
+    false,
+  );
 });

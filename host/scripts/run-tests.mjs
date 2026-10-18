@@ -214,6 +214,15 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
  * failure) while one of its children is still running.
  */
   async function runBatchFiles({ batch, batchLabel, concurrency, deadlineMs, perFileMs, run, now, suite, keepGoing = false, retryEnvironmental = true }) {
+    /**
+     * The failure to report for one child, with the runner's own budget kill relabelled to name the
+     * file and the budget - and with the killed child's captured output kept. One spelling for both
+     * the first attempt and the retry: a second budget kill must still read the same way.
+     */
+    const describeRunFailure = (path, message, budgetMs, childOutput) =>
+      message.startsWith("test_supervisor_timeout:")
+        ? runnerError("test_file_timeout", `${relativePath(path)}:budget_ms=${budgetMs}${childOutput}`)
+        : new Error(message);
     const failures = new Array(batch.length);
     let nextIndex = 0;
     let stopped = false;
@@ -248,17 +257,12 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
       // and code: reporting a real failure as "the budget expired" hides the reason it failed,
       // and the budget is not even what ended it (`budgetMs === perFileMs` only says the per-file
       // bound was the smaller of the two).
-      const message = error instanceof Error ? error.message : String(error);
-      // Relabelling must not discard what the killed child had produced: the supervisor's own
-      // message carries its bounded output after the first newline, and without it a budget
-      // expiry is a name and a number with no clue what the file was doing when it was killed.
-      const childOutput = message.includes("\n") ? message.slice(message.indexOf("\n")) : "";
-        failures[index] = {
-          path,
-          error: message.startsWith("test_supervisor_timeout:")
-            ? runnerError("test_file_timeout", `${relativePath(path)}:budget_ms=${budgetMs}${childOutput}`)
-            : error,
-        };
+        const message = error instanceof Error ? error.message : String(error);
+        // Relabelling must not discard what the killed child had produced: the supervisor's own
+        // message carries its bounded output after the first newline, and without it a budget
+        // expiry is a name and a number with no clue what the file was doing when it was killed.
+        const childOutput = message.includes("\n") ? message.slice(message.indexOf("\n")) : "";
+        failures[index] = { path, budgetMs, error: describeRunFailure(path, message, budgetMs, childOutput) };
         // A batch stops at its first failure unless the caller asked to see everything. The
         // remaining files in the batch are still run under `--keep-going`, which exists because
         // this machine's environmental failures were costing whole batches of information.
@@ -287,9 +291,16 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
     // A failure that is the machine's - no assertion in the child's output, and a named transport or
     // budget cause - gets ONE retry, and it gets it here, after both pools have drained, so the
     // retry really is the file alone. Anything else, and anything that fails again, is a failure.
+    //
+    // A budget kill is only the machine's when the BATCH shortened the budget
+    // (`Math.min(fileRemainingMs, perFileMs)`): then a slow-but-passing file was killed for the suite's
+    // remaining time. A kill at the file's own full budget is the file being too slow or hung, and it is
+    // reported by name rather than costing a second budget.
     if (retryEnvironmental) {
       for (const [index, failure] of failures.entries()) {
         if (failure === undefined || !isEnvironmentalFailure(failure.error)) continue;
+        const budgetKill = (failure.error.message ?? "").startsWith("test_file_timeout:");
+        if (budgetKill && failure.budgetMs === perFileMs) continue;
         const path = batch[index];
         const label = relativePath(path);
         const retryRemainingMs = deadlineMs - now();
@@ -298,15 +309,19 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
           console.error(`host_test_suite_file_retry_skipped:suite=${batchLabel}:file=${label}:reason=suite_deadline`);
           continue;
         }
+        const retryBudgetMs = Math.min(retryRemainingMs, perFileMs);
         try {
-          await run([path], { timeoutMs: Math.min(retryRemainingMs, perFileMs) });
+          await run([path], { timeoutMs: retryBudgetMs });
           console.error(`host_test_suite_file_retry_outcome:suite=${batchLabel}:file=${label}:outcome=passed`);
           failures[index] = undefined;
         } catch (error) {
           // The second failure is what the run reports, and it keeps the child's own message: a
-          // retry that fails for a different reason is that reason.
+          // retry that fails for a different reason is that reason - relabelled the same way the
+          // first attempt was, so a second budget kill still names the file and its budget.
+          const message = error instanceof Error ? error.message : String(error);
+          const childOutput = message.includes("\n") ? message.slice(message.indexOf("\n")) : "";
           console.error(`host_test_suite_file_retry_outcome:suite=${batchLabel}:file=${label}:outcome=failed`);
-          failures[index] = { path, error };
+          failures[index] = { path, budgetMs: retryBudgetMs, error: describeRunFailure(path, message, retryBudgetMs, childOutput) };
         }
       }
     }
@@ -325,8 +340,15 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
  * publisher fixtures contend on one lock file in a temp root: the loser reports
  * `EPERM ... open '...\\.test-publisher.lock'` in a batch and passes when it runs alone. Without this
  * one such file hides every batch after it.
+ *
+ * `test_file_timeout` is here too, and that is deliberate: it is the relabel the runner applies when
+ * **the supervisor killed the child** for its budget, not a judgement about the code - and a shortened
+ * budget is what a batch gets when the suite deadline is near. The two-sided rule still holds: a child
+ * whose captured output carries an assertion failure is never retried, so a file that asserted and
+ * then hung keeps its own message.
  */
-const ENVIRONMENTAL_FAILURE_CAUSES = /ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|EPERM|EBUSY|ERR_[A-Z_]+/u;
+const ENVIRONMENTAL_FAILURE_CAUSES =
+  /ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|EPERM|EBUSY|test_file_timeout|ERR_[A-Z_]+/u;
 const ASSERTION_FAILURE_CAUSES = /AssertionError|ERR_ASSERTION|Expected values to be strictly|not ok \d+/u;
 
 /** Whether a batch failure is the machine's, by the rule above - and never a child that asserted. */
@@ -397,6 +419,14 @@ export async function runTestBatches(paths, {
         .map((failure) => relative(hostRoot, failure.path).replaceAll("\\", "/"))
         .join(",")}:keeping_going=true`,
     );
+    // The child's own message, for the same reason the single-failure path keeps it: with
+    // `--keep-going` the run deliberately continues, so this line is the ONLY place a reader learns
+    // why a file failed until the summary - and the summary would carry names but no reasons.
+    for (const failure of failures) {
+      const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
+      const bounded = message.length > 600 ? `${message.slice(0, 600)}…` : message;
+      console.error(`host_test_suite_batch_failure:file=${relative(hostRoot, failure.path).replaceAll("\\", "/")}\n${bounded}`);
+    }
   }
   if (allFailures.length > 0)
     throw runnerError(
