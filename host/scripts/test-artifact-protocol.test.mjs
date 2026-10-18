@@ -12,12 +12,17 @@ const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pnpmCli = process.platform === "win32"
   ? resolve(process.env.APPDATA ?? resolve(process.env.USERPROFILE ?? hostRoot, "AppData", "Roaming"), "npm", "node_modules", "pnpm", "bin", "pnpm.cjs")
   : undefined;
-
+/**
+ * The Node a child of this suite must run under. The Host suite's coordinator publishes the Node it
+ * resolved as `GAMEBUDDY_HOST_TEST_NODE` (`run-tests.mjs:172`) because `process.execPath` is bun when
+ * the suite itself is launched by bun; `process.execPath` stays the correct fallback under Node.
+ */
+const testNode = process.env.GAMEBUDDY_HOST_TEST_NODE ?? process.execPath;
 
 async function runScript(name) {
   try {
     return await runBoundedChild({
-      command: pnpmCli ? process.execPath : "pnpm",
+      command: pnpmCli ? testNode : "pnpm",
       args: pnpmCli ? [pnpmCli, "run", name] : ["run", name],
       cwd: hostRoot,
       timeoutMs: DEFAULT_SUITE_TIMEOUT_MS,
@@ -28,49 +33,71 @@ async function runScript(name) {
   }
 }
 
+/**
+ * This file deletes `host/dist-test` on purpose, and every later file in its batch loads
+ * `compiled-test-bootstrap.mjs`, whose first two lines statically import `../dist-test/*`. A run that
+ * failed before its own rebuild therefore left three more files to die at load with
+ * `ERR_MODULE_NOT_FOUND` - which the runner retries as "environmental" and reports as their failures, so
+ * one red file read as four. The rebuild is unconditional for that reason; one red file costs one file.
+ */
+async function rebuildTestArtifactIfMissing() {
+  const present = await access(resolve(hostRoot, "dist-test")).then(() => true, () => false);
+  if (present) return;
+  try {
+    await runScript("build:test");
+  } catch {
+    // The failure that reached this point is the one worth reporting; a rebuild that cannot run is the
+    // same fault again, and letting it out would replace the original message.
+  }
+}
+
 test("package test and build:test serialize their complete dist-test ownership", async () => {
   const lockPath = resolve(hostRoot, ".test-artifact.lock");
-  // A valid, live lock is the deterministic contention fixture. Acquire it
-  // through the production protocol before touching dist-test, then keep the
-  // exact owner alive while both public scripts prove they fail closed.
-  await withTestArtifactLock(async () => {
-    await rm(resolve(hostRoot, "dist-test"), { recursive: true, force: true });
-    const ownedLockBytes = await readFile(lockPath);
-    const results = await Promise.allSettled([runScript("test"), runScript("build:test")]);
-    assert.equal(results.filter((result) => result.status === "fulfilled").length, 0);
-    assert.equal(results.filter((result) => result.status === "rejected").length, 2);
-    for (const result of results) {
-      assert.equal(result.status, "rejected");
-      assert.match(String(result.reason), /host_test_artifact_already_in_use/);
-    }
-    await assert.rejects(access(resolve(hostRoot, "dist-test")), { code: "ENOENT" });
-    // Contenders must preserve the live owner's exact bytes; in particular,
-    // they must never replace it with a malformed or newly generated record.
-    assert.deepEqual(await readFile(lockPath), ownedLockBytes);
-  }, { lockPath });
-  // One uncontended invocation must still publish the complete verification
-  // artifact. This is intentionally sequential: contention is checked above.
-  await runScript("build:test");
-  await assertHostVerificationArtifactManifest({ root: hostRoot });
-  await access(resolve(hostRoot, "dist-test", "runtime.test.js"));
-  await access(resolve(hostRoot, "dist-test", "action-registry.test.js"));
-  await access(resolve(hostRoot, "dist-test", "test-fixtures", "windows-named-mutex-safety-seal-worker.js"));
-  await assert.rejects(access(resolve(hostRoot, "dist-test", "test-fixtures", "windows-named-mutex-safety-seal-worker.ts")), { code: "ENOENT" });
-  await assert.rejects(access(resolve(hostRoot, "dist", "test-fixtures", "windows-named-mutex-safety-seal-worker.js")), { code: "ENOENT" });
-  await assert.rejects(access(resolve(hostRoot, "dist-test", "main.js")), { code: "ENOENT" });
-  await assert.rejects(access(resolve(hostRoot, "dist-test", "dialogue-web-main.js")), { code: "ENOENT" });
-  const productionMaterializer = await readFile(resolve(hostRoot, "src", "continuity-semantic-game-runtime-materializer", "continuity-semantic-game-runtime-materializer.ts"), "utf8");
-  const testMaterializer = await readFile(resolve(hostRoot, "dist-test", "continuity-semantic-game-runtime-materializer", "continuity-semantic-game-runtime-materializer.js"), "utf8");
-  assert.doesNotMatch(productionMaterializer, /materializer\.test-support/);
-  assert.match(testMaterializer, /recordMaterializedProductionRuntimeForTest/);
-  assert.match(testMaterializer, /forgetMaterializedProductionRuntimeForTest/);
+  try {
+    // A valid, live lock is the deterministic contention fixture. Acquire it
+    // through the production protocol before touching dist-test, then keep the
+    // exact owner alive while both public scripts prove they fail closed.
+    await withTestArtifactLock(async () => {
+      await rm(resolve(hostRoot, "dist-test"), { recursive: true, force: true });
+      const ownedLockBytes = await readFile(lockPath);
+      const results = await Promise.allSettled([runScript("test"), runScript("build:test")]);
+      assert.equal(results.filter((result) => result.status === "fulfilled").length, 0);
+      assert.equal(results.filter((result) => result.status === "rejected").length, 2);
+      for (const result of results) {
+        assert.equal(result.status, "rejected");
+        assert.match(String(result.reason), /host_test_artifact_already_in_use/);
+      }
+      await assert.rejects(access(resolve(hostRoot, "dist-test")), { code: "ENOENT" });
+      // Contenders must preserve the live owner's exact bytes; in particular,
+      // they must never replace it with a malformed or newly generated record.
+      assert.deepEqual(await readFile(lockPath), ownedLockBytes);
+    }, { lockPath });
+    // One uncontended invocation must still publish the complete verification
+    // artifact. This is intentionally sequential: contention is checked above.
+    await runScript("build:test");
+    await assertHostVerificationArtifactManifest({ root: hostRoot });
+    await access(resolve(hostRoot, "dist-test", "runtime.test.js"));
+    await access(resolve(hostRoot, "dist-test", "action-registry.test.js"));
+    await access(resolve(hostRoot, "dist-test", "test-fixtures", "windows-named-mutex-safety-seal-worker.js"));
+    await assert.rejects(access(resolve(hostRoot, "dist-test", "test-fixtures", "windows-named-mutex-safety-seal-worker.ts")), { code: "ENOENT" });
+    await assert.rejects(access(resolve(hostRoot, "dist", "test-fixtures", "windows-named-mutex-safety-seal-worker.js")), { code: "ENOENT" });
+    await assert.rejects(access(resolve(hostRoot, "dist-test", "main.js")), { code: "ENOENT" });
+    await assert.rejects(access(resolve(hostRoot, "dist-test", "dialogue-web-main.js")), { code: "ENOENT" });
+    const productionMaterializer = await readFile(resolve(hostRoot, "src", "continuity-semantic-game-runtime-materializer", "continuity-semantic-game-runtime-materializer.ts"), "utf8");
+    const testMaterializer = await readFile(resolve(hostRoot, "dist-test", "continuity-semantic-game-runtime-materializer", "continuity-semantic-game-runtime-materializer.js"), "utf8");
+    assert.doesNotMatch(productionMaterializer, /materializer\.test-support/);
+    assert.match(testMaterializer, /recordMaterializedProductionRuntimeForTest/);
+    assert.match(testMaterializer, /forgetMaterializedProductionRuntimeForTest/);
+  } finally {
+    await rebuildTestArtifactIfMissing();
+  }
 });
 
 test("a raced cross-process candidate never leaves a malformed published lock", async () => {
   const lockPath = resolve(hostRoot, `.test-artifact-race-${process.pid}-${Date.now()}.lock`);
   const worker = resolve(hostRoot, "scripts/test-artifact-protocol-worker.mjs");
   const result = await runBoundedChild({
-    command: process.execPath,
+    command: testNode,
     args: [worker, "raced-contender", lockPath],
     cwd: hostRoot,
     timeoutMs: 10_000,
