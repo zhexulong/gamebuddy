@@ -37,7 +37,7 @@ test("production control client sends a single authenticated sequence and keeps 
     connectPipe: () => {
       pipe = new FakePipe((request) => {
         if (request.type === "hello") return { ok: true, runtimeInstanceId: "runtime_one", protocolVersion: 1 };
-        if (request.type === "player_input") return { ok: true, accepted: "player_input" };
+        if (request.type === "player_input") return { ok: true, accepted: "player_input", turnOutcome: "completed" };
         if (request.type === "stop_all") return { ok: true, accepted: "duplicate_stop" };
         throw new Error("unexpected_control_request");
       });
@@ -45,8 +45,18 @@ test("production control client sends a single authenticated sequence and keeps 
     },
   });
   assert.deepEqual(await client.hello(), { runtimeInstanceId: "runtime_one" });
-  await client.playerInput({ requestId: "input_one", sourceEventId: "source_one", text: "安全测试", locale: "zh-CN" });
-  assert.deepEqual(await client.stopAll({ requestId: "stop_one", stopId: "stop_one", sourceEventId: "source_stop" }), { accepted: "duplicate_stop" });
+  // The Host's `player_input` reply always names how the turn ended (companion-control-server.ts:318-322),
+  // and since d45b1276 the client publishes it: `accepted` alone let a dead turn read as an answer.
+  assert.deepEqual(await client.playerInput({ requestId: "input_one", sourceEventId: "source_one", text: "安全测试", locale: "zh-CN" }), {
+    accepted: "player_input",
+    turnOutcome: "completed",
+  });
+  // A `stop_all` reply carries no turn outcome (companion-control-server.ts:338-349), so the client reports
+  // `undefined` there rather than inventing a completion.
+  assert.deepEqual(await client.stopAll({ requestId: "stop_one", stopId: "stop_one", sourceEventId: "source_stop" }), {
+    accepted: "duplicate_stop",
+    turnOutcome: undefined,
+  });
   await client.close();
   assert.deepEqual(pipe.requests.map((request) => request.type), ["hello", "player_input", "stop_all"]);
   assert.equal(JSON.stringify(pipe.requests.slice(1)).includes(capability.launchToken), false);
@@ -67,12 +77,15 @@ test("production control client preserves active, queued, and idle STOP outcomes
   await client.hello();
   assert.deepEqual(await client.stopAll({ requestId: "stop_active", stopId: "stop_active", sourceEventId: "source_active" }), {
     accepted: "active_turn_cancelled",
+    turnOutcome: undefined,
   });
   assert.deepEqual(await client.stopAll({ requestId: "stop_queued", stopId: "stop_queued", sourceEventId: "source_queued" }), {
     accepted: "queued_turn_cancelled",
+    turnOutcome: undefined,
   });
   assert.deepEqual(await client.stopAll({ requestId: "stop_idle", stopId: "stop_idle", sourceEventId: "source_idle" }), {
     accepted: "no_active_turn",
+    turnOutcome: undefined,
   });
   await client.close();
 });
