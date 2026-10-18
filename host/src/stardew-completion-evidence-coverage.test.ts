@@ -377,6 +377,8 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["is_profession", "false"],
       ["chosen_profession", "none"],
       ["remaining_new_levels", "0"],
+      ["pair_settled", "true"],
+      ["profession_settled", "true"],
       ["menu_closed", "true"],
     ],
   },
@@ -931,6 +933,8 @@ test("respond_level_up: the profession branch settles, and a contradicting recei
     ["is_profession", "true"],
     ["chosen_profession", "0"],
     ["remaining_new_levels", "0"],
+    ["pair_settled", "true"],
+    ["profession_settled", "true"],
     ["menu_closed", "true"],
   ];
   const withField = (key: string, value: string): readonly (readonly [string, string])[] =>
@@ -971,5 +975,19 @@ test("respond_level_up: the profession branch settles, and a contradicting recei
     completionEvidence("respond_level_up", "level_up_resolved", detail(withField("level", "three"))),
     false,
     "the settled pair is integral",
+  );
+  // The two facts the success condition turns on, which only became readable when the Mod began
+  // publishing them: a receipt that says the pair did NOT settle, or the profession did NOT, is not a
+  // resolution whatever else it claims - and the terminal code alone cannot say so, because the Mod
+  // writes `level_up_resolved` only when both hold.
+  assert.equal(
+    completionEvidence("respond_level_up", "level_up_resolved", detail(withField("pair_settled", "false"))),
+    false,
+    "a pair the engine still lists as unlevelled has settled nothing",
+  );
+  assert.equal(
+    completionEvidence("respond_level_up", "level_up_resolved", detail(withField("profession_settled", "false"))),
+    false,
+    "nor has a profession the actor does not carry",
   );
 });

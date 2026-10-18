@@ -1565,17 +1565,23 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       );
     case "respond_level_up":
       // Evidence literal: farmhandexecutioncontroller.modalactions.cs:355-516 RequestLocalRespondLevelUp —
-      // modal_type;skill;level;is_profession;chosen_profession;remaining_new_levels;menu_closed. The Mod mints
-      // `level_up_resolved` only when `pairSettled && professionSettled && !menu.isActive`, and it writes the
-      // SAME evidence under `level_up_postcondition_unavailable` when those do not hold — so the terminal code
-      // is what separates a resolved menu from an unresolved one, not the shape.
+      // modal_type;skill;level;is_profession;chosen_profession;remaining_new_levels;pair_settled;
+      // profession_settled;menu_closed. The Mod mints `level_up_resolved` only when
+      // `pairSettled && professionSettled && !menu.isActive`, and it writes the SAME evidence under
+      // `level_up_postcondition_unavailable` when those do not hold — so the terminal code is what
+      // separates a resolved menu from an unresolved one, not the shape.
       //
-      // Of the three conjuncts the receipt publishes one outright: `menu_closed` is the menu's own active flag
-      // re-read after the settlement. `pairSettled` and `professionSettled` have no field of their own, so the
-      // rule states what the receipt DOES carry: the modal was the LevelUpMenu, the settled pair is integral,
-      // the branch the receipt names agrees with the kind of menu it settled (`is_profession=true` names a
-      // profession and an ordinary level names `none` — the one reading that would otherwise claim a
-      // profession write that never happened), the pending count is a fresh integer, and the menu is closed.
+      // All three conjuncts are now readable, which is the point of a completion rule: `menu_closed` is
+      // the menu's own active flag re-read after the settlement, and `pair_settled`/`profession_settled`
+      // are the engine's own re-reads of the two things the settlement claims to have done
+      // (`!actor.newLevels.Contains(pair)`, `!actor.professions.Contains(chosen) || !isProfession`).
+      // Before those two were published the rule agreed with the receipt on everything EXCEPT the two
+      // facts the success condition turns on — it had to trust the producer for exactly those.
+      //
+      // What the rule still restates from the shape: the modal was the LevelUpMenu, the settled pair is
+      // integral, and the branch the receipt names agrees with the kind of menu it settled
+      // (`is_profession=true` names a profession and an ordinary level names `none` — the one reading that
+      // would otherwise claim a profession write that never happened).
       //
       // A LevelUpMenu has no pure-cancel path (`cleanupBeforeExit -> okButtonClicked` grants the perk), so
       // `menu_closed` is not decoration: it is the only statement in the receipt that the thing which grants
@@ -1584,7 +1590,17 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
         receipt.reasonCode === "level_up_resolved" &&
         exactEvidence(
           detail,
-          ["modal_type", "skill", "level", "is_profession", "chosen_profession", "remaining_new_levels", "menu_closed"],
+          [
+            "modal_type",
+            "skill",
+            "level",
+            "is_profession",
+            "chosen_profession",
+            "remaining_new_levels",
+            "pair_settled",
+            "profession_settled",
+            "menu_closed",
+          ],
           (e) =>
             e.modal_type === "LevelUpMenu" &&
             integerEvidenceValue(e.skill) !== null &&
@@ -1594,6 +1610,8 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
               ? integerEvidenceValue(e.chosen_profession) !== null
               : e.chosen_profession === "none") &&
             integerEvidenceValue(e.remaining_new_levels) !== null &&
+            e.pair_settled === "true" &&
+            e.profession_settled === "true" &&
             e.menu_closed === "true",
         )
       );
