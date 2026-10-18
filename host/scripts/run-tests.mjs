@@ -321,10 +321,12 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
  * The rule is deliberately two-sided: a child whose output carries an assertion failure is NEVER
  * environmental, whatever else it printed, and a retry is bounded to one attempt - so a cause that
  * persists still fails the run. This exists because this machine resets loopback sockets under load
- * (a file that failed a batch with `read ECONNRESET` passed 10/10 on its own), and without it one
- * such file hides every batch after it.
+ * (a file that failed a batch with `read ECONNRESET` passed 10/10 on its own), and because two
+ * publisher fixtures contend on one lock file in a temp root: the loser reports
+ * `EPERM ... open '...\\.test-publisher.lock'` in a batch and passes when it runs alone. Without this
+ * one such file hides every batch after it.
  */
-const ENVIRONMENTAL_FAILURE_CAUSES = /ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|ERR_[A-Z_]+/u;
+const ENVIRONMENTAL_FAILURE_CAUSES = /ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|EPERM|EBUSY|ERR_[A-Z_]+/u;
 const ASSERTION_FAILURE_CAUSES = /AssertionError|ERR_ASSERTION|Expected values to be strictly|not ok \d+/u;
 
 /** Whether a batch failure is the machine's, by the rule above - and never a child that asserted. */

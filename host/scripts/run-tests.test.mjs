@@ -689,4 +689,12 @@ test("a child that asserted is never retried and never called environmental", as
   assert.equal(calls.length, 1, "an assertion failure is the code's, and is reported as it arrived");
   assert.equal(isEnvironmentalFailure(new Error("AssertionError: x\nECONNRESET")), false);
   assert.equal(isEnvironmentalFailure(new Error("test_runner_failed:code=1\n[cause]: read ECONNRESET")), true);
+  // Two publisher fixtures contend on one lock file in a temp root: the loser reports EPERM in a
+  // batch and passes alone, which is the same class as the socket reset.
+  assert.equal(
+    isEnvironmentalFailure(
+      new Error("test_runner_failed:code=1:signal=none\nError: EPERM: operation not permitted, open 'x\\.test-publisher.lock'"),
+    ),
+    true,
+  );
 });
