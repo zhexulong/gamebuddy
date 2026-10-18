@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { assessMultiDayBaseline } from "./multiday-baseline.mjs";
 import {
+  closeIsEngineCommitted,
   classifyActorHold,
   decideHeldMenu,
   MAX_DISMISS_ATTEMPTS,
@@ -318,4 +319,51 @@ test("the loop's records are what the baseline gate judges, end to end", async (
   assert.deepEqual(assessment.violations, []);
   assert.equal(assessment.state, "passed");
   assert.equal(assessment.daysCrossed, 3);
+});
+
+test("a close the ENGINE owns is waited for instead of being counted as a failed dismissal", () => {
+  // Measured on g42stall: the settlement menu's dismissal commits through the engine's own path (the outro that
+  // creates the save menu), so the menu stays on screen while the engine finishes it. The loop dispatched three
+  // "successful" dismissals of the same menu, exhausted its attempts, and reported
+  // `rollover_menu_not_cleared:ShippingMenu` - while the Mod's lifecycle finished the day eight seconds later.
+  assert.equal(
+    closeIsEngineCommitted({ reasonCode: "modal_dismissed", evidence: "modal_type=ShippingMenu;clearing=true" }),
+    true,
+  );
+  assert.equal(closeIsEngineCommitted("modal_type=ShippingMenu;close_effect=engine_shipping_commit"), true);
+  assert.equal(
+    closeIsEngineCommitted({ reasonCode: "modal_dismissed", evidence: "modal_type=ShippingMenu;cleared=true" }),
+    false,
+  );
+  assert.equal(closeIsEngineCommitted(null), false);
+
+  // A world whose menu stays up for two observations after the committed dismissal, then clears as the day changes.
+  let observed = 0;
+  const world = {
+    observe: async () => {
+      observed += 1;
+      if (observed <= 2)
+        return {
+          dayOfMonth: 5,
+          actorDispositionKind: "modal",
+          actorDispositionDetail: "ShippingMenu",
+          actionable: false,
+        };
+      return { dayOfMonth: 6, actorDispositionKind: "idle", actionable: true, activeExecution: null };
+    },
+    dismiss: async () => ({
+      receipt: { reasonCode: "modal_dismissed", evidence: "modal_type=ShippingMenu;clearing=true" },
+      reasonCode: null,
+    }),
+  };
+  return watchRollover(world, {
+    dayBefore: 5,
+    now: () => Date.now(),
+    sleep: async () => {},
+    timeoutMs: 5_000,
+    pollIntervalMs: 1,
+  }).then((outcome) => {
+    assert.equal(outcome.crossed, true, JSON.stringify(outcome));
+    assert.equal(outcome.dayAfter, 6);
+  });
 });

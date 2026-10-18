@@ -31,6 +31,22 @@ const POLL_INTERVAL_MS = 250;
 /** How many times ONE menu type may be dismissed before its persistence is a named stop. */
 export const MAX_DISMISS_ATTEMPTS = 3;
 
+/**
+ * Does this dismissal's receipt say the ENGINE owns completing the close?
+ *
+ * `dismiss_modal` commits the settlement menu through the engine's own path (the outro), because that outro is the
+ * only thing that creates `SaveGameMenu` - and therefore the only thing that saves the night. So the menu
+ * legitimately REMAINS on screen while the engine finishes it, and the receipt says so with `clearing=true`.
+ * Measured 2026-10-18 (g42stall): three successful dismissals of the same ShippingMenu exhausted the attempts, the
+ * night was recorded as `rollover_menu_not_cleared:ShippingMenu`, and the Mod's own lifecycle then finished the day
+ * eight seconds later - a harness verdict about a night that worked.
+ */
+export function closeIsEngineCommitted(receipt) {
+  if (receipt === null || receipt === undefined) return false;
+  const text = typeof receipt === "string" ? receipt : JSON.stringify(receipt);
+  return /clearing=true|close_effect=engine_shipping_commit/u.test(text);
+}
+
 /** The menu the actor is held by, in the shape the Mod reports it. */
 export function readHeldMenu(snapshot) {
   if (snapshot === null || typeof snapshot !== "object") return null;
@@ -99,6 +115,8 @@ export async function watchRollover(
 ) {
   const menus = [];
   const attempts = new Map();
+  // Menu types whose close the ENGINE is completing: waited for, never re-sent.
+  const committed = new Set();
   const deadline = now() + timeoutMs;
   for (;;) {
     const aborted = abort === null ? null : abort();
@@ -136,6 +154,15 @@ export async function watchRollover(
     }
 
     if (decision.kind === "dismiss") {
+      // A committed close is WAITED FOR. Re-sending it would stack outro commits on a menu the engine is already
+      // closing, and counting those as failed attempts is what recorded a working night as uncleared.
+      if (committed.has(menuType)) {
+        if (now() >= deadline) {
+          return Object.freeze({ crossed: false, reasonCode: `rollover_menu_not_cleared:${menuType}`, menus });
+        }
+        await sleep(pollIntervalMs);
+        continue;
+      }
       const sent = attempts.get(menuType) ?? 0;
       if (sent >= MAX_DISMISS_ATTEMPTS) {
         return Object.freeze({ crossed: false, reasonCode: `rollover_menu_not_cleared:${menuType}`, menus });
@@ -149,6 +176,8 @@ export async function watchRollover(
       if (outcome.reasonCode !== null && outcome.reasonCode !== undefined) {
         return Object.freeze({ crossed: false, reasonCode: outcome.reasonCode, menus });
       }
+      // ...and a close the engine owns is not a failure: stop dispatching and let it complete.
+      if (closeIsEngineCommitted(outcome?.receipt)) committed.add(menuType);
     }
 
     // The night is over once the world says so. A menu still holding the actor is not over, whatever the
