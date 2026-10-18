@@ -52,7 +52,12 @@ test("promotion checker rejects a duplicate or missing source-owned projection",
   );
   assert.ok(
     failuresFor({
-      registry: sources.registry.replace('actionAdapter(\n    "move_to_tile",', 'actionAdapter(\n    "missing_adapter",'),
+      // The anchor keys on the CALL, not on the formatter's line breaking: this spelling is
+      // written on one line while the call fits and broken across lines when it does not, and a
+      // mutation that silently matches nothing reports a checker failure that never happened.
+      registry: sources.registry.replace(/actionAdapter\(\s*"move_to_tile",/u, (match) =>
+        match.replace('"move_to_tile",', '"missing_adapter",'),
+      ),
     }).includes("published_host_projection:move_to_tile"),
   );
   assert.ok(
@@ -104,9 +109,7 @@ test("promotion checker preserves transport, schema, and game-thread guard check
     dispatcherGuardRemoved.includes(guard),
     "removing the dispatcher guard must leave the CanExecute guard in place",
   );
-  assert.ok(
-    failuresFor({ farmhandActionRouter: dispatcherGuardRemoved }).includes("router_missing_game_thread_guard"),
-  );
+  assert.ok(failuresFor({ farmhandActionRouter: dispatcherGuardRemoved }).includes("router_missing_game_thread_guard"));
 
   // And the converse: removing only the off-path guard must NOT be reported,
   // otherwise the predicate is still just counting occurrences in the file.
@@ -126,12 +129,18 @@ test("gate descriptors remain non-authoritative coverage metadata", () => {
   });
 
   assert.equal(failures.includes("published_missing_gate_descriptor:equip_tool"), true);
-  assert.equal(failures.some((failure) => failure.startsWith("host_tool_count:")), false);
+  assert.equal(
+    failures.some((failure) => failure.startsWith("host_tool_count:")),
+    false,
+  );
   assert.equal(
     failures.some((failure) => failure.startsWith("missing_envelope_validator:")),
     false,
   );
-  assert.equal(STARDEW_PUBLISHED_ACTION_GATES.some((entry) => entry.actionId === "move_to_tile"), true);
+  assert.equal(
+    STARDEW_PUBLISHED_ACTION_GATES.some((entry) => entry.actionId === "move_to_tile"),
+    true,
+  );
 });
 test("promotion rejects a published target action whose snapshot family the schema omits", () => {
   const schema = JSON.parse(sources.schema);
