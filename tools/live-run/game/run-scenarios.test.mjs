@@ -235,8 +235,12 @@ test("the multi-day prompt states the day as the companion's own, without coachi
   const templateLines = block.split("\n").filter((line) => line.includes("${PRESENCE_PARAGRAPH_"));
   assert.equal(templateLines.length, 2, "both locales must carry the presence paragraph in their template");
   const promptText = templateLines.join("\n");
-  assert.match(promptText, /(交给你|由你决定)/u, "the Chinese prompt must hand the day over with its task");
-  assert.match(promptText, /(farm is yours|up to you)/u, "the English prompt must hand the day over with its task");
+  assert.match(promptText, /(你看着办|由你决定)/u, "the Chinese prompt must hand the day over with its task");
+  assert.match(
+    promptText,
+    /(left the how to you|up to you)/u,
+    "the English prompt must hand the day over with its task",
+  );
   // The hour is theirs; the tool and the steps are not the prompt's business. Naming them is the coaching this
   // file's own comment says was deleted, and design/handbook/live-run-patterns.md forbids it ("the prompt gives the
   // player's intent, not steps, tool names or coordinates"). The refusal receipt is where "advance_day only works
