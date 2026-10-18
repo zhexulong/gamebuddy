@@ -1168,7 +1168,15 @@ public sealed partial class ModEntry : Mod
         WindowsBodyProgramJournalStore? bodyProgramJournalStore = null;
         OpenBodyProgramJournalAuthority? bodyProgramAuthority = null;
         FarmhandBodyProgramController? farmhandBodyProgramController = null;
-        string bodyProgramUnavailableReason = "body_program_unavailable";
+        // NULL unless a branch below names a reason. It used to start as "body_program_unavailable", which made that
+        // default the published answer even when the journal opened and the routes went live: the success path clears
+        // `state.BodyProgramUnavailableReason` (line ~2902) and this local then STOMPED IT BACK when it assigned the
+        // field, so hello_ack carried a reason and the Host - correctly, given what it was told - refused to mount the
+        // three program tools. Measured 2026-10-18 with the diagnostic added for exactly this question:
+        // `BODY_PROGRAM_MOUNT {"unavailableReason":"body_program_unavailable","mounted":false}` while the same run's
+        // log said `program_submit/status/events routes are live`, and the manifests went from 107 tools (with the
+        // trio) to 104 (without) the moment the mount gate landed.
+        string? bodyProgramUnavailableReason = null;
         if (bridgeConfigValid && scopeMatchesWorld && runtimeAttestation is not null)
         {
             if (bodyProgramCatalog is null)

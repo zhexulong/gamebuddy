@@ -91,13 +91,13 @@ public sealed class BridgeSessionPublicationTests
             "presentationLocale",
             "registrations",
             "runtimeRole",
-            "launchGeneration",
-            // The Mod publishes why it cannot honour an ActionProgram whenever it cannot - here the session was
-            // constructed with no program authority at all, so the ack says so and the Host does not mount the
-            // program tools. Serialized only when present, which is why every other wire fixture is unchanged.
-            "bodyProgramUnavailableReason");
+            "launchGeneration");
+        // No `bodyProgramUnavailableReason` here: this session's caller declared none, and that field is published ONLY
+        // when a caller declares one (null means the routes are usable). The default used to BE the refusal string,
+        // which made a composed controller publish a reason anyway - and the Host, correctly given what it was told,
+        // refused to mount three tools the Mod was serving. Serialized only when present, so every other wire fixture
+        // is unchanged.
         serializedPayload.GetProperty("launchGeneration").ValueKind.Should().Be(JsonValueKind.Null);
-        serializedPayload.GetProperty("bodyProgramUnavailableReason").GetString().Should().Be("body_program_unavailable");
 
         string? snapshotOutputPath = Environment.GetEnvironmentVariable("GAMEBUDDY_SNAPSHOT_WIRE_OUTPUT");
         if (snapshotOutputPath is null)

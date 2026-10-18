@@ -30,7 +30,7 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
     private readonly string token;
     private readonly Func<FarmhandCapabilityPublication> capabilityPublicationProvider;
     private readonly OpenBodyProgramJournalAuthority? bodyProgramAuthority;
-    private readonly string bodyProgramUnavailableReason;
+    private readonly string? bodyProgramUnavailableReason;
     private readonly Func<string> presentationLocale;
     private readonly Func<DerivedDestinationSet?> navigationSetProvider;
     private readonly NavigationReferenceStore navigationReferences;
@@ -91,13 +91,16 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
         BridgeRuntimeAttestation? runtimeAttestation = null,
         LocalPipeBridge? pipeBridge = null,
         OpenBodyProgramJournalAuthority? bodyProgramAuthority = null,
-        string bodyProgramUnavailableReason = "body_program_unavailable",
+        // Null means the caller declared the routes usable. The default USED to be the refusal string, which made a
+// composed controller publish a reason anyway - the Host then refused to mount the tools while the Mod was
+// serving them (measured 2026-10-18: routes live in the log, `body_program_unavailable` on the ack).
+string? bodyProgramUnavailableReason = null,
         Func<SceneObservationInput?>? sceneObservationProvider = null)
     {
         this.runtimeAttestation = runtimeAttestation ?? BridgeRuntimeAttestation.Default;
         this.pipeBridge = pipeBridge;
         this.bodyProgramAuthority = bodyProgramAuthority;
-        this.bodyProgramUnavailableReason = bodyProgramUnavailableReason ?? "body_program_unavailable";
+        this.bodyProgramUnavailableReason = bodyProgramUnavailableReason;
         this.executions = executions;
         this.actionRouter = actionRouter ?? throw new ArgumentNullException(nameof(actionRouter));
         this.scope = scope;
@@ -753,7 +756,7 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
         response = null;
         if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "program_submit", out reasonCode)) return false;
         if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
-        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason; return false; }
+        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason ?? "body_program_unavailable"; return false; }
         BodyProgramSubmitResult result = this.bodyProgramAuthority.Submit(envelope!.Payload, this.EnabledBodyProgramActionIds());
         response = Reply("program_submit_result", envelope.CorrelationId,
             new BridgeBodyProgramSubmitResult(ToWire(result.Code), ToBridgeVerification(result.Verification), ToBridgeSnapshot(result.Snapshot)));
@@ -767,7 +770,7 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
         response = null;
         if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "program_status", out reasonCode)) return false;
         if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
-        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason; return false; }
+        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason ?? "body_program_unavailable"; return false; }
         BodyProgramStatusResult result = this.bodyProgramAuthority.Status(envelope!.Payload.ProgramId);
         response = Reply("program_status_result", envelope.CorrelationId,
             new BridgeBodyProgramStatusResult(ToWire(result.Code), ToBridgeSnapshot(result.Snapshot)));
@@ -781,7 +784,7 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
         response = null;
         if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "program_events", out reasonCode)) return false;
         if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
-        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason; return false; }
+        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason ?? "body_program_unavailable"; return false; }
         BridgeBodyProgramEventsRequest request = envelope!.Payload;
         BodyProgramEventsResult result = this.bodyProgramAuthority.Events(request.ProgramId, request.Cursor, request.PageSize);
         response = Reply("program_events_result", envelope.CorrelationId,
