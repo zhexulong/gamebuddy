@@ -6,6 +6,7 @@ import {
 import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { NativeChatPreview } from "./provider-invocation.js";
 import type { PiVariantBranch } from "../pi-session-variant-branch.internal.js";
+import { bindSettledPromptEntries, sessionEntryIds } from "../pi-session-variant-branch.internal.js";
 import type {
   AttemptStartingTurn,
   CancelledTurn,
@@ -219,6 +220,12 @@ export async function runMountedProviderStart(
   let variantBranch: PiVariantBranch | undefined;
   let variantBranchRetained = false;
   let responseMessageId: string | undefined;
+  /** The exact text this turn's visible reply was committed with, or `undefined` when none was. */
+  let committedReplyText: string | undefined;
+  /** Every session entry that existed before this prompt, so what it appended is an identity fact. */
+  let entriesBefore: ReadonlySet<string> | undefined;
+  /** The exact accepted player text this prompt was invoked with. */
+  let promptText: string | undefined;
   let previewPublished = false;
   let observationSettled = false;
   let providerRunning = false;
@@ -234,6 +241,41 @@ export async function runMountedProviderStart(
       resolve(fact.statusClass);
     });
   });
+  /**
+   * Records which Pi session entries this prompt appended for the durable rows this turn wrote - the
+   * `(thread_id, message_id, entry_id)` binding a single-row delete reads back. Nothing else names
+   * that correspondence, which is why a delete could not exist before it: a rewind proves a dropped
+   * suffix positionally, but a hole in the middle has to name the exact entry the player pointed at.
+   *
+   * The two rows are the ones this turn actually wrote: normally the accepted player row and the
+   * reply row this attempt committed, and for a same-position variant turn the anchor player row its
+   * prompt re-asked and the reply position it regenerated. A row the prompt produced a candidate for
+   * that is not exactly one entry records nothing (see `bindSettledPromptEntries`), and the write can
+   * never fail the turn it describes - the reply is already durable by the time this runs, and a row
+   * with no binding is the honest state a delete refuses on.
+   */
+  const recordSettledPromptEntries = async (): Promise<void> => {
+    if (entriesBefore === undefined || promptText === undefined) return;
+    const variant = scope.facts.variant;
+    const playerMessageId = variant?.anchorMessageId ?? scope.facts.messageId;
+    const replyMessageId = variant === null ? responseMessageId : variant.targetMessageId;
+    const bindings = bindSettledPromptEntries(runtimeSession.session, entriesBefore, {
+      playerText: promptText,
+      replyText: committedReplyText ?? null,
+    });
+    const rows: Readonly<{ messageId: string; entryId: string }>[] = [];
+    for (const binding of bindings) {
+      const messageId = binding.role === "player" ? playerMessageId : replyMessageId;
+      if (messageId === undefined) continue;
+      rows.push(Object.freeze({ messageId, entryId: binding.entryId }));
+    }
+    if (rows.length === 0) return;
+    try {
+      await scope.recordTranscriptEntryBinding(rows);
+    } catch {
+      process.stderr.write("[binding] transcript entry binding not recorded\n");
+    }
+  };
   try {
     if (installObserver === undefined || promptFn === undefined) {
       // Arm linearization: the exact session surface is unavailable before a
@@ -333,6 +375,7 @@ export async function runMountedProviderStart(
             );
             if (committed.status !== "presentation_committed")
               throw new Error("native_content_presentation_commit_rejected");
+            committedReplyText = text;
             if (variant !== null) variantBranchRetained = true;
           } catch (error) {
             // Observer callback failure is not a terminal authority. Preserve a
@@ -432,6 +475,7 @@ export async function runMountedProviderStart(
       throw new Error("semantic_chat_runtime_authored_context_unavailable");
     scope.authoredContextCapability.assertInstall(scope.facts.turnId, refs, volatileRefs);
     const text = await scope.readAcceptedMessageText();
+    promptText = text;
     // The message read is asynchronous, so it cannot share the previous
     // linearization point. Revalidate immediately before the Host invocation.
     try {
@@ -482,6 +526,9 @@ export async function runMountedProviderStart(
         return Promise.resolve("rejected");
       }
     };
+    // Every session entry that exists at this instant is, by append-only construction, NOT one this
+    // prompt produced: the difference after it settles names exactly the entries it did.
+    entriesBefore = sessionEntryIds(runtimeSession.session);
     const promptSettled = settlePrompt();
     promptPromise = promptSettled.then(() => undefined);
     const first = await Promise.race([
@@ -597,6 +644,11 @@ export async function runMountedProviderStart(
     if (previewPublished) await previewPublisher?.clear();
     if (promptPromise !== undefined) await promptPromise;
     await nativeObserver?.close();
+    // The prompt has settled and its final assistant snapshot has been drained, so this is the one
+    // moment where both what the prompt appended and which row it was committed as are known. It runs
+    // here, before the scope closes and after every terminal transition, and it can never change this
+    // turn's outcome: a row left with no recorded binding is the honest state a delete refuses on.
+    await recordSettledPromptEntries();
     releaseActivePrompt?.();
   }
 }

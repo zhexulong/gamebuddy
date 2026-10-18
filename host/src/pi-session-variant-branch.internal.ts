@@ -51,7 +51,7 @@
  * context-edit mechanism left behind.
  */
 
-import type { AgentSession, ContextEditableContent } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ContextEditableContent, SessionEntry } from "@earendil-works/pi-coding-agent";
 
 import { chatTranscriptAssistantText } from "./native-companion-content.js";
 
@@ -261,6 +261,133 @@ export function editPiTranscriptEntry(
     status: "edited",
     revert: (): void => {
       session.sessionManager.appendContextEdit(entry.id, { content: original });
+      session.refreshContext();
+    },
+  });
+}
+
+/**
+ * Every entry id a session currently carries, as the starting point for "what did this prompt
+ * append". Pi's session is append-only, so a set difference across one prompt names the entries
+ * that prompt produced and nothing else.
+ */
+export function sessionEntryIds(session: PiVariantBranchSession): ReadonlySet<string> {
+  return new Set(session.sessionManager.getEntries().map((entry) => entry.id));
+}
+
+/**
+ * What one settled prompt appended, resolved to the durable rows a turn writes.
+ *
+ * This is the durable binding the other three shapes all document a stand-in for
+ * ("TRANSITIONAL BINDING"): which Pi entry a `tavern_messages` row is carried by. Pi persists the
+ * prompt it was given and the provider's reply as its own `message` entries
+ * (`SessionManager.appendMessage`, called from `agent-session.js` `_handleAgentEvent` on
+ * `message_end`), but that id reaches no session listener - `entry_appended` is emitted only for
+ * extension, boundary, recovery, cache-warmer and custom-entry appends - and `AgentSession` keeps
+ * its own message -> entry map private. The exact fact Pi does expose is the session itself: the
+ * entries are append-only and readable, so the entries that did not exist before this prompt are
+ * exactly the ones it produced.
+ *
+ * Which of those carries WHICH row is then a content question, and it is answered with the same
+ * projection the row was written from (`chatTranscriptPlayerText` for a player row,
+ * `chatTranscriptAssistantText` for a reply row, both of which the transcript itself uses). A role
+ * with zero or more than one candidate is not proof, so that row records no binding at all - never
+ * "the nth entry of that role", which is the positional stand-in this exists to replace.
+ */
+export function bindSettledPromptEntries(
+  session: PiVariantBranchSession,
+  entriesBefore: ReadonlySet<string>,
+  expected: Readonly<{ playerText: string; replyText: string | null }>,
+): readonly Readonly<{ role: "player" | "companion"; entryId: string }>[] {
+  const appended = session.sessionManager.getEntries().filter((entry) => !entriesBefore.has(entry.id));
+  const bindings: Readonly<{ role: "player" | "companion"; entryId: string }>[] = [];
+  const playerEntry = uniqueAppendedEntry(
+    appended,
+    (message) => chatTranscriptPlayerText(message) === expected.playerText,
+  );
+  if (playerEntry !== null) bindings.push(Object.freeze({ role: "player", entryId: playerEntry }));
+  if (expected.replyText !== null) {
+    const replyEntry = uniqueAppendedEntry(
+      appended,
+      (message) => chatTranscriptAssistantText(message) === expected.replyText,
+    );
+    if (replyEntry !== null) bindings.push(Object.freeze({ role: "companion", entryId: replyEntry }));
+  }
+  return Object.freeze(bindings);
+}
+
+/** The one appended message entry a projection names, or `null` when none or several do. */
+function uniqueAppendedEntry(appended: readonly SessionEntry[], matches: (message: unknown) => boolean): string | null {
+  const matched = appended.filter(
+    (entry) => entry.type === "message" && matches((entry as { message?: unknown }).message),
+  );
+  return matched.length === 1 ? matched[0]!.id : null;
+}
+
+/**
+ * The one entry a single-row delete may omit: exactly one of the row's recorded entries is on the
+ * model's own active path. A row carried by two path entries at once is ambiguous, and a row whose
+ * every recorded entry is off the path has no contribution left to remove, so both answer `null` -
+ * the caller refuses rather than omitting an entry it cannot prove is the row the player named.
+ */
+export function boundEntryOnActivePath(
+  session: PiVariantBranchSession,
+  boundEntryIds: readonly string[],
+): string | null {
+  if (boundEntryIds.length === 0) return null;
+  const onPath = new Set(session.sessionManager.getBranch().map((entry) => entry.id));
+  const present = [...new Set(boundEntryIds)].filter((entryId) => onPath.has(entryId));
+  return present.length === 1 ? present[0]! : null;
+}
+
+/** Why a refused single-row delete left the model's context exactly as it was. */
+type PiTranscriptDeleteRefusal = "delete_target_unavailable" | "delete_target_off_path";
+
+export type PiTranscriptDeleteResult =
+  | Readonly<{
+      status: "deleted";
+      /**
+       * Puts the entry's own contribution back, as another append-only edit, so a store write that
+       * refuses leaves the model reading the transcript it did before. The tool and the session
+       * cannot be atomic, so the caller owns this compensation when its durable commit refuses.
+       */
+      revert(): void;
+    }>
+  | Readonly<{ status: "refused"; reason: PiTranscriptDeleteRefusal }>;
+
+/**
+ * The delete half: ONE entry the model carries stops contributing anything, and everything after it
+ * stays on the path.
+ *
+ * This is the mirror image of the edit's refusal of a cut, and it is why a delete needs the durable
+ * binding: the rewind drops a suffix and proves that suffix positionally, but a hole in the middle
+ * has to name the exact entry the player pointed at, because there is no tail to match against and
+ * no way to tell two entries of the same role apart by position.
+ *
+ * What it does with that entry is the vendor's append-only edit of it with `null`: the entry keeps
+ * its place, the entries after it keep theirs, and only its contribution disappears. The appended
+ * edit is the session file's LAST entry, so a mount that re-opens the file lands on it and reads the
+ * hole - the same durability the rewind pins its cut with, in the one shape that leaves a gap
+ * instead of shortening the path.
+ *
+ * What the Transcript is NOT: the durable row this entry was carried by is removed too, so the
+ * player's transcript shows a gap exactly where the model's path shows one. Memory is a separate
+ * store with its own records; a fact promoted from this exchange is not a view of it and is not
+ * retracted by removing it (`design/40` - the Chat transcript and the Memory partition are separate
+ * durability scopes).
+ */
+export function deletePiTranscriptEntry(session: PiVariantBranchSession, entryId: string): PiTranscriptDeleteResult {
+  const entry = session.sessionManager.getEntry(entryId);
+  const original = entry === undefined ? null : editableContentOf(entry);
+  if (original === null) return { status: "refused", reason: "delete_target_unavailable" };
+  if (!session.sessionManager.getBranch().some((candidate) => candidate.id === entryId))
+    return { status: "refused", reason: "delete_target_off_path" };
+  session.sessionManager.appendContextEdit(entryId, null);
+  session.refreshContext();
+  return Object.freeze({
+    status: "deleted",
+    revert: (): void => {
+      session.sessionManager.appendContextEdit(entryId, { content: original });
       session.refreshContext();
     },
   });

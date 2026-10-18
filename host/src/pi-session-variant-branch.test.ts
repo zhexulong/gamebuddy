@@ -6,13 +6,18 @@ import test from "node:test";
 import { type AgentSession, SessionManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 
 import {
+  bindSettledPromptEntries,
+  boundEntryOnActivePath,
   branchPiVariantAnchor,
+  deletePiTranscriptEntry,
   editPiTranscriptEntry,
   rewindPiTranscriptTail,
+  sessionEntryIds,
   type PiTranscriptMessage,
   type PiVariantPosition,
 } from "./pi-session-variant-branch.internal.js";
 import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
+import { chatTranscriptAssistantText } from "./native-companion-content.js";
 
 const PROMPT_TEXT = "I waited at the bus stop until noon.";
 const EARLIER_PROMPT_TEXT = "I walked down to the harbor at dawn.";
@@ -593,6 +598,178 @@ test("an entry the session does not carry refuses, and a revert is itself durabl
         ["user", [{ type: "text", text: EDITED_PROMPT_TEXT }]],
         ["assistant", [{ type: "text", text: FIRST_REPLY }]],
       ],
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * What a settled prompt DID append is an identity fact (the session is append-only), and it is the
+ * only fact Pi offers: the entry id `appendMessage` returns reaches no session listener, and
+ * `AgentSession` keeps its own message -> entry map private. So the capture is a set difference across
+ * the prompt, and which entry carries which durable row is answered by the same projection the row was
+ * written from - never by a position among the entries of a role, which is exactly the stand-in the
+ * durable binding exists to replace.
+ */
+test("a settled prompt's own entries bind to the rows they carry, and an ambiguous one binds nothing", async () => {
+  const fixture = await createSession("gamebuddy-transcript-binding-", []);
+  try {
+    assert.deepEqual(fixture.modelMessages(), []);
+    const before = sessionEntryIds(fixture.session);
+    const playerEntry = appendPrompt(fixture.sessionManager, PROMPT_TEXT);
+    const replyEntry = appendReply(fixture.sessionManager, FIRST_REPLY);
+    fixture.session.refreshContext();
+    assert.deepEqual(
+      bindSettledPromptEntries(fixture.session, before, { playerText: PROMPT_TEXT, replyText: FIRST_REPLY }),
+      [
+        { role: "player", entryId: playerEntry },
+        { role: "companion", entryId: replyEntry },
+      ],
+    );
+    // A reply the prompt did not commit (a turn that failed before its presentation) binds no reply
+    // row at all, and the player row it DID append still binds.
+    assert.deepEqual(bindSettledPromptEntries(fixture.session, before, { playerText: PROMPT_TEXT, replyText: null }), [
+      { role: "player", entryId: playerEntry },
+    ]);
+    // Two appended user entries carrying the same text are not a proof of which one is the row, so
+    // the row binds nothing rather than "the newest" or "the first".
+    const secondPlayerEntry = appendPrompt(fixture.sessionManager, PROMPT_TEXT);
+    fixture.session.refreshContext();
+    assert.deepEqual(
+      bindSettledPromptEntries(fixture.session, before, { playerText: PROMPT_TEXT, replyText: FIRST_REPLY }),
+      [{ role: "companion", entryId: replyEntry }],
+    );
+    // And a text this prompt never appended binds nothing: the capture is what it produced, not what
+    // the transcript happens to contain.
+    assert.deepEqual(
+      bindSettledPromptEntries(fixture.session, before, {
+        playerText: "A line this prompt never carried",
+        replyText: "A reply this prompt never produced",
+      }),
+      [],
+    );
+    assert.equal(fixture.sessionManager.getEntry(secondPlayerEntry) !== undefined, true);
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The delete half: ONE entry stops contributing, the entries before it and after it stay on the path,
+ * and a session re-opened from its own file reads the same hole - which is what separates a delete from
+ * a rewind (which ends the path) and from an edit (which replaces the words but keeps the entry).
+ */
+test("a mid-transcript delete leaves a hole, and the session file the next mount reads has it", async () => {
+  const fixture = await createSession("gamebuddy-transcript-delete-", [FIRST_REPLY]);
+  appendPrompt(fixture.sessionManager, EARLIER_PROMPT_TEXT);
+  appendReply(fixture.sessionManager, SECOND_REPLY);
+  fixture.session.refreshContext();
+  let reopened: AgentSession | undefined;
+  try {
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+    ]);
+    // The binding the runner would have recorded for the first reply, read back through the active
+    // path the way the delete does.
+    const firstReplyEntry = fixture.sessionManager
+      .getBranch()
+      .find((entry) => entry.type === "message" && chatTranscriptAssistantText(entry.message) === FIRST_REPLY)!.id;
+    assert.equal(
+      boundEntryOnActivePath(fixture.session, [firstReplyEntry, "entry_from_another_session"]),
+      firstReplyEntry,
+    );
+    const deleted = deletePiTranscriptEntry(fixture.session, firstReplyEntry);
+    assert.equal(deleted.status, "deleted");
+    // Exactly one entry left the path: the two before it and the two after it are still there, so this
+    // is not a cut - it is a hole.
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["user", [{ type: "text", text: EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+    ]);
+
+    // The durable half: the appended omission is the file's LAST entry, so a fresh manager opening
+    // that file lands on it and the hole is what the context carries.
+    fixture.dispose();
+    const revivedManager = SessionManager.continueRecent(fixture.cwd, fixture.sessionDir);
+    assert.equal(revivedManager.getSessionId(), fixture.sessionManager.getSessionId());
+    const revived = await createAgentSession({
+      cwd: fixture.cwd,
+      agentDir: join(fixture.root, "agent"),
+      sessionManager: revivedManager,
+      noTools: "all",
+      tools: [],
+    });
+    reopened = revived.session;
+    assert.deepEqual(reopened.agent.state.messages.map(projectedMessage), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["user", [{ type: "text", text: EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+    ]);
+  } finally {
+    reopened?.dispose();
+    await fixture.close();
+  }
+});
+
+/**
+ * Every shape the delete cannot prove refuses and mutates nothing, and `revert()` puts the entry's own
+ * contribution back the same way - as another append-only edit - so it outlives the process rather
+ * than depending on what this one remembers.
+ */
+test("an entry that is not on the model's path refuses, and a revert is itself durable", async () => {
+  const fixture = await createSession("gamebuddy-transcript-delete-refusal-", [FIRST_REPLY]);
+  try {
+    const before = quoted(fixture.modelMessages());
+    const leafBefore = fixture.sessionManager.getLeafId();
+    const entriesBefore = fixture.sessionManager.getEntryCount();
+    // Nothing the row could resolve to: no entry at all.
+    assert.equal(boundEntryOnActivePath(fixture.session, []), null);
+    assert.equal(boundEntryOnActivePath(fixture.session, ["entry_this_session_never_had"]), null);
+    const refused = deletePiTranscriptEntry(fixture.session, "entry_this_session_never_had");
+    assert.equal(refused.status, "refused");
+    if (refused.status === "refused") assert.equal(refused.reason, "delete_target_unavailable");
+    assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore);
+    assert.equal(fixture.sessionManager.getLeafId(), leafBefore);
+    assert.equal(quoted(fixture.modelMessages()), before);
+
+    // A reply a branch moved off the path has no contribution to remove, so it refuses as that rather
+    // than appending an omission the vendor's own edit would reject anyway.
+    const playerEntry = fixture.sessionManager.getBranch()[0]!.id;
+    const replyEntry = fixture.sessionManager
+      .getBranch()
+      .find((entry) => entry.type === "message" && chatTranscriptAssistantText(entry.message) === FIRST_REPLY)!.id;
+    fixture.sessionManager.branch(playerEntry);
+    fixture.session.refreshContext();
+    assert.equal(boundEntryOnActivePath(fixture.session, [replyEntry]), null);
+    const offPath = deletePiTranscriptEntry(fixture.session, replyEntry);
+    assert.equal(offPath.status, "refused");
+    if (offPath.status === "refused") assert.equal(offPath.reason, "delete_target_off_path");
+
+    // And a hole this session does make can be put back, durably.
+    fixture.sessionManager.branch(replyEntry);
+    fixture.session.refreshContext();
+    const deleted = deletePiTranscriptEntry(fixture.session, playerEntry);
+    assert.equal(deleted.status, "deleted");
+    assert.deepEqual(fixture.modelMessages(), [["assistant", [{ type: "text", text: FIRST_REPLY }]]]);
+    if (deleted.status === "deleted") deleted.revert();
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+    ]);
+    const deletedAgain = deletePiTranscriptEntry(fixture.session, playerEntry);
+    assert.equal(deletedAgain.status, "deleted");
+    fixture.dispose();
+    const revivedManager = SessionManager.continueRecent(fixture.cwd, fixture.sessionDir);
+    assert.deepEqual(
+      revivedManager
+        .buildSessionProjection()
+        .messages.map((message) => [message.role, "content" in message ? message.content : null]),
+      [["assistant", [{ type: "text", text: FIRST_REPLY }]]],
     );
   } finally {
     await fixture.close();

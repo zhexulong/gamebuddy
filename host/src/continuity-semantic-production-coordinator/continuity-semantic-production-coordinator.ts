@@ -17,6 +17,7 @@ export {
   createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
   createKnownSemanticGameProductionAuthorityFromDeploymentManifest,
   createSharedSemanticProductionAuthorityFromDeploymentManifest,
+  deleteMountedChatMessage,
   editMountedChatMessage,
   isCurrentMountedChatRuntimeLease,
   rewindMountedChatTranscript,

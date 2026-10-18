@@ -50,7 +50,9 @@ import type {
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import {
+  boundEntryOnActivePath,
   branchPiVariantAnchor,
+  deletePiTranscriptEntry,
   editPiTranscriptEntry,
   rewindPiTranscriptTail,
   type PiTranscriptMessage,
@@ -399,6 +401,14 @@ export type ProviderInvocationScope = Readonly<{
    * final commit reservation but never creates any presentation authority.
    */
   canPreviewNativeContent(): boolean;
+  /**
+   * Records the Pi session entries this exact turn's prompt appended for the durable rows the turn
+   * wrote, as the durable `(thread_id, message_id, entry_id)` binding a single-row delete reads. It
+   * is deliberately infallible towards the turn: the runner calls it after the prompt has settled,
+   * and a binding it cannot write leaves a row a delete will honestly refuse on rather than
+   * poisoning a reply that is already visible.
+   */
+  recordTranscriptEntryBinding(entries: readonly Readonly<{ messageId: string; entryId: string }>[]): Promise<void>;
   /**
    * Reads the durable winner for a STOP that raced this invocation. The runner
    * owns prompt/gate drain and therefore performs the final `cancel` or
@@ -939,6 +949,22 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
       const previewEpoch = (nativeContentPreviewEpoch ??= mounted.presentationEpoch.capture());
       return record.active.value && mounted.active && mounted.presentationEpoch.isCurrent(previewEpoch);
     };
+    /**
+     * Records which Pi session entries this exact turn's prompt produced for the rows it wrote, so a
+     * later single-row delete can name the entry it omits instead of guessing at a position. The
+     * runner is the only caller that knows what the prompt appended, and it calls this after the
+     * prompt settles. A binding write can never fail the turn it describes: the reply is already
+     * durable by then, and a row with no binding is the honest state a delete refuses on.
+     */
+    const recordTranscriptEntryBinding = async (
+      entries: readonly Readonly<{ messageId: string; entryId: string }>[],
+    ): Promise<void> => {
+      if (entries.length === 0) return;
+      assertScopeActive();
+      const store = mounted.store();
+      if (typeof store.recordTranscriptEntryBinding !== "function") return;
+      await store.recordTranscriptEntryBinding(mounted.transitionAuthority.authority, mounted.chatThreadId, entries);
+    };
     const finalizeCancellation = async (): Promise<
       | import("../tavern/chat-thread-store.js").CompletionClaimedTurn
       | import("../tavern/chat-thread-store.js").CompletedTurn
@@ -1002,6 +1028,7 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
         beginActivePrompt,
         reserveNativeContentCommit,
         canPreviewNativeContent,
+        recordTranscriptEntryBinding,
         finalizeCancellation,
       }),
     );
@@ -1335,6 +1362,81 @@ export async function editMountedChatMessage(
     return await store.editTranscriptMessage!(record.transitionAuthority.authority, record.chatThreadId, input);
   } catch (error) {
     edited.revert();
+    throw error;
+  }
+}
+
+/**
+ * The one authorized single-message delete ingress. A delete removes exactly one row from the middle of
+ * a conversation, and only a live mounted lease holds the exact runtime session whose active path the
+ * mounted conversation owns; so a caller with a store but no live mount cannot reshape a conversation.
+ * Like the swipe, rewind and edit ingresses it neither creates nor selects a Chat and never prompts Pi.
+ *
+ * The order is the difference from a rewind, and it is the reason this operation needed a durable
+ * binding at all. A rewind drops a SUFFIX and proves that suffix positionally - the session's own newest
+ * message entries must carry the dropped rows in order - so it never has to tell two entries of the same
+ * role apart. A hole in the MIDDLE has no tail to match against, so the row the player named is resolved
+ * through the durable `(thread_id, message_id, entry_id)` binding the runner recorded for the turn that
+ * wrote it, and the entry that omission names must be the one on the model's active path. A row with no
+ * recorded binding (every row written before the binding existed) refuses as exactly that, and never as
+ * a guess.
+ *
+ * The durable read, the entry's omission in the session and the durable row removal share one
+ * synchronous critical section - there is no `await` between the session proof and the session
+ * mutation, and the Host runs on a single event loop - so nothing can be admitted between them. The
+ * store re-checks the row, its position and the ledger inside its own transaction, so a turn admitted by
+ * a write that slipped in before the read still refuses; that refusal rolls the transaction back and the
+ * entry's own contribution is put back by an appended edit, so the session file agrees with the
+ * transcript the player still has. A refused delete therefore leaves both authorities exactly as it
+ * found them.
+ */
+export async function deleteMountedChatMessage(
+  manifest: HostDeploymentManifest,
+  lease: MountedChatRuntimeLease,
+  input: Readonly<{ messageId: string; expectedOrder: number }>,
+): Promise<import("../tavern/chat-thread-store.js").ChatThreadState> {
+  const record = mountedChatRuntimeLeases.get(lease);
+  if (
+    record === undefined ||
+    !record.active ||
+    manifest.runtimeRoot !== record.runtimeRoot ||
+    manifest.principal.playerId !== record.principal.playerId ||
+    manifest.principal.companionId !== record.principal.companionId ||
+    manifest.principal.continuityId !== record.principal.continuityId ||
+    typeof input.messageId !== "string" ||
+    input.messageId.length === 0 ||
+    !Number.isSafeInteger(input.expectedOrder) ||
+    input.expectedOrder < 0
+  )
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_delete_unavailable");
+  const runtimeSession = record.providerRuntimeSession;
+  if (runtimeSession === undefined)
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_delete_unavailable");
+  const store = record.store();
+  const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
+  const target = state.messages[input.expectedOrder];
+  if (target === undefined || target.messageId !== input.messageId)
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_delete_unavailable");
+  const bound =
+    typeof store.readTranscriptEntryBinding === "function"
+      ? await store.readTranscriptEntryBinding(record.chatThreadId, input.messageId)
+      : [];
+  const entryId = boundEntryOnActivePath(runtimeSession.session, bound);
+  if (entryId === null) throw new SemanticProductionCoordinatorError("chat_delete_binding_unavailable");
+  let deleted: import("../pi-session-variant-branch.internal.js").PiTranscriptDeleteResult;
+  try {
+    deleted = deletePiTranscriptEntry(runtimeSession.session, entryId);
+  } catch {
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_delete_unavailable");
+  }
+  if (deleted.status !== "deleted") {
+    process.stderr.write(`[delete] session shape refused: ${deleted.reason}\n`);
+    throw new SemanticProductionCoordinatorError("chat_delete_binding_unavailable");
+  }
+  try {
+    return await store.deleteTranscriptMessage!(record.transitionAuthority.authority, record.chatThreadId, input);
+  } catch (error) {
+    deleted.revert();
     throw error;
   }
 }
