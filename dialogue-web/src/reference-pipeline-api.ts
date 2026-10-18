@@ -357,6 +357,10 @@ const PROBLEM_CODES = [
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
+  // The edit's own two: the row is not the player's own words, or a reply is being written from the
+  // very text the edit would replace.
+  "chat_edit_not_player_message",
+  "chat_edit_turn_active",
   // A durable companion record that is absent, incomplete or unreadable is a data-integrity fact,
   // not a retryable runtime outage.
   "companion_record_unreadable",
@@ -973,6 +977,20 @@ export type ReferencePipelineApi = Readonly<{
     }>,
     options: Readonly<{ csrfToken: string }>,
   ): Promise<Readonly<{ apiVersion: 1; lastMessage: BrowserMessageV1 | null }>>;
+  /**
+   * POST /api/tavern/v1/messages/edit with CSRF. One of the player's own messages carries different
+   * text from now on; the answer is that row as the durable read-back holds it.
+   */
+  edit(
+    command: Readonly<{
+      apiVersion: 1;
+      selectionGeneration: number;
+      messageHandle: string;
+      expectedOrder: number;
+      text: string;
+    }>,
+    options: Readonly<{ csrfToken: string }>,
+  ): Promise<Readonly<{ apiVersion: 1; message: BrowserMessageV1 }>>;
   /** POST /api/tavern/v1/turns/:turnHandle/cancel with CSRF. */
   cancel(turnHandle: string, command: CancelTurnCommandV1, csrfToken: string): Promise<CancelTurnResultV1>;
   /** POST /api/tavern/v1/message-submission-status (no CSRF/idempotency headers). */
@@ -1086,6 +1104,22 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
           )
             throw new TavernProtocolError();
           return Object.freeze({ apiVersion: 1 as const, lastMessage: body.lastMessage });
+        },
+        { "Content-Type": "application/json", "x-csrf-token": options.csrfToken },
+        command,
+      );
+    },
+    async edit(command, options) {
+      if (!isRecord(command) || !isOpaqueHandle(options.csrfToken)) throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/messages/edit",
+        200,
+        (body) => {
+          if (!isRecord(body) || body.apiVersion !== 1 || !isBrowserMessage(body.message))
+            throw new TavernProtocolError();
+          return Object.freeze({ apiVersion: 1 as const, message: body.message });
         },
         { "Content-Type": "application/json", "x-csrf-token": options.csrfToken },
         command,

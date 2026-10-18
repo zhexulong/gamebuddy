@@ -1,5 +1,5 @@
-import { memo } from "react";
-import { ChevronLeft, ChevronRight, LoaderCircle, RefreshCw, Undo2 } from "lucide-react";
+import { memo, useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight, LoaderCircle, Pencil, RefreshCw, Undo2 } from "lucide-react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
 import { CompanionAvatar } from "./CompanionAvatar";
@@ -53,6 +53,7 @@ export const MessageBubble = memo(function MessageBubble({
   onRewindConfirm,
   onRewindCancel,
   rewindArmed = false,
+  onEdit,
   removedCount = 0,
   pending = null,
   streaming = false,
@@ -84,6 +85,14 @@ export const MessageBubble = memo(function MessageBubble({
   /** True for the one message whose rewind is armed: its strip becomes that confirmation. */
   rewindArmed?: boolean;
   /**
+   * The edit control's save. The player's own message carries the text they rewrote AND the order the
+   * page rendered it at, because the Host refuses a row that has moved. The editor itself is this
+   * row's own presentation state - it opens on the field the words came from - and the callback hands
+   * the new text up when they save; the authoritative reread, not a local guess, owns what the
+   * transcript then shows.
+   */
+  onEdit?: (messageHandle: string, expectedOrder: number, text: string) => void;
+  /**
    * How many messages this point would remove, counted from the transcript this bubble belongs to.
    * It is what the control's accessible name says the press will remove, before it is pressed; zero
    * (a caller that could not count, or a row that is not part of the transcript) offers no control.
@@ -95,7 +104,7 @@ export const MessageBubble = memo(function MessageBubble({
    * command with its single-flight ref, and the control saying so is what keeps a
    * double click from looking like it did nothing.
    */
-  pending?: "swipe" | "regenerate" | "opening" | "rewind" | null;
+  pending?: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | null;
   /**
    * True only for the live streaming preview: the bubble then carries the
    * reading caret. The caret is inserted into the bubble's last block on every
@@ -133,6 +142,11 @@ export const MessageBubble = memo(function MessageBubble({
     rewindConfirmPrompt: string;
     rewindConfirmYes: string;
     rewindConfirmNo: string;
+    editMessage: string;
+    editMessageName: string;
+    editMessageField: string;
+    editMessageSave: string;
+    editMessageCancel: string;
   }>;
 }) {
   const isPlayer = message.role === "player";
@@ -157,6 +171,27 @@ export const MessageBubble = memo(function MessageBubble({
   const rewindPoint =
     onRewind !== undefined && removedCount > 0 && message.order > 0 && !isPlayer ? removedCount : undefined;
   const rewindName = labels.rewindHereName.replace("{{count}}", String(removedCount));
+  /**
+   * The editor is this row's own presentation state: it holds the words the player is rewriting, and
+   * it exists only while the row does - a row a rewind dropped takes its open editor with it. The
+   * order the page rendered is sent with the save, so a row that moved under the editor is refused by
+   * name rather than edited where the player is not looking.
+   */
+  const [editor, setEditor] = useState<Readonly<{ text: string; sent: string | null }> | null>(null);
+  const openEditor = (): void => {
+    setEditor(Object.freeze({ text: message.text, sent: null }));
+  };
+  /**
+   * The editor closes on the one fact that says the edit landed: the row the transcript now carries
+   * holds exactly the words that were sent, and no mutation is in flight. A refusal therefore leaves
+   * the field and the player's words exactly as they typed them - a reply still being written costs
+   * them the press, not the rewrite.
+   */
+  useEffect(() => {
+    if (editor === null || editor.sent === null) return;
+    if (pending !== null || message.text !== editor.sent) return;
+    setEditor(null);
+  }, [editor, pending, message.text]);
   // Whether this message's strip has a pager at all: the strip exists for its own
   // controls, so a message with neither keeps no empty row under the bubble.
   const hasControls = openingChoice !== undefined || swipeSet !== undefined;
@@ -341,6 +376,71 @@ export const MessageBubble = memo(function MessageBubble({
               <span className="message-waiting" role="status">
                 {waitingNote}
               </span>
+            )}
+          </div>
+        )}
+        {/* The player's own row carries exactly one control, and it is the same strip the companion's
+            reply uses rather than a second row of buttons: the words are already on the page, so the
+            affordance that changes them belongs under them. */}
+        {isPlayer && onEdit !== undefined && (
+          <div className="message-actions">
+            {editor !== null ? (
+              <div className="message-edit" data-testid="message-edit-form">
+                <textarea
+                  className="message-edit-field"
+                  data-testid="message-edit-field"
+                  aria-label={labels.editMessageField}
+                  value={editor.text}
+                  disabled={busy}
+                  rows={2}
+                  onChange={(event) => setEditor({ text: event.target.value, sent: editor.sent })}
+                />
+                <div className="message-edit-actions">
+                  <button
+                    type="button"
+                    className="action-btn edit-save-btn"
+                    data-testid="message-edit-save"
+                    disabled={busy || editor.text.trim().length === 0 || editor.text === message.text}
+                    onClick={() => {
+                      setEditor({ text: editor.text, sent: editor.text });
+                      onEdit(message.handle, message.order, editor.text);
+                    }}
+                    title={labels.editMessageSave}
+                    aria-label={labels.editMessageSave}
+                  >
+                    {labels.editMessageSave}
+                  </button>
+                  <button
+                    type="button"
+                    className="action-btn edit-cancel-btn"
+                    data-testid="message-edit-cancel"
+                    disabled={busy}
+                    onClick={() => setEditor(null)}
+                    title={labels.editMessageCancel}
+                    aria-label={labels.editMessageCancel}
+                  >
+                    {labels.editMessageCancel}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="action-btn edit-btn"
+                data-testid="message-edit"
+                disabled={busy}
+                {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
+                onClick={openEditor}
+                title={labels.editMessageName}
+                aria-label={labels.editMessageName}
+              >
+                {pending === "edit" ? (
+                  <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                ) : (
+                  <Pencil size={14} aria-hidden="true" />
+                )}
+                {labels.editMessage}
+              </button>
             )}
           </div>
         )}

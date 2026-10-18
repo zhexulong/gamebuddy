@@ -33,10 +33,11 @@ const AUTHENTICATION_PROBLEM_CODES: readonly string[] = ["unauthorized", "csrf_f
 const RECONCILIATION_PROBLEM_CODES: readonly string[] = ["state_reconciliation_required"];
 
 /**
- * The rewind refusals, each with its own sentence: a rewind is destructive, so "something went
- * wrong" would leave the player unable to tell whether anything was removed.
+ * The message mutations' refusals, each with its own sentence: a rewind destroys what it names and an
+ * edit changes words the model will answer, so "something went wrong" would leave the player unable
+ * to tell what happened to the conversation.
  */
-function rewindProblemView(code: string | null, labels: Messages): ProblemViewState | undefined {
+function messageMutationProblemView(code: string | null, labels: Messages): ProblemViewState | undefined {
   switch (code) {
     case "chat_message_not_found":
       return {
@@ -61,6 +62,18 @@ function rewindProblemView(code: string | null, labels: Messages): ProblemViewSt
         kind: "problem",
         title: labels.problemChatRewindTurnActiveTitle,
         detail: labels.problemChatRewindTurnActiveDetail,
+      };
+    case "chat_edit_not_player_message":
+      return {
+        kind: "problem",
+        title: labels.problemChatEditNotPlayerMessageTitle,
+        detail: labels.problemChatEditNotPlayerMessageDetail,
+      };
+    case "chat_edit_turn_active":
+      return {
+        kind: "problem",
+        title: labels.problemChatEditTurnActiveTitle,
+        detail: labels.problemChatEditTurnActiveDetail,
       };
     default:
       return undefined;
@@ -135,8 +148,8 @@ export function composedProblemView(error: unknown, labels: Messages): ProblemVi
       detail: labels.problemReconciliationFailedDetail,
     };
   }
-  const rewindView = rewindProblemView(code, labels);
-  if (rewindView !== undefined) return rewindView;
+  const mutationView = messageMutationProblemView(code, labels);
+  if (mutationView !== undefined) return mutationView;
   if (code !== null && ABSENT_ROUTE_PROBLEM_CODES.includes(code)) {
     return {
       kind: "problem",

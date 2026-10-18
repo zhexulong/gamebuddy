@@ -55,7 +55,7 @@ type Model = Readonly<{
   preview: Readonly<{ turnHandle: string; text: string }> | null;
   voice: VoiceSurfaceStateV1 | null;
   /** The chat mutation in flight, exactly as the shell projects it to Timeline. */
-  pending: Readonly<{ kind: "swipe" | "regenerate" | "opening" | "rewind"; handle: string }> | null;
+  pending: Readonly<{ kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit"; handle: string }> | null;
   /** The one message whose rewind is armed, exactly as the shell projects it to Timeline. */
   rewindArmedHandle: string | null;
 }>;
@@ -65,6 +65,9 @@ let rerender: (() => void) | null = null;
 
 /** Every rewind control a journey pressed, so a test can see what the surface sent. */
 const rewindCalls: { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] = [];
+
+/** Every edit a journey saved, so a test can see the pair and the words the surface sent. */
+const editCalls: { handle: string; order: number; text: string }[] = [];
 
 function Probe() {
   const [, bump] = useState(0);
@@ -106,6 +109,9 @@ function Probe() {
           rerender?.();
         }}
         rewindArmedHandle={model.rewindArmedHandle}
+        onEdit={(handle, order, text) => {
+          editCalls.push({ handle, order, text });
+        }}
         pending={model.pending}
       />
       <Composer
@@ -151,8 +157,72 @@ const chatProbe = {
     model = { ...model, voice: state };
     rerender?.();
   },
-  setPending(pending: { kind: "swipe" | "regenerate" | "opening" | "rewind"; handle: string } | null): void {
+  setPending(pending: { kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit"; handle: string } | null): void {
     model = { ...model, pending };
+    rerender?.();
+  },
+  /** Every edit this probe's save button sent. */
+  editCalls(): readonly { handle: string; order: number; text: string }[] {
+    return [...editCalls];
+  },
+  resetEditCalls(): void {
+    editCalls.length = 0;
+  },
+  /**
+   * The edit control as the player meets it: what it is called, the target it actually paints, and
+   * the strip it sits in. The strip is the same row the reply uses, so its height is what says the
+   * row did not wrap: one control of `--touch-target-min` measures one row, and a strip that wrapped
+   * would be at least two.
+   */
+  editControl(handle: string): {
+    ariaLabel: string | null;
+    title: string | null;
+    label: string | null;
+    width: number;
+    height: number;
+    stripHeight: number;
+  } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const button = li?.querySelector('[data-testid="message-edit"]') as HTMLButtonElement | null;
+    if (button === null || button === undefined) return null;
+    const rect = button.getBoundingClientRect();
+    const strip = li?.querySelector(".message-actions");
+    return {
+      ariaLabel: button.getAttribute("aria-label"),
+      title: button.getAttribute("title"),
+      label: button.textContent,
+      width: rect.width,
+      height: rect.height,
+      stripHeight: strip === null || strip === undefined ? 0 : strip.getBoundingClientRect().height,
+    };
+  },
+  /**
+   * The open editor on `handle`: the words in the field, and its two answers. `null` when the row is
+   * not being edited, which is what says the field is not offered as a second resident control.
+   */
+  editForm(handle: string): { value: string | null; save: string | null; cancel: string | null } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const form = li?.querySelector('[data-testid="message-edit-form"]');
+    if (form === null || form === undefined) return null;
+    const field = form.querySelector('[data-testid="message-edit-field"]') as HTMLTextAreaElement | null;
+    return {
+      value: field === null ? null : field.value,
+      save: form.querySelector('[data-testid="message-edit-save"]')?.textContent ?? null,
+      cancel: form.querySelector('[data-testid="message-edit-cancel"]')?.textContent ?? null,
+    };
+  },
+  /**
+   * The authoritative reread's own effect on one row, for a journey about an edit that landed: the
+   * transcript row is replaced with the words the Host now holds, keeping its handle and position.
+   */
+  applyEditedText(handle: string, text: string): void {
+    const existing = model.transcript.find((message) => message.handle === handle);
+    if (existing === undefined) return;
+    const edited: BrowserMessageV1 = Object.freeze({ ...existing, text });
+    model = {
+      ...model,
+      transcript: model.transcript.map((message) => (message.handle === handle ? edited : message)),
+    };
     rerender?.();
   },
   /** Every arm, confirm and cancel this probe's rewind control has sent. */

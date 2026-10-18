@@ -1,0 +1,168 @@
+import { expect, test, type Page } from "@playwright/test";
+
+/**
+ * Editing the player's own message, mounted, with its own measurements.
+ *
+ * The edit is the one message mutation that is not destructive, so what the surface has to get right
+ * is different from the rewind's in three places, and each one is an assertion here:
+ *
+ * 1. `is one control in the player's own strip, and names what saving does` - the player's row carries
+ *    exactly one button, in the same strip the companion's reply uses rather than a second row of
+ *    buttons, and its accessible name says what the press does to the conversation: the model reads
+ *    the new words from the next turn on. An edit that only changed the bubble would be a lie, and
+ *    the name is where the player is told that. Measured from the layout at both widths, not from a
+ *    class name: the box is at least the 44 px touch minimum (`--touch-target-min`) and the strip is
+ *    still ONE row (`two controls in one strip that wrapped at 400 px` is the defect this measures).
+ * 2. `is offered where the words are the player's, and nowhere else` - not on the greeting (it has its
+ *    own route), not on the companion's reply (its text is one of its own swipes and the ledger's
+ *    presentation), never as a second resident control beside the edit button, and not on the
+ *    optimistic row the player has not sent yet.
+ * 3. `opens the field the words came from, and sends the pair only on save` - the editor holds the
+ *    current text, the two answers are Save and Cancel, nothing is sent by opening or by cancelling,
+ *    and the save sends the handle, the text AND the order the page rendered the row at, because the
+ *    transcript is what a position means and the Host refuses a row that moved.
+ * 4. `stays open until the transcript holds what was sent` - the words the player rewrote are theirs
+ *    until the Host says otherwise: on a refusal the field keeps them, and it closes only when the row
+ *    the reread returned carries exactly what was saved.
+ */
+
+const CONVERSATION = [
+  { role: "companion" as const, text: "An opening greet." },
+  { role: "player" as const, text: "Where are we?" },
+  { role: "companion" as const, text: "On the pier." },
+  { role: "player" as const, text: "And now?" },
+  { role: "companion" as const, text: "Still on the pier." },
+];
+
+type EditProbe = {
+  editControl(handle: string): {
+    ariaLabel: string | null;
+    title: string | null;
+    label: string | null;
+    width: number;
+    height: number;
+    stripHeight: number;
+  } | null;
+  editForm(handle: string): { value: string | null; save: string | null; cancel: string | null } | null;
+  editCalls(): readonly { handle: string; order: number; text: string }[];
+  resetEditCalls(): void;
+  applyEditedText(handle: string, text: string): void;
+  setPending(pending: { kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit"; handle: string } | null): void;
+};
+
+declare global {
+  interface Window {
+    chatProbe: EditProbe & {
+      setConversation(entries: readonly Readonly<{ role: "player" | "companion"; text: string }>[]): void;
+    };
+  }
+}
+
+async function openConversation(page: Page): Promise<void> {
+  await page.goto("/tests/chat-surface-probe.html");
+  await page.waitForFunction(() => window.chatProbe !== undefined);
+  await page.evaluate((entries) => window.chatProbe.setConversation(entries), CONVERSATION);
+}
+
+/** The touch minimum the rest of the strip uses, plus the sub-pixel the measured box may round to. */
+const TOUCH_MINIMUM = 44;
+const ONE_ROW = TOUCH_MINIMUM + 1;
+
+test("the edit control is one control in the player's strip, names what saving does, and is the touch minimum", async ({
+  page,
+}) => {
+  await openConversation(page);
+
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 400, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const control = await page.evaluate(() => window.chatProbe.editControl("h1"));
+    const where = `${viewport.width}x${viewport.height}`;
+    expect(control, where).not.toBeNull();
+    expect(control?.label?.trim(), where).toBe("Edit");
+    expect(control?.ariaLabel, where).toContain("Edit this message");
+    // The name states the consequence: the model reads the new words from the next turn on.
+    expect(control?.ariaLabel, where).toContain("the model reads your new words from the next turn on");
+    expect(control?.title, where).toBe(control?.ariaLabel);
+    // Measured from the layout: the whole target, not a class name.
+    expect(control?.width, where).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
+    expect(control?.height, where).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
+    // The strip is the same row the reply uses, and one control of the touch minimum is one row: a
+    // strip that wrapped to two would be at least 44 + 6 + 44 tall.
+    expect(control?.stripHeight, where).toBeLessThanOrEqual(ONE_ROW);
+  }
+});
+
+test("the edit is offered where the words are the player's, and nowhere else", async ({ page }) => {
+  await openConversation(page);
+
+  // The greeting has its own route, and her reply is not the player's to rewrite.
+  expect(await page.evaluate(() => window.chatProbe.editControl("h0"))).toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.editControl("h2"))).toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.editControl("h4"))).toBeNull();
+  // The player's own rows each carry exactly one.
+  expect(await page.evaluate(() => window.chatProbe.editControl("h1"))).not.toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.editControl("h3"))).not.toBeNull();
+
+  // Opened, the field replaces that one control rather than sitting beside it.
+  await page.click('[data-handle="h1"] [data-testid="message-edit"]');
+  expect(await page.evaluate(() => window.chatProbe.editControl("h1"))).toBeNull();
+  const buttons = await page.locator('[data-handle="h1"] .message-actions button').allTextContents();
+  expect(buttons.map((label) => label.trim())).toEqual(["Save", "Cancel"]);
+});
+
+test("opening the editor gives the words the player wrote, and nothing is sent until save", async ({ page }) => {
+  await openConversation(page);
+  await page.evaluate(() => window.chatProbe.resetEditCalls());
+
+  await page.click('[data-handle="h1"] [data-testid="message-edit"]');
+  const opened = await page.evaluate(() => window.chatProbe.editForm("h1"));
+  expect(opened).not.toBeNull();
+  expect(opened?.value).toBe("Where are we?");
+  expect(opened?.save?.trim()).toBe("Save");
+  expect(opened?.cancel?.trim()).toBe("Cancel");
+  // Opening is not a command: the Host hears nothing until Save.
+  expect(await page.evaluate(() => window.chatProbe.editCalls())).toEqual([]);
+
+  // Cancelling closes the field and sends nothing either.
+  await page.click('[data-testid="message-edit-cancel"]');
+  expect(await page.evaluate(() => window.chatProbe.editForm("h1"))).toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.editControl("h1"))).not.toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.editCalls())).toEqual([]);
+});
+
+test("the save sends the words and the position the page rendered, and closes on the transcript that holds them", async ({
+  page,
+}) => {
+  await openConversation(page);
+  await page.evaluate(() => window.chatProbe.resetEditCalls());
+
+  await page.click('[data-handle="h3"] [data-testid="message-edit"]');
+  await page.fill('[data-testid="message-edit-field"]', "And then?");
+  await page.click('[data-testid="message-edit-save"]');
+
+  // The pair the Host checks: the handle, the words, and the order this page rendered the row at.
+  expect(await page.evaluate(() => window.chatProbe.editCalls())).toEqual([
+    { handle: "h3", order: 3, text: "And then?" },
+  ]);
+  // The save is in flight, so the surface says so and the words stay in the field.
+  await page.evaluate(() => window.chatProbe.setPending({ kind: "edit", handle: "h3" }));
+  expect(await page.evaluate(() => window.chatProbe.editForm("h3"))).not.toBeNull();
+
+  // A refusal is the other outcome, and it costs the player nothing: the field is still open with the
+  // words they typed.
+  await page.evaluate(() => window.chatProbe.setPending(null));
+  const refused = await page.evaluate(() => window.chatProbe.editForm("h3"));
+  expect(refused?.value).toBe("And then?");
+
+  // The authoritative reread is what closes it: the row now carries exactly what was saved. The
+  // field's own absence is asserted through a retrying locator, because the close is the row's own
+  // effect after the reread renders - not a synchronous rewrite of the DOM.
+  await page.evaluate(() => window.chatProbe.applyEditedText("h3", "And then?"));
+  await expect(page.locator('[data-handle="h3"] [data-testid="message-edit-form"]')).toHaveCount(0);
+  await expect(page.locator('[data-handle="h3"] .message-bubble')).toContainText("And then?");
+  // And the one control is back in its place.
+  await expect(page.locator('[data-handle="h3"] [data-testid="message-edit"]')).toHaveCount(1);
+});

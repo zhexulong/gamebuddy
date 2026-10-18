@@ -100,7 +100,7 @@ export function ComposedReferenceGameApp() {
   // commands (regenerate mints a fresh idempotency key per click). The ref is the
   // synchronous single-flight guard, the state is the projection the surface shows.
   const [chatMutation, setChatMutation] = useState<Readonly<{
-    kind: "swipe" | "regenerate" | "opening" | "rewind";
+    kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit";
     handle: string;
   }> | null>(null);
   // The rewind arm: the message the player asked to cut back to, and the order they were shown it
@@ -914,6 +914,37 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
+   * The edit: the player's own message carries different text from now on, in the transcript and in
+   * the model's own session together. It has the same shape as the other message mutations -
+   * single-flight, no local rewrite held - and it sends the order the page rendered the row at,
+   * because the transcript is what a position means and the Host refuses a row that has moved. The
+   * authoritative reread owns what the conversation then shows.
+   */
+  const handleEdit = async (messageHandle: string, expectedOrder: number, text: string): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    if (chatMutationRef.current) return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    chatMutationRef.current = true;
+    setChatMutation(Object.freeze({ kind: "edit" as const, handle: messageHandle }));
+    try {
+      await tavernApiRef.current.edit(
+        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, expectedOrder, text },
+        { csrfToken: current.session.snapshot.csrfToken },
+      );
+      await rereadChat();
+    } catch (error) {
+      await rereadChat().catch(() => {
+        commit(problemView(error, messages(current.locale)));
+      });
+    } finally {
+      chatMutationRef.current = false;
+      setChatMutation(null);
+    }
+  };
+
+  /**
    * A rename from the Chats surface is a management mutation, and the composed
    * root owns this shell's Chat projection (its title heading included), so the
    * composed `/state` read is the authority that moves the heading. The panel
@@ -1267,6 +1298,7 @@ export function ComposedReferenceGameApp() {
                 }
                 onRewindCancel={handleRewindCancel}
                 rewindArmedHandle={rewindArm === null ? null : rewindArm.handle}
+                onEdit={(messageHandle, expectedOrder, text) => void handleEdit(messageHandle, expectedOrder, text)}
                 value={inputText}
                 onChange={writeInput}
                 onSend={() => void handleSend()}

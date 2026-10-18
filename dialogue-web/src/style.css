@@ -918,6 +918,111 @@
     cursor: not-allowed;
   }
 
+  /* The edit control. It is the player's own row's ONLY control, and it stays one: the row carries
+     the button in the same strip the companion's reply uses, and the field it opens replaces that
+     button rather than adding a second one beside it. The box is the 44 px touch minimum the rest of
+     the strip uses (`--touch-target-min`), so the strip stays a single row at 400 px. */
+  .edit-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+    padding: 0 var(--space-3);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    color: var(--text-secondary);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .edit-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    background-color: var(--surface-hover);
+    border-color: var(--border-strong);
+  }
+
+  .edit-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* The player's row is mirrored (`.message.player` is `row-reverse`), so its strip follows the
+     bubble to the outer edge instead of sitting under the avatar. */
+  .message.player .message-actions {
+    justify-content: flex-end;
+  }
+
+  .message-edit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    width: 100%;
+  }
+
+  .message-edit-field {
+    width: 100%;
+    min-height: var(--touch-target-min);
+    padding: var(--space-2) var(--space-3);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-primary);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+  }
+
+  .message-edit-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  .edit-save-btn,
+  .edit-cancel-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+    padding: 0 var(--space-3);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .edit-save-btn {
+    color: var(--text-primary);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-strong);
+  }
+
+  .edit-cancel-btn {
+    color: var(--text-secondary);
+    background-color: transparent;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .edit-save-btn:hover:not(:disabled),
+  .edit-cancel-btn:hover:not(:disabled) {
+    background-color: var(--surface-hover);
+    color: var(--text-primary);
+  }
+
+  .edit-save-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   /* ==========================================================================
    Draft Section (P3 Read-Only Named Region)
    ========================================================================== */

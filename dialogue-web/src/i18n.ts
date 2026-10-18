@@ -323,6 +323,14 @@ const en = {
   rewindConfirmPrompt: "Remove this message and everything after it? This cannot be undone.",
   rewindConfirmYes: "Remove",
   rewindConfirmNo: "Keep",
+  // The edit control: the player's own row carries one button, and pressing it opens the field their
+  // words came from. Its accessible name says what saving does to the conversation - the model reads
+  // the new words from the next turn on - because an edit that only changed the bubble would be a lie.
+  editMessage: "Edit",
+  editMessageName: "Edit this message: the model reads your new words from the next turn on",
+  editMessageField: "Your message",
+  editMessageSave: "Save",
+  editMessageCancel: "Cancel",
   // The Host's own name for the greeting variant a new chat opened on: it labels
   // the greeting set's entries `Default` / `Alternate N` (the card's own 1-based
   // order). The catalogue carries that vocabulary so a zh-CN UI never prints the
@@ -359,6 +367,12 @@ const en = {
   problemChatRewindOpeningRetainedDetail: "The greeting this conversation started on cannot be removed.",
   problemChatRewindTurnActiveTitle: "A reply is still being written",
   problemChatRewindTurnActiveDetail: "Stop the reply that is in flight, then rewind.",
+  // The edit's own two refusals: the row is not the player's own words, or a reply is being written
+  // from the very text the edit would replace.
+  problemChatEditNotPlayerMessageTitle: "That is not your message",
+  problemChatEditNotPlayerMessageDetail: "Only the messages you wrote can be edited.",
+  problemChatEditTurnActiveTitle: "A reply is still being written",
+  problemChatEditTurnActiveDetail: "Wait for the reply to finish, then edit your message.",
 
   // Characters (design/28 §2) — companion library + persona/scenario/greeting
   charactersTitle: "Characters",
@@ -874,6 +888,13 @@ const zh: Messages = {
   rewindConfirmPrompt: "删除这条消息及其之后的全部内容？此操作无法撤销。",
   rewindConfirmYes: "删除",
   rewindConfirmNo: "保留",
+  // 编辑控件：玩家自己的那一行只带一个按钮，按下后打开写这句话的输入框。无障碍名称说清保存后对话会发生什么
+  // ——模型从下一轮开始读到你改写后的文字，因为只改气泡不改模型所见就是一种欺骗。
+  editMessage: "编辑",
+  editMessageName: "编辑这条消息：模型从下一轮开始读到你改写后的文字",
+  editMessageField: "你的消息",
+  editMessageSave: "保存",
+  editMessageCancel: "取消",
   openingVariantDefault: "默认",
   openingVariantAlternate: "备用 {{index}}",
 
@@ -900,6 +921,10 @@ const zh: Messages = {
   problemChatRewindOpeningRetainedDetail: "对话开始时的那句问候不能删除。",
   problemChatRewindTurnActiveTitle: "还有一条回复正在生成",
   problemChatRewindTurnActiveDetail: "请先停止正在生成的回复，再回退。",
+  problemChatEditNotPlayerMessageTitle: "这不是你的消息",
+  problemChatEditNotPlayerMessageDetail: "只能编辑你自己发送的消息。",
+  problemChatEditTurnActiveTitle: "还有一条回复正在生成",
+  problemChatEditTurnActiveDetail: "请等这条回复生成完成后，再编辑你的消息。",
 
   // Characters (design/28 §2)
   charactersTitle: "角色",

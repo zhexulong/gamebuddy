@@ -32,6 +32,7 @@ export function ChatSurface({
   onRewindConfirm,
   onRewindCancel,
   rewindArmedHandle,
+  onEdit,
   value,
   onChange,
   onSend,
@@ -51,7 +52,7 @@ export function ChatSurface({
   chatTitle: string | null;
   labels: Messages;
   /** The chat mutation in flight and the message it belongs to, if any. */
-  pending: Readonly<{ kind: "swipe" | "regenerate" | "opening" | "rewind"; handle: string }> | null;
+  pending: Readonly<{ kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit"; handle: string }> | null;
   /**
    * The optimistic player message: the text just sent, shown until the authoritative one lands.
    * It is handed to the timeline, which owns the scrolling section - rendering it beside the
@@ -69,6 +70,8 @@ export function ChatSurface({
   onRewindCancel: () => void;
   /** The one message whose rewind is armed, if any. */
   rewindArmedHandle: string | null;
+  /** The player's own row's edit: the new text and the order the page rendered the row at. */
+  onEdit: (messageHandle: string, expectedOrder: number, text: string) => void;
   value: string;
   onChange: (text: string) => void;
   onSend: () => void;
@@ -101,6 +104,7 @@ export function ChatSurface({
         onRewindConfirm={onRewindConfirm}
         onRewindCancel={onRewindCancel}
         rewindArmedHandle={rewindArmedHandle}
+        onEdit={onEdit}
         pendingPlayerMessage={pendingPlayerMessage}
       />
       {notice !== null && (
