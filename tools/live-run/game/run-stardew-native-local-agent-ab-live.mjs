@@ -227,11 +227,11 @@ const SCENARIO_PROMPTS = Object.freeze({
     // "the day is yours to end" is said, because a night the harness chose would be a scripted crossing.
     zh: (day) =>
       `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。今天没有人给你派活——你自己看看周围，想做什么就做什么。` +
-      `做完今天想做的事，**先走进农舍屋里**，然后在床上睡下（advance_day 只在农舍屋内生效，站在外面它会一直等你进屋而不会结束这一天），明天接着来。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+      `这一天怎么过、什么时候收工，都由你决定。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
     en: (day) =>
       `It is morning in Stardew Valley (day ${String(day)} in a row for you). Nobody has assigned you anything today - look around and do whatever you think is worth doing. ` +
       `When you are done for the day, go INSIDE the farmhouse first, and then sleep in your bed there. advance_day only works indoors - called from outside it waits for you to come in and never ends the day. ` +
-      `You will pick it up tomorrow. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+      `How you spend the day, and when you call it done, is yours to decide. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
@@ -1192,30 +1192,6 @@ function accomplishedSince(startIndex) {
   return [...accomplished].sort();
 }
 
-/** How many times one day may be REMINDED that it is not over yet before the run stops waiting. */
-const MULTIDAY_SLEEP_ATTEMPTS = (() => {
-  const requested = Number.parseInt(process.env.GAMEBUDDY_MULTIDAY_SLEEP_ATTEMPTS ?? "2", 10);
-  return Number.isInteger(requested) && requested >= 0 && requested <= 5 ? requested : 2;
-})();
-
-/**
- * What the companion is told when its turn settled without ending the day.
- *
- * A day is over when the companion has SLEPT, so a turn that merely reported back is not the end of it. The
- * reminder is deliberately a PLAYER turn rather than anything the harness does: the night must stay the
- * companion's own decision (measured 2026-10-17: run m11 worked six real pieces of farm work in 360s and then
- * reported to the player, which `companion_did_not_sleep` named correctly - the harness had never asked again).
- */
-export const MULTI_DAY_SLEEP_REMINDER = Object.freeze({
-  zh: "今天还没结束——先把话放一放。它只在农舍屋内生效：先进屋，再上床睡下（advance_day）。明天的事明天再说。",
-  en: "The day is not over yet - hold the report for now. It only works indoors: go inside the farmhouse first, then sleep in your bed (advance_day). Tomorrow can wait until tomorrow.",
-});
-
-/** Did the companion dispatch its own `advance_day` since `startIndex`? */
-function dispatchedAdvanceDaySince(startIndex) {
-  return actionTrace.slice(startIndex).some((entry) => entry.action === "advance_day");
-}
-
 function deferred() {
   let resolve;
   const promise = new Promise((settle) => {
@@ -1916,26 +1892,6 @@ try {
           if (walked.status !== null) status = walked.status;
           agentTurnResult = walked.turn;
           sessionTurns.push(Object.freeze({ goalIndex: day - 1, goal: promptForDay(day), turn: walked.turn, day }));
-          // A day is over when the companion SLEEPS, so a turn that settled without dispatching its own
-          // `advance_day` has not ended the day - it reported back. Asking again is the harness restating the
-          // day's own intent, never starting a night for it: the companion still decides, and a run that never
-          // sleeps is reported as `companion_did_not_sleep` after the bounded retries (measured 2026-10-17).
-          for (let attempt = 0; attempt < MULTIDAY_SLEEP_ATTEMPTS; attempt += 1) {
-            if (dispatchedAdvanceDaySince(before)) break;
-            const reminder = MULTI_DAY_SLEEP_REMINDER[localeKey];
-            const nudged = await runAgentTurn(reminder, tools);
-            if (nudged.status !== null) status = nudged.status;
-            agentTurnResult = nudged.turn;
-            sessionTurns.push(
-              Object.freeze({
-                goalIndex: day - 1,
-                goal: reminder,
-                turn: nudged.turn,
-                day,
-                reminderAttempt: attempt + 1,
-              }),
-            );
-          }
           // The day's own verdict: what it accomplished, read from the receipts its dispatches produced. This is
           // the "the companion kept working" half of the baseline, and it is computed from the trace rather than
           // from the companion's prose.

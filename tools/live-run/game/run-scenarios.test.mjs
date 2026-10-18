@@ -102,38 +102,6 @@ test("every scenario has a prompt in both locales, and none of them is empty", (
   assert.match(prompts, /\$\{PRESENCE_PARAGRAPH_EN\}\$\{COMPANION_VOICE_RULE_EN\}/u);
 });
 
-test("the multi-day prompt is the one that tells the companion to end its own day", () => {
-  // Nobody else ends the night: the loop only watches. So "the day is yours to end" has to be SAID, and it has
-  // to be said in the prompt rather than arranged by the harness, because a night the harness started would be
-  // a scripted crossing rather than the companion's own day.
-  const prompts = RUNNER.slice(
-    RUNNER.indexOf("const SCENARIO_PROMPTS = Object.freeze({"),
-    RUNNER.indexOf("const SESSION_GOALS"),
-  );
-  const at = prompts.indexOf("multiday_routine: Object.freeze({");
-  const block = prompts.slice(at, prompts.indexOf("}),", at));
-  assert.match(block, /睡下/u, "the Chinese prompt must say to go to bed");
-  assert.match(block, /sleep in your bed/u, "the English prompt must say to sleep in your bed");
-  // ...and the action's OWN precondition, which the lifecycle enforces by name: it only begins a night from
-  // inside the farmhouse, so a prompt that omits this leaves the companion dispatching a sleep it cannot take.
-  assert.match(block, /只在农舍屋内生效/u, "the Chinese prompt must state the indoor precondition");
-  assert.match(block, /only works indoors/u, "the English prompt must state the indoor precondition");
-  // The watcher must not dispatch a night of its own: it reads the receipt of the dispatch the COMPANION made,
-  // and its one write is the settlement-menu dismissal.
-  const watcher = RUNNER.slice(
-    RUNNER.indexOf("async function watchNightRollover(day"),
-    RUNNER.indexOf("async function startVoiceLane"),
-  );
-  assert.doesNotMatch(watcher, /action: "advance_day"/u, "the watcher must not dispatch a night");
-  assert.match(watcher, /entry\.action === "advance_day"/u, "the watcher reads the companion's own dispatch");
-  assert.match(watcher, /action: "dismiss_modal"/u, "the watcher closes the settlement menu the rollover raises");
-  // The watcher must WAIT for the night to begin rather than observing from the first second of the day: a
-  // watcher that polls the world for the whole turn cannot tell "not yet" from "never", and was measured
-  // observing from t=0 on the first multi-day run.
-  assert.match(watcher, /const waitForNightToBegin = async \(\) => \{/u, "the watcher waits for the night to begin");
-  assert.match(watcher, /companion_did_not_sleep/u, "a day without a night is named");
-});
-
 test("the run budget is a harness bound that fits the scenario, not one fixed number", () => {
   // Measured 2026-10-17 on run m12: with a fixed 10-minute run deadline, the FIRST accepted night consumed the
   // budget and every later dispatch came back `bridge_connect_deadline_exceeded` - a harness fault that read
@@ -173,33 +141,6 @@ test("the rollover watcher dispatches through the harness, not with a raw execut
     RUNNER,
     /import \{ executeFresh, TERMINAL_STATES \} from "\.\.\/\.\.\/lib\/stardew-native-smoke-harness-v1\.mjs";/,
   );
-});
-
-test("a day that only reported back is asked again, by the companion's own decision", () => {
-  // Measured 2026-10-17 (run m11): the companion worked six real pieces of farm work in 360s and then reported to
-  // the player. `companion_did_not_sleep` named it correctly, but the harness had never asked again - a day ends
-  // when the companion SLEEPS, so a settled turn that dispatched no `advance_day` has not ended it.
-  assert.match(RUNNER, /const MULTIDAY_SLEEP_ATTEMPTS = \(\(\) => \{/u);
-  assert.match(RUNNER, /export const MULTI_DAY_SLEEP_REMINDER = Object\.freeze\(\{/u);
-  assert.match(RUNNER, /function dispatchedAdvanceDaySince\(startIndex\) \{/u);
-  const dayTurn = RUNNER.slice(RUNNER.indexOf("dayTurn: async (day) => {"), RUNNER.indexOf("nightWatch: (day) =>"));
-  assert.match(dayTurn, /for \(let attempt = 0; attempt < MULTIDAY_SLEEP_ATTEMPTS; attempt \+= 1\) \{/u);
-  assert.match(dayTurn, /if \(dispatchedAdvanceDaySince\(before\)\) break;/u, "a real night stops the reminders");
-  // The reminder is delivered as a PLAYER turn: the night stays the companion's decision, and `advance_day` is
-  // never dispatched by the harness on its behalf.
-  assert.match(dayTurn, /const nudged = await runAgentTurn\(reminder, tools\);/u);
-  assert.doesNotMatch(dayTurn, /action: "advance_day"/u);
-  // Both locales carry the reminder, and it says the two steps the lifecycle actually requires.
-  const reminder = RUNNER.slice(
-    RUNNER.indexOf("export const MULTI_DAY_SLEEP_REMINDER"),
-    RUNNER.indexOf("function dispatchedAdvanceDaySince"),
-  );
-  assert.match(reminder, /zh: "/u);
-  assert.match(reminder, /en: "/u);
-  assert.match(reminder, /睡下/u, "the reminder must say to sleep");
-  assert.match(reminder, /只在农舍屋内生效/u, "the reminder must repeat the indoor precondition");
-  assert.match(reminder, /sleep in your bed/u);
-  assert.match(reminder, /advance_day/u);
 });
 
 test("no scenario prompt prescribes a route", () => {
@@ -280,4 +221,44 @@ test("farmer-to-farmer presence is not one of the single-player scenarios", () =
     assert.ok(!prompts.includes(coOpOnly), `a single-player scenario must not claim ${coOpOnly}`);
   }
   assert.match(RUNNER, /Farmer-to-farmer presence and warp\n\/\/ sync are NOT one of these scenarios/u);
+});
+
+test("the multi-day prompt states the day as the companion's own, without coaching it", () => {
+  const prompts = RUNNER.slice(
+    RUNNER.indexOf("const SCENARIO_PROMPTS = Object.freeze({"),
+    RUNNER.indexOf("const SESSION_GOALS"),
+  );
+  const at = prompts.indexOf("multiday_routine: Object.freeze({");
+  const block = prompts.slice(at, prompts.indexOf("}),", at));
+  // The assertions are about what the MODEL READS, so they run on the template lines rather than the whole
+  // block: the block's comments legitimately discuss `advance_day` (that is documentation, not prompt text).
+  const templateLines = block.split("\n").filter((line) => line.includes("${PRESENCE_PARAGRAPH_"));
+  assert.equal(templateLines.length, 2, "both locales must carry the presence paragraph in their template");
+  const promptText = templateLines.join("\n");
+  assert.match(promptText, /由你决定/u, "the Chinese prompt must leave the day to the companion");
+  assert.match(promptText, /yours to decide/u, "the English prompt must leave the day to the companion");
+  // The hour is theirs; the tool and the steps are not the prompt's business. Naming them is the coaching this
+  // file's own comment says was deleted, and design/handbook/live-run-patterns.md forbids it ("the prompt gives the
+  // player's intent, not steps, tool names or coordinates"). The refusal receipt is where "advance_day only works
+  // indoors" belongs. Measured 2026-10-17/18: the coaching was there, and a reviewer graded it over-encoding.
+  assert.doesNotMatch(promptText, /advance_day/u, "the prompt must not name the tool");
+  assert.doesNotMatch(promptText, /农舍|farmhouse/u, "the prompt must not prescribe the step");
+  // The night stays the companion's own decision, so the loop never dispatches one: `advance_day` appears only as
+  // the receipt it reads back.
+  const watcher = RUNNER.slice(
+    RUNNER.indexOf("async function watchNightRollover(day"),
+    RUNNER.indexOf("async function startVoiceLane"),
+  );
+  assert.doesNotMatch(watcher, /action: "advance_day"/u, "the watcher must not dispatch a night");
+  assert.match(watcher, /entry\.action === "advance_day"/u, "the watcher reads the companion's own dispatch");
+});
+
+test("the harness does not nudge a companion that ended its day without sleeping", () => {
+  // The harness used to inject a SECOND PLAYER MESSAGE per day ("the day is not over yet..."), which the RUNBOOK
+  // forbids in as many words: a second player message is itself a steer, and if it produces the sleep then "it
+  // closed the loop" was really "it was pushed". The run now reports companion_did_not_sleep with no retry.
+  assert.doesNotMatch(RUNNER, /MULTI_DAY_SLEEP_REMINDER/u);
+  assert.doesNotMatch(RUNNER, /MULTIDAY_SLEEP_ATTEMPTS/u);
+  assert.doesNotMatch(RUNNER, /dispatchedAdvanceDaySince/u);
+  assert.match(RUNNER, /companion_did_not_sleep/u);
 });
