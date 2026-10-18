@@ -466,6 +466,11 @@ test("P4c hands the plan's selected volatile world-book refs to the vendor bindi
   const volatileRef = fixture.volatileRefs[0];
   assert.ok(volatileRef, "the volatile catalog fixture must produce the ref the plan installs");
 
+  // The turn's volatile binding lives for exactly the prompt window and is released at settlement:
+  // p4-provider-start-execution.ts's `finally` calls `clearVolatileForTurn`. Reading the registry
+  // after `runMountedProviderStart` returns therefore asks about the wrong moment - the handover has
+  // already happened and been released. Snapshot it while the prompt is the live one instead.
+  let boundDuringPrompt: unknown;
   const { scope } = createScope({
     readAcceptedAuthoredContextPlan: async () =>
       Object.freeze({
@@ -480,6 +485,7 @@ test("P4c hands the plan's selected volatile world-book refs to the vendor bindi
       },
       session: Object.freeze({
         prompt() {
+          boundDuringPrompt = readAuthoredContextRegistry()?.volatileTurns.get(authoredScope.sessionId);
           return Promise.resolve();
         },
       }),
@@ -488,10 +494,13 @@ test("P4c hands the plan's selected volatile world-book refs to the vendor bindi
 
   await runMountedProviderStart(scope);
 
-  assert.deepEqual(readAuthoredContextRegistry()?.volatileTurns.get(authoredScope.sessionId), {
+  assert.deepEqual(boundDuringPrompt, {
     turnId: facts.turnId,
     sourceRefs: [volatileRef],
   });
+  // The leak-prevention half: the binding must not outlive its prompt, or a later turn's install
+  // would meet a stale binding. A red here is not to be "fixed" by keeping the binding alive.
+  assert.equal(readAuthoredContextRegistry()?.volatileTurns.get(authoredScope.sessionId), undefined);
   await authoredContextCapability.clear();
 });
 
