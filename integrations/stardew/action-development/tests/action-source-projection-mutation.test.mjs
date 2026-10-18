@@ -59,9 +59,11 @@ test("Host route drift restricts the executable intersection without widening it
   const registry = sources.host_registry;
   const gameTools = sources.host_game_tools;
 
-  const adapterAdrift = registry.replace(
-    'actionAdapter(\n    "equip_tool",',
-    'actionAdapter(\n    "equip_tool_x",',
+  // The anchor tolerates the formatter's line breaking: this call is written on one line while it
+  // fits and broken across lines when it does not, and a mutation test must key on the CALL, not
+  // on how wide the sheet decided it was. The guard below still fails loudly if nothing matched.
+  const adapterAdrift = registry.replace(/actionAdapter\(\s*"equip_tool",/u, (match) =>
+    match.replace('"equip_tool",', '"equip_tool_x",'),
   );
   assert.notEqual(adapterAdrift, registry, "adapter anchor must match");
   const adapterProjection = deriveWith({ host_registry: adapterAdrift });
