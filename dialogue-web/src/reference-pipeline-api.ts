@@ -360,6 +360,12 @@ const PROBLEM_CODES = [
   // A durable companion record that is absent, incomplete or unreadable is a data-integrity fact,
   // not a retryable runtime outage.
   "companion_record_unreadable",
+  // Her own world book is one durable file replaced whole, so an edit CASes on the revision
+  // the browser read: the book moved on, she has no book, or the threads that pin the revision
+  // it replaced could not be carried along. Each is its own bounded fact.
+  "companion_world_book_conflict",
+  "companion_world_book_absent",
+  "companion_world_book_binding_partial",
   // The companion's performance directive is CASed on the exact profile revision the browser
   // read; a stale edit is its own bounded refusal.
   "character_voice_conflict",

@@ -7,7 +7,7 @@ import type {
   WorldInfoContentV1,
   WorldInfoStateV1,
 } from "../management-pipeline-api";
-import { problemTextWithCode } from "../management-pipeline-api";
+import { problemTextWithCode, TavernProblemError } from "../management-pipeline-api";
 import type { WorldInfoSurfaceSource } from "./management-surface-panels";
 import { CharactersPanel } from "./CharactersPanel";
 import { characterLabels, type CharacterLabels } from "./character-domain-labels";
@@ -58,56 +58,223 @@ export function CharactersSurfacePanel({
   return (
     <>
       <CharactersPanel api={api} csrfToken={csrfToken} locale={locale} />
-      <CompanionWorldBookSection api={api} locale={locale} />
+      <CompanionWorldBookSection api={api} csrfToken={csrfToken} locale={locale} />
       <CharacterWorldBookPanel api={api} csrfToken={csrfToken} locale={locale} read={read} />
     </>
   );
 }
 
 /**
- * The companion's own world book. `absent` is both "she has no book" and "the
- * read could not be served": neither is a book, so neither renders a block - the
- * surface never invents one, and a failed read never reads as an empty book.
+ * The companion's own world book, which the player reads AND edits.
+ *
+ * `absent` is both "she has no book" and "the read could not be served": neither is a
+ * book, so neither renders a block - the surface never invents one, and a failed read
+ * never reads as an empty book. A book that exists is editable even when it carries no
+ * entries: an empty book is exactly the one a player has to be able to add to.
+ *
+ * The draft PINS the revision the read carried. A save that would overwrite a change
+ * the player never saw must keep failing until she reopens the editor on the book that
+ * is actually there, so the editor's CAS is never silently rebased by a read-back.
  */
 type CompanionWorldBookView =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "absent" }>
-  | Readonly<{ kind: "ready"; worldBook: CompanionWorldBookV1 }>;
+  | Readonly<{ kind: "ready"; handle: string; worldBook: CompanionWorldBookV1 }>;
+
+/** One entry being edited, with its trigger words as the player typed them. */
+type CompanionWorldBookEntryDraft = Readonly<{
+  /**
+   * The row's own identity while it is being edited, and the handle its removal is
+   * armed on. It is client-only - the save builds the wire payload field by field, so
+   * it cannot be sent - and it is minted per row, so adding or removing rows never
+   * reuses one. Keying editable rows by position is what makes React reconcile a
+   * keystroke into the wrong row.
+   */
+  rowId: string;
+  title: string;
+  keys: string;
+  constant: boolean;
+  content: string;
+}>;
+
+type CompanionWorldBookDraft = Readonly<{
+  handle: string;
+  /** The durable revision the editor was opened on; the save CASes on exactly this. */
+  expectedRevision: number;
+  entries: readonly CompanionWorldBookEntryDraft[];
+}>;
+
+/** The one outcome line this section reports, so two operations never print two notices. */
+type CompanionWorldBookNotice = Readonly<{ kind: "success" | "failure"; text: string }> | null;
+
+/**
+ * The next authoring row's identity. A module counter rather than a uuid: the id never
+ * leaves the browser, and a counter keeps a test deterministic.
+ */
+let nextCompanionWorldBookRowId = 0;
+
+function toCompanionWorldBookEntryDraft(entry: CompanionWorldBookV1["entries"][number]): CompanionWorldBookEntryDraft {
+  nextCompanionWorldBookRowId += 1;
+  return {
+    rowId: `companion-world-book-row-${nextCompanionWorldBookRowId}`,
+    title: entry.title,
+    keys: entry.keys.join(", "),
+    constant: entry.constant,
+    content: entry.content,
+  };
+}
+
+function newCompanionWorldBookEntryDraft(): CompanionWorldBookEntryDraft {
+  nextCompanionWorldBookRowId += 1;
+  return {
+    rowId: `companion-world-book-row-${nextCompanionWorldBookRowId}`,
+    title: "",
+    keys: "",
+    constant: false,
+    content: "",
+  };
+}
+
+/**
+ * Whether the draft is what the Host accepts: every entry carries a title and a body.
+ *
+ * The two are the durable validator's own required fields, so an incomplete draft is
+ * not a refusal - the save control is simply not offered yet. Offering it and letting
+ * the Host refuse would tell the player only that her save failed, when the fact is
+ * that an entry is still missing the one thing it must have.
+ */
+function companionWorldBookDraftIsComplete(draft: CompanionWorldBookDraft): boolean {
+  return draft.entries.every((entry) => entry.title.trim().length > 0 && entry.content.trim().length > 0);
+}
+
+/**
+ * The player's sentence for one refused save.
+ *
+ * Every way the Host refuses this save is a different fact - the book moved on since she
+ * read it, she has no book, an entry is not something the Host will keep, the durable
+ * thread store could not follow - and one "could not save" sentence would send her
+ * looking for the wrong fault. A code this table does not know keeps the base sentence
+ * with the code appended, so an unexpected refusal is still named rather than swallowed.
+ */
+function companionWorldBookRefusal(labels: CharacterLabels, error: unknown): string {
+  const code = error instanceof TavernProblemError ? error.code : null;
+  switch (code) {
+    case "companion_world_book_conflict":
+      return labels.companionWorldBookConflict;
+    case "companion_world_book_absent":
+      return labels.companionWorldBookAbsent;
+    case "authored_content_invalid":
+    case "invalid_request":
+      return labels.companionWorldBookInvalid;
+    case "companion_record_unreadable":
+      return labels.companionWorldBookUnreadable;
+    case "companion_world_book_binding_partial":
+      return labels.companionWorldBookBindingPartial;
+    case "storage_unavailable":
+      return labels.companionWorldBookNotSaved;
+    default:
+      return problemTextWithCode(labels.worldBookSaveFailed, error);
+  }
+}
 
 function CompanionWorldBookSection({
   api,
+  csrfToken,
   locale,
 }: {
   api: ManagementPipelineApi;
+  csrfToken: string;
   locale: Locale;
 }): ReactElement | null {
   const labels = characterLabels(locale);
   const [view, setView] = useState<CompanionWorldBookView>({ kind: "loading" });
+  const [draft, setDraft] = useState<CompanionWorldBookDraft | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<CompanionWorldBookNotice>(null);
+  // The row whose removal is armed. Arming is per row and per section, so a second arm
+  // replaces the first and no stale arm can fire on another entry.
+  const [armed, setArmed] = useState<string | null>(null);
+
+  const readOnce = async (): Promise<CompanionWorldBookView> => {
+    try {
+      // The book belongs to the mounted companion, exactly as the persona,
+      // scenario, opening and directive do: the surface reads the current
+      // library entry's own book and no other companion's.
+      const list = await api.listCompanions();
+      const current = list.companions.find((entry) => entry.isCurrent);
+      if (current === undefined) return { kind: "absent" };
+      const worldBook = await api.readCompanionWorldBook(current.handle);
+      return worldBook.present ? { kind: "ready", handle: current.handle, worldBook } : { kind: "absent" };
+    } catch {
+      return { kind: "absent" };
+    }
+  };
 
   useEffect(() => {
     let active = true;
     void (async () => {
-      try {
-        // The book belongs to the mounted companion, exactly as the persona,
-        // scenario, opening and directive do: the surface reads the current
-        // library entry's own book and no other companion's.
-        const list = await api.listCompanions();
-        const current = list.companions.find((entry) => entry.isCurrent);
-        if (current === undefined) {
-          if (active) setView({ kind: "absent" });
-          return;
-        }
-        const worldBook = await api.readCompanionWorldBook(current.handle);
-        if (!active) return;
-        setView(worldBook.present ? { kind: "ready", worldBook } : { kind: "absent" });
-      } catch {
-        if (active) setView({ kind: "absent" });
-      }
+      const next = await readOnce();
+      if (active) setView(next);
     })();
     return () => {
       active = false;
     };
+    // The client is the mount's own authority and is stable for the life of the surface.
   }, [api]);
+
+  const beginEdit = (): void => {
+    if (view.kind !== "ready" || view.worldBook.revision === null) return;
+    setDraft({
+      handle: view.handle,
+      expectedRevision: view.worldBook.revision,
+      entries: view.worldBook.entries.map(toCompanionWorldBookEntryDraft),
+    });
+    setArmed(null);
+    setNotice(null);
+  };
+
+  /**
+   * Saves the whole list. The Host's own reply is the new projection, so a saved book
+   * is re-rendered from what it returned rather than from what the editor asked for; a
+   * refusal re-reads the book BEFORE it is reported, so the surface shows the truth and
+   * the editor keeps the revision it was opened on.
+   */
+  const submit = (): void => {
+    if (draft === null || !companionWorldBookDraftIsComplete(draft)) return;
+    const target = draft;
+    const entries = target.entries.map((entry) => ({
+      title: entry.title.trim(),
+      keys: parseTriggerWords(entry.keys),
+      constant: entry.constant,
+      content: entry.content,
+    }));
+    setSaving(true);
+    setArmed(null);
+    void (async () => {
+      let failure: string | null = null;
+      try {
+        const updated = await api.updateCompanionWorldBook(
+          target.handle,
+          { apiVersion: 1, expectedRevision: target.expectedRevision, entries },
+          csrfToken,
+        );
+        setView({ kind: "ready", handle: target.handle, worldBook: updated });
+        setDraft(null);
+      } catch (error) {
+        failure = companionWorldBookRefusal(labels, error);
+        setView(await readOnce());
+      } finally {
+        setSaving(false);
+      }
+      setNotice(failure === null ? { kind: "success", text: labels.saved } : { kind: "failure", text: failure });
+    })();
+  };
+
+  const remove = (rowId: string): void => {
+    if (draft === null) return;
+    setArmed(null);
+    setDraft({ ...draft, entries: draft.entries.filter((entry) => entry.rowId !== rowId) });
+  };
 
   if (view.kind !== "ready") return null;
   const entries = view.worldBook.entries;
@@ -165,6 +332,187 @@ function CompanionWorldBookSection({
           </div>
         </details>
       )}
+      {/* The editor is offered whether or not the book carries entries: an empty
+          book is the one a player most needs to add to. */}
+      {draft === null ? (
+        <div className="composer-actions">
+          <button type="button" className="small-button" data-companion-world-book-edit onClick={beginEdit}>
+            {labels.companionWorldBookEdit}
+          </button>
+        </div>
+      ) : (
+        <CompanionWorldBookEditor
+          labels={labels}
+          draft={draft}
+          saving={saving}
+          armed={armed}
+          onChange={setDraft}
+          onArm={setArmed}
+          onRemove={remove}
+          onSubmit={submit}
+          onCancel={() => {
+            setDraft(null);
+            setArmed(null);
+            setNotice(null);
+          }}
+        />
+      )}
+      {notice !== null && (
+        <p
+          role="status"
+          data-companion-world-book-notice
+          className={notice.kind === "success" ? "success-banner" : "error-banner"}
+        >
+          {notice.text}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The one editor for her own book: every entry's title, trigger words and body, plus
+ * adding a row and removing one.
+ *
+ * Removal follows the product's destructive-row shape - arm, then confirm - because a
+ * bare delete on a row beside a save control is a control a player fires by accident,
+ * and an entry she wrote is not recoverable after the save. The body is the row's last
+ * field and its own textarea rather than a fold: this is the one screen where the text
+ * is being written, so hiding it would hide the field being edited.
+ */
+function CompanionWorldBookEditor({
+  labels,
+  draft,
+  saving,
+  armed,
+  onChange,
+  onArm,
+  onRemove,
+  onSubmit,
+  onCancel,
+}: Readonly<{
+  labels: CharacterLabels;
+  draft: CompanionWorldBookDraft;
+  saving: boolean;
+  armed: string | null;
+  onChange: (draft: CompanionWorldBookDraft) => void;
+  onArm: (rowId: string | null) => void;
+  onRemove: (rowId: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}>): ReactElement {
+  const updateEntry = (index: number, entry: CompanionWorldBookEntryDraft): void =>
+    onChange({ ...draft, entries: draft.entries.map((item, itemIndex) => (itemIndex === index ? entry : item)) });
+  return (
+    <section data-companion-world-book-draft>
+      <h3>{labels.companionWorldBookEditTitle}</h3>
+      <p className="management-settings-hint">{labels.companionWorldBookEditHint}</p>
+      {draft.entries.map((entry, index) => (
+        <div key={entry.rowId} data-companion-world-book-entry-draft>
+          <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-title`}>
+            {labels.worldBookEntryTitle}
+          </label>
+          <input
+            id={`companion-world-book-entry-${index}-title`}
+            className="form-input"
+            type="text"
+            maxLength={256}
+            value={entry.title}
+            onChange={(event) => updateEntry(index, { ...entry, title: event.target.value })}
+          />
+          <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-keys`}>
+            {labels.worldBookEntryKeys}
+          </label>
+          <input
+            id={`companion-world-book-entry-${index}-keys`}
+            className="form-input"
+            type="text"
+            value={entry.keys}
+            onChange={(event) => updateEntry(index, { ...entry, keys: event.target.value })}
+          />
+          <p className="management-settings-hint">{labels.companionWorldBookEntryKeysHint}</p>{" "}
+          <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-body`}>
+            {labels.companionWorldBookEntryBody}
+          </label>
+          <textarea
+            id={`companion-world-book-entry-${index}-body`}
+            className="form-textarea"
+            rows={4}
+            maxLength={4096}
+            value={entry.content}
+            onChange={(event) => updateEntry(index, { ...entry, content: event.target.value })}
+          />
+          {/* The row's own removal, and only while it is armed: the confirmation is the
+              row's only action until it is answered, and it never shares a line with the
+              control it replaces. */}
+          {armed === entry.rowId ? (
+            <div data-companion-world-book-remove-confirm>
+              <p role="status" data-companion-world-book-remove-prompt>
+                {labels.companionWorldBookRemoveConfirm.replace("{{title}}", entry.title)}
+              </p>
+              <div className="composer-actions">
+                <button
+                  type="button"
+                  className="small-button danger"
+                  data-companion-world-book-remove-yes
+                  onClick={() => onRemove(entry.rowId)}
+                >
+                  {labels.companionWorldBookRemove}
+                </button>
+                <button
+                  type="button"
+                  className="small-button"
+                  data-companion-world-book-remove-no
+                  onClick={() => onArm(null)}
+                >
+                  {labels.worldBookCancel}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="composer-actions">
+              <button
+                type="button"
+                className="small-button"
+                data-companion-world-book-remove
+                onClick={() => onArm(entry.rowId)}
+              >
+                {labels.companionWorldBookRemove}
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+      <div className="composer-actions">
+        <button
+          type="button"
+          className="small-button"
+          data-companion-world-book-add
+          onClick={() => onChange({ ...draft, entries: [...draft.entries, newCompanionWorldBookEntryDraft()] })}
+        >
+          {labels.companionWorldBookAddEntry}
+        </button>
+      </div>
+      <div className="composer-actions">
+        <button
+          type="button"
+          className="small-button"
+          data-companion-world-book-save
+          disabled={saving || !companionWorldBookDraftIsComplete(draft)}
+          onClick={onSubmit}
+        >
+          {saving ? labels.saving : labels.companionWorldBookSave}
+        </button>
+        <button
+          type="button"
+          className="small-button"
+          data-companion-world-book-cancel
+          disabled={saving}
+          onClick={onCancel}
+        >
+          {labels.worldBookCancel}
+        </button>
+      </div>
     </section>
   );
 }

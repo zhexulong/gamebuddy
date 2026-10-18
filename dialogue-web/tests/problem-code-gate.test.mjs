@@ -354,8 +354,9 @@ test("problem-code.4: no browser-contract handler catches and decides nothing", 
 test("problem-code.5: the authorities and the sender signatures are read, not assumed", (t) => {
   const { tavern, turn, game, transport } = authorities();
   // The count is the premise of "the reader really read the union", nothing more: the rewind's four
-  // refusals moved it from 44 to 48, and it still fails the moment the reader stops seeing a member.
-  assert.equal(tavern.size, 48, `the tavern problem union should have 48 members, read ${tavern.size}`);
+  // refusals moved it from 44 to 48, and the world book's own edit refusals moved it 48 to 51, and
+  // it still fails the moment the reader stops seeing a member.
+  assert.equal(tavern.size, 51, `the tavern problem union should have 51 members, read ${tavern.size}`);
   assert.equal(game.size, 23, `the game problem union should have 23 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");

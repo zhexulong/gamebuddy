@@ -96,6 +96,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "settings.profiles.update"
     | "companion.list"
     | "companion.worldbook.read"
+    | "companion.worldbook.update"
     | "companion.profile.read"
     | "companion.create"
     | "character.import.stage"
@@ -146,6 +147,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.settings.profiles.update"
     | "tavern.operation.companion.list"
     | "tavern.operation.companion.worldbook.read"
+    | "tavern.operation.companion.worldbook.update"
     | "tavern.operation.companion.profile.read"
     | "tavern.operation.companion.create"
     | "tavern.operation.character.import.stage"
@@ -250,13 +252,13 @@ export type CompanionDetailV1 = Readonly<{
 /**
  * One entry of the companion's OWN world book - the reviewed card's
  * `character_book`, which the import persisted under the companion's runtime
- * root. The entry's body IS projected, read-only: the panel already lets the player
- * read and edit this companion's voice directive, persona, scenario and greetings,
- * so a row showing which words reach an entry but not what it says is a row they
- * can deliberately reach and still cannot read. The Host renders the body through
- * the run's macro table before it is sent, so no `{{user}}`/`{{char}}` placeholder
- * reaches this surface. Editing an entry is a planned capability, not a forbidden
- * one; it is not served yet.
+ * root. The entry's body IS projected, and it is editable: the panel already lets
+ * the player read and edit this companion's voice directive, persona, scenario and
+ * greetings, so a row showing which words reach an entry but not what it says is a
+ * row they can deliberately reach and still cannot read. The Host renders the body
+ * through the run's macro table before it is sent, so no `{{user}}`/`{{char}}`
+ * placeholder reaches this surface; `updateCompanionWorldBook` sends the whole list
+ * back with the book's durable revision as the CAS.
  */
 export type CompanionWorldBookEntryV1 = Readonly<{
   title: string;
@@ -277,10 +279,23 @@ export type CompanionWorldBookEntryV1 = Readonly<{
  * artifacts a Chat may bind, this is the book the companion was provisioned with.
  * `present: false` means the companion has no book at all - the surface then
  * renders no block, so absence never reads as a book whose entries were lost.
+ * `revision` is the durable book's own revision and is null in exactly that one
+ * case; it is what an edit CASes on.
  */
 export type CompanionWorldBookV1 = Readonly<{
   apiVersion: 1;
   present: boolean;
+  revision: number | null;
+  entries: readonly CompanionWorldBookEntryV1[];
+}>;
+/**
+ * One player edit of the companion's OWN world book: the complete entry list, CASed
+ * on the revision the read carried. The entries are the projection's own shape, so
+ * this command can never carry a bound the read does not already carry.
+ */
+export type UpdateCompanionWorldBookCommandV1 = Readonly<{
+  apiVersion: 1;
+  expectedRevision: number;
   entries: readonly CompanionWorldBookEntryV1[];
 }>;
 /**
@@ -924,8 +939,10 @@ const OPERATION_IDS = [
   // design/28 §2 Character / Persona / Scenario / Greeting + Chat retention.
   "companion.list",
   // design/28 §2 the companion's OWN world book: what the reviewed card carried,
-  // which is a different thing from the World Info items a Chat can attach.
+  // which is a different thing from the World Info items a Chat can attach. Read
+  // and rewritten through the same route pair, CASed on the book's own revision.
   "companion.worldbook.read",
+  "companion.worldbook.update",
   // design/28 §2 the read-only character inspector: one roster companion's own authored
   // facts, which no other route projects for a companion who is not the mounted one.
   "companion.profile.read",
@@ -983,6 +1000,7 @@ const LABEL_KEYS = [
   "tavern.nav.characters",
   "tavern.operation.companion.list",
   "tavern.operation.companion.worldbook.read",
+  "tavern.operation.companion.worldbook.update",
   "tavern.operation.companion.profile.read",
   "tavern.operation.companion.create",
   "tavern.operation.character.import.stage",
@@ -1072,6 +1090,13 @@ const PROBLEM_CODES = [
   // A companion record that is absent, incomplete or unreadable: a data-integrity fact, not a
   // retryable runtime outage.
   "companion_record_unreadable",
+  // Her own world book is one durable file replaced whole, so an edit CASes on the
+  // revision the browser read. Each refusal is its own code rather than a generic
+  // failure: the book moved on, she has no book to edit, or the durable thread store
+  // could not follow the change (the last is not retryable into validity).
+  "companion_world_book_conflict",
+  "companion_world_book_absent",
+  "companion_world_book_binding_partial",
   // Transport: the over-ceiling request body the management dispatcher refuses before any route
   // runs (`tavern-management-dialogue-web.ts:538`), sent outside its own schema check. It must be
   // named here or the typed 413 arrives as an opaque `TavernProtocolError` with no code to show;
@@ -1632,7 +1657,7 @@ function isCompanionCharacterVoice(value: unknown): value is CompanionCharacterV
   );
 }
 
-const COMPANION_WORLD_BOOK_KEYS = ["apiVersion", "present", "entries"] as const;
+const COMPANION_WORLD_BOOK_KEYS = ["apiVersion", "present", "revision", "entries"] as const;
 const COMPANION_WORLD_BOOK_ENTRY_KEYS = ["title", "keys", "constant", "content"] as const;
 /**
  * The companion's own world book, read once per mount. The browser may not widen
@@ -1646,6 +1671,7 @@ function isCompanionWorldBook(value: unknown): value is CompanionWorldBookV1 {
     hasExactKeys(value, COMPANION_WORLD_BOOK_KEYS) &&
     value.apiVersion === TAVERN_BROWSER_API_VERSION &&
     typeof value.present === "boolean" &&
+    (value.revision === null || isPositiveSafeInteger(value.revision)) &&
     Array.isArray(value.entries) &&
     value.entries.length <= 128 &&
     value.entries.every(isCompanionWorldBookEntry)
@@ -1663,6 +1689,24 @@ function isCompanionWorldBookEntry(value: unknown): value is CompanionWorldBookE
     Array.isArray(value.keys) &&
     value.keys.length <= 16 &&
     value.keys.every((key) => isLengthBoundedString(key, 1, 64))
+  );
+}
+
+const UPDATE_COMPANION_WORLD_BOOK_COMMAND_KEYS = ["apiVersion", "expectedRevision", "entries"] as const;
+/**
+ * One player edit of the companion's own world book. The revision is the one the
+ * read carried, so the mirror checks it is a positive integer rather than settling
+ * for "a number": the durable book's own revision is never zero.
+ */
+function isUpdateCompanionWorldBookCommand(value: unknown): value is UpdateCompanionWorldBookCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, UPDATE_COMPANION_WORLD_BOOK_COMMAND_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isPositiveSafeInteger(value.expectedRevision) &&
+    Array.isArray(value.entries) &&
+    value.entries.length <= 128 &&
+    value.entries.every(isCompanionWorldBookEntry)
   );
 }
 
@@ -2626,6 +2670,11 @@ export function validateCompanionWorldBook(value: unknown): CompanionWorldBookV1
   return value;
 }
 
+export function validateCompanionWorldBookUpdateCommand(value: unknown): UpdateCompanionWorldBookCommandV1 {
+  if (!isUpdateCompanionWorldBookCommand(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validateCompanionProfile(value: unknown): CompanionProfileV1 {
   if (!isCompanionProfile(value)) throw new TavernProtocolError();
   return value;
@@ -2878,6 +2927,17 @@ export type ManagementPipelineApi = Readonly<{
    * the World Info items a conversation can attach.
    */
   readCompanionWorldBook(handle: string): Promise<CompanionWorldBookV1>;
+  /**
+   * PUT /api/tavern/v1/companions/:handle/worldbook: replaces her own book's entry
+   * list, CASed on the revision the read carried. The reply is the Host's own
+   * re-projection, so the surface re-renders from what it returned and never from
+   * what it asked for.
+   */
+  updateCompanionWorldBook(
+    handle: string,
+    command: UpdateCompanionWorldBookCommandV1,
+    csrfToken: string,
+  ): Promise<CompanionWorldBookV1>;
   /**
    * GET /api/tavern/v1/companions/:handle/profile: the read-only character
    * inspector - one roster companion's own authored facts, by the handle the
@@ -3355,6 +3415,34 @@ export function createManagementPipelineApi(
     async readCompanionProfile(handle: string): Promise<CompanionProfileV1> {
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
       return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/profile`, 200, validateCompanionProfile);
+    },
+    async updateCompanionWorldBook(
+      handle: string,
+      command: UpdateCompanionWorldBookCommandV1,
+      csrfToken: string,
+    ): Promise<CompanionWorldBookV1> {
+      if (!isOpaqueHandle(handle) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const validated = validateCompanionWorldBookUpdateCommand(command);
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        `/api/tavern/v1/companions/${handle}/worldbook`,
+        200,
+        validateCompanionWorldBook,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        {
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          expectedRevision: validated.expectedRevision,
+          entries: validated.entries.map((entry) => ({
+            title: entry.title,
+            keys: [...entry.keys],
+            constant: entry.constant,
+            content: entry.content,
+          })),
+        },
+      );
+      observe("companion.worldbook.update", "passed", String(result.revision));
+      return result;
     },
     async updateCompanionVoice(
       handle: string,

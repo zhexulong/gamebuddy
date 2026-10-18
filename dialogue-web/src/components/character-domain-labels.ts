@@ -212,6 +212,31 @@ export type CharacterLabels = Readonly<{
   companionWorldBookNoEntries: string;
   /** The disclosure that reveals one entry's own text. */
   companionWorldBookEntryText: string;
+  /**
+   * Her own book is editable, so this is the editor's own vocabulary. It is separate
+   * from the attachable library's because the two are different artifacts: an entry's
+   * keys are what reaches it in her conversation, not the library's always-on rule.
+   */
+  companionWorldBookEdit: string;
+  companionWorldBookEditTitle: string;
+  companionWorldBookEditHint: string;
+  companionWorldBookEntryBody: string;
+  companionWorldBookEntryKeysHint: string;
+  companionWorldBookAddEntry: string;
+  companionWorldBookRemove: string;
+  companionWorldBookRemoveConfirm: string;
+  companionWorldBookSave: string;
+  /**
+   * One sentence per refused save. The Host refuses each in its own way - the book
+   * moved on, she has none, an entry is not one it will keep, the durable thread
+   * store could not follow - and "could not save" would point at the wrong fault.
+   */
+  companionWorldBookConflict: string;
+  companionWorldBookAbsent: string;
+  companionWorldBookInvalid: string;
+  companionWorldBookUnreadable: string;
+  companionWorldBookBindingPartial: string;
+  companionWorldBookNotSaved: string;
 
   /** The decoder's own disposition classes, in player words. */
   dispositionAccepted: string;
@@ -392,6 +417,28 @@ const en: CharacterLabels = Object.freeze({
   companionWorldBookNoEntries: "Her own book is here, but it carries no entries yet.",
   companionWorldBookEntryText: "What it says",
 
+  companionWorldBookEdit: "Edit her own book",
+  companionWorldBookEditTitle: "Editing her own world book",
+  companionWorldBookEditHint:
+    "Change an entry's text or its trigger words, or add and remove entries. Her own book is loaded when a chat starts, so a conversation that is already running keeps the background it loaded and picks this up when it starts again.",
+  companionWorldBookEntryBody: "What it says",
+  companionWorldBookEntryKeysHint:
+    "Separated by commas. In a chat the entry is used when your own words match one of them; an entry marked as always with her is carried either way.",
+  companionWorldBookAddEntry: "Add entry",
+  companionWorldBookRemove: "Remove entry",
+  companionWorldBookRemoveConfirm: 'Remove the entry "{{title}}"?',
+  companionWorldBookSave: "Save her own book",
+  companionWorldBookConflict:
+    "Her own book changed after you read it, so nothing was saved. Close this editor, reopen it on the book that is there now, and make your change again.",
+  companionWorldBookAbsent: "She has no own world book to edit.",
+  companionWorldBookInvalid:
+    "The Host cannot keep this as it stands - every entry needs a title and text, and a field may be over its limit. Nothing was saved.",
+  companionWorldBookUnreadable: "Her own world book could not be read, so nothing was saved.",
+  companionWorldBookBindingPartial:
+    "Her own book was changed, but the conversations that were reading it could not be moved to the new revision. Restart GameBuddy before continuing them.",
+  companionWorldBookNotSaved:
+    "Nothing was saved: her own book or her conversations' storage is unavailable. Try again.",
+
   dispositionAccepted: "used",
   dispositionPreserved: "kept unchanged",
   dispositionDropped: "not used",
@@ -565,6 +612,26 @@ const zh: CharacterLabels = Object.freeze({
   companionWorldBookAlwaysOn: "始终随行",
   companionWorldBookNoEntries: "她的世界书已在这里，但里面还没有词条。",
   companionWorldBookEntryText: "看看正文",
+
+  companionWorldBookEdit: "编辑她自己的世界书",
+  companionWorldBookEditTitle: "正在编辑她自己的世界书",
+  companionWorldBookEditHint:
+    "可以修改词条的正文或触发词，也可以添加、移除词条。她自己的世界书在对话开始时载入，所以正在进行的对话仍使用已经载入的背景，改动会在对话重新开始时生效。",
+  companionWorldBookEntryBody: "词条正文",
+  companionWorldBookEntryKeysHint:
+    "用逗号分隔。在对话里，当你说到这些词时这条词条才会被用到；标为始终随行的词条则一直带上。",
+  companionWorldBookAddEntry: "添加词条",
+  companionWorldBookRemove: "移除词条",
+  companionWorldBookRemoveConfirm: "要移除「{{title}}」这条词条吗？",
+  companionWorldBookSave: "保存她自己的世界书",
+  companionWorldBookConflict:
+    "她的世界书在你读取之后已被改动，所以这次没有保存。请关闭编辑器，在现在这本世界书上重新打开，再改一次。",
+  companionWorldBookAbsent: "她还没有自己的世界书可编辑。",
+  companionWorldBookInvalid: "Host 无法保留这次改动——每条词条都需要标题和正文，也可能有字段超出上限。这次没有保存。",
+  companionWorldBookUnreadable: "无法读取她自己的世界书，这次没有保存。",
+  companionWorldBookBindingPartial:
+    "她的世界书已改动，但正在读取它的对话无法迁移到新版本。请重新启动 GameBuddy 后再继续这些对话。",
+  companionWorldBookNotSaved: "没有保存：她的世界书或她对话的存储暂时不可用。请重试。",
 
   dispositionAccepted: "已使用",
   dispositionPreserved: "原样保留",
