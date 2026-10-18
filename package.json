@@ -222,6 +222,7 @@
     "test:stardew-uncovered-exit-expansion": "node --test integrations/stardew/action-development/tests/stardew-uncovered-exit-expansion.test.mjs",
     "test:stardew-uncovered-exit-table": "node --test integrations/stardew/action-development/tests/stardew-uncovered-exit-table.test.mjs",
     "test:stardew:core": "dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests",
+    "test:stardew:all": "node tools/test-stardew-all.mjs",
     "test:stardew:integration": "dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests",
     "test:tavern-presets": "node tools/validate-tavern-card.mjs",
     "test:tavern-references": "node --test tools/verify-tavern-semantic-references.test.mjs",
