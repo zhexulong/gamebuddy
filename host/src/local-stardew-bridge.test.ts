@@ -2141,13 +2141,13 @@ test("local Stardew bridge fails closed when a fact listener throws event_pump_e
 });
 
 test("a Mod error frame settles the pending request with the Mod own reason code", async () => {
-  // The Mod names a refusal in an error frame; an error frame is an expected response for every request type, so
-  // the pending call used to be left to its own timer and the caller saw `bridge_connect_deadline_exceeded`
-  // instead. Measured 2026-10-17: a capability refusal answered as `action_not_available` surfaced as a 45 s
-  // timeout, and both sides logs read like a transport fault because neither reported the refusal.
+  // The Mod names a refusal in an error frame; that frame is the typed response to the request it refuses, so the
+  // caller must receive it as `bridge_rejected:<reasonCode>` right away - the contract every other route uses and
+  // the tag `game-tools`' authoritative-rejection check keys on. It must never wait out its own deadline, and it
+  // must never arrive as an opaque bare reason code: `isAuthoritativeRejection` would not recognise it, and a
+  // refusal the Mod returned BEFORE any write would be turned into a recovery obligation.
   const pipeName = `gamebuddy_error_frame_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;
-  let sendError: (() => void) | undefined;
   const server = createServer((socket: Socket) => {
     peer = socket;
     let buffer = Buffer.alloc(0);
@@ -2187,15 +2187,14 @@ test("a Mod error frame settles the pending request with the Mod own reason code
           );
           continue;
         }
-        sendError = () =>
-          socket.write(
-            frame({
-              ...request,
-              messageId: "mod_error_frame",
-              type: "error",
-              payload: { reasonCode: "action_not_available" },
-            }),
-          );
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_error_frame",
+            type: "error",
+            payload: { reasonCode: "action_not_available" },
+          }),
+        );
       }
     });
   });
@@ -2204,20 +2203,18 @@ test("a Mod error frame settles the pending request with the Mod own reason code
   );
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
-    const dispatched = client.execute({
-      requestId: "req_error_frame",
-      idempotencyKey: "idem_error_frame",
-      action: "move_to_tile",
-      args: { x: 1, y: 1 },
-      expectedRevision: client.state.snapshot?.revision ?? 1,
-      deadlineMs: Date.now() + 30_000,
-    });
-    assert.ok(sendError !== undefined);
-    sendError();
     await assert.rejects(
-      () => dispatched,
-      (error: Error) => error.message === "action_not_available",
-      "the caller must receive the Mod own reason, not its own deadline",
+      () =>
+        client.execute({
+          requestId: "req_error_frame",
+          idempotencyKey: "idem_error_frame",
+          action: "move_to_tile",
+          args: { x: 1, y: 1 },
+          expectedRevision: client.state.snapshot?.revision ?? 1,
+          deadlineMs: Date.now() + 30_000,
+        }),
+      (error: Error) => error.message === "bridge_rejected:action_not_available",
+      "the caller must receive the Mod own reason as a typed refusal, not its own deadline",
     );
     // The frame is still recorded for observation, and it is NOT a receipt.
     assert.equal(client.state.latestReasonCode, "action_not_available");

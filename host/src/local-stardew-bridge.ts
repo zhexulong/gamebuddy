@@ -752,20 +752,14 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       return;
     }
     if (message.type === "error") {
-      // The Mod's NAME for a refusal must reach the caller that asked. An error frame is an expected response for
-      // every request type, so it used to fall through to the generic handling below: the pending call was never
-      // settled by it, and its own timer produced `bridge_connect_deadline_exceeded` instead of the reason the Mod
-      // had already given. Measured 2026-10-17: a capability refusal answered as `action_not_available` surfaced as
-      // a 45 s timeout, and both sides' logs looked like a transport fault because neither reported the refusal.
+      // An error frame is the typed response to the exact request it refuses, and the caller that asked owns what
+      // to do with it: `execute` answers `stale_snapshot` with one re-observe and one re-dispatch, and every other
+      // refusal is surfaced as `bridge_rejected:<reasonCode>`. Settling the pending call here would pre-empt that
+      // policy and hand the refusal to the caller as an opaque string, so record it and let the normal response
+      // path below deliver the frame. (A Mod refusal proves no write; an opaque message reads as an unknown write.)
       this.#latestReasonCode = message.payload.reasonCode;
-      if (pending !== undefined) {
-        this.#pending.delete(message.correlationId);
-        clearTimeout(pending.timer);
-        pending.reject(new Error(message.payload.reasonCode));
-      }
       for (const listener of this.#diagnosticListeners)
         listener({ stage: "mod_refusal_received", reasonCode: message.payload.reasonCode });
-      return;
     }
     // A query response is a solicited recovery result. Its only consumer is
     // the caller (the reconnect supervisor), which then routes it through the
