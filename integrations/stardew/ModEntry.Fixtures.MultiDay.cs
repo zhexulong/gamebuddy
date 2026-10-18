@@ -15,10 +15,6 @@ public sealed partial class ModEntry
     /// `getSkillNumberFromName`), and the same five that gate the mastery hint (Game1.cs:9135).
     /// </summary>
     private static readonly string[] PinnedSkills = { "Farming", "Fishing", "Foraging", "Mining", "Combat" };
-    /// <summary>
-    /// The morning stamina the multi-day Given arms, chosen from the same range the attach-time fixtures use:
-    /// below the runner's low-stamina threshold, and well above the -15 pass-out floor.
-    /// </summary>
 
     /// <summary>
     /// The composed world must let the companion WALK between the places its day uses: home, the bin, and the field
@@ -199,7 +195,9 @@ public sealed partial class ModEntry
         // reads and then clears exactly this container.
         const string shippedItemId = "(O)24";
         StardewValley.Inventories.IInventory shippingBin = farm.getShippingBin(player);
-        shippingBin.Clear();
+        // The refusal comes FIRST: the audit found it was unreachable dead code, because Clear() ran before the check -
+        // so the fixture silently destroyed whatever the template's own bin held and then reported bin_stacks=1 as if
+        // it had been verified. A world with a non-empty bin is one this Given cannot describe, so it refuses.
         if (shippingBin.CountItemStacks() != 0)
             throw new InvalidOperationException("fixture_native_local_multi_day_bin_not_empty");
         shippingBin.Add(ItemRegistry.Create<StardewValley.Object>(shippedItemId, 1));
@@ -295,3 +293,4 @@ public sealed partial class ModEntry
             LogLevel.Info);
     }
 }
+
