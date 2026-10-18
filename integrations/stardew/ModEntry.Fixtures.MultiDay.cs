@@ -173,7 +173,19 @@ public sealed partial class ModEntry
         if (Game1.currentSeason != "spring")
             Game1.currentSeason = "spring";
         Game1.dayOfMonth = 5;
-        Game1.timeOfDay = 600;
+        // Mid-morning, not dawn. The premise is that the morning chores are already done and the session takes
+        // over the rest of the day, which is both realistic for a "play a day" world and the reason a night is
+        // reachable at all: the engine day-end chain (24:00 clock shake plus the getting-late notice, 25:00,
+        // 26:00 forced dismount) is 13 in-game hours away at 11:00 rather than 18 at 06:00, and an in-game hour
+        // costs about 7 real seconds.
+        Game1.timeOfDay = 1100;
+        // The energy that premise implies. A farmer wakes at MaxStamina (Farmer.cs:2070 restores it on the new
+        // day), so a full bar is only realistic BEFORE the morning work - and with a full bar plus a sparse world
+        // there is no fatigue pressure anywhere in the run, which is what the fixture-realism audit found: the
+        // whole collapse path (stamina at or below -15, Game1.cs:6452), the pass-out bill (Farmer.cs:5869-5877)
+        // and the halved next morning (Farmer.cs:3574-3577) were unreachable. 90 points is roughly a morning of
+        // hoeing and watering: enough that the rest of the day can genuinely exhaust the actor.
+        player.stamina = Math.Max(player.MaxStamina - 90f, 10f);
 
         // (2) The actor's own home. The engine's load placement is asserted rather
         // than re-created, and re-established only if it does not hold.
@@ -289,7 +301,7 @@ public sealed partial class ModEntry
 
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log(
-            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};time={Game1.timeOfDay};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups={player.newLevels.Count};pending_level_up={(player.newLevels.Count > 0 ? $"{player.newLevels[0].X}@{player.newLevels[0].Y}" : "none")};skills_pinned={string.Join(",", PinnedSkills)}@{10};professions={player.professions.Count};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;guarantee=one_pending_level_up_is_an_ordinary_level;guarantee=skills_pinned_with_their_professions;guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
+            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};time={Game1.timeOfDay};stamina={player.Stamina}/{player.MaxStamina};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups={player.newLevels.Count};pending_level_up={(player.newLevels.Count > 0 ? $"{player.newLevels[0].X}@{player.newLevels[0].Y}" : "none")};skills_pinned={string.Join(",", PinnedSkills)}@{10};professions={player.professions.Count};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;guarantee=one_pending_level_up_is_an_ordinary_level;guarantee=skills_pinned_with_their_professions;guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
             LogLevel.Info);
     }
 }

@@ -79,19 +79,27 @@ public sealed class MultiDayPlaySessionFixtureTests
         source.Should().Contain("guarantee=first_rollover_may_add_gotMasteryHint");
     }
 
-    [Fact]
-    public void TheGivenKeepsTheFatigueAssertionReachableWithMaxedSkills()
+        [Fact]
+    public void TheGivenArmsARealDaysEnergyAndTheWorkThatCanSpendIt()
     {
-        // The scenario must NOT write stamina at all.
-        //
-        // An earlier version armed 12 points "so the fatigue/self-heal assertion stays reachable", but that
-        // threshold belongs to a DIFFERENT scenario (`native_stamina_recovery_v1`, which arms its own low stamina),
-        // and nothing in the multi-day run reads it: two independent reviews found the write had no reader, and its
-        // only effect was making an early pass-out more likely. The pin is inverted so a scenario-only write with no
-        // assertion behind it cannot come back silently.
+        // INVERTED by the fixture-realism audit (design/research/fixture-realism-audit.md). An earlier version of
+        // this test forbade ANY stamina write, because the write it replaced (12 points) had no reader and only made
+        // an early pass-out likelier. The audit then measured the opposite failure: the world offered about THREE
+        // points of tool work out of the 270 a morning holds (weeds and grass are cut with a scythe, which costs
+        // nothing, and the crops are Grab harvests), so the whole fatigue path - collapse at -15, the pass-out bill,
+        // the halved next morning - was unreachable, and the actor had no way to become tired enough for its day to
+        // end. The write is now the day premise itself, and this pins it as such.
         string source = ReadMultiDayGivenSource();
-        source.Should().NotContain("LowMorningStamina");
-        source.Should().NotContain("player.stamina =");
+        source.Should().Contain("player.stamina = Math.Max(player.MaxStamina - 90f, 10f);");
+        // Strictly below a full bar, or the premise "the morning chores are already done" is not expressed.
+        source.Should().NotContain("player.stamina = player.MaxStamina;");
+        // The run can see it: the arm log reports the energy it arms.
+        source.Should().Contain("stamina={player.Stamina}/{player.MaxStamina}");
+
+        // ...and the world has to contain work that spends it, or the energy is decorative.
+        string fixture = ReadFixtureSource();
+        fixture.Should().Contain("for (int index = 0; index < 10; index += 1)");
+        fixture.Should().Contain("cauliflowerSeedId, 8");
     }
 
     [Fact]

@@ -767,7 +767,7 @@ public sealed partial class ModEntry : Mod
                     throw new InvalidOperationException("fixture_native_local_crop_research_watering_can_missing_after_add");
                 const string cauliflowerSeedId = "(O)474";
                 if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == cauliflowerSeedId && item.Stack > 0)
-                    && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(cauliflowerSeedId, 2)) is not null)
+                    && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(cauliflowerSeedId, 8)) is not null)
                     throw new InvalidOperationException("fixture_native_local_crop_research_seed_inventory_full");
                 if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == cauliflowerSeedId && item.Stack > 0))
                     throw new InvalidOperationException("fixture_native_local_crop_research_seed_missing_after_add");
@@ -3365,7 +3365,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             Game1.currentLocation = previousLocation;
         }
 
-        // Sparse, independently-placeable affordances. Every placement reuses the
+        // A DAY WORTH of tool work, sparsely placed. Every placement reuses the
         // same native emptiness/standability probe the per-action fixtures use, so
         // a tile already claimed by an earlier placement is skipped rather than
         // stacked; a farm that cannot host them fails closed instead of silently
@@ -3385,7 +3385,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // re-derived after the props exist (a re-scan skips occupied tiles and would answer a different question).
         this.nativeLocalPlaySessionStartTile = startTile;
         Vector2? standingTile = null;
-        for (int index = 0; index < 2; index += 1)
+        for (int index = 0; index < 4; index += 1)
         {
             (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile);
             if (spot is null)
@@ -3405,6 +3405,11 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             provisioned.Add($"grass={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
             standingTile ??= spot.Value.StandingTile;
         }
+        // Ten stones, because one stone is not a day. A pickaxe spends about 4 stamina per swing at power 1
+        // (Pickaxe.cs:88), so a handful of rocks is the difference between an actor that can work until it is
+        // tired and one that cannot reach -15 no matter what it does - the audit measured the old world at about
+        // THREE points of the 270 a morning holds. Still a few rocks by the crossroads, not a quarry.
+        for (int index = 0; index < 10; index += 1)
         {
             (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile);
             if (spot is null)
