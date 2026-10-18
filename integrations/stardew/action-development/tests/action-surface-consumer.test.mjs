@@ -157,6 +157,8 @@ test("enforces canonical typed argument/output maps and ScopePlayer resource cla
     ["argumentSchema", { x: "integer" }, "invalid_action"],
     ["argumentSchema", { x: { type: "number" } }, "invalid_action"],
     ["argumentSchema", { x: { type: "integer", extra: true } }, "invalid_argument_schema_entry_shape"],
+    ["argumentSchema", { x: { type: "string", enum: [] } }, "invalid_argument_schema_enum"],
+    ["argumentSchema", { x: { type: "string", enum: ["ok", 7] } }, "invalid_argument_schema_enum"],
     ["outputFacts", [], "invalid_action"],
     ["outputFacts", { result: "number" }, "invalid_action"],
     ["outputFacts", { result: 1 }, "invalid_action"],
@@ -179,6 +181,18 @@ test("enforces canonical typed argument/output maps and ScopePlayer resource cla
   const extraTemplateField = cloneFixture();
   extraTemplateField.actions[0].resourceTemplate.extra = true;
   fails("invalid_resource_template_shape", () => validateActionSurface(extraTemplateField));
+});
+
+test("a declared argument vocabulary is part of the entry and survives the strict consumer", () => {
+  const withVocabulary = cloneFixture();
+  withVocabulary.actions[0].argumentSchema.x = { type: "string", enum: ["confirm", "branch_a", "branch_b"] };
+
+  const validated = validateActionSurface(withVocabulary);
+
+  assert.deepEqual(validated.actions[0].argumentSchema.x, {
+    type: "string",
+    enum: ["confirm", "branch_a", "branch_b"],
+  });
 });
 
 test("enforces bounded JSON text, arrays, identifiers, numbers, and plain data", () => {

@@ -31,7 +31,7 @@ public sealed class FarmhandActionSurfaceExportTests
             projection.Kind.Should().Be(source.Kind.ToWireValue());
             projection.ArgumentSchema.Should().Equal(descriptor.Arguments.ToDictionary(
                 argument => argument.Name,
-                argument => new FarmhandActionArgumentSchema(argument.Type)));
+                argument => new FarmhandActionArgumentSchema(argument.Type, argument.Enum)));
             projection.OutputFacts.Should().Equal(descriptor.OutputFacts);
             projection.ResourceTemplate.Claims.Should().Equal(descriptor.ResourceTemplate.Select(claim =>
                 new FarmhandActionResourceTemplateValueProjection(claim.Key, claim.Value.ToString())));

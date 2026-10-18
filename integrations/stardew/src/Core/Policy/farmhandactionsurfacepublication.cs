@@ -24,7 +24,18 @@ public sealed record FarmhandActionDescriptorProjection(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Always)] long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs
 );
 
-public sealed record FarmhandActionArgumentSchema(string Type);
+/// <summary>
+/// One declared argument on the cross-language surface. <see cref="Enum"/> is the
+/// descriptor's own value vocabulary (<see cref="FarmhandActionArgument.Enum"/>) and is
+/// published for the same reason the type is: a consumer that cannot see a closed set can
+/// only guess it. Measured 2026-10-18: this projection omitted the enum, so the generated
+/// contract said `respond_level_up`'s `choice` was any string while the Mod refused
+/// everything outside `LevelUpChoiceEnum`, and the Host's tool schema and request validator
+/// disagreed with each other about the same action. A null enum is omitted from the JSON.
+/// </summary>
+public sealed record FarmhandActionArgumentSchema(
+    string Type,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Enum = null);
 public sealed record FarmhandActionResourceTemplate(IReadOnlyList<FarmhandActionResourceTemplateValueProjection> Claims);
 public sealed record FarmhandActionResourceTemplateValueProjection(string Key, string Value);
 public sealed record FarmhandActionPostcondition(string Name);
@@ -67,7 +78,7 @@ public static class FarmhandActionSurfacePublication
             ?? throw new InvalidOperationException("Farmhand action registration requires a descriptor.");
         Dictionary<string, FarmhandActionArgumentSchema> argumentSchema = descriptor.Arguments.ToDictionary(
             argument => argument.Name,
-            argument => new FarmhandActionArgumentSchema(argument.Type),
+            argument => new FarmhandActionArgumentSchema(argument.Type, argument.Enum),
             StringComparer.Ordinal);
         if (argumentSchema.Count != descriptor.Arguments.Count)
             throw new InvalidOperationException("Farmhand action descriptor argument names must be unique.");

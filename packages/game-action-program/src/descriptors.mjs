@@ -2,7 +2,7 @@ import { deepFreeze, isPlainDataObject } from "./model.mjs";
 
 const DESCRIPTOR_KEYS = new Set(["actionId", "identityVersion", "lifecycle", "kind", "argumentSchema", "outputFacts", "resourceTemplate", "effect", "postcondition"]);
 const PROJECTION_KEYS = new Set(["schema", "catalogRevision", "actions"]);
-const ARGUMENT_SCHEMA_KEYS = new Set(["type"]);
+const ARGUMENT_SCHEMA_KEYS = new Set(["type", "enum"]);
 const RESOURCE_TEMPLATE_KEYS = new Set(["claims"]);
 const RESOURCE_CLAIM_KEYS = new Set(["key", "value"]);
 const POSTCONDITION_KEYS = new Set(["name"]);
@@ -20,6 +20,7 @@ const MAX_FACTS = 32;
 const MAX_RESOURCE_CLAIMS = 16;
 const MAX_IDENTITY_VERSION = 2_147_483_647;
 const MAX_STRING_LENGTH = 128;
+const MAX_VOCABULARY_VALUES = 128;
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
 // Argument names are producer-owned and may use the published camelCase spelling.
 const ARGUMENT_IDENTIFIER = /^[a-z][A-Za-z0-9_]{0,127}$/;
@@ -117,12 +118,25 @@ function validArgumentSchema(value) {
   const keys = dataKeys(value);
   return keys !== null && keys.length <= MAX_ARGUMENTS
     && keys.every((key) => ARGUMENT_IDENTIFIER.test(key))
-    && keys.every((key) => {
-      const entry = ownValue(value, key);
-      const type = ownValue(entry, "type");
-      return entry !== INVALID && isPlainDataObject(entry)
-        && sameKeys(entry, ARGUMENT_SCHEMA_KEYS) && VALUE_TYPES.has(type);
-    });
+    && keys.every((key) => validArgumentSchemaEntry(ownValue(value, key)));
+}
+
+/**
+ * One argument entry: its declared type plus the producer's own value vocabulary when the argument is a
+ * closed set (`FarmhandActionArgumentSchema.Enum`). The vocabulary is part of the descriptor, so a consumer
+ * that rejects it cannot read the domain it is supposed to project.
+ */
+function validArgumentSchemaEntry(entry) {
+  if (entry === INVALID || !isPlainDataObject(entry)) return false;
+  const keys = dataKeys(entry);
+  if (keys === null || keys.length > ARGUMENT_SCHEMA_KEYS.size) return false;
+  if (!keys.every((key) => ARGUMENT_SCHEMA_KEYS.has(key))) return false;
+  if (!keys.includes("type") || !VALUE_TYPES.has(ownValue(entry, "type"))) return false;
+  if (!keys.includes("enum")) return true;
+  const vocabulary = ownValue(entry, "enum");
+  return isDenseArray(vocabulary, MAX_VOCABULARY_VALUES)
+    && vocabulary.length > 0
+    && vocabulary.every((member) => typeof member === "string" && member.length > 0 && member.length <= MAX_STRING_LENGTH);
 }
 
 function validOutputFacts(value) {

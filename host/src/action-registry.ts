@@ -1090,6 +1090,11 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
     const level = getDescriptorArgument(descriptor, "expectedLevel");
     if (!choice || choice.type !== "string" || !skill || skill.type !== "integer" || !level || level.type !== "integer")
       return false;
+    // The vocabulary is part of the contract, not a decoration: the Mod's registry acceptance refuses
+    // every value outside it (`FarmhandExecutionAcceptance`), so a descriptor that publishes none
+    // describes an argument nothing can satisfy - and the Host's tool schema could not state the
+    // model-facing domain either.
+    if (getArgumentEnum(choice) === undefined) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "level_up_resolved") return false;
     return true;

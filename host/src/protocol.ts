@@ -2745,6 +2745,12 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   } else if (value.action === "respond_level_up") {
     // The pair is the binding, so the Host refuses an unshaped request before it can reach the Mod: a persistent
     // save write must not be dispatchable without naming the level-up it is for.
+    //
+    // The three values are the Mod's OWN published vocabulary (`FarmhandActionCatalog.LevelUpChoiceEnum`,
+    // projected onto the descriptor and onto the generated action surface) and the Mod's registry acceptance
+    // refuses anything outside it on the game thread. They are spelled here so the refusal is specific and
+    // pre-bridge; `game-tools-argument-contract.test.ts` holds this list and the published one equal, and a
+    // value the Mod's contract declares legal can never be refused here.
     if (!hasExactKeys(value.args, ["choice", "expectedSkill", "expectedLevel"])) return "invalid_args";
     if (
       typeof value.args.choice !== "string" ||

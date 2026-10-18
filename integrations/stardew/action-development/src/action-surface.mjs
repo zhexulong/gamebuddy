@@ -40,6 +40,11 @@ export const ACTION_SURFACE_VISIBLE_LIFECYCLES = Object.freeze(["published", "li
 const LIFECYCLES = new Set(ACTION_SURFACE_LIFECYCLES);
 const KINDS = new Set(["execution", "read_only"]);
 const ACTION_VALUE_TYPES = new Set(["integer", "string", "boolean", "object", "destination_selector", "destination_arrival"]);
+// One argument entry: its declared type, plus the descriptor's own value vocabulary when the
+// argument is a closed set (`FarmhandActionArgumentSchema.Enum`). The vocabulary is projected
+// with the type because a consumer that cannot read a closed set can only guess it.
+const ARGUMENT_SCHEMA_ENTRY_KEYS = Object.freeze(["type"]);
+const ARGUMENT_SCHEMA_ENUM_ENTRY_KEYS = Object.freeze(["type", "enum"]);
 const DYNAMIC_PUBLICATION_FIELDS = new Set([
   "advertised",
   "available",
@@ -286,14 +291,23 @@ function validateIdentifier(value, code) {
   return value;
 }
 
+function validateEnumVocabulary(value) {
+  if (!isArray(value) || value.length === 0) fail("invalid_argument_schema_enum");
+  for (const entry of value) {
+    if (typeof entry !== "string" || entry.length === 0) fail("invalid_argument_schema_enum");
+  }
+}
+
 function validateTypedMap(value, location, entriesAreObjects) {
   if (!isObject(value) || isArray(value) || prototypeOf(value) !== Object.prototype) fail("invalid_action");
   for (const key of ownKeys(value, "invalid_action")) {
     const entry = dataDescriptor(value, key, "invalid_action").value;
     if (entriesAreObjects) {
       if (!isObject(entry) || isArray(entry) || prototypeOf(entry) !== Object.prototype) fail("invalid_action");
-      exactKeys(entry, ["type"], `${location}_entry`);
+      const hasEnum = ownKeys(entry, "invalid_action").includes("enum");
+      exactKeys(entry, hasEnum ? ARGUMENT_SCHEMA_ENUM_ENTRY_KEYS : ARGUMENT_SCHEMA_ENTRY_KEYS, `${location}_entry`);
       if (!ACTION_VALUE_TYPES.has(dataDescriptor(entry, "type").value)) fail("invalid_action");
+      if (hasEnum) validateEnumVocabulary(dataDescriptor(entry, "enum").value);
     } else if (!ACTION_VALUE_TYPES.has(entry)) {
       fail("invalid_action");
     }

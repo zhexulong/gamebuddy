@@ -431,7 +431,7 @@ export function buildCandidateToolSchema(
       throw new Error("Invalid or incomplete descriptor for express_emote: missing emote enum");
     }
     const literals = enumVals.map((v) => Type.Literal(v));
-    const emoteSchema = literals.length === 1 ? literals[0]! : Type.Union(literals);
+    const emoteSchema = literalUnionSchema(literals);
     return Type.Object(
       {
         emote: emoteSchema,
@@ -447,10 +447,33 @@ export function buildCandidateToolSchema(
       throw new Error("Invalid or incomplete descriptor for face_direction: missing direction enum");
     }
     const literals = enumVals.map((v) => Type.Literal(v));
-    const directionSchema = literals.length === 1 ? literals[0]! : Type.Union(literals);
+    const directionSchema = literalUnionSchema(literals);
     return Type.Object(
       {
         direction: directionSchema,
+      },
+      { additionalProperties: false },
+    );
+  }
+
+  if (actionId === "respond_level_up") {
+    // Both halves of this action carry a real constraint, so this is the override the fallback below
+    // documents. `choice` is the Mod's own published closed set (`FarmhandActionCatalog.LevelUpChoiceEnum`,
+    // projected onto the descriptor); the pair is the binding the Mod re-checks against the menu it is
+    // holding, bounded to the values the engine can actually put in `Farmer.newLevels` - skills 0..5
+    // (luck included) and levels 1..10, the SAME bounds `FarmhandExecutionAcceptance` and the Host's
+    // request validator enforce. Measured 2026-10-18: the fallback described `choice` as any string and
+    // `expectedLevel` as "any integer from 0", and the schema-derived call was refused by the Host's own
+    // validator - a tool whose declared domain the bridge could never accept.
+    const vocabulary = getArgumentEnum(getDescriptorArgument(descriptor, "choice"));
+    if (vocabulary === undefined) {
+      throw new Error("Invalid or incomplete descriptor for respond_level_up: missing choice vocabulary");
+    }
+    return Type.Object(
+      {
+        choice: literalUnionSchema(vocabulary.map((value) => Type.Literal(value))),
+        expectedSkill: Type.Integer({ minimum: 0, maximum: 5 }),
+        expectedLevel: Type.Integer({ minimum: 1, maximum: 10 }),
       },
       { additionalProperties: false },
     );
@@ -594,6 +617,14 @@ function declaredArguments(
   for (const name of (descriptor === undefined ? [] : declaredArgumentNames(descriptor)) ?? [])
     args[name] = params[name];
   return args;
+}
+
+/**
+ * One declared vocabulary as a schema: a closed set the Mod published, never a Host guess. `getArgumentEnum`
+ * is the only reader of it, so the model-facing domain and the Mod's own acceptance check read the same list.
+ */
+function literalUnionSchema(literals: readonly TSchema[]): TSchema {
+  return literals.length === 1 ? literals[0]! : Type.Union([...literals]);
 }
 
 /**

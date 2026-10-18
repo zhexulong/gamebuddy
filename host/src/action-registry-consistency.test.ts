@@ -34,7 +34,7 @@ type SurfaceAction = Readonly<{
   identityVersion: number;
   lifecycle: string;
   kind: string;
-  argumentSchema?: Readonly<Record<string, Readonly<{ type: string }>>>;
+  argumentSchema?: Readonly<Record<string, Readonly<{ type: string; enum?: readonly string[] }>>>;
   resourceTemplate?: Readonly<{ claims?: readonly SurfaceActionClaim[] }>;
   effect?: "read" | "write";
   postcondition?: Readonly<{ name?: string }>;
@@ -45,16 +45,10 @@ function loadActionSurface(): readonly SurfaceAction[] {
   try {
     parsed = JSON.parse(readFileSync(ACTION_SURFACE_ARTIFACT, "utf8"));
   } catch (error) {
-    throw new Error(
-      `stardew_action_surface_artifact_unreadable:${ACTION_SURFACE_ARTIFACT}`,
-      { cause: error },
-    );
+    throw new Error(`stardew_action_surface_artifact_unreadable:${ACTION_SURFACE_ARTIFACT}`, { cause: error });
   }
   const surface = parsed as Readonly<{ schema?: unknown; actions?: unknown }>;
-  if (
-    surface?.schema !== "gamebuddy-action-descriptors/v1" ||
-    !Array.isArray(surface.actions)
-  ) {
+  if (surface?.schema !== "gamebuddy-action-descriptors/v1" || !Array.isArray(surface.actions)) {
     throw new Error("stardew_action_surface_artifact_invalid_shape");
   }
   return surface.actions as readonly SurfaceAction[];
@@ -72,11 +66,7 @@ function claimsScopePlayer(action: SurfaceAction): boolean {
  * read_only / experimental / withdrawn actions are intentionally untooled.
  */
 function hostMustSurfaceTool(action: SurfaceAction): boolean {
-  return (
-    action.lifecycle === "published" &&
-    action.kind === "execution" &&
-    claimsScopePlayer(action)
-  );
+  return action.lifecycle === "published" && action.kind === "execution" && claimsScopePlayer(action);
 }
 
 /**
@@ -96,9 +86,7 @@ function isPublishedWorthyExperimental(action: SurfaceAction): boolean {
   );
 }
 
-const adapterIds = new Set<string>(
-  STARDEW_ACTION_ADAPTERS.map((adapter) => adapter.actionId),
-);
+const adapterIds = new Set<string>(STARDEW_ACTION_ADAPTERS.map((adapter) => adapter.actionId));
 
 test("every published execution ScopePlayer artifact action has a Host adapter", () => {
   const missingAdapter = loadActionSurface()
@@ -146,20 +134,11 @@ test("every staged candidate action stays surfaceable through a Host tool name",
  * rather than hand-building one, so an arm that cannot fire is caught by the same check as an arm that is
  * missing.
  */
-const GAME_TOOLS_SOURCE = readFileSync(
-  resolve(hostRoot, "src", "game-tools.ts"),
-  "utf8",
-);
+const GAME_TOOLS_SOURCE = readFileSync(resolve(hostRoot, "src", "game-tools.ts"), "utf8");
 
 /** Every action id a mount block names, straight from the source. */
 function mountedActionIds(): readonly string[] {
-  return [
-    ...new Set(
-      [...GAME_TOOLS_SOURCE.matchAll(/^\s*action: "([a-z_]+)",/gm)].map(
-        (match) => match[1]!,
-      ),
-    ),
-  ].sort();
+  return [...new Set([...GAME_TOOLS_SOURCE.matchAll(/^\s*action: "([a-z_]+)",/gm)].map((match) => match[1]!))].sort();
 }
 
 /** The descriptor hello_ack publishes for one artifact action: an `arguments` array plus the postcondition record. */
@@ -168,11 +147,10 @@ function publishedDescriptor(action: SurfaceAction): ActionRegistrationDescripto
     arguments: Object.entries(action.argumentSchema ?? {}).map(([name, schema]) => ({
       name,
       type: schema.type,
+      ...(schema.enum === undefined ? {} : { enum: schema.enum }),
     })),
     ...(action.effect === undefined ? {} : { effect: action.effect }),
-    ...(action.postcondition?.name === undefined
-      ? {}
-      : { postcondition: { name: action.postcondition.name } }),
+    ...(action.postcondition?.name === undefined ? {} : { postcondition: { name: action.postcondition.name } }),
   };
 }
 
@@ -183,17 +161,14 @@ function publishedDescriptor(action: SurfaceAction): ActionRegistrationDescripto
  */
 const UNJUDGEABLE_FROM_THE_ARTIFACT: Readonly<Record<string, string>> = Object.freeze({
   express_emote:
-    "its arm requires the emote argument's enum and a nativeBinding, and the exported artifact carries neither: FarmhandActionArgumentSchema is { type } only (farmhandactionsurfacepublication.cs:27) and the projection record has no native binding field at all (:14-25).",
+    "its arm requires the emote argument's enum AND a nativeBinding; the artifact publishes the vocabulary (FarmhandActionArgumentSchema.Enum), but the projection record carries no native binding field at all (farmhandactionsurfacepublication.cs:14-25).",
   face_direction:
-    "same projection gap as express_emote: the direction argument's enum (FarmhandActionCatalog.DirectionEnum) and the descriptor's nativeBinding are not projected into the artifact.",
+    "same gap as express_emote: the artifact publishes the direction vocabulary, but the descriptor's nativeBinding is still not projected into it.",
 });
 
 test("every mounted descriptor-derived action opens the gate on the Mod's own published descriptor", () => {
   const mounted = mountedActionIds();
-  assert.ok(
-    mounted.length >= 70,
-    `expected the mount blocks to be found, got ${mounted.length}`,
-  );
+  assert.ok(mounted.length >= 70, `expected the mount blocks to be found, got ${mounted.length}`);
   const published = new Map(loadActionSurface().map((action) => [action.actionId, action]));
   const failures: string[] = [];
   for (const actionId of mounted) {
@@ -205,13 +180,11 @@ test("every mounted descriptor-derived action opens the gate on the Mod's own pu
       continue;
     }
     if (!isModDescriptorComplete(actionId, publishedDescriptor(action)))
-      failures.push(`${actionId}: the gate stays shut on the descriptor the Mod publishes, so the Agent can never call it`);
+      failures.push(
+        `${actionId}: the gate stays shut on the descriptor the Mod publishes, so the Agent can never call it`,
+      );
   }
-  assert.deepEqual(
-    failures,
-    [],
-    `these mounted actions are unreachable: ${failures.join(" | ")}`,
-  );
+  assert.deepEqual(failures, [], `these mounted actions are unreachable: ${failures.join(" | ")}`);
 });
 
 test("every descriptor-derived id is both mounted and published, so no arm is dead code", () => {

@@ -49,10 +49,6 @@ const SURFACE_PATH = resolve(
   hostRoot,
   "../integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
 );
-const CATALOG_PATH = resolve(
-  hostRoot,
-  "../integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
-);
 const GAME_TOOLS_PATH = resolve(hostRoot, "src/game-tools.ts");
 
 const SCOPE: Scope = {
@@ -75,7 +71,7 @@ type SurfaceAction = Readonly<{
   identityVersion: number;
   lifecycle: string;
   kind: string;
-  argumentSchema?: Readonly<Record<string, Readonly<{ type?: string }>>>;
+  argumentSchema?: Readonly<Record<string, Readonly<{ type?: string; enum?: readonly string[] }>>>;
   effect?: string;
   postcondition?: Readonly<{ name?: string }>;
 }>;
@@ -91,23 +87,15 @@ function publishedSurface(): readonly SurfaceAction[] {
   return parsed.actions as readonly SurfaceAction[];
 }
 
-/** A bounded enum the Mod declares for a constrained argument, read from the Mod's own catalog. */
-function catalogEnum(name: string): readonly string[] {
-  const catalog = readFileSync(CATALOG_PATH, "utf8");
-  const at = catalog.indexOf(`IReadOnlyList<string> ${name} =`);
-  if (at === -1) return [];
-  const end = catalog.indexOf("});", at);
-  const segment = end === -1 ? catalog.slice(at) : catalog.slice(at, end);
-  return [...segment.matchAll(/"([a-z_]+)"/g)].map((match) => match[1] as string);
-}
-
 /** The Mod's published registration for one action, in the wire (`arguments`) descriptor shape. */
 function registrationFor(action: SurfaceAction): ActionRegistration {
   const arguments_ = Object.entries(action.argumentSchema ?? {}).map(([name, schema]) => ({
     name,
     type: schema.type ?? "string",
-    ...(action.actionId === "express_emote" ? { enum: catalogEnum("EmoteEnum") } : {}),
-    ...(action.actionId === "face_direction" ? { enum: catalogEnum("DirectionEnum") } : {}),
+    // The vocabulary travels WITH the argument on the Mod's published surface, so the probe
+    // exercises the closed set the Mod declares rather than one this test invents or scrapes
+    // out of the C# source.
+    ...(schema.enum === undefined ? {} : { enum: schema.enum }),
   }));
   const postconditionName = action.postcondition?.name;
   const descriptor: ActionRegistrationDescriptor = {
@@ -255,12 +243,10 @@ function declaredArgumentKeys(schema: JsonObject, requiredOnly: boolean): readon
 /** A schema-satisfying value for one declared argument, so the call fails only on the argument SHAPE. */
 function valueFor(node: JsonObject, name: string, action: string): unknown {
   const variants = node.anyOf ?? node.oneOf;
-  if (Array.isArray(variants) && variants.length > 0)
-    return valueFor(variants[0] as JsonObject, name, action);
+  if (Array.isArray(variants) && variants.length > 0) return valueFor(variants[0] as JsonObject, name, action);
   if (Array.isArray(node.enum) && node.enum.length > 0) return node.enum[0];
   if (node.const !== undefined) return node.const;
-  if (node.type === "integer" || node.type === "number")
-    return typeof node.minimum === "number" ? node.minimum : 1;
+  if (node.type === "integer" || node.type === "number") return typeof node.minimum === "number" ? node.minimum : 1;
   if (node.type === "boolean") return false;
   if (node.type === "object") {
     const value: JsonObject = {};
@@ -270,8 +256,7 @@ function valueFor(node: JsonObject, name: string, action: string): unknown {
   }
   const pattern = typeof node.pattern === "string" ? node.pattern : "";
   if (pattern.includes("sr1_")) return SCENE_REF;
-  if (name === "expectedTargetId")
-    return action === "ride_minecart" ? MINECART_TARGET_ID : TARGET_ID;
+  if (name === "expectedTargetId") return action === "ride_minecart" ? MINECART_TARGET_ID : TARGET_ID;
   return "aa";
 }
 
@@ -282,9 +267,41 @@ function argsFor(schema: JsonObject, keys: readonly string[], action: string): J
   return args;
 }
 
+/** The closed set a schema node declares, read only when EVERY member is a string literal. */
+function declaredVocabulary(node: JsonObject): readonly string[] {
+  const variants = node.anyOf ?? node.oneOf;
+  if (Array.isArray(variants) && variants.length > 0) {
+    const literals = variants.map((variant) => (variant as JsonObject).const);
+    return literals.every((literal) => typeof literal === "string") ? (literals as string[]) : [];
+  }
+  return Array.isArray(node.enum) && node.enum.every((member) => typeof member === "string")
+    ? (node.enum as string[])
+    : [];
+}
+
+/**
+ * One probe per DECLARED VOCABULARY VALUE. A schema that admits a value the Mod's contract declares
+ * legal, while the Host's request validator refuses it, is the same defect as a dropped argument: the
+ * model is told it may send something the bridge will never see. Probing only the first member, as the
+ * shape probes do, cannot see a validator whose closed set is missing one value.
+ */
+function vocabularyProbes(
+  schema: JsonObject,
+  keys: readonly string[],
+  action: string,
+): readonly Readonly<{ label: string; args: JsonObject }>[] {
+  const properties = propertiesOf(schema);
+  const probes: Array<{ label: string; args: JsonObject }> = [];
+  for (const key of keys) {
+    for (const value of declaredVocabulary((properties[key] ?? {}) as JsonObject)) {
+      probes.push({ label: `${key}=${value}`, args: { ...argsFor(schema, keys, action), [key]: value } });
+    }
+  }
+  return probes;
+}
+
 function actionOf(toolName: string): string | undefined {
-  for (const [action, name] of Object.entries(STARDEW_ACTION_TOOL_NAMES))
-    if (name === toolName) return action;
+  for (const [action, name] of Object.entries(STARDEW_ACTION_TOOL_NAMES)) if (name === toolName) return action;
   return undefined;
 }
 
@@ -314,13 +331,7 @@ function mountedTools(): readonly MountedTool[] {
       schema: tool.parameters as unknown as JsonObject,
       call: async (args) => {
         const before = calls.length;
-        const result = await tool.execute(
-          "gate_call",
-          args,
-          new AbortController().signal,
-          () => {},
-          {} as never,
-        );
+        const result = await tool.execute("gate_call", args, new AbortController().signal, () => {}, {} as never);
         if (calls.length > before) {
           const request = calls[calls.length - 1];
           return { refusal: null, forwarded: request === undefined ? null : Object.keys(request.args) };
@@ -359,6 +370,13 @@ test("every mounted tool forwards what its own schema declares, and the protocol
           `${tool.name} (${tool.action}): ${label} args [${expected.join(", ")}] reached the bridge as [${forwarded.join(", ")}]`,
         );
     }
+    for (const probe of vocabularyProbes(tool.schema, all, tool.action)) {
+      const outcome = await tool.call(probe.args);
+      if (outcome.refusal !== null)
+        offenders.push(
+          `${tool.name} (${tool.action}): the schema admits ${probe.label}, which its own validator refused with "${outcome.refusal}" before the bridge`,
+        );
+    }
   }
 
   assert.deepEqual(
@@ -391,8 +409,7 @@ test("the protocol's exact wire shape matches the Mod-declared arguments for eve
     const args: JsonObject = {};
     for (const [name, schema] of Object.entries(action.argumentSchema ?? {}))
       args[name] = valueFor(schema as unknown as JsonObject, name, action.actionId);
-    if (action.actionId === "pickup_forage")
-      args.sceneTarget = { observationId: "gateObservation", ref: SCENE_REF };
+    if (action.actionId === "pickup_forage") args.sceneTarget = { observationId: "gateObservation", ref: SCENE_REF };
     const verdict = validateExecutionRequest(
       {
         requestId: "gateRequestId",
@@ -410,19 +427,13 @@ test("the protocol's exact wire shape matches the Mod-declared arguments for eve
       );
   }
 
-  assert.deepEqual(
-    offenders,
-    [],
-    "the Host protocol and the Mod's own wire shape must demand the same keys",
-  );
+  assert.deepEqual(offenders, [], "the Host protocol and the Mod's own wire shape must demand the same keys");
 });
 
 /** The argument names a description tells the model to supply, taken from its "must be copied" recipe. */
 function instructedNames(description: string): readonly string[] {
   const recipe = /([A-Za-z][A-Za-z0-9_]*(?:(?:,| and)\s+[A-Za-z][A-Za-z0-9_]*)*)\s+must be copied/g;
-  return [...description.matchAll(recipe)].flatMap((match) =>
-    (match[1] as string).split(/,\s*| and\s+/),
-  );
+  return [...description.matchAll(recipe)].flatMap((match) => (match[1] as string).split(/,\s*| and\s+/));
 }
 
 test("a description's argument recipe names only schema arguments and covers every required one", () => {
