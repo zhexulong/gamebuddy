@@ -232,6 +232,14 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     if (night.facts.day_started_observed !== "true") {
       violations.push(violation("night_day_started_edge_not_observed", `${where}.evidence.day_started_observed`));
     }
+    // A claim of a save is only believable if the save boundary was ever entered. The lifecycle's own evidence now
+    // distinguishes "a save was observed" from "the save-boundary budget expired and the transition was taken
+    // anyway", because the two produce the same phase sequence (measured 2026-10-17/18: run g28 moved
+    // `AwaitingSave -> AwaitingDayStart` exactly 300 frames after entering it - the budget, not a save - while
+    // `is_saving=false` for the whole run).
+    if (night.facts.save_boundary_not_observed === "true" && night.facts.saved_observed === "true") {
+      violations.push(violation("night_claims_a_save_without_entering_the_save_boundary", `${where}.evidence`));
+    }
 
     // The menu that decides whether a rollover stalls: it must have been closed by the product, and
     // the closure must be a receipted fact rather than an inference.
@@ -318,6 +326,7 @@ const CHECKED_RULES = Object.freeze([
   "night_world_calendar_unobserved",
   "night_world_calendar_mismatch",
   "night_saved_edge_not_observed",
+  "night_claims_a_save_without_entering_the_save_boundary",
   "night_day_started_edge_not_observed",
   "night_raised_unclosable_menu",
   "level_up_menu_not_resolved",

@@ -5,12 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import {
-  DEFAULT_LIVE_RUN_ROOT,
-  LIVE_RUN_ROOT_ENV,
-  openLiveRunCapture,
-  resolveLiveRunRoot,
-} from "./capture.mjs";
+import { DEFAULT_LIVE_RUN_ROOT, LIVE_RUN_ROOT_ENV, openLiveRunCapture, resolveLiveRunRoot } from "./capture.mjs";
 
 async function scratch(t) {
   const dir = await mkdtemp(join(tmpdir(), "live-run-capture-"));
@@ -22,10 +17,7 @@ test("resolveLiveRunRoot honours the env override and defaults to a repo-local r
   const repoRoot = await scratch(t);
   assert.equal(resolveLiveRunRoot({ repoRoot, env: {} }), join(repoRoot, DEFAULT_LIVE_RUN_ROOT));
   const scratchRoot = join(repoRoot, "scratch-runs");
-  assert.equal(
-    resolveLiveRunRoot({ repoRoot, env: { [LIVE_RUN_ROOT_ENV]: scratchRoot } }),
-    scratchRoot,
-  );
+  assert.equal(resolveLiveRunRoot({ repoRoot, env: { [LIVE_RUN_ROOT_ENV]: scratchRoot } }), scratchRoot);
   // An empty override is not a root: fall back rather than writing to "".
   assert.equal(
     resolveLiveRunRoot({ repoRoot, env: { [LIVE_RUN_ROOT_ENV]: "" } }),
@@ -85,8 +77,16 @@ test("copyTree keeps only included paths and never descends into node_modules", 
   await capture.close();
 
   assert.ok(existsSync(join(capture.dir, "runtime-root", "contexts", "abc", "identity-profile.json")));
-  assert.ok(existsSync(join(capture.dir, "runtime-root", "contexts", "abc", "data", "cortexkit", "magic-context", "context.db")));
-  assert.ok(existsSync(join(capture.dir, "runtime-root", "contexts", "abc", "data", "cortexkit", "magic-context", "magic-context.log")));
+  assert.ok(
+    existsSync(
+      join(capture.dir, "runtime-root", "contexts", "abc", "data", "cortexkit", "magic-context", "context.db"),
+    ),
+  );
+  assert.ok(
+    existsSync(
+      join(capture.dir, "runtime-root", "contexts", "abc", "data", "cortexkit", "magic-context", "magic-context.log"),
+    ),
+  );
   assert.equal(existsSync(join(capture.dir, "runtime-root", "contexts", "abc", "unrelated.txt")), false);
   assert.equal(existsSync(join(capture.dir, "runtime-root", "contexts", "abc", "node_modules")), false);
 });
@@ -178,4 +178,24 @@ test("captureRuntimeRoot rejects an empty root explicitly", async (t) => {
   await capture.captureRuntimeRoot("");
   const summary = await capture.close();
   assert.equal(summary.failures[0].error, "runtime_root_required");
+});
+
+test("a run writes a launch receipt before it does any work, so a killed run leaves evidence", async () => {
+  // Night audit (2026-10-17/18): 7 of 36 run directories were empty and 10 had no manifest, because every record
+  // was written at CLOSE. A run killed before its interesting moment was therefore indistinguishable on disk from
+  // one that never started. The receipt is written the moment the directory exists.
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-capture-launch-"));
+  try {
+    const capture = await openLiveRunCapture({ kind: "game-ladder", label: "receipt", root });
+    const receipt = JSON.parse(await readFile(join(capture.dir, "launch.json"), "utf8"));
+    assert.equal(receipt.schema, "gamebuddy-live-run-launch/v1");
+    assert.equal(receipt.kind, "game-ladder");
+    assert.equal(receipt.label, "receipt");
+    assert.equal(typeof receipt.startedAtMs, "number");
+    assert.equal(typeof receipt.pid, "number");
+    // A process death after this point still leaves the directory non-empty.
+    assert.ok(existsSync(join(capture.dir, "launch.json")));
+  } finally {
+    rm(root, { recursive: true, force: true });
+  }
 });

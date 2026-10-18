@@ -1110,6 +1110,33 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     private static bool ReadPlayerText(JsonElement value, out string? result) { result = value.ValueKind == JsonValueKind.String ? value.GetString() : null; return result is { Length: >= 1 and <= 128 } && result.Trim().Length > 0 && result == result.TrimStart() && result == result.TrimEnd() && result.Normalize(System.Text.NormalizationForm.FormC) == result; }
     private static bool ReadNavigationRef(JsonElement value, out string? result) { result = value.ValueKind == JsonValueKind.String ? value.GetString() : null; return result is not null && result.StartsWith("dr1_", StringComparison.Ordinal) && result.Length == 26; }
     private static bool IsBoundedString(string? value, int maximum) => value is not null && value.Length <= maximum;
+    /// <summary>
+    /// The `correlationId` of a frame whose typed parse FAILED, so a refusal can still be attached to the call it
+    /// refuses.
+    ///
+    /// Measured 2026-10-17/18 (audit of that night's runs): `HandleExecute` refused an unparseable execution request
+    /// with `SerializeError(state, null, "invalid_envelope")`, and the Host resolves responses by correlation id - so a
+    /// null-correlated refusal matched no pending call and could never settle it. The caller saw only its own 45 s
+    /// timer, which is the same "refusal nobody named" shape the night was made of. The id is read best-effort and
+    /// bounded: a frame that has no usable id still refuses, it just cannot be attributed.
+    /// </summary>
+    internal static string? TryReadCorrelationId(string json)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+            if (!document.RootElement.TryGetProperty("correlationId", out JsonElement correlation)) return null;
+            if (correlation.ValueKind != JsonValueKind.String) return null;
+            string? value = correlation.GetString();
+            return IsOpaqueId(value) ? value : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     public static bool TryDeserializeExecutionRequest(
         string json,
         out BridgeEnvelope<BridgeExecutionRequest>? envelope,

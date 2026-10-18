@@ -101,6 +101,8 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private int settleFrames;
     private int readyBarrierFrames;
     private int saveBoundaryFrames;
+    /// <summary>True once the save-boundary budget expired without observing a save, so the receipt can say so.</summary>
+    private bool saveBoundaryNotObserved;
     private int ticks;
     private int dayBefore;
     private int daysBefore;
@@ -247,7 +249,20 @@ internal sealed class SleepAndAdvanceDayLifecycle
         if (this.phase != phaseBefore && !this.finished)
             this.monitor.Log($"GameBuddy sleep lifecycle {phaseBefore} -> {this.phase} (topology={this.Topology()}).", LogLevel.Info);
         if (!terminal && this.ticks % 600 == 0 && !this.finished)
-            this.monitor.Log($"GameBuddy sleep lifecycle still in {this.phase} (topology={this.Topology()}).", LogLevel.Info);
+            // The three facts the day-start decision is made OF, published with the wait that is made from them.
+            // Run g27 crossed the first night with every menu closed by the product and the world reporting day 6,
+            // and the receipt was still missing - and there was no way to tell WHICH fact never arrived (the save,
+            // its completion, or SMAPI's own DayStarted). `wait_frames` is included because exhausting it is a NAMED
+            // outcome (`day_start_not_observed`), not a hang.
+            this.monitor.Log(
+                $"GameBuddy sleep lifecycle still in {this.phase} (topology={this.Topology()}). "
+                + $"saving={this.savingObserved.ToString().ToLowerInvariant()};"
+                + $"saved={this.NightSavedObserved.ToString().ToLowerInvariant()};"
+                + $"day_started={this.NightDayStartedObserved.ToString().ToLowerInvariant()};"
+                + $"delta={(Game1.Date?.TotalDays ?? 0) - this.dayBefore};"
+                + $"wait_frames={this.dayStartWaitFrames}/{DayStartFrameBudget};"
+                + $"is_saving={Game1.game1.IsSaving.ToString().ToLowerInvariant()}.",
+                LogLevel.Info);
         return terminal;
     }
 
@@ -720,6 +735,12 @@ internal sealed class SleepAndAdvanceDayLifecycle
         this.saveBoundaryFrames++;
         if (this.saveBoundaryFrames >= SaveBoundaryFrameBudget)
         {
+            // The budget expiring is a FACT ABOUT THIS NIGHT, not an internal detail: the transition that follows is
+            // taken without an observed save, and a receipt that does not say so reads as if one happened. Measured
+            // 2026-10-17/18 (run g28): `AwaitingSave -> AwaitingDayStart` fired exactly 300 frames after the wait
+            // began - the budget, not a save - while `is_saving=false` for the whole run, and the receipt could not
+            // state that because the fact lived only in this in-memory trace.
+            this.saveBoundaryNotObserved = true;
             this.trace.Add("save_boundary_not_observed");
             this.phase = Phase.AwaitingDayStart;
         }
@@ -851,6 +872,9 @@ internal sealed class SleepAndAdvanceDayLifecycle
             ["savingObserved"] = this.savingObserved,
             ["savedObserved"] = this.NightSavedObserved,
             ["dayStartedObserved"] = this.NightDayStartedObserved,
+            // The transition was taken WITHOUT an observed save, and the receipt says so rather than leaving a reader
+            // to infer that a save happened (see ObserveSaveBoundary).
+            ["saveBoundaryNotObserved"] = this.saveBoundaryNotObserved,
             ["readyCheckObserved"] = this.readyCheckObserved,
         };
         if (this.multiPlayer)
@@ -879,6 +903,9 @@ internal sealed class SleepAndAdvanceDayLifecycle
             $"saving_observed={this.savingObserved.ToString().ToLowerInvariant()}",
             $"saved_observed={this.NightSavedObserved.ToString().ToLowerInvariant()}",
             $"day_started_observed={this.NightDayStartedObserved.ToString().ToLowerInvariant()}",
+            // A receipt that claims a day advanced without saying whether a save was ever observed lets a reader
+            // assume one. Published unconditionally, because "false" here is the informative value.
+            $"save_boundary_not_observed={this.saveBoundaryNotObserved.ToString().ToLowerInvariant()}",
         };
         if (this.dayBaselineCaptured)
         {

@@ -175,6 +175,14 @@ function fixtureChecks() {
         }),
     ],
     [
+      "claims_a_save_without_a_save_boundary",
+      "night_claims_a_save_without_entering_the_save_boundary",
+      // `day()` takes FLAT overrides, so the evidence is passed flat too: the first version of this case nested it
+      // under `terminal`, the helper ignored it, and the "falsifier" exercised nothing while still reading as a
+      // falsifier.
+      () => day({ evidence: `${EVIDENCE()};save_boundary_not_observed=true` }),
+    ],
+    [
       "festival",
       "night_landed_on_a_festival_day",
       () =>

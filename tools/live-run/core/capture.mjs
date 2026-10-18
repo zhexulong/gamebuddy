@@ -114,6 +114,24 @@ export async function openLiveRunCapture({ kind, label, root, budget, dirName } 
     failures.push({ op: "mkdir", path: dir, error: String(error?.message ?? error) });
   }
 
+  // A LAUNCH RECEIPT, written the moment the run directory exists.
+  //
+  // Measured 2026-10-17/18 (night audit): 7 of 36 run directories were EMPTY and 10 had no `manifest.json`, because
+  // every record was written at CLOSE - so a run killed before its interesting moment left no evidence that it had
+  // ever been armed, and "the run failed" was indistinguishable on disk from "the run never started". The receipt
+  // is deliberately tiny and outside the charge budget: its value is highest exactly when nothing else got written.
+  if (opened) {
+    try {
+      await writeFile(
+        join(dir, "launch.json"),
+        `${JSON.stringify({ schema: "gamebuddy-live-run-launch/v1", kind, label: label ?? null, startedAtMs: Date.now(), pid: process.pid })}\n`,
+        "utf8",
+      );
+    } catch (error) {
+      failures.push({ op: "write", path: join(dir, "launch.json"), error: String(error?.message ?? error) });
+    }
+  }
+
   /** JSON record (an observation, not a copy). Small and usually kept; still
    * charged so a runaway caller cannot exceed the budget through records. */
   async function record(name, value) {

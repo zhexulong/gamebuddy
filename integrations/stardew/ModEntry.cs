@@ -2372,7 +2372,11 @@ public sealed partial class ModEntry : Mod
         if (!BridgeProtocol.TryDeserializeExecutionRequest(json, out BridgeEnvelope<BridgeExecutionRequest>? request, out _) || request is null)
         {
             this.MonitorNativeChatIngress("navigation_execution_parse_rejected");
-            return this.SerializeError(state, null, "invalid_envelope");
+            // Correlate the refusal even though the TYPED parse failed: without an id the Host cannot match this error
+            // to the call that caused it, so the caller reports its own timer and the refusal is invisible
+            // (measured 2026-10-17/18: `respond_level_up` was rejected here on every dispatch and the run reported a 45 s
+            // timeout; the night's audit named this the one still-open instance of its dominant failure mode).
+            return this.SerializeError(state, BridgeProtocol.TryReadCorrelationId(json), "invalid_envelope");
         }
         return this.SerializeBridgeResponse<BridgeExecutionRequest, BridgeReceipt>(state, request,
             (BridgeEnvelope<BridgeExecutionRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => state.BridgeSession!.TryExecute(generation, request, out response, out reason), out _);
