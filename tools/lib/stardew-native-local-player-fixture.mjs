@@ -1176,6 +1176,15 @@ async function backupBodyProgramJournal(options, backup) {
   // The save root is recorded with the scope: restore runs from the
   // transaction's own backup and is not handed a save root again, so the one
   // directory the removal is bounded to has to travel with the marker.
+  // The live scope is CLEARED, not left alone: the save this run receives is the TEMPLATE, which has no programs,
+  // so a journal from a previous run would describe a world that no longer exists. That is not a hypothetical - the
+  // Mod opens `RecoveryRequired` whenever a leftover program has a dispatched-but-unsettled node
+  // (`ShouldComposeBodyProgramController` accepts only `Empty|Opened`, ModEntry.cs:2834), so it composed no
+  // controller and refused every `program_submit` with `body_program_journal_unavailable`. Measured 2026-10-18: a
+  // 4267-byte journal still held the program `farm_day5_b` from a killed run, and every run afterwards was refused.
+  // The backup above is what makes this honest: `restore` puts the caller's own bytes back, so the world OUTSIDE the
+  // transaction is unchanged while the run itself starts coherent.
+  await rm(scopeDirectory, { recursive: true, force: true });
   await writeJson(join(backup, "body-program-journal.json"), {
     version: 1,
     path: scopeDirectory,
