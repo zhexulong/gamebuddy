@@ -61,7 +61,10 @@ Write-Host "Preparing fixture (step 1: restore + prepare)..."
 
 Write-Host "Clearing stale Body Program journal after backup..."
 $binding = Get-Content -Raw $BindingPath | ConvertFrom-Json
-$scope = Join-Path (Join-Path $env:APPDATA "StardewValley\Saves") ("BodyProgramJournal-v1\stardew\{0}\{1}\{2}\{3}" -f $binding.saveId, $binding.worldId, $binding.playerId, $binding.companionId)
+# The journal root is `Constants.DataPath` (the folder CONTAINING Saves), not the save root: the Mod joins
+# `BodyProgramJournal-v1` onto the former, so looking under Saves cleared nothing and a stale program kept every
+# following run in RecoveryRequired (measured 2026-10-18).
+$scope = Join-Path (Join-Path $env:APPDATA "StardewValley") ("BodyProgramJournal-v1\stardew\{0}\{1}\{2}\{3}" -f $binding.saveId, $binding.worldId, $binding.playerId, $binding.companionId)
 if (Test-Path -LiteralPath $scope) { Remove-Item -LiteralPath $scope -Recurse -Force }
 
 Write-Host "Launching StardewModdingAPI.exe from $GameDir ..."

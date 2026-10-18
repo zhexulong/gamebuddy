@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { readExperimentalStardewActionIds } from "./stardew-published-action-registry.mjs";
 
 const BUNDLE_FILES = Object.freeze([
@@ -1118,6 +1118,23 @@ async function backupManagedFiles(context, backup) {
  * both - the journal is out of scope, and that is recorded explicitly rather
  * than silently skipped, so the distinction stays visible in the backup marker.
  */
+/**
+ * The directory the Mod joins `BodyProgramJournal-v1` onto: `StardewModdingAPI.Constants.DataPath`.
+ *
+ * That is the folder which CONTAINS `Saves`, so a save root ending in `Saves` has its journal one level up. The
+ * tool looked under the save root itself, at `<saveRoot>/BodyProgramJournal-v1/...` - a path that does not exist -
+ * so the reset below never touched the live journal. Measured 2026-10-18: the real file at
+ * `%APPDATA%/StardewValley/BodyProgramJournal-v1/stardew/<saveId>/<worldId>/<playerId>/<companionId>/journal.json`
+ * still held the program `farm_day5_b`, left mid-flight when a run was killed, and every run since opened
+ * `RecoveryRequired`, composed no controller and refused every `program_submit` with
+ * `body_program_journal_unavailable`. A caller pointing somewhere that is NOT a `Saves` directory keeps the old
+ * behaviour, because then there is nothing to derive.
+ */
+function bodyProgramJournalRoot(saveRoot) {
+  const trimmed = resolve(saveRoot);
+  return basename(trimmed).toLowerCase() === "saves" ? dirname(trimmed) : trimmed;
+}
+
 function bodyProgramJournalScopeDirectory(options) {
   // A caller that declares no Stardew save root has no journal in scope: the
   // offline source-assertion tests prepare a fixture without one, and the live
@@ -1131,7 +1148,7 @@ function bodyProgramJournalScopeDirectory(options) {
   for (const segment of segments)
     if (typeof segment !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(segment))
       throw new Error("invalid_native_local_binding");
-  return join(options.stardewSaveRoot, "BodyProgramJournal-v1", "stardew", ...segments);
+  return join(bodyProgramJournalRoot(options.stardewSaveRoot), "BodyProgramJournal-v1", "stardew", ...segments);
 }
 
 async function backupBodyProgramJournal(options, backup) {
@@ -1163,6 +1180,9 @@ async function backupBodyProgramJournal(options, backup) {
     version: 1,
     path: scopeDirectory,
     existed,
+    // The root the containment check must use, NOT the save root: restore removes exactly this subtree, and the
+    // admitted boundary has to be the directory the Mod actually writes into.
+    journalRoot: bodyProgramJournalRoot(options.stardewSaveRoot),
     saveRoot: options.stardewSaveRoot,
   });
   return { path: scopeDirectory, existed };
@@ -1183,7 +1203,10 @@ async function backupBodyProgramJournal(options, backup) {
 function ownedJournalScopePath(marker) {
   if (typeof marker.saveRoot !== "string" || !isAbsolute(marker.saveRoot) || typeof marker.path !== "string")
     throw new Error("invalid_fixture_backup_manifest");
-  const journalRoot = resolve(join(marker.saveRoot, "BodyProgramJournal-v1"));
+  // Prefer the recorded journal root (the DataPath-derived one); fall back to the legacy derivation so an old
+  // marker fails the containment check rather than silently admitting a path under the wrong parent.
+  const root = typeof marker.journalRoot === "string" ? marker.journalRoot : marker.saveRoot;
+  const journalRoot = resolve(join(root, "BodyProgramJournal-v1"));
   const scopePath = resolve(marker.path);
   const containment = relative(journalRoot, scopePath);
   if (containment === "" || containment.startsWith("..") || isAbsolute(containment) || containment.includes(".."))
