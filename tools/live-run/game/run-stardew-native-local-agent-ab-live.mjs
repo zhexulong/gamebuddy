@@ -1204,6 +1204,46 @@ function captureModLogFacts(runDir) {
     return Object.freeze({ path, archived: false, error: String(error?.message ?? error).slice(0, 240) });
   }
 }
+
+/**
+ * How long the Mod may go without printing a heartbeat before the run says the WORLD stopped.
+ *
+ * The Mod's heartbeat is per tick, and the native-local lane prints it on every path that yields (including the ones
+ * that pump the bridge), so its absence is not a bridge problem - it means the game thread is not reaching the Mod at
+ * all. Measured 2026-10-18 (g40night): the last heartbeat was 19:23:59 with `bridge=connected; rx=552/552`, the last
+ * log line at 19:24:01 was a navigation execution starting, and then the log went silent for six minutes until the
+ * harness reported a dead pipe. Nothing named the stall while it was happening, so the run looked like a transport
+ * fault. This turns it into a timestamped reason at the moment it occurs.
+ */
+const MOD_HEARTBEAT_STALL_MS = 90_000;
+
+/** Where the Mod's own log lives, and the one line in it that proves the world is still advancing. */
+const MOD_LOG_PATH = () => join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
+const MOD_HEARTBEAT_MARKER = "DEBUG-native-local-heartbeat";
+let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
+
+/**
+ * Sample the Mod's heartbeat: how many it has printed, when that count last grew, and the newest line.
+ *
+ * Counting rather than parsing timestamps keeps it independent of the log's clock format and of midnight.
+ */
+function sampleModHeartbeat() {
+  try {
+    const lines = readFileSync(MOD_LOG_PATH(), "utf8")
+      .split("\n")
+      .filter((line) => line.includes(MOD_HEARTBEAT_MARKER));
+    const grew = lines.length > modHeartbeatSample.count;
+    modHeartbeatSample = {
+      count: lines.length,
+      sinceMs: grew ? Date.now() : modHeartbeatSample.sinceMs,
+      line: (lines.at(-1) ?? "").trim().slice(0, 200),
+    };
+  } catch (error) {
+    // Unreadable is not stalled: the run has no evidence either way, and inventing a stall would be worse.
+    modHeartbeatSample = { ...modHeartbeatSample, line: `unreadable:${String(error?.message ?? error).slice(0, 80)}` };
+  }
+  return Object.freeze({ ...modHeartbeatSample, silentMs: Date.now() - modHeartbeatSample.sinceMs });
+}
 const MULTIDAY_CROSSINGS = (() => {
   const requested = Number.parseInt(process.env.GAMEBUDDY_MULTIDAY_CROSSINGS ?? "2", 10);
   if (!Number.isInteger(requested) || requested < MINIMUM_BASELINE_DAYS || requested > MAXIMUM_BASELINE_DAYS) {
@@ -1295,6 +1335,11 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
       if (dispatched !== undefined) return null;
       if (daySettled) return "companion_did_not_sleep";
+      // Before the harness's own bound: has the WORLD stopped? A stalled heartbeat is a different finding from
+      // "the companion has not slept yet", and it is the one that has silently ended most of the multi-day runs.
+      const liveness = sampleModHeartbeat();
+      if (liveness.silentMs >= MOD_HEARTBEAT_STALL_MS)
+        return `world_stopped_advancing:silent_ms=${String(liveness.silentMs)}:last_heartbeat=${liveness.line}`;
       if (Date.now() >= deadline) return "companion_did_not_sleep:day_turn_still_running";
       await new Promise((resolve) => setTimeout(resolve, MULTIDAY_POLL_INTERVAL_MS));
     }

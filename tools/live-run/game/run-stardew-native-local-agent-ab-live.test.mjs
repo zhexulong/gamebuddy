@@ -850,3 +850,21 @@ test("the night watcher outlives the day turn it accompanies", () => {
   // And the honest pair of outcomes still exists: a settled day with no advance_day is named at once.
   assert.match(RUNNER_SOURCE, /companion_did_not_sleep/u);
 });
+
+test("a stalled Mod heartbeat is named while it is happening, not six minutes later", () => {
+  // Measured on g40night: the last heartbeat was 19:23:59 (`bridge=connected; rx=552/552`), the last log line at
+  // 19:24:01 was a navigation execution starting, and the log then went silent for six minutes until the harness
+  // reported a dead pipe. Per-tick heartbeats print on EVERY yielding path (including the ones that pump the bridge),
+  // so their absence means the game thread is not reaching the Mod - a different finding from "the companion has not
+  // slept", and the one that has silently ended most of the multi-day runs.
+  assert.match(RUNNER_SOURCE, /const MOD_HEARTBEAT_STALL_MS = 90_000;/u);
+  assert.match(RUNNER_SOURCE, /function sampleModHeartbeat\(\)/u);
+  assert.match(RUNNER_SOURCE, /DEBUG-native-local-heartbeat/u);
+  // It must be consulted BEFORE the harness's own bound, and say what it saw.
+  assert.match(
+    RUNNER_SOURCE,
+    /if \(liveness\.silentMs >= MOD_HEARTBEAT_STALL_MS\)[\s\S]{0,120}world_stopped_advancing:silent_ms=/u,
+  );
+  // An unreadable log is not a stall: no evidence must not become a verdict.
+  assert.match(RUNNER_SOURCE, /Unreadable is not stalled/u);
+});
