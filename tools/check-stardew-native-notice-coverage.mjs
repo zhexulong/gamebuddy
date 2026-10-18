@@ -32,16 +32,16 @@ const PRODUCER_FAMILIES = Object.freeze([
   Object.freeze({
     id: "hud",
     surface: "Game1.hudMessages",
-    patterns: [String.raw`showGlobalMessage\(`, String.raw`addHUDMessage\(`, String.raw`hudMessages\.Add`],
+    patterns: ["showGlobalMessage\\(", "addHUDMessage\\(", "hudMessages\\.Add"],
     // The observer must re-read the FIELD each pass: `Game1.cs` both fills and REPLACES the list, so a captured
     // reference goes stale and the chain silently stops.
-    observerMustRead: String.raw`Game1\.hudMessages`,
+    observerMustRead: "Game1\\.hudMessages",
   }),
   Object.freeze({
     id: "chat",
     surface: "Game1.chatBox",
-    patterns: [String.raw`chatBox\.list`, String.raw`chatBox\.addMessage`, String.raw`chatBox\.list\.Add`],
-    observerMustRead: String.raw`chatBox`,
+    patterns: ["chatBox\\.list", "chatBox\\.addMessage", "chatBox\\.list\\.Add"],
+    observerMustRead: "chatBox",
   }),
 ]);
 
@@ -130,9 +130,6 @@ for (const family of PRODUCER_FAMILIES) {
     readers.length > 0,
     `${String(callSites)} native call sites in ${String(files.size)} files, readers: ${readers.map((r) => r.path.slice(MOD.length + 1)).join(",") || "none"}`,
   );
-  for (const reader of readers) {
-    violations.push(...[]);
-  }
 }
 
 // The hud observer must re-read the field INSIDE its observation step, not capture it once: `Game1.cs` reassigns
