@@ -68,6 +68,29 @@ public sealed partial class ModEntry : Mod
 
     private string tickWatchdogPhaseForReport() => Volatile.Read(ref this.tickWatchdogPhase) ?? "unknown";
 
+    /// <summary>
+    /// Name the stage the tick is about to enter, and prove it was REACHED, on the last line the log keeps.
+    ///
+    /// The heartbeat alone cannot answer "where did it freeze": it is printed between the pipe drain and the
+    /// executions update, so its phase is always `pipe_drain` whatever happens afterwards. Measured 2026-10-18 (g46):
+    /// the run froze right after a navigation execution was queued, the last heartbeat read `phase=pipe_drain`, and
+    /// that says nothing about whether the tick died in the drain or in the body controller's update. Two markers per
+    /// tick - one on each side of the dangerous stage - make the last line decisive.
+    ///
+    /// Throttled like the heartbeat (2 s), so a log is never flooded, and it never changes authority.
+    /// </summary>
+    private void LogStageOnce(string phase)
+    {
+        this.MarkTickPhase(phase);
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (now - this.nativeLocalPlayerFixtureLastStageUnixMs < 2_000L)
+            return;
+        this.nativeLocalPlayerFixtureLastStageUnixMs = now;
+        this.Monitor.Log(
+            $"[DEBUG-native-local-stage] stage={phase};tick={Interlocked.Read(ref this.tickWatchdogTick)}",
+            LogLevel.Trace);
+    }
+
     private void LogBlockedTickReasonOnce(string reason)    {
         if (this.blockedTickReasonsLogged.Add(reason))
         {
@@ -183,6 +206,7 @@ public sealed partial class ModEntry : Mod
     private long nativeLocalPlayerFixtureDeadlineUnixMs;
     private long nativeLocalPlayerFixtureLastReadinessLogUnixMs;
     private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
+    private long nativeLocalPlayerFixtureLastStageUnixMs;
 
     /// <summary>
     /// Tick watchdog state: the phase the current tick is in, and when that tick started.
@@ -1441,8 +1465,9 @@ public sealed partial class ModEntry : Mod
             Volatile.Write(ref this.tickWatchdogPhase, "pipe_drain");
             this.DrainLocalPipeBridge(nativeLocalState);
             this.LogNativeLocalPipelineHeartbeat();
-            Volatile.Write(ref this.tickWatchdogPhase, "executions_update");
+            this.LogStageOnce("executions_update");
             nativeLocalState.Executions?.Update();
+            this.LogStageOnce("executions_update_done");
             // The Body Program successor pump must run on the native-local player
             // lane exactly like the formal lane: it auto-starts dependency-free
             // sources and exact successors and parks when no authenticated
