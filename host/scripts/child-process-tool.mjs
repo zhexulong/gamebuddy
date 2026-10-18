@@ -222,7 +222,7 @@ function assertMandatorySpawnOptions(spawnOptions) {
   }
 }
 
-function childAlreadyExited(child) {
+export function childAlreadyExited(child) {
   return (child.exitCode !== null && child.exitCode !== undefined) ||
     (child.signalCode !== null && child.signalCode !== undefined);
 }

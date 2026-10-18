@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import test from "node:test";
-import { DEFAULT_SUITE_TIMEOUT_MS, runBoundedChild } from "./child-process-tool.mjs";
+import { DEFAULT_SUITE_TIMEOUT_MS, childAlreadyExited, runBoundedChild } from "./child-process-tool.mjs";
 import { buildProductionArtifact, resolveTypeScriptInvocation, verifyDeclaredMagicContextArtifact } from "./build-production-artifact.mjs";
 import { assertCompleteProductionArtifact, copyApprovedResources, createBrowserArtifactSnapshot, createInventory, describeInventoryDifference, parseEsmResolutionProbeResult, publishProductionArtifact as publishProductionArtifactWithoutRuntime, readArtifactConfig, recheckProductionEntry, resolveProductionEntry, resolveProductionModule, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
 import { createIncompleteRuntimeFixture } from "./production-artifact-runtime-test-support.mjs";
@@ -68,6 +68,22 @@ async function fixture() {
   return root;
 }
 async function withFixture(run) { const root = await fixture(); try { await run(root); } finally { await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } }
+/**
+ * Resolves when the child exits, or fails by name at the deadline. `exit` fires once, so a
+ * listener attached after the event never settles: a launcher that dies early must fail the
+ * waiting test instead of hanging it. The deadline asks the launcher to stop first, because a
+ * launcher owns the game child tree it spawned.
+ */
+async function waitForChildExit(child, deadlineMs, describe) {
+  if (childAlreadyExited(child)) return [child.exitCode, child.signalCode];
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`child ${String(child.pid)} did not exit within ${deadlineMs}ms: ${describe()}`));
+    }, deadlineMs);
+    child.once("exit", (code, signal) => { clearTimeout(timer); resolve([code, signal]); });
+  });
+}
 const testHash = (value) => createHash("sha256").update(value).digest("hex");
 const testU16 = (value) => { const bytes = Buffer.alloc(2); bytes.writeUInt16LE(value); return bytes; };
 const testU32 = (value) => { const bytes = Buffer.alloc(4); bytes.writeUInt32LE(value); return bytes; };
@@ -1526,8 +1542,13 @@ test("launcher rejects a test-fixture runtime generation before relaying source 
 test("active STOP proof receipt is wrapper-owned and leaves the Preview child live", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
+  // The staged launcher chain is static: start-test-artifact.mjs imports production-artifact-test-support.mjs,
+  // which imports production-artifact.mjs, which imports closure staging and persona hygiene. A fixture
+  // missing any of them dies with ERR_MODULE_NOT_FOUND before the wrapper can prove or relay anything.
   for (const script of [
     "active-stop-proof.mjs",
+    "check-release-persona-hygiene.mjs",
+    "production-artifact-closure-staging.mjs",
     "production-artifact.mjs",
     "voice-artifact-fixture-publisher.mjs",
     "production-artifact-esm-resolution-probe.mjs",
@@ -1588,7 +1609,7 @@ else {
       new Promise((resolve) => wrapper.stdout.on("data", () => {
         if (stdout === "active_stop_proof_verified\n") resolve();
       })),
-      new Promise((_, reject) => setTimeout(() => reject(new Error(`proof receipt timeout: ${stdout} ${stderr}`)), 5_000)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`proof receipt timeout: wrapper_exit=${String(wrapper.exitCode)} stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderr)}`)), 5_000)),
     ]);
     assert.equal(stdout, "active_stop_proof_verified\n");
     assert.equal(wrapper.exitCode, null, `wrapper exited after proof: ${stderr}`);
@@ -1597,11 +1618,11 @@ else {
       new Promise((resolve) => wrapper.on("message", () => {
         if (messages.some((message) => message?.schema === "post-proof-ordinary-ipc" && message.value === 1)) resolve();
       })),
-      new Promise((_, reject) => setTimeout(() => reject(new Error(`post-proof IPC timeout: ${JSON.stringify(messages)}`)), 5_000)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`post-proof IPC timeout: messages=${JSON.stringify(messages)} stderr=${JSON.stringify(stderr)}`)), 5_000)),
     ]);
   } finally {
     wrapper.kill("SIGTERM");
-    await new Promise((resolve) => wrapper.once("exit", resolve));
+    await waitForChildExit(wrapper, 5_000, () => `wrapper survived SIGTERM; stderr=${JSON.stringify(stderr)}`);
   }
   const exited = spawn(process.execPath, [
     join(root, "scripts", "start-test-artifact.mjs"),
@@ -1615,7 +1636,7 @@ else {
   exited.stderr.setEncoding("utf8");
   exited.stdout.on("data", (chunk) => { exitedStdout += chunk; });
   exited.stderr.on("data", (chunk) => { exitedStderr += chunk; });
-  const [exitCode] = await new Promise((resolve) => exited.once("exit", (...args) => resolve(args)));
+  const [exitCode] = await waitForChildExit(exited, 15_000, () => `stdout=${JSON.stringify(exitedStdout)} stderr=${JSON.stringify(exitedStderr)}`);
   assert.equal(exitCode, 1);
   assert.equal(exitedStdout, "active_stop_proof_verified\n");
   assert.equal(exitedStderr, "preview_exited_after_active_stop_proof\n");
