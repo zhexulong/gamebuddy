@@ -2,6 +2,7 @@ import type { Static } from "typebox";
 import { join } from "node:path";
 import {
   isCurrentMountedChatRuntimeLease,
+  rewindMountedChatTranscript,
   selectMountedSwipeVariant,
   stopMountedChatPresentationEpoch,
   type MountedChatRuntimeLease,
@@ -16,6 +17,8 @@ import {
   type MessageSubmissionStatusQueryV1Schema,
   type MessageSubmissionStatusV1Schema,
   type RegenerateMessageCommandV1,
+  type RewindChatCommandV1,
+  type RewindChatResultV1,
   type SubmitMessageCommandV1,
   type SubmitResultV1Schema,
   type SwipeSelectCommandV1,
@@ -133,6 +136,14 @@ export type ChatPipelineService = Readonly<{
   cancel(turnHandle: string, command: CancelTurnCommandV1): Promise<BrowserTurnV1>;
   selectSwipe?(command: SwipeSelectCommandV1): Promise<SwipeSelectResultV1>;
   regenerate?(command: RegenerateMessageCommandV1, idempotencyKey: string): Promise<SubmitResultV1>;
+  /**
+   * Drops the named message and every message after it from the mounted conversation - the
+   * transcript the player reads and the session the model sees, together. The named row is resolved
+   * through the lease's own handle projection, and the position the browser read it at is part of
+   * the command, so a transcript that moved under the click is refused instead of rewound past a
+   * turn the player never saw.
+   */
+  rewind?(command: RewindChatCommandV1): Promise<RewindChatResultV1>;
   /**
    * Rejects new admission and drains admitted acceptance, commit callbacks and
    * background start work before resolving. The mounted lease itself stays
@@ -572,6 +583,47 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       }
     },
 
+    async rewind(command: RewindChatCommandV1): Promise<RewindChatResultV1> {
+      assertOpen();
+      if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+      if (!TavernBrowserValidatorsV1.RewindChatCommandV1Schema.Check(command)) throw unavailable();
+      if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
+      const state = await resumeState();
+      const target = state.messages.find(
+        (message: ChatThreadState["messages"][number]) =>
+          lease.browserProjection.projectMessageHandle(message.messageId) === command.messageHandle,
+      );
+      if (target === undefined) throw rewindRefusal("chat_message_not_found");
+      const order = state.messages.indexOf(target);
+      // The transcript is what a position means: a row that is no longer at the order the browser
+      // rendered it is a stale view, and rewinding from it would drop messages the player never saw.
+      if (order !== command.expectedOrder) throw rewindRefusal("chat_message_revision_conflict");
+      // The greeting is the conversation's own first message, not part of the exchange above it:
+      // dropping it would leave a thread whose recorded opening no longer exists.
+      if (target.kind === "opening") throw rewindRefusal("chat_rewind_opening_retained");
+      // A turn that is not terminal is a reply still being written. Rewinding through it would
+      // truncate a mounted turn, so it is refused rather than silently drained.
+      const ledger = state.turnLedger;
+      if (ledger !== null && !isTerminalLedger(ledger)) throw rewindRefusal("chat_rewind_turn_active");
+      try {
+        const next = await rewindMountedChatTranscript(manifest, lease, {
+          messageId: target.messageId,
+          expectedOrder: order,
+        });
+        const tail = next.messages[next.messages.length - 1];
+        const result = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          lastMessage: tail === undefined ? null : projectMessage(lease, tail, next.messages.length - 1),
+        });
+        // Fail closed unless the committed representation satisfies its frozen contract schema; a
+        // partial or invalid projection never escapes.
+        if (!TavernBrowserValidatorsV1.RewindChatResultV1Schema.Check(result)) throw unavailable();
+        return result;
+      } catch (error) {
+        throw rethrowRewindError(error);
+      }
+    },
+
     async close(): Promise<void> {
       if (closePromise !== undefined) return closePromise;
       closing = true;
@@ -740,6 +792,27 @@ function validateSubmitCommand(command: SubmitMessageCommandV1, lease: MountedCh
     throw unavailable();
   // Exact-binding selection: browser input can never select another generation.
   if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
+}
+
+/**
+ * The rewind refusals that name the point the player chose. They keep their own code all the way to
+ * the surface; every other failure (store shape, session branch, read-back, admission, unknown)
+ * collapses to the service's fail-closed code so no raw path, identifier or content can escape.
+ */
+const CHAT_REWIND_REFUSALS: readonly string[] = [
+  "chat_message_not_found",
+  "chat_message_revision_conflict",
+  "chat_rewind_opening_retained",
+  "chat_rewind_turn_active",
+];
+
+function rewindRefusal(code: string): Error {
+  return new Error(code);
+}
+
+function rethrowRewindError(error: unknown): Error {
+  if (error instanceof Error && CHAT_REWIND_REFUSALS.includes(error.message)) return error;
+  return unavailable();
 }
 
 function randomId(): string {

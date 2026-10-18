@@ -13,6 +13,8 @@ import {
 import { createReferencePipelineDialogueWebDelegatedHandler } from "./reference-pipeline-dialogue-web.delegated.js";
 import {
   type RegenerateMessageCommandV1,
+  type RewindChatCommandV1,
+  type RewindChatResultV1,
   type SwipeSelectCommandV1,
   type SwipeSelectResultV1,
   composeReferenceTavernProfile,
@@ -545,9 +547,11 @@ function mutationService(
   recorder: {
     swipes: SwipeSelectCommandV1[];
     regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
+    rewinds: RewindChatCommandV1[];
     closes: number;
   },
   swipeResult: SwipeSelectResultV1,
+  rewind: { result: RewindChatResultV1; refusal?: string } = { result: REWIND_RESULT },
 ): ChatPipelineService {
   return Object.freeze({
     async submitAfterResponseCommit() {
@@ -567,11 +571,19 @@ function mutationService(
       recorder.regenerations.push({ command, idempotencyKey });
       return result;
     },
+    async rewind(command): Promise<RewindChatResultV1> {
+      recorder.rewinds.push(command);
+      if (rewind.refusal !== undefined) throw new Error(rewind.refusal);
+      return rewind.result;
+    },
     async close() {
       recorder.closes += 1;
     },
   });
 }
+
+/** An emptied transcript: the rewind's answer when the player removed the first message. */
+const REWIND_RESULT: RewindChatResultV1 = Object.freeze({ apiVersion: 1, lastMessage: null });
 
 test("the production reference profile declares the message-mutation group and fits the canonical groups", () => {
   const production = composeReferenceTavernProfile();
@@ -630,8 +642,9 @@ test("delegated handler answers the reference profile's Swipe and Regenerate rou
   const recorder: {
     swipes: SwipeSelectCommandV1[];
     regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
+    rewinds: RewindChatCommandV1[];
     closes: number;
-  } = { swipes: [], regenerations: [], closes: 0 };
+  } = { swipes: [], regenerations: [], rewinds: [], closes: 0 };
   const broker = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile: production }),
     bootstrapToken,
@@ -686,6 +699,90 @@ test("delegated handler answers the reference profile's Swipe and Regenerate rou
         idempotencyKey: "A".repeat(22),
       },
     ]);
+  } finally {
+    await server.close();
+    assert.equal(recorder.closes, 1);
+  }
+});
+
+test("delegated handler answers the reference profile's Rewind route, and a refusal keeps its own name", async () => {
+  const production = composeReferenceTavernProfile();
+  const lastMessage = {
+    handle,
+    role: "companion" as const,
+    text: "the reply the player kept",
+    locale: "en" as const,
+    order: 1,
+    revision: 1,
+  };
+  const rewind: { result: RewindChatResultV1; refusal?: string } = {
+    result: Object.freeze({ apiVersion: 1, lastMessage: Object.freeze(lastMessage) }),
+  };
+  const recorder: {
+    swipes: SwipeSelectCommandV1[];
+    regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
+    rewinds: RewindChatCommandV1[];
+    closes: number;
+  } = { swipes: [], regenerations: [], rewinds: [], closes: 0 };
+  const broker = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile: production }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+  });
+  const delegated = createReferencePipelineDialogueWebDelegatedHandler({
+    profile: production,
+    referenceStateFacade: facade,
+    pipelineService: mutationService(
+      recorder,
+      Object.freeze({ apiVersion: 1, message: Object.freeze({ ...lastMessage }) }),
+      rewind,
+    ),
+    eventStream,
+    capability: broker.delegatedAuthCapability,
+  });
+  const server = await start(broker, delegated);
+  try {
+    const initial = await bootstrap(server.origin);
+    assert.equal(initial.status, 200);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const csrf = root.chat.csrfToken;
+    const command = { apiVersion: 1, selectionGeneration: 1, messageHandle: handle, expectedOrder: 0 };
+    const rewindRequest = (token: string, body: unknown) =>
+      fetch(`${server.origin}/api/tavern/v1/messages/rewind`, {
+        method: "POST",
+        headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": token },
+        body: JSON.stringify(body),
+      });
+
+    // The route reaches the service and answers with the transcript's new last row.
+    const answered = await rewindRequest(csrf, command);
+    const answeredBody = await answered.text();
+    assert.equal(answered.status, 200, `rewind must be served, got ${answered.status} ${answeredBody}`);
+    assert.deepEqual(JSON.parse(answeredBody), rewind.result);
+    assert.deepEqual(recorder.rewinds, [command]);
+
+    // A body the contract does not admit is refused before the service, not after it.
+    const malformed = await rewindRequest(csrf, { apiVersion: 1, selectionGeneration: 1, messageHandle: handle });
+    assert.equal(malformed.status, 400);
+    assert.equal(((await malformed.json()) as { code: string }).code, "invalid_request");
+    assert.equal(recorder.rewinds.length, 1);
+
+    // The wrong CSRF fails before the service too, as every mutation on this surface does.
+    const wrongCsrf = await rewindRequest("B".repeat(43), command);
+    assert.equal(wrongCsrf.status, 403);
+    assert.equal(((await wrongCsrf.json()) as { code: string }).code, "csrf_failed");
+    assert.equal(recorder.rewinds.length, 1);
+
+    // A refusal the Host named keeps its own code: the player is told a reply is still being
+    // written, not that the runtime went away.
+    rewind.refusal = "chat_rewind_turn_active";
+    const refused = await rewindRequest(csrf, command);
+    assert.equal(refused.status, 409);
+    assert.equal(((await refused.json()) as { code: string }).code, "chat_rewind_turn_active");
+    assert.equal(recorder.rewinds.length, 2);
   } finally {
     await server.close();
     assert.equal(recorder.closes, 1);
