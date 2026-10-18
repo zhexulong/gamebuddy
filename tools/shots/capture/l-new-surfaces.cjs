@@ -15,10 +15,11 @@ const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot } = requir
 /**
  * A real PNG character card: signature + IHDR + tEXt(`chara`) + IEND, CRC32s correct.
  *
- * The run cannot show a picture the product was never given: the default companion's
- * card is JSON, so her row is a monogram - correct, and not evidence about rendering.
- * Importing a PNG card is what puts a decoded image on screen, which is the fact this
- * driver exists to record.
+ * A run can show only a picture the product was given, and the default companion now carries her
+ * own (`assets/tavern/presets/default-companion/avatar.png`, provisioned into her companion root),
+ * so her roster row is already a decoded image. Importing a PNG card is what shows a picture a CARD
+ * brought with it - the case this item exists to record - while a `.json` card's companion is the
+ * monogram fallback in the same element.
  */
 /**
  * The same PNG card the HOST's own tests hand to the decoder, so a refusal here cannot be a
