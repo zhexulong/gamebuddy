@@ -18,11 +18,7 @@ import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-ada
  * rename a rule's required key and it goes red on that action's missing-key case.
  */
 
-const completionEvidence = (
-  actionId: string,
-  reasonCode: string,
-  detail: string,
-): boolean =>
+const completionEvidence = (actionId: string, reasonCode: string, detail: string): boolean =>
   STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(actionId, {
     state: "succeeded",
     reasonCode,
@@ -368,6 +364,20 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["native_answered", "true"],
       ["outro_started", "true"],
       ["postcondition", "dialogue_outro_started"],
+    ],
+  },
+  // The modal family's third action. An ordinary level is the shape the common case takes; the profession
+  // chooser is the SAME terminal's other branch, and it is pinned with its own A/B at the bottom of this file.
+  respond_level_up: {
+    reasonCode: "level_up_resolved",
+    fields: [
+      ["modal_type", "LevelUpMenu"],
+      ["skill", "2"],
+      ["level", "3"],
+      ["is_profession", "false"],
+      ["chosen_profession", "none"],
+      ["remaining_new_levels", "0"],
+      ["menu_closed", "true"],
     ],
   },
   chest_store: {
@@ -775,7 +785,17 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
     ],
     // A purchase of SEVERAL units moves money and goods by more than one, so only the inequality is required;
     // `stock_before`/`stock_after` are diagnostics of the offer and are not part of the world fact.
-    requiredFields: ["shop", "owner", "item", "money_before", "money_after", "owned_before", "owned_after", "gained", "menu_closed"],
+    requiredFields: [
+      "shop",
+      "owner",
+      "item",
+      "money_before",
+      "money_after",
+      "owned_before",
+      "owned_after",
+      "gained",
+      "menu_closed",
+    ],
   },
 };
 
@@ -897,4 +917,59 @@ test("shop_purchase: a receipt that spent nothing and gained nothing is not a pu
     return [key, value] as const;
   });
   assert.equal(completionEvidence("shop_purchase", "item_purchased", detail(noop)), false);
+});
+
+test("respond_level_up: the profession branch settles, and a contradicting receipt does not", () => {
+  // The rule accepts ONE shape, so the generated cases above - which remove a key at a time - cannot tell its
+  // validate clause from `() => true`: removing a key already fails `exactEvidence`'s exact-key-set check. This
+  // pins the clause itself, and pins the OTHER branch of the same terminal: a level-5/10 profession chooser,
+  // whose choice writes `Farmer.professions` and which the receipt names with a numeric id.
+  const profession: readonly (readonly [string, string])[] = [
+    ["modal_type", "LevelUpMenu"],
+    ["skill", "0"],
+    ["level", "5"],
+    ["is_profession", "true"],
+    ["chosen_profession", "0"],
+    ["remaining_new_levels", "0"],
+    ["menu_closed", "true"],
+  ];
+  const withField = (key: string, value: string): readonly (readonly [string, string])[] =>
+    profession.map(([fieldKey, fieldValue]) => [fieldKey, fieldKey === key ? value : fieldValue] as const);
+
+  // Skill 0 at level 5 offers the pair 0/1 (`LevelUpMenu.cs:421-437`), so both branch ids are real ones.
+  assert.equal(
+    completionEvidence("respond_level_up", "level_up_resolved", detail(profession)),
+    true,
+    "the left branch of the level-5 pair is a resolution",
+  );
+  assert.equal(
+    completionEvidence("respond_level_up", "level_up_resolved", detail(withField("chosen_profession", "1"))),
+    true,
+    "the right branch of the same pair is equally real",
+  );
+  assert.equal(
+    completionEvidence("respond_level_up", "level_up_resolved", detail(withField("chosen_profession", "none"))),
+    false,
+    "a profession settlement that names no profession is not one",
+  );
+  assert.equal(
+    completionEvidence("respond_level_up", "level_up_resolved", detail(withField("is_profession", "false"))),
+    false,
+    "an ordinary level cannot carry a numeric profession id",
+  );
+  assert.equal(
+    completionEvidence("respond_level_up", "level_up_resolved", detail(withField("menu_closed", "false"))),
+    false,
+    "a menu that is still active has settled nothing",
+  );
+  assert.equal(
+    completionEvidence("respond_level_up", "level_up_resolved", detail(withField("modal_type", "DialogueBox"))),
+    false,
+    "another modal is not this action's working precondition",
+  );
+  assert.equal(
+    completionEvidence("respond_level_up", "level_up_resolved", detail(withField("level", "three"))),
+    false,
+    "the settled pair is integral",
+  );
 });
