@@ -226,12 +226,11 @@ const SCENARIO_PROMPTS = Object.freeze({
     // over, by dispatching its own `advance_day`. The loop never ends a night for it - the prompt is where
     // "the day is yours to end" is said, because a night the harness chose would be a scripted crossing.
     zh: (day) =>
-      `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。今天没有人给你派活——你自己看看周围，想做什么就做什么。` +
-      `我今天要去镇上办事，农场就交给你了：把该干的活干完，天黑了就回屋睡觉，明天接着来。怎么干由你决定。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+      `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天），今天的农场工作现在开始。` +
+      `玩家去镇上了，农场交给你：把今天的活干完，天黑就回屋睡觉，明天接着来。怎么干由你决定。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
     en: (day) =>
-      `It is morning in Stardew Valley (day ${String(day)} in a row for you). Nobody has assigned you anything today - look around and do whatever you think is worth doing. ` +
-      `When you are done for the day, go INSIDE the farmhouse first, and then sleep in your bed there. advance_day only works indoors - called from outside it waits for you to come in and never ends the day. ` +
-      `Today's work on the farm starts now. The player has gone into town and the farm is yours: get the day's work done, and when it gets dark go inside and sleep - we pick it up tomorrow. How you do it is up to you. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+      `It is morning in Stardew Valley (day ${String(day)} in a row for you), and today's work on the farm starts now. ` +
+      `The player has gone into town and the farm is yours: get the day's work done, and when it gets dark go inside and sleep - we pick it up tomorrow. How you do it is up to you. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
