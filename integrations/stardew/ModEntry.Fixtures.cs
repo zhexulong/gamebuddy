@@ -3390,11 +3390,11 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                     : "fixture_native_local_play_session_start_tile_missing");
         // Recorded for the composed world's reachability assertion: the tile the session actually starts on, not one
         // re-derived after the props exist (a re-scan skips occupied tiles and would answer a different question).
-        // A composed multi-day world begins the day AT HOME, so the props are anchored on the door tile instead of
-        // on a crossroad the actor would have been warped to. Anchoring them elsewhere is what put the companion in
-        // the FIELD at 06:00 - a state no save produces - and it also cost the night its natural shape, because the
-        // companion then had to walk home before it could sleep.
-        if (startAtHome && requiredReachable is { } homeDoor) startTile = homeDoor;
+        // The props keep the crossroad the search picked (a tile that can WALK to the door), and only the ACTOR stays
+        // home: anchoring the props on the door tile itself fenced the farm in - the door could no longer reach the
+        // shipping bin, and the world correctly refused to arm (`fixture_native_local_multi_day_home_unreachable:
+        // what=bin;door=66,15`). The search already guarantees the half that matters; the warp below is what the
+        // composed multi-day world does not want.
         this.nativeLocalPlaySessionStartTile = startTile;
         Vector2? standingTile = null;
         for (int index = 0; index < 4; index += 1)
