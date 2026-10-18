@@ -2073,12 +2073,12 @@ test("a failed observation refresh is named in the CONTENT, not hidden in detail
   const tools = createStardewObservationTools(integration as never);
   const observe = tools.find((tool) => tool.name === "stardew_observe");
   assert.ok(observe !== undefined);
-  const result = await observe.execute({}, {} as never);
-  const text = result.content[0].text;
+  const result = await observe.execute("t", {}, new AbortController().signal, () => {}, {} as never);
+  const text = result.content[0]?.type === "text" ? result.content[0].text : "";
   assert.match(text, /STALE SNAPSHOT/u, "the content must say the snapshot could not be refreshed");
   assert.match(text, /bridge_response_timeout/u, "and it must name why");
-  assert.equal(result.details.refresh, "cached");
-  assert.equal(result.details.reasonCode, "available_cached_after_failed_refresh");
+  assert.equal((result.details as { refresh?: string }).refresh, "cached");
+  assert.equal((result.details as { reasonCode?: string }).reasonCode, "available_cached_after_failed_refresh");
   // The data is still there, so a reader that understood the warning can use it.
   assert.match(text, /383/u);
 });
