@@ -1,29 +1,27 @@
 #!/usr/bin/env node
 /**
- * Symlink the Host's vendored workspace dependencies to their source directories.
+ * Link the vendored Voice protocol package to its source directory.
  *
- * pnpm `file:` snapshots the package into the store and never re-copies a rebuilt
- * `dist`, so a vendor rebuild is invisible to Host until something forces a
- * reinstall. A junction to the vendor source keeps it live: `bun build` of the
- * vendor immediately updates the declarations Host resolves.
+ * **The Magic Context entry refuses, and that is the point of this file's state today.** A junction to
+ * `vendor/magic-context/packages/pi-plugin` makes `realpath()` of the declared dependency escape the
+ * repository's `node_modules`, and the Host requires the opposite: `host/scripts/sync-declared-magic-context-artifact.mjs`
+ * refuses to run (`magic_context_declared_package_outside_repository_node_modules`) and two suites assert that
+ * the runtime resolves the Host-declared package (`runtime.test.ts`: "runtime resolves Magic Context from the
+ * Host-declared package dependency", "does not resolve into vendor"). A live link to the vendor source
+ * therefore does not trade a small staleness cost for convenience - it puts the runtime on a package the
+ * product's own guards reject, and it hides that until a suite fails on a machine someone else is using.
  *
- * Why a symlink (pnpm `link`) instead of `file:`:
- *   - pnpm docs: `file:` hard-links/copies the package into the store and
- *     auto-installs its deps; changing the linked folder does NOT trigger a
- *     reinstall (it is a snapshot).
- *   - `pnpm link`/a junction to the source is a live symlink: vendor `dist`
- *     rebuilds are picked up immediately, matching the dev loop we need.
- *   - Each vendored package keeps its own Bun/pnpm-managed node_modules, which
- *     is what `pnpm link` requires on the "manual dependency installation" side.
- *   - CI keeps the `file:` protocol (reproducible snapshot); this script is for
- *     local development only.
+ * The supported loop for that package is a rebuild plus the sync that copies the built `dist` into the
+ * declared package:
+ *   bun run --cwd vendor/magic-context/packages/pi-plugin build
+ *   node host/scripts/sync-declared-magic-context-artifact.mjs
  *
- * Both dependencies are covered, because both fail the same way: the Voice
- * protocol package is vendored too, and a stale store copy of it made Host's
- * `@gamebuddy/voice-protocol` unresolvable after the submodule was re-initialised.
+ * Voice protocol has no such invariant (nothing asserts its containment), so its link stays: pnpm's
+ * `file:` protocol snapshots the package into the store and never re-copies a rebuilt `dist`, and a
+ * junction to the vendor source keeps the declarations Host resolves live.
  *
- * Idempotent: a link that already points at its vendor is left untouched;
- * otherwise the existing node_modules entry is replaced.
+ * Idempotent: a link that already points at its vendor is left untouched; otherwise the existing
+ * node_modules entry is replaced.
  */
 import { lstat, readlink, rm, symlink } from "node:fs/promises";
 import path from "node:path";
@@ -35,9 +33,13 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LINKS = [
   {
     name: "@cortexkit/pi-magic-context",
-    link: path.join(ROOT, "host", "node_modules", "@cortexkit", "pi-magic-context"),
-    target: path.join(ROOT, "vendor", "magic-context", "packages", "pi-plugin"),
-    build: "bun run --cwd vendor/magic-context/packages/pi-plugin build",
+    refused: [
+      "refusing to link @cortexkit/pi-magic-context to vendor/: the Host requires the declared package",
+      "inside the repository's node_modules, and the runtime suites assert it does not resolve into vendor.",
+      "Use the supported refresh instead:",
+      "  bun run --cwd vendor/magic-context/packages/pi-plugin build",
+      "  node host/scripts/sync-declared-magic-context-artifact.mjs",
+    ].join("\n"),
   },
   {
     name: "@gamebuddy/voice-protocol",
@@ -62,7 +64,7 @@ async function link({ name, link: linkPath, target: targetDir, build }) {
   if (existing !== null) {
     if (path.resolve(existing) === target) {
       process.stdout.write(`vendor link already points at ${target}\n`);
-      return;
+      return false;
     }
     // Replace whatever is there (a pnpm store snapshot or stale junction).
     await rm(linkPath, { recursive: true, force: true }).catch(() => undefined);
@@ -71,6 +73,18 @@ async function link({ name, link: linkPath, target: targetDir, build }) {
   await symlink(target, linkPath, "junction");
   process.stdout.write(`linked host ${name} -> ${target}\n`);
   process.stdout.write(`next: ensure the vendor dist exists (${build})\n`);
+  return false;
 }
 
-for (const entry of LINKS) await link(entry);
+let refused = false;
+for (const entry of LINKS) {
+  if (entry.refused !== undefined) {
+    process.stderr.write(`${entry.refused}\n`);
+    refused = true;
+    continue;
+  }
+  await link(entry);
+}
+// Non-zero because the run did not do what it was asked for: a warning would be read once and then
+// ignored, and the next person to run it by habit would silently put the runtime on the vendor tree.
+if (refused) process.exitCode = 1;
