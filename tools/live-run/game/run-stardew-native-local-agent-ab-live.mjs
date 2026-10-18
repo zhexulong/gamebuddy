@@ -231,7 +231,7 @@ const SCENARIO_PROMPTS = Object.freeze({
     en: (day) =>
       `It is morning in Stardew Valley (day ${String(day)} in a row for you). Nobody has assigned you anything today - look around and do whatever you think is worth doing. ` +
       `When you are done for the day, go INSIDE the farmhouse first, and then sleep in your bed there. advance_day only works indoors - called from outside it waits for you to come in and never ends the day. ` +
-      `I am heading into town today, so the farm is yours: get the day's work done, and when it gets dark go inside and sleep - we pick it up tomorrow. How you do it is up to you. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+      `Today's work on the farm starts now. The player has gone into town and the farm is yours: get the day's work done, and when it gets dark go inside and sleep - we pick it up tomorrow. How you do it is up to you. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
