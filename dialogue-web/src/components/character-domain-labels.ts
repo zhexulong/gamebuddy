@@ -460,7 +460,7 @@ const en: CharacterLabels = Object.freeze({
 
   exportTitle: "Save her as a character card",
   exportHint:
-    "Saves the companion in play as a standard SillyTavern V3 card, in either form: a JSON card (.json - her world book, scenario, openings and performance directive as text) or a PNG card (.png - her picture with that same card inside it). Either can be imported again here or in any app that reads character cards. A PNG card needs her own picture; a companion without one is saved as a JSON card.",
+    "Saves the companion in play as a standard SillyTavern V3 card, in either form: a JSON card (.json - her world book, scenario, openings and performance directive as text) or a PNG card (.png - her picture with that same card inside it). Either can be imported again here or in any app that reads character cards. A PNG card needs her own picture, so a companion without one can only save the JSON card.",
   exportJsonCard: "Export JSON card",
   exportPngCard: "Export PNG card",
   exportBusy: "Exporting…",
@@ -668,7 +668,7 @@ const zh: CharacterLabels = Object.freeze({
 
   exportTitle: "把她另存为角色卡",
   exportHint:
-    "把在玩的伙伴另存为标准的 SillyTavern V3 角色卡，有两种形式：JSON 卡（.json——她的世界书、场景、开场白和演出指导，以文本保存）或 PNG 卡（.png——她的画像，卡片就装在画像里）。两种都可以在这里或任何读取角色卡的应用中重新导入。PNG 卡需要她自己的画像；没有画像的伙伴会另存为 JSON 卡。",
+    "把在玩的伙伴另存为标准的 SillyTavern V3 角色卡，有两种形式：JSON 卡（.json——她的世界书、场景、开场白和演出指导，以文本保存）或 PNG 卡（.png——她的画像，卡片就装在画像里）。两种都可以在这里或任何读取角色卡的应用中重新导入。PNG 卡需要她自己的画像，因此没有画像的伙伴只能另存为 JSON 卡。",
   exportJsonCard: "导出 JSON 角色卡",
   exportPngCard: "导出 PNG 角色卡",
   exportBusy: "导出中…",
