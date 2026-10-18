@@ -239,7 +239,8 @@
     "vendor:refresh": "pnpm install --force",
     "verify-demo-prerequisites": "node tools/verify-demo-prerequisites.mjs",
     "verify:stardew-action-projection-local": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-local.ps1 -Configuration Debug",
-    "verify:stardew-action-projection-p2c": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-p2c.ps1 -Configuration Debug"
+    "verify:stardew-action-projection-p2c": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-p2c.ps1 -Configuration Debug",
+    "check:stardew-native-notice-coverage": "node tools/check-stardew-native-notice-coverage.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",
