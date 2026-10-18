@@ -66,21 +66,28 @@ export function CharactersSurfacePanel({
 }
 
 /**
- * The character-card export: one control that saves the companion in play as a
- * standard Tavern V3 card.
+ * The character-card export: two controls that save the companion in play as a
+ * standard Tavern V3 card, one per form.
  *
  * The card is produced by the Host (`companion.card.export`) and delivered as the
  * bytes it returned - the browser is the download surface, so this control hands
- * the Host's own JSON text to a `Blob` and lets the browser save it under the
- * filename the Host minted. Nothing is re-serialized on this side, so the saved
- * file is exactly the card the Host built and the import route accepts it.
+ * the Host's own payload to a `Blob` and lets the browser save it under the
+ * filename the Host minted. Nothing is rebuilt on this side: the JSON form is the
+ * Host's own card text, and the PNG form is the Host's own card file (her picture
+ * with the card inside it), so what lands is exactly the card the Host built and
+ * the import route accepts.
+ *
+ * The two forms are named controls, not one control with a choice hidden behind a
+ * filename: a player asks for the JSON card or the PNG card and the request says
+ * which. The PNG card contains her own picture, so a companion without one gets her
+ * own refusal rather than a silently blank or invented image.
  *
  * The companion addressed is the one in play, taken from the roster's own opaque
  * handle - the same handle every other companion read is addressed by - and the
  * route resolves any listed companion, so a later per-row entry point needs no new
  * contract. Every way the Host can refuse has its own sentence: there is no
- * companion to export, her records could not be read, or they will not fit a card
- * our import accepts.
+ * companion to export, her records could not be read, they will not fit a card our
+ * import accepts, or she has no picture for the PNG form.
  */
 function CompanionCardExportSection({
   api,
@@ -122,8 +129,8 @@ function CompanionCardExportSection({
    * object URL, one click on an anchor carrying the Host's filename, and the URL
    * released on a later task so the download has already begun reading it.
    */
-  const download = (fileName: string, text: string): void => {
-    const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const download = (fileName: string, blob: Blob): void => {
+    const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = fileName;
@@ -133,7 +140,7 @@ function CompanionCardExportSection({
     setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
-  const exportCard = (): void => {
+  const exportCard = (format: "json" | "png"): void => {
     if (target === "absent" || busy) return;
     const handle = target.handle;
     setBusy(true);
@@ -141,8 +148,12 @@ function CompanionCardExportSection({
     void (async () => {
       let next: Readonly<{ ok: boolean; text: string }>;
       try {
-        const card = await api.exportCompanionCard(handle);
-        download(card.fileName, card.card);
+        const card = await api.exportCompanionCard(handle, format);
+        // The Host's own bytes, in the Host's own file kind: the JSON card is its
+        // text, the PNG card is the whole file the Host built.
+        if (card.format === "png")
+          download(card.fileName, new Blob([base64Bytes(card.cardFileBase64)], { type: "image/png" }));
+        else download(card.fileName, new Blob([card.card], { type: "application/json" }));
         next = { ok: true, text: labels.exportSaved.replace("{{file}}", card.fileName) };
       } catch (error) {
         next = { ok: false, text: exportRefusal(labels, error) };
@@ -159,19 +170,29 @@ function CompanionCardExportSection({
       {target === "absent" ? (
         <p data-companion-card-export-nothing>{labels.exportNothing}</p>
       ) : (
-        // One control, named for what it does. Its 44 px hit target is the shared
-        // button's own floor (`--touch-target-min`), so it matches every other
-        // control on this surface rather than a size invented here.
+        // Two controls, each named for the form it saves. Their 44 px hit targets
+        // are the shared button's own floor (`--touch-target-min`), so they match
+        // every other control on this surface rather than a size invented here.
         <div className="composer-actions">
           <button
             type="button"
             className="small-button"
-            data-companion-card-export
-            aria-label={`${labels.exportCard}: ${target.name}`}
+            data-companion-card-export-json
+            aria-label={`${labels.exportJsonCard}: ${target.name}`}
             disabled={busy}
-            onClick={exportCard}
+            onClick={() => exportCard("json")}
           >
-            {busy ? labels.exportBusy : labels.exportCard}
+            {busy ? labels.exportBusy : labels.exportJsonCard}
+          </button>
+          <button
+            type="button"
+            className="small-button"
+            data-companion-card-export-png
+            aria-label={`${labels.exportPngCard}: ${target.name}`}
+            disabled={busy}
+            onClick={() => exportCard("png")}
+          >
+            {busy ? labels.exportBusy : labels.exportPngCard}
           </button>
         </div>
       )}
@@ -185,11 +206,24 @@ function CompanionCardExportSection({
 }
 
 /**
+ * The bytes a base64 payload names, decoded in this browser.
+ *
+ * `atob` is fed the whole string at once - the PNG card is a file, and it is the
+ * same size the player will save - and the per-character copy is the only loop.
+ */
+function base64Bytes(value: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+/**
  * The player's sentence for one refused export. Each way the Host refuses is a
- * different fact - there is no companion, her records could not be read, or they
- * will not fit a card - and one "could not export" would send her looking for the
- * wrong fault. A code this table does not know keeps the base sentence with the
- * code appended.
+ * different fact - there is no companion, her records could not be read, they will
+ * not fit a card, or she has no picture for the PNG form - and one "could not
+ * export" would send her looking for the wrong fault. A code this table does not
+ * know keeps the base sentence with the code appended.
  */
 function exportRefusal(labels: CharacterLabels, error: unknown): string {
   const code = error instanceof TavernProblemError ? error.code : null;
@@ -200,6 +234,8 @@ function exportRefusal(labels: CharacterLabels, error: unknown): string {
       return labels.exportUnreadable;
     case "companion_card_too_large":
       return labels.exportTooLarge;
+    case "companion_card_image_absent":
+      return labels.exportImageAbsent;
     default:
       return problemTextWithCode(labels.exportFailed, error);
   }

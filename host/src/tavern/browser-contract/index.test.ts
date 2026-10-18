@@ -1510,7 +1510,7 @@ test("every route freezes the exact security, binding, and success policy matrix
       "none",
       [],
       ["companionHandle"],
-      [],
+      ["format"],
       200,
       "application/json",
     ],

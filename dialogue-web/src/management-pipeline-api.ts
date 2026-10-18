@@ -346,18 +346,20 @@ export type CompanionProfileV1 = Readonly<{
   worldBook: CompanionWorldBookV1;
 }>;
 /**
- * One companion's own records exported as a standard Tavern V3 card.
+ * One companion's own records exported as a standard Tavern V3 card, in the form
+ * the caller asked for.
  *
- * `card` is the card's own JSON TEXT - the exact bytes the player saves - so the
- * Host is the one author of the card's serialization and the browser never rebuilds
- * it. `fileName` is what the save dialog offers; `spec` is the format's own version.
+ * The JSON arm carries `card`, the card's own JSON TEXT - the exact bytes the
+ * player saves - so the Host is the one author of the card's serialization and
+ * the browser never rebuilds it. The PNG arm carries `cardFileBase64`, the whole
+ * card file (her picture with the card inside it) base64-encoded - the same
+ * spelling `character.import.stage` uses for a PNG card on the way in. `fileName`
+ * is what the save dialog offers; `spec` is the format's own version. `format`
+ * names which arm this is, so the browser never infers the file's kind.
  */
-export type CompanionCardExportV1 = Readonly<{
-  apiVersion: 1;
-  spec: "chara_card_v3";
-  fileName: string;
-  card: string;
-}>;
+export type CompanionCardExportV1 =
+  | Readonly<{ apiVersion: 1; format: "json"; spec: "chara_card_v3"; fileName: string; card: string }>
+  | Readonly<{ apiVersion: 1; format: "png"; spec: "chara_card_v3"; fileName: string; cardFileBase64: string }>;
 /**
  * The mounted companion's own performance directive, as the durable identity
  * profile holds it (the imported card's `system_prompt`). `source` is
@@ -1122,6 +1124,10 @@ const PROBLEM_CODES = [
   // `companion.card.export` refuses by name when a companion's own records will not fit a
   // Tavern card our import accepts: a bounded, non-retryable fact about her data.
   "companion_card_too_large",
+  // And the PNG form's own refusal: a PNG card must contain an image, and a companion
+  // with no picture has none the Host will put there. The JSON card carries her records
+  // without a picture, so this is a bounded fact about her records, not a runtime outage.
+  "companion_card_image_absent",
   // Transport: the over-ceiling request body the management dispatcher refuses before any route
   // runs (`tavern-management-dialogue-web.ts:538`), sent outside its own schema check. It must be
   // named here or the typed 413 arrives as an opaque `TavernProtocolError` with no code to show;
@@ -1759,21 +1765,31 @@ function isCompanionProfile(value: unknown): value is CompanionProfileV1 {
   );
 }
 
-const COMPANION_CARD_EXPORT_KEYS = ["apiVersion", "spec", "fileName", "card"] as const;
+const COMPANION_CARD_EXPORT_JSON_KEYS = ["apiVersion", "format", "spec", "fileName", "card"] as const;
+const COMPANION_CARD_EXPORT_PNG_KEYS = ["apiVersion", "format", "spec", "fileName", "cardFileBase64"] as const;
 /**
- * One companion's exported card. `card` is the card's own JSON text, bounded by the
- * decoder's own JSON input ceiling - the same bound the Host's schema checks - so the
- * mirror never refuses a card the import route would accept.
+ * One companion's exported card. The JSON arm's `card` is the card's own JSON text,
+ * bounded by the decoder's own JSON input ceiling; the PNG arm's `cardFileBase64` is
+ * the whole card file, bounded by the decoder's own PNG input ceiling, base64-
+ * inflated. Same bounds the Host's own schema checks, so the mirror never refuses a
+ * card the import route would accept.
  */
 function isCompanionCardExport(value: unknown): value is CompanionCardExportV1 {
-  return (
-    isRecord(value) &&
-    hasExactKeys(value, COMPANION_CARD_EXPORT_KEYS) &&
-    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
-    value.spec === "chara_card_v3" &&
-    isLengthBoundedString(value.fileName, 1, 200) &&
-    isLengthBoundedString(value.card, 2, 2_097_152)
-  );
+  if (
+    !isRecord(value) ||
+    value.apiVersion !== TAVERN_BROWSER_API_VERSION ||
+    value.spec !== "chara_card_v3" ||
+    !isLengthBoundedString(value.fileName, 1, 200)
+  )
+    return false;
+  if (value.format === "json")
+    return hasExactKeys(value, COMPANION_CARD_EXPORT_JSON_KEYS) && isLengthBoundedString(value.card, 2, 2_097_152);
+  if (value.format === "png")
+    return (
+      hasExactKeys(value, COMPANION_CARD_EXPORT_PNG_KEYS) &&
+      isLengthBoundedString(value.cardFileBase64, 2, MAX_CARD_FILE_BASE64_CHARS)
+    );
+  return false;
 }
 
 function isCompanionProfilePersona(value: unknown): value is CompanionProfilePersonaV1 {
@@ -2995,7 +3011,7 @@ export type ManagementPipelineApi = Readonly<{
    * GET /api/tavern/v1/companions/:handle/card: one roster companion's own records as
    * a standard Tavern V3 card, which the browser saves to disk. Read-only.
    */
-  exportCompanionCard(handle: string): Promise<CompanionCardExportV1>;
+  exportCompanionCard(handle: string, format: "json" | "png"): Promise<CompanionCardExportV1>;
   /** PUT /api/tavern/v1/companions/:handle/voice: edit or clear the directive, CASed on its revision. */
   updateCompanionVoice(
     handle: string,
@@ -3468,9 +3484,15 @@ export function createManagementPipelineApi(
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
       return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/profile`, 200, validateCompanionProfile);
     },
-    async exportCompanionCard(handle: string): Promise<CompanionCardExportV1> {
+    async exportCompanionCard(handle: string, format: "json" | "png"): Promise<CompanionCardExportV1> {
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
-      return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/card`, 200, validateCompanionCardExport);
+      return exchange(
+        fetchLike,
+        "GET",
+        `/api/tavern/v1/companions/${handle}/card?format=${format}`,
+        200,
+        validateCompanionCardExport,
+      );
     },
     async updateCompanionWorldBook(
       handle: string,

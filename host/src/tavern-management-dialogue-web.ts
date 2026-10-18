@@ -69,6 +69,8 @@ import {
   type WorldInfoStateV1,
   type WorldInfoUpdateCommandV1,
 } from "./tavern/browser-contract/index.js";
+import type { CompanionCardFormat } from "./tavern/companion-card-export.js";
+import type { CompanionCardExportResult } from "./tavern/companion-card-export-service.js";
 import { TavernConnectionRevisionConflict } from "./tavern/connection-store.js";
 import { TAVERN_PROVIDER_CATALOG } from "./tavern/provider-catalog.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
@@ -408,7 +410,7 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    * her.
    */
   companionCardExportService?: Readonly<{
-    read(handle: string): Promise<Omit<CompanionCardExportV1, "apiVersion"> | null>;
+    read(handle: string, format: CompanionCardFormat): Promise<CompanionCardExportResult | null>;
   }>;
   /**
    * Host-owned new-companion provisioner. The browser sends a display name
@@ -1452,23 +1454,42 @@ export function createTavernManagementDialogueWebRequestHandler(
         const cardHandle = matchCompanionCardExportRoute(request.method, url.pathname);
         if (cardHandle !== null) {
           // companion.card.export: one roster companion's own records projected into a
-          // standard Tavern V3 card she can save and re-import. The exact opaque handle the
-          // roster projected resolves to THAT companion, whoever she is (an archived
-          // companion's work is extractable, or the export would only ever reach the one in
-          // play); a handle this mount never handed out is answered by the bound service as
-          // null (404). A read: a same-origin fetch with no CSRF header, and nothing is
-          // written, so taking her work out can never change her.
-          if (url.search !== "" || (await hasRequestBody(request)))
+          // standard Tavern V3 card she can save and re-import, in the form the request
+          // NAMES. The exact opaque handle the roster projected resolves to THAT companion,
+          // whoever she is (an archived companion's work is extractable, or the export would
+          // only ever reach the one in play); a handle this mount never handed out is answered
+          // by the bound service as null (404). A read: a same-origin fetch with no CSRF
+          // header, and nothing is written, so taking her work out can never change her.
+          if (await hasRequestBody(request)) return sendProblem(response, 400, "invalid_request");
+          const formats = url.searchParams.getAll("format");
+          const cardFormat = formats[0];
+          // The form is named, never inferred: exactly one `format` entry, and one of the two
+          // the contract declares. Anything else - no format, an unknown value, a repeated
+          // parameter, an extra one - is refused before dispatch, so the Host never guesses a
+          // file's kind and never has to choose between two forms the caller asked for.
+          if (url.searchParams.size !== 1 || formats.length !== 1 || (cardFormat !== "json" && cardFormat !== "png"))
             return sendProblem(response, 400, "invalid_request");
           if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
           if (!profile.routeIds.includes("companion.card.export") || companionCardExportService === undefined)
             return sendProblem(response, 404, "profile_operation_unavailable");
-          const exported = await companionCardExportService.read(cardHandle);
+          const exported = await companionCardExportService.read(cardHandle, cardFormat);
           if (exported === null) return sendProblem(response, 404, "companion_not_found");
-          const result: CompanionCardExportV1 = Object.freeze({
-            apiVersion: TAVERN_BROWSER_API_VERSION,
-            ...exported,
-          });
+          const result: CompanionCardExportV1 =
+            exported.format === "png"
+              ? Object.freeze({
+                  apiVersion: TAVERN_BROWSER_API_VERSION,
+                  format: "png",
+                  spec: exported.spec,
+                  fileName: exported.fileName,
+                  cardFileBase64: Buffer.from(exported.cardFile).toString("base64"),
+                })
+              : Object.freeze({
+                  apiVersion: TAVERN_BROWSER_API_VERSION,
+                  format: "json",
+                  spec: exported.spec,
+                  fileName: exported.fileName,
+                  card: exported.card,
+                });
           if (!TavernBrowserValidatorsV1.CompanionCardExportV1Schema.Check(result))
             throw new Error("companion_card_export_service_unavailable");
           return sendJson(response, 200, result);
@@ -2423,6 +2444,10 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   // a bounded, non-retryable fact about her data, with its own code so the surface
   // says the export was refused rather than that something failed.
   if (message === "companion_card_too_large") return { status: 409, code: "companion_card_too_large" };
+  // The PNG form needs an image, and this Host will not invent one. A companion
+  // with no picture gets her own bounded, non-retryable refusal rather than a
+  // fabricated placeholder; the JSON card carries her records without a picture.
+  if (message === "companion_card_image_absent") return { status: 409, code: "companion_card_image_absent" };
   // The book was written and the restoring write then failed too, so the threads that
   // still pin the previous revision are the one state a retry cannot fix. It is named
   // rather than reported as a clean storage failure.

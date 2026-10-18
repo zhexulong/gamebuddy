@@ -239,19 +239,22 @@ export type CharacterLabels = Readonly<{
   companionWorldBookNotSaved: string;
 
   /**
-   * The character-card export: one control on the Characters surface that saves
-   * the companion in play as a standard Tavern V3 card. Each way the Host can
-   * refuse is its own sentence - there is no companion, her records could not be
-   * read, or her records will not fit a card our import accepts.
+   * The character-card export: two controls on the Characters surface that save
+   * the companion in play as a standard Tavern V3 card, in the form each one
+   * names. Each way the Host can refuse is its own sentence - there is no
+   * companion, her records could not be read, her records will not fit a card our
+   * import accepts, or she has no picture to put in a PNG card.
    */
   exportTitle: string;
   exportHint: string;
-  exportCard: string;
+  exportJsonCard: string;
+  exportPngCard: string;
   exportBusy: string;
   exportSaved: string;
   exportNothing: string;
   exportUnreadable: string;
   exportTooLarge: string;
+  exportImageAbsent: string;
   exportFailed: string;
 
   /** The decoder's own disposition classes, in player words. */
@@ -457,13 +460,16 @@ const en: CharacterLabels = Object.freeze({
 
   exportTitle: "Save her as a character card",
   exportHint:
-    "Exports the companion in play as a standard SillyTavern V3 card (.json): her world book, scenario, openings and performance directive. You can import it again here or in any app that reads character cards.",
-  exportCard: "Export character card",
+    "Saves the companion in play as a standard SillyTavern V3 card, in either form: a JSON card (.json - her world book, scenario, openings and performance directive as text) or a PNG card (.png - her picture with that same card inside it). Either can be imported again here or in any app that reads character cards. A PNG card needs her own picture; a companion without one is saved as a JSON card.",
+  exportJsonCard: "Export JSON card",
+  exportPngCard: "Export PNG card",
   exportBusy: "Exporting…",
   exportSaved: "Saved {{file}}.",
   exportNothing: "There is no companion to export yet.",
   exportUnreadable: "Her records could not be read, so no card was made.",
   exportTooLarge: "Her records are too large to fit in a character card, so nothing was saved.",
+  exportImageAbsent:
+    "She has no picture, so there is no PNG card to make. Use the JSON card — it carries her records without a picture.",
   exportFailed: "The character card could not be exported.",
 
   dispositionAccepted: "used",
@@ -662,13 +668,15 @@ const zh: CharacterLabels = Object.freeze({
 
   exportTitle: "把她另存为角色卡",
   exportHint:
-    "把在玩的伙伴导出为标准的 SillyTavern V3 角色卡（.json）：她的世界书、场景、开场白和演出指导。你可以在这里或任何读取角色卡的应用中重新导入它。",
-  exportCard: "导出角色卡",
+    "把在玩的伙伴另存为标准的 SillyTavern V3 角色卡，有两种形式：JSON 卡（.json——她的世界书、场景、开场白和演出指导，以文本保存）或 PNG 卡（.png——她的画像，卡片就装在画像里）。两种都可以在这里或任何读取角色卡的应用中重新导入。PNG 卡需要她自己的画像；没有画像的伙伴会另存为 JSON 卡。",
+  exportJsonCard: "导出 JSON 角色卡",
+  exportPngCard: "导出 PNG 角色卡",
   exportBusy: "导出中…",
   exportSaved: "已保存 {{file}}。",
   exportNothing: "还没有可以导出的伙伴。",
   exportUnreadable: "无法读取她的档案，未能生成角色卡。",
   exportTooLarge: "她的档案太大，放不进一张角色卡，因此没有导出。",
+  exportImageAbsent: "她没有画像，无法生成 PNG 角色卡。请用 JSON 角色卡——它同样携带她的设定，只是没有画像。",
   exportFailed: "无法导出这张角色卡。",
 
   dispositionAccepted: "已使用",

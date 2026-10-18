@@ -385,8 +385,9 @@ const PROBLEM_CODES = [
   "world_info_revision_conflict",
   "world_info_in_use",
   // `companion.card.export` refuses by name when a companion's own records will not fit
-  // a Tavern card our import accepts.
+  // a Tavern card our import accepts, and again when the PNG form has no picture to carry.
   "companion_card_too_large",
+  "companion_card_image_absent",
   // Transport: the over-ceiling request body the router refuses before any route runs.
   "payload_too_large",
 ] as const;

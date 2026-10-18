@@ -173,6 +173,12 @@ const ProblemCode = Type.Union([
   // her data rather than a runtime outage, so it is not collapsed into
   // storage/runtime unavailable: the card cannot be made smaller by trying again.
   Type.Literal("companion_card_too_large"),
+  // `companion.card.export` refuses the PNG form by name when she has no picture
+  // to put in it: a PNG card must contain an image, and this Host does not invent
+  // one. It is a bounded, non-retryable fact about her own records - the JSON card
+  // carries them without a picture - so it is not collapsed into storage/runtime
+  // unavailable.
+  Type.Literal("companion_card_image_absent"),
 ]);
 
 /**
@@ -1175,23 +1181,42 @@ export const CompanionProfileV1Schema = strictObject({
   greetings: CompanionProfileGreetingsV1Schema,
   worldBook: CompanionWorldBookV1Schema,
 });
+/** The PNG card ceiling, base64-inflated - the decoder's own PNG input bound. */
+const CARD_FILE_BASE64_MAX_CHARS = Math.ceil(ST_CARD_DECODER_LIMITS_V1.inputBytesPng / 3) * 4;
 /**
- * One companion's own records exported as a standard Tavern V3 character card.
+ * One companion's own records exported as a standard Tavern V3 character card,
+ * in the form the caller asked for.
  *
- * `card` is the card's own JSON TEXT - exactly the bytes the browser saves - so
- * the Host stays the one authority on how a card is serialized and the browser
- * never re-serializes one the Host built. `fileName` is what the save dialog
+ * The JSON arm carries `card`, the card's own JSON TEXT - exactly the bytes the
+ * browser saves - bounded by the decoder's own JSON input ceiling. The PNG arm
+ * carries `cardFileBase64`, the WHOLE card file (her picture with the card inside
+ * it) base64-encoded, bounded by the decoder's PNG input ceiling. Either way the
+ * Host stays the one authority on how a card is built and the browser saves what
+ * it was handed rather than re-serializing it. `fileName` is what the save dialog
  * offers, and `spec` is the card format's own declared version.
  *
- * The text is bounded by the decoder's own JSON input ceiling, so a card this
- * route returns whole is one the import route accepts.
+ * `format` names which arm this is, so the browser never infers the file's kind
+ * from anything as weak as an extension.
  */
-export const CompanionCardExportV1Schema = strictObject({
-  apiVersion: ApiVersion,
-  spec: Type.Literal("chara_card_v3"),
-  fileName: Type.String({ minLength: 1, maxLength: 200 }),
-  card: Type.String({ minLength: 2, maxLength: ST_CARD_DECODER_LIMITS_V1.inputBytesJson }),
-});
+export const CompanionCardExportV1Schema = Type.Union([
+  strictObject({
+    apiVersion: ApiVersion,
+    format: Type.Literal("json"),
+    spec: Type.Literal("chara_card_v3"),
+    fileName: Type.String({ minLength: 1, maxLength: 200 }),
+    card: Type.String({ minLength: 2, maxLength: ST_CARD_DECODER_LIMITS_V1.inputBytesJson }),
+  }),
+  // The PNG form: her picture with the card inside it, as the WHOLE card file,
+  // base64. `cardFileBase64` is the same spelling `character.import.stage` uses
+  // for a PNG card on the way in, so one format has one name in both directions.
+  strictObject({
+    apiVersion: ApiVersion,
+    format: Type.Literal("png"),
+    spec: Type.Literal("chara_card_v3"),
+    fileName: Type.String({ minLength: 1, maxLength: 200 }),
+    cardFileBase64: Type.String({ minLength: 2, maxLength: CARD_FILE_BASE64_MAX_CHARS }),
+  }),
+]);
 /**
  * The mounted companion's own performance directive, as the durable identity
  * profile holds it (the imported card's `system_prompt`).
@@ -1833,6 +1858,13 @@ const ChatPath = strictObject({ chatHandle: OpaqueHandle });
 const EventsQuery = strictObject({ apiVersion: ApiVersion, cursor: Type.Optional(OpaqueHandle) });
 const noQuery = strictObject({});
 const noPath = strictObject({});
+/**
+ * `companion.card.export`'s own query: which form of the card to build. It is
+ * REQUIRED and named, never guessed - the plain `GET .../card` is not a card of
+ * some defaulted kind, because a file's format is a decision the caller makes and
+ * the Host records, not one an extension or a default can imply.
+ */
+const CompanionCardFormatQuery = strictObject({ format: Type.Union([Type.Literal("json"), Type.Literal("png")]) });
 type RouteDescriptor = Readonly<{
   routeId: string;
   method: string;
@@ -2497,7 +2529,7 @@ const RouteDescriptors = Object.freeze([
     idempotency: "none",
     headers: EmptyHeaders,
     pathParams: CompanionPath,
-    query: noQuery,
+    query: CompanionCardFormatQuery,
     success: { status: 200, contentType: "application/json", schema: CompanionCardExportV1Schema },
   }),
   route({

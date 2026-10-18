@@ -356,9 +356,10 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // The count is the premise of "the reader really read the union", nothing more: the rewind's four
   // refusals moved it from 44 to 48, the world book's own edit refusals moved it 48 to 51, the
   // edit's two moved it 51 to 53, the card export's one (companion_card_too_large) moved it
-  // 53 to 54, and the delete's three moved it 54 to 57 - and it still fails the moment the reader
-  // stops seeing a member.
-  assert.equal(tavern.size, 57, `the tavern problem union should have 57 members, read ${tavern.size}`);
+  // 53 to 54, the delete's three moved it 54 to 57, and the PNG card's own refusal
+  // (companion_card_image_absent, the picture-less export) moved it 57 to 58 - and it still fails
+  // the moment the reader stops seeing a member.
+  assert.equal(tavern.size, 58, `the tavern problem union should have 58 members, read ${tavern.size}`);
   assert.equal(game.size, 23, `the game problem union should have 23 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");

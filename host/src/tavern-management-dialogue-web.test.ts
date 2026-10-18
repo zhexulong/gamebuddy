@@ -19,7 +19,10 @@ import {
 } from "./tavern/browser-contract/index.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
 import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "./tavern/companion-world-book-service.js";
-import { exportCompanionCard } from "./tavern/companion-card-export.js";
+import { exportCompanionCard, type CompanionCardFormat } from "./tavern/companion-card-export.js";
+import type { CompanionCardExportResult } from "./tavern/companion-card-export-service.js";
+import { writeCompanionCardPng } from "./tavern/png-card-writer.js";
+import { pngPictureFile } from "./test-support/png-card.test-support.js";
 import { decodeStCard } from "./st-card-import.js";
 import { macroTable } from "./tavern/macro-engine.js";
 import { readWorldBook, validateWorldBook, writeWorldBook } from "./worldbook.js";
@@ -2771,6 +2774,8 @@ test("companion.worldbook.update names a companion with no book and a book it ca
 const tooLargeHandle = "T".repeat(42) + "A";
 const unreadableHandle = "U".repeat(42) + "A";
 const unknownHandle = "Z".repeat(42) + "A";
+/** A companion whose PNG form has no picture to carry. */
+const noPictureHandle = "P".repeat(42) + "A";
 const exportRouteGroup = ["companion.card.export"] as const;
 const exportProfile = composeTavernProfile({
   profileId: "gamebuddy.tavern-management.chat-list-title",
@@ -2810,17 +2815,22 @@ const exportOnlyProfile = composeTavernProfile({
 });
 
 function cardExportService(recorder: { reads: string[] }): Readonly<{
-  read(
-    handle: string,
-  ): Promise<Omit<import("./tavern/browser-contract/index.js").CompanionCardExportV1, "apiVersion"> | null>;
+  read(handle: string, format: CompanionCardFormat): Promise<CompanionCardExportResult | null>;
 }> {
   const card = exportCompanionCard({ name: "琥珀", scenario: "你们一起在祖辈留下的农场里开始新的生活。" });
+  // A real PNG card, so the route's own base64 payload is checked against bytes a
+  // decoder can read back rather than against an arbitrary string.
+  const cardFile = writeCompanionCardPng(pngPictureFile(), card.card);
   return Object.freeze({
-    async read(requested: string) {
-      recorder.reads.push(requested);
-      if (requested === handle) return card;
+    async read(requested: string, format: CompanionCardFormat) {
+      recorder.reads.push(`${format} ${requested}`);
+      if (requested === handle)
+        return format === "png"
+          ? Object.freeze({ format: "png" as const, spec: card.spec, fileName: "琥珀.png", cardFile })
+          : Object.freeze({ format: "json" as const, spec: card.spec, fileName: card.fileName, card: card.card });
       if (requested === tooLargeHandle) throw new Error("companion_card_too_large");
       if (requested === unreadableHandle) throw new Error("companion_record_unreadable");
+      if (requested === noPictureHandle && format === "png") throw new Error("companion_card_image_absent");
       return null;
     },
   });
@@ -2852,48 +2862,86 @@ test("companion.card.export serves a roster companion's card as a session read a
     assert.equal(bootstrap.status, 200);
     const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
     const session = { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" };
-    const cardPath = (value: string) => `/api/tavern/v1/companions/${value}/card`;
+    const cardPath = (value: string, format: string) => `/api/tavern/v1/companions/${value}/card?format=${format}`;
 
     // A read: same-origin session only - no CSRF header - and the exact bytes the
-    // Host built come back, which our own decoder accepts.
-    const read = await fetch(`${origin}${cardPath(handle)}`, { headers: session });
+    // Host built come back, which our own decoder accepts. The format is named in
+    // the request, never inferred.
+    const read = await fetch(`${origin}${cardPath(handle, "json")}`, { headers: session });
     assert.equal(read.status, 200);
     const body = (await read.json()) as {
       apiVersion: number;
+      format: string;
       spec: string;
       fileName: string;
       card: string;
     };
     assert.equal(body.apiVersion, 1);
+    assert.equal(body.format, "json");
     assert.equal(body.spec, "chara_card_v3");
     assert.equal(body.fileName, "琥珀.json");
     assert.equal(decodeStCard(body.card).candidate?.profileCandidate.identity.name, "琥珀");
-    assert.deepEqual(recorder.reads, [handle]);
+
+    // The PNG form: the WHOLE card file, base64, and the bytes decode to a real
+    // PNG card our own decoder reads back to the same companion.
+    const readPng = await fetch(`${origin}${cardPath(handle, "png")}`, { headers: session });
+    assert.equal(readPng.status, 200);
+    const pngBody = (await readPng.json()) as {
+      apiVersion: number;
+      format: string;
+      spec: string;
+      fileName: string;
+      cardFileBase64: string;
+    };
+    assert.equal(pngBody.apiVersion, 1);
+    assert.equal(pngBody.format, "png");
+    assert.equal(pngBody.spec, "chara_card_v3");
+    assert.equal(pngBody.fileName, "琥珀.png");
+    const cardFile = Buffer.from(pngBody.cardFileBase64, "base64");
+    assert.deepEqual(Array.from(cardFile.subarray(0, 8)), [137, 80, 78, 71, 13, 10, 26, 10]);
+    const decodedPng = decodeStCard(cardFile);
+    assert.equal(decodedPng.source, "png");
+    assert.equal(decodedPng.candidate?.profileCandidate.identity.name, "琥珀");
+    assert.deepEqual(recorder.reads, [`json ${handle}`, `png ${handle}`]);
 
     // A cross-origin read is refused before the service runs.
-    const crossOrigin = await fetch(`${origin}${cardPath(handle)}`, {
+    const crossOrigin = await fetch(`${origin}${cardPath(handle, "json")}`, {
       headers: { ...session, Origin: `http://127.0.0.1:1` },
     });
     assert.equal(crossOrigin.status, 401);
-    // A query the contract does not admit is refused before dispatch.
-    const withQuery = await fetch(`${origin}${cardPath(handle)}?x=1`, { headers: session });
+    // A query the contract does not admit is refused before dispatch: an extra
+    // parameter, a format the contract does not declare, and a bare read with no
+    // format at all (the form is named, never defaulted).
+    const withQuery = await fetch(`${origin}${cardPath(handle, "json")}&x=1`, { headers: session });
     assert.equal(withQuery.status, 400);
+    const badFormat = await fetch(`${origin}${cardPath(handle, "webp")}`, { headers: session });
+    assert.equal(badFormat.status, 400);
+    const noFormat = await fetch(`${origin}/api/tavern/v1/companions/${handle}/card`, { headers: session });
+    assert.equal(noFormat.status, 400);
+    const repeatedFormat = await fetch(`${origin}${cardPath(handle, "json")}&format=png`, { headers: session });
+    assert.equal(repeatedFormat.status, 400);
 
     // A handle this mount never handed out: the service answers null, and the
     // route reports a companion that is not there rather than borrowing another.
-    const unknown = await fetch(`${origin}${cardPath(unknownHandle)}`, { headers: session });
+    const unknown = await fetch(`${origin}${cardPath(unknownHandle, "json")}`, { headers: session });
     assert.equal(unknown.status, 404);
     assert.equal(((await unknown.json()) as { code: string }).code, "companion_not_found");
 
     // A record that cannot be read is a durable fact, not a retryable outage.
-    const unreadable = await fetch(`${origin}${cardPath(unreadableHandle)}`, { headers: session });
+    const unreadable = await fetch(`${origin}${cardPath(unreadableHandle, "json")}`, { headers: session });
     assert.equal(unreadable.status, 503);
     assert.equal(((await unreadable.json()) as { code: string }).code, "companion_record_unreadable");
 
     // A card too large to import back is its own refusal, not a generic failure.
-    const tooLarge = await fetch(`${origin}${cardPath(tooLargeHandle)}`, { headers: session });
+    const tooLarge = await fetch(`${origin}${cardPath(tooLargeHandle, "json")}`, { headers: session });
     assert.equal(tooLarge.status, 409);
     assert.equal(((await tooLarge.json()) as { code: string }).code, "companion_card_too_large");
+
+    // A companion with no picture gets the PNG form's own refusal, named: the Host
+    // does not invent an image, and the JSON card is the form that carries her.
+    const noPicture = await fetch(`${origin}${cardPath(noPictureHandle, "png")}`, { headers: session });
+    assert.equal(noPicture.status, 409);
+    assert.equal(((await noPicture.json()) as { code: string }).code, "companion_card_image_absent");
   } finally {
     await server.close();
   }
@@ -2920,7 +2968,7 @@ test("the card export route is absent when the profile does not declare it, and 
       body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
     });
     const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const refused = await fetch(`${origin}/api/tavern/v1/companions/${handle}/card`, {
+    const refused = await fetch(`${origin}/api/tavern/v1/companions/${handle}/card?format=json`, {
       headers: { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
     });
     assert.equal(refused.status, 404);
