@@ -474,6 +474,14 @@ export function createHostGameRuntimeMaterializer(
           (execution.connection as { state?: { bodyProgramUnavailableReason?: string | null } }).state
             ?.bodyProgramUnavailableReason ?? null;
         const bodyProgramMounted = bodyProgramUnavailableReason === null;
+        // The decision is REPORTED, not just applied: whether the companion can batch a day's work at all hinges on it,
+        // and when the tools went missing between two runs the artifacts said nothing about why (measured 2026-10-18:
+        // manifests from 10:41-11:15 carry the three program tools, every manifest from 13:06 on carries none, and the
+        // Mod's own log for the later runs says the routes are live). The marker lands in the run log next to the
+        // harness's own, so "the companion did not batch" can be told apart from "it was never offered the tool".
+        process.stderr.write(
+          `BODY_PROGRAM_MOUNT ${JSON.stringify({ unavailableReason: bodyProgramUnavailableReason, mounted: bodyProgramMounted })}\n`,
+        );
         if (bodyProgramMounted)
           bodyProgramConsumers.set(bodyProgramConsumer, { port: ports.bodyProgram, available: true, active: 0 });
         const closeFixedTools = bodyProgramMounted ? createBodyProgramToolCloser(bodyProgramConsumer) : async () => {};
