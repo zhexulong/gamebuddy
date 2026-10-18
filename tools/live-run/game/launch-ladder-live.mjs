@@ -203,6 +203,17 @@ const prepareAttempt = (attempt) => {
     binding,
     "--action",
     action,
+    // The declared Stardew save root, so the fixture transaction can manage the Mod-owned Body Program journal.
+    //
+    // That journal is scoped by the binding's four ids and is what decides whether the companion may submit a plan at
+    // all: the Mod opens `RecoveryRequired` whenever the scope holds a program with a dispatched-but-unsettled node,
+    // and `ShouldComposeBodyProgramController` accepts only `Empty|Opened` (ModEntry.cs:2834). Without this flag the
+    // tool reports the journal as "not scoped, not managed by this transaction" (its backup marker records
+    // `path: null, existed: null`), so a leftover program survives every run and every `program_submit` is refused with
+    // `body_program_journal_unavailable`. Measured 2026-10-18: the real scope journal still held `farm_day5_b` from a
+    // killed run while this very launcher's runs were refused - and the flag was simply never passed.
+    "--stardew-save-root",
+    path.join(process.env.APPDATA ?? "", "StardewValley", "Saves"),
     // NOTE: the cross-day lifecycle is deliberately NOT armed here.
     //
     // Arming it (`--sleep-lifecycle-evidence`, i.e. `SleepLifecycle.Enable`) at config load starts it BEFORE the
