@@ -106,6 +106,13 @@ export type CompanionCardExport = Readonly<{
 }>;
 
 /**
+ * The two forms a companion's card can be saved in: the standard `.json` card,
+ * and the `.png` card that trades her picture with it. Named, never inferred from
+ * a filename - the caller says which it asked for and the Host builds that one.
+ */
+export type CompanionCardFormat = "json" | "png";
+
+/**
  * Builds the V3 card from the companion's stored records.
  *
  * Pure: no I/O, no clock, no environment. Serialization is `JSON.stringify` of a
@@ -149,7 +156,7 @@ export function exportCompanionCard(records: CompanionCardRecords): CompanionCar
   const card = buildCompanionCard(records);
   const text = JSON.stringify(card);
   assertCompanionCardImportable(card);
-  return Object.freeze({ spec: TAVERN_CARD_SPEC, fileName: companionCardFileName(records.name), card: text });
+  return Object.freeze({ spec: TAVERN_CARD_SPEC, fileName: companionCardFileName(records.name, "json"), card: text });
 }
 
 /**
@@ -197,16 +204,17 @@ const MAX_FILE_NAME_STEM = 64;
  * The companion's own name is the file's name (what the SillyTavern ecosystem
  * does), with the characters Windows and POSIX reserve replaced - a filename is
  * not a place to discover that her name carried a path separator. A name that
- * sanitizes away to nothing falls back to the format's own word.
+ * sanitizes away to nothing falls back to the word `companion`, and the extension
+ * is the form's own (`json` or `png`).
  */
-export function companionCardFileName(name: string): string {
+export function companionCardFileName(name: string, format: CompanionCardFormat): string {
   const stem = name
     .replace(/[\\/:*?"<>|]/gu, "_")
     .replace(/[\u0000-\u001f\u007f]/gu, "_")
     .replace(/^\.+/u, "")
     .trim()
     .slice(0, MAX_FILE_NAME_STEM);
-  return `${stem.length === 0 ? "companion" : stem}.json`;
+  return `${stem.length === 0 ? "companion" : stem}.${format}`;
 }
 
 /**

@@ -3,10 +3,19 @@ import { join } from "node:path";
 import { readIdentityProfile } from "../identity-profile.js";
 import type { IdentityProfile } from "../identity-profile.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
+import type { CompanionIdentity } from "../runtime.js";
 import { readWorldBook, type WorldBook } from "../worldbook.js";
 import type { TavernArtifactStore } from "./artifact-store.js";
-import { type CompanionCardExport, type CompanionCardRecords, exportCompanionCard } from "./companion-card-export.js";
+import { companionAvatarPath, readAvatarFile } from "./companion-avatar/index.js";
+import {
+  type CompanionCardExport,
+  type CompanionCardFormat,
+  type CompanionCardRecords,
+  companionCardFileName,
+  exportCompanionCard,
+} from "./companion-card-export.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
+import { writeCompanionCardPng } from "./png-card-writer.js";
 import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 
@@ -27,8 +36,21 @@ export type CompanionCardExportTarget = Readonly<{
   name: string | null;
 }>;
 
+/**
+ * One companion's card, in the form the caller named.
+ *
+ * The JSON arm is the card's own text; the PNG arm is the card file itself - her
+ * picture with the card inside it - as bytes, because the browser saves exactly
+ * what the Host built rather than re-encoding it. Both arms are the same card:
+ * the PNG is the JSON with one `tEXt` chunk added to a picture, not a second
+ * projection of her records (see `png-card-writer.ts`).
+ */
+export type CompanionCardExportResult =
+  | Readonly<{ format: "json"; spec: CompanionCardExport["spec"]; fileName: string; card: string }>
+  | Readonly<{ format: "png"; spec: CompanionCardExport["spec"]; fileName: string; cardFile: Uint8Array }>;
+
 export type CompanionCardExportService = Readonly<{
-  read(handle: string): Promise<CompanionCardExport | null>;
+  read(handle: string, format: CompanionCardFormat): Promise<CompanionCardExportResult | null>;
 }>;
 
 /**
@@ -47,6 +69,17 @@ export type CompanionCardExportService = Readonly<{
  * rather than being exported as an absent field - a truncated card would read as
  * the author's own work.
  *
+ * **The PNG form, and what image goes inside it.** A PNG card must contain an
+ * image, and the honest one is HER OWN picture: the bytes her companion namespace
+ * already holds, framed unchanged around the card chunk. When she has no picture
+ * - a companion created directly, or imported from a `.json` card, neither of
+ * which ever carried one - the export refuses the PNG form BY NAME
+ * (`companion_card_image_absent`) and the player is told the JSON card carries her
+ * records without a picture. It does not invent art and it does not ship a blank
+ * card: a fabricated placeholder would be a picture that is not her, and a card
+ * whose only image is one this Host made up is a card that lies about its
+ * companion.
+ *
  * The card carries the durable record's own text, macros and all. The import
  * renders `{{user}}`/`{{char}}` through the run's macro table on the way in, so
  * the export writes what the author wrote and the round trip lands on the same
@@ -61,7 +94,7 @@ export function createCompanionCardExportService(
   }>,
 ): CompanionCardExportService {
   return Object.freeze({
-    async read(handle: string): Promise<CompanionCardExport | null> {
+    async read(handle: string, format: CompanionCardFormat): Promise<CompanionCardExportResult | null> {
       const companion = await options.resolveCompanion(handle);
       if (companion === null) return null;
       const identity = Object.freeze({
@@ -93,7 +126,17 @@ export function createCompanionCardExportService(
           : { openings: greetings.variants.map((variant) => Object.freeze({ text: variant.text })) }),
         worldBook,
       };
-      return exportCompanionCard(records);
+      const card = exportCompanionCard(records);
+      if (format === "json")
+        return Object.freeze({ format: "json", spec: card.spec, fileName: card.fileName, card: card.card });
+      const picture = await readAvatarOrThrow(options, identity);
+      if (picture === null) throw new Error("companion_card_image_absent");
+      return Object.freeze({
+        format: "png",
+        spec: card.spec,
+        fileName: companionCardFileName(name, "png"),
+        cardFile: writeCompanionCardPng(picture, card.card),
+      });
     },
   });
 }
@@ -104,6 +147,34 @@ async function readIdentityProfileOrThrow(path: string): Promise<IdentityProfile
   } catch {
     throw new Error("companion_record_unreadable");
   }
+}
+
+/**
+ * Her own picture, or `null` when she has none.
+ *
+ * Absence is an ordinary state (she was created directly, or imported from a
+ * `.json` card) and the caller refuses the PNG form by name for it. A picture
+ * that EXISTS and cannot be used throws: "she has no picture" and "her picture is
+ * there and unreadable" are different facts, and only a present-but-broken
+ * companion artifact is `companion_record_unreadable`.
+ */
+async function readAvatarOrThrow(
+  options: Readonly<{ runtimeRoot: string; playerId: string }>,
+  identity: CompanionIdentity,
+): Promise<Uint8Array | null> {
+  let read;
+  try {
+    read = await readAvatarFile(
+      companionAvatarPath(options.runtimeRoot, options.playerId, {
+        companionId: identity.companionId,
+        continuityId: identity.continuityId!,
+      }),
+      options.runtimeRoot,
+    );
+  } catch {
+    throw new Error("companion_record_unreadable");
+  }
+  return read.state === "absent" ? null : read.bytes;
 }
 
 async function readScenarioOrThrow(

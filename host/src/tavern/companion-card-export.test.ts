@@ -22,6 +22,8 @@ import { provisionNewCompanion } from "./new-companion-service.js";
 import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { StCardImportService } from "./st-card-import-service.js";
 import { decodeStCard } from "../st-card-import.js";
+import { pngCardFile } from "../test-support/png-card.test-support.js";
+import { companionAvatarPath, readAvatarFile } from "./companion-avatar/index.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./compatibility-manifest.v1.js";
 
@@ -158,17 +160,17 @@ test("a companion's card round-trips through the real import path to the same ef
             })
           : null,
     });
-    const exported = await exportService.read(handle);
-    assert.notEqual(exported, null);
-    assert.equal(exported!.spec, "chara_card_v3");
-    assert.equal(exported!.fileName, "琥珀.json");
+    const exported = await exportService.read(handle, "json");
+    if (exported === null || exported.format !== "json") throw new Error("expected the JSON form of the card");
+    assert.equal(exported.spec, "chara_card_v3");
+    assert.equal(exported.fileName, "琥珀.json");
     // The exported card is one our own decoder accepts, and it declares the V3 spec.
-    const decoded = decodeStCard(exported!.card);
+    const decoded = decodeStCard(exported.card);
     assert.equal(decoded.format, "st-v3");
     assert.notEqual(decoded.candidate, undefined);
 
     // Feed it back through the REAL import path.
-    const secondStage = await importService.import("round_trip_card", exported!.card);
+    const secondStage = await importService.import("round_trip_card", exported.card);
     const secondEligible = secondStage.candidate.artifact.fields
       .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
       .map((field) => field.field);
@@ -323,11 +325,12 @@ test("an export refuses by name when a record will not fit the importer's own ca
   );
 });
 
-test("a card filename is the companion's own name, made safe for a filesystem", () => {
-  assert.equal(companionCardFileName("琥珀"), "琥珀.json");
-  assert.equal(companionCardFileName('a/b\\c:d*e?f"g<h>i|j'), "a_b_c_d_e_f_g_h_i_j.json");
-  assert.equal(companionCardFileName(".."), "companion.json");
-  assert.equal(companionCardFileName("   "), "companion.json");
+test("a card filename is the companion's own name, made safe for a filesystem, in the form's own extension", () => {
+  assert.equal(companionCardFileName("琥珀", "json"), "琥珀.json");
+  assert.equal(companionCardFileName("琥珀", "png"), "琥珀.png");
+  assert.equal(companionCardFileName('a/b\\c:d*e?f"g<h>i|j', "json"), "a_b_c_d_e_f_g_h_i_j.json");
+  assert.equal(companionCardFileName("..", "png"), "companion.png");
+  assert.equal(companionCardFileName("   ", "json"), "companion.json");
 });
 
 test("a companion with no records at all still exports a card our import reads back by name", () => {
@@ -335,4 +338,222 @@ test("a companion with no records at all still exports a card our import reads b
   const decoded = decodeStCard(exported.card);
   assert.equal(decoded.candidate?.profileCandidate.identity.name, "Solo");
   assert.equal(decoded.losses.length, 0);
+});
+
+/** Every chunk of a PNG in order, read by the test and not by the code under test. */
+function pngChunksOf(input: Uint8Array): readonly Readonly<{ type: string; data: Buffer }>[] {
+  const bytes = Buffer.from(input);
+  const chunks: Readonly<{ type: string; data: Buffer }>[] = [];
+  let offset = 8;
+  while (offset + 12 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const type = bytes.subarray(offset + 4, offset + 8).toString("latin1");
+    chunks.push(Object.freeze({ type, data: Buffer.from(bytes.subarray(offset + 8, offset + 8 + length)) }));
+    offset += 12 + length;
+    if (type === "IEND") break;
+  }
+  return chunks;
+}
+
+/** The chunks that ARE the picture: everything that is not a card-carrying text chunk. */
+function pictureChunks(bytes: Uint8Array): readonly string[] {
+  const cardKeywords = new Set(["chara", "ccv3", "character"]);
+  return pngChunksOf(bytes)
+    .filter((chunk) => {
+      if (!["tEXt", "zTXt", "iTXt"].includes(chunk.type)) return true;
+      const split = chunk.data.indexOf(0);
+      return split < 1 || !cardKeywords.has(chunk.data.subarray(0, split).toString("latin1").toLowerCase());
+    })
+    .map((chunk) => `${chunk.type}:${chunk.data.toString("base64")}`);
+}
+
+/** The card JSON a PNG carries in its one card chunk, or `null` when it carries none. */
+function carriedCardJson(bytes: Uint8Array): string | null {
+  const cardChunks = pngChunksOf(bytes).filter((chunk) => chunk.type === "tEXt");
+  for (const chunk of cardChunks) {
+    const split = chunk.data.indexOf(0);
+    if (split < 1) continue;
+    const keyword = chunk.data.subarray(0, split).toString("latin1").toLowerCase();
+    if (!["chara", "ccv3", "character"].includes(keyword)) continue;
+    const value = chunk.data
+      .subarray(split + 1)
+      .toString("latin1")
+      .trim();
+    return value.startsWith("{") ? value : Buffer.from(value, "base64").toString("utf8");
+  }
+  return null;
+}
+
+/**
+ * The PNG form's own acceptance: a companion with her own picture is exported as a
+ * PNG card - her picture, with the card inside it - and those bytes are fed back
+ * through the REAL import path (`StCardImportService` stage → review → confirm →
+ * `provisionNewCompanion`).
+ *
+ * The imported companion's avatar must be the card file the export produced, byte
+ * for byte, and the picture inside it must still be the picture she had. The seed
+ * is a PNG card, because that is the only way a companion ends up with a picture
+ * (her avatar IS the card file she was imported from) - and it also makes the hard
+ * case real: her bytes already carry the card she came from, so this proves the
+ * writer replaces that stale chunk rather than letting it shadow the new one.
+ */
+test("her picture round-trips: the PNG card carries her own image and the re-import keeps the whole card as her avatar", async (t) => {
+  const root = await canonicalTestRoot("tavern-card-export-png-round-trip-");
+  let threads: ReturnType<typeof createChatThreadStore> | undefined;
+  try {
+    const store = new TavernArtifactStore(root);
+    const seedIdentity = { playerId: "player-png", companionId: "seed-png", continuityId: "seed-png-continuity" };
+    const seedPaths = resolveTavernPaths(resolveRuntimePaths(seedIdentity, root), seedIdentity);
+    const importService = new StCardImportService(store, seedPaths);
+    // The seed is a PNG card: its `chara` value is the SEED_CARD's own JSON, base64-
+    // encoded (the ecosystem's own spelling, and the only one a `tEXt` chunk can carry
+    // for a card whose text is not ASCII).
+    const seedPicture = Buffer.from(pngCardFile(Buffer.from(SEED_CARD, "utf8").toString("base64")));
+    await importService.import("png_seed", seedPicture);
+    const seededStage = await importService.read("png_seed");
+    const seededEligible = seededStage.candidate.artifact.fields
+      .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+      .map((field) => field.field);
+    await importService.recordReview("png_seed", { reviewedFields: seededEligible, approvedAtMs: 1 });
+    threads = createChatThreadStore(root, "b".repeat(64));
+    const first = await provisionNewCompanion(
+      root,
+      "player-png",
+      seededStage.candidate.artifact,
+      await importService.confirmedReview("png_seed"),
+      threads,
+      await importService.stagedAvatar("png_seed"),
+    );
+    const firstRecords = await readRecords(root, first.identity);
+
+    const herPicturePath = companionAvatarPath(root, "player-png", {
+      companionId: first.identity.companionId,
+      continuityId: first.identity.continuityId!,
+    });
+    const herPicture = await readAvatarFile(herPicturePath, root);
+    assert.equal(herPicture.state, "present");
+    if (herPicture.state !== "present") return;
+    // Her own bytes are the PNG card she was imported from - the card chunk and all.
+    assert.deepEqual(herPicture.bytes, seedPicture);
+
+    const handle = "P".repeat(43);
+    const exportService = createCompanionCardExportService({
+      store,
+      runtimeRoot: root,
+      playerId: "player-png",
+      resolveCompanion: async (requested) =>
+        requested === handle
+          ? Object.freeze({
+              companionId: first.identity.companionId,
+              continuityId: first.identity.continuityId!,
+              name: firstRecords.name,
+            })
+          : null,
+    });
+    const json = await exportService.read(handle, "json");
+    const png = await exportService.read(handle, "png");
+    if (json === null || json.format !== "json") throw new Error("expected the JSON form of the card");
+    if (png === null || png.format !== "png") throw new Error("expected the PNG form of the card");
+    assert.equal(png.fileName, "琥珀.png");
+    const cardFile = Buffer.from(png.cardFile);
+
+    // Her picture survived byte for byte; the stale card chunk it carried did not.
+    assert.deepEqual(pictureChunks(cardFile), pictureChunks(herPicture.bytes));
+    assert.equal(carriedCardJson(cardFile), json.card);
+    assert.deepEqual(pngChunksOf(cardFile).filter((chunk) => chunk.type === "IEND").length, 1);
+    // Both forms carry the SAME card: the PNG arm is the JSON arm inside a picture.
+    assert.deepEqual(decodeStCard(cardFile).candidate, decodeStCard(json.card).candidate);
+    assert.equal(decodeStCard(cardFile).source, "png");
+    assert.equal(decodeStCard(cardFile).format, "st-v3");
+
+    // Feed the PNG card back through the REAL import path, picture and all.
+    const secondStage = await importService.import("png_round_trip", cardFile);
+    const secondEligible = secondStage.candidate.artifact.fields
+      .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+      .map((field) => field.field);
+    await importService.recordReview("png_round_trip", { reviewedFields: secondEligible, approvedAtMs: 2 });
+    const second = await provisionNewCompanion(
+      root,
+      "player-png",
+      secondStage.candidate.artifact,
+      await importService.confirmedReview("png_round_trip"),
+      threads,
+      await importService.stagedAvatar("png_round_trip"),
+    );
+    const secondRecords = await readRecords(root, second.identity);
+    const importedAvatar = await readAvatarFile(
+      companionAvatarPath(root, "player-png", {
+        companionId: second.identity.companionId,
+        continuityId: second.identity.continuityId!,
+      }),
+      root,
+    );
+
+    t.diagnostic(
+      `png round-trip her-picture=${pictureChunks(herPicture.bytes).join("|")}\n` +
+        `png round-trip exported-card=${pictureChunks(cardFile).join("|")}\n` +
+        `png round-trip imported-avatar-bytes=${importedAvatar.state === "present" ? importedAvatar.bytes.length : -1}\n` +
+        `png round-trip exported-card-bytes=${cardFile.length}`,
+    );
+
+    // The imported companion's avatar IS the card the export produced, byte for byte.
+    assert.equal(importedAvatar.state, "present");
+    if (importedAvatar.state !== "present") return;
+    assert.deepEqual(importedAvatar.bytes, cardFile);
+    assert.deepEqual(pictureChunks(importedAvatar.bytes), pictureChunks(herPicture.bytes));
+
+    // And the effective records are the ones she had.
+    assert.equal(secondRecords.name, firstRecords.name);
+    assert.equal(secondRecords.scenario, firstRecords.scenario);
+    assert.deepEqual(secondRecords.openings, firstRecords.openings);
+    assert.equal(secondRecords.characterVoice, firstRecords.characterVoice);
+    assert.equal(secondRecords.personaCore, firstRecords.personaCore);
+    assert.equal(secondRecords.interactionStyle, firstRecords.interactionStyle);
+    assert.deepEqual(secondRecords.examples, firstRecords.examples);
+    assert.equal(secondRecords.worldBook?.scanDepth, firstRecords.worldBook?.scanDepth);
+    const entries = (book: WorldBook | null) =>
+      (book?.entries ?? []).map((entry) => ({
+        title: entry.title,
+        content: entry.content,
+        keys: entry.keys ?? [],
+        constant: entry.constant === true,
+      }));
+    assert.deepEqual(entries(secondRecords.worldBook), entries(firstRecords.worldBook));
+    assert.equal(firstRecords.name, "琥珀");
+    assert.equal(firstRecords.openings.length, 3);
+  } finally {
+    threads?.close?.();
+    await cleanupTestRoot(root);
+  }
+});
+
+/**
+ * A companion with no picture cannot produce a PNG card, and the refusal says so
+ * by name instead of shipping a blank or invented image. The JSON form is the one
+ * that carries her records, and it still works.
+ */
+test("a companion with no picture refuses the PNG form by name, and the JSON form still carries her", async () => {
+  const root = await canonicalTestRoot("tavern-card-export-no-picture-");
+  try {
+    const store = new TavernArtifactStore(root);
+    const handle = "N".repeat(43);
+    const exportService = createCompanionCardExportService({
+      store,
+      runtimeRoot: root,
+      playerId: "player-no-picture",
+      resolveCompanion: async (requested) =>
+        requested === handle
+          ? Object.freeze({ companionId: "companion-n", continuityId: "continuity-n", name: "Solo" })
+          : null,
+    });
+    // The JSON form is a projection of her records and needs no picture.
+    const json = await exportService.read(handle, "json");
+    if (json === null || json.format !== "json") throw new Error("expected the JSON form of the card");
+    assert.equal(json.fileName, "Solo.json");
+    assert.equal(decodeStCard(json.card).candidate?.profileCandidate.identity.name, "Solo");
+    // The PNG form does not: there is no picture to carry, and none is invented.
+    await assert.rejects(() => exportService.read(handle, "png"), /companion_card_image_absent/);
+  } finally {
+    await cleanupTestRoot(root);
+  }
 });
