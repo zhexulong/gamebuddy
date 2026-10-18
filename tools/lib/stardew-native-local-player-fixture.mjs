@@ -1098,11 +1098,11 @@ async function backupManagedFiles(context, backup) {
 
 /**
  * The Mod-owned Body Program journal lives outside everything the Mod-file
- * backup covers: `<StardewSaveRoot>/BodyProgramJournal-v1/<integration>/<saveId>/
+ * backup covers: `<Constants.DataPath>/BodyProgramJournal-v1/stardew/<saveId>/
  * <worldId>/<playerId>/<companionId>/journal.json` (see
- * integrations/stardew/WindowsBodyProgramJournalStore.cs). It is a durable
- * authority keyed by the fixture binding's four opaque ids, so its scope is
- * byte-identical across runs of the same fixture.
+ * integrations/stardew/WindowsBodyProgramJournalStore.cs), where `Constants.DataPath` is the folder that CONTAINS
+ * `Saves`. It is a durable authority keyed by the fixture binding's four opaque ids, so its scope is byte-identical
+ * across runs of the same fixture.
  *
  * That makes it a reset gap rather than a durability feature: a run that leaves
  * a non-terminal or RecoveryRequired program behind makes the next run's
@@ -1204,10 +1204,9 @@ async function backupBodyProgramJournal(options, backup) {
  * backup, and restore used to pass the path it names straight into a recursive
  * removal. A save root is the one directory tree the owner ruling forbids
  * tooling to touch unless the slot is its own, so the marker's path is admitted
- * only inside `<recorded save root>/BodyProgramJournal-v1`: a save folder is a
- * direct child of the save root and can therefore never be named, and a marker
- * from an undeclared, foreign or hand-edited root is refused loudly instead of
- * being resolved through.
+ * only inside the recorded journal root (the `Constants.DataPath`-derived one, which is one level above a `Saves`
+ * save root): a save folder is a direct child of the save root and can therefore never be named, and a marker
+ * from an undeclared, foreign or hand-edited root is refused loudly instead of being resolved through.
  */
 function ownedJournalScopePath(marker) {
   if (typeof marker.saveRoot !== "string" || !isAbsolute(marker.saveRoot) || typeof marker.path !== "string")
