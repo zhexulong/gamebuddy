@@ -116,7 +116,7 @@ test("service source keeps start/claim private and imports no HTTP/response surf
 });
 
 const mountPreamble = `
-  const [serviceUrl, coordinatorUrl, deploymentUrl, storeUrl, runtimeUrl, contractUrl, internalUrl, root] = process.argv.slice(1);
+  const [serviceUrl, coordinatorUrl, deploymentUrl, storeUrl, runtimeUrl, contractUrl, internalUrl, root, piUrl] = process.argv.slice(1);
   const { writeFile, mkdir } = await import("node:fs/promises");
   const principal = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" };
   const manifestPath = root + "/manifest.json";
@@ -178,6 +178,26 @@ const mountPreamble = `
       }),
     );
   }
+  /**
+   * One complete turn with Pi's own half of it: the prompt the Host passed, then the reply the
+   * provider returned, both appended as children of the current leaf, exactly as the provider path
+   * leaves the session.
+   */
+  async function driveTurnWithSessionPair(fx, responseId, promptText, replyText) {
+    return internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
+      internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
+        const sessionManager = scope.runtimeSession.sessionManager;
+        sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.now() });
+        sessionManager.appendMessage({ role: "assistant", content: [{ type: "text", text: replyText }] });
+        const times = [await nextTime(), await nextTime(), await nextTime(), await nextTime(), await nextTime()];
+        await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
+        await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
+        await scope.transitionPresentation({ operation: "commit_presentation", cancelEpoch: 0, message: { messageId: responseId, text: replyText, occurredAtMs: times[2] }, committedAtMs: times[2] });
+        await scope.transitionPresentation({ operation: "claim_completion", claimedAtMs: times[3] });
+        return await scope.transitionPresentation({ operation: "complete", completedAtMs: times[4] });
+      }),
+    );
+  }
   async function driveVariantToCompleted(fx, position) {
     return internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
       internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
@@ -230,6 +250,7 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
     "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
     import.meta.url,
   ).href;
+  const piUrl = new URL("../../node_modules/@earendil-works/pi-coding-agent/dist/index.js", import.meta.url).href;
   const child = spawn(
     process.execPath,
     [
@@ -244,6 +265,7 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
       contractUrl,
       internalUrl,
       root,
+      piUrl,
     ],
     { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   );
@@ -999,5 +1021,130 @@ test(
       scannedAtBoundary > declaredDepth,
       `the boundary turn scans ${scannedAtBoundary} messages against declaredDepth=${declaredDepth}`,
     );
+  },
+);
+
+/**
+ * The rewind's real-root proof, and the one that decides the Pi-side mechanism.
+ *
+ * Two turns are driven through the real production coordinator mount, each with Pi's own half of a
+ * prompt appended to the mounted session - the shape the provider path leaves - and then the
+ * transcript is rewound to the second player line. The model's context is read the way the NEXT
+ * mount would read it: straight out of the session JSONL, projected with the vendor's own renderer
+ * and the leaf `SessionManager._buildIndex` would land on (the file's last entry). That is the
+ * assertion a bare leaf move fails - measured: after a bare leaf move the live session carries the
+ * shortened conversation, but the file's last entry is still the dropped reply, so a re-opened
+ * session carries the whole tail again - which is why the rewind pins the cut with an appended edit
+ * on the kept entry instead.
+ */
+test(
+  "a rewind leaves the dropped turns out of the durable transcript and out of the session a mount re-reads",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const { readdir, readFile, stat } = await import("node:fs/promises");
+  const { join: joinPath } = await import("node:path");
+  const { buildSessionProjection } = await import(piUrl);
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  const firstText = "Synthetic player request";
+  const secondText = "A second line the player takes back.";
+  const first = await service.submitAfterResponseCommit(commandFor(fx, {}), "rewindoneaaaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  await driveTurnWithSessionPair(fx, "reply_01", firstText, "First synthetic reply.");
+  const second = await service.submitAfterResponseCommit(commandFor(fx, { text: secondText, expectedDraftRevision: 1 }), "rewindtwoaaaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 2);
+  await driveTurnWithSessionPair(fx, "reply_02", secondText, "Second synthetic reply.");
+
+  /** What the next mount would send the model, read from the session file alone. */
+  const modelTexts = async () => {
+    const leaves = (await readdir(fx.root, { recursive: true })).filter((leaf) => leaf.endsWith(".jsonl"));
+    const files = await Promise.all(leaves.map(async (leaf) => ({ leaf, at: (await stat(joinPath(fx.root, leaf))).mtimeMs })));
+    files.sort((left, right) => right.at - left.at);
+    const entries = (await readFile(joinPath(fx.root, files[0].leaf), "utf8")).split("\\n").filter((line) => line.length > 0).map((line) => JSON.parse(line)).filter((entry) => entry.type !== "session");
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const leafId = entries.length === 0 ? null : entries[entries.length - 1].id;
+    return buildSessionProjection(entries, leafId, byId).messages.map((message) =>
+      Array.isArray(message.content)
+        ? message.content.filter((part) => part.type === "text").map((part) => part.text).join("")
+        : String(message.content),
+    );
+  };
+
+  const handleOf = (id) => fx.lease.browserProjection.projectMessageHandle(id);
+  const beforeState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const modelBefore = await modelTexts();
+  const rewound = await run(async () => service.rewind({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(beforeState.messages[3].messageId), expectedOrder: 3 }));
+  const afterState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const modelAfter = await modelTexts();
+  const refusal = async (messageHandle, expectedOrder, selectionGeneration) =>
+    await run(async () => service.rewind({ apiVersion: 1, selectionGeneration: selectionGeneration ?? fx.generation, messageHandle, expectedOrder }));
+  const refusedUnknown = await refusal("A".repeat(43), 3);
+  const refusedOrder = await refusal(handleOf(afterState.messages[1].messageId), 4);
+  const refusedOpening = await refusal(handleOf(afterState.messages[0].messageId), 0);
+  const refusedGeneration = await refusal(handleOf(afterState.messages[1].messageId), 1, fx.generation + 1);
+  const modelAfterRefusals = await modelTexts();
+  const settled = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({
+    first, second, rewound, modelBefore, modelAfter, modelAfterRefusals,
+    refusedUnknown, refusedOrder, refusedOpening, refusedGeneration,
+    afterTexts: afterState.messages.map((message) => message.text),
+    afterKinds: afterState.messages.map((message) => message.kind),
+    settledTexts: settled.messages.map((message) => message.text),
+    settledLedgerStatus: settled.turnLedger === null ? null : settled.turnLedger.status,
+    openingKind: beforeState.messages[0].kind,
+    replyHandle: handleOf("reply_01"),
+    startCalls,
+  }));
+`);
+    assert.equal(output.startCalls, 2);
+    assert.equal(output.openingKind, "opening");
+
+    // The rewind's own answer: the row that now ends the transcript, projected from the read-back.
+    const rewound = output.rewound as {
+      ok: boolean;
+      value?: { apiVersion: number; lastMessage: { text: string; order: number } };
+    };
+    assert.equal(rewound.ok, true, JSON.stringify(output.rewound));
+    assert.equal(rewound.value?.apiVersion, 1);
+    assert.equal(rewound.value?.lastMessage.text, "First synthetic reply.");
+    assert.equal(rewound.value?.lastMessage.order, 2);
+
+    // The durable transcript the player reads: two turns in, one kept.
+    assert.deepEqual(output.afterKinds, ["opening", "player", "response"]);
+    assert.equal((output.afterTexts as string[])[1], "Synthetic player request");
+    assert.equal((output.afterTexts as string[])[2], "First synthetic reply.");
+    assert.equal((output.afterTexts as string[]).includes("A second line the player takes back."), false);
+    assert.deepEqual(output.settledTexts, output.afterTexts);
+    // The dropped turn is gone from the ledger too, and the kept one is the thread's current turn.
+    assert.equal(output.settledLedgerStatus, "completed");
+
+    // The model's context, read from the session JSONL the next mount would read.
+    assert.deepEqual(output.modelBefore, [
+      "Synthetic player request",
+      "First synthetic reply.",
+      "A second line the player takes back.",
+      "Second synthetic reply.",
+    ]);
+    assert.deepEqual(output.modelAfter, ["Synthetic player request", "First synthetic reply."]);
+    assert.equal(
+      JSON.stringify(output.modelAfter).includes("Second synthetic reply."),
+      false,
+      "the dropped turns must not be in the context the next mount derives from the session file",
+    );
+
+    // Every refusal is named, and not one of them touched either authority.
+    const named = (entry: unknown) => (entry as { error?: string }).error ?? "";
+    assert.match(named(output.refusedUnknown), /chat_message_not_found/, JSON.stringify(output.refusedUnknown));
+    assert.match(named(output.refusedOrder), /chat_message_revision_conflict/);
+    assert.match(named(output.refusedOpening), /chat_rewind_opening_retained/);
+    assert.match(named(output.refusedGeneration), /chat_pipeline_service_selection_conflict/);
+    assert.deepEqual(output.modelAfterRefusals, output.modelAfter);
+    const settledAfterRefusals = output.settledTexts as string[];
+    assert.equal(settledAfterRefusals.length, 3);
   },
 );
