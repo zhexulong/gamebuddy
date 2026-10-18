@@ -481,7 +481,7 @@ export function createHostGameRuntimeMaterializer(
         // share this same object while live state remains freshly read per call.
         const fixedTools = bodyProgramMounted
           ? createBodyProgramTools(bodyProgramConsumer, execution.connection, mountedPolicy, retainedPolicyIdentity)
-          : [];
+          : Object.freeze([]);
         const recovery = readStardewRecoveryBindingContext(recoveryContext);
         let constructed: Readonly<{
           runtime: RuntimeSession;
