@@ -1,9 +1,9 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { identityProfileMetadata, readIdentityProfile } from "../identity-profile.js";
 import { projectCompanionVoice, updateMountedCompanionVoice } from "../tavern/companion-voice-service.js";
-import { projectRenderedCompanionWorldBook } from "../tavern/companion-world-book-service.js";
+import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "../tavern/companion-world-book-service.js";
 import { createCompanionProfileService } from "../tavern/companion-profile-service.js";
 import { createCompanionAvatarService, type CompanionAvatarService } from "../tavern/companion-avatar/index.js";
 import { createCompanionAvatarRequestHandler } from "../tavern/companion-avatar/face.js";
@@ -34,6 +34,7 @@ import {
   type CreateChatCommandV1,
   type SelectChatCommandV1,
   TAVERN_BROWSER_API_VERSION,
+  type UpdateCompanionWorldBookCommandV1,
   chatListPreviewText,
 } from "../tavern/browser-contract/index.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
@@ -383,15 +384,47 @@ function createTavernManagementDomains(
   });
   /**
    * The companion's OWN world book: the reviewed card's `character_book`, which the
-   * import persisted at `<runtimeCwd>/worldbook.json`. Read-only, and a different
-   * thing from the World Info items a conversation can attach - the surface that
-   * read only the library said "no world book" beside a companion that has one.
-   * Only the mounted companion's handle resolves.
+   * import persisted at `<runtimeCwd>/worldbook.json`. A different thing from the
+   * World Info items a conversation can attach - the surface that read only the
+   * library said "no world book" beside a companion that has one. Only the mounted
+   * companion's handle resolves.
+   *
+   * The edit rewrites the durable file and then carries the new revision to every
+   * Chat thread of this continuity that pins the previous one: the runtime refuses a
+   * book that does not match its thread's pin, so an edit that left the pins behind
+   * would stop those Chats from mounting at all. Layer 1 is one book per companion,
+   * so its provenance is the same `reviewed-import` the creation seams stamp.
    */
+  const refreshCompanionWorldBookBinding = libraryThreads.refreshCompanionWorldBookBinding;
+  if (refreshCompanionWorldBookBinding === undefined) throw new Error("tavern_management_composition_unavailable");
   const companionWorldBookService = Object.freeze({
     async read(handle: string) {
       if (handle !== companionHandleFor(currentCompanionId)) return null;
       return await projectRenderedCompanionWorldBook(runtimePaths.runtimeCwd, await mountedMacros());
+    },
+    async update(handle: string, command: UpdateCompanionWorldBookCommandV1) {
+      if (handle !== companionHandleFor(currentCompanionId)) return null;
+      const bindingFor = (metadata: Readonly<{ worldBookId: string; revision: number; canonicalHash: string }>) =>
+        Object.freeze({
+          worldBookId: metadata.worldBookId,
+          revision: metadata.revision,
+          canonicalHash: metadata.canonicalHash,
+          provenance: "reviewed-import" as const,
+        });
+      return await updateCompanionWorldBook({
+        path: join(runtimePaths.runtimeCwd, "worldbook.json"),
+        containmentRoot: runtimePaths.root,
+        macros: await mountedMacros(),
+        expectedRevision: command.expectedRevision,
+        entries: command.entries,
+        refreshBindings: async (previous, next) =>
+          await refreshCompanionWorldBookBinding({
+            companionId: manifest.principal.companionId,
+            continuityId: manifest.principal.continuityId,
+            previous: bindingFor(previous),
+            binding: bindingFor(next),
+          }),
+      });
     },
   });
   /**
@@ -852,7 +885,7 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
   connectionService: ["read", "create", "test", "activate", "selectModel", "remove"],
   libraryService: ["listCompanions"],
   companionVoiceService: ["read", "update"],
-  companionWorldBookService: ["read"],
+  companionWorldBookService: ["read", "update"],
   companionProfileService: ["read"],
   newCompanionProvisioner: ["create"],
   newChatProvisioner: ["create"],
@@ -932,6 +965,7 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.profiles.update",
       "companion.list",
       "companion.worldbook.read",
+      "companion.worldbook.update",
       "companion.create",
       "persona.read",
       "persona.update",
@@ -988,6 +1022,7 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.profiles.update",
       "companion.list",
       "companion.worldbook.read",
+      "companion.worldbook.update",
       "companion.create",
       "persona.read",
       "persona.update",

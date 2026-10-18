@@ -19,6 +19,7 @@ import {
   type CompanionProfileV1,
   type CompanionCharacterVoiceV1,
   type CompanionVoiceV1,
+  type UpdateCompanionWorldBookCommandV1,
   type ComposedTavernProfile,
   type CreateCompanionCommandV1,
   type CreateChatCommandV1,
@@ -180,6 +181,7 @@ const MANAGEMENT_NAVIGATION_ITEM_IDS_LEGACY_WITH_MEMORY = ["chat", "memory"] as 
 const MANAGEMENT_P9_ROUTES = [
   "companion.list",
   "companion.worldbook.read",
+  "companion.worldbook.update",
   "companion.create",
   "persona.read",
   "persona.update",
@@ -273,6 +275,9 @@ const reviewStCardImportValidator = Compile(TavernBrowserContractV1.schemas.Revi
 const confirmStCardImportValidator = Compile(TavernBrowserContractV1.schemas.ConfirmStCardImportCommandV1Schema);
 const modelProfileUpdateValidator = Compile(TavernBrowserContractV1.schemas.TavernModelProfileUpdateCommandV1Schema);
 const updateCompanionVoiceValidator = Compile(TavernBrowserContractV1.schemas.UpdateCompanionVoiceCommandV1Schema);
+const updateCompanionWorldBookValidator = Compile(
+  TavernBrowserContractV1.schemas.UpdateCompanionWorldBookCommandV1Schema,
+);
 
 /**
  * The one Host-owned Chat/Game model profile store this dispatcher accepts. It
@@ -361,13 +366,19 @@ export type TavernManagementDialogueWebOptions = Readonly<{
   }>;
   /**
    * The companion's own world book: the reviewed card's `character_book`, as the
-   * import persisted it under the companion's runtime root. Read-only, and a
-   * different thing from the World Info items one conversation can attach
-   * (`worldInfoService`). Only the mounted companion's handle resolves; any other
-   * handle is reported 404 rather than projected as a different identity.
+   * import persisted it under the companion's runtime root. A different thing from
+   * the World Info items one conversation can attach (`worldInfoService`), and
+   * editable in place: `update` replaces the whole entry list, CASed on the revision
+   * `read` projected. Only the mounted companion's handle resolves; any other handle
+   * is reported 404 rather than projected as a different identity.
    */
   companionWorldBookService?: Readonly<{
     read(handle: string): Promise<CompanionWorldBookV1 | null>;
+    /**
+     * Replaces the whole entry list, CASed on the revision `read` projected. Only the
+     * mounted companion's handle resolves; any other handle is answered as null (404).
+     */
+    update(handle: string, command: UpdateCompanionWorldBookCommandV1): Promise<CompanionWorldBookV1 | null>;
   }>;
   /**
    * The read-only character inspector: the authored facts of ANY companion in the
@@ -706,10 +717,13 @@ export function createTavernManagementDialogueWebRequestHandler(
   }
   // The companion's own world book is mounted only when the exact read is injected;
   // a profile that advertises the route without it fails closed before dispatch, so
-  // the surface is never shown a book the Host cannot read.
-  if (profile.routeIds.includes("companion.worldbook.read")) {
-    if (companionWorldBookService === undefined) throw new Error("tavern_management_composition_unavailable");
-    if (!profile.operationIds.includes("companion.worldbook.read"))
+  // the surface is never shown a book the Host cannot read. The edit is part of the
+  // same capability: a profile that advertises it must bind the write and declare it
+  // as an operation, or the panel would offer a save the dispatcher cannot serve.
+  for (const routeId of ["companion.worldbook.read", "companion.worldbook.update"] as const) {
+    if (profile.routeIds.includes(routeId) && companionWorldBookService === undefined)
+      throw new Error("tavern_management_composition_unavailable");
+    if (profile.routeIds.includes(routeId) && !profile.operationIds.includes(routeId))
       throw new Error("tavern_management_composition_unavailable");
   }
   // The character inspector is mounted only when the exact read is injected; a
@@ -1342,17 +1356,42 @@ export function createTavernManagementDialogueWebRequestHandler(
       {
         const worldBookHandle = matchCompanionWorldBookRoute(request.method, url.pathname);
         if (worldBookHandle !== null) {
-          // companion.worldbook.read: the companion's OWN book, which is a different
-          // thing from the World Info library a conversation attaches. The exact opaque
-          // handle the list projected resolves; any other handle is answered by the
-          // bound service as null (404), so browser input can never name another
-          // durable companion identity.
-          if (url.search !== "" || (await hasRequestBody(request)))
-            return sendProblem(response, 400, "invalid_request");
-          if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
-          if (!profile.routeIds.includes("companion.worldbook.read") || companionWorldBookService === undefined)
+          // companion.worldbook.read / companion.worldbook.update: the companion's OWN
+          // book, which is a different thing from the World Info library a conversation
+          // attaches. The exact opaque handle the list projected resolves; any other
+          // handle is answered by the bound service as null (404), so browser input can
+          // never name another durable companion identity. A read is a same-origin
+          // browser fetch; a rewrite is a CSRF-bound, revision-CASed write.
+          if (request.method === "GET") {
+            if (url.search !== "" || (await hasRequestBody(request)))
+              return sendProblem(response, 400, "invalid_request");
+            if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+            if (!profile.routeIds.includes("companion.worldbook.read") || companionWorldBookService === undefined)
+              return sendProblem(response, 404, "profile_operation_unavailable");
+            const worldBook = await companionWorldBookService.read(worldBookHandle);
+            if (worldBook === null) return sendProblem(response, 404, "companion_not_found");
+            if (!TavernBrowserValidatorsV1.CompanionWorldBookV1Schema.Check(worldBook))
+              throw new Error("companion_world_book_service_unavailable");
+            return sendJson(response, 200, worldBook);
+          }
+          if (url.search !== "") return sendProblem(response, 400, "invalid_request");
+          if (!isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+          const session = admitRequest(request, origin);
+          if (session === null) return sendProblem(response, 401, "unauthorized");
+          if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+            return sendProblem(response, 403, "csrf_failed");
+          if (
+            !profile.routeIds.includes("companion.worldbook.update") ||
+            !profile.operationIds.includes("companion.worldbook.update") ||
+            companionWorldBookService === undefined
+          )
             return sendProblem(response, 404, "profile_operation_unavailable");
-          const worldBook = await companionWorldBookService.read(worldBookHandle);
+          const body = await readJsonBody(request, MAX_BODY_BYTES);
+          if (!updateCompanionWorldBookValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+          const worldBook = await companionWorldBookService.update(
+            worldBookHandle,
+            body as UpdateCompanionWorldBookCommandV1,
+          );
           if (worldBook === null) return sendProblem(response, 404, "companion_not_found");
           if (!TavernBrowserValidatorsV1.CompanionWorldBookV1Schema.Check(worldBook))
             throw new Error("companion_world_book_service_unavailable");
@@ -2201,9 +2240,9 @@ function matchCompanionVoiceRoute(method: string | undefined, pathname: string):
   return match === null ? null : match[1]!;
 }
 
-/** companion.worldbook.read: the mounted companion's OWN world book (not the World Info library). */
+/** companion.worldbook.read / update: the mounted companion's OWN world book (not the World Info library). */
 function matchCompanionWorldBookRoute(method: string | undefined, pathname: string): string | null {
-  if (method !== "GET") return null;
+  if (method !== "GET" && method !== "PUT") return null;
   const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})\/worldbook$/.exec(pathname);
   return match === null ? null : match[1]!;
 }
@@ -2308,6 +2347,20 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   // The companion directive is CASed on the exact profile revision the browser read;
   // a stale edit is a bounded, player-actionable refusal rather than a lost write.
   if (message === "character_voice_conflict") return { status: 409, code: "character_voice_conflict" };
+  // Her own world book is one durable file replaced whole, so an edit CASes on the
+  // revision the browser read. Each way the save can be refused says what happened
+  // instead of collapsing into "failed": the book moved on, she has no book to edit,
+  // the entries are not a book the persistent validator accepts, or the durable thread
+  // store could not follow the change (nothing was kept then - the refusal is honest).
+  if (message === "companion_world_book_conflict") return { status: 409, code: "companion_world_book_conflict" };
+  if (message === "companion_world_book_absent") return { status: 404, code: "companion_world_book_absent" };
+  if (message === "companion_world_book_invalid") return { status: 400, code: "authored_content_invalid" };
+  // The book was written and the restoring write then failed too, so the threads that
+  // still pin the previous revision are the one state a retry cannot fix. It is named
+  // rather than reported as a clean storage failure.
+  if (message === "companion_world_book_binding_partial")
+    return { status: 503, code: "companion_world_book_binding_partial" };
+  if (message === "companion_world_book_binding_unavailable") return { status: 503, code: "storage_unavailable" };
   // The new-chat opening choice: a sealed opening, a Chat whose opening is not a greeting, and a
   // variant that no longer resolves are each a distinct, bounded, player-actionable refusal.
   if (message === "chat_opening_locked" || message === "chat_thread_opening_locked")

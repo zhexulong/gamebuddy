@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 import {
@@ -15,6 +18,9 @@ import {
   type WorldInfoStateV1,
 } from "./tavern/browser-contract/index.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
+import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "./tavern/companion-world-book-service.js";
+import { macroTable } from "./tavern/macro-engine.js";
+import { readWorldBook, validateWorldBook, writeWorldBook } from "./worldbook.js";
 import type { MemoryManagementService } from "./tavern/memory-management/memory-management.js";
 import type { TavernManagementState, TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
 import type { PublicWorldInfoProjection } from "./tavern/world-info-management/world-info-management.js";
@@ -2353,4 +2359,399 @@ test("management handler does not serve a World Info authoring route the profile
     [0, 0, 0, 0],
   );
   await handler.close();
+});
+
+/**
+ * The management profile that also serves the Characters surface's own book: the shared
+ * core plus the `companion.list`/persona/scenario/greeting/retention group, which is
+ * all-or-nothing and now carries her own book's edit beside its read.
+ */
+const charactersRouteGroup = [
+  "companion.list",
+  "companion.worldbook.read",
+  "companion.worldbook.update",
+  "companion.create",
+  "persona.read",
+  "persona.update",
+  "scenario.read",
+  "scenario.update",
+  "greeting.read",
+  "greeting.update",
+  "chat.archive",
+  "chat.restore",
+  "chat.trash",
+] as const;
+const charactersProfile = composeTavernProfile({
+  profileId: "gamebuddy.tavern-management.chat-list-title",
+  releaseTier: "tavern_management",
+  routeIds: [...profile.routeIds, ...charactersRouteGroup],
+  operationIds: [...profile.operationIds, ...charactersRouteGroup],
+  navigationItemIds: ["chat", "characters"],
+});
+
+/** The run's own macro table, so the rendered bodies are asserted rather than assumed. */
+const surfaceMacros = macroTable({ char: "琥珀", user: "阿岚" });
+
+/**
+ * The companion whose book the surface edits (the mount's own library entry).
+ * `handle` is the opaque per-mount handle the roster projects, which is the only handle
+ * these routes resolve.
+ */
+function realCompanionWorldBookService(
+  root: string,
+  calls: { refreshes: number; announced: readonly number[] | null },
+): Readonly<{
+  read(handle: string): Promise<import("./tavern/browser-contract/index.js").CompanionWorldBookV1 | null>;
+  update(
+    handle: string,
+    command: import("./tavern/browser-contract/index.js").UpdateCompanionWorldBookCommandV1,
+  ): Promise<import("./tavern/browser-contract/index.js").CompanionWorldBookV1 | null>;
+}> {
+  return Object.freeze({
+    async read(requested: string) {
+      if (requested !== handle) return null;
+      return await projectRenderedCompanionWorldBook(root, surfaceMacros);
+    },
+    async update(
+      requested: string,
+      command: import("./tavern/browser-contract/index.js").UpdateCompanionWorldBookCommandV1,
+    ) {
+      if (requested !== handle) return null;
+      return await updateCompanionWorldBook({
+        path: join(root, "worldbook.json"),
+        containmentRoot: root,
+        macros: surfaceMacros,
+        expectedRevision: command.expectedRevision,
+        entries: command.entries,
+        refreshBindings: async (previous, next) => {
+          calls.refreshes += 1;
+          calls.announced = [previous.revision, next.revision];
+          return 0;
+        },
+      });
+    },
+  });
+}
+
+function cardOwnedBook(): import("./worldbook.js").WorldBook {
+  return validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "worldbook_route_proof",
+    revision: 7,
+    alwaysOnPremise: "{{user}}和她一起打理农场。",
+    scanDepth: 4,
+    entries: [
+      {
+        entryId: "st-json-1",
+        title: "温室",
+        content: "{{char}}把温室的玻璃换成了新的。",
+        scope: "setting",
+        provenance: "st-card-import",
+        tokenBudget: "small",
+        keys: ["温室", "玻璃房"],
+      },
+      {
+        entryId: "st-json-2",
+        title: "洒水器",
+        content: "洒水器接在井边。",
+        scope: "setting",
+        provenance: "st-card-import",
+        tokenBudget: "small",
+        constant: true,
+        keys: ["洒水器"],
+      },
+    ],
+  });
+}
+
+test("companion.worldbook.update rewrites the real durable book through the route, CASed on the revision it read", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-world-book-route-"));
+  await writeWorldBook(join(root, "worldbook.json"), cardOwnedBook());
+  const calls = { refreshes: 0, announced: null as readonly number[] | null };
+  // A REAL loopback server and real `fetch`, not an in-process response object: this route
+  // reads and writes a real file, so the reply lands on real I/O and a fixed number of event-loop
+  // ticks is not a settle condition. It also proves the route is served on the wire.
+  const server = await startTavernManagementDialogueWebServer({
+    managementStateFacade: facade,
+    managementService: service({ lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 }),
+    worldInfoService: worldInfoService(),
+    playerPreferenceStore: voicePreferenceStore,
+    libraryService: Object.freeze({
+      async listCompanions() {
+        return [{ handle, name: "琥珀", isCurrent: true }];
+      },
+    }),
+    personaService: Object.freeze({
+      async read() {
+        return null;
+      },
+      async update(request) {
+        return { revision: request.expectedRevision + 1, name: request.name };
+      },
+    }),
+    scenarioService: Object.freeze({
+      async read() {
+        return null;
+      },
+      async update(request) {
+        return {
+          revision: request.expectedRevision + 1,
+          name: request.name,
+          description: request.description,
+          preview: request.description.slice(0, 64),
+        };
+      },
+    }),
+    greetingService: Object.freeze({
+      async read() {
+        return null;
+      },
+      async update(request) {
+        return { revision: request.expectedRevision + 1, variants: request.variants };
+      },
+    }),
+    companionWorldBookService: realCompanionWorldBookService(root, calls),
+    profile: charactersProfile,
+    bootstrapToken: token,
+  });
+  try {
+    const origin = server.origin;
+    const bootstrap = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    assert.equal(bootstrap.status, 200);
+    const snapshot = (await bootstrap.json()) as { csrfToken: string };
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const session = { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" };
+    const writes = { ...session, "Content-Type": "application/json", "X-CSRF-Token": snapshot.csrfToken };
+    const worldBookPath = `/api/tavern/v1/companions/${handle}/worldbook`;
+
+    // The read projects the durable revision, which is what the edit CASes on.
+    const read = await fetch(`${origin}${worldBookPath}`, { headers: session });
+    assert.equal(read.status, 200);
+    const before = (await read.json()) as {
+      present: boolean;
+      revision: number | null;
+      entries: readonly { title: string; keys: readonly string[]; constant: boolean; content: string }[];
+    };
+    assert.equal(before.present, true);
+    assert.equal(before.revision, 7);
+    assert.deepEqual(
+      before.entries.map((entry) => entry.content),
+      ["琥珀把温室的玻璃换成了新的。", "洒水器接在井边。"],
+    );
+
+    // A rewrite without the CSRF header is refused before it can touch the book.
+    const noCsrf = await fetch(`${origin}${worldBookPath}`, {
+      method: "PUT",
+      headers: { ...session, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        apiVersion: 1,
+        expectedRevision: 7,
+        entries: [{ title: "温室", keys: [], constant: false, content: "改过了。" }],
+      }),
+    });
+    assert.equal(noCsrf.status, 403);
+    assert.equal(((await noCsrf.json()) as { code: string }).code, "csrf_failed");
+
+    // A body the contract does not admit is refused by the request schema.
+    const invalidBody = await fetch(`${origin}${worldBookPath}`, {
+      method: "PUT",
+      headers: writes,
+      body: JSON.stringify({ apiVersion: 1, expectedRevision: 7 }),
+    });
+    assert.equal(invalidBody.status, 400);
+
+    // A handle this mount never handed out resolves to nothing at all.
+    const unknownHandle = await fetch(`${origin}/api/tavern/v1/companions/${"Z".repeat(43)}/worldbook`, {
+      method: "PUT",
+      headers: writes,
+      body: JSON.stringify({
+        apiVersion: 1,
+        expectedRevision: 7,
+        entries: [{ title: "温室", keys: [], constant: false, content: "改过了。" }],
+      }),
+    });
+    assert.equal(unknownHandle.status, 404);
+    assert.equal(((await unknownHandle.json()) as { code: string }).code, "companion_not_found");
+
+    // The player rewrites one body and adds a row, leaving the other row alone.
+    const updated = await fetch(`${origin}${worldBookPath}`, {
+      method: "PUT",
+      headers: writes,
+      body: JSON.stringify({
+        apiVersion: 1,
+        expectedRevision: 7,
+        entries: [
+          { title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "{{user}}说这扇玻璃是她挑的。" },
+          before.entries[1]!,
+          { title: "雨天", keys: ["下雨", "雨天"], constant: false, content: "{{char}}喜欢雨天。" },
+        ],
+      }),
+    });
+    assert.equal(updated.status, 200);
+    const updatedBody = (await updated.json()) as {
+      revision: number | null;
+      entries: readonly { title: string; content: string }[];
+    };
+    assert.equal(updatedBody.revision, 8);
+    // The reply is the Host's own re-projection: the macros are RENDERED on the wire.
+    assert.deepEqual(
+      updatedBody.entries.map((entry) => entry.content),
+      ["阿岚说这扇玻璃是她挑的。", "洒水器接在井边。", "琥珀喜欢雨天。"],
+    );
+    assert.equal(calls.refreshes, 1, "the edit carries the new revision to the threads that pin the old one");
+    assert.deepEqual(calls.announced, [7, 8]);
+
+    // …while the durable file holds the PLAYER's own words, and the card's own text on
+    // the row she did not touch.
+    const durable = await readWorldBook(join(root, "worldbook.json"));
+    assert.deepEqual(
+      durable.entries.map((entry) => entry.content),
+      ["{{user}}说这扇玻璃是她挑的。", "洒水器接在井边。", "{{char}}喜欢雨天。"],
+    );
+    assert.equal(durable.entries[0]!.provenance, "authored");
+    assert.equal(durable.entries[1]!.provenance, "st-card-import");
+    assert.equal(durable.alwaysOnPremise, "{{user}}和她一起打理农场。");
+
+    // Removing the row the player added, and reading the book back.
+    const removed = await fetch(`${origin}${worldBookPath}`, {
+      method: "PUT",
+      headers: writes,
+      body: JSON.stringify({ apiVersion: 1, expectedRevision: 8, entries: updatedBody.entries.slice(0, 2) }),
+    });
+    assert.equal(removed.status, 200);
+    const afterRemoval = (await removed.json()) as { revision: number | null; entries: readonly { title: string }[] };
+    assert.equal(afterRemoval.revision, 9);
+    assert.deepEqual(
+      afterRemoval.entries.map((entry) => entry.title),
+      ["温室", "洒水器"],
+    );
+    assert.equal(calls.refreshes, 2, "each successful edit carries the new revision to the threads");
+
+    // The stale revision — the one the browser read first — now names a book that has
+    // moved on twice, and the refusal says exactly that instead of "failed".
+    const stale = await fetch(`${origin}${worldBookPath}`, {
+      method: "PUT",
+      headers: writes,
+      body: JSON.stringify({
+        apiVersion: 1,
+        expectedRevision: 7,
+        entries: [{ title: "温室", keys: [], constant: false, content: "旧版本。" }],
+      }),
+    });
+    assert.equal(stale.status, 409);
+    assert.equal(((await stale.json()) as { code: string }).code, "companion_world_book_conflict");
+    // …and a refused edit changes nothing, at any revision.
+    assert.equal((await readWorldBook(join(root, "worldbook.json"))).revision, 9);
+    assert.equal(calls.refreshes, 2, "a refused edit never reaches the threads");
+
+    // An entry the persistent validator will not keep gets its own code, not invalid_request.
+    const invalidEntry = await fetch(`${origin}${worldBookPath}`, {
+      method: "PUT",
+      headers: writes,
+      body: JSON.stringify({
+        apiVersion: 1,
+        expectedRevision: 9,
+        entries: [{ title: "温室", keys: [], constant: false, content: "" }],
+      }),
+    });
+    assert.equal(invalidEntry.status, 400);
+    assert.equal(((await invalidEntry.json()) as { code: string }).code, "authored_content_invalid");
+    assert.equal((await readWorldBook(join(root, "worldbook.json"))).revision, 9);
+  } finally {
+    await server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("companion.worldbook.update names a companion with no book and a book it cannot read", async () => {
+  const absent = await mkdtemp(join(tmpdir(), "gamebuddy-world-book-absent-"));
+  const broken = await mkdtemp(join(tmpdir(), "gamebuddy-world-book-broken-"));
+  await writeFile(join(broken, "worldbook.json"), "{ not json", "utf8");
+  for (const [root, expectedStatus, expectedCode] of [
+    [absent, 404, "companion_world_book_absent"],
+    [broken, 503, "companion_record_unreadable"],
+  ] as const) {
+    const calls = { refreshes: 0, announced: null as readonly number[] | null };
+    const server = await startTavernManagementDialogueWebServer({
+      managementStateFacade: facade,
+      managementService: service({ lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 }),
+      worldInfoService: worldInfoService(),
+      playerPreferenceStore: voicePreferenceStore,
+      libraryService: Object.freeze({
+        async listCompanions() {
+          return [{ handle, name: "琥珀", isCurrent: true }];
+        },
+      }),
+      personaService: Object.freeze({
+        async read() {
+          return null;
+        },
+        async update(request) {
+          return { revision: request.expectedRevision + 1, name: request.name };
+        },
+      }),
+      scenarioService: Object.freeze({
+        async read() {
+          return null;
+        },
+        async update(request) {
+          return {
+            revision: request.expectedRevision + 1,
+            name: request.name,
+            description: request.description,
+            preview: request.description.slice(0, 64),
+          };
+        },
+      }),
+      greetingService: Object.freeze({
+        async read() {
+          return null;
+        },
+        async update(request) {
+          return { revision: request.expectedRevision + 1, variants: request.variants };
+        },
+      }),
+      companionWorldBookService: realCompanionWorldBookService(root, calls),
+      profile: charactersProfile,
+      bootstrapToken: token,
+    });
+    try {
+      const origin = server.origin;
+      const bootstrap = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
+        method: "POST",
+        headers: { Origin: origin, "Content-Type": "application/json" },
+        body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+      });
+      const snapshot = (await bootstrap.json()) as { csrfToken: string };
+      const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+      const refused = await fetch(`${origin}/api/tavern/v1/companions/${handle}/worldbook`, {
+        method: "PUT",
+        headers: {
+          Origin: origin,
+          Cookie: cookie,
+          "Sec-Fetch-Site": "same-origin",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": snapshot.csrfToken,
+        },
+        body: JSON.stringify({
+          apiVersion: 1,
+          expectedRevision: 1,
+          entries: [{ title: "温室", keys: [], constant: false, content: "正文。" }],
+        }),
+      });
+      assert.equal(refused.status, expectedStatus);
+      assert.equal(((await refused.json()) as { code: string }).code, expectedCode);
+      assert.equal(calls.refreshes, 0);
+      // Neither refusal invented a book.
+      if (root === absent) await assert.rejects(readFile(join(absent, "worldbook.json"), "utf8"), /ENOENT/);
+    } finally {
+      await server.close();
+    }
+  }
+  await rm(absent, { recursive: true, force: true });
+  await rm(broken, { recursive: true, force: true });
 });

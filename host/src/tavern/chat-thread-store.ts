@@ -739,6 +739,35 @@ export type ChatThreadStore = Readonly<{
       binding?: TavernStableWorldInfoBinding;
     }>,
   ): Promise<ChatThreadState>;
+  /**
+   * Carries Layer 1 (the companion's own Card book) to a new revision on every thread
+   * of one companion/continuity that is pinned to exactly the previous metadata.
+   *
+   * The companion's own book is ONE mutable file whose revision and content-derived hash
+   * change with every edit the player makes, while each thread pins the exact metadata it
+   * was created against and the runtime construction refuses a book that does not match
+   * its thread's pin. So an edit has to carry the pins with it, and this is the only
+   * place that does: `setManagedWorldInfoBinding` owns Layer 2 and deliberately refuses
+   * Layer 1.
+   *
+   * The match is the whole triple - `worldBookId`, `revision` AND `canonicalHash` - not
+   * the id on its own. A row already pointing at the new revision (another path got
+   * there first) or at any other book must be left exactly as it is; a sweep that
+   * rewrote whatever it found would silently move a Chat onto a book it was never
+   * pinned to, which is the one thing this slot must never do. Desired and applied are
+   * written together, as they always are for this slot, so the two can never disagree.
+   *
+   * Both are validated before any SQLite mutation, and the whole pass is one
+   * transaction. Returns how many threads were re-pointed.
+   */
+  refreshCompanionWorldBookBinding?(
+    input: Readonly<{
+      companionId: string;
+      continuityId: string;
+      previous: TavernStableWorldBookBinding;
+      binding: TavernStableWorldBookBinding;
+    }>,
+  ): Promise<number>;
   /** Metadata-only player title mutation using the lifecycle management CAS. */
   renameThreadTitle?(
     input: Readonly<{
@@ -1789,6 +1818,33 @@ export function createChatThreadStore(
       return withDb((db) => {
         const rows = db.prepare("SELECT * FROM tavern_threads ORDER BY thread_id ASC").all() as any[];
         return Object.freeze(rows.map((row) => rowToThread(db, row)));
+      });
+    },
+
+    async refreshCompanionWorldBookBinding(input): Promise<number> {
+      assertId("companionId", input.companionId);
+      assertId("continuityId", input.continuityId);
+      const previous = freezeCompanionWorldBookBinding(input.previous);
+      const binding = freezeCompanionWorldBookBinding(input.binding);
+      return withDb((db) => {
+        const rows = db
+          .prepare(
+            `SELECT bindings.* FROM tavern_thread_world_info_bindings AS bindings
+             JOIN tavern_threads AS threads ON threads.thread_id = bindings.thread_id
+             WHERE bindings.slot = 'companion' AND threads.companion_id = ? AND threads.continuity_id = ?`,
+          )
+          .all(input.companionId, input.continuityId) as any[];
+        let repointed = 0;
+        for (const row of rows) {
+          if (
+            !sameBinding(worldBookBindingFromRow(row, false), previous) ||
+            !sameBinding(worldBookBindingFromRow(row, true), previous)
+          )
+            continue;
+          writeWorldInfoBinding(db, row.thread_id, "companion", binding, binding);
+          repointed += 1;
+        }
+        return repointed;
       });
     },
 

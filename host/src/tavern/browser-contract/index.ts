@@ -136,6 +136,17 @@ const ProblemCode = Type.Union([
   // The companion's performance directive is a durable profile field edited against an exact
   // profile revision; a stale edit is its own bounded, non-retryable-by-repeating fact.
   Type.Literal("character_voice_conflict"),
+  // The companion's own world book (`companion.worldbook.update`) is one durable file
+  // replaced whole, so an edit is CASed on the revision the browser read. Each way it can
+  // be refused names itself rather than collapsing into "failed": the book moved on since
+  // that read, there is no book to edit, or the entries are not a book the persistent
+  // validator accepts. A player cannot act on "the world book could not be saved".
+  Type.Literal("companion_world_book_conflict"),
+  Type.Literal("companion_world_book_absent"),
+  // The one state a retry cannot fix: the book was replaced and the threads that pin the
+  // revision it replaced could not be carried along. Its own code, because reporting it as
+  // a clean storage failure would tell the player nothing about what is now inconsistent.
+  Type.Literal("companion_world_book_binding_partial"),
   // The managed World Info library's own refusals (`world-info.detail`/`create`/`update`/`delete`).
   // Each names exactly what happened - the item is gone, its title is taken, the edit raced a newer
   // revision, or the mounted Chat still reads it - because a generic failure tells the player
@@ -699,6 +710,9 @@ const OperationId = Type.Union([
   Type.Literal("world-info.delete"),
   Type.Literal("companion.list"),
   Type.Literal("companion.worldbook.read"),
+  // The player rewrites her companion's own book: the complete entry list, CASed on the
+  // revision the read projected.
+  Type.Literal("companion.worldbook.update"),
   // The read-only character inspector: one companion's own authored facts, by
   // the roster's own opaque handle.
   Type.Literal("companion.profile.read"),
@@ -753,6 +767,7 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.character.voice.update"),
   Type.Literal("tavern.operation.companion.list"),
   Type.Literal("tavern.operation.companion.worldbook.read"),
+  Type.Literal("tavern.operation.companion.worldbook.update"),
   Type.Literal("tavern.operation.companion.profile.read"),
   Type.Literal("tavern.operation.companion.create"),
   Type.Literal("tavern.operation.character.import.stage"),
@@ -952,9 +967,11 @@ export const COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH = 4_096;
  * (`desktop-presentation-admission-owner.ts`, the same authority the scenario
  * projection uses), so a `{{user}}`/`{{char}}` placeholder never reaches the
  * player - and the durable file keeps the author's own text. **Editing** an entry
- * is a planned capability, not a forbidden one: it needs a `PUT` with the same
- * `expectedRevision` CAS the neighbouring companion mutations carry, and it is not
- * served yet.
+ * is served by `companion.worldbook.update`, which carries this shape back with
+ * the book's durable revision as the CAS. The rendered body is what the player
+ * read and what she edits, so the write path re-attaches each row's durable
+ * authored text to any row that still renders to exactly what came back; a row
+ * the player rewrote is hers, stored verbatim and rendered on the next read.
  */
 export const CompanionWorldBookEntryV1Schema = strictObject({
   title: Type.String({ minLength: 1, maxLength: 256 }),
@@ -983,10 +1000,38 @@ export const CompanionWorldBookEntryV1Schema = strictObject({
  * `present` is false when the companion has no book at all. The surface renders no
  * block in that case rather than an empty one, so a companion without a book never
  * reads as a book whose entries were lost.
+ *
+ * `revision` is the durable book's own revision from `<runtimeCwd>/worldbook.json`,
+ * and it is null in exactly the one case `present` is false: a book that exists
+ * always carries a positive revision. It is projected because an edit must CAS on
+ * it - the file is replaced whole, so without the value the browser read, two edits
+ * would silently overwrite one another and the second screen would be showing a book
+ * that no longer exists.
  */
 export const CompanionWorldBookV1Schema = strictObject({
   apiVersion: ApiVersion,
   present: Type.Boolean(),
+  revision: Type.Union([Revision, Type.Null()]),
+  entries: Type.Array(CompanionWorldBookEntryV1Schema, { maxItems: 128 }),
+});
+/**
+ * One player edit of the companion's OWN world book: the complete entry list as the
+ * player now wants her book to read, CASed on the revision she read.
+ *
+ * The whole list is replaced rather than one row named by an id, because the durable
+ * `entryId` is a storage fact the browser is never handed: the projection carries
+ * titles, trigger words and bodies, and the list that comes back IS the book the
+ * player wants. The book's premise and its declared scan depth are not projected, so
+ * they are not editable here and the write path carries them through unchanged - a
+ * mutation that is not about them must not silently drop them.
+ *
+ * An inbound entry is the projection's own entry shape (its body is the RENDERED
+ * text the player read), so this command can never carry a bound the read does not
+ * already carry.
+ */
+export const UpdateCompanionWorldBookCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  expectedRevision: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
   entries: Type.Array(CompanionWorldBookEntryV1Schema, { maxItems: 128 }),
 });
 /**
@@ -2294,6 +2339,21 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CompanionWorldBookV1Schema },
   }),
   route({
+    routeId: "companion.worldbook.update",
+    method: "PUT",
+    path: "/api/tavern/v1/companions/:companionHandle/worldbook",
+    operationId: "companion.worldbook.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    request: UpdateCompanionWorldBookCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: CompanionWorldBookV1Schema },
+  }),
+  route({
     routeId: "companion.profile.read",
     method: "GET",
     path: "/api/tavern/v1/companions/:companionHandle/profile",
@@ -2626,6 +2686,7 @@ export const TavernBrowserContractV1 = Object.freeze({
     CompanionDetailV1Schema,
     CompanionWorldBookEntryV1Schema,
     CompanionWorldBookV1Schema,
+    UpdateCompanionWorldBookCommandV1Schema,
     CompanionProfileV1Schema,
     CompanionVoiceV1Schema,
     CompanionCharacterVoiceV1Schema,
@@ -2737,8 +2798,34 @@ export type WorldInfoUpdateCommandV1 = Static<typeof WorldInfoUpdateCommandV1Sch
 export type CompanionListEntryV1 = Static<typeof CompanionListEntryV1Schema>;
 export type CompanionListV1 = Static<typeof CompanionListV1Schema>;
 export type CompanionDetailV1 = Static<typeof CompanionDetailV1Schema>;
-export type CompanionWorldBookEntryV1 = Static<typeof CompanionWorldBookEntryV1Schema>;
-export type CompanionWorldBookV1 = Static<typeof CompanionWorldBookV1Schema>;
+/**
+ * The world book's own wire types are HAND-WRITTEN rather than `Static` of their schemas,
+ * for the same reason `MemoryReadV1` and `CompanionProfileV1` are: the producer freezes
+ * every list it carries and every trigger list inside them, so the type has to say
+ * `readonly` rather than describe a mutable array the producer never returns. The schemas
+ * (`CompanionWorldBookEntryV1Schema`, `CompanionWorldBookV1Schema`) remain the validators
+ * the dispatcher checks every reply against, so the two are one declaration of the same
+ * shape at the two layers that need it.
+ */
+export type CompanionWorldBookEntryV1 = Readonly<{
+  title: string;
+  keys: readonly string[];
+  constant: boolean;
+  content: string;
+}>;
+export type CompanionWorldBookV1 = Readonly<{
+  apiVersion: typeof TAVERN_BROWSER_API_VERSION;
+  present: boolean;
+  /** The durable book's own revision, null in exactly the one case `present` is false. */
+  revision: number | null;
+  entries: readonly CompanionWorldBookEntryV1[];
+}>;
+export type UpdateCompanionWorldBookCommandV1 = Readonly<{
+  apiVersion: typeof TAVERN_BROWSER_API_VERSION;
+  expectedRevision: number;
+  /** The projection's own entry shape, so the browser may send back exactly what it read. */
+  entries: readonly CompanionWorldBookEntryV1[];
+}>;
 export type CompanionCharacterVoiceV1 = Static<typeof CompanionCharacterVoiceV1Schema>;
 export type CompanionVoiceV1 = Static<typeof CompanionVoiceV1Schema>;
 export type UpdateCompanionVoiceCommandV1 = Static<typeof UpdateCompanionVoiceCommandV1Schema>;

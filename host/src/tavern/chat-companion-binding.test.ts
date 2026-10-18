@@ -50,6 +50,9 @@ import {
 } from "./new-companion-service.js";
 import { resolveTavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import { type CharacterCandidate, validateTavernArtifact } from "./types.js";
+import { readWorldBook, writeWorldBook } from "../worldbook.js";
+import { macroTable } from "./macro-engine.js";
+import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "./companion-world-book-service.js";
 
 test.before(async () => {
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
@@ -443,5 +446,140 @@ test("a corrupt companion-owned scenario fails the new Chat closed instead of si
   } finally {
     threads.close?.();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+/**
+ * The book the player edits is the book every Chat mounts against.
+ *
+ * Layer 1 is one mutable file whose revision and content-derived hash change with every
+ * edit, while each thread pins the exact metadata it was created against and the runtime
+ * construction refuses a book that does not match its thread's pin. So an edit that did
+ * not carry the pins with it would not be "the companion reads the new text" - it would
+ * be those Chats refusing to mount at all. `updateCompanionWorldBook` therefore rewrites
+ * the file and then re-points every thread of the continuity that still pins the
+ * revision it replaced, and this is that pair asserted end to end: the edit's own refresh
+ * callback IS the real store method, and the same mount path the product uses reads the
+ * edited text back.
+ */
+test("an edit to her own book carries the threads that pin it, and the next mount reads the edited text", async () => {
+  const fixture = await twoChats();
+  const runtimeCwd = resolveRuntimePaths(fixture.provision.identity, fixture.root).runtimeCwd;
+  const macros = macroTable({ char: CARD.name, user: "阿岚" });
+  let firstChat: PreparedChat | undefined;
+  let secondChat: PreparedChat | undefined;
+  try {
+    await fixture.library.createNewChat({ ...FIRST });
+    await fixture.library.createNewChat({ ...SECOND });
+    const before = await fixture.threads.resumeThread(SECOND.chatThreadId, SECOND.chatSurfaceSessionId);
+    const pinnedBefore = before.thread.companionWorldBookBinding;
+    assert.ok(pinnedBefore !== undefined, "a Chat that names no book of its own binds the companion's");
+
+    const read = await projectRenderedCompanionWorldBook(runtimeCwd, macros);
+    assert.equal(read.revision, pinnedBefore.revision);
+    const refresh = fixture.threads.refreshCompanionWorldBookBinding;
+    assert.ok(refresh !== undefined, "the store that owns the pins must be able to move them");
+    const edited = await updateCompanionWorldBook({
+      path: join(runtimeCwd, "worldbook.json"),
+      containmentRoot: fixture.root,
+      macros,
+      expectedRevision: pinnedBefore.revision,
+      entries: read.entries.map((entry) =>
+        entry.title === "The farm covenant"
+          ? { ...entry, content: "SENTINEL-EDITED: {{char}} keeps the ledger, and {{user}} now keeps the seed box." }
+          : entry,
+      ),
+      refreshBindings: async (previous, next) =>
+        await refresh({
+          companionId: fixture.provision.identity.companionId,
+          continuityId: fixture.provision.identity.continuityId!,
+          previous: {
+            worldBookId: previous.worldBookId,
+            revision: previous.revision,
+            canonicalHash: previous.canonicalHash,
+            provenance: "reviewed-import",
+          },
+          binding: {
+            worldBookId: next.worldBookId,
+            revision: next.revision,
+            canonicalHash: next.canonicalHash,
+            provenance: "reviewed-import",
+          },
+        }),
+    });
+    assert.equal(edited.revision, pinnedBefore.revision + 1);
+
+    // Both Chats of the continuity now pin the new revision: the slot moved with the book.
+    for (const chat of [FIRST, SECOND]) {
+      const after = await fixture.threads.resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId);
+      assert.equal(after.thread.companionWorldBookBinding?.revision, edited.revision);
+      assert.equal(after.thread.appliedCompanionWorldBookBinding?.revision, edited.revision);
+    }
+
+    // The mount path the product uses constructs the Chat - it used to refuse a book that
+    // had drifted from its pin - and the catalog it materializes carries the EDITED text.
+    secondChat = await constructChat(fixture, SECOND);
+    const catalog = await secondChat.prepared.materializeDesiredStableContextForPiSession("pi_edited_book");
+    const materialized = [...catalog.stableSources, ...catalog.volatileSources]
+      .map((source) => source.content)
+      .join("\n");
+    assert.equal(
+      materialized.includes("SENTINEL-EDITED:"),
+      true,
+      `the edited entry must reach the model, got ${materialized.slice(0, 400)}`,
+    );
+    assert.equal(materialized.includes("now keeps the seed box."), true, "the player's own words reach it");
+    // …rendered through the RUN's macro table, not the test's: `{{char}}` is the identity
+    // profile's own name, and no raw placeholder may be published as authored context.
+    assert.equal(materialized.includes("琥珀 keeps the ledger, and"), true);
+    assert.equal(materialized.includes("{{"), false, "no raw macro reaches the model");
+    assert.equal(materialized.includes("SENTINEL-CONSTANT"), false, "the text the player replaced is gone");
+
+    // The row she did not touch still reaches the model with the card's own text, macros
+    // rendered - the edit is not a rewrite of the rest of her book.
+    assert.equal(materialized.includes("on rainy valley days nobody hauls water"), true);
+  } finally {
+    await release({
+      ...(firstChat === undefined ? {} : { first: firstChat }),
+      ...(secondChat === undefined ? {} : { second: secondChat }),
+      threads: fixture.threads,
+      root: fixture.root,
+    });
+  }
+});
+
+/**
+ * The gate the edit is scoped around still bites.
+ *
+ * The only writer of `worldbook.json` is `writeWorldBook`, called under the book's own
+ * lock by the service that carries the pins. Bytes that changed WITHOUT that service - a
+ * hand edit, a tampered file - must still stop the Chat from materializing its authored
+ * context, or the edit would have removed the drift gate rather than scoped it. The seam
+ * is the one this file's other tests use: preparation (which reads no book) followed by
+ * the materialization the mount performs, which is exactly where a drifted book is
+ * refused (`chat_runtime_exact_content_unavailable`).
+ */
+test("a book changed outside the service still refuses the mount", async () => {
+  const fixture = await twoChats();
+  const runtimeCwd = resolveRuntimePaths(fixture.provision.identity, fixture.root).runtimeCwd;
+  let chat: PreparedChat | undefined;
+  try {
+    await fixture.library.createNewChat({ ...SECOND });
+    const book = await readWorldBook(join(runtimeCwd, "worldbook.json"));
+    // The same file, one entry changed, and no pin carried: exactly the drift the gate exists for.
+    await writeWorldBook(join(runtimeCwd, "worldbook.json"), {
+      ...book,
+      revision: book.revision + 1,
+      entries: book.entries.map((entry, index) =>
+        index === 0 ? { ...entry, content: "SENTINEL-HAND-EDITED" } : entry,
+      ),
+    });
+    chat = await constructChat(fixture, SECOND);
+    await assert.rejects(
+      chat.prepared.materializeDesiredStableContextForPiSession("pi_hand_edited_book"),
+      /chat_runtime_exact_content_unavailable/,
+    );
+  } finally {
+    await release({ ...(chat === undefined ? {} : { first: chat }), threads: fixture.threads, root: fixture.root });
   }
 });

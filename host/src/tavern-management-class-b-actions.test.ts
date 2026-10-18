@@ -121,6 +121,7 @@ const OPTIONAL_GROUPS = [
   [
     "companion.list",
     "companion.worldbook.read",
+    "companion.worldbook.update",
     "companion.create",
     "persona.read",
     "persona.update",
@@ -400,329 +401,341 @@ test("ADR-0010 Class B: no Host module re-wires a turn-state reader into a Class
   );
 });
 
-test("ADR-0010 Class B: every action the ADR names succeeds with a turn in flight and leaves the turn alone", { skip: designAdrSkipReason }, async () => {
-  // 1. The requirement is the ADR's, not this file's: derive it and prove the
-  //    table covers exactly it. A Class B action added to the ADR without a
-  //    request here is the failure this catches.
-  const declared = classBActionIds(await readFile(ADR, "utf8"));
-  assert.ok(declared.length >= 10, `the ADR should name the Class B actions, read ${declared.length}`);
-  assert.deepEqual(
-    declared.filter((actionId) => CLASS_B_REQUESTS[actionId] === undefined),
-    [],
-    "every Class B action the ADR names must be exercised by this gate",
-  );
-
-  const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-class-b-"));
-  let worldInfoBound = false;
-  const worldInfoState = (): WorldInfoStateV1 => ({
-    state: worldInfoBound ? "selected" : "none",
-    revision: worldInfoBound ? WORLD_INFO_REVISION_BOUND : WORLD_INFO_REVISION,
-    items: [{ handle: ITEM_HANDLE, title: "Pelican Town", summary: null, selected: worldInfoBound, pending: false }],
-  });
-  let preference: PlayerPreference = {
-    revision: 0,
-    locale: null,
-    disclosureVersion: null,
-    consent: "undecided",
-    decidedAtMs: null,
-    outputDevice: null,
-    persona: null,
-  };
-  const modelProfiles: Record<"chat" | "game", TavernModelProfileProjection> = {
-    chat: { surface: "chat", revision: 0, modelId: "initial-model", thinkingLevel: "low" },
-    game: { surface: "game", revision: 0, modelId: "initial-model", thinkingLevel: "low" },
-  };
-  const memories: { handle: string; title: string; content: string }[] = [];
-  const memoryRead = () => ({
-    apiVersion: 1 as const,
-    projectionRevision: PROJECTION_REVISION,
-    chapters: Object.freeze([]),
-    memories: Object.freeze(
-      memories.map((memory) =>
-        Object.freeze({
-          handle: memory.handle,
-          title: memory.title,
-          content: memory.content,
-          category: "semantic" as const,
-          status: "active" as const,
-          origin: "companion" as const,
-          pinned: false,
-        }),
-      ),
-    ),
-  });
-  const connectionProbe: TavernConnectionProbe = async () =>
-    Object.freeze({ outcome: "ready" as const, failure: null });
-
-  const turn = runningTurnFacade();
-  const connection = createTavernConnectionService({ agentDir: root, probe: connectionProbe });
-  const server = await startTavernManagementDialogueWebServer({
-    managementStateFacade: turn.facade,
-    managementService: Object.freeze({
-      async readDraft() {
-        return { apiVersion: 1 as const, revision: 0, text: null };
-      },
-      async saveDraft(command) {
-        return { apiVersion: 1 as const, revision: command.expectedRevision + 1, text: command.text };
-      },
-      async discardDraft(command) {
-        return { apiVersion: 1 as const, revision: command.expectedRevision + 1, text: null };
-      },
-      async listChats() {
-        return { apiVersion: 1 as const, chats: [] };
-      },
-      async renameChatTitle(command) {
-        return {
-          apiVersion: 1 as const,
-          title: command.title,
-          managementRevision: command.expectedManagementRevision + 1,
-        };
-      },
-      async transitionLifecycle(command) {
-        const status =
-          command.operation === "archive"
-            ? ("archived" as const)
-            : command.operation === "trash"
-              ? ("trashed" as const)
-              : ("active" as const);
-        return {
-          apiVersion: 1 as const,
-          handle: command.chatHandle,
-          status,
-          managementRevision: command.expectedManagementRevision + 1,
-        };
-      },
-      async commitOpeningVariant() {
-        return {
-          apiVersion: 1 as const,
-          openingVariant: { variantId: "class-b-opening", index: 0, count: 1, label: null, locked: false },
-        };
-      },
-      async close() {
-        // no-op
-      },
-    }) satisfies ChatManagementService,
-    memoryService: Object.freeze({
-      async read() {
-        return memoryRead();
-      },
-      async mutate(command) {
-        if (command.operation === "create")
-          memories.push({ handle: MEMORY_HANDLE, title: "Class B memory", content: command.content });
-        return memoryRead();
-      },
-      async close() {
-        // no-op
-      },
-    }),
-    worldInfoService: Object.freeze({
-      async read() {
-        return worldInfoState();
-      },
-      async setBinding(command) {
-        worldInfoBound = command.sourceHandle !== null;
-        return worldInfoState();
-      },
-      async detail() {
-        throw new Error("unused_world_info_detail");
-      },
-      async create() {
-        throw new Error("unused_world_info_create");
-      },
-      async update() {
-        throw new Error("unused_world_info_update");
-      },
-      async delete() {
-        throw new Error("unused_world_info_delete");
-      },
-      async close() {
-        // no-op
-      },
-    }),
-    playerPreferenceStore: Object.freeze({
-      async read() {
-        return preference;
-      },
-      async update(expectedRevision, update) {
-        preference = appliedPreference(preference, expectedRevision, update);
-        return preference;
-      },
-    }),
-    listVoiceOutputDevices: async () => [{ id: "waveout:1", name: "Speakers" }],
-    connectionService: connection,
-    modelProfileStore: Object.freeze({
-      async read(surface) {
-        return { ...modelProfiles[surface] };
-      },
-      async update(surface, expectedRevision, update) {
-        modelProfiles[surface] = {
-          surface,
-          revision: expectedRevision + 1,
-          modelId: update.modelId,
-          thinkingLevel: update.thinkingLevel,
-        };
-        return { ...modelProfiles[surface] };
-      },
-    }),
-    libraryService: Object.freeze({
-      async listCompanions() {
-        return [];
-      },
-    }),
-    personaService: Object.freeze({
-      async read() {
-        return null;
-      },
-      async update(request) {
-        return { revision: request.expectedRevision + 1, name: request.name };
-      },
-    }),
-    scenarioService: Object.freeze({
-      async read() {
-        return null;
-      },
-      async update(request) {
-        return {
-          revision: request.expectedRevision + 1,
-          name: request.name,
-          description: request.description,
-          preview: request.description.slice(0, 64),
-        };
-      },
-    }),
-    greetingService: Object.freeze({
-      async read() {
-        return null;
-      },
-      async update(request) {
-        return { revision: request.expectedRevision + 1, variants: request.variants };
-      },
-    }),
-    // This profile declares `companion.worldbook.read` (it advertises the whole
-    // optional set), and the handler fails closed when a declared route has no bound
-    // service - so the gate must bind one. The Class B rule does not read the book:
-    // the stub answers the honest empty shape, which is what the durable read returns
-    // for a companion with no book of its own.
-    companionWorldBookService: Object.freeze({
-      async read() {
-        return { apiVersion: 1 as const, present: false, entries: [] };
-      },
-    }),
-    profile: composeTavernProfile({
-      profileId: "gamebuddy.tavern-management.chat-list-title",
-      releaseTier: "tavern_management",
-      routeIds: [...CORE_ROUTES, ...OPTIONAL_GROUPS.flat()],
-      operationIds: [...CORE_OPERATIONS, ...OPTIONAL_GROUPS.flat()],
-      navigationItemIds: ["chat", "memory", "characters"],
-    }),
-    bootstrapToken: BOOTSTRAP_TOKEN,
-  });
-
-  try {
-    const origin = server.origin;
-    const bootstrap = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
-      method: "POST",
-      headers: { Origin: origin, "Content-Type": "application/json" },
-      body: JSON.stringify({ apiVersion: 1, bootstrapToken: BOOTSTRAP_TOKEN }),
-    });
-    assert.equal(bootstrap.status, 200);
-    const snapshot = (await bootstrap.json()) as { csrfToken: string };
-    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const sessionHeaders = { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" };
-
-    // The precondition the whole rule is about: a durable turn is generating.
-    const before = await fetch(`${origin}/api/tavern/v1/state`, { headers: sessionHeaders });
-    const beforeState = (await before.json()) as { chat: { turn: unknown } };
-    assert.equal((beforeState.chat.turn as { state: string }).state, "running");
-
-    // A ready connection is what `activate` CASes on; this is setup, not a Class B action.
-    const created = await fetch(`${origin}/api/tavern/v1/settings/connections`, {
-      method: "POST",
-      headers: { ...sessionHeaders, "Content-Type": "application/json", "X-CSRF-Token": snapshot.csrfToken },
-      body: JSON.stringify({ apiVersion: 1, providerId: "deepseek", apiKey: "sk-synthetic-credential" }),
-    });
-    assert.equal(created.status, 200);
-    const createdBody = (await created.json()) as {
-      revision: number;
-      connections: readonly { connectionId: string }[];
-    };
-    const facts: Facts = {
-      connectionId: createdBody.connections[0]!.connectionId,
-      connectionRevision: createdBody.revision,
-      preferenceRevision: 0,
-    };
-    const probed = await fetch(`${origin}/api/tavern/v1/settings/connections/${facts.connectionId}/test`, {
-      method: "POST",
-      headers: { ...sessionHeaders, "Content-Type": "application/json", "X-CSRF-Token": snapshot.csrfToken },
-      body: JSON.stringify({ apiVersion: 1, expectedRevision: facts.connectionRevision }),
-    });
-    assert.equal(probed.status, 200);
-    facts.connectionRevision = ((await probed.json()) as { state: { revision: number } }).state.revision;
-
-    const order = [
-      "settings.profiles.update",
-      "settings.connection.activate",
-      "settings.connection.model",
-      "world-info.bind",
-      "persona.update",
-      "scenario.update",
-      "greeting.update",
-      "chat.rename",
-      "chat.archive",
-      "chat.restore",
-      "chat.trash",
-      "memory.mutate",
-      "draft.save",
-      "settings.language.update",
-      "settings.voice.consent",
-      "settings.voice.devices",
-      "draft.discard",
-    ];
+test(
+  "ADR-0010 Class B: every action the ADR names succeeds with a turn in flight and leaves the turn alone",
+  { skip: designAdrSkipReason },
+  async () => {
+    // 1. The requirement is the ADR's, not this file's: derive it and prove the
+    //    table covers exactly it. A Class B action added to the ADR without a
+    //    request here is the failure this catches.
+    const declared = classBActionIds(await readFile(ADR, "utf8"));
+    assert.ok(declared.length >= 10, `the ADR should name the Class B actions, read ${declared.length}`);
     assert.deepEqual(
-      [...order].sort(),
-      Object.keys(CLASS_B_REQUESTS).sort(),
-      "the run must exercise every mapped Class B action",
+      declared.filter((actionId) => CLASS_B_REQUESTS[actionId] === undefined),
+      [],
+      "every Class B action the ADR names must be exercised by this gate",
     );
 
-    for (const actionId of order) {
-      const action = CLASS_B_REQUESTS[actionId]!;
-      const request = action.request(facts);
-      const readsBefore = turn.reads();
-      const response = await fetch(`${origin}${request.path}`, {
-        method: request.method,
-        headers: {
-          ...sessionHeaders,
-          ...(request.body === undefined ? {} : { "Content-Type": "application/json" }),
-          ...(request.method === "GET" ? {} : { "X-CSRF-Token": snapshot.csrfToken }),
-        },
-        ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-      });
-      const raw = await response.text();
-      assert.equal(response.status, 200, `${actionId} answered ${response.status} while a turn was in flight: ${raw}`);
-      // A refusal that consulted the durable turn is the defect the ADR names.
-      assert.equal(
-        turn.reads() - readsBefore,
-        0,
-        `${actionId} read the durable turn projection; a Class B action must not consult turn state`,
-      );
-      const body = JSON.parse(raw) as Record<string, unknown>;
-      assert.notEqual(body.code, "dialogue_busy", `${actionId} answered a turn-derived refusal`);
-      action.readBack(body);
-      if (typeof body.revision === "number" && actionId.startsWith("settings.")) {
-        if (actionId.startsWith("settings.connection")) facts.connectionRevision = body.revision;
-        else facts.preferenceRevision = body.revision;
-      }
-    }
+    const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-class-b-"));
+    let worldInfoBound = false;
+    const worldInfoState = (): WorldInfoStateV1 => ({
+      state: worldInfoBound ? "selected" : "none",
+      revision: worldInfoBound ? WORLD_INFO_REVISION_BOUND : WORLD_INFO_REVISION,
+      items: [{ handle: ITEM_HANDLE, title: "Pelican Town", summary: null, selected: worldInfoBound, pending: false }],
+    });
+    let preference: PlayerPreference = {
+      revision: 0,
+      locale: null,
+      disclosureVersion: null,
+      consent: "undecided",
+      decidedAtMs: null,
+      outputDevice: null,
+      persona: null,
+    };
+    const modelProfiles: Record<"chat" | "game", TavernModelProfileProjection> = {
+      chat: { surface: "chat", revision: 0, modelId: "initial-model", thinkingLevel: "low" },
+      game: { surface: "game", revision: 0, modelId: "initial-model", thinkingLevel: "low" },
+    };
+    const memories: { handle: string; title: string; content: string }[] = [];
+    const memoryRead = () => ({
+      apiVersion: 1 as const,
+      projectionRevision: PROJECTION_REVISION,
+      chapters: Object.freeze([]),
+      memories: Object.freeze(
+        memories.map((memory) =>
+          Object.freeze({
+            handle: memory.handle,
+            title: memory.title,
+            content: memory.content,
+            category: "semantic" as const,
+            status: "active" as const,
+            origin: "companion" as const,
+            pinned: false,
+          }),
+        ),
+      ),
+    });
+    const connectionProbe: TavernConnectionProbe = async () =>
+      Object.freeze({ outcome: "ready" as const, failure: null });
 
-    // The turn is undisturbed: still the same generating turn, and no Class B
-    // action above ever reached the cancel path that Class A owns.
-    const after = await fetch(`${origin}/api/tavern/v1/state`, { headers: sessionHeaders });
-    const afterState = (await after.json()) as { chat: { turn: unknown } };
-    assert.deepEqual(afterState.chat.turn, beforeState.chat.turn, "a Class B action disturbed the turn");
-    assert.equal((afterState.chat.turn as { state: string }).state, "running");
-  } finally {
-    await server.close();
-    await connection.close();
-    await rm(root, { recursive: true, force: true });
-  }
-});
+    const turn = runningTurnFacade();
+    const connection = createTavernConnectionService({ agentDir: root, probe: connectionProbe });
+    const server = await startTavernManagementDialogueWebServer({
+      managementStateFacade: turn.facade,
+      managementService: Object.freeze({
+        async readDraft() {
+          return { apiVersion: 1 as const, revision: 0, text: null };
+        },
+        async saveDraft(command) {
+          return { apiVersion: 1 as const, revision: command.expectedRevision + 1, text: command.text };
+        },
+        async discardDraft(command) {
+          return { apiVersion: 1 as const, revision: command.expectedRevision + 1, text: null };
+        },
+        async listChats() {
+          return { apiVersion: 1 as const, chats: [] };
+        },
+        async renameChatTitle(command) {
+          return {
+            apiVersion: 1 as const,
+            title: command.title,
+            managementRevision: command.expectedManagementRevision + 1,
+          };
+        },
+        async transitionLifecycle(command) {
+          const status =
+            command.operation === "archive"
+              ? ("archived" as const)
+              : command.operation === "trash"
+                ? ("trashed" as const)
+                : ("active" as const);
+          return {
+            apiVersion: 1 as const,
+            handle: command.chatHandle,
+            status,
+            managementRevision: command.expectedManagementRevision + 1,
+          };
+        },
+        async commitOpeningVariant() {
+          return {
+            apiVersion: 1 as const,
+            openingVariant: { variantId: "class-b-opening", index: 0, count: 1, label: null, locked: false },
+          };
+        },
+        async close() {
+          // no-op
+        },
+      }) satisfies ChatManagementService,
+      memoryService: Object.freeze({
+        async read() {
+          return memoryRead();
+        },
+        async mutate(command) {
+          if (command.operation === "create")
+            memories.push({ handle: MEMORY_HANDLE, title: "Class B memory", content: command.content });
+          return memoryRead();
+        },
+        async close() {
+          // no-op
+        },
+      }),
+      worldInfoService: Object.freeze({
+        async read() {
+          return worldInfoState();
+        },
+        async setBinding(command) {
+          worldInfoBound = command.sourceHandle !== null;
+          return worldInfoState();
+        },
+        async detail() {
+          throw new Error("unused_world_info_detail");
+        },
+        async create() {
+          throw new Error("unused_world_info_create");
+        },
+        async update() {
+          throw new Error("unused_world_info_update");
+        },
+        async delete() {
+          throw new Error("unused_world_info_delete");
+        },
+        async close() {
+          // no-op
+        },
+      }),
+      playerPreferenceStore: Object.freeze({
+        async read() {
+          return preference;
+        },
+        async update(expectedRevision, update) {
+          preference = appliedPreference(preference, expectedRevision, update);
+          return preference;
+        },
+      }),
+      listVoiceOutputDevices: async () => [{ id: "waveout:1", name: "Speakers" }],
+      connectionService: connection,
+      modelProfileStore: Object.freeze({
+        async read(surface) {
+          return { ...modelProfiles[surface] };
+        },
+        async update(surface, expectedRevision, update) {
+          modelProfiles[surface] = {
+            surface,
+            revision: expectedRevision + 1,
+            modelId: update.modelId,
+            thinkingLevel: update.thinkingLevel,
+          };
+          return { ...modelProfiles[surface] };
+        },
+      }),
+      libraryService: Object.freeze({
+        async listCompanions() {
+          return [];
+        },
+      }),
+      personaService: Object.freeze({
+        async read() {
+          return null;
+        },
+        async update(request) {
+          return { revision: request.expectedRevision + 1, name: request.name };
+        },
+      }),
+      scenarioService: Object.freeze({
+        async read() {
+          return null;
+        },
+        async update(request) {
+          return {
+            revision: request.expectedRevision + 1,
+            name: request.name,
+            description: request.description,
+            preview: request.description.slice(0, 64),
+          };
+        },
+      }),
+      greetingService: Object.freeze({
+        async read() {
+          return null;
+        },
+        async update(request) {
+          return { revision: request.expectedRevision + 1, variants: request.variants };
+        },
+      }),
+      // This profile declares `companion.worldbook.read` (it advertises the whole
+      // optional set), and the handler fails closed when a declared route has no bound
+      // service - so the gate must bind one. The Class B rule does not read the book:
+      // the stub answers the honest empty shape, which is what the durable read returns
+      // for a companion with no book of its own. The edit is part of the same bound
+      // capability, so it is stubbed too and never called.
+      companionWorldBookService: Object.freeze({
+        async read() {
+          return { apiVersion: 1 as const, present: false, revision: null, entries: [] };
+        },
+        async update() {
+          return { apiVersion: 1 as const, present: false, revision: null, entries: [] };
+        },
+      }),
+      profile: composeTavernProfile({
+        profileId: "gamebuddy.tavern-management.chat-list-title",
+        releaseTier: "tavern_management",
+        routeIds: [...CORE_ROUTES, ...OPTIONAL_GROUPS.flat()],
+        operationIds: [...CORE_OPERATIONS, ...OPTIONAL_GROUPS.flat()],
+        navigationItemIds: ["chat", "memory", "characters"],
+      }),
+      bootstrapToken: BOOTSTRAP_TOKEN,
+    });
+
+    try {
+      const origin = server.origin;
+      const bootstrap = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
+        method: "POST",
+        headers: { Origin: origin, "Content-Type": "application/json" },
+        body: JSON.stringify({ apiVersion: 1, bootstrapToken: BOOTSTRAP_TOKEN }),
+      });
+      assert.equal(bootstrap.status, 200);
+      const snapshot = (await bootstrap.json()) as { csrfToken: string };
+      const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+      const sessionHeaders = { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" };
+
+      // The precondition the whole rule is about: a durable turn is generating.
+      const before = await fetch(`${origin}/api/tavern/v1/state`, { headers: sessionHeaders });
+      const beforeState = (await before.json()) as { chat: { turn: unknown } };
+      assert.equal((beforeState.chat.turn as { state: string }).state, "running");
+
+      // A ready connection is what `activate` CASes on; this is setup, not a Class B action.
+      const created = await fetch(`${origin}/api/tavern/v1/settings/connections`, {
+        method: "POST",
+        headers: { ...sessionHeaders, "Content-Type": "application/json", "X-CSRF-Token": snapshot.csrfToken },
+        body: JSON.stringify({ apiVersion: 1, providerId: "deepseek", apiKey: "sk-synthetic-credential" }),
+      });
+      assert.equal(created.status, 200);
+      const createdBody = (await created.json()) as {
+        revision: number;
+        connections: readonly { connectionId: string }[];
+      };
+      const facts: Facts = {
+        connectionId: createdBody.connections[0]!.connectionId,
+        connectionRevision: createdBody.revision,
+        preferenceRevision: 0,
+      };
+      const probed = await fetch(`${origin}/api/tavern/v1/settings/connections/${facts.connectionId}/test`, {
+        method: "POST",
+        headers: { ...sessionHeaders, "Content-Type": "application/json", "X-CSRF-Token": snapshot.csrfToken },
+        body: JSON.stringify({ apiVersion: 1, expectedRevision: facts.connectionRevision }),
+      });
+      assert.equal(probed.status, 200);
+      facts.connectionRevision = ((await probed.json()) as { state: { revision: number } }).state.revision;
+
+      const order = [
+        "settings.profiles.update",
+        "settings.connection.activate",
+        "settings.connection.model",
+        "world-info.bind",
+        "persona.update",
+        "scenario.update",
+        "greeting.update",
+        "chat.rename",
+        "chat.archive",
+        "chat.restore",
+        "chat.trash",
+        "memory.mutate",
+        "draft.save",
+        "settings.language.update",
+        "settings.voice.consent",
+        "settings.voice.devices",
+        "draft.discard",
+      ];
+      assert.deepEqual(
+        [...order].sort(),
+        Object.keys(CLASS_B_REQUESTS).sort(),
+        "the run must exercise every mapped Class B action",
+      );
+
+      for (const actionId of order) {
+        const action = CLASS_B_REQUESTS[actionId]!;
+        const request = action.request(facts);
+        const readsBefore = turn.reads();
+        const response = await fetch(`${origin}${request.path}`, {
+          method: request.method,
+          headers: {
+            ...sessionHeaders,
+            ...(request.body === undefined ? {} : { "Content-Type": "application/json" }),
+            ...(request.method === "GET" ? {} : { "X-CSRF-Token": snapshot.csrfToken }),
+          },
+          ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+        });
+        const raw = await response.text();
+        assert.equal(
+          response.status,
+          200,
+          `${actionId} answered ${response.status} while a turn was in flight: ${raw}`,
+        );
+        // A refusal that consulted the durable turn is the defect the ADR names.
+        assert.equal(
+          turn.reads() - readsBefore,
+          0,
+          `${actionId} read the durable turn projection; a Class B action must not consult turn state`,
+        );
+        const body = JSON.parse(raw) as Record<string, unknown>;
+        assert.notEqual(body.code, "dialogue_busy", `${actionId} answered a turn-derived refusal`);
+        action.readBack(body);
+        if (typeof body.revision === "number" && actionId.startsWith("settings.")) {
+          if (actionId.startsWith("settings.connection")) facts.connectionRevision = body.revision;
+          else facts.preferenceRevision = body.revision;
+        }
+      }
+
+      // The turn is undisturbed: still the same generating turn, and no Class B
+      // action above ever reached the cancel path that Class A owns.
+      const after = await fetch(`${origin}/api/tavern/v1/state`, { headers: sessionHeaders });
+      const afterState = (await after.json()) as { chat: { turn: unknown } };
+      assert.deepEqual(afterState.chat.turn, beforeState.chat.turn, "a Class B action disturbed the turn");
+      assert.equal((afterState.chat.turn as { state: string }).state, "running");
+    } finally {
+      await server.close();
+      await connection.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
