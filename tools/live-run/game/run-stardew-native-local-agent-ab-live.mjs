@@ -227,11 +227,11 @@ const SCENARIO_PROMPTS = Object.freeze({
     // "the day is yours to end" is said, because a night the harness chose would be a scripted crossing.
     zh: (day) =>
       `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。今天没有人给你派活——你自己看看周围，想做什么就做什么。` +
-      `这一天怎么过、什么时候收工，都由你决定。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+      `我今天要去镇上办事，农场就交给你了：把该干的活干完，天黑了就回屋睡觉，明天接着来。怎么干由你决定。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
     en: (day) =>
       `It is morning in Stardew Valley (day ${String(day)} in a row for you). Nobody has assigned you anything today - look around and do whatever you think is worth doing. ` +
       `When you are done for the day, go INSIDE the farmhouse first, and then sleep in your bed there. advance_day only works indoors - called from outside it waits for you to come in and never ends the day. ` +
-      `How you spend the day, and when you call it done, is yours to decide. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+      `I am heading into town today, so the farm is yours: get the day's work done, and when it gets dark go inside and sleep - we pick it up tomorrow. How you do it is up to you. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
@@ -1149,6 +1149,44 @@ const MULTIDAY_DISMISS_TIMEOUT_MS = 60_000;
 /** How often the night watcher asks the world. It runs only while a night is in flight. */
 const MULTIDAY_POLL_INTERVAL_MS = 250;
 
+/**
+ * This run's Mod log, copied into the run directory, plus the lines an audit needs out of it.
+ *
+ * The Mod's own phase facts live in %APPDATA%/StardewValley/ErrorLogs/SMAPI-latest.txt, which ROTATES: once the
+ * next run starts, the previous night's is_saving, save_boundary_not_observed, SaveGameMenu and
+ * SetForegroundWindow evidence is gone - the round-2 audit could not confirm the crossing cause for exactly that
+ * reason ("the facts are not in the surviving artifacts"). Durability is the fix. Note what it already shows: the
+ * foreground WINDOW MODE is not a proxy for actual activation, because a real run logged
+ * SetForegroundWindow=refused while running in foreground mode.
+ */
+function captureModLogFacts(runDir) {
+  const path = join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
+  try {
+    const text = readFileSync(path, "utf8");
+    const rows = text.split("\n");
+    const tail = (pattern, count = 4) =>
+      rows
+        .filter((row) => pattern.test(row))
+        .slice(-count)
+        .map((row) => row.trim().slice(0, 400));
+    const archived = typeof runDir === "string" && runDir.length > 0;
+    if (archived) writeFileSync(join(runDir, "mod-log.txt"), text);
+    const lastWith = (needle) => (rows.filter((row) => row.includes(needle)).slice(-1)[0] ?? "").trim().slice(0, 400);
+    return Object.freeze({
+      path,
+      bytes: text.length,
+      archived,
+      setForegroundWindow: tail(/SetForegroundWindow/i),
+      saveGameMenu: tail(/SaveGameMenu/i),
+      saveBoundary: tail(/save_boundary|SaveBoundaryFrameBudget|save boundary/i),
+      sleepLifecycle: tail(/sleep lifecycle/i, 6),
+      lastFrameState: lastWith("game_mode="),
+      lastSavingState: lastWith("saving="),
+    });
+  } catch (error) {
+    return Object.freeze({ path, archived: false, error: String(error?.message ?? error).slice(0, 240) });
+  }
+}
 const MULTIDAY_CROSSINGS = (() => {
   const requested = Number.parseInt(process.env.GAMEBUDDY_MULTIDAY_CROSSINGS ?? "2", 10);
   if (!Number.isInteger(requested) || requested < MINIMUM_BASELINE_DAYS || requested > MAXIMUM_BASELINE_DAYS) {
@@ -2295,6 +2333,8 @@ try {
     // reader can compute the TAIL (last dispatch -> end) instead of inferring it from a bundle that may be refused.
     startedAtMs: phaseTimings.runStartedAtMs,
     endedAtMs: Date.now(),
+    // This run's own Mod log, archived with the lines an audit needs (see captureModLogFacts).
+    modLog: captureModLogFacts(capture?.dir ?? null),
     // One verdict per run, ANDed from the scenario's own clause plus the shared gates. Each scenario's
     // clause is already `true` for the other scenarios, so this line stays a single readable conjunction.
     state:
