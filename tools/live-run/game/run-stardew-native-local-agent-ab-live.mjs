@@ -2335,6 +2335,10 @@ try {
     runManifestModel: personaWorldBook.model,
   });
   const result = {
+    // The run's own window, published wherever a result is: `startedAtMs` is the runner's own phase clock, so a
+    // reader can compute the TAIL (last dispatch -> end) instead of inferring it from a bundle that may be refused.
+    startedAtMs: phaseTimings.runStartedAtMs,
+    endedAtMs: Date.now(),
     // One verdict per run, ANDed from the scenario's own clause plus the shared gates. Each scenario's
     // clause is already `true` for the other scenarios, so this line stays a single readable conjunction.
     state:
@@ -2473,6 +2477,10 @@ try {
   // still exits non-zero instead of pretending it was reportable.
   console.error(error);
   const partialResult = {
+    // Same window on the failure path: the artefact that most needs to say where the time went is the one a run
+    // leaves behind when it did not finish.
+    startedAtMs: phaseTimings.runStartedAtMs,
+    endedAtMs: Date.now(),
     state: "blocked",
     scenario: SCENARIO,
     legacyLadder: LEGACY_LADDER,

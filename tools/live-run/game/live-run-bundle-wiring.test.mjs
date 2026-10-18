@@ -210,3 +210,20 @@ test("the action cadence is split into exec, think and idle, stamped honestly", 
   assert.match(SOURCE, /actionCadence: summarizeActionCadence\(actionTrace\),/);
   assert.match(SOURCE, /import \{ summarizeActionCadence \} from "\.\.\/\.\.\/lib\/action-cadence\.mjs";/);
 });
+
+test("both result paths carry the run window, so the tail is measurable even when the bundle is refused", () => {
+  // The review asked where a 15-minute run's time went and the artifacts could not say: the deepest run's directory
+  // held a result with no window at all (its bundle was refused, so no manifest). The TAIL - last dispatch to the
+  // end - is the number that question needs, and it must survive the failure path too.
+  // Each result literal owns its own window, checked INSIDE the literal rather than by a global count: the runner
+  // legitimately mentions the phase clock elsewhere (a run-identity record), so a count would be asserting the
+  // wrong thing and would break the day an unrelated use appears.
+  for (const marker of ["const result = {", "const partialResult = {"]) {
+    const from = SOURCE.indexOf(marker);
+    assert.ok(from > 0, `${marker} must exist`);
+    const block = SOURCE.slice(from, from + 400);
+    assert.match(block, /startedAtMs: phaseTimings\.runStartedAtMs,/u, `${marker} must carry the start`);
+    assert.match(block, /endedAtMs: Date\.now\(\),/u, `${marker} must carry the end`);
+  }
+  assert.match(SOURCE, /runStartedAtMs: Date\.now\(\)/u, "the phase clock is the start the results publish");
+});
