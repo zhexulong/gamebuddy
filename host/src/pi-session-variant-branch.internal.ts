@@ -1,20 +1,24 @@
 /**
- * The Pi-side half of the two Chat operations that reshape a conversation for the model.
+ * The Pi-side half of the three Chat operations that reshape a conversation for the model.
  *
- * One is a same-position variant turn (`branchPiVariantAnchor`), the other a rewind
- * (`rewindPiTranscriptTail`). Both make the model's ACTIVE PATH equal the transcript the player
- * reads, both refuse a session shape they cannot prove, and both hand their caller a `revert()`,
+ * One is a same-position variant turn (`branchPiVariantAnchor`), one a rewind
+ * (`rewindPiTranscriptTail`), one an in-place edit of a message the conversation already carries
+ * (`editPiTranscriptEntry`). All three make the model's ACTIVE PATH equal the transcript the player
+ * reads, all three refuse a session shape they cannot prove, and each hands its caller a `revert()`,
  * because the store and Pi cannot be atomic.
  *
- * They differ in exactly one way, and the difference is what the session file ends with. Pi appends
- * the prompt and the reply as children of the current leaf, and `SessionManager._buildIndex` resets
- * the leaf to the file's LAST entry whenever a session is re-opened (`runtime-core.internal.ts`
- * mounts one with `SessionManager.continueRecent`), so a leaf pointer is not itself durable. The
- * variant half is safe because a prompt always follows it - the new reply becomes the file's last
- * entry, and the path to it excludes the reply it replaced. A rewind appends nothing, so a bare leaf
- * move would be undone by the next mount: the dropped turns would come back into the model's
- * context while the transcript the player reads stayed shortened. The rewind half therefore makes
- * the cut durable with the vendor's own append-only edit - see `rewindPiTranscriptTail`.
+ * They differ in what the session file ends with, and that is what decides each one's mechanism. Pi
+ * appends the prompt and the reply as children of the current leaf, and `SessionManager._buildIndex`
+ * resets the leaf to the file's LAST entry whenever a session is re-opened
+ * (`runtime-core.internal.ts` mounts one with `SessionManager.continueRecent`), so a leaf pointer is
+ * not itself durable. The variant half is safe because a prompt always follows it - the new reply
+ * becomes the file's last entry, and the path to it excludes the reply it replaced. A rewind appends
+ * nothing, so a bare leaf move would be undone by the next mount: the dropped turns would come back
+ * into the model's context while the transcript the player reads stayed shortened. The rewind half
+ * therefore makes the cut durable with the vendor's own append-only edit - see
+ * `rewindPiTranscriptTail`. The edit half appends that same kind of edit and nothing else: the
+ * replacement is the file's last entry, so it survives a re-open, and the entries after the edited
+ * one stay on the path - only the one entry's contribution changes.
  *
  * The variant half, in detail:
  *
@@ -197,6 +201,79 @@ export type PiTranscriptRewindResult =
       revert(): void;
     }>
   | Readonly<{ status: "refused"; reason: PiTranscriptRewindRefusal }>;
+
+/** Why a refused edit left the model's context exactly as it was. Each reason is a statement about
+ * the entry the caller named and the session did not carry, so the caller refuses instead of
+ * replacing text in an entry it cannot prove belongs to the message the player is looking at. */
+type PiTranscriptEditRefusal = "edit_target_unavailable" | "edit_target_text_mismatch";
+
+export type PiTranscriptEditResult =
+  | Readonly<{
+      status: "edited";
+      /**
+       * Puts the entry's own original contribution back, as another append-only edit of the same
+       * entry, so a store write that refuses leaves the model reading the transcript it did before -
+       * and leaves the session file agreeing with that, because the restoring edit is the file's last
+       * entry. The store and Pi cannot be atomic, so the caller owns this compensation when its
+       * durable commit refuses.
+       */
+      revert(): void;
+    }>
+  | Readonly<{ status: "refused"; reason: PiTranscriptEditRefusal }>;
+
+/**
+ * The edit half: one entry the model already carries contributes `text` from now on.
+ *
+ * TRANSITIONAL BINDING, the same one the other two halves document: no authority records which Pi
+ * entry a durable `tavern_messages` row corresponds to, so the proof is positional. `entryIndex` is
+ * the entry's position among the messages a prompt actually carries - the greeting is never prompted,
+ * so the transcript's own order is one greater than this index once a Chat has one - and the entry
+ * there must carry the target's own role AND its exact current text. A shape it cannot prove refuses,
+ * and the caller must then leave the transcript unchanged.
+ *
+ * What it does with that proof is the vendor's append-only edit of one entry: the target keeps its
+ * place on the active path, the entries after it stay on it, and only its contribution changes. The
+ * appended edit is the session file's last entry, so a mount that re-opens the file lands on it and
+ * the replacement is what the next request carries - the same durability the rewind pins its cut
+ * with, in the one shape that fits a conversation that is not being shortened.
+ */
+export function editPiTranscriptEntry(
+  session: PiVariantBranchSession,
+  entryIndex: number,
+  target: PiTranscriptMessage,
+  text: string,
+): PiTranscriptEditResult {
+  const messages = branchMessageEntries(session);
+  const entry = messages[entryIndex];
+  if (entry === undefined) return { status: "refused", reason: "edit_target_unavailable" };
+  const actual = target.role === "player" ? entry.player : entry.reply;
+  if (actual !== target.text) return { status: "refused", reason: "edit_target_text_mismatch" };
+  // The entry's own current content is what a revert puts back, and it is the same fact the proof
+  // above just established: only a player or a reply message carries the transcript's text for its
+  // role, and those are exactly the messages a context edit replaces. An entry that carries none -
+  // a tool entry between two messages - is an entry that does not carry the text named, and refuses
+  // as that rather than as a third kind of failure nothing can distinguish.
+  const original = editableContentOf(session.sessionManager.getEntry(entry.id));
+  if (original === null) return { status: "refused", reason: "edit_target_text_mismatch" };
+  session.sessionManager.appendContextEdit(entry.id, { content: editedContentOf(original, text) });
+  session.refreshContext();
+  return Object.freeze({
+    status: "edited",
+    revert: (): void => {
+      session.sessionManager.appendContextEdit(entry.id, { content: original });
+      session.refreshContext();
+    },
+  });
+}
+
+/**
+ * One entry's content with its text replaced, in the shape the entry already has: an edit changes the
+ * words the model reads, never the shape of the message it reads them from, so a part array stays a
+ * part array and a plain string stays a plain string.
+ */
+function editedContentOf(original: ContextEditableContent, text: string): ContextEditableContent {
+  return Array.isArray(original) ? [{ type: "text", text }] : text;
+}
 
 /**
  * The exact content one session entry contributes, when an edit could put it back: `null` for an

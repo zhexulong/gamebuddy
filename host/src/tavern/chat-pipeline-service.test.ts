@@ -1148,3 +1148,193 @@ test(
     assert.equal(settledAfterRefusals.length, 3);
   },
 );
+
+/**
+ * The edit's real-root proof, and the one that decides whether an edit is a real edit.
+ *
+ * Two turns are driven through the real production coordinator mount, each with Pi's own half of its
+ * prompt appended to the mounted session - the shape the provider path leaves - and the player's first
+ * line is then rewritten. Two things are asserted on that one run:
+ *
+ *  - the durable transcript the player reads: read back from the store, the same rows in the same
+ *    order with the first player row's text replaced, and the turn bookkeeping untouched - an edit
+ *    rewrites words, never the ledger the words belong to;
+ *  - the model's context: read out of the session JSONL alone, projected with the vendor's own
+ *    renderer and the leaf `SessionManager._buildIndex` would land on (the file's last entry). It
+ *    carries the NEW text and not the old - the assertion a bubble-only edit fails, and the reason
+ *    the edit half of `pi-session-variant-branch.internal.ts` appends a context edit rather than
+ *    leaving the session alone.
+ *
+ * Every refusal is named and none of them touched either authority: an unknown handle, a row that is
+ * no longer at the position the browser read, her reply, the greeting the Chat opened on, a reply
+ * still being written, and a row the session itself cannot prove (Pi's own prompt there carries
+ * different words), which is the one refusal the surface reports as the runtime's rather than as the
+ * player's.
+ */
+test(
+  "an edit reaches the durable transcript and the session a mount re-reads, and every refusal keeps its name",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const { readdir, readFile, stat } = await import("node:fs/promises");
+  const { join: joinPath } = await import("node:path");
+  const { buildSessionProjection } = await import(piUrl);
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  const firstText = "Synthetic player request";
+  const secondText = "A second line the player keeps.";
+  const thirdText = "A third line she answers.";
+  const editedText = "Synthetic player request, corrected.";
+  const first = await service.submitAfterResponseCommit(commandFor(fx, {}), "editoneaaaaaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  await driveTurnWithSessionPair(fx, "reply_01", firstText, "First synthetic reply.");
+  const second = await service.submitAfterResponseCommit(commandFor(fx, { text: secondText, expectedDraftRevision: 1 }), "edittwoaaaaaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 2);
+  await driveTurnWithSessionPair(fx, "reply_02", secondText, "Second synthetic reply.");
+
+  /** What the next mount would send the model, read from the session file alone. */
+  const modelTexts = async () => {
+    const leaves = (await readdir(fx.root, { recursive: true })).filter((leaf) => leaf.endsWith(".jsonl"));
+    const files = await Promise.all(leaves.map(async (leaf) => ({ leaf, at: (await stat(joinPath(fx.root, leaf))).mtimeMs })));
+    files.sort((left, right) => right.at - left.at);
+    const entries = (await readFile(joinPath(fx.root, files[0].leaf), "utf8")).split("\\n").filter((line) => line.length > 0).map((line) => JSON.parse(line)).filter((entry) => entry.type !== "session");
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const leafId = entries.length === 0 ? null : entries[entries.length - 1].id;
+    return buildSessionProjection(entries, leafId, byId).messages.map((message) =>
+      Array.isArray(message.content)
+        ? message.content.filter((part) => part.type === "text").map((part) => part.text).join("")
+        : String(message.content),
+    );
+  };
+
+  const handleOf = (id) => fx.lease.browserProjection.projectMessageHandle(id);
+  const beforeState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const modelBefore = await modelTexts();
+  const edited = await run(async () => service.edit({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(beforeState.messages[1].messageId), expectedOrder: 1, text: editedText }));
+  const afterState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const modelAfter = await modelTexts();
+  const attempt = async (overrides) => await run(async () => service.edit({ apiVersion: 1, selectionGeneration: fx.generation, text: editedText, ...overrides }));
+  const refusedUnknown = await attempt({ messageHandle: "A".repeat(43), expectedOrder: 1 });
+  const refusedOrder = await attempt({ messageHandle: handleOf(afterState.messages[1].messageId), expectedOrder: 3 });
+  const refusedCompanion = await attempt({ messageHandle: handleOf(afterState.messages[2].messageId), expectedOrder: 2 });
+  const refusedOpening = await attempt({ messageHandle: handleOf(afterState.messages[0].messageId), expectedOrder: 0 });
+  const refusedGeneration = await attempt({ messageHandle: handleOf(afterState.messages[1].messageId), expectedOrder: 1, selectionGeneration: fx.generation + 1 });
+
+  // A turn that is not terminal refuses the whole edit: the accepted player row is the prompt the
+  // reply in flight is being written from.
+  const third = await service.submitAfterResponseCommit(commandFor(fx, { text: thirdText, expectedDraftRevision: 2 }), "editthreeaaaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 3);
+  const heldState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const refusedTurnActive = await attempt({ messageHandle: handleOf(afterState.messages[1].messageId), expectedOrder: 1 });
+  // The same turn completes, but Pi's own prompt for it carries different words than the transcript's
+  // row: the session cannot prove the entry at that position is the message named, so the edit
+  // refuses rather than replacing the words of an entry it cannot identify.
+  await driveTurnWithSessionPair(fx, "reply_03", "Words the model was actually given.", "Third synthetic reply.");
+  const provenState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const modelBeforeUnproven = await modelTexts();
+  const refusedUnproven = await attempt({ messageHandle: handleOf(provenState.messages[5].messageId), expectedOrder: 5 });
+  const modelAfterRefusals = await modelTexts();
+  const settled = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({
+    first, second, third, edited, modelBefore, modelAfter, modelBeforeUnproven, modelAfterRefusals,
+    refusedUnknown, refusedOrder, refusedCompanion, refusedOpening, refusedGeneration, refusedTurnActive, refusedUnproven,
+    beforeTexts: beforeState.messages.map((message) => message.text),
+    afterTexts: afterState.messages.map((message) => message.text),
+    heldTexts: heldState.messages.map((message) => message.text),
+    settledTexts: settled.messages.map((message) => message.text),
+    settledLedgerStatus: settled.turnLedger === null ? null : settled.turnLedger.status,
+    editedHandle: handleOf(beforeState.messages[1].messageId),
+    editedMessageId: beforeState.messages[1].messageId,
+    startCalls,
+  }));
+`);
+    assert.equal(output.startCalls, 3);
+
+    // The edit's own answer: the row the durable read-back holds, with the words that were saved.
+    const edited = output.edited as {
+      ok: boolean;
+      value?: { apiVersion: number; message: { text: string; order: number; role: string } };
+    };
+    assert.equal(edited.ok, true, JSON.stringify(output.edited));
+    assert.equal(edited.value?.apiVersion, 1);
+    assert.equal(edited.value?.message.text, "Synthetic player request, corrected.");
+    assert.equal(edited.value?.message.order, 1);
+    assert.equal(edited.value?.message.role, "player");
+    // The projected row names the message through the lease's own handle, never a durable id.
+    assertNoRawIdentityLeaks(JSON.stringify(output.edited), [(output as { editedMessageId?: string }).editedMessageId]);
+
+    // The durable transcript: the same conversation, one row's words rewritten. The greeting is
+    // whatever the mounted companion's own greeting set holds, so it is compared to itself rather
+    // than to a literal - what matters is that the edit left it and every other row alone.
+    assert.deepEqual((output.beforeTexts as string[]).slice(1), [
+      "Synthetic player request",
+      "First synthetic reply.",
+      "A second line the player keeps.",
+      "Second synthetic reply.",
+    ]);
+    assert.deepEqual((output.afterTexts as string[]).slice(1), [
+      "Synthetic player request, corrected.",
+      "First synthetic reply.",
+      "A second line the player keeps.",
+      "Second synthetic reply.",
+    ]);
+    assert.equal((output.afterTexts as string[])[0], (output.beforeTexts as string[])[0]);
+    // A turn that is not terminal refuses the whole edit without touching a row: the transcript read
+    // while that turn was armed carries the five rows the edit left, plus that turn's own player row.
+    assert.deepEqual((output.heldTexts as string[]).slice(0, 5), output.afterTexts);
+    assert.equal((output.heldTexts as string[]).length, 6);
+    assert.deepEqual(output.settledTexts, [
+      ...(output.afterTexts as string[]),
+      "A third line she answers.",
+      "Third synthetic reply.",
+    ]);
+    assert.equal(output.settledLedgerStatus, "completed");
+
+    // The model's context, read from the session JSONL the next mount would read: the new words,
+    // never the old ones.
+    assert.deepEqual(output.modelBefore, [
+      "Synthetic player request",
+      "First synthetic reply.",
+      "A second line the player keeps.",
+      "Second synthetic reply.",
+    ]);
+    assert.deepEqual(output.modelAfter, [
+      "Synthetic player request, corrected.",
+      "First synthetic reply.",
+      "A second line the player keeps.",
+      "Second synthetic reply.",
+    ]);
+
+    // Every refusal is named, and not one of them touched either authority.
+    const named = (entry: unknown) => (entry as { error?: string }).error ?? "";
+    assert.match(named(output.refusedUnknown), /chat_message_not_found/, JSON.stringify(output.refusedUnknown));
+    assert.match(named(output.refusedOrder), /chat_message_revision_conflict/);
+    assert.match(named(output.refusedCompanion), /chat_edit_not_player_message/);
+    assert.match(named(output.refusedOpening), /chat_edit_not_player_message/);
+    assert.match(named(output.refusedGeneration), /chat_pipeline_service_selection_conflict/);
+    assert.match(named(output.refusedTurnActive), /chat_edit_turn_active/);
+    // A shape the session cannot prove collapses to the service's own fail-closed code: it is not a
+    // point the player can act on, so no named refusal would be honest about it.
+    assert.match(named(output.refusedUnproven), /chat_pipeline_service_unavailable/);
+    assert.deepEqual(output.modelAfterRefusals, [
+      "Synthetic player request, corrected.",
+      "First synthetic reply.",
+      "A second line the player keeps.",
+      "Second synthetic reply.",
+      "Words the model was actually given.",
+      "Third synthetic reply.",
+    ]);
+    assert.deepEqual(output.modelBeforeUnproven, output.modelAfterRefusals);
+    assert.equal(
+      JSON.stringify(output.modelAfterRefusals).includes('Synthetic player request"'),
+      false,
+      "the words the player replaced must not be in the context the next mount derives",
+    );
+    const settledAfterRefusals = output.settledTexts as string[];
+    assert.equal(settledAfterRefusals.length, 7);
+  },
+);

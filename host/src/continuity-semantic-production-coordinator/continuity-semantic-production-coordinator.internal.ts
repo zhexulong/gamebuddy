@@ -51,6 +51,7 @@ import type {
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import {
   branchPiVariantAnchor,
+  editPiTranscriptEntry,
   rewindPiTranscriptTail,
   type PiTranscriptMessage,
 } from "../pi-session-variant-branch.internal.js";
@@ -1267,6 +1268,73 @@ export async function rewindMountedChatTranscript(
     return await store.rewindTranscript!(record.transitionAuthority.authority, record.chatThreadId, input);
   } catch (error) {
     rewound.revert();
+    throw error;
+  }
+}
+
+/**
+ * The one authorized in-place edit ingress. An edit replaces what the model's own session carries for
+ * one message, and only a live mounted lease holds the exact runtime session whose path the mounted
+ * conversation owns; so a caller with a store but no live mount cannot reshape a conversation. Like
+ * the swipe and rewind ingresses it neither creates nor selects a Chat and never prompts Pi.
+ *
+ * The order is the whole point, and it is the rewind's: the durable read, the session's own
+ * replacement and the durable row update share one synchronous critical section - there is no
+ * `await` between them, and the Host runs on a single event loop - so nothing can be admitted
+ * between the session shape this edit proved and the row it rewrites. The store re-checks the row and
+ * the ledger inside its own transaction, so a turn admitted by a write that slipped in before the
+ * read still refuses; that refusal rolls the transaction back, and the entry's own original text is
+ * put back by an appended edit, so the session file agrees with the transcript the player still has.
+ * A refused edit therefore leaves both authorities exactly as it found them.
+ */
+export async function editMountedChatMessage(
+  manifest: HostDeploymentManifest,
+  lease: MountedChatRuntimeLease,
+  input: Readonly<{ messageId: string; expectedOrder: number; text: string }>,
+): Promise<import("../tavern/chat-thread-store.js").ChatThreadState> {
+  const record = mountedChatRuntimeLeases.get(lease);
+  if (
+    record === undefined ||
+    !record.active ||
+    manifest.runtimeRoot !== record.runtimeRoot ||
+    manifest.principal.playerId !== record.principal.playerId ||
+    manifest.principal.companionId !== record.principal.companionId ||
+    manifest.principal.continuityId !== record.principal.continuityId ||
+    typeof input.messageId !== "string" ||
+    input.messageId.length === 0 ||
+    typeof input.text !== "string" ||
+    input.text.length === 0 ||
+    !Number.isSafeInteger(input.expectedOrder) ||
+    input.expectedOrder < 0
+  )
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_edit_unavailable");
+  const runtimeSession = record.providerRuntimeSession;
+  if (runtimeSession === undefined)
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_edit_unavailable");
+  const store = record.store();
+  const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
+  const target = state.messages[input.expectedOrder];
+  if (target === undefined || target.messageId !== input.messageId || target.kind !== "player")
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_edit_unavailable");
+  // The greeting is never prompted into the session, so the entry's own position is the number of
+  // transcript rows before it that a prompt could carry.
+  const entryIndex = state.messages
+    .slice(0, input.expectedOrder)
+    .filter((message) => message.kind !== "opening").length;
+  const edited = editPiTranscriptEntry(
+    runtimeSession.session,
+    entryIndex,
+    Object.freeze({ role: target.role, text: target.text }),
+    input.text,
+  );
+  if (edited.status !== "edited") {
+    process.stderr.write(`[edit] session shape refused: ${edited.reason}\n`);
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_edit_unavailable");
+  }
+  try {
+    return await store.editTranscriptMessage!(record.transitionAuthority.authority, record.chatThreadId, input);
+  } catch (error) {
+    edited.revert();
     throw error;
   }
 }

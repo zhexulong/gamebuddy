@@ -12,6 +12,8 @@ import {
 } from "./composed-reference-game-browser.js";
 import { createReferencePipelineDialogueWebDelegatedHandler } from "./reference-pipeline-dialogue-web.delegated.js";
 import {
+  type EditMessageCommandV1,
+  type EditMessageResultV1,
   type RegenerateMessageCommandV1,
   type RewindChatCommandV1,
   type RewindChatResultV1,
@@ -541,17 +543,19 @@ test("delegated handler without a mounted pipeline service fails mutations close
 
 /**
  * A pipeline service that answers only the message-mutation half of the reference profile
- * (Regenerate and Swipe), so a test can prove the dispatcher reaches them.
+ * (Regenerate, Swipe, Rewind and Edit), so a test can prove the dispatcher reaches them.
  */
 function mutationService(
   recorder: {
     swipes: SwipeSelectCommandV1[];
     regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
     rewinds: RewindChatCommandV1[];
+    edits: EditMessageCommandV1[];
     closes: number;
   },
   swipeResult: SwipeSelectResultV1,
   rewind: { result: RewindChatResultV1; refusal?: string } = { result: REWIND_RESULT },
+  edit: { result: EditMessageResultV1; refusal?: string } = { result: EDIT_RESULT },
 ): ChatPipelineService {
   return Object.freeze({
     async submitAfterResponseCommit() {
@@ -576,6 +580,11 @@ function mutationService(
       if (rewind.refusal !== undefined) throw new Error(rewind.refusal);
       return rewind.result;
     },
+    async edit(command): Promise<EditMessageResultV1> {
+      recorder.edits.push(command);
+      if (edit.refusal !== undefined) throw new Error(edit.refusal);
+      return edit.result;
+    },
     async close() {
       recorder.closes += 1;
     },
@@ -585,12 +594,31 @@ function mutationService(
 /** An emptied transcript: the rewind's answer when the player removed the first message. */
 const REWIND_RESULT: RewindChatResultV1 = Object.freeze({ apiVersion: 1, lastMessage: null });
 
+/** The edited row, as the durable read-back holds it: the edit's own answer. */
+const EDIT_RESULT: EditMessageResultV1 = Object.freeze({
+  apiVersion: 1,
+  message: Object.freeze({
+    handle,
+    role: "player" as const,
+    text: "a corrected line",
+    locale: "und" as const,
+    order: 0,
+    revision: 1,
+  }),
+});
+
 test("the production reference profile declares the message-mutation group and fits the canonical groups", () => {
   const production = composeReferenceTavernProfile();
   assert.equal(referenceTavernProfileFitsCanonicalGroups(production), true);
   // The declaration is the core Chat routes plus the message-mutation extension, in the canonical
   // order: a profile that grows a route without growing a group would fail the fit above.
-  assert.deepEqual(production.routeIds, [...tavernProfile.routeIds, "chat.swipe", "chat.regenerate", "chat.rewind"]);
+  assert.deepEqual(production.routeIds, [
+    ...tavernProfile.routeIds,
+    "chat.swipe",
+    "chat.regenerate",
+    "chat.rewind",
+    "chat.edit",
+  ]);
   assert.deepEqual(production.operationIds, ["chat.submit", "chat.cancel"]);
 });
 
@@ -643,8 +671,9 @@ test("delegated handler answers the reference profile's Swipe and Regenerate rou
     swipes: SwipeSelectCommandV1[];
     regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
     rewinds: RewindChatCommandV1[];
+    edits: EditMessageCommandV1[];
     closes: number;
-  } = { swipes: [], regenerations: [], rewinds: [], closes: 0 };
+  } = { swipes: [], regenerations: [], rewinds: [], edits: [], closes: 0 };
   const broker = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile: production }),
     bootstrapToken,
@@ -722,8 +751,9 @@ test("delegated handler answers the reference profile's Rewind route, and a refu
     swipes: SwipeSelectCommandV1[];
     regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
     rewinds: RewindChatCommandV1[];
+    edits: EditMessageCommandV1[];
     closes: number;
-  } = { swipes: [], regenerations: [], rewinds: [], closes: 0 };
+  } = { swipes: [], regenerations: [], rewinds: [], edits: [], closes: 0 };
   const broker = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile: production }),
     bootstrapToken,
@@ -783,6 +813,100 @@ test("delegated handler answers the reference profile's Rewind route, and a refu
     assert.equal(refused.status, 409);
     assert.equal(((await refused.json()) as { code: string }).code, "chat_rewind_turn_active");
     assert.equal(recorder.rewinds.length, 2);
+  } finally {
+    await server.close();
+    assert.equal(recorder.closes, 1);
+  }
+});
+
+test("delegated handler answers the reference profile's Edit route, and every refusal keeps its own name", async () => {
+  const production = composeReferenceTavernProfile();
+  const edit: { result: EditMessageResultV1; refusal?: string } = { result: EDIT_RESULT };
+  const recorder: {
+    swipes: SwipeSelectCommandV1[];
+    regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
+    rewinds: RewindChatCommandV1[];
+    edits: EditMessageCommandV1[];
+    closes: number;
+  } = { swipes: [], regenerations: [], rewinds: [], edits: [], closes: 0 };
+  const broker = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile: production }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+  });
+  const delegated = createReferencePipelineDialogueWebDelegatedHandler({
+    profile: production,
+    referenceStateFacade: facade,
+    pipelineService: mutationService(
+      recorder,
+      Object.freeze({ apiVersion: 1, message: Object.freeze({ ...EDIT_RESULT.message }) }),
+      { result: REWIND_RESULT },
+      edit,
+    ),
+    eventStream,
+    capability: broker.delegatedAuthCapability,
+  });
+  const server = await start(broker, delegated);
+  try {
+    const initial = await bootstrap(server.origin);
+    assert.equal(initial.status, 200);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const csrf = root.chat.csrfToken;
+    const command = {
+      apiVersion: 1,
+      selectionGeneration: 1,
+      messageHandle: handle,
+      expectedOrder: 0,
+      text: "a corrected line",
+    };
+    const editRequest = (token: string, body: unknown) =>
+      fetch(`${server.origin}/api/tavern/v1/messages/edit`, {
+        method: "POST",
+        headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": token },
+        body: JSON.stringify(body),
+      });
+
+    // The route reaches the service and answers with the edited row the durable read-back holds.
+    const answered = await editRequest(csrf, command);
+    const answeredBody = await answered.text();
+    assert.equal(answered.status, 200, `edit must be served, got ${answered.status} ${answeredBody}`);
+    assert.deepEqual(JSON.parse(answeredBody), edit.result);
+    assert.deepEqual(recorder.edits, [command]);
+
+    // A body the contract does not admit is refused before the service, not after it: an edit without
+    // the text it writes names nothing to change.
+    const malformed = await editRequest(csrf, {
+      apiVersion: 1,
+      selectionGeneration: 1,
+      messageHandle: handle,
+      expectedOrder: 0,
+    });
+    assert.equal(malformed.status, 400);
+    assert.equal(((await malformed.json()) as { code: string }).code, "invalid_request");
+    assert.equal(recorder.edits.length, 1);
+
+    // The wrong CSRF fails before the service too, as every mutation on this surface does.
+    const wrongCsrf = await editRequest("B".repeat(43), command);
+    assert.equal(wrongCsrf.status, 403);
+    assert.equal(((await wrongCsrf.json()) as { code: string }).code, "csrf_failed");
+    assert.equal(recorder.edits.length, 1);
+
+    // Each refusal the Host names keeps its own code: the player is told which row the edit cannot
+    // touch, not that the runtime went away.
+    for (const refusal of [
+      "chat_edit_not_player_message",
+      "chat_edit_turn_active",
+      "chat_message_not_found",
+    ] as const) {
+      edit.refusal = refusal;
+      const refused = await editRequest(csrf, command);
+      assert.equal(refused.status, 409, refusal);
+      assert.equal(((await refused.json()) as { code: string }).code, refusal);
+    }
+    assert.equal(recorder.edits.length, 4);
   } finally {
     await server.close();
     assert.equal(recorder.closes, 1);

@@ -709,6 +709,23 @@ export type ChatThreadStore = Readonly<{
     input: Readonly<{ messageId: string; expectedOrder: number }>,
   ): Promise<ChatThreadState>;
   /**
+   * The durable half of an in-place edit: the player's own message carries different text from now
+   * on. Like the rewind, the caller names the exact row it read AND the position it read it at - a
+   * row that has moved since that read is refused rather than edited where the player never saw it.
+   *
+   * Only the player's own words are editable here. A companion reply carries variant state and the
+   * ledger's own presentation row, so its text has its own semantics and no route reaches this
+   * method with one; the greeting the Chat opened on has its own route. A turn that is not terminal
+   * refuses the whole operation, because the accepted player row is the prompt the reply in flight
+   * is being written from: editing it would leave the transcript disagreeing with a request the
+   * model already received.
+   */
+  editTranscriptMessage?(
+    authority: MountedTurnTransitionAuthority,
+    chatThreadId: string,
+    input: Readonly<{ messageId: string; expectedOrder: number; text: string }>,
+  ): Promise<ChatThreadState>;
+  /**
    * Ordinary exact-turn Stop mutation. It is intentionally independent from
    * the retired P4/P5 transition authority: the service supplies a current
    * mounted turn/attempt pair, SQLite decides the terminal winner, and the
@@ -2161,6 +2178,41 @@ export function createChatThreadStore(
         // this whole transaction back instead of committing a disagreement.
         const readBack = readStateFromDb(db, chatThreadId);
         if (readBack.messages.length !== index) throw new Error("chat_rewind_readback_mismatch");
+        return readBack;
+      });
+    },
+
+    async editTranscriptMessage(authority, chatThreadId, input): Promise<ChatThreadState> {
+      assertMountedTurnTransitionAuthority(authority);
+      assertId("chatThreadId", chatThreadId);
+      assertId("messageId", input.messageId);
+      if (!Number.isSafeInteger(input.expectedOrder) || input.expectedOrder < 0)
+        throw new Error("invalid_chat_edit_order");
+      assertText(input.text);
+      return withDb((db) => {
+        const current = readStateFromDb(db, chatThreadId);
+        if ((current.thread.lifecycleStatus ?? "active") !== "active")
+          throw new Error("chat_thread_lifecycle_not_active");
+        const index = current.messages.findIndex((message) => message.messageId === input.messageId);
+        if (index < 0) throw new Error("chat_message_not_found");
+        if (index !== input.expectedOrder) throw new Error("chat_message_revision_conflict");
+        const target = current.messages[index]!;
+        // The player's own row and nothing else: the companion's reply text is one of its swipes and
+        // the ledger's presentation, and the greeting is the opening the thread records.
+        if (target.role !== "player" || target.kind !== "player") throw new Error("chat_edit_not_player_message");
+        const ledger = current.turnLedger;
+        if (ledger !== null && !isTerminalLedger(ledger)) throw new Error("chat_edit_turn_active");
+        db.prepare("UPDATE tavern_messages SET text = ? WHERE thread_id = ? AND message_id = ?").run(
+          input.text,
+          chatThreadId,
+          input.messageId,
+        );
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(now(), chatThreadId);
+        // The read-back is the assertion: it re-runs the same opening, message and ledger integrity
+        // checks every other read runs, and the row it returns is the one the model's own path now
+        // has to carry - so an edit that did not land exactly rolls this transaction back.
+        const readBack = readStateFromDb(db, chatThreadId);
+        if (readBack.messages[index]?.text !== input.text) throw new Error("chat_edit_readback_mismatch");
         return readBack;
       });
     },

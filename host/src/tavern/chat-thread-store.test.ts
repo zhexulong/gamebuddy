@@ -1530,3 +1530,206 @@ test("a rewind drops the named message and every row after it, together with the
     await rm(root, { recursive: true, force: true });
   }
 });
+
+/**
+ * An edit is the one Chat mutation that rewrites a row in place, so it must rewrite exactly the
+ * player's own words and nothing else: the transcript order, the turn bookkeeping and every other
+ * row stay as they were. The rows below come from real accepted turns - the same shape the mounted
+ * Chat meets - because a player line IS an accepted turn's evidence (`validateTurnIntegrity` names
+ * it), and an edit that broke that evidence would make the next read refuse the whole thread.
+ */
+test("an edit rewrites the player's own row in place and refuses every row that is not theirs", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-edit-");
+  const continuityKey = createHash("sha256")
+    .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
+    .digest("hex");
+  const t0 = Date.now();
+  const s = createChatThreadStore(root, continuityKey, () => t0);
+  const reopened = createChatThreadStore(root, continuityKey, () => t0);
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit(request(opening));
+    const accept = (await import("./chat-thread-store.js")).acceptMountedPlayerMessage;
+    const binding = {
+      runtimeRoot: root,
+      playerId: "player_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      selectionGeneration: 1,
+    };
+    const claimBinding = {
+      ...binding,
+      runtimeBindingDigest: "b".repeat(64),
+      runtimeOwner: {
+        ownerToken: "owner_01",
+        runtimeInstanceId: "inst_01",
+        ownerPid: 1234,
+        ownerProcessStartIdentity: "pid_1234",
+      },
+    };
+    /** One complete turn: accept, claim, arm, run, commit the reply, complete. */
+    const turn = async (ordinal: number, text: string, replyId: string) => {
+      const key = `key${ordinal}`.padEnd(22, "x");
+      const accepted = await accept(binding, {
+        text,
+        locale: "en-US",
+        idempotencyKey: key,
+        expectedDraftRevision: ordinal - 1,
+        authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+      });
+      const claimed = await claimMountedAttempt(claimBinding);
+      const attempt = { ...claimBinding, attemptId: claimed.attempt.attemptId };
+      await transitionMountedProviderStart(attempt, { operation: "arm", observedAtMs: t0 + 1 });
+      await transitionMountedProviderStart(attempt, {
+        operation: "running",
+        statusClass: "success",
+        observedAtMs: t0 + 2,
+      });
+      await transitionMountedPresentation(attempt, {
+        operation: "commit_presentation",
+        cancelEpoch: 1,
+        message: { messageId: replyId, text: `${text} back`, occurredAtMs: t0 + 3 },
+        committedAtMs: t0 + 3,
+      });
+      await transitionMountedPresentation(attempt, { operation: "claim_completion", claimedAtMs: t0 + 4 });
+      await transitionMountedPresentation(attempt, { operation: "complete", completedAtMs: t0 + 5 });
+      return { key, playerId: accepted.messageId, turnId: accepted.turnId };
+    };
+
+    const first = await turn(1, "First line", "reply_01");
+    const second = await turn(2, "Second line", "reply_02");
+    const before = await s.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      before.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId, "reply_02"],
+    );
+
+    // The edit lands on the named row and only there: same rows, same order, same turn bookkeeping,
+    // and the durable read-back is what answers.
+    const after = await s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+      messageId: first.playerId,
+      expectedOrder: 1,
+      text: "First line, corrected",
+    });
+    assert.deepEqual(
+      after.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId, "reply_02"],
+    );
+    assert.deepEqual(
+      after.messages.map((message) => message.text),
+      ["Welcome to the tavern.", "First line, corrected", "First line back", "Second line", "Second line back"],
+    );
+    assert.equal(after.turnLedger?.turnId, second.turnId);
+    assert.equal(after.turnLedger?.status, "completed");
+    assert.equal(after.idempotency.length, 2);
+    const durable = await reopened.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      durable.messages.map((message) => message.text),
+      ["Welcome to the tavern.", "First line, corrected", "First line back", "Second line", "Second line back"],
+    );
+    // The turn's own evidence is still readable: the edit changed words, not the ledger the words
+    // belong to.
+    assert.equal(durable.turnLedger?.idempotencyKey, second.key);
+
+    const unchanged = durable.messages.map((message) => message.text);
+    // A row this Chat does not carry.
+    await assert.rejects(
+      () =>
+        s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+          messageId: "missing_01",
+          expectedOrder: 1,
+          text: "Nowhere",
+        }),
+      /chat_message_not_found/,
+    );
+    // A row that is no longer at the position the caller read.
+    await assert.rejects(
+      () =>
+        s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+          messageId: first.playerId,
+          expectedOrder: 3,
+          text: "The wrong row entirely",
+        }),
+      /chat_message_revision_conflict/,
+    );
+    // Her reply: its text is one of its own swipes and the ledger's presentation, so it is not this
+    // route's to rewrite - and the greeting the Chat opened on has its own route.
+    await assert.rejects(
+      () =>
+        s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+          messageId: "reply_01",
+          expectedOrder: 2,
+          text: "Put words in her mouth",
+        }),
+      /chat_edit_not_player_message/,
+    );
+    await assert.rejects(
+      () =>
+        s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+          messageId: "opening_01",
+          expectedOrder: 0,
+          text: "Rewrite the greeting",
+        }),
+      /chat_edit_not_player_message/,
+    );
+    // Text the durable store will not carry (empty, or non-NFC) is its own refusal, not an edit.
+    await assert.rejects(
+      () =>
+        s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+          messageId: first.playerId,
+          expectedOrder: 1,
+          text: "",
+        }),
+      /invalid_chat_thread_text/,
+    );
+
+    // A turn that has not reached its terminal state refuses the whole edit: the transcript is not
+    // allowed to change under a reply that is being written from that very text.
+    const held = await accept(binding, {
+      text: "Third line",
+      locale: "en-US",
+      idempotencyKey: "key3".padEnd(22, "x"),
+      expectedDraftRevision: 2,
+      authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+    });
+    const heldState = await s.resumeThread("thread_01", "surface_01");
+    await assert.rejects(
+      () =>
+        s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+          messageId: held.messageId,
+          expectedOrder: heldState.messages.findIndex((message) => message.messageId === held.messageId),
+          text: "Changed while she answers",
+        }),
+      /chat_edit_turn_active/,
+    );
+    assert.deepEqual(
+      (await s.resumeThread("thread_01", "surface_01")).messages.map((message) => message.text),
+      heldState.messages.map((message) => message.text),
+    );
+    // Every refusal above left the transcript byte-identical, not merely unread differently.
+    assert.deepEqual(
+      heldState.messages.slice(0, 5).map((message) => message.text),
+      unchanged,
+    );
+
+    // The writer sits behind the mounted transition authority, exactly as the swipe and rewind
+    // writers do.
+    const revoked = createMountedTurnTransitionAuthority();
+    revoked.revoke();
+    await assert.rejects(
+      () =>
+        s.editTranscriptMessage!(revoked.authority, "thread_01", {
+          messageId: first.playerId,
+          expectedOrder: 1,
+          text: "Not without the lease",
+        }),
+      /p4_p5_transition_authority_unavailable/,
+    );
+  } finally {
+    reopened.close?.();
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});

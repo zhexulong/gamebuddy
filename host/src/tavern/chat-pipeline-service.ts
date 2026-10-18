@@ -1,6 +1,7 @@
 import type { Static } from "typebox";
 import { join } from "node:path";
 import {
+  editMountedChatMessage,
   isCurrentMountedChatRuntimeLease,
   rewindMountedChatTranscript,
   selectMountedSwipeVariant,
@@ -14,6 +15,8 @@ import {
   type BrowserTurnV1,
   type CancelTurnCommandV1,
   type ComposedTavernProfile,
+  type EditMessageCommandV1,
+  type EditMessageResultV1,
   type MessageSubmissionStatusQueryV1Schema,
   type MessageSubmissionStatusV1Schema,
   type RegenerateMessageCommandV1,
@@ -144,6 +147,13 @@ export type ChatPipelineService = Readonly<{
    * turn the player never saw.
    */
   rewind?(command: RewindChatCommandV1): Promise<RewindChatResultV1>;
+  /**
+   * Replaces the text of one of the player's own messages - in the transcript the player reads and in
+   * the session the model sees, together. The named row is resolved through the lease's own handle
+   * projection and the position the browser read it at is part of the command, so a transcript that
+   * moved under the editor is refused instead of edited where the player never saw it.
+   */
+  edit?(command: EditMessageCommandV1): Promise<EditMessageResultV1>;
   /**
    * Rejects new admission and drains admitted acceptance, commit callbacks and
    * background start work before resolving. The mounted lease itself stays
@@ -593,18 +603,18 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
         (message: ChatThreadState["messages"][number]) =>
           lease.browserProjection.projectMessageHandle(message.messageId) === command.messageHandle,
       );
-      if (target === undefined) throw rewindRefusal("chat_message_not_found");
+      if (target === undefined) throw mutationRefusal("chat_message_not_found");
       const order = state.messages.indexOf(target);
       // The transcript is what a position means: a row that is no longer at the order the browser
       // rendered it is a stale view, and rewinding from it would drop messages the player never saw.
-      if (order !== command.expectedOrder) throw rewindRefusal("chat_message_revision_conflict");
+      if (order !== command.expectedOrder) throw mutationRefusal("chat_message_revision_conflict");
       // The greeting is the conversation's own first message, not part of the exchange above it:
       // dropping it would leave a thread whose recorded opening no longer exists.
-      if (target.kind === "opening") throw rewindRefusal("chat_rewind_opening_retained");
+      if (target.kind === "opening") throw mutationRefusal("chat_rewind_opening_retained");
       // A turn that is not terminal is a reply still being written. Rewinding through it would
       // truncate a mounted turn, so it is refused rather than silently drained.
       const ledger = state.turnLedger;
-      if (ledger !== null && !isTerminalLedger(ledger)) throw rewindRefusal("chat_rewind_turn_active");
+      if (ledger !== null && !isTerminalLedger(ledger)) throw mutationRefusal("chat_rewind_turn_active");
       try {
         const next = await rewindMountedChatTranscript(manifest, lease, {
           messageId: target.messageId,
@@ -620,7 +630,52 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
         if (!TavernBrowserValidatorsV1.RewindChatResultV1Schema.Check(result)) throw unavailable();
         return result;
       } catch (error) {
-        throw rethrowRewindError(error);
+        throw rethrowMutationRefusal(error);
+      }
+    },
+
+    async edit(command: EditMessageCommandV1): Promise<EditMessageResultV1> {
+      assertOpen();
+      if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+      if (!TavernBrowserValidatorsV1.EditMessageCommandV1Schema.Check(command)) throw unavailable();
+      if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
+      const state = await resumeState();
+      const target = state.messages.find(
+        (message: ChatThreadState["messages"][number]) =>
+          lease.browserProjection.projectMessageHandle(message.messageId) === command.messageHandle,
+      );
+      if (target === undefined) throw mutationRefusal("chat_message_not_found");
+      const order = state.messages.indexOf(target);
+      // The transcript is what a position means: a row that is no longer where the browser read it is
+      // a stale view, and editing from it would rewrite a message the player is not looking at.
+      if (order !== command.expectedOrder) throw mutationRefusal("chat_message_revision_conflict");
+      // Only the player's own words. Her reply carries swipe state and the ledger's own presentation
+      // row, so its text has its own semantics; the greeting the Chat opened on has its own route.
+      if (target.role !== "player" || target.kind !== "player") throw mutationRefusal("chat_edit_not_player_message");
+      // A turn that is not terminal is a reply being written from the very text this edit replaces,
+      // so the transcript is not allowed to change under it.
+      const ledger = state.turnLedger;
+      if (ledger !== null && !isTerminalLedger(ledger)) throw mutationRefusal("chat_edit_turn_active");
+      try {
+        const next = await editMountedChatMessage(manifest, lease, {
+          messageId: target.messageId,
+          expectedOrder: order,
+          text: command.text,
+        });
+        const edited = next.messages[order];
+        // The projection reads the durable read-back, never the command's echo: a row that is not the
+        // one the edit just wrote is a disagreement the surface must not see.
+        if (edited === undefined || edited.text !== command.text) throw unavailable();
+        const result = Object.freeze({
+          apiVersion: TAVERN_BROWSER_API_VERSION,
+          message: projectMessage(lease, edited, order),
+        });
+        // Fail closed unless the committed representation satisfies its frozen contract schema; a
+        // partial or invalid projection never escapes.
+        if (!TavernBrowserValidatorsV1.EditMessageResultV1Schema.Check(result)) throw unavailable();
+        return result;
+      } catch (error) {
+        throw rethrowMutationRefusal(error);
       }
     },
 
@@ -795,23 +850,28 @@ function validateSubmitCommand(command: SubmitMessageCommandV1, lease: MountedCh
 }
 
 /**
- * The rewind refusals that name the point the player chose. They keep their own code all the way to
- * the surface; every other failure (store shape, session branch, read-back, admission, unknown)
- * collapses to the service's fail-closed code so no raw path, identifier or content can escape.
+ * The message-mutation refusals that name the point the player chose: the rewind's four and the
+ * edit's two. They keep their own code all the way to the surface; every other failure (store shape,
+ * session path, read-back, admission, unknown) collapses to the service's fail-closed code so no raw
+ * path, identifier or content can escape. One list for both operations, because each forwards the
+ * durable store's own refusals unchanged - and only codes a store or ingress can really produce
+ * belong on it.
  */
-const CHAT_REWIND_REFUSALS: readonly string[] = [
+const CHAT_MESSAGE_MUTATION_REFUSALS: readonly string[] = [
   "chat_message_not_found",
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
+  "chat_edit_not_player_message",
+  "chat_edit_turn_active",
 ];
 
-function rewindRefusal(code: string): Error {
+function mutationRefusal(code: string): Error {
   return new Error(code);
 }
 
-function rethrowRewindError(error: unknown): Error {
-  if (error instanceof Error && CHAT_REWIND_REFUSALS.includes(error.message)) return error;
+function rethrowMutationRefusal(error: unknown): Error {
+  if (error instanceof Error && CHAT_MESSAGE_MUTATION_REFUSALS.includes(error.message)) return error;
   return unavailable();
 }
 

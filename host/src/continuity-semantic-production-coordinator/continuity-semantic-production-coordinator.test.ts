@@ -270,10 +270,12 @@ test("production coordinator exports only the known Game constructor and its saf
     "createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
     "createSharedSemanticProductionAuthorityFromDeploymentManifest",
+    "editMountedChatMessage",
     "isCurrentMountedChatRuntimeLease",
-    // The mounted-Chat mutations, in the order the surface lists them: a rewind belongs to the same
-    // family as the swipe and the authored-context settle - it mutates the mounted Chat under the
-    // lease - which is why it is on the surface rather than internal to the pipeline service.
+    // The mounted-Chat mutations, in the order the surface lists them: an edit and a rewind belong to
+    // the same family as the swipe and the authored-context settle - they reshape the mounted Chat
+    // under the lease - which is why they are on the surface rather than internal to the pipeline
+    // service.
     "rewindMountedChatTranscript",
     "selectMountedSwipeVariant",
     "settleMountedAuthoredContext",
@@ -295,6 +297,7 @@ test("production coordinator exports only the known Game constructor and its saf
     "createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
     "createSharedSemanticProductionAuthorityFromDeploymentManifest",
+    "editMountedChatMessage",
     "isCurrentMountedChatRuntimeLease",
     "orchestrateExplicitGameRecovery",
     "rewindMountedChatTranscript",

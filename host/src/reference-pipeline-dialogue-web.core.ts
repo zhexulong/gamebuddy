@@ -114,13 +114,16 @@ export function problemFor(error: unknown): Readonly<{ status: number; code: Pro
   if (message === "idempotency_conflict") return { status: 409, code: "idempotency_conflict" };
   if (message === "chat_draft_revision_conflict") return { status: 409, code: "draft_conflict" };
   if (message === "chat_pipeline_service_selection_conflict") return { status: 409, code: "selection_conflict" };
-  // A rewind refusal is a statement about the point the player named, so it keeps its own name all
-  // the way to the surface: which row is gone, which view has moved, which point is the greeting
-  // the Chat opened on, and whether a reply is still being written.
+  // A message mutation's refusal is a statement about the point the player named, so it keeps its own
+  // name all the way to the surface: which row is gone, which view has moved, which point is the
+  // greeting the Chat opened on, whether a reply is still being written, and - for an edit - that the
+  // row is not the player's own words.
   if (message === "chat_message_not_found") return { status: 409, code: "chat_message_not_found" };
   if (message === "chat_message_revision_conflict") return { status: 409, code: "chat_message_revision_conflict" };
   if (message === "chat_rewind_opening_retained") return { status: 409, code: "chat_rewind_opening_retained" };
   if (message === "chat_rewind_turn_active") return { status: 409, code: "chat_rewind_turn_active" };
+  if (message === "chat_edit_not_player_message") return { status: 409, code: "chat_edit_not_player_message" };
+  if (message === "chat_edit_turn_active") return { status: 409, code: "chat_edit_turn_active" };
   if (
     message === "chat_pipeline_service_commit_rejected" ||
     message === "chat_pipeline_service_closed" ||

@@ -7,6 +7,7 @@ import { type AgentSession, SessionManager, createAgentSession } from "@earendil
 
 import {
   branchPiVariantAnchor,
+  editPiTranscriptEntry,
   rewindPiTranscriptTail,
   type PiTranscriptMessage,
   type PiVariantPosition,
@@ -20,6 +21,8 @@ const FIRST_REPLY = "First reply: I was still on the pier.";
 const SECOND_REPLY = "Second reply: I came as soon as the rain eased.";
 const REGENERATED_REPLY = "Regenerated reply: the rain made me late.";
 const SECOND_REGENERATED_REPLY = "Second regeneration: the rain stopped and I walked over.";
+const EDITED_PROMPT_TEXT = "I waited at the bus stop until noon, then took the second bus.";
+const THIRD_PROMPT_TEXT = "I asked the driver where this one goes.";
 
 type Fixture = Readonly<{
   root: string;
@@ -465,6 +468,132 @@ test("a transcript tail the session does not carry refuses and mutates nothing",
     fixture.dispose();
     const revivedManager = SessionManager.continueRecent(fixture.cwd, fixture.sessionDir);
     assert.deepEqual(revivedManager.buildSessionProjection().messages, []);
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The edit half, and the property that separates it from the other two: nothing is shortened. The
+ * edited entry keeps its place on the path and every entry after it stays there, so the projection is
+ * the same conversation with one entry's words replaced - and the appended edit is the file's LAST
+ * entry, which is what makes the replacement survive a re-open the way a rewind's cut does.
+ */
+test("an edit replaces one entry's words, and a session re-opened from its file carries them", async () => {
+  const fixture = await createSession("gamebuddy-transcript-edit-", [FIRST_REPLY]);
+  appendPrompt(fixture.sessionManager, EARLIER_PROMPT_TEXT);
+  appendReply(fixture.sessionManager, SECOND_REPLY);
+  fixture.session.refreshContext();
+  let reopened: AgentSession | undefined;
+  try {
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+    ]);
+
+    const edited = editPiTranscriptEntry(fixture.session, 0, drop("player", PROMPT_TEXT), EDITED_PROMPT_TEXT);
+    assert.equal(edited.status, "edited");
+    // Only the one entry's words changed: the entry's own content shape is kept, and nothing after it
+    // left the path - an edit is not a cut.
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: EDITED_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+    ]);
+    assert.equal(countRole(fixture.modelMessages(), "assistant"), 2);
+
+    // The durable half: the appended edit is the file's last entry, so a fresh manager opening that
+    // file lands its leaf on the edit and the replacement is what the context carries.
+    fixture.dispose();
+    const revivedManager = SessionManager.continueRecent(fixture.cwd, fixture.sessionDir);
+    assert.equal(revivedManager.getSessionId(), fixture.sessionManager.getSessionId());
+    const revived = await createAgentSession({
+      cwd: fixture.cwd,
+      agentDir: join(fixture.root, "agent"),
+      sessionManager: revivedManager,
+      noTools: "all",
+      tools: [],
+    });
+    reopened = revived.session;
+    assert.deepEqual(reopened.agent.state.messages.map(projectedMessage), [
+      ["user", [{ type: "text", text: EDITED_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+    ]);
+
+    // And the conversation continues from there, with the edited words still the ones the model reads.
+    appendPrompt(revivedManager, THIRD_PROMPT_TEXT);
+    appendReply(revivedManager, REGENERATED_REPLY);
+    reopened.refreshContext();
+    assert.deepEqual(reopened.agent.state.messages.map(projectedMessage), [
+      ["user", [{ type: "text", text: EDITED_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+      ["user", [{ type: "text", text: THIRD_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: REGENERATED_REPLY }]],
+    ]);
+  } finally {
+    reopened?.dispose();
+    await fixture.close();
+  }
+});
+
+/**
+ * Every shape the edit's derivation cannot prove refuses, and the refusal is silent: no entry is
+ * appended, so the leaf, the entry count and the projection are byte-identical after. `revert()`
+ * restores the entry's own words the same way - as another append-only edit - so it outlives the
+ * process rather than depending on what this one remembers.
+ */
+test("an entry the session does not carry refuses, and a revert is itself durable", async () => {
+  const fixture = await createSession("gamebuddy-transcript-edit-refusal-", [FIRST_REPLY]);
+  try {
+    const before = quoted(fixture.modelMessages());
+    const leafBefore = fixture.sessionManager.getLeafId();
+    const entriesBefore = fixture.sessionManager.getEntryCount();
+    const cases = [
+      { index: 4, target: drop("player", PROMPT_TEXT), reason: "edit_target_unavailable" },
+      { index: 0, target: drop("player", "a line this session never carried"), reason: "edit_target_text_mismatch" },
+      { index: 0, target: drop("companion", PROMPT_TEXT), reason: "edit_target_text_mismatch" },
+      { index: 1, target: drop("player", FIRST_REPLY), reason: "edit_target_text_mismatch" },
+    ] as const;
+    for (const item of cases) {
+      const result = editPiTranscriptEntry(fixture.session, item.index, item.target, EDITED_PROMPT_TEXT);
+      assert.equal(result.status, "refused", item.reason);
+      if (result.status === "refused") assert.equal(result.reason, item.reason);
+      assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore, item.reason);
+      assert.equal(fixture.sessionManager.getLeafId(), leafBefore, item.reason);
+      assert.equal(quoted(fixture.modelMessages()), before, item.reason);
+    }
+
+    const edited = editPiTranscriptEntry(fixture.session, 0, drop("player", PROMPT_TEXT), EDITED_PROMPT_TEXT);
+    assert.equal(edited.status, "edited");
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: EDITED_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+    ]);
+    if (edited.status === "edited") edited.revert();
+    assert.equal(quoted(fixture.modelMessages()), before);
+
+    // The restoration is a session entry rather than a leaf move, so a re-open reads the original
+    // words too: there is nothing for the next mount to undo.
+    const editedAgain = editPiTranscriptEntry(fixture.session, 0, drop("player", PROMPT_TEXT), EDITED_PROMPT_TEXT);
+    assert.equal(editedAgain.status, "edited");
+    fixture.dispose();
+    const revivedManager = SessionManager.continueRecent(fixture.cwd, fixture.sessionDir);
+    assert.deepEqual(
+      revivedManager
+        .buildSessionProjection()
+        .messages.map((message) => [message.role, "content" in message ? message.content : null]),
+      [
+        ["user", [{ type: "text", text: EDITED_PROMPT_TEXT }]],
+        ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ],
+    );
   } finally {
     await fixture.close();
   }

@@ -129,6 +129,12 @@ const ProblemCode = Type.Union([
   Type.Literal("chat_message_revision_conflict"),
   Type.Literal("chat_rewind_opening_retained"),
   Type.Literal("chat_rewind_turn_active"),
+  // Editing one of the player's own messages in place (`chat.edit`) is the same shape of bounded
+  // vocabulary: the handle names a row the player did not write, or a reply is being written from
+  // the very text the edit would replace. Each is a fact the surface can state plainly, so no edit
+  // ever fails with "the conversation could not be changed" about a message the player can see.
+  Type.Literal("chat_edit_not_player_message"),
+  Type.Literal("chat_edit_turn_active"),
   // A durable companion record that is absent, incomplete or unreadable is a data-integrity
   // fact, not a runtime outage: it is bounded and never retryable, so the player is not told
   // to retry something that cannot succeed by retrying.
@@ -1575,6 +1581,28 @@ export const RewindChatResultV1Schema = strictObject({
   lastMessage: Type.Union([BrowserMessageV1Schema, Type.Null()]),
 });
 /**
+ * Editing one of the player's own messages in place (`chat.edit`): the message carries different text
+ * from now on - in the durable transcript the player reads AND in the model's own session, which is
+ * the invariant the whole operation exists for. An edit that only changed the bubble would leave the
+ * model answering words the player no longer says.
+ *
+ * `expectedOrder` is the transcript position the browser rendered that message at. The transcript is
+ * what the position means, so a row that has moved - because a rewind landed between the read and the
+ * save - is refused rather than edited where the player never saw it.
+ */
+export const EditMessageCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  messageHandle: OpaqueHandle,
+  expectedOrder: Revision,
+  text: BoundedText,
+});
+export const EditMessageResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  /** The edited row, projected from the durable read-back rather than from the command's echo. */
+  message: BrowserMessageV1Schema,
+});
+/**
  * New-chat opening variant choice. The browser names no durable greeting id and no chat id: the
  * mounted companion's own greeting set is resolved by the Host, and the mounted Chat is the one
  * the admission already bound. `targetIndex` is 0-based; `direction` steps from the committed
@@ -1723,6 +1751,8 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
+  "chat_edit_not_player_message",
+  "chat_edit_turn_active",
   "dialogue_busy",
   "connection_not_found",
   "connection_not_ready",
@@ -1987,6 +2017,20 @@ const RouteDescriptors = Object.freeze([
     query: noQuery,
     request: RewindChatCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: RewindChatResultV1Schema },
+  }),
+  route({
+    routeId: "chat.edit",
+    method: "POST",
+    path: "/api/tavern/v1/messages/edit",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: EditMessageCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: EditMessageResultV1Schema },
   }),
   route({
     routeId: "memory.read",
@@ -2721,6 +2765,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     RegenerateMessageCommandV1Schema,
     RewindChatCommandV1Schema,
     RewindChatResultV1Schema,
+    EditMessageCommandV1Schema,
+    EditMessageResultV1Schema,
     BrowserOpeningVariantV1Schema,
     ChatOpeningCommandV1Schema,
     ChatOpeningResultV1Schema,
@@ -2768,6 +2814,8 @@ export type SwipeSelectResultV1 = Static<typeof SwipeSelectResultV1Schema>;
 export type RegenerateMessageCommandV1 = Static<typeof RegenerateMessageCommandV1Schema>;
 export type RewindChatCommandV1 = Static<typeof RewindChatCommandV1Schema>;
 export type RewindChatResultV1 = Static<typeof RewindChatResultV1Schema>;
+export type EditMessageCommandV1 = Static<typeof EditMessageCommandV1Schema>;
+export type EditMessageResultV1 = Static<typeof EditMessageResultV1Schema>;
 export type BrowserOpeningVariantV1 = Static<typeof BrowserOpeningVariantV1Schema>;
 export type ChatOpeningCommandV1 = Static<typeof ChatOpeningCommandV1Schema>;
 export type ChatOpeningResultV1 = Static<typeof ChatOpeningResultV1Schema>;
@@ -3019,12 +3067,13 @@ const REFERENCE_TAVERN_ROUTE_IDS = [
   "events",
 ] as const;
 /**
- * The optional message-mutation extension of the reference Chat profile: Swipe, Regenerate and Rewind.
+ * The optional message-mutation extension of the reference Chat profile: Swipe, Regenerate, Rewind
+ * and Edit.
  *
- * The browser client posts all three from its own message controls, so the dispatcher mounted on the
+ * The browser client posts all four from its own message controls, so the dispatcher mounted on the
  * composed Chat surface must reach them or the player's controls answer 404. They are routes, not
- * operations: the browser gates Regenerate on the `chat.submit` affordance and Swipe/Rewind on the
- * message's own projection, so the Host projects no `state.operations` row for any of them.
+ * operations: the browser gates Regenerate on the `chat.submit` affordance and Swipe/Rewind/Edit on
+ * the message's own projection, so the Host projects no `state.operations` row for any of them.
  *
  * Declared as an optional group rather than folded into the core list so every existing reference
  * profile - the standalone handler's own declaration and the API-level test slices - stays a valid
@@ -3032,7 +3081,12 @@ const REFERENCE_TAVERN_ROUTE_IDS = [
  * declares must belong to exactly one group, which `referenceTavernProfileFitsCanonicalGroups`
  * enforces.
  */
-const REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS = ["chat.swipe", "chat.regenerate", "chat.rewind"] as const;
+const REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS = [
+  "chat.swipe",
+  "chat.regenerate",
+  "chat.rewind",
+  "chat.edit",
+] as const;
 const REFERENCE_TAVERN_ROUTE_GROUPS = [
   REFERENCE_TAVERN_ROUTE_IDS,
   REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS,

@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Compile } from "typebox/compile";
 import {
   type ComposedTavernProfile,
+  type EditMessageCommandV1,
   type RegenerateMessageCommandV1,
   type RewindChatCommandV1,
   type SwipeSelectCommandV1,
@@ -166,6 +167,23 @@ export function createReferencePipelineDialogueWebDelegatedHandler(
           return sendProblem(response, 503, "runtime_unavailable");
         const result = await pipelineService.rewind(body as RewindChatCommandV1);
         if (!TavernBrowserValidatorsV1.RewindChatResultV1Schema.Check(result))
+          throw new Error("chat_pipeline_service_unavailable");
+        return sendJson(response, 200, result);
+      }
+      if (request.method === "POST" && url.pathname === "/api/tavern/v1/messages/edit") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const context = verifyComposedReferenceGameBrowserAuth(capability, request, origin);
+        if (context === null) return sendProblem(response, 401, "unauthorized");
+        if (!checkComposedReferenceGameBrowserAuthCsrf(context, request))
+          return sendProblem(response, 403, "csrf_failed");
+        const body = await readJsonBody(request, MAX_BOOTSTRAP_BODY_BYTES);
+        const route = TavernBrowserContractV1.routes.find((entry) => entry.routeId === "chat.edit");
+        if (route === undefined || !("request" in route) || !Compile(route.request).Check(body))
+          return sendProblem(response, 400, "invalid_request");
+        if (pipelineService === undefined || pipelineService.edit === undefined)
+          return sendProblem(response, 503, "runtime_unavailable");
+        const result = await pipelineService.edit(body as EditMessageCommandV1);
+        if (!TavernBrowserValidatorsV1.EditMessageResultV1Schema.Check(result))
           throw new Error("chat_pipeline_service_unavailable");
         return sendJson(response, 200, result);
       }
