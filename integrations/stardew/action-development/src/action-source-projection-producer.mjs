@@ -200,7 +200,11 @@ function parseModCatalog(source) {
 }
 
 function parseHostAdapters(source) {
-  const ids = [...source.matchAll(/actionAdapter\(\s*\n\s*"([a-z0-9_]+)",/g)].map((entry) => entry[1]);
+  // The anchor keys on the CALL, not on the formatter's line breaking: a short
+  // registration is written on one line while it fits and broken across lines
+  // when it does not, and the Host surface must not lose an action because the
+  // sheet decided it was narrow enough to keep on one line.
+  const ids = [...source.matchAll(/actionAdapter\(\s*"([a-z0-9_]+)",/g)].map((entry) => entry[1]);
   if (ids.length === 0) fail("adapters_empty");
   return assertUnique(ids, "adapter_duplicates");
 }

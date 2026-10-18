@@ -122,6 +122,7 @@ test("protocol/schema drift restricts the executable intersection", () => {
   assert.ok(!unionProjection.mod.executableActionIds.includes("equip_tool"));
 
   const messageTypeRemoved = protocol.replace('  "hello",\n', "");
+  assert.notEqual(messageTypeRemoved, protocol, "bridge message type anchor must match");
   const messageProjection = deriveWith({ host_protocol: messageTypeRemoved });
   assert.ok(messageProjection.mod.executableActionIds.includes("equip_tool"));
 
