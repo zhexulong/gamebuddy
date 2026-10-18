@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -51,7 +51,7 @@ function record(overrides: Partial<StardewInstallationRegistrationRecordV1> = {}
 }
 
 async function fixture(): Promise<{ root: string; path: string; dispose(): Promise<void> }> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-registration-"));
+  const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-stardew-registration-"));
   return {
     root,
     path: join(root, "stardew-installation-registration", "registration.json"),

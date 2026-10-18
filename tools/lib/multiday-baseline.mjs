@@ -31,8 +31,8 @@ const isPlainObject = (value) => typeof value === "object" && value !== null && 
 const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
 
 /** The engine's own season order, and the days each season holds a festival on. */
-export const SEASON_NAMES = Object.freeze(["spring", "summer", "fall", "winter"]);
-export const DAYS_PER_SEASON = 28;
+const SEASON_NAMES = Object.freeze(["spring", "summer", "fall", "winter"]);
+const DAYS_PER_SEASON = 28;
 
 /** The bounded window this corpus is willing to call a baseline. */
 export const MINIMUM_BASELINE_DAYS = 2;
@@ -61,7 +61,7 @@ export const BASELINE_SCOPE_NOTES = Object.freeze([
  * A night that lands on one of these takes a different path in the game's own day pipeline, which is why the
  * baseline names it out of scope rather than passing it (see `BASELINE_SCOPE_NOTES`).
  */
-export const FESTIVAL_DAYS_BY_SEASON = Object.freeze({
+const FESTIVAL_DAYS_BY_SEASON = Object.freeze({
   spring: Object.freeze([13, 24]),
   summer: Object.freeze([11, 28]),
   fall: Object.freeze([16, 27]),
@@ -164,7 +164,7 @@ export function classifyNight({ terminal, after }) {
  * days a longer companion meets - the season-boundary rollover and a festival - and both take different paths in
  * the game's own day pipeline, so a pass must not be read as covering them.
  */
-export function nightOutsideBaselineScope(classified) {
+function nightOutsideBaselineScope(classified) {
   if (classified === null || classified === undefined) return null;
   if (!classified.advanced) return null;
   // A season rollover is the night that ends on day 1: only the 28 -> 1 wrap can produce it, so it needs no

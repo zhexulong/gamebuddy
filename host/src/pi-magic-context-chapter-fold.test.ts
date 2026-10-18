@@ -124,6 +124,17 @@ import test from "node:test";
 import { createCompanionRuntime, resolveRuntimePaths, type CompanionIdentity } from "./runtime.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
+
+/**
+ * The root these cases build in - the same shape the Host's own launcher uses, because the product
+ * verifies it. `%LOCALAPPDATA%` on Windows (a path the OS authored, so already canonical), the temp
+ * directory elsewhere; canonicalizing `tmpdir()` alone is not enough on a CI runner (measured: the
+ * fold cases still failed `unsafe_path_boundary` with that fix in place).
+ */
+function canonicalRootParent(): string {
+  const root = process.platform === "win32" ? (process.env.LOCALAPPDATA ?? tmpdir()) : tmpdir();
+  return realpathSync(root);
+}
 import { createGameBuddyPlayerMemoryCrudFacade } from "@cortexkit/pi-magic-context/memory";
 
 const apiKey = process.env.CPA_OAI_API_KEY;
@@ -212,7 +223,7 @@ test(
     bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
     let runtime: Awaited<ReturnType<typeof createCompanionRuntime>> | undefined;
     let bodyFailed = false;
-    const root = await mkdtemp(join(realpathSync(tmpdir()), "gamebuddy-chapter-fold-"));
+    const root = await mkdtemp(join(canonicalRootParent(), "gamebuddy-chapter-fold-"));
     // The fixture's own bound on its body, and the reason it exists: a bound imposed from outside is
     // not a failure this test can survive. Node reports `--test-timeout` and then waits for the body,
     // so the run looks stalled for minutes; a runner that does kill the process (the Host suite's

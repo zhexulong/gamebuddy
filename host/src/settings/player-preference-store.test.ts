@@ -344,7 +344,7 @@ test("the runtime-facing reader resolves the player's choice from the one root p
 });
 
 test("the companion language is the player's own bounded tag, not a closed pair", async () => {
-  const root = await mkdtemp(join(tmpdir(), "player-preference-locale-"));
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "player-preference-locale-"));
   await mkdir(root, { recursive: true });
   const store = new PlayerPreferenceStore(playerPreferencePath(root));
 
