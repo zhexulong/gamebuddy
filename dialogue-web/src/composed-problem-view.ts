@@ -27,8 +27,45 @@ export type ProblemViewState = Readonly<{ kind: "problem"; title: string; detail
 /** Codes whose own meaning is "there is no live session behind this request". */
 const AUTHENTICATION_PROBLEM_CODES: readonly string[] = ["unauthorized", "csrf_failed"];
 
-/** The one code whose own meaning is "the state could not be safely reconciled". */
+/**
+ * Codes whose own meaning is "the state could not be safely reconciled".
+ */
 const RECONCILIATION_PROBLEM_CODES: readonly string[] = ["state_reconciliation_required"];
+
+/**
+ * The rewind refusals, each with its own sentence: a rewind is destructive, so "something went
+ * wrong" would leave the player unable to tell whether anything was removed.
+ */
+function rewindProblemView(code: string | null, labels: Messages): ProblemViewState | undefined {
+  switch (code) {
+    case "chat_message_not_found":
+      return {
+        kind: "problem",
+        title: labels.problemChatMessageNotFoundTitle,
+        detail: labels.problemChatMessageNotFoundDetail,
+      };
+    case "chat_message_revision_conflict":
+      return {
+        kind: "problem",
+        title: labels.problemChatMessageRevisionConflictTitle,
+        detail: labels.problemChatMessageRevisionConflictDetail,
+      };
+    case "chat_rewind_opening_retained":
+      return {
+        kind: "problem",
+        title: labels.problemChatRewindOpeningRetainedTitle,
+        detail: labels.problemChatRewindOpeningRetainedDetail,
+      };
+    case "chat_rewind_turn_active":
+      return {
+        kind: "problem",
+        title: labels.problemChatRewindTurnActiveTitle,
+        detail: labels.problemChatRewindTurnActiveDetail,
+      };
+    default:
+      return undefined;
+  }
+}
 
 /** Codes whose own meaning is "the page asked for a route this build does not serve". */
 const ABSENT_ROUTE_PROBLEM_CODES: readonly string[] = [
@@ -48,11 +85,7 @@ function problemCode(error: unknown): string | null {
 }
 
 function isRetryableProblem(error: unknown): boolean {
-  return (
-    (error instanceof ComposedReferenceGameProblemError ||
-      error instanceof TavernProblemError) &&
-    error.retryable
-  );
+  return (error instanceof ComposedReferenceGameProblemError || error instanceof TavernProblemError) && error.retryable;
 }
 
 /**
@@ -77,8 +110,7 @@ export function observedProblemCause(error: unknown): string | null {
 function internalProblem(error: unknown, labels: Messages): ProblemViewState {
   const code = observedProblemCode(error) ?? labels.problemInternalErrorNoCode;
   const cause = observedProblemCause(error);
-  const template =
-    cause === null ? labels.problemInternalErrorDetail : labels.problemInternalErrorCauseDetail;
+  const template = cause === null ? labels.problemInternalErrorDetail : labels.problemInternalErrorCauseDetail;
   return {
     kind: "problem",
     title: labels.problemInternalErrorTitle,
@@ -103,6 +135,8 @@ export function composedProblemView(error: unknown, labels: Messages): ProblemVi
       detail: labels.problemReconciliationFailedDetail,
     };
   }
+  const rewindView = rewindProblemView(code, labels);
+  if (rewindView !== undefined) return rewindView;
   if (code !== null && ABSENT_ROUTE_PROBLEM_CODES.includes(code)) {
     return {
       kind: "problem",

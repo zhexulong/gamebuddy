@@ -830,6 +830,94 @@
     cursor: not-allowed;
   }
 
+  /* The rewind control. It is the destructive affordance in this row, so it carries the same 44 px
+   target as the rest of the strip and, once armed, the row shows the confirmation instead of the
+   controls it would cut away. */
+  .rewind-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+    padding: 0 var(--space-3);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .rewind-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    background-color: var(--surface-hover);
+    border-color: var(--border-strong);
+  }
+
+  .rewind-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .message-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    width: 100%;
+  }
+
+  .message-confirm-prompt {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .message-confirm-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .rewind-confirm-yes,
+  .rewind-confirm-no {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+    padding: 0 var(--space-3);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .rewind-confirm-yes {
+    color: var(--text-primary);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-strong);
+  }
+
+  .rewind-confirm-no {
+    color: var(--text-secondary);
+    background-color: transparent;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .rewind-confirm-yes:hover:not(:disabled),
+  .rewind-confirm-no:hover:not(:disabled) {
+    background-color: var(--surface-hover);
+    color: var(--text-primary);
+  }
+
+  .rewind-confirm-yes:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   /* ==========================================================================
    Draft Section (P3 Read-Only Named Region)
    ========================================================================== */

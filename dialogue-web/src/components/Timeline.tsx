@@ -23,6 +23,10 @@ export function Timeline({
   onSwipe,
   onRegenerate,
   onOpeningVariant,
+  onRewind,
+  onRewindConfirm,
+  onRewindCancel,
+  rewindArmedHandle = null,
   pending = null,
   pendingPlayerMessage = null,
 }: {
@@ -49,17 +53,31 @@ export function Timeline({
     /** The catalogue's words for the Host's own greeting-variant labels. */
     openingVariantDefault: string;
     openingVariantAlternate: string;
+    /** The rewind control and the confirmation it opens. */
+    rewindHere: string;
+    rewindHereName: string;
+    rewindConfirmPrompt: string;
+    rewindConfirmYes: string;
+    rewindConfirmNo: string;
   };
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate?: (messageHandle: string) => void;
   /** The new-chat opening choice for the first message; offered only when the Host publishes one. */
   onOpeningVariant?: (messageHandle: string, direction: "prev" | "next") => void;
   /**
+   * The rewind point and its confirmation: the arm names the message and the order the timeline
+   * rendered it at, the confirm sends the mutation, and the cancel closes the arm.
+   */
+  onRewind?: (messageHandle: string, expectedOrder: number) => void;
+  onRewindConfirm?: (messageHandle: string, expectedOrder: number) => void;
+  onRewindCancel?: () => void;
+  /** The one message whose rewind is armed, if any. */
+  rewindArmedHandle?: string | null /**
    * The chat mutation in flight and the message it belongs to, if any. Only that
    * message's own controls go busy, so a swipe on one variant never disables the
    * regenerate affordance of another.
-   */
-  pending?: Readonly<{ kind: "swipe" | "regenerate" | "opening"; handle: string }> | null;
+   */;
+  pending?: Readonly<{ kind: "swipe" | "regenerate" | "opening" | "rewind"; handle: string }> | null;
   /**
    * The optimistic player message: the text just sent, shown until the
    * authoritative one lands.
@@ -113,6 +131,9 @@ export function Timeline({
   const onSwipeRef = useRef(onSwipe);
   const onRegenerateRef = useRef(onRegenerate);
   const onOpeningVariantRef = useRef(onOpeningVariant);
+  const onRewindRef = useRef(onRewind);
+  const onRewindConfirmRef = useRef(onRewindConfirm);
+  const onRewindCancelRef = useRef(onRewindCancel);
 
   // The handler props are re-created by the shell on every render - including
   // every streaming delta - so they are re-read through refs and the callbacks
@@ -123,6 +144,9 @@ export function Timeline({
     onSwipeRef.current = onSwipe;
     onRegenerateRef.current = onRegenerate;
     onOpeningVariantRef.current = onOpeningVariant;
+    onRewindRef.current = onRewind;
+    onRewindConfirmRef.current = onRewindConfirm;
+    onRewindCancelRef.current = onRewindCancel;
   });
 
   const handleSwipe = useCallback((messageHandle: string, direction: "prev" | "next") => {
@@ -134,11 +158,22 @@ export function Timeline({
   const handleOpeningVariant = useCallback((messageHandle: string, direction: "prev" | "next") => {
     onOpeningVariantRef.current?.(messageHandle, direction);
   }, []);
+  const handleRewind = useCallback((messageHandle: string, expectedOrder: number) => {
+    onRewindRef.current?.(messageHandle, expectedOrder);
+  }, []);
+  const handleRewindConfirm = useCallback((messageHandle: string, expectedOrder: number) => {
+    onRewindConfirmRef.current?.(messageHandle, expectedOrder);
+  }, []);
+  const handleRewindCancel = useCallback(() => {
+    onRewindCancelRef.current?.();
+  }, []);
   // A caller that passed no handler keeps no control: the bubble gates its
   // swipe/regenerate affordances on the handler being present.
   const swipeHandler = onSwipe === undefined ? undefined : handleSwipe;
   const regenerateHandler = onRegenerate === undefined ? undefined : handleRegenerate;
   const openingVariantHandler = onOpeningVariant === undefined ? undefined : handleOpeningVariant;
+  const rewindHandler = onRewind === undefined ? undefined : handleRewind;
+  const rewindConfirmHandler = onRewindConfirm === undefined ? undefined : handleRewindConfirm;
   /**
    * Regeneration re-asks the last thing the player said, so exactly one row can
    * offer it: the transcript's own last message, when that message is a companion
@@ -225,6 +260,11 @@ export function Timeline({
               onSwipe={swipeHandler}
               onRegenerate={message.handle === regenerateHandle ? regenerateHandler : undefined}
               onOpeningVariant={openingVariantHandler}
+              onRewind={rewindHandler}
+              onRewindConfirm={rewindConfirmHandler}
+              onRewindCancel={onRewindCancel === undefined ? undefined : handleRewindCancel}
+              rewindArmed={rewindArmedHandle === message.handle}
+              removedCount={transcript.length - message.order}
             />
           ))}
           {preview !== null && (

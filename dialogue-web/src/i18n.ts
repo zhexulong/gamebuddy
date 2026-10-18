@@ -315,6 +315,14 @@ const en = {
   swipePrevious: "Previous variant",
   swipeNext: "Next variant",
   regenerateVariant: "Regenerate",
+  // The rewind control: a message's own strip, one button, and what pressing it will remove. A
+  // rewind is destructive and has no undo, so the arm states the consequence and only the confirm
+  // sends it - the same shape the Chats row's archive/trash uses.
+  rewindHere: "Rewind to here",
+  rewindHereName: "Rewind to here: removes this message and everything after it ({{count}} in all)",
+  rewindConfirmPrompt: "Remove this message and everything after it? This cannot be undone.",
+  rewindConfirmYes: "Remove",
+  rewindConfirmNo: "Keep",
   // The Host's own name for the greeting variant a new chat opened on: it labels
   // the greeting set's entries `Default` / `Alternate N` (the card's own 1-based
   // order). The catalogue carries that vocabulary so a zh-CN UI never prints the
@@ -339,6 +347,18 @@ const en = {
   problemInternalErrorDetail: "GameBuddy reported an internal error (code {{code}}).",
   problemInternalErrorCauseDetail: "GameBuddy reported an internal error (code {{code}}; cause {{cause}}).",
   problemInternalErrorNoCode: "none reported",
+  // The rewind refusals, one sentence each: which row is gone, which view has moved, which point is
+  // the greeting, and whether a reply is still being written.
+  problemChatMessageNotFoundTitle: "That message is gone",
+  problemChatMessageNotFoundDetail:
+    "This conversation no longer has that message. Read it again and pick another point to rewind to.",
+  problemChatMessageRevisionConflictTitle: "The conversation moved",
+  problemChatMessageRevisionConflictDetail:
+    "This message is no longer where the page read it. Reload the page and try again.",
+  problemChatRewindOpeningRetainedTitle: "That is the opening",
+  problemChatRewindOpeningRetainedDetail: "The greeting this conversation started on cannot be removed.",
+  problemChatRewindTurnActiveTitle: "A reply is still being written",
+  problemChatRewindTurnActiveDetail: "Stop the reply that is in flight, then rewind.",
 
   // Characters (design/28 §2) — companion library + persona/scenario/greeting
   charactersTitle: "Characters",
@@ -847,6 +867,13 @@ const zh: Messages = {
   swipePrevious: "上一个变体",
   swipeNext: "下一个变体",
   regenerateVariant: "重新生成",
+  // 回退控件：消息自己的操作条上一个按钮，并说清按下去会删掉什么。回退不可撤销，所以先确认再发送，与
+  // 会话行上的归档/删除同一形状。
+  rewindHere: "回退到这里",
+  rewindHereName: "回退到这里：删除这条消息及其之后的全部内容（共 {{count}} 条）",
+  rewindConfirmPrompt: "删除这条消息及其之后的全部内容？此操作无法撤销。",
+  rewindConfirmYes: "删除",
+  rewindConfirmNo: "保留",
   openingVariantDefault: "默认",
   openingVariantAlternate: "备用 {{index}}",
 
@@ -865,6 +892,14 @@ const zh: Messages = {
   problemInternalErrorDetail: "GameBuddy 报告了内部错误（代码 {{code}}）。",
   problemInternalErrorCauseDetail: "GameBuddy 报告了内部错误（代码 {{code}}；原因 {{cause}}）。",
   problemInternalErrorNoCode: "未报告任何代码",
+  problemChatMessageNotFoundTitle: "这条消息已经不在了",
+  problemChatMessageNotFoundDetail: "这个对话里已经没有这条消息了。请重新读取，另选一个回退位置。",
+  problemChatMessageRevisionConflictTitle: "对话已经变化",
+  problemChatMessageRevisionConflictDetail: "这条消息已经不在页面上显示的位置了。请重新加载页面后重试。",
+  problemChatRewindOpeningRetainedTitle: "这是开场问候",
+  problemChatRewindOpeningRetainedDetail: "对话开始时的那句问候不能删除。",
+  problemChatRewindTurnActiveTitle: "还有一条回复正在生成",
+  problemChatRewindTurnActiveDetail: "请先停止正在生成的回复，再回退。",
 
   // Characters (design/28 §2)
   charactersTitle: "角色",

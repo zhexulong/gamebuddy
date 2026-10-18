@@ -122,12 +122,11 @@ const ProblemCode = Type.Union([
   Type.Literal("chat_opening_variant_not_found"),
   // Rewinding the conversation to an earlier message (`chat.rewind`) is one mutation over two
   // authorities - the visible transcript and the model's own session - so every way it can be
-  // refused is its own bounded fact about which point the player named: a handle this Chat does
-  // not carry, a view of the transcript that has already moved, a point with nothing after it,
-  // the greeting the Chat opened on, or a reply that is still being written.
+  // refused is its own bounded fact about the point the player named: a handle this Chat does not
+  // carry, a view of the transcript that has already moved, the greeting the Chat opened on, or a
+  // reply that is still being written.
   Type.Literal("chat_message_not_found"),
   Type.Literal("chat_message_revision_conflict"),
-  Type.Literal("chat_rewind_nothing_after"),
   Type.Literal("chat_rewind_opening_retained"),
   Type.Literal("chat_rewind_turn_active"),
   // A durable companion record that is absent, incomplete or unreadable is a data-integrity
@@ -1677,7 +1676,6 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_opening_variant_not_found",
   "chat_message_not_found",
   "chat_message_revision_conflict",
-  "chat_rewind_nothing_after",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
   "dialogue_busy",

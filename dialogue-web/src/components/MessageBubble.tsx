@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ChevronLeft, ChevronRight, LoaderCircle, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, LoaderCircle, RefreshCw, Undo2 } from "lucide-react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
 import { CompanionAvatar } from "./CompanionAvatar";
@@ -49,6 +49,11 @@ export const MessageBubble = memo(function MessageBubble({
   onSwipe,
   onRegenerate,
   onOpeningVariant,
+  onRewind,
+  onRewindConfirm,
+  onRewindCancel,
+  rewindArmed = false,
+  removedCount = 0,
   pending = null,
   streaming = false,
   waitingNote = null,
@@ -68,12 +73,29 @@ export const MessageBubble = memo(function MessageBubble({
    */
   onOpeningVariant?: (messageHandle: string, direction: "prev" | "next") => void;
   /**
+   * The rewind control's first half: it removes this message and everything after it, so the click
+   * only ARMS the action and the confirm below the prompt is what sends it. The accessor is handed
+   * the order the page rendered this message at, because the Host refuses a message that is no
+   * longer there - the transcript is what a position means.
+   */
+  onRewind?: (messageHandle: string, expectedOrder: number) => void;
+  onRewindConfirm?: (messageHandle: string, expectedOrder: number) => void;
+  onRewindCancel?: () => void;
+  /** True for the one message whose rewind is armed: its strip becomes that confirmation. */
+  rewindArmed?: boolean;
+  /**
+   * How many messages this point would remove, counted from the transcript this bubble belongs to.
+   * It is what the control's accessible name says the press will remove, before it is pressed; zero
+   * (a caller that could not count, or a row that is not part of the transcript) offers no control.
+   */
+  removedCount?: number;
+  /**
    * The mutation this exact message is waiting on, if any. While it is set the
    * message's own controls are disabled: the shell already guards against a second
    * command with its single-flight ref, and the control saying so is what keeps a
    * double click from looking like it did nothing.
    */
-  pending?: "swipe" | "regenerate" | "opening" | null;
+  pending?: "swipe" | "regenerate" | "opening" | "rewind" | null;
   /**
    * True only for the live streaming preview: the bubble then carries the
    * reading caret. The caret is inserted into the bubble's last block on every
@@ -106,6 +128,11 @@ export const MessageBubble = memo(function MessageBubble({
     regenerateVariant: string;
     openingVariantDefault: string;
     openingVariantAlternate: string;
+    rewindHere: string;
+    rewindHereName: string;
+    rewindConfirmPrompt: string;
+    rewindConfirmYes: string;
+    rewindConfirmNo: string;
   }>;
 }) {
   const isPlayer = message.role === "player";
@@ -122,6 +149,14 @@ export const MessageBubble = memo(function MessageBubble({
   // The message's own swipe set, when the Host published more than one variant of
   // it. It is the same shape as the opening choice, and it reads the same way.
   const swipeSet = swipeInfo !== undefined && swipeInfo.totalSwipes > 1 ? swipeInfo : undefined;
+  /**
+   * The rewind point is the message the conversation is cut back TO, so the greeting is never one
+   * (the Host refuses it), a row that is not part of the transcript is never one, and a point with
+   * nothing after it is not a rewind at all.
+   */
+  const rewindPoint =
+    onRewind !== undefined && removedCount > 0 && message.order > 0 && !isPlayer ? removedCount : undefined;
+  const rewindName = labels.rewindHereName.replace("{{count}}", String(removedCount));
   // Whether this message's strip has a pager at all: the strip exists for its own
   // controls, so a message with neither keeps no empty row under the bubble.
   const hasControls = openingChoice !== undefined || swipeSet !== undefined;
@@ -176,9 +211,41 @@ export const MessageBubble = memo(function MessageBubble({
             bubble, regenerate 493..537 under it, their centres 145 px apart - and
             going back to an earlier variant after asking again meant crossing the
             bubble. */}
-        {!isPlayer && (hasControls || onRegenerate) && (
+        {!isPlayer && (hasControls || onRegenerate || rewindPoint !== undefined || rewindArmed) && (
           <div className="message-actions">
-            {openingChoice && (
+            {/* An armed rewind is this message's only control: the pager and regenerate step aside
+                for the confirmation the same way a Chats row's own strip does. */}
+            {rewindArmed && (
+              <div className="message-confirm" data-testid="message-rewind-confirm">
+                <p className="message-confirm-prompt" role="status">
+                  {labels.rewindConfirmPrompt}
+                </p>
+                <div className="message-confirm-actions">
+                  <button
+                    type="button"
+                    className="action-btn rewind-confirm-yes"
+                    data-testid="message-rewind-confirm-yes"
+                    disabled={busy}
+                    onClick={() => onRewindConfirm?.(message.handle, message.order)}
+                    title={labels.rewindConfirmYes}
+                    aria-label={labels.rewindConfirmYes}
+                  >
+                    {labels.rewindConfirmYes}
+                  </button>
+                  <button
+                    type="button"
+                    className="action-btn rewind-confirm-no"
+                    data-testid="message-rewind-confirm-no"
+                    onClick={() => onRewindCancel?.()}
+                    title={labels.rewindConfirmNo}
+                    aria-label={labels.rewindConfirmNo}
+                  >
+                    {labels.rewindConfirmNo}
+                  </button>
+                </div>
+              </div>
+            )}
+            {!rewindArmed && openingChoice && (
               <div className="swipe-controls" aria-label={labels.swipeNavigation}>
                 {/* The glyph is the visible control and the number between the two
                     is the state; the words live in the accessible name. Long labels
@@ -208,7 +275,7 @@ export const MessageBubble = memo(function MessageBubble({
                 </button>
               </div>
             )}
-            {swipeSet && (
+            {!rewindArmed && swipeSet && (
               <div className="swipe-controls" aria-label={labels.swipeNavigation}>
                 <button
                   type="button"
@@ -233,7 +300,7 @@ export const MessageBubble = memo(function MessageBubble({
                 </button>
               </div>
             )}
-            {onRegenerate && (
+            {!rewindArmed && onRegenerate && (
               <button
                 type="button"
                 className="action-btn regenerate-btn"
@@ -251,7 +318,26 @@ export const MessageBubble = memo(function MessageBubble({
                 {labels.regenerateVariant}
               </button>
             )}
-            {waitingNote !== null && (
+            {!rewindArmed && rewindPoint !== undefined && (
+              <button
+                type="button"
+                className="action-btn rewind-btn"
+                data-testid="message-rewind"
+                disabled={busy}
+                {...(pending === "rewind" ? { "data-busy": "true" as const } : {})}
+                onClick={() => onRewind?.(message.handle, message.order)}
+                title={rewindName}
+                aria-label={rewindName}
+              >
+                {pending === "rewind" ? (
+                  <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                ) : (
+                  <Undo2 size={14} aria-hidden="true" />
+                )}
+                {labels.rewindHere}
+              </button>
+            )}
+            {!rewindArmed && waitingNote !== null && (
               <span className="message-waiting" role="status">
                 {waitingNote}
               </span>

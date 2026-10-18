@@ -100,9 +100,13 @@ export function ComposedReferenceGameApp() {
   // commands (regenerate mints a fresh idempotency key per click). The ref is the
   // synchronous single-flight guard, the state is the projection the surface shows.
   const [chatMutation, setChatMutation] = useState<Readonly<{
-    kind: "swipe" | "regenerate" | "opening";
+    kind: "swipe" | "regenerate" | "opening" | "rewind";
     handle: string;
   }> | null>(null);
+  // The rewind arm: the message the player asked to cut back to, and the order they were shown it
+  // at. A rewind destroys everything after that point, so the arm only names the target and the
+  // confirmation below the bubble is what sends it.
+  const [rewindArm, setRewindArm] = useState<Readonly<{ handle: string; expectedOrder: number }> | null>(null);
   const chatMutationRef = useRef(false);
   // The durable draft's authoring state is the composer's own field (see the
   // seeding effect below); what stays here is the closed outcome line its
@@ -859,6 +863,57 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
+   * The rewind arm and its confirmation. The arm names the message AND the order the page rendered
+   * it at, and it is dropped the moment that pairing stops holding, so a stale arm can never fire a
+   * destructive command on a message the player is no longer looking at. The Host re-checks the
+   * same pairing anyway: this only keeps the surface honest.
+   */
+  const mountedTranscript = view.kind === "ready" ? (view.session.snapshot.chat?.transcript ?? null) : null;
+  useEffect(() => {
+    if (rewindArm === null) return;
+    if (
+      mountedTranscript?.some(
+        (message) => message.handle === rewindArm.handle && message.order === rewindArm.expectedOrder,
+      ) === true
+    )
+      return;
+    setRewindArm(null);
+  }, [rewindArm, mountedTranscript]);
+
+  const handleRewindArm = (messageHandle: string, expectedOrder: number): void => {
+    setRewindArm(Object.freeze({ handle: messageHandle, expectedOrder }));
+  };
+
+  const handleRewindCancel = (): void => {
+    setRewindArm(null);
+  };
+
+  const handleRewindConfirm = async (messageHandle: string, expectedOrder: number): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    if (chatMutationRef.current) return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    setRewindArm(null);
+    chatMutationRef.current = true;
+    setChatMutation(Object.freeze({ kind: "rewind" as const, handle: messageHandle }));
+    try {
+      await tavernApiRef.current.rewind(
+        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, expectedOrder },
+        { csrfToken: current.session.snapshot.csrfToken },
+      );
+      await rereadChat();
+    } catch (error) {
+      await rereadChat().catch(() => {
+        commit(problemView(error, messages(current.locale)));
+      });
+    } finally {
+      chatMutationRef.current = false;
+      setChatMutation(null);
+    }
+  };
+
+  /**
    * A rename from the Chats surface is a management mutation, and the composed
    * root owns this shell's Chat projection (its title heading included), so the
    * composed `/state` read is the authority that moves the heading. The panel
@@ -1206,6 +1261,12 @@ export function ComposedReferenceGameApp() {
                 onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
                 onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
                 onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
+                onRewind={handleRewindArm}
+                onRewindConfirm={(messageHandle, expectedOrder) =>
+                  void handleRewindConfirm(messageHandle, expectedOrder)
+                }
+                onRewindCancel={handleRewindCancel}
+                rewindArmedHandle={rewindArm === null ? null : rewindArm.handle}
                 value={inputText}
                 onChange={writeInput}
                 onSend={() => void handleSend()}

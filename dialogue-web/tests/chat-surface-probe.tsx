@@ -55,11 +55,16 @@ type Model = Readonly<{
   preview: Readonly<{ turnHandle: string; text: string }> | null;
   voice: VoiceSurfaceStateV1 | null;
   /** The chat mutation in flight, exactly as the shell projects it to Timeline. */
-  pending: Readonly<{ kind: "swipe" | "regenerate" | "opening"; handle: string }> | null;
+  pending: Readonly<{ kind: "swipe" | "regenerate" | "opening" | "rewind"; handle: string }> | null;
+  /** The one message whose rewind is armed, exactly as the shell projects it to Timeline. */
+  rewindArmedHandle: string | null;
 }>;
 
-let model: Model = { transcript: [], preview: null, voice: null, pending: null };
+let model: Model = { transcript: [], preview: null, voice: null, pending: null, rewindArmedHandle: null };
 let rerender: (() => void) | null = null;
+
+/** Every rewind control a journey pressed, so a test can see what the surface sent. */
+const rewindCalls: { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] = [];
 
 function Probe() {
   const [, bump] = useState(0);
@@ -80,6 +85,27 @@ function Probe() {
         labels={LABELS}
         onSwipe={() => undefined}
         onRegenerate={() => undefined}
+        /*
+         * The rewind drives the shell's own two-step shape: the arm is local presentation state
+         * here, exactly as the shell keeps it, and the confirm is what a journey observes on the
+         * way to the Host.
+         */
+        onRewind={(handle, order) => {
+          rewindCalls.push({ kind: "arm", handle, order });
+          model = { ...model, rewindArmedHandle: handle };
+          rerender?.();
+        }}
+        onRewindConfirm={(handle, order) => {
+          rewindCalls.push({ kind: "confirm", handle, order });
+          model = { ...model, rewindArmedHandle: null };
+          rerender?.();
+        }}
+        onRewindCancel={() => {
+          rewindCalls.push({ kind: "cancel", handle: "", order: -1 });
+          model = { ...model, rewindArmedHandle: null };
+          rerender?.();
+        }}
+        rewindArmedHandle={model.rewindArmedHandle}
         pending={model.pending}
       />
       <Composer
@@ -125,9 +151,62 @@ const chatProbe = {
     model = { ...model, voice: state };
     rerender?.();
   },
-  setPending(pending: { kind: "swipe" | "regenerate" | "opening"; handle: string } | null): void {
+  setPending(pending: { kind: "swipe" | "regenerate" | "opening" | "rewind"; handle: string } | null): void {
     model = { ...model, pending };
     rerender?.();
+  },
+  /** Every arm, confirm and cancel this probe's rewind control has sent. */
+  rewindCalls(): readonly { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] {
+    return [...rewindCalls];
+  },
+  resetRewindCalls(): void {
+    rewindCalls.length = 0;
+  },
+  /**
+   * The rewind control as the player meets it: what it is called, and the target it actually
+   * paints. A control whose measured box is under the touch minimum is the defect the journey
+   * exists for, so the size is read from the layout rather than from a class name.
+   */
+  rewindControl(handle: string): {
+    ariaLabel: string | null;
+    title: string | null;
+    label: string | null;
+    width: number;
+    height: number;
+  } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const button = li?.querySelector('[data-testid="message-rewind"]') as HTMLButtonElement | null;
+    if (button === null || button === undefined) return null;
+    const rect = button.getBoundingClientRect();
+    return {
+      ariaLabel: button.getAttribute("aria-label"),
+      title: button.getAttribute("title"),
+      label: button.textContent,
+      width: rect.width,
+      height: rect.height,
+    };
+  },
+  /**
+   * The armed confirmation on `handle`'s row: its prompt, its two answers, and how many of the
+   * row's ordinary controls are still rendered beside it (the confirmation is meant to replace
+   * them, not sit among them).
+   */
+  rewindConfirm(handle: string): {
+    prompt: string | null;
+    yes: string | null;
+    no: string | null;
+    ordinaryControls: number;
+  } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const confirm = li?.querySelector('[data-testid="message-rewind-confirm"]');
+    if (confirm === null || confirm === undefined) return null;
+    return {
+      prompt: confirm.querySelector(".message-confirm-prompt")?.textContent ?? null,
+      yes: confirm.querySelector('[data-testid="message-rewind-confirm-yes"]')?.textContent ?? null,
+      no: confirm.querySelector('[data-testid="message-rewind-confirm-no"]')?.textContent ?? null,
+      ordinaryControls:
+        (li?.querySelectorAll('.swipe-controls, .regenerate-btn, [data-testid="message-rewind"]').length ?? 0),
+    };
   },
   /** A transcript entry with swipe variants, so the swipe controls are offered. */
   withSwipes(handle: string, text: string): void {
@@ -187,6 +266,7 @@ const chatProbe = {
     swipeDisabled: boolean;
     switcherDisabled: boolean;
     regenerateDisabled: boolean;
+    rewindDisabled: boolean;
   } | null {
     const li = document.querySelector(`li[data-handle="${handle}"]`);
     if (li === null) return null;
@@ -198,6 +278,8 @@ const chatProbe = {
       swipeDisabled: switcherDisabled,
       switcherDisabled,
       regenerateDisabled: (li.querySelector(".regenerate-btn") as HTMLButtonElement | null)?.disabled ?? false,
+      rewindDisabled:
+        (li.querySelector('[data-testid="message-rewind"]') as HTMLButtonElement | null)?.disabled ?? false,
     };
   },
   voiceState(): string | null {

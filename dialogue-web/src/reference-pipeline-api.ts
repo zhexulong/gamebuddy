@@ -351,6 +351,12 @@ const PROBLEM_CODES = [
   "chat_opening_locked",
   "chat_opening_not_greeting",
   "chat_opening_variant_not_found",
+  // The rewind refusals: each names one point the player asked for. See `TAVERN_BROWSER_PROBLEM_CODES_V1`'s
+  // sibling in the Host contract.
+  "chat_message_not_found",
+  "chat_message_revision_conflict",
+  "chat_rewind_opening_retained",
+  "chat_rewind_turn_active",
   // A durable companion record that is absent, incomplete or unreadable is a data-integrity fact,
   // not a retryable runtime outage.
   "companion_record_unreadable",
@@ -948,6 +954,19 @@ export type ReferencePipelineApi = Readonly<{
     }>,
     options: Readonly<{ csrfToken: string; idempotencyKey: string }>,
   ): Promise<SubmitResultV1>;
+  /**
+   * POST /api/tavern/v1/messages/rewind with CSRF. The named message and every message after it
+   * leave the conversation; the answer is the row that now ends it, or `null` when it is empty.
+   */
+  rewind(
+    command: Readonly<{
+      apiVersion: 1;
+      selectionGeneration: number;
+      messageHandle: string;
+      expectedOrder: number;
+    }>,
+    options: Readonly<{ csrfToken: string }>,
+  ): Promise<Readonly<{ apiVersion: 1; lastMessage: BrowserMessageV1 | null }>>;
   /** POST /api/tavern/v1/turns/:turnHandle/cancel with CSRF. */
   cancel(turnHandle: string, command: CancelTurnCommandV1, csrfToken: string): Promise<CancelTurnResultV1>;
   /** POST /api/tavern/v1/message-submission-status (no CSRF/idempotency headers). */
@@ -1043,6 +1062,26 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
           "x-csrf-token": options.csrfToken,
           "idempotency-key": options.idempotencyKey,
         },
+        command,
+      );
+    },
+    async rewind(command, options) {
+      if (!isRecord(command) || !isOpaqueHandle(options.csrfToken)) throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/messages/rewind",
+        200,
+        (body) => {
+          if (
+            !isRecord(body) ||
+            body.apiVersion !== 1 ||
+            (body.lastMessage !== null && !isBrowserMessage(body.lastMessage))
+          )
+            throw new TavernProtocolError();
+          return Object.freeze({ apiVersion: 1 as const, lastMessage: body.lastMessage });
+        },
+        { "Content-Type": "application/json", "x-csrf-token": options.csrfToken },
         command,
       );
     },

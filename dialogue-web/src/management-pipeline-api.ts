@@ -1058,6 +1058,10 @@ const PROBLEM_CODES = [
   "chat_opening_locked",
   "chat_opening_not_greeting",
   "chat_opening_variant_not_found",
+  "chat_message_not_found",
+  "chat_message_revision_conflict",
+  "chat_rewind_opening_retained",
+  "chat_rewind_turn_active",
   // The managed World Info library's own refusals (`world-info.create`/`update`/`delete`/`detail`):
   // the item is gone, its title is taken, the edit raced a newer revision, or the mounted Chat
   // still reads it. Each reaches the player as its own code rather than as a generic failure.
