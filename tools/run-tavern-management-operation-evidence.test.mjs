@@ -33,69 +33,69 @@ function attemptBody(operationId) {
   throw new Error(`${operationId} block is unterminated`);
 }
 
-const ALL_OPERATIONS = [
-  "draft.save",
-  "draft.discard",
-  "chat.rename",
-  "chat.opening",
-  "memory.mutate",
-  "world-info.bind",
-  "world-info.create",
-  "world-info.detail",
-  "world-info.update",
-  "world-info.delete",
-  "settings.voice.read",
-  "settings.voice.consent",
-  "settings.voice.devices",
-  "settings.language.read",
-  "settings.language.update",
-  "settings.connection.read",
-  "settings.connection.create",
-  "settings.connection.test",
-  "settings.connection.activate",
-  "settings.connection.model",
-  "settings.connection.remove",
-  "settings.profiles.read",
-  "settings.profiles.update",
-  "companion.list",
-  "companion.create",
-  "companion.worldbook.read",
-  "character.voice.read",
-  "character.voice.update",
-  "persona.read",
-  "persona.update",
-  "scenario.read",
-  "scenario.update",
-  "greeting.read",
-  "greeting.update",
-  "chat.create",
-  "chat.select",
-  "chat.archive",
-  "chat.restore",
-  "chat.trash",
-  "character.import.stage",
-  "character.import.read",
-  "character.import.review",
-  "character.import.confirm",
-  "character.import.history",
-];
+/**
+ * The producer's vocabulary is the MOUNTED PROFILE's, derived here rather than kept as a second
+ * hand-written copy of it.
+ *
+ * That copy drifted twice in one night: `companion.detail` was deleted from the profile and stayed
+ * in the list, and `chat.opening`/`chat.create`/`chat.select` and the world-book reads were declared
+ * and missing from it. A list that has to be hand-edited to agree with the profile is the drift the
+ * equality assertion was standing in front of, and editing it is also how the next operation gets
+ * silently skipped. Both directions are checked below instead, so the only things that can fail are
+ * a MISSING attempt block and a STALE one, each named by the operation it belongs to.
+ */
+const { readMountedTavernManagementProfile } = await import("./lib/tavern-mounted-operation-vocabulary.mjs");
+const DECLARED_OPERATIONS = readMountedTavernManagementProfile().operationIds;
 
-test("the producer exercises every operation the mounted profile declares", async () => {
-  const { readMountedTavernManagementProfile } = await import("./lib/tavern-mounted-operation-vocabulary.mjs");
-  const declared = readMountedTavernManagementProfile().operationIds;
-  assert.deepEqual([...declared].sort(), [...ALL_OPERATIONS].sort());
-  for (const operationId of declared) attemptBody(operationId);
+/** Every operation the producer actually exercises, read out of its own source. */
+function attemptedOperations() {
+  return [...SOURCE.matchAll(/await attempt\("([a-z][a-z0-9._-]*)"/g)].map((match) => match[1]);
+}
+
+/** The bounded machine codes one attempt block asserts about its own reply, or null when it has none. */
+function assertedCodesOrNull(operationId) {
+  if (!SOURCE.includes(`await attempt("${operationId}", async () => {`)) return null;
+  return [...attemptBody(operationId).matchAll(/throw new Error\("([a-z0-9_]+)"\)/g)].map((match) => match[1]);
+}
+
+test("the producer exercises every operation the mounted profile declares", (t) => {
+  // A declared operation with no attempt block leaves the release evidence claiming a surface
+  // exists while nothing exercised it. The failure names the operation it is missing for.
+  const missing = DECLARED_OPERATIONS.filter((operationId) => assertedCodesOrNull(operationId) === null);
+  const attempted = attemptedOperations();
+  t.diagnostic(
+    `operation-evidence.1: ${DECLARED_OPERATIONS.length} operation(s) declared by the mounted profile, ${attempted.length} attempt block(s) in the producer, ${DECLARED_OPERATIONS.length - missing.length} covered, ${missing.length} missing`,
+  );
+  assert.deepEqual(missing, [], "every operation the mounted profile declares must be exercised by the producer");
 });
 
-test("no operation is reported as passed on the strength of a 2xx alone", () => {
+test("the producer exercises nothing the mounted profile does not declare", (t) => {
+  // The reverse direction, which is what the hand-written list used to catch and what no derived
+  // comparison can: a block kept for an operation the profile no longer declares is a stale step
+  // whose outcome would be reported for a surface that does not exist.
+  const declared = new Set(DECLARED_OPERATIONS);
+  const attempted = attemptedOperations();
+  const stale = [...new Set(attempted.filter((operationId) => !declared.has(operationId)))];
+  t.diagnostic(
+    `operation-evidence.2: ${attempted.length} attempt block(s), ${attempted.length - stale.length} matching a declared operation, ${stale.length} stale`,
+  );
+  assert.deepEqual(stale, [], "a step must name an operation the mounted profile declares");
+});
+
+test("no operation is reported as passed on the strength of a 2xx alone", (t) => {
   // Every block must assert something about the REPLY, not only that the call
   // resolved. `sendJson` already throws on a non-2xx, so a block whose only
   // statement is the request would report a pass for a no-op server.
-  for (const operationId of ALL_OPERATIONS) {
-    const body = attemptBody(operationId);
-    const assertions = [...body.matchAll(/throw new Error\("([a-z0-9_]+)"\)/g)].map((m) => m[1]);
-    assert.ok(assertions.length > 0, `${operationId} asserts nothing about the response: ${body.slice(0, 120)}`);
+  const bare = [];
+  for (const operationId of DECLARED_OPERATIONS) {
+    const assertions = assertedCodesOrNull(operationId);
+    if (assertions === null) continue;
+    if (assertions.length === 0) bare.push(operationId);
   }
+  t.diagnostic(
+    `operation-evidence.3: ${DECLARED_OPERATIONS.length - bare.length} operation(s) assert at least one postcondition, ${bare.length} assert nothing`,
+  );
+  assert.deepEqual(bare, [], "an operation whose only statement is the request reports nothing as evidence");
 });
 
 test("the writes assert their durable effect, not only the reply shape", () => {
@@ -152,7 +152,20 @@ test("the writes assert their durable effect, not only the reply shape", () => {
       "character_voice_source_not_player",
       "character_voice_not_durable",
     ],
+    // Her own world book is one durable file replaced whole, CASed on the revision the step read.
+    // This step is the one write that sends TWO mutations - it puts a marked body in and then puts
+    // her own body back - so the codes below are the ones asserted after its LAST request; the
+    // advance from +1 to +2 is what proves the edit really landed in between, and the codes for the
+    // edit itself (`worldbook_edit_not_applied`, `worldbook_edit_revision_unadvanced`) are asserted
+    // against the reply and the read-back between the two writes.
+    "companion.worldbook.update": ["worldbook_restore_not_applied", "worldbook_revision_unadvanced"],
   };
+  // A write that belongs to no declared operation is a stale entry, exactly like a stale attempt
+  // block: its codes would be checked against a surface the mounted profile does not serve.
+  const undeclared = Object.keys(postWriteAssertions).filter(
+    (operationId) => !DECLARED_OPERATIONS.includes(operationId),
+  );
+  assert.deepEqual(undeclared, [], "every write named here must be an operation the mounted profile declares");
   for (const [operationId, codes] of Object.entries(postWriteAssertions)) {
     const body = attemptBody(operationId);
     // The mutation is the LAST request the block sends: everything the block

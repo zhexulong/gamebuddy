@@ -851,7 +851,9 @@ async function exerciseOperations(origin, client) {
   // companion.worldbook.read: her OWN book (what the reviewed card carried), which is a different
   // store from the attachable library above. The mounted companion was provisioned from a card
   // whose world book the conversation's own binding names, so an absent book here would mean the
-  // surface lost the book the Chat is actually carrying.
+  // surface lost the book the Chat is actually carrying. (This step used to report `blocked`: the
+  // route validates its reply with `CompanionWorldBookV1Schema` and the published entry schema did
+  // not declare the `content` the service projects. It declares it now, so the read round-trips.)
   await attempt("companion.worldbook.read", async () => {
     const handle = await currentCompanionHandle();
     // KNOWN BLOCKER for this operation, recorded so nobody has to derive it again: the route
@@ -874,6 +876,81 @@ async function exerciseOperations(origin, client) {
       if (!Array.isArray(entry.keys)) throw new Error("companion_world_book_keys_missing");
       if (typeof entry.content !== "string") throw new Error("companion_world_book_content_missing");
     }
+  });
+
+  // companion.worldbook.update: the player rewrites her OWN book. It is one durable file replaced
+  // whole, so the edit CASes on the revision the read above carried, and the entry list it sends is
+  // the list it read - the projection's own shape.
+  //
+  // The RESTORE is part of this operation's postcondition, not cleanup. This harness edits a real
+  // companion's real book inside the run's own root, and an artifact that left a run's companion
+  // carrying test prose would describe a product state nobody has. So the step asserts three facts,
+  // none of which can hold against a server that stored nothing: the reply shows the marked body at
+  // the next revision, the read route shows the marked body too (the file, not the reply), and the
+  // read after the restore shows HER OWN body back at exactly two revisions further - which is the
+  // evidence that both writes landed, because a book that never changed cannot be two ahead.
+  await attempt("companion.worldbook.update", async () => {
+    const handle = await currentCompanionHandle();
+    const path = `/api/tavern/v1/companions/${handle}/worldbook`;
+    const before = await readJson(origin, client, path);
+    if (before === null || typeof before !== "object") throw new Error("worldbook_unavailable");
+    if (before.present !== true) throw new Error("worldbook_not_present");
+    if (!Number.isSafeInteger(before.revision) || before.revision < 1)
+      throw new Error("worldbook_revision_unavailable");
+    if (!Array.isArray(before.entries) || before.entries.length === 0) throw new Error("worldbook_entries_missing");
+    const originalEntries = before.entries;
+    const markedEntries = originalEntries.map((entry, index) =>
+      index === 0 ? { ...entry, content: `${entry.content}\n[evidence: companion.worldbook.update]` } : entry,
+    );
+    const edited = await sendJson(origin, client, "PUT", path, {
+      apiVersion: 1,
+      expectedRevision: before.revision,
+      entries: markedEntries,
+    });
+    if (edited === null || typeof edited !== "object") throw new Error("worldbook_edit_unavailable");
+    if (edited.revision !== before.revision + 1) throw new Error("worldbook_edit_revision_unadvanced");
+    if (edited.entries?.[0]?.content !== markedEntries[0].content) throw new Error("worldbook_edit_not_applied");
+    // The durable half: the read route is a second read of the store the file lives in.
+    const afterEdit = await readJson(origin, client, path);
+    if (afterEdit?.entries?.[0]?.content !== markedEntries[0].content) throw new Error("worldbook_edit_not_durable");
+    const restored = await sendJson(origin, client, "PUT", path, {
+      apiVersion: 1,
+      expectedRevision: edited.revision,
+      entries: originalEntries,
+    });
+    if (restored?.revision !== edited.revision + 1) throw new Error("worldbook_restore_revision_unadvanced");
+    const afterRestore = await readJson(origin, client, path);
+    if (afterRestore?.entries?.[0]?.content !== originalEntries[0].content)
+      throw new Error("worldbook_restore_not_applied");
+    if (afterRestore?.revision !== before.revision + 2) throw new Error("worldbook_revision_unadvanced");
+  });
+
+  // companion.profile.read: the read-only character inspector - one ROSTER companion's own
+  // authored facts, addressed by the handle the roster just handed out. It is the one
+  // companion-addressed read that resolves a companion who is NOT the mounted one, so the step
+  // reads the row the list marks current and checks the shape the inspector renders.
+  await attempt("companion.profile.read", async () => {
+    const handle = await currentCompanionHandle();
+    const profile = await readJson(origin, client, `/api/tavern/v1/companions/${handle}/profile`);
+    if (profile === null || typeof profile !== "object") throw new Error("companion_profile_unavailable");
+    if (typeof profile.name !== "string" || profile.name.length === 0)
+      throw new Error("companion_profile_name_missing");
+    if (typeof profile.persona?.present !== "boolean") throw new Error("companion_profile_persona_missing");
+    for (const dimension of ["core", "interactionStyle", "expressionStyle"]) {
+      const value = profile.persona[dimension];
+      if (value !== null && (typeof value !== "string" || value.length === 0))
+        throw new Error("companion_profile_persona_dimension_invalid");
+    }
+    if (typeof profile.scenario?.present !== "boolean") throw new Error("companion_profile_scenario_missing");
+    if (typeof profile.greetings?.present !== "boolean") throw new Error("companion_profile_greetings_missing");
+    if (!Array.isArray(profile.greetings?.variants)) throw new Error("companion_profile_greeting_variants_missing");
+    const book = profile.worldBook;
+    if (book === null || typeof book !== "object") throw new Error("companion_profile_worldbook_missing");
+    if (typeof book.present !== "boolean") throw new Error("companion_profile_worldbook_present_invalid");
+    // The revision the inspector carries with the book: a positive integer when she has one,
+    // null exactly when she has none.
+    if (book.present === true ? !Number.isSafeInteger(book.revision) || book.revision < 1 : book.revision !== null)
+      throw new Error("companion_profile_worldbook_revision_invalid");
   });
 
   // character.voice.read / .update: the mounted companion's own performance directive, held on her
