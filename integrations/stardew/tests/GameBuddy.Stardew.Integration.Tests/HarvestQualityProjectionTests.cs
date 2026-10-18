@@ -35,7 +35,7 @@ public sealed class HarvestQualityProjectionTests
         string source = ReadFarmingActions();
         source.Should().Contain("harvest_quality={harvestedQuality};");
         source.Should().Contain("quality_counts_before={qualityCountsBefore};");
-        source.Should().Contain("quality_counts_after={qualityCountsAfter};");
+        source.Should().Contain("quality_counts_after={qualityCountsAfter}");
     }
 
     [Fact]
