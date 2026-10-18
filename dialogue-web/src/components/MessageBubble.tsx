@@ -489,7 +489,10 @@ export const MessageBubble = memo(function MessageBubble({
                   {labels.editMessage}
                 </button>
               ))}
-            {deletePoint !== undefined && (
+            {/* While the editor is open the strip is the editor: a destructive Delete sitting beside
+                Save and Cancel is a mis-click waiting to happen, and this row's own armed confirm
+                already follows that rule (it replaces the other controls rather than joining them). */}
+            {deletePoint !== undefined && editor === null && (
               <button
                 type="button"
                 className="action-btn delete-btn"
