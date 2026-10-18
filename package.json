@@ -170,6 +170,8 @@
     "test:stardew-fixture-roots": "node --test tools/stardew-fixture-roots.test.mjs",
     "test:stardew-fixture-scenario-resolution": "node --test tools/stardew-fixture-scenario-resolution.test.mjs",
     "test:stardew-fixture-scenario-wiring": "node --test tools/check-stardew-fixture-scenario-wiring.test.mjs",
+    "test:stardew-fixture-action-coverage": "node --test tools/lib/fixture-action-coverage.test.mjs",
+    "check:stardew-fixture-action-coverage": "node tools/check-stardew-fixture-action-coverage.mjs",
     "test:stardew-fixture-transaction-inspector": "node --test tools/stardew-fixture-transaction-inspector.test.mjs",
     "test:stardew-formal-action-gate": "node --test tools/stardew-formal-action-gate.test.mjs",
     "test:stardew-gameplay-completeness": "node --test tools/check-stardew-gameplay-completeness.test.mjs",

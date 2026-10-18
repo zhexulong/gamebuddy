@@ -632,8 +632,6 @@ export function fixtureActions(action) {
   // the fixture publishes each action alone.
   if (action === "tailor_clothing") return ["tailor_clothing"];
   if (action === "dye_clothing_with_item") return ["dye_clothing_with_item"];
-  if (action === "accept_special_order") return ["accept_special_order"];
-  if (action === "claim_museum_reward") return ["claim_museum_reward"];
   // The building-chest pair. Both publish the same load/collect targets over the building the
   // fixture provisions (a Load chest and a Collect chest declared by its own data); each action is
   // independently listed because neither is a precondition of the other.
