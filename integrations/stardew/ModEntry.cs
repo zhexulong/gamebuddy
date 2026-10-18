@@ -975,6 +975,13 @@ public sealed partial class ModEntry : Mod
     /// Bounded pipeline heartbeat that proves the game-thread tick path is still
     /// executing (and is not frozen in a pipe read or elsewhere). Logs at most
     /// once per 2 seconds, is content-safe, and never changes authority.
+    ///
+    /// It also carries the PHASE the tick is in, because that is what a freeze needs: the background watchdog can name
+    /// a stalled tick only if its own thread gets to run and log, and in the failures that mattered the last line was
+    /// a plain heartbeat with no phase at all (measured 2026-10-18, g43cross: the Mod stopped inside a navigation
+    /// execution and the harness named the stall 90 s later while the Mod's log said nothing about where it stopped).
+    /// The phase is a plain field read, so this costs nothing per tick and turns the last line before any freeze into
+    /// the answer: `phase=executions_update` says the body controller never returned.
     /// </summary>
     private void LogNativeLocalPipelineHeartbeat()
     {
@@ -991,7 +998,7 @@ public sealed partial class ModEntry : Mod
         LocalPipeBridge.InboundFrameCounters inbound = this.GetEmbodimentState().LocalPipeBridge?.SnapshotInboundFrameCounters()
             ?? default;
         this.Monitor.Log(
-            $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};last={(inbound.LastType ?? "none")}",
+            $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};last={(inbound.LastType ?? "none")};phase={this.tickWatchdogPhaseForReport()}",
             LogLevel.Trace);
     }
 
