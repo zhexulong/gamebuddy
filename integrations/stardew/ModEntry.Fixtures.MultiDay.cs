@@ -173,19 +173,7 @@ public sealed partial class ModEntry
         if (Game1.currentSeason != "spring")
             Game1.currentSeason = "spring";
         Game1.dayOfMonth = 5;
-        // Mid-morning, not dawn. The premise is that the morning chores are already done and the session takes
-        // over the rest of the day, which is both realistic for a "play a day" world and the reason a night is
-        // reachable at all: the engine day-end chain (24:00 clock shake plus the getting-late notice, 25:00,
-        // 26:00 forced dismount) is 13 in-game hours away at 11:00 rather than 18 at 06:00, and an in-game hour
-        // costs about 7 real seconds.
-        Game1.timeOfDay = 1100;
-        // The energy that premise implies. A farmer wakes at MaxStamina (Farmer.cs:2070 restores it on the new
-        // day), so a full bar is only realistic BEFORE the morning work - and with a full bar plus a sparse world
-        // there is no fatigue pressure anywhere in the run, which is what the fixture-realism audit found: the
-        // whole collapse path (stamina at or below -15, Game1.cs:6452), the pass-out bill (Farmer.cs:5869-5877)
-        // and the halved next morning (Farmer.cs:3574-3577) were unreachable. 90 points is roughly a morning of
-        // hoeing and watering: enough that the rest of the day can genuinely exhaust the actor.
-        player.stamina = Math.Max(player.MaxStamina - 90f, 10f);
+        Game1.timeOfDay = 600;
 
         // (2) The actor's own home. The engine's load placement is asserted rather
         // than re-created, and re-established only if it does not hold.

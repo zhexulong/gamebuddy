@@ -79,24 +79,23 @@ public sealed class MultiDayPlaySessionFixtureTests
         source.Should().Contain("guarantee=first_rollover_may_add_gotMasteryHint");
     }
 
-        [Fact]
+            [Fact]
     public void TheGivenArmsARealDaysEnergyAndTheWorkThatCanSpendIt()
     {
-        // INVERTED by the fixture-realism audit (design/research/fixture-realism-audit.md). An earlier version of
-        // this test forbade ANY stamina write, because the write it replaced (12 points) had no reader and only made
-        // an early pass-out likelier. The audit then measured the opposite failure: the world offered about THREE
-        // points of tool work out of the 270 a morning holds (weeds and grass are cut with a scythe, which costs
-        // nothing, and the crops are Grab harvests), so the whole fatigue path - collapse at -15, the pass-out bill,
-        // the halved next morning - was unreachable, and the actor had no way to become tired enough for its day to
-        // end. The write is now the day premise itself, and this pins it as such.
+        // The scenario must NOT manufacture stamina.
+        //
+        // An earlier version armed 12 points "so the fatigue/self-heal assertion stays reachable", but that threshold
+        // belongs to a DIFFERENT scenario and nothing in the multi-day run reads it; two reviews found the write had no
+        // reader and only made an early pass-out likelier. A later version replaced it with "MaxStamina - 90" to express
+        // a mid-morning premise - and the owner rejected that too, correctly: a Stardew day starts at 06:00 with a full
+        // bar, so the real fix for a world with no fatigue pressure is the WORK it can spend, never a manufactured start.
+        // The pin is inverted so neither version can come back silently.
         string source = ReadMultiDayGivenSource();
-        source.Should().Contain("player.stamina = Math.Max(player.MaxStamina - 90f, 10f);");
-        // Strictly below a full bar, or the premise "the morning chores are already done" is not expressed.
-        source.Should().NotContain("player.stamina = player.MaxStamina;");
-        // The run can see it: the arm log reports the energy it arms.
-        source.Should().Contain("stamina={player.Stamina}/{player.MaxStamina}");
+        source.Should().NotContain("LowMorningStamina");
+        source.Should().NotContain("player.stamina =");
+        source.Should().Contain("Game1.timeOfDay = 600;");
 
-        // ...and the world has to contain work that spends it, or the energy is decorative.
+        // ...and the world does contain work that spends the morning it really has.
         string fixture = ReadFixtureSource();
         fixture.Should().Contain("for (int index = 0; index < 10; index += 1)");
         fixture.Should().Contain("cauliflowerSeedId, 8");
