@@ -267,8 +267,27 @@ internal sealed class StardewBodyController
         this.transientSinceMs = 0;
     }
 
+    /// <summary>
+    /// The last step this controller entered, and how many ticks it has been entered on.
+    ///
+    /// Why it exists: four multi-day runs died with the game thread inside `Executions.Update()` - the Mod log
+    /// simply stopped, with no exception and no watchdog line, while the process kept a core busy. The stage marker
+    /// can only say "inside the executions update", and this controller calls INTO the engine from there (the native
+    /// pathfinder is constructed synchronously), so the question is which of those engine calls never returned. The
+    /// heartbeat prints both fields, so the last heartbeat of a frozen run answers it without a debugger.
+    /// </summary>
+    internal static string LastPhase { get; private set; } = "idle";
+
+    /// <summary>Ticks this controller has entered; a frozen count next to a frozen heartbeat is a hang, not a pause.</summary>
+    internal static long EnteredTicks { get; private set; }
+
+    private static void MarkBodyPhase(string phase) => LastPhase = phase;
+
     public void Update(int tick)
     {
+        EnteredTicks += 1;
+        // Everything below this line runs on the game thread and may call into the engine.
+        MarkBodyPhase("update_begin");
         LocalMoveSpec? specification = this.active;
         if (specification is null)
             return;
@@ -493,17 +512,19 @@ internal sealed class StardewBodyController
     private PathFindController BuildNativePath(LocalMoveSpec specification, Farmer localPlayer)
     {
         GameLocation location = localPlayer.currentLocation!;
-        return new PathFindController(
+        // The engine's finder runs its search INSIDE this constructor, on the game thread, bounded by the node
+        // budget below: it is the one place here that can hold the tick for a long time, so it gets its own phase.
+        MarkBodyPhase("native_path_build");
+        PathFindController built = new PathFindController(
             localPlayer,
             location,
-            // The native goal remains a predicate on every re-plan. Re-planning
-            // after the quiet window must not turn an adjacent approach back into
-            // an exact-coordinate request.
             this.IsArrivalTile(specification),
             -1,
             null,
             NativePathNodeBudget,
             new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y));
+        MarkBodyPhase("native_path_built");
+        return built;
     }
 
     private void HaltNativeMovement(Farmer localPlayer)

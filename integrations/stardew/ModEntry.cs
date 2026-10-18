@@ -1022,7 +1022,7 @@ public sealed partial class ModEntry : Mod
         LocalPipeBridge.InboundFrameCounters inbound = this.GetEmbodimentState().LocalPipeBridge?.SnapshotInboundFrameCounters()
             ?? default;
         this.Monitor.Log(
-            $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};last={(inbound.LastType ?? "none")};phase={this.tickWatchdogPhaseForReport()}",
+            $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};last={(inbound.LastType ?? "none")};phase={this.tickWatchdogPhaseForReport()};bodyphase={StardewBodyController.LastPhase};bodyticks={StardewBodyController.EnteredTicks}",
             LogLevel.Trace);
     }
 
