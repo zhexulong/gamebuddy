@@ -93,7 +93,7 @@ async function stubCharacters(
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })));
   await page.route("**/api/tavern/v1/companions", (route) => route.fulfill(jsonOk({ apiVersion: 1, companions })));
   await page.route("**/api/tavern/v1/companions/*/worldbook", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, present: false, entries: [] })),
+    route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, entries: [] })),
   );
   await page.route("**/api/tavern/v1/companions/*/profile", (route) => {
     const handle = route.request().url().split("/companions/")[1]!.split("/")[0]!;
@@ -122,7 +122,7 @@ function absentProfile(name: string): Projection {
     persona: { present: false, core: null, interactionStyle: null, expressionStyle: null },
     scenario: { present: false, name: null, description: null },
     greetings: { present: false, label: null, variants: [] },
-    worldBook: { apiVersion: 1, present: false, entries: [] },
+    worldBook: { apiVersion: 1, present: false, revision: null, entries: [] },
   };
 }
 
@@ -168,6 +168,7 @@ test("a companion who carries her authored facts shows all of them, each one fol
     worldBook: {
       apiVersion: 1,
       present: true,
+      revision: 3,
       entries: [
         { title: "The pact", keys: [], constant: true, content: "They agreed to split the ridge." },
         { title: "Greenhouse", keys: ["glass", "seedling"], constant: false, content: "The glass was replaced." },
@@ -232,7 +233,7 @@ test("a companion provisioned without them says so, and an empty book is not an 
   const emptyBook: Projection = {
     ...absentProfile("Bare"),
     name: "Bookless",
-    worldBook: { apiVersion: 1, present: true, entries: [] },
+    worldBook: { apiVersion: 1, present: true, revision: 3, entries: [] },
   };
   await stubCharacters(
     page,

@@ -108,7 +108,7 @@ async function stubCharacters(
   );
   await page.route("**/api/tavern/v1/companions", (route) => route.fulfill(jsonOk({ apiVersion: 1, companions: library() })));
   await page.route("**/api/tavern/v1/companions/*/worldbook", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, present: false, entries: [] })),
+    route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, entries: [] })),
   );
   // The inspector's own read. This file is about what the surface PROMISES, not
   // about what a companion carries (that is `companion-inspector.spec.ts`), so it
@@ -121,7 +121,7 @@ async function stubCharacters(
         persona: { present: false, core: null, interactionStyle: null, expressionStyle: null },
         scenario: { present: false, name: null, description: null },
         greetings: { present: false, label: null, variants: [] },
-        worldBook: { apiVersion: 1, present: false, entries: [] },
+        worldBook: { apiVersion: 1, present: false, revision: null, entries: [] },
       }),
     ),
   );

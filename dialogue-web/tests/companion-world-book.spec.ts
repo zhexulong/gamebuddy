@@ -102,7 +102,7 @@ async function stubCharacters(
   );
   await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, (route) =>
     route.fulfill(
-      jsonOk(worldBook ?? { apiVersion: 1, present: false, entries: [] }),
+      jsonOk(worldBook ?? { apiVersion: 1, present: false, revision: null, entries: [] }),
     ),
   );
   await page.route("**/api/tavern/v1/persona", (route) =>
@@ -139,6 +139,7 @@ test("a companion who has a world book shows its count and its trigger words", a
   await stubCharacters(page, {
     apiVersion: 1,
     present: true,
+    revision: 7,
     entries: [
       { title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "温室的玻璃是她去年冬天换的,她说这样开春就能提前育苗。" },
       { title: "洒水器", keys: ["洒水器", "灌溉"], constant: false, content: "洒水器是她修好的,管子接在井边。" },
@@ -203,7 +204,7 @@ test("a companion who has no world book renders no block for her own book", asyn
 });
 
 test("a world book that carries no entries says so instead of showing a zero", async ({ page }) => {
-  await stubCharacters(page, { apiVersion: 1, present: true, entries: [] });
+  await stubCharacters(page, { apiVersion: 1, present: true, revision: 7, entries: [] });
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
   const surface = await openCharacters(page, "角色");
 
@@ -233,7 +234,7 @@ test("the companion's trigger list folds into a disclosure at 400x800", async ({
       constant: false,
       content: `第 ${index} 条正文。`,
     }));
-  await stubCharacters(page, { apiVersion: 1, present: true, entries });
+  await stubCharacters(page, { apiVersion: 1, present: true, revision: 7, entries });
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
   await page.setViewportSize({ width: 400, height: 800 });
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=characters`);
@@ -283,6 +284,7 @@ test("the companion's own trigger list draws the same card rows as the bindable 
   await stubCharacters(page, {
     apiVersion: 1,
     present: true,
+    revision: 7,
     entries: [
       { title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "温室的玻璃是她去年冬天换的,她说这样开春就能提前育苗。" },
       { title: "洒水器", keys: ["洒水器", "灌溉"], constant: false, content: "洒水器是她修好的,管子接在井边。" },
@@ -377,4 +379,244 @@ test("the companion's own trigger list draws the same card rows as the bindable 
   expect(companionList).toEqual(libraryList);
   expect(companionList!.display, "the list itself is a column").toBe("flex");
   expect(companionList!.listStyle, "no marker from the container").toBe("none");
+});
+
+/**
+ * The book is the player's to edit, and the save is the Host's own answer.
+ *
+ * The whole entry list goes back on one `PUT`, CASed on the revision the read carried,
+ * because the durable `entryId` is a storage fact the browser is never handed: the row
+ * keys are the rendered facts the player read. The proof is the request the surface
+ * actually sent (the revision and the edited text, field by field) and what the list
+ * shows after the Host answered with its own re-projection - a surface that re-rendered
+ * from a local guess would pass a screenshot and fail this.
+ */
+test("editing an entry's text and trigger words sends the revision it read, and the list shows the Host's reply", async ({ page }) => {
+  const book = {
+    apiVersion: 1,
+    present: true,
+    revision: 7,
+    entries: [
+      { title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "温室的玻璃是她去年冬天换的。" },
+      { title: "洒水器", keys: ["洒水器"], constant: false, content: "洒水器是她修好的。" },
+    ],
+  };
+  await stubCharacters(page, book);
+  const sent: { method: string; expectedRevision?: number; content?: string; keys?: readonly string[] }[] = [];
+  await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.fulfill(jsonOk(book));
+      return;
+    }
+    const body = JSON.parse(route.request().postData() ?? "null") as {
+      expectedRevision: number;
+      entries: readonly { title: string; keys: readonly string[]; content: string }[];
+    };
+    sent.push({ method: "PUT", expectedRevision: body.expectedRevision });
+    sent[0]!.content = body.entries[0]!.content;
+    sent[0]!.keys = body.entries[0]!.keys;
+    // The Host's own reply: the same list at the next revision, already rendered.
+    await route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        present: true,
+        revision: 8,
+        entries: body.entries.map((entry) => ({ ...entry, content: entry.content })),
+      }),
+    );
+  });
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  const surface = await openCharacters(page, "角色");
+
+  const block = surface.locator("[data-companion-world-book]");
+  await block.locator("[data-companion-world-book-edit]").click();
+  const editor = block.locator("[data-companion-world-book-draft]");
+  await expect(editor).toBeVisible();
+  await expect(editor.locator("h3")).toHaveText("正在编辑她自己的世界书");
+
+  const firstBody = editor.locator("textarea").first();
+  await firstBody.fill("{{user}}说这扇玻璃是她挑的。");
+  await editor.locator('input[type="text"]').nth(1).fill("温室、玻璃房、花房");
+  await editor.locator("[data-companion-world-book-save]").click();
+
+  // The request the surface sent: the revision it read, the player's own words, her keys.
+  await expect(block.locator("[data-companion-world-book-notice]")).toHaveText("已保存。");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]!.expectedRevision).toBe(7);
+  expect(sent[0]!.content).toBe("{{user}}说这扇玻璃是她挑的。");
+  expect(sent[0]!.keys).toEqual(["温室", "玻璃房", "花房"]);
+
+  // …and the editor closed onto the list the Host returned.
+  await expect(editor).toHaveCount(0);
+  await block.locator("[data-companion-world-book-disclosure] > summary").click();
+  const rows = block.locator("[data-companion-world-book-entry]");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("触发词：温室、玻璃房、花房");
+});
+
+/**
+ * An edit is invisible to a conversation that is already running, and the panel says so.
+ *
+ * The runtime publishes its authored catalog once, at mount, so a mounted Chat keeps the
+ * background it loaded and picks an edit up when it mounts again. That is a fact about
+ * the product a player has to be able to read before she presses save, not a silence -
+ * the hint is asserted here in the same words the editor shows.
+ */
+test("the editor says when an edit reaches a conversation, because a running one keeps what it loaded", async ({ page }) => {
+  await stubCharacters(page, {
+    apiVersion: 1,
+    present: true,
+    revision: 7,
+    entries: [{ title: "温室", keys: ["温室"], constant: false, content: "温室的玻璃。" }],
+  });
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  const surface = await openCharacters(page, "角色");
+
+  const block = surface.locator("[data-companion-world-book]");
+  await block.locator("[data-companion-world-book-edit]").click();
+  await expect(block.locator("[data-companion-world-book-draft]")).toContainText(
+    "正在进行的对话仍使用已经载入的背景，改动会在对话重新开始时生效。",
+  );
+});
+
+/**
+ * A save the Host refused because the book moved on says THAT, and the editor keeps the
+ * revision it was opened on - so the surface never silently rebases a write over a change
+ * the player never saw.
+ */
+test("a save refused because the book changed says the book changed, not that it failed", async ({ page }) => {
+  const book = {
+    apiVersion: 1,
+    present: true,
+    revision: 7,
+    entries: [{ title: "温室", keys: ["温室"], constant: false, content: "温室的玻璃是她去年冬天换的。" }],
+  };
+  await stubCharacters(page, book);
+  let attempts = 0;
+  await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.fulfill(jsonOk(book));
+      return;
+    }
+    attempts += 1;
+    // The Host's own problem body: `type`/`title`/`status`/`code`/`requestId`/`retryable`,
+    // which is what the client validates before it reads `code` at all.
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        type: "about:blank",
+        title: "World book revision conflict",
+        status: 409,
+        code: "companion_world_book_conflict",
+        requestId: csrfToken,
+        retryable: false,
+      }),
+    });
+  });
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  const surface = await openCharacters(page, "角色");
+
+  const block = surface.locator("[data-companion-world-book]");
+  await block.locator("[data-companion-world-book-edit]").click();
+  await block.locator("[data-companion-world-book-draft] textarea").first().fill("改过了。");
+  await block.locator("[data-companion-world-book-save]").click();
+
+  const notice = block.locator("[data-companion-world-book-notice]");
+  await expect(notice).toContainText("她的世界书在你读取之后已被改动");
+  await expect(notice).toContainText("没有保存");
+  await expect(notice).not.toContainText("无法保存");
+
+  // The read-back is the truth: the list shows the book that is actually there, while the
+  // editor still CASes on the revision it was opened on, so a second save refuses again
+  // rather than overwriting the change nobody showed her.
+  await expect(block.locator("[data-companion-world-book-count]")).toHaveText("她自己的世界书里有 1 条词条");
+  await block.locator("[data-companion-world-book-save]").click();
+  await expect(notice).toContainText("她的世界书在你读取之后已被改动");
+  expect(attempts).toBe(2);
+});
+
+/**
+ * The editor at both widths, measured rather than eyeballed.
+ *
+ * The Characters surface is one column at 400x800 and six stacked sections; an editor
+ * that overflows its column is what the earlier measurements in this file are about
+ * (`[data-companion-world-book-list]` alone was 714 px of unwrapped trigger words). The
+ * editor is three fields per row, so its own geometry is measured at both widths, and
+ * after a save the list is asserted to be the book the Host returned.
+ */
+test("the editor fits its column at 1440x900 and at 400x800, and removing a row needs a confirmation", async ({ page }) => {
+  const entries = Array.from({ length: 3 }, (_, index) => ({
+    title: `词条 ${index}`,
+    keys: ["料理", "做饭"],
+    constant: false,
+    content: `第 ${index} 条正文。`,
+  }));
+  const book = { apiVersion: 1, present: true, revision: 7, entries };
+  await stubCharacters(page, book);
+  let sentEntries: readonly { title: string; content: string }[] | null = null;
+  await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.fulfill(jsonOk(book));
+      return;
+    }
+    const body = JSON.parse(route.request().postData() ?? "null") as {
+      entries: readonly { title: string; content: string }[];
+    };
+    sentEntries = body.entries;
+    await route.fulfill(jsonOk({ apiVersion: 1, present: true, revision: 8, entries: body.entries }));
+  });
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+
+  const surface = page.getByTestId("characters-surface");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=characters`);
+  await expect(surface).toBeVisible();
+  const block = surface.locator("[data-companion-world-book]");
+  await block.locator("[data-companion-world-book-edit]").click();
+  const editor = block.locator("[data-companion-world-book-draft]");
+  await expect(editor).toBeVisible();
+
+  // The same open editor at both widths: the geometry is what is being measured, so one
+  // mount is measured twice rather than two mounts compared - a second navigation would
+  // measure a different page load and, worse, would measure an editor that is not open.
+  const measure = async (width: number, height: number) => {
+    await page.setViewportSize({ width, height });
+    await expect(editor).toBeVisible();
+    return await editor.evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      const inputs = [...node.querySelectorAll<HTMLElement>("input, textarea")].map((field) =>
+        Math.round(field.getBoundingClientRect().width),
+      );
+      return { width: Math.round(rect.width), right: Math.round(rect.right), fields: inputs.length, widest: Math.max(...inputs) };
+    });
+  };
+
+  const wide = await measure(1440, 900);
+  const narrow = await measure(400, 800);
+  console.log(`[world-book-editor] wide=${JSON.stringify(wide)} narrow=${JSON.stringify(narrow)}`);
+  for (const [label, measured, viewport] of [
+    ["1440x900", wide, 1440],
+    ["400x800", narrow, 400],
+  ] as const) {
+    expect(measured.width, `${label}: the editor has a width`).toBeGreaterThan(0);
+    expect(measured.right, `${label}: the editor stays inside its viewport`).toBeLessThanOrEqual(viewport);
+    expect(measured.fields, `${label}: three fields per row`).toBe(9);
+    expect(measured.widest, `${label}: no field is collapsed to nothing`).toBeGreaterThan(40);
+  }
+
+  // Removing a row is armed first: a bare delete beside the save control is a control a
+  // player fires by accident, and her entry is not recoverable after the save.
+  await editor.locator("[data-companion-world-book-remove]").first().click();
+  await expect(editor.locator("[data-companion-world-book-remove-yes]")).toBeVisible();
+  await editor.locator("[data-companion-world-book-remove-no]").click();
+  await expect(editor.locator("[data-companion-world-book-remove-yes]")).toHaveCount(0);
+  await expect(editor.locator("[data-companion-world-book-entry-draft]")).toHaveCount(3);
+
+  await editor.locator("[data-companion-world-book-remove]").first().click();
+  await editor.locator("[data-companion-world-book-remove-yes]").click();
+  await expect(editor.locator("[data-companion-world-book-entry-draft]")).toHaveCount(2);
+  await editor.locator("[data-companion-world-book-save]").click();
+  await expect(block.locator("[data-companion-world-book-notice]")).toHaveText("已保存。");
+  expect(sentEntries!.map((entry) => entry.title)).toEqual(["词条 1", "词条 2"]);
 });

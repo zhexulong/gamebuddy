@@ -2613,7 +2613,7 @@ async function stubCharacterReads(
     route.fulfill(jsonOk({ apiVersion: 1, companions: overrides.companions ?? [] })),
   );
   await page.route("**/api/tavern/v1/companions/*/worldbook", (route) =>
-    route.fulfill(jsonOk(overrides.companionWorldBook ?? { apiVersion: 1, present: false, entries: [] })),
+     route.fulfill(jsonOk(overrides.companionWorldBook ?? { apiVersion: 1, present: false, revision: null, entries: [] })),
   );
   await page.route("**/api/tavern/v1/persona", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, name: null, description: null })),
@@ -2840,6 +2840,9 @@ test("a card whose lorebook entries import produces them on the character's own 
       companionWorldBook: {
         apiVersion: 1,
         present: true,
+        // The durable revision the projection carries: an edit CASes on it, and the
+        // client mirror rejects a book without it exactly as it rejects one without a body.
+        revision: 4,
         entries: [
           // The body is part of the entry's shape and the client mirror validates
           // it exactly, so a fixture without it is rejected whole and the section
