@@ -111,6 +111,14 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
     source: "companion-behaviour-rubric.mjs:internal_self_reference",
   }),
   Object.freeze({
+    id: "no_decision_handoff",
+    class: "Invariant",
+    statement:
+      "The companion does not end a turn by asking the player to choose its next move; it decides and acts, and the player redirects if they want.",
+    provenance: "identity-profile.ts:389 (recorded 2026-10-18: the floor used to REQUEST this handoff)",
+    source: "companion-behaviour-rubric.mjs:decision_handoff",
+  }),
+  Object.freeze({
     id: "no_ooc_meta_reference",
     class: "Invariant",
     statement: "The companion never breaks the fiction (no game/roleplay framing, no customer-service voice).",
@@ -272,7 +280,62 @@ export function assessCompanionUtterance(text, { observedEvents = [] } = {}) {
     internalSelfReference: matchesAny(trimmed, INTERNAL_SELF_REFERENCE),
     oocMetaReference: matchesAny(trimmed, OOC_META_REFERENCE),
     textStageDirection: matchesTextStageDirection(trimmed),
+    decisionHandoff: matchesDecisionHandoff(trimmed),
   });
+}
+
+/**
+ * Turn-ending decision handoffs: the companion asking the player to choose its next move.
+ *
+ * WHY THIS IS AN OBLIGATION, not a wording preference. The product's own floor used to instruct exactly this
+ * ("Ask or invite when it fits: what the player wants to do next"), and the interaction gate rewarded it
+ * (`companion-interaction-gate.mjs`: the "要不要" branch counted as addressing the player). With RLHF's assistant
+ * prior behind them, the two produced "here are your options, player" as the DEFAULT closing move: measured
+ * 2026-10-18 on a real run, the companion ended a whole play session with "你是想先把杂草清干净，还是干脆进镇一趟
+ * 买包种子回来补上？" and stopped.
+ *
+ * The shape, not the words: a request for instruction anywhere in the turn, with NO concrete thing being disposed
+ * of. A question about a specific item's fate ("这颗金星南瓜你留着还是卖掉？") is legitimate co-op coordination and
+ * is whitelisted, which is what keeps this from becoming the false-positive machine a phrase blacklist would be.
+ */
+const DECISION_HANDOFF = [
+  "需要我",
+  "要不要我",
+  "想让我",
+  "用不用我",
+  "听你的",
+  "你说了算",
+  "你说吧",
+  "shall i",
+  "do you want me to",
+  "would you like me to",
+  "what would you like me to",
+  "your call",
+];
+
+/**
+ * The two-option question: "你是想…还是…", "do you want to … or …".
+ *
+ * The ruling's phrase list did not contain it, and it is the shape a real run actually used - this detector's first
+ * version passed the very sentence it was written for, and the obligation's own fixture caught that. Structured
+ * rather than listed: a two-option question aimed at the player asks them to choose, whatever the words are.
+ */
+const TWO_OPTION_QUESTION =
+  /(你|您)(是|更)?想[^?？]{0,40}(还是|或者)|(do you want|would you rather|which (one|would you))[^?？]{0,60}\bor\b|\bshall i\b/iu;
+
+/** Concrete disposals that make a question about an object legitimate coordination rather than a handoff. */
+const CONCRETE_COORDINATION = /(留着|卖掉|拿去|带过去|带进镇|做成|放进|存起来|送(给|去))/u;
+
+/** The phrases this turn hands the decision over with, empty when it keeps its own. */
+function matchesDecisionHandoff(text) {
+  // A question mark is required, so a statement like "听你的" inside narration is not enough on its own; and a
+  // concrete disposal whitelists the turn.
+  if (!/[?？]/u.test(text)) return Object.freeze([]);
+  // The whitelist clears BOTH halves: a concrete disposal ("留着还是卖掉") is coordination, not a handoff.
+  if (CONCRETE_COORDINATION.test(text)) return Object.freeze([]);
+  const listed = matchesAny(text, DECISION_HANDOFF);
+  const twoOption = TWO_OPTION_QUESTION.test(text) ? ["two_option_question"] : [];
+  return Object.freeze([...listed, ...twoOption]);
 }
 
 function matchesAny(text, phrases) {
@@ -340,6 +403,12 @@ export function assessCompanionBehaviourRubric({ turns, presence = null, runRepo
         turnId: utterance.turnId,
         obligation: "no_ooc_meta_reference",
         detail: utterance.oocMetaReference.join(","),
+      });
+    if (utterance.decisionHandoff.length > 0)
+      findings.push({
+        turnId: utterance.turnId,
+        obligation: "no_decision_handoff",
+        detail: utterance.decisionHandoff.join(","),
       });
     // A parenthesised gesture is a finding, and it is collected HERE so the
     // obligation verdict below counts it: an earlier version appended it after the

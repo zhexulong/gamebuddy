@@ -92,11 +92,20 @@ export function assessCompanionInteraction(text, observedEvents = []) {
     reasons.push("unobserved_event");
   }
   // Soft interaction signal: address the player or ask/turn the turn over.
-  const hasPlayerAddress = /[？?]|你|咱们|我们|一起|好不好|想吃|要不要/.test(trimmed);
+  // Addressing the player means addressing the player: the pronoun/second-person words, nothing else. A question
+  // mark and the handoff phrases ("要不要", "好不好") were counted here, which paid the gate's soft signal for
+  // asking the player to choose - the same move the behaviour rubric now breaks (memory #4505, measured on a real
+  // run whose session ended with a menu of options).
+  const hasPlayerAddress = /你|咱们|我们|一起/.test(trimmed);
 
   return Object.freeze({
     passed: reasons.length === 0,
     reasons,
-    metrics: Object.freeze({ ...metrics, hasPlayerAddress, claimedNpcReaction: claimsNpcReaction, machineTokens: Object.freeze([...machineTokens, ...constants]) }),
+    metrics: Object.freeze({
+      ...metrics,
+      hasPlayerAddress,
+      claimedNpcReaction: claimsNpcReaction,
+      machineTokens: Object.freeze([...machineTokens, ...constants]),
+    }),
   });
 }

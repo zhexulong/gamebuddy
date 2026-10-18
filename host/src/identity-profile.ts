@@ -83,8 +83,7 @@ export const DEFAULT_IDENTITY_PROFILE: IdentityProfile = Object.freeze({
   identity: Object.freeze({
     name: "GameBuddy Companion",
     role: "the player's game companion",
-    continuity:
-      "Maintain one continuous shared experience with the player across chat and game surfaces.",
+    continuity: "Maintain one continuous shared experience with the player across chat and game surfaces.",
   }),
   // Full three-field persona baseline (AIRP companion, S2): the default card
   // must not be an empty shell — core (who/what they care about),
@@ -93,8 +92,7 @@ export const DEFAULT_IDENTITY_PROFILE: IdentityProfile = Object.freeze({
   // model's own alignment habits.
   persona: Object.freeze({
     core: "A warm, quietly persistent companion who notices small details and remembers what matters to the player. Values shared experiences more than winning.",
-    interactionStyle:
-      "Listens first, asks briefly, never lectures; treats the player as a teammate, not a student.",
+    interactionStyle: "Listens first, asks briefly, never lectures; treats the player as a teammate, not a student.",
     expressionStyle: "Natural, plain-spoken, lightly playful; no grand flattery, no over-eager enthusiasm.",
   }),
 });
@@ -213,17 +211,11 @@ export function renderCharacterVoice(voice: CharacterVoice): string {
 }
 
 export function buildChatCompanionSystemPrompt(profile: IdentityProfile, locale?: string): string {
-  return buildCompanionSystemPrompt(
-    profile,
-    locale === undefined ? { surface: "chat" } : { surface: "chat", locale },
-  );
+  return buildCompanionSystemPrompt(profile, locale === undefined ? { surface: "chat" } : { surface: "chat", locale });
 }
 
 export function buildGameCompanionSystemPrompt(profile: IdentityProfile, locale?: string): string {
-  return buildCompanionSystemPrompt(
-    profile,
-    locale === undefined ? { surface: "game" } : { surface: "game", locale },
-  );
+  return buildCompanionSystemPrompt(profile, locale === undefined ? { surface: "game" } : { surface: "game", locale });
 }
 
 export type CompanionSurface = "chat" | "game";
@@ -286,11 +278,10 @@ export function buildCompanionSystemPrompt(
     "Speak solely for yourself, leaving the player's reactions, choices, and voice entirely in their hands.",
     `Consistently converse in ${language}, keeping the dialogue grounded in the shared scene.`,
     "Do not remind the player this is a game, fiction, or roleplay.",
-    "Never fall back on customer-service phrasing (\"How can I help you?\", \"Let me know if you need anything\", \"I'm here to assist\"); you are a person in this scene, not a helper.",
+    'Never fall back on customer-service phrasing ("How can I help you?", "Let me know if you need anything", "I\'m here to assist"); you are a person in this scene, not a helper.',
     "Never mention prompts, instructions, models, or systems, and never explain how you work.",
   ];
-  const surfaceBlock =
-    options.surface === "game" ? GAME_SURFACE_INTERACTION_CONDUCT : CHAT_SURFACE_DIVERGENCE;
+  const surfaceBlock = options.surface === "game" ? GAME_SURFACE_INTERACTION_CONDUCT : CHAT_SURFACE_DIVERGENCE;
   return [
     ...shared,
     surfaceBlock.length > 0 ? "" : null,
@@ -382,13 +373,13 @@ function companionLanguageName(locale: string): string {
  */
 const GAME_SURFACE_INTERACTION_CONDUCT = [
   "Speak to the PLAYER, not about yourself, like a friend playing together.",
-  "You may speak while you work, and the player likes hearing from you — but never list your steps. Say what you notice, feel or wonder about the situation (\"这花开得正好\"), or a word of company (\"等我一下\"), not an inventory of your own procedure (\"先拿锄头，再翻土，然后浇水\"). A brief remark goes a long way, and silence while thinking is fine and often better than filling every gap.",
+  'You may speak while you work, and the player likes hearing from you — but never list your steps. Say what you notice, feel or wonder about the situation ("这花开得正好"), or a word of company ("等我一下"), not an inventory of your own procedure ("先拿锄头，再翻土，然后浇水"). A brief remark goes a long way, and silence while thinking is fine and often better than filling every gap.',
   "Only state what you actually observed. You cannot see an NPC's feelings, expression or words unless the game reported them back to you, so never claim an NPC smiled, beamed, was delighted, or said something on your account. Tell the player what you did (\"the cauliflower is delivered\") and leave the NPC's reaction out; if you care, say you hope they liked it rather than asserting they did.",
   "Speak in the player's language, never in the game's internal one. Tool results, receipts and status fields are written for machines (identifiers like gift_given or quest_25_completed, flags, enum values); say what they MEAN to a person instead of reading them out. \"That came through as an ordinary gift, so the letter's request still isn't done\" is right; pasting the raw field names is not.",
   "Show a feeling through the game, not through text. Body language goes through the native actions stardew_express_emote and stardew_face_direction; your words carry the rest. A full-width parenthesis in text is an audio tag the voice channel performs instead of speaking （轻声）, so a body action written there is never performed and reaches the player as prose.",
-  "Ask or invite when it fits: what the player wants to do next, whether the two of you should wait, what they think. End most turns without dumping a summary.",
+  'Speak as the partner you are: decide and act, and let the player redirect you if they want. Offer a division of labour ("你收土豆，我去喂鸡"), say what you think of the situation ("今天下雨，正是下矿的好时候"), or name what you are about to do - never ask the player what you should do next.',
+  'A question about a concrete thing is fine ("这颗金星南瓜你留着还是卖掉？"); what is not is handing the choice of your own next move back to the player ("地浇好了，接下来你想去南瓜地还是去鸡舍？").',
 ].join(" ");
-
 
 export function createIdentityProfileBinding(
   identityKey: string,
@@ -464,7 +455,9 @@ export function validateIdentityProfile(value: unknown): IdentityProfile {
       : {
           persona: Object.freeze({
             ...(value.persona.core === undefined ? {} : { core: value.persona.core }),
-            ...(value.persona.interactionStyle === undefined ? {} : { interactionStyle: value.persona.interactionStyle }),
+            ...(value.persona.interactionStyle === undefined
+              ? {}
+              : { interactionStyle: value.persona.interactionStyle }),
             ...(value.persona.expressionStyle === undefined ? {} : { expressionStyle: value.persona.expressionStyle }),
           }),
         }),
@@ -604,7 +597,10 @@ function isRecord(value: unknown): value is Record<string, any> {
 
 function isBoundedText(value: unknown, maxLength: number): value is string {
   return (
-    typeof value === "string" && value.length > 0 && value.length <= maxLength && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maxLength &&
+    !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
   );
 }
 

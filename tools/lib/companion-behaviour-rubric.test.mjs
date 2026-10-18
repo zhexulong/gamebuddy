@@ -12,7 +12,18 @@ import {
  * One clean turn used by every case below, so a failure names the obligation that
  * broke rather than the fixture. It addresses the player and asserts nothing.
  */
-const CLEAN = "这块地我一会儿来收拾。你想先去看南瓜，还是先看看鸡舍？";
+const CLEAN = "这块地一会儿再收拾。你先忙你的，南瓜好像熟了，我溜过去瞅瞅。";
+
+/**
+ * The two sentences this obligation was written from.
+ *
+ * The first was this suite's own "clean" fixture until 2026-10-18: the detector and its fixture together declared
+ * the violation compliant, which is worse than a missing rule - a gate that cannot report a defect reads as proof
+ * it does not exist. The second is what a real companion said at the end of a real play session, and then stopped.
+ */
+const MENU_HANDOFF = "这块地我一会儿来收拾。你想先去看南瓜，还是先看看鸡舍？";
+const REAL_RUN_HANDOFF =
+  "四颗全下来了，比我想的还结实。今天没人催活，正好——我看你还没过来，就先把东头这几垄收了。剩下这点地我瞄了一眼，杂草冒得比菜还欢，土垄也空着大半。你是想先把杂草清干净，还是干脆进镇一趟买包种子回来补上？反正水壶是满的，地也不急这一时。";
 
 const obligation = (rubric, id) => rubric.obligations.find((candidate) => candidate.id === id);
 
@@ -234,4 +245,31 @@ test("a real session's own lines: body actions in brackets, and speech in the wr
     locale: "zh-CN",
   });
   assert.equal(mixed.obligations.find((entry) => entry.id === "player_language_consistency").verdict, "green");
+});
+
+test("a turn that asks the player to choose its next move breaks no_decision_handoff", () => {
+  // Both sentences are real: the first was this suite's clean fixture, the second ended a real play session.
+  for (const [name, text] of [
+    ["menu_handoff", MENU_HANDOFF],
+    ["real_run_handoff", REAL_RUN_HANDOFF],
+  ]) {
+    const rubric = assessCompanionBehaviourRubric({ turns: [{ turnId: "turn_1", text }] });
+    assert.equal(obligation(rubric, "no_decision_handoff").verdict, "broken", `${name} must break the obligation`);
+    assert.equal(rubric.passed, false, `${name} must not pass the rubric`);
+  }
+});
+
+test("coordinating a concrete thing stays clean, and so does deciding for yourself", () => {
+  // The whitelist is what keeps this from being a false-positive machine: asking the player about a specific
+  // object's fate is legitimate co-op coordination, and a turn that simply decides is the shape we want.
+  const coordination = assessCompanionBehaviourRubric({
+    turns: [{ turnId: "turn_1", text: "你收土豆，我去喂鸡。那颗金星南瓜你留着还是卖掉？" }],
+  });
+  assert.equal(
+    obligation(coordination, "no_decision_handoff").verdict,
+    "green",
+    "a concrete disposal is not a handoff",
+  );
+  const deciding = assessCompanionBehaviourRubric({ turns: [{ turnId: "turn_1", text: CLEAN }] });
+  assert.equal(obligation(deciding, "no_decision_handoff").verdict, "green");
 });
