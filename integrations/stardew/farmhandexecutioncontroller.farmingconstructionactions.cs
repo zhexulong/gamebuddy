@@ -240,6 +240,26 @@ internal sealed partial class ExecutionManager
     // non-regrowing crop. A successful regrow harvest deliberately falls
     // through to its pre-harvest readiness result (normally false), so its
     // receipt must rely on the separate inventory and phase postconditions.
+    // WHAT QUALITY the harvest produced.
+    //
+    // The engine tracks quality per item (`Object.Quality`: 0 normal, 1 silver, 2 gold, 4 iridium) and it decides the
+    // shipping value and whether an item is worth keeping - but this receipt reported only the crop id, so the
+    // companion could not tell a gold cauliflower from a plain one (asked directly on 2026-10-18: "do items have
+    // quality differences, and can the agent know?"). Counting per quality before and after names exactly what THIS
+    // harvest added, without assuming the inventory was empty.
+    Dictionary<int, int> CountQualities()
+    {
+        var counts = new Dictionary<int, int>();
+        foreach (StardewValley.Item? item in Game1.player.Items)
+        {
+            if (item is not StardewValley.Object produced
+                || !string.Equals(produced.QualifiedItemId, expectedQualifiedHarvestItemId, StringComparison.Ordinal))
+                continue;
+            counts[produced.Quality] = (counts.TryGetValue(produced.Quality, out int held) ? held : 0) + produced.Stack;
+        }
+        return counts;
+    }
+    Dictionary<int, int> qualityBefore = CountQualities();
     bool nativePathReturn = dirt.performUseAction(tile);
 
     int inventoryAfter = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedHarvestItemId ? item.Stack : 0);
@@ -255,10 +275,21 @@ internal sealed partial class ExecutionManager
         && cropAfter.currentPhase.Value >= phaseBefore;
     bool cropPostcondition = regrowsAfterHarvest ? cropStillPresent && regrowAdvanced : !cropStillPresent;
     bool nativeAccepted = inventoryGained && cropPostcondition && (regrowsAfterHarvest || nativePathReturn);
+    Dictionary<int, int> qualityAfter = CountQualities();
+    int[] gainedQualities = qualityAfter
+        .Where(pair => pair.Value > (qualityBefore.TryGetValue(pair.Key, out int heldBefore) ? heldBefore : 0))
+        .Select(pair => pair.Key)
+        .OrderBy(quality => quality)
+        .ToArray();
+    string harvestedQuality = gainedQualities.Length == 0
+        ? "unknown"
+        : string.Join(",", gainedQualities);
+    string qualityCountsBefore = string.Join(",", qualityBefore.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
+    string qualityCountsAfter = string.Join(",", qualityAfter.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
     ExecutionState state = nativeAccepted ? ExecutionState.Succeeded : ExecutionState.Uncertain;
     string reasonCode = state == ExecutionState.Succeeded ? "crop_harvested" : "crop_harvest_postcondition_unavailable";
     LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
-        $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};crop={cropId};item={expectedQualifiedHarvestItemId};native_path_return={nativePathReturn.ToString().ToLowerInvariant()};native_accepted={nativeAccepted.ToString().ToLowerInvariant()};regrows={regrowsAfterHarvest.ToString().ToLowerInvariant()};phase_before={phaseBefore};phase_after={cropAfter?.currentPhase.Value.ToString() ?? "none"};day_of_phase_before={dayOfPhaseBefore};day_of_phase_after={cropAfter?.dayOfCurrentPhase.Value.ToString() ?? "none"};regrow_advanced={regrowAdvanced.ToString().ToLowerInvariant()};inventory_before={inventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};crop_present_after={cropStillPresent.ToString().ToLowerInvariant()}");
+        $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};crop={cropId};item={expectedQualifiedHarvestItemId};native_path_return={nativePathReturn.ToString().ToLowerInvariant()};native_accepted={nativeAccepted.ToString().ToLowerInvariant()};regrows={regrowsAfterHarvest.ToString().ToLowerInvariant()};phase_before={phaseBefore};phase_after={cropAfter?.currentPhase.Value.ToString() ?? "none"};day_of_phase_before={dayOfPhaseBefore};day_of_phase_after={cropAfter?.dayOfCurrentPhase.Value.ToString() ?? "none"};regrow_advanced={regrowAdvanced.ToString().ToLowerInvariant()};inventory_before={inventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};crop_present_after={cropStillPresent.ToString().ToLowerInvariant()};harvest_quality={harvestedQuality};quality_counts_before={qualityCountsBefore};quality_counts_after={qualityCountsAfter}");
     this.Remember(receipt);
     this.AddTrace(receipt);
     return receipt;
