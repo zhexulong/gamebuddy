@@ -931,11 +931,13 @@ async function runAgentTurn(text, tools) {
       break;
     }
   }
-  if (turn === null)
-    turn = await Promise.race([
-      agentTurn,
-      new Promise((resolve) => setTimeout(() => resolve({ settled: false, error: "agent_turn_timeout" }), 5000)),
-    ]);
+  // The loop above IS the waiter, and its budget is `turnWaitSeconds`. This used to race the turn against a FIVE
+  // SECOND timeout and label whatever lost `agent_turn_timeout` - which fired on run g35real at the exact moment the
+  // companion submitted its first real ActionProgram (`AGENT_PROGRAM_SUBMIT farm_day5_b accepted`): the loop had
+  // broken on the PROGRAM's terminal state while the TURN was still running, `turn` was still null, and five seconds
+  // of a working session became a timeout verdict that closed the binding mid-program. Awaiting the turn here is
+  // what the loop was already doing; the harness's own run budget stays the hard stop.
+  if (turn === null) turn = await agentTurn;
   // SELF-DIRECTED SCENARIO ONLY: after the turn settles, keep waiting until the session is QUIET instead of closing the turn
   // on the first settle. A terminal receipt (e.g. `modal_interrupted`) is a follow_up fact, not a player
   // message, and it may trigger the Agent to act again (dismiss, resume) BEFORE the session truly rests. With

@@ -820,3 +820,15 @@ test("waitForSessionQuiet reaches quiet when only body_trace pings follow a term
   clearInterval(timer);
   assert.equal(settled.quieter, true, "a ping-only tail must reach quiet rather than run to the deadline");
 });
+
+test("the turn waiter does not give up five seconds after a program finishes", () => {
+  // Measured on run g35real: the companion submitted its first real ActionProgram
+  // (`AGENT_PROGRAM_SUBMIT farm_day5_b accepted`), the wait loop broke on the PROGRAM's terminal state while the
+  // TURN was still running, and the five-second race that used to sit after it declared `agent_turn_timeout` - so a
+  // working session was recorded as a timeout, and the binding closed while the program was executing. The loop is
+  // the waiter, and the run budget is the hard stop; nothing may turn five seconds of silence into a verdict.
+  assert.match(SOURCE, /if \(turn === null\) turn = await agentTurn;/u);
+  assert.doesNotMatch(SOURCE, /error: "agent_turn_timeout"/u, "no path may invent a turn timeout from a short race");
+  // The verdict mapping still understands an unsettled turn, which is what makes a genuine one visible.
+  assert.match(SOURCE, /entry\.error === "agent_turn_timeout"/u);
+});
