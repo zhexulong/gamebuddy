@@ -2,11 +2,19 @@
  * The Pi-side half of the two Chat operations that reshape a conversation for the model.
  *
  * One is a same-position variant turn (`branchPiVariantAnchor`), the other a rewind
- * (`branchPiTranscriptTail`). Both are the same act: Pi appends the prompt and the reply as children
- * of the current leaf, so a conversation that the player has shortened must shorten the session's
- * ACTIVE PATH too - moving the leaf is the only way to make the next request carry the transcript
- * the player reads. Both proofs refuse a session shape they cannot prove, and both hand their caller
- * a `revert()` because the store and Pi cannot be atomic.
+ * (`rewindPiTranscriptTail`). Both make the model's ACTIVE PATH equal the transcript the player
+ * reads, both refuse a session shape they cannot prove, and both hand their caller a `revert()`,
+ * because the store and Pi cannot be atomic.
+ *
+ * They differ in exactly one way, and the difference is what the session file ends with. Pi appends
+ * the prompt and the reply as children of the current leaf, and `SessionManager._buildIndex` resets
+ * the leaf to the file's LAST entry whenever a session is re-opened (`runtime-core.internal.ts`
+ * mounts one with `SessionManager.continueRecent`), so a leaf pointer is not itself durable. The
+ * variant half is safe because a prompt always follows it - the new reply becomes the file's last
+ * entry, and the path to it excludes the reply it replaced. A rewind appends nothing, so a bare leaf
+ * move would be undone by the next mount: the dropped turns would come back into the model's
+ * context while the transcript the player reads stayed shortened. The rewind half therefore makes
+ * the cut durable with the vendor's own append-only edit - see `rewindPiTranscriptTail`.
  *
  * The variant half, in detail:
  *
@@ -39,7 +47,7 @@
  * context-edit mechanism left behind.
  */
 
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ContextEditableContent } from "@earendil-works/pi-coding-agent";
 
 import { chatTranscriptAssistantText } from "./native-companion-content.js";
 
@@ -56,10 +64,7 @@ type PiVariantBranchRefusal =
   | "variant_position_has_no_variant"
   | "variant_reply_tail_unavailable"
   | "variant_reply_tail_text_mismatch"
-  | "variant_anchor_unavailable"
-  | "rewind_nothing_dropped"
-  | "rewind_tail_unavailable"
-  | "rewind_tail_text_mismatch";
+  | "variant_anchor_unavailable";
 
 export type PiVariantBranchResult =
   | Readonly<{
@@ -112,9 +117,7 @@ export function branchPiVariantAnchor(
 }
 
 /**
- * The rewind half: moves the active leaf to the entry before the first dropped message, so the
- * dropped tail leaves the model's active path and the next request carries the shortened
- * transcript exactly once.
+ * The rewind half: makes every dropped transcript row contribute nothing to the model, durably.
  *
  * TRANSITIONAL BINDING, the same one `branchPiVariantAnchor` documents: no authority records which
  * Pi entry a durable `tavern_messages` row corresponds to, so the proof is positional. The session
@@ -123,14 +126,25 @@ export function branchPiVariantAnchor(
  * provider returned, so a healthy transcript's tail matches entry for entry. A shape it cannot
  * prove refuses, and the caller must then leave the transcript unchanged.
  *
+ * What it does with that proof is two shapes of ONE vendor mechanism, chosen by what survives:
+ *
+ *   - The transcript keeps a message the model still carries: move the leaf to that entry and
+ *     append a no-op context edit OF ITS OWN CONTENT. That edit is a child of the kept entry, so
+ *     the session file now ends on the kept side of the cut, and re-opening the session lands the
+ *     leaf there - the dropped entries are not merely passed over, they are off the path.
+ *   - The transcript keeps nothing the model carries (a rewind back to an empty conversation, or
+ *     back to nothing but the greeting, which is never prompted): there is no kept entry to pin the
+ *     cut to, so every dropped entry is omitted instead, with one `null` replacement each. The last
+ *     such edit is then the file's last entry, which is what makes the omission survive a re-open.
+ *
  * The dropped messages are the named row AND every row after it, which is why the proof is a suffix
- * and not a single lookup: a session whose dropped tail is the newest thing on the branch is
- * exactly the shape a rewind leaves behind, so a second rewind from the same point still matches.
+ * and not a single lookup: a session a rewind already shortened still carries the rows the player
+ * kept, so a second rewind from an earlier point still matches.
  */
-export function branchPiTranscriptTail(
+export function rewindPiTranscriptTail(
   session: PiVariantBranchSession,
   dropped: readonly PiTranscriptMessage[],
-): PiVariantBranchResult {
+): PiTranscriptRewindResult {
   if (dropped.length === 0) return { status: "refused", reason: "rewind_nothing_dropped" };
   const messages = branchMessageEntries(session);
   if (messages.length < dropped.length) return { status: "refused", reason: "rewind_tail_unavailable" };
@@ -140,21 +154,73 @@ export function branchPiTranscriptTail(
     const actual = expected.role === "player" ? entry?.player : entry?.reply;
     if (actual !== expected.text) return { status: "refused", reason: "rewind_tail_text_mismatch" };
   }
-  // The first dropped message's parent is the last message the player keeps, so the leaf lands on
-  // the kept side of the boundary; the next prompt then appends as its child.
-  return branchedTo(session, messages[start]!.parentId);
+  const kept = start === 0 ? undefined : messages[start - 1];
+  const keptContent = kept === undefined ? null : editableContentOf(session.sessionManager.getEntry(kept.id));
+  // The kept entry has to be one an edit can put back byte for byte; an entry that carries no
+  // editable model content (a bash or tool entry between two messages) cannot pin the cut, so the
+  // rewind refuses rather than cutting with nothing durable behind it.
+  if (kept !== undefined && keptContent === null) return { status: "refused", reason: "rewind_keep_unavailable" };
+  const previousLeafId = session.sessionManager.getLeafId();
+  if (kept === undefined || keptContent === null) {
+    for (const entry of messages.slice(start)) session.sessionManager.appendContextEdit(entry.id, null);
+  } else {
+    branchTo(session, kept.id);
+    session.sessionManager.appendContextEdit(kept.id, { content: keptContent });
+  }
+  session.refreshContext();
+  return Object.freeze({
+    status: "rewound",
+    revert: (): void => {
+      branchTo(session, previousLeafId);
+    },
+  });
 }
 
 /** One Chat transcript message a rewind drops, as the transcript itself holds it. */
 export type PiTranscriptMessage = Readonly<{ role: "player" | "companion"; text: string }>;
 
+/** Why a refused rewind left the model's context exactly as it was. */
+type PiTranscriptRewindRefusal =
+  | "rewind_nothing_dropped"
+  | "rewind_tail_unavailable"
+  | "rewind_tail_text_mismatch"
+  | "rewind_keep_unavailable";
+
+export type PiTranscriptRewindResult =
+  | Readonly<{
+      status: "rewound";
+      /**
+       * Puts the leaf back where it was, so a rewind whose durable truncation refused leaves the
+       * model's context exactly as it found it. The store and Pi cannot be atomic, so the caller
+       * owns this compensation when its durable commit refuses.
+       */
+      revert(): void;
+    }>
+  | Readonly<{ status: "refused"; reason: PiTranscriptRewindRefusal }>;
+
+/**
+ * The exact content one session entry contributes, when an edit could put it back: `null` for an
+ * entry that contributes no editable model content, which is also the one shape a rewind cannot pin
+ * a cut to.
+ */
+function editableContentOf(
+  entry: ReturnType<PiVariantBranchSession["sessionManager"]["getEntry"]>,
+): ContextEditableContent | null {
+  if (entry?.type !== "message") return null;
+  const message = entry.message;
+  if (message.role === "user" || message.role === "assistant" || message.role === "toolResult") return message.content;
+  return null;
+}
+
 /** The session branch's message entries in order, each with the text it contributed. */
 function branchMessageEntries(session: PiVariantBranchSession): readonly Readonly<{
+  id: string;
   parentId: string | null;
   reply: string | null;
   player: string | null;
 }>[] {
   const messages: Readonly<{
+    id: string;
     parentId: string | null;
     reply: string | null;
     player: string | null;
@@ -163,6 +229,7 @@ function branchMessageEntries(session: PiVariantBranchSession): readonly Readonl
     if (entry.type !== "message") continue;
     messages.push(
       Object.freeze({
+        id: entry.id,
         parentId: entry.parentId,
         reply: chatTranscriptAssistantText(entry.message),
         player: chatTranscriptPlayerText(entry.message),

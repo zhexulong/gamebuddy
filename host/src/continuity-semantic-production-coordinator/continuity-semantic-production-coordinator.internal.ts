@@ -50,8 +50,8 @@ import type {
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import {
-  branchPiTranscriptTail,
   branchPiVariantAnchor,
+  rewindPiTranscriptTail,
   type PiTranscriptMessage,
 } from "../pi-session-variant-branch.internal.js";
 import { identityKey, type RuntimeSession } from "../runtime.js";
@@ -1218,18 +1218,18 @@ export async function selectMountedSwipeVariant(
 }
 
 /**
- * The one authorized rewind ingress. A rewind moves the model's own session leaf, and only a live
- * mounted lease holds the exact runtime session whose leaf the mounted conversation owns; so a
- * caller with a store but no live mount cannot reshape a conversation. Like the swipe ingress it
- * neither creates nor selects a Chat.
+ * The one authorized rewind ingress. A rewind reshapes the model's own session, and only a live
+ * mounted lease holds the exact runtime session the mounted conversation owns, so a caller with a
+ * store but no live mount cannot reshape a conversation. Like the swipe ingress it neither creates
+ * nor selects a Chat.
  *
- * The order is the whole point. The durable read, the Pi leaf move and the durable truncation share
- * one synchronous critical section - there is no `await` between the branch and the store write,
- * and the Host runs on a single event loop - so nothing can be admitted between the session shape
- * this rewind proved and the rows it removes. The store re-checks the ledger inside its own
- * transaction, so a turn admitted by a write that slipped in before the read still refuses; that
- * refusal rolls the transaction back, and the leaf is put where it was. A refused rewind therefore
- * leaves both authorities exactly as it found them.
+ * The order is the whole point. The durable read, the session's own shortening and the durable
+ * truncation share one synchronous critical section - there is no `await` between them, and the Host
+ * runs on a single event loop - so nothing can be admitted between the session shape this rewind
+ * proved and the rows it removes. The store re-checks the ledger inside its own transaction, so a
+ * turn admitted by a write that slipped in before the read still refuses; that refusal rolls the
+ * transaction back, and the session is put where it was. A refused rewind therefore leaves both
+ * authorities exactly as it found them.
  */
 export async function rewindMountedChatTranscript(
   manifest: HostDeploymentManifest,
@@ -1258,15 +1258,15 @@ export async function rewindMountedChatTranscript(
   const dropped: PiTranscriptMessage[] = state.messages
     .slice(input.expectedOrder)
     .map((message) => Object.freeze({ role: message.role, text: message.text }));
-  const branched = branchPiTranscriptTail(runtimeSession.session, dropped);
-  if (branched.status !== "branched") {
-    process.stderr.write(`[rewind] branch refused: ${branched.reason}\n`);
+  const rewound = rewindPiTranscriptTail(runtimeSession.session, dropped);
+  if (rewound.status !== "rewound") {
+    process.stderr.write(`[rewind] session shape refused: ${rewound.reason}\n`);
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_rewind_unavailable");
   }
   try {
     return await store.rewindTranscript!(record.transitionAuthority.authority, record.chatThreadId, input);
   } catch (error) {
-    branched.revert();
+    rewound.revert();
     throw error;
   }
 }
