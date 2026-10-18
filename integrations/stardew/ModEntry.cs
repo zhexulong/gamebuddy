@@ -79,11 +79,14 @@ public sealed partial class ModEntry : Mod
     ///
     /// Throttled like the heartbeat (2 s), so a log is never flooded, and it never changes authority.
     /// </summary>
-    private void LogStageOnce(string phase)
+    private void LogStageOnce(string phase, bool force = false)
     {
         this.MarkTickPhase(phase);
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (now - this.nativeLocalPlayerFixtureLastStageUnixMs < 2_000L)
+        // Throttled, EXCEPT when the caller says this line has to be there: an execution in flight is exactly the
+        // case where the last line of a frozen log must be the marker immediately before the engine call that hung,
+        // not a stale heartbeat. Four runs froze with `phase=pipe_drain` as their final word because of that throttle.
+        if (!force && now - this.nativeLocalPlayerFixtureLastStageUnixMs < 2_000L)
             return;
         this.nativeLocalPlayerFixtureLastStageUnixMs = now;
         this.Monitor.Log(
@@ -1473,7 +1476,7 @@ public sealed partial class ModEntry : Mod
             Volatile.Write(ref this.tickWatchdogPhase, "pipe_drain");
             this.DrainLocalPipeBridge(nativeLocalState);
             this.LogNativeLocalPipelineHeartbeat();
-            this.LogStageOnce("executions_update");
+            this.LogStageOnce("executions_update", force: nativeLocalState.Executions?.IsBodyBusy == true);
             nativeLocalState.Executions?.Update();
             this.LogStageOnce("executions_update_done");
             // The Body Program successor pump must run on the native-local player
@@ -1481,7 +1484,11 @@ public sealed partial class ModEntry : Mod
             // sources and exact successors and parks when no authenticated
             // admission/native seams are wired. Without it, an accepted A→B
             // program stays pending on this fixture topology.
-            nativeLocalState.BodyProgramController?.Update();
+            // The program pump is the other half that runs on this lane, and one freeze followed a program submission:
+        // its own markers make the difference visible.
+        this.LogStageOnce("program_pump", force: nativeLocalState.BodyProgramController is not null);
+        nativeLocalState.BodyProgramController?.Update();
+        this.LogStageOnce("program_pump_done");
             this.npcDialoguePager?.Observe(nativeLocalState.BridgeSession);
             this.PublishPendingStopObservation(nativeLocalState);
             this.MarkTickPhase("idle_between_ticks");
