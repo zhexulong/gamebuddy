@@ -106,7 +106,7 @@ function fixture(
           identityVersion: 1,
           lifecycle: "published",
           kind: "execution",
-        }
+        },
       ],
       snapshotRevision: 1,
       activeExecution: null,
@@ -176,9 +176,7 @@ async function binding(): Promise<GameRuntimeBinding> {
   const token = mintBindingToken(execution);
   let closed = false;
   return Object.freeze({
-    async executeWithBinding<T>(
-      callback: (token: OpaqueGameRuntimeBindingToken) => Promise<T> | T,
-    ): Promise<T> {
+    async executeWithBinding<T>(callback: (token: OpaqueGameRuntimeBindingToken) => Promise<T> | T): Promise<T> {
       if (closed) throw new Error("game_runtime_binding_unavailable");
       try {
         return await callback(token);
@@ -601,12 +599,8 @@ test("retains a durable uncertain action journal across materializer close witho
         },
       });
       assert.equal(executeCalls, 1, "receipt recovery must not resend the action");
-      assert.deepEqual(receiptQueries, [
-        { requestId: request.requestId, idempotencyKey: request.idempotencyKey },
-      ]);
-      assert.deepEqual(outcome, [
-        { requestId: request.requestId, result: "admitted", state: "accepted" },
-      ]);
+      assert.deepEqual(receiptQueries, [{ requestId: request.requestId, idempotencyKey: request.idempotencyKey }]);
+      assert.deepEqual(outcome, [{ requestId: request.requestId, result: "admitted", state: "accepted" }]);
       assert.equal(reopened.record("logical_missing_response_01")?.state, "recovery_pending");
     } finally {
       await reopened.close();
@@ -773,22 +767,31 @@ test("production materializer source rejects legacy lifecycle, facade, store com
 
 test("public runtime facade, attachment, GameConnection, and adapter surfaces do not name a program port or tool API", async () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
-  const publicSources = await Promise.all([
-    "game-connection.ts",
-    "runtime.ts",
-    "runtime-core.internal.ts",
-    "game-integration-adapter.ts",
-    "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.internal.ts",
-  ].map((path) => readFile(join(root, path), "utf8")));
+  const publicSources = await Promise.all(
+    [
+      "game-connection.ts",
+      "runtime.ts",
+      "runtime-core.internal.ts",
+      "game-integration-adapter.ts",
+      "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.internal.ts",
+    ].map((path) => readFile(join(root, path), "utf8")),
+  );
   for (const source of publicSources) {
     assert.equal(source.includes("bodyProgramTransport"), false);
     assert.equal(source.includes("BodyProgramPort"), false);
     assert.equal(source.includes("programVerify"), false);
     assert.equal(source.includes("programSubmit"), false);
   }
-  const materializer = await readFile(join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"), "utf8");
-   assert.equal(materializer.includes("bodyProgramTransport"), false);
-   assert.equal(materializer.includes(".test-support"), false, "production materializer must not enter the test-support graph");
+  const materializer = await readFile(
+    join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"),
+    "utf8",
+  );
+  assert.equal(materializer.includes("bodyProgramTransport"), false);
+  assert.equal(
+    materializer.includes(".test-support"),
+    false,
+    "production materializer must not enter the test-support graph",
+  );
 });
 
 test("production Game presentation composition supplies session and opaque admission only inside materialization", async () => {
@@ -802,7 +805,12 @@ test("production Game presentation composition supplies session and opaque admis
   assert.match(source, /gameVoicePresentation\?: GameVoicePresentationAttachment/);
   assert.doesNotMatch(source, /gamePresentation\?:/);
   assert.match(source, /sessionId: gameSessionId/);
-  assert.match(source, /createGamePresentationAdmissionProvider\(\s*turnTracker,\s*handle\.interruption,\s*\)/);
+  // The two ARGUMENTS are what must hold - the turn tracker and the interruption handle the
+  // admission is fenced by - so the trailing comma is optional here: the formatter breaks this
+  // call across lines only while it does not fit on one, and this pin broke the first time the
+  // call was short enough to collapse (`handle.interruption,` + newline became `handle.interruption)`),
+  // which says nothing about the behaviour the assertion protects.
+  assert.match(source, /createGamePresentationAdmissionProvider\(\s*turnTracker,\s*handle\.interruption,?\s*\)/);
   assert.match(source, /createFarmhandCompanionPresentationPort/);
   // The voice path is asserted as BEHAVIOUR, not as a spelling. Commit 75eb1dae
   // deliberately hoisted the attachment consumption into `gameVoicePayload` (so the
@@ -831,10 +839,7 @@ test("Game materializer assembles canonical Game context through the tested asse
     join(materializerDirectory, "continuity-semantic-game-runtime-materializer.ts"),
     "utf8",
   );
-  const assemblySource = await readFile(
-    join(materializerDirectory, "game-runtime-context-assembly.ts"),
-    "utf8",
-  );
+  const assemblySource = await readFile(join(materializerDirectory, "game-runtime-context-assembly.ts"), "utf8");
   // System assembly, not caller/script injection: the materializer delegates to
   // the shared seam inside the runtime constructor and forwards both resolved
   // values to the runtime core.
@@ -942,10 +947,7 @@ test("connected dispatch validates Unicode scalar text and fails closed when no 
     await assert.rejects(connected.dispatchPromptDefinedTask("contains\u0000nul"), /invalid_gameplay_task/);
     await assert.rejects(connected.dispatchPromptDefinedTask("\ud800"), /invalid_gameplay_task/);
     await assert.rejects(connected.dispatchPromptDefinedTask("\udfff"), /invalid_gameplay_task/);
-    await assert.rejects(
-      connected.dispatchPromptDefinedTask(undefined as unknown as string),
-      /invalid_gameplay_task/,
-    );
+    await assert.rejects(connected.dispatchPromptDefinedTask(undefined as unknown as string), /invalid_gameplay_task/);
     assert.equal(calls, 1);
   } finally {
     await runtimeBinding.close();
