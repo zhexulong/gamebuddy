@@ -11,6 +11,10 @@ import type {
   FailedTurn,
   RunningTurn,
 } from "./chat-thread-store.js";
+import {
+  authoredContextCatalogFixture,
+  readAuthoredContextRegistry,
+} from "../test-support/authored-context-catalog.test-support.js";
 import { createChatEventStream } from "./chat-event-stream.js";
 import { runMountedProviderStart, type NativeChatPreviewPublisher } from "./p4-provider-start-execution.js";
 
@@ -432,21 +436,36 @@ test("P4c installs the durable authored-context plan before its plain-text promp
   assert.deepEqual(events, ["read-plan", "assert-install", "read-text", "prompt"]);
 });
 
-test("P4c forwards the plan's selected volatile world-book refs into the volatile install", async () => {
-  // The keyword-gated world-book entries live ONLY in `plan.volatileSources`: the
-  // catalog's per-turn selection (chat-thread-store.ts `selectAuthoredContextVolatileSourceRefs`)
-  // put them there, and this call is the only place that selection is handed to the
-  // vendor's per-turn m[1] binding. Passing `[]` here compiles, leaves every stable
-  // assertion green, and silently drops every entry the player's words just matched.
-  const volatileRef = Object.freeze({
+test("P4c hands the plan's selected volatile world-book refs to the vendor binding the extension entry reads", async () => {
+  // The keyword-gated world-book entries live ONLY in `plan.volatileSources`: the catalog's per-turn
+  // selection (chat-thread-store.ts `selectAuthoredContextVolatileSourceRefs`) put them there, and
+  // this call is the only place that selection is handed to Magic Context. The assertion below is
+  // read out of the vendor's OWN process-wide registry rather than a spy, so a hardcoded `[]` fails
+  // here - and so does a Magic Context build whose two bundle entries keep separate registries,
+  // which is the defect that left every selected entry (the always-on constant as much as the
+  // keyword-gated one) invisible to the model.
+  const catalogSource = Object.freeze({
     sourceId: "book_01_entry_2",
-    kind: "lorebook_entry",
     revision: "1",
-    canonicalHash: "b".repeat(64),
+    content: "Keyword-gated backdrop.",
+    budgetTokens: 8,
     totalOrderKey: "0002",
     provenance: "tavern-world-book-entry/book_01_entry_2/revision/1/canonical/c",
+    selectionKeys: Object.freeze(["绿茶"]),
   });
-  let installedVolatile: readonly AuthoredVolatileSourceRef[] | undefined;
+  const authoredScope = Object.freeze({
+    continuityId: facts.continuityId,
+    sessionId: "pi_session_volatile_delivery",
+    surface: "tavern" as const,
+    threadId: facts.chatThreadId,
+    profile: Object.freeze({ profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }),
+  });
+  const fixture = authoredContextCatalogFixture(authoredScope, { volatileSources: [catalogSource] });
+  const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/tavern");
+  const authoredContextCapability = publishGameBuddyAuthoredStableCatalog(authoredScope, fixture.catalog);
+  const volatileRef = fixture.volatileRefs[0];
+  assert.ok(volatileRef, "the volatile catalog fixture must produce the ref the plan installs");
+
   const { scope } = createScope({
     readAcceptedAuthoredContextPlan: async () =>
       Object.freeze({
@@ -454,16 +473,7 @@ test("P4c forwards the plan's selected volatile world-book refs into the volatil
         stableSources: Object.freeze([]),
         volatileSources: Object.freeze([volatileRef]),
       }),
-    authoredContextCapability: Object.freeze({
-      assertInstall(
-        _durableTurnId: string,
-        _refs: readonly AuthoredStableSourceRef[],
-        volatileRefs?: readonly AuthoredVolatileSourceRef[],
-      ) {
-        installedVolatile = volatileRefs;
-      },
-      clearVolatileForTurn: (_durableTurnId: string) => undefined,
-    }),
+    authoredContextCapability,
     runtimeSession: Object.freeze({
       installTavernProviderStartObserver() {
         return () => undefined;
@@ -478,7 +488,11 @@ test("P4c forwards the plan's selected volatile world-book refs into the volatil
 
   await runMountedProviderStart(scope);
 
-  assert.deepEqual(installedVolatile, [volatileRef]);
+  assert.deepEqual(readAuthoredContextRegistry()?.volatileTurns.get(authoredScope.sessionId), {
+    turnId: facts.turnId,
+    sourceRefs: [volatileRef],
+  });
+  await authoredContextCapability.clear();
 });
 
 test("P4c fails closed on an authored-context mismatch before prompt", async () => {

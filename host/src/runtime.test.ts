@@ -5,7 +5,12 @@ import { dirname, join } from "node:path";
 import test, { before } from "node:test";
 import { createServer, type Server, type Socket } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  AUTHORED_CONTEXT_REGISTRY_SLOT_KEY,
+  authoredContextCatalogFixture,
+  readAuthoredContextRegistry,
+} from "./test-support/authored-context-catalog.test-support.js";
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -1454,49 +1459,101 @@ test("the recorded Magic Context runtime identity is the loaded artifact's own v
   assert.equal(RUNTIME_PACKAGE_VERSIONS.magicContext, artifact.version);
 });
 
-test("the loaded Magic Context extension cannot see the Host's authored-context publication", async () => {
-  // PINNED CURRENT TRUTH, measured on a real Chat turn (live run
-  // 6a936d00066f78e2808f16cc, generation g-mvcz5ktz-36908): the durable plan for
-  // every turn carried both the always-on `lorebook_constant` and the keyword-gated
-  // `lorebook_entry` rows the player's words matched (`tavern.sqlite`
-  // `tavern_turn_context_plans` / `_volatile_sources`), yet the provider-bound
-  // `session_meta.cached_m0_bytes` was `<session-history></session-history>` and
-  // `cached_m1_bytes` the empty `session-history-since` placeholder - no
-  // `<gamebuddy-authored-context>`, no `<gamebuddy-volatile-context>`. The entries
-  // are SELECTED and never DELIVERED, for the always-on entry as much as for the
-  // keyword-gated ones.
+test("the loaded Magic Context extension and the Host's tavern entry share one authored-context registry", async () => {
+  // The durable plan SELECTS the companion's world book - the always-on `lorebook_constant` and the
+  // keyword-gated `lorebook_entry` rows the player's words matched (`tavern.sqlite`
+  // `tavern_turn_context_plans` / `_volatile_sources`) - and the provider-bound `session_meta` must
+  // carry what those entries rendered. It did not: `cached_m0_bytes` was
+  // `<session-history></session-history>` and `cached_m1_bytes` the empty `session-history-since`
+  // placeholder, for the constant entry as much as for the keyword-gated ones. The stop was the
+  // published artifact: `build` runs `bun build` once per entry, so `gamebuddy-stable-context-source`
+  // was inlined once for the Host's `./tavern` entry (publish + the per-turn volatile bind) and once
+  // for the Pi extension entry (the reader whose result fills m[0]/m[1]) - the writer's map was
+  // never the reader's map.
   //
-  // The stop is not the selection hop. Magic Context keeps the publication in a
-  // process-local map (`authoredRenderer`) inside `gamebuddy-stable-context-source`,
-  // and the published artifact carries TWO separately built copies of that module:
-  // the Host imports `./tavern` (publish + the per-turn volatile bind) while Pi
-  // loads the package root as the extension (the reader that fills `m[0]`/`m[1]`).
-  // The writer's map is therefore never the reader's map. `runtime-core.internal.ts`
-  // already names this boundary for the embedded historian (`jiti` loads the
-  // extension with `moduleCache: false`, so any second import is a second instance)
-  // and crosses it with a `Symbol.for` slot on `globalThis`; the authored-context
-  // registry has no such channel.
+  // MEASURED ONCE THE REGISTRY WAS SHARED (Chat live run `5d277c83309284ecbf780bb8`, generation
+  // `g-mvd3inaf-27044-aecf54ddd9ba4baaa36545a9683bcdd9`): the turn's durable plan carried volatile
+  // token count 85 and the keyword-gated rows `…_entry_3` / `…_entry_5` / `…_entry_6`, and the
+  // provider-bound `session_meta.cached_m0_bytes` (1130 B) held `<gamebuddy-authored-context
+  // version="v2" …>` including the `lorebook_constant` `gamebuddy-worldbook-default-companion`,
+  // while `cached_m1_bytes` (1159 B) held `<gamebuddy-volatile-context …>` with those three
+  // `<gamebuddy-volatile-source>` blocks.
   //
-  // When a fix gives the two sides one registry (or one shared bundle copy), this
-  // assertion must be replaced by a DELIVERY assertion - the rendered
-  // `<gamebuddy-volatile-context>` / `<gamebuddy-authored-context>` block reaching
-  // the provider-bound bytes - and not merely relaxed.
+  // Magic Context keeps that registry on `globalThis` under `Symbol.for(…)`, the same cross-entry
+  // channel it already uses for the embedded historian binding. This test loads BOTH published
+  // entries in one process - two module copies, exactly the shape the defect needed - and requires
+  // them to end up on ONE registry whose write the extension side reads.
   const extensionEntry = resolveMagicContextExtensionEntry();
   const tavernEntry = fileURLToPath(import.meta.resolve("@cortexkit/pi-magic-context/tavern"));
   const packageRoot = join(dirname(extensionEntry), "..");
   assert.equal(tavernEntry.startsWith(packageRoot), true);
   assert.notEqual(tavernEntry, extensionEntry);
+
   const extensionBundle = await readFile(extensionEntry, "utf8");
   const tavernBundle = await readFile(tavernEntry, "utf8");
-  // Each bundle declares its own registry for the same source module...
-  assert.match(extensionBundle, /authoredRenderer = new Map/);
-  assert.match(tavernBundle, /authoredRenderer = new Map/);
-  // ...and each holds only one half of the seam: the binder ships where the Host
-  // publishes, the reader ships where the extension renders the prompt.
-  assert.equal(tavernBundle.includes("__gamebuddyBindAuthoredVolatileTurn"), true);
-  assert.equal(extensionBundle.includes("__gamebuddyBindAuthoredVolatileTurn"), false);
+  for (const bundle of [extensionBundle, tavernBundle]) {
+    // One registry, named by the same `Symbol.for` key in both copies, with no module-local map
+    // kept beside it: a second source of truth is how the two halves diverged in the first place.
+    assert.equal(bundle.split(AUTHORED_CONTEXT_REGISTRY_SLOT_KEY).length - 1, 1);
+    assert.doesNotMatch(bundle, /authoredRenderer = new Map/);
+    assert.match(bundle, /materializations: authoredRenderer/);
+  }
+  // The extension entry carries the reader that renders m[0] and m[1]; the tavern entry is where
+  // the Host publishes and applies the per-turn volatile bind, and it renders no prompt itself.
   assert.equal(extensionBundle.includes("__gamebuddyReadAuthoredVolatileMaterialization"), true);
   assert.equal(tavernBundle.includes("__gamebuddyReadAuthoredVolatileMaterialization"), false);
+
+  await import(pathToFileURL(extensionEntry).href);
+  const extensionRegistry = readAuthoredContextRegistry();
+  assert.notEqual(extensionRegistry, undefined);
+  // The tavern bundle is a separate bundle with its own copy of the module: it must adopt the
+  // extension's registry, not create a second one.
+  await import(pathToFileURL(tavernEntry).href);
+  assert.equal(readAuthoredContextRegistry(), extensionRegistry);
+
+  const scope = Object.freeze({
+    continuityId: "continuity_authored_registry",
+    sessionId: "pi_session_authored_registry",
+    surface: "tavern" as const,
+    threadId: "thread_authored_registry",
+    profile: Object.freeze({ profileId: "profile_authored_registry", revision: 1, canonicalHash: "a".repeat(64) }),
+  });
+  const fixture = authoredContextCatalogFixture(scope, {
+    stableSources: [
+      {
+        sourceId: "worldbook_authored_registry",
+        kind: "lorebook_constant",
+        revision: "1",
+        content: "The always-on backdrop.",
+        budgetTokens: 8,
+        totalOrderKey: "0001",
+        provenance: "test-support/authored-context-catalog",
+      },
+    ],
+    volatileSources: [
+      {
+        sourceId: "worldbook_authored_registry_entry_1",
+        revision: "1",
+        content: "The keyword-gated backdrop.",
+        budgetTokens: 8,
+        totalOrderKey: "0002",
+        provenance: "test-support/authored-context-catalog",
+        selectionKeys: ["绿茶"],
+      },
+    ],
+  });
+  const tavern = await import("@cortexkit/pi-magic-context/tavern");
+  const capability = tavern.publishGameBuddyAuthoredStableCatalog(scope, fixture.catalog);
+
+  // The Host's publication is now in the registry the extension entry's reader reads, and it
+  // carries the rendered block that reader pushes into m[0].
+  const materialization = readAuthoredContextRegistry()?.materializations.get(scope.sessionId);
+  assert.deepEqual(
+    materialization?.sources.map((source) => source.kind),
+    ["lorebook_constant"],
+  );
+  assert.match(materialization?.renderedBlock ?? "", /<gamebuddy-authored-context version="v2"/);
+  await capability.clear();
 });
 
 test("runtime loads only Magic Context and preserves a session partition", async () => {
