@@ -100,13 +100,17 @@ export function ComposedReferenceGameApp() {
   // commands (regenerate mints a fresh idempotency key per click). The ref is the
   // synchronous single-flight guard, the state is the projection the surface shows.
   const [chatMutation, setChatMutation] = useState<Readonly<{
-    kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit";
+    kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
     handle: string;
   }> | null>(null);
   // The rewind arm: the message the player asked to cut back to, and the order they were shown it
   // at. A rewind destroys everything after that point, so the arm only names the target and the
   // confirmation below the bubble is what sends it.
   const [rewindArm, setRewindArm] = useState<Readonly<{ handle: string; expectedOrder: number }> | null>(null);
+  // The delete arm: the one message the player asked to remove, and the order they were shown it at.
+  // A delete is destructive and has no undo, so the arm names the target and the confirmation below
+  // the bubble is what sends it - the same shape the rewind arm and a Chats row's trash use.
+  const [deleteArm, setDeleteArm] = useState<Readonly<{ handle: string; expectedOrder: number }> | null>(null);
   const chatMutationRef = useRef(false);
   // The durable draft's authoring state is the composer's own field (see the
   // seeding effect below); what stays here is the closed outcome line its
@@ -881,6 +885,9 @@ export function ComposedReferenceGameApp() {
   }, [rewindArm, mountedTranscript]);
 
   const handleRewindArm = (messageHandle: string, expectedOrder: number): void => {
+    // Only one destructive arm can be open at a time, so arming one drops the other: a row showing
+    // two confirmations at once would leave the player unable to tell what the next press removes.
+    setDeleteArm(null);
     setRewindArm(Object.freeze({ handle: messageHandle, expectedOrder }));
   };
 
@@ -899,6 +906,57 @@ export function ComposedReferenceGameApp() {
     setChatMutation(Object.freeze({ kind: "rewind" as const, handle: messageHandle }));
     try {
       await tavernApiRef.current.rewind(
+        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, expectedOrder },
+        { csrfToken: current.session.snapshot.csrfToken },
+      );
+      await rereadChat();
+    } catch (error) {
+      await rereadChat().catch(() => {
+        commit(problemView(error, messages(current.locale)));
+      });
+    } finally {
+      chatMutationRef.current = false;
+      setChatMutation(null);
+    }
+  };
+
+  /**
+   * The delete arm and its confirmation, the rewind arm's own shape one row over: the arm names the
+   * message AND the order the page rendered it at, and it is dropped the moment that pairing stops
+   * holding, so a stale arm can never delete a message the player is no longer looking at. The Host
+   * re-checks the same pairing anyway: this only keeps the surface honest.
+   */
+  useEffect(() => {
+    if (deleteArm === null) return;
+    if (
+      mountedTranscript?.some(
+        (message) => message.handle === deleteArm.handle && message.order === deleteArm.expectedOrder,
+      ) === true
+    )
+      return;
+    setDeleteArm(null);
+  }, [deleteArm, mountedTranscript]);
+
+  const handleDeleteArm = (messageHandle: string, expectedOrder: number): void => {
+    setRewindArm(null);
+    setDeleteArm(Object.freeze({ handle: messageHandle, expectedOrder }));
+  };
+
+  const handleDeleteCancel = (): void => {
+    setDeleteArm(null);
+  };
+
+  const handleDeleteConfirm = async (messageHandle: string, expectedOrder: number): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    if (chatMutationRef.current) return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    setDeleteArm(null);
+    chatMutationRef.current = true;
+    setChatMutation(Object.freeze({ kind: "delete" as const, handle: messageHandle }));
+    try {
+      await tavernApiRef.current.delete(
         { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, expectedOrder },
         { csrfToken: current.session.snapshot.csrfToken },
       );
@@ -1299,6 +1357,12 @@ export function ComposedReferenceGameApp() {
                 onRewindCancel={handleRewindCancel}
                 rewindArmedHandle={rewindArm === null ? null : rewindArm.handle}
                 onEdit={(messageHandle, expectedOrder, text) => void handleEdit(messageHandle, expectedOrder, text)}
+                onDelete={handleDeleteArm}
+                onDeleteConfirm={(messageHandle, expectedOrder) =>
+                  void handleDeleteConfirm(messageHandle, expectedOrder)
+                }
+                onDeleteCancel={handleDeleteCancel}
+                deleteArmedHandle={deleteArm === null ? null : deleteArm.handle}
                 value={inputText}
                 onChange={writeInput}
                 onSend={() => void handleSend()}

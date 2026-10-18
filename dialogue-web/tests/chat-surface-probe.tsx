@@ -55,16 +55,28 @@ type Model = Readonly<{
   preview: Readonly<{ turnHandle: string; text: string }> | null;
   voice: VoiceSurfaceStateV1 | null;
   /** The chat mutation in flight, exactly as the shell projects it to Timeline. */
-  pending: Readonly<{ kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit"; handle: string }> | null;
+  pending: Readonly<{ kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | "delete"; handle: string }> | null;
   /** The one message whose rewind is armed, exactly as the shell projects it to Timeline. */
   rewindArmedHandle: string | null;
+  /** The one message whose delete is armed, exactly as the shell projects it to Timeline. */
+  deleteArmedHandle: string | null;
 }>;
 
-let model: Model = { transcript: [], preview: null, voice: null, pending: null, rewindArmedHandle: null };
+let model: Model = {
+  transcript: [],
+  preview: null,
+  voice: null,
+  pending: null,
+  rewindArmedHandle: null,
+  deleteArmedHandle: null,
+};
 let rerender: (() => void) | null = null;
 
 /** Every rewind control a journey pressed, so a test can see what the surface sent. */
 const rewindCalls: { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] = [];
+
+/** Every delete control a journey pressed, in the same shape as the rewind's. */
+const deleteCalls: { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] = [];
 
 /** Every edit a journey saved, so a test can see the pair and the words the surface sent. */
 const editCalls: { handle: string; order: number; text: string }[] = [];
@@ -112,6 +124,26 @@ function Probe() {
         onEdit={(handle, order, text) => {
           editCalls.push({ handle, order, text });
         }}
+        /*
+         * The delete drives the same two-step shape the shell keeps: the arm is local presentation
+         * state here, and the confirm is what a journey observes on the way to the Host.
+         */
+        onDelete={(handle, order) => {
+          deleteCalls.push({ kind: "arm", handle, order });
+          model = { ...model, deleteArmedHandle: handle };
+          rerender?.();
+        }}
+        onDeleteConfirm={(handle, order) => {
+          deleteCalls.push({ kind: "confirm", handle, order });
+          model = { ...model, deleteArmedHandle: null };
+          rerender?.();
+        }}
+        onDeleteCancel={() => {
+          deleteCalls.push({ kind: "cancel", handle: "", order: -1 });
+          model = { ...model, deleteArmedHandle: null };
+          rerender?.();
+        }}
+        deleteArmedHandle={model.deleteArmedHandle}
         pending={model.pending}
       />
       <Composer
@@ -157,9 +189,67 @@ const chatProbe = {
     model = { ...model, voice: state };
     rerender?.();
   },
-  setPending(pending: { kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit"; handle: string } | null): void {
+  setPending(pending: { kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | "delete"; handle: string } | null): void {
     model = { ...model, pending };
     rerender?.();
+  },
+  /** Every arm, confirm and cancel this probe's delete control has sent. */
+  deleteCalls(): readonly { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] {
+    return [...deleteCalls];
+  },
+  resetDeleteCalls(): void {
+    deleteCalls.length = 0;
+  },
+  /**
+   * The delete control as the player meets it: what it is called, the target it actually paints, and
+   * the strip it sits in. The size is read from the layout rather than from a class name, because a
+   * control under the touch minimum is the defect the journey exists for.
+   */
+  deleteControl(handle: string): {
+    ariaLabel: string | null;
+    title: string | null;
+    label: string | null;
+    width: number;
+    height: number;
+    stripHeight: number;
+  } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const button = li?.querySelector('[data-testid="message-delete"]') as HTMLButtonElement | null;
+    if (button === null || button === undefined) return null;
+    const rect = button.getBoundingClientRect();
+    const strip = li?.querySelector(".message-actions");
+    return {
+      ariaLabel: button.getAttribute("aria-label"),
+      title: button.getAttribute("title"),
+      label: button.textContent,
+      width: rect.width,
+      height: rect.height,
+      stripHeight: strip === null || strip === undefined ? 0 : strip.getBoundingClientRect().height,
+    };
+  },
+  /**
+   * The armed delete confirmation on `handle`'s row: its prompt, its two answers, and how many of the
+   * row's ordinary controls are still rendered beside it (the confirmation replaces them, not sits
+   * among them).
+   */
+  deleteConfirm(handle: string): {
+    prompt: string | null;
+    yes: string | null;
+    no: string | null;
+    ordinaryControls: number;
+  } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const confirm = li?.querySelector('[data-testid="message-delete-confirm"]');
+    if (confirm === null || confirm === undefined) return null;
+    return {
+      prompt: confirm.querySelector(".message-confirm-prompt")?.textContent ?? null,
+      yes: confirm.querySelector('[data-testid="message-delete-confirm-yes"]')?.textContent ?? null,
+      no: confirm.querySelector('[data-testid="message-delete-confirm-no"]')?.textContent ?? null,
+      ordinaryControls:
+        li?.querySelectorAll(
+          '.swipe-controls, .regenerate-btn, [data-testid="message-rewind"], [data-testid="message-edit"], [data-testid="message-delete"]',
+        ).length ?? 0,
+    };
   },
   /** Every edit this probe's save button sent. */
   editCalls(): readonly { handle: string; order: number; text: string }[] {

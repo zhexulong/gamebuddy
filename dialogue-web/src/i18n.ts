@@ -331,6 +331,14 @@ const en = {
   editMessageField: "Your message",
   editMessageSave: "Save",
   editMessageCancel: "Cancel",
+  // The delete control: a message's own strip, one button, and the one row it removes. A delete is
+  // destructive and has no undo, so the arm states exactly what goes - this message, not the
+  // conversation after it - and only the confirm sends it, the same shape the Chats row's trash uses.
+  deleteMessage: "Delete",
+  deleteMessageName: "Delete this message: the model stops reading it from the next turn on",
+  deleteConfirmPrompt: "Delete this message? This cannot be undone.",
+  deleteConfirmYes: "Delete",
+  deleteConfirmNo: "Keep",
   // The Host's own name for the greeting variant a new chat opened on: it labels
   // the greeting set's entries `Default` / `Alternate N` (the card's own 1-based
   // order). The catalogue carries that vocabulary so a zh-CN UI never prints the
@@ -373,6 +381,16 @@ const en = {
   problemChatEditNotPlayerMessageDetail: "Only the messages you wrote can be edited.",
   problemChatEditTurnActiveTitle: "A reply is still being written",
   problemChatEditTurnActiveDetail: "Wait for the reply to finish, then edit your message.",
+  // The delete's own three refusals. The last one is not about the player's choice at all: a message
+  // the Host never recorded a session entry for cannot be removed on its own, and saying so is
+  // better than removing a different part of what the model reads.
+  problemChatDeleteOpeningRetainedTitle: "That is the opening",
+  problemChatDeleteOpeningRetainedDetail: "The greeting this conversation started on cannot be deleted.",
+  problemChatDeleteTurnActiveTitle: "A reply is still being written",
+  problemChatDeleteTurnActiveDetail: "Wait for the reply to finish, then delete the message.",
+  problemChatDeleteBindingUnavailableTitle: "This one cannot be deleted",
+  problemChatDeleteBindingUnavailableDetail:
+    "GameBuddy never recorded which part of the model's memory this message is, so it cannot remove only this one. Messages sent from now on can be deleted.",
 
   // Characters (design/28 §2) — companion library + persona/scenario/greeting
   charactersTitle: "Characters",
@@ -895,6 +913,13 @@ const zh: Messages = {
   editMessageField: "你的消息",
   editMessageSave: "保存",
   editMessageCancel: "取消",
+  // 删除控件：消息自己的操作条上一个按钮，只删这一条。删除不可撤销，所以先确认、并说清删掉的是什么
+  // ——是这一条，而不是它之后的整个对话，与会话行上的删除同一形状。
+  deleteMessage: "删除",
+  deleteMessageName: "删除这条消息：模型从下一轮开始不再读到它",
+  deleteConfirmPrompt: "删除这条消息？此操作无法撤销。",
+  deleteConfirmYes: "删除",
+  deleteConfirmNo: "保留",
   openingVariantDefault: "默认",
   openingVariantAlternate: "备用 {{index}}",
 
@@ -925,6 +950,13 @@ const zh: Messages = {
   problemChatEditNotPlayerMessageDetail: "只能编辑你自己发送的消息。",
   problemChatEditTurnActiveTitle: "还有一条回复正在生成",
   problemChatEditTurnActiveDetail: "请等这条回复生成完成后，再编辑你的消息。",
+  problemChatDeleteOpeningRetainedTitle: "这是开场问候",
+  problemChatDeleteOpeningRetainedDetail: "对话开始时的那句问候不能删除。",
+  problemChatDeleteTurnActiveTitle: "还有一条回复正在生成",
+  problemChatDeleteTurnActiveDetail: "请等这条回复生成完成后，再删除这条消息。",
+  problemChatDeleteBindingUnavailableTitle: "这一条无法删除",
+  problemChatDeleteBindingUnavailableDetail:
+    "GameBuddy 没有记录这条消息在模型记忆中对应的是哪一段，因此无法只删掉这一条。从现在起发送的新消息都可以删除。",
 
   // Characters (design/28 §2)
   charactersTitle: "角色",

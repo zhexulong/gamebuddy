@@ -33,9 +33,10 @@ const AUTHENTICATION_PROBLEM_CODES: readonly string[] = ["unauthorized", "csrf_f
 const RECONCILIATION_PROBLEM_CODES: readonly string[] = ["state_reconciliation_required"];
 
 /**
- * The message mutations' refusals, each with its own sentence: a rewind destroys what it names and an
- * edit changes words the model will answer, so "something went wrong" would leave the player unable
- * to tell what happened to the conversation.
+ * The message mutations' refusals, each with its own sentence: a rewind destroys everything after the
+ * point it names, an edit changes words the model will answer, and a delete removes one message the
+ * model reads - so "something went wrong" would leave the player unable to tell what happened to the
+ * conversation.
  */
 function messageMutationProblemView(code: string | null, labels: Messages): ProblemViewState | undefined {
   switch (code) {
@@ -74,6 +75,24 @@ function messageMutationProblemView(code: string | null, labels: Messages): Prob
         kind: "problem",
         title: labels.problemChatEditTurnActiveTitle,
         detail: labels.problemChatEditTurnActiveDetail,
+      };
+    case "chat_delete_opening_retained":
+      return {
+        kind: "problem",
+        title: labels.problemChatDeleteOpeningRetainedTitle,
+        detail: labels.problemChatDeleteOpeningRetainedDetail,
+      };
+    case "chat_delete_turn_active":
+      return {
+        kind: "problem",
+        title: labels.problemChatDeleteTurnActiveTitle,
+        detail: labels.problemChatDeleteTurnActiveDetail,
+      };
+    case "chat_delete_binding_unavailable":
+      return {
+        kind: "problem",
+        title: labels.problemChatDeleteBindingUnavailableTitle,
+        detail: labels.problemChatDeleteBindingUnavailableDetail,
       };
     default:
       return undefined;

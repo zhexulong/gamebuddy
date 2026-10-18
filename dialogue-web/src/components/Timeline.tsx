@@ -28,6 +28,10 @@ export function Timeline({
   onRewindCancel,
   rewindArmedHandle = null,
   onEdit,
+  onDelete,
+  onDeleteConfirm,
+  onDeleteCancel,
+  deleteArmedHandle = null,
   pending = null,
   pendingPlayerMessage = null,
 }: {
@@ -66,6 +70,12 @@ export function Timeline({
     editMessageField: string;
     editMessageSave: string;
     editMessageCancel: string;
+    /** The delete control and the confirmation it opens. */
+    deleteMessage: string;
+    deleteMessageName: string;
+    deleteConfirmPrompt: string;
+    deleteConfirmYes: string;
+    deleteConfirmNo: string;
   };
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate?: (messageHandle: string) => void;
@@ -85,11 +95,25 @@ export function Timeline({
    */;
   onEdit?: (messageHandle: string, expectedOrder: number, text: string) => void;
   /**
+   * The delete point and its confirmation: the arm names the message and the order the timeline
+   * rendered it at, the confirm sends the mutation, and the cancel closes the arm. A delete leaves a
+   * gap rather than shortening the conversation, so - unlike the rewind - every row but the opening
+   * is a legal point.
+   */
+  onDelete?: (messageHandle: string, expectedOrder: number) => void;
+  onDeleteConfirm?: (messageHandle: string, expectedOrder: number) => void;
+  onDeleteCancel?: () => void;
+  /** The one message whose delete is armed, if any. */
+  deleteArmedHandle?: string | null;
+  /**
    * The chat mutation in flight and the message it belongs to, if any. Only that
    * message's own controls go busy, so a swipe on one variant never disables the
    * regenerate affordance of another.
    */
-  pending?: Readonly<{ kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit"; handle: string }> | null;
+  pending?: Readonly<{
+    kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
+    handle: string;
+  }> | null;
   /**
    * The optimistic player message: the text just sent, shown until the
    * authoritative one lands.
@@ -147,6 +171,9 @@ export function Timeline({
   const onRewindConfirmRef = useRef(onRewindConfirm);
   const onRewindCancelRef = useRef(onRewindCancel);
   const onEditRef = useRef(onEdit);
+  const onDeleteRef = useRef(onDelete);
+  const onDeleteConfirmRef = useRef(onDeleteConfirm);
+  const onDeleteCancelRef = useRef(onDeleteCancel);
 
   // The handler props are re-created by the shell on every render - including
   // every streaming delta - so they are re-read through refs and the callbacks
@@ -161,6 +188,9 @@ export function Timeline({
     onRewindConfirmRef.current = onRewindConfirm;
     onRewindCancelRef.current = onRewindCancel;
     onEditRef.current = onEdit;
+    onDeleteRef.current = onDelete;
+    onDeleteConfirmRef.current = onDeleteConfirm;
+    onDeleteCancelRef.current = onDeleteCancel;
   });
 
   const handleSwipe = useCallback((messageHandle: string, direction: "prev" | "next") => {
@@ -184,6 +214,15 @@ export function Timeline({
   const handleEdit = useCallback((messageHandle: string, expectedOrder: number, text: string) => {
     onEditRef.current?.(messageHandle, expectedOrder, text);
   }, []);
+  const handleDelete = useCallback((messageHandle: string, expectedOrder: number) => {
+    onDeleteRef.current?.(messageHandle, expectedOrder);
+  }, []);
+  const handleDeleteConfirm = useCallback((messageHandle: string, expectedOrder: number) => {
+    onDeleteConfirmRef.current?.(messageHandle, expectedOrder);
+  }, []);
+  const handleDeleteCancel = useCallback(() => {
+    onDeleteCancelRef.current?.();
+  }, []);
   // A caller that passed no handler keeps no control: the bubble gates its
   // swipe/regenerate affordances on the handler being present.
   const swipeHandler = onSwipe === undefined ? undefined : handleSwipe;
@@ -192,6 +231,8 @@ export function Timeline({
   const rewindHandler = onRewind === undefined ? undefined : handleRewind;
   const rewindConfirmHandler = onRewindConfirm === undefined ? undefined : handleRewindConfirm;
   const editHandler = onEdit === undefined ? undefined : handleEdit;
+  const deleteHandler = onDelete === undefined ? undefined : handleDelete;
+  const deleteConfirmHandler = onDeleteConfirm === undefined ? undefined : handleDeleteConfirm;
   /**
    * Regeneration re-asks the last thing the player said, so exactly one row can
    * offer it: the transcript's own last message, when that message is a companion
@@ -283,6 +324,10 @@ export function Timeline({
               onRewindCancel={onRewindCancel === undefined ? undefined : handleRewindCancel}
               rewindArmed={rewindArmedHandle === message.handle}
               onEdit={editHandler}
+              onDelete={deleteHandler}
+              onDeleteConfirm={deleteConfirmHandler}
+              onDeleteCancel={onDeleteCancel === undefined ? undefined : handleDeleteCancel}
+              deleteArmed={deleteArmedHandle === message.handle}
               removedCount={transcript.length - message.order}
             />
           ))}

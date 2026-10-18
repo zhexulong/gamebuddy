@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, LoaderCircle, Pencil, RefreshCw, Undo2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, LoaderCircle, Pencil, RefreshCw, Trash2, Undo2 } from "lucide-react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
 import { CompanionAvatar } from "./CompanionAvatar";
@@ -54,6 +54,10 @@ export const MessageBubble = memo(function MessageBubble({
   onRewindCancel,
   rewindArmed = false,
   onEdit,
+  onDelete,
+  onDeleteConfirm,
+  onDeleteCancel,
+  deleteArmed = false,
   removedCount = 0,
   pending = null,
   streaming = false,
@@ -93,6 +97,17 @@ export const MessageBubble = memo(function MessageBubble({
    */
   onEdit?: (messageHandle: string, expectedOrder: number, text: string) => void;
   /**
+   * The delete control's first half: it removes this ONE message, out of the middle of the
+   * conversation, so the click only ARMS the action and the confirm is what sends it - the same shape
+   * the rewind control and a Chats row's own trash use. The accessor is handed the order the page
+   * rendered this message at, because the Host refuses a message that is no longer there.
+   */
+  onDelete?: (messageHandle: string, expectedOrder: number) => void;
+  onDeleteConfirm?: (messageHandle: string, expectedOrder: number) => void;
+  onDeleteCancel?: () => void;
+  /** True for the one message whose delete is armed: its strip becomes that confirmation. */
+  deleteArmed?: boolean;
+  /**
    * How many messages this point would remove, counted from the transcript this bubble belongs to.
    * It is what the control's accessible name says the press will remove, before it is pressed; zero
    * (a caller that could not count, or a row that is not part of the transcript) offers no control.
@@ -104,7 +119,7 @@ export const MessageBubble = memo(function MessageBubble({
    * command with its single-flight ref, and the control saying so is what keeps a
    * double click from looking like it did nothing.
    */
-  pending?: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | null;
+  pending?: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | "delete" | null;
   /**
    * True only for the live streaming preview: the bubble then carries the
    * reading caret. The caret is inserted into the bubble's last block on every
@@ -147,6 +162,11 @@ export const MessageBubble = memo(function MessageBubble({
     editMessageField: string;
     editMessageSave: string;
     editMessageCancel: string;
+    deleteMessage: string;
+    deleteMessageName: string;
+    deleteConfirmPrompt: string;
+    deleteConfirmYes: string;
+    deleteConfirmNo: string;
   }>;
 }) {
   const isPlayer = message.role === "player";
@@ -172,6 +192,13 @@ export const MessageBubble = memo(function MessageBubble({
     onRewind !== undefined && removedCount > 0 && message.order > 0 && !isPlayer ? removedCount : undefined;
   const rewindName = labels.rewindHereName.replace("{{count}}", String(removedCount));
   /**
+   * The delete point is the message the player is looking at, and it is never the opening: the row at
+   * order zero is the greeting the Chat started on (the Host refuses it, and so does this surface). A
+   * delete leaves a gap rather than shortening the conversation, so - unlike the rewind - a row with
+   * nothing after it is still a legal point.
+   */
+  const deletePoint = onDelete !== undefined && message.order > 0 ? message.order : undefined;
+  /**
    * The editor is this row's own presentation state: it holds the words the player is rewriting, and
    * it exists only while the row does - a row a rewind dropped takes its open editor with it. The
    * order the page rendered is sent with the save, so a row that moved under the editor is refused by
@@ -194,7 +221,7 @@ export const MessageBubble = memo(function MessageBubble({
   }, [editor, pending, message.text]);
   // Whether this message's strip has a pager at all: the strip exists for its own
   // controls, so a message with neither keeps no empty row under the bubble.
-  const hasControls = openingChoice !== undefined || swipeSet !== undefined;
+  const hasControls = openingChoice !== undefined || swipeSet !== undefined || deletePoint !== undefined;
   // The Host's per-message language, painted on the text only: the author line
   // and the swipe/regenerate controls are player-facing UI words and must keep
   // the surface's own language. `und` paints nothing (browserMessageLanguageTag),
@@ -246,7 +273,7 @@ export const MessageBubble = memo(function MessageBubble({
             bubble, regenerate 493..537 under it, their centres 145 px apart - and
             going back to an earlier variant after asking again meant crossing the
             bubble. */}
-        {!isPlayer && (hasControls || onRegenerate || rewindPoint !== undefined || rewindArmed) && (
+        {!isPlayer && !deleteArmed && (hasControls || onRegenerate || rewindPoint !== undefined || rewindArmed) && (
           <div className="message-actions">
             {/* An armed rewind is this message's only control: the pager and regenerate step aside
                 for the confirmation the same way a Chats row's own strip does. */}
@@ -372,6 +399,25 @@ export const MessageBubble = memo(function MessageBubble({
                 {labels.rewindHere}
               </button>
             )}
+            {!rewindArmed && deletePoint !== undefined && (
+              <button
+                type="button"
+                className="action-btn delete-btn"
+                data-testid="message-delete"
+                disabled={busy}
+                {...(pending === "delete" ? { "data-busy": "true" as const } : {})}
+                onClick={() => onDelete?.(message.handle, message.order)}
+                title={labels.deleteMessageName}
+                aria-label={labels.deleteMessageName}
+              >
+                {pending === "delete" ? (
+                  <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                ) : (
+                  <Trash2 size={14} aria-hidden="true" />
+                )}
+                {labels.deleteMessage}
+              </button>
+            )}
             {!rewindArmed && waitingNote !== null && (
               <span className="message-waiting" role="status">
                 {waitingNote}
@@ -379,69 +425,124 @@ export const MessageBubble = memo(function MessageBubble({
             )}
           </div>
         )}
-        {/* The player's own row carries exactly one control, and it is the same strip the companion's
-            reply uses rather than a second row of buttons: the words are already on the page, so the
-            affordance that changes them belongs under them. */}
-        {isPlayer && onEdit !== undefined && (
+        {/* The player's own row carries its own controls in the same strip the companion's reply
+            uses rather than a second row of buttons: the words are already on the page, so the
+            affordances that change them belong under them. */}
+        {isPlayer && !deleteArmed && (onEdit !== undefined || deletePoint !== undefined) && (
           <div className="message-actions">
-            {editor !== null ? (
-              <div className="message-edit" data-testid="message-edit-form">
-                <textarea
-                  className="message-edit-field"
-                  data-testid="message-edit-field"
-                  aria-label={labels.editMessageField}
-                  value={editor.text}
-                  disabled={busy}
-                  rows={2}
-                  onChange={(event) => setEditor({ text: event.target.value, sent: editor.sent })}
-                />
-                <div className="message-edit-actions">
-                  <button
-                    type="button"
-                    className="action-btn edit-save-btn"
-                    data-testid="message-edit-save"
-                    disabled={busy || editor.text.trim().length === 0 || editor.text === message.text}
-                    onClick={() => {
-                      setEditor({ text: editor.text, sent: editor.text });
-                      onEdit(message.handle, message.order, editor.text);
-                    }}
-                    title={labels.editMessageSave}
-                    aria-label={labels.editMessageSave}
-                  >
-                    {labels.editMessageSave}
-                  </button>
-                  <button
-                    type="button"
-                    className="action-btn edit-cancel-btn"
-                    data-testid="message-edit-cancel"
+            {onEdit !== undefined &&
+              (editor !== null ? (
+                <div className="message-edit" data-testid="message-edit-form">
+                  <textarea
+                    className="message-edit-field"
+                    data-testid="message-edit-field"
+                    aria-label={labels.editMessageField}
+                    value={editor.text}
                     disabled={busy}
-                    onClick={() => setEditor(null)}
-                    title={labels.editMessageCancel}
-                    aria-label={labels.editMessageCancel}
-                  >
-                    {labels.editMessageCancel}
-                  </button>
+                    rows={2}
+                    onChange={(event) => setEditor({ text: event.target.value, sent: editor.sent })}
+                  />
+                  <div className="message-edit-actions">
+                    <button
+                      type="button"
+                      className="action-btn edit-save-btn"
+                      data-testid="message-edit-save"
+                      disabled={busy || editor.text.trim().length === 0 || editor.text === message.text}
+                      onClick={() => {
+                        setEditor({ text: editor.text, sent: editor.text });
+                        onEdit(message.handle, message.order, editor.text);
+                      }}
+                      title={labels.editMessageSave}
+                      aria-label={labels.editMessageSave}
+                    >
+                      {labels.editMessageSave}
+                    </button>
+                    <button
+                      type="button"
+                      className="action-btn edit-cancel-btn"
+                      data-testid="message-edit-cancel"
+                      disabled={busy}
+                      onClick={() => setEditor(null)}
+                      title={labels.editMessageCancel}
+                      aria-label={labels.editMessageCancel}
+                    >
+                      {labels.editMessageCancel}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ) : (
+              ) : (
+                <button
+                  type="button"
+                  className="action-btn edit-btn"
+                  data-testid="message-edit"
+                  disabled={busy}
+                  {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
+                  onClick={openEditor}
+                  title={labels.editMessageName}
+                  aria-label={labels.editMessageName}
+                >
+                  {pending === "edit" ? (
+                    <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                  ) : (
+                    <Pencil size={14} aria-hidden="true" />
+                  )}
+                  {labels.editMessage}
+                </button>
+              ))}
+            {deletePoint !== undefined && (
               <button
                 type="button"
-                className="action-btn edit-btn"
-                data-testid="message-edit"
+                className="action-btn delete-btn"
+                data-testid="message-delete"
                 disabled={busy}
-                {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
-                onClick={openEditor}
-                title={labels.editMessageName}
-                aria-label={labels.editMessageName}
+                {...(pending === "delete" ? { "data-busy": "true" as const } : {})}
+                onClick={() => onDelete?.(message.handle, message.order)}
+                title={labels.deleteMessageName}
+                aria-label={labels.deleteMessageName}
               >
-                {pending === "edit" ? (
+                {pending === "delete" ? (
                   <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
                 ) : (
-                  <Pencil size={14} aria-hidden="true" />
+                  <Trash2 size={14} aria-hidden="true" />
                 )}
-                {labels.editMessage}
+                {labels.deleteMessage}
               </button>
             )}
+          </div>
+        )}
+        {/* An armed delete is this row's only control: like the rewind's arm, the confirmation
+            replaces the pager, regenerate, edit and delete rather than joining them, and it states
+            exactly what goes - this one message, not the conversation after it. */}
+        {deleteArmed && (
+          <div className="message-actions">
+            <div className="message-confirm" data-testid="message-delete-confirm">
+              <p className="message-confirm-prompt" role="status">
+                {labels.deleteConfirmPrompt}
+              </p>
+              <div className="message-confirm-actions">
+                <button
+                  type="button"
+                  className="action-btn delete-confirm-yes"
+                  data-testid="message-delete-confirm-yes"
+                  disabled={busy}
+                  onClick={() => onDeleteConfirm?.(message.handle, message.order)}
+                  title={labels.deleteConfirmYes}
+                  aria-label={labels.deleteConfirmYes}
+                >
+                  {labels.deleteConfirmYes}
+                </button>
+                <button
+                  type="button"
+                  className="action-btn delete-confirm-no"
+                  data-testid="message-delete-confirm-no"
+                  onClick={() => onDeleteCancel?.()}
+                  title={labels.deleteConfirmNo}
+                  aria-label={labels.deleteConfirmNo}
+                >
+                  {labels.deleteConfirmNo}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

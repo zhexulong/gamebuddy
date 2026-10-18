@@ -880,8 +880,13 @@
     gap: var(--space-2);
   }
 
+  /* The two destructive confirmations on a message row - the rewind's and the delete's - are ONE
+     shape: the same information, the same two answers, the same 44 px floor. They differ only in the
+     words the strip renders, which is the bubble's own business. */
   .rewind-confirm-yes,
-  .rewind-confirm-no {
+  .rewind-confirm-no,
+  .delete-confirm-yes,
+  .delete-confirm-no {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -895,34 +900,41 @@
     cursor: pointer;
   }
 
-  .rewind-confirm-yes {
+  .rewind-confirm-yes,
+  .delete-confirm-yes {
     color: var(--text-primary);
     background-color: var(--surface-raised);
     border: 1px solid var(--border-strong);
   }
 
-  .rewind-confirm-no {
+  .rewind-confirm-no,
+  .delete-confirm-no {
     color: var(--text-secondary);
     background-color: transparent;
     border: 1px solid var(--border-subtle);
   }
 
   .rewind-confirm-yes:hover:not(:disabled),
-  .rewind-confirm-no:hover:not(:disabled) {
+  .rewind-confirm-no:hover:not(:disabled),
+  .delete-confirm-yes:hover:not(:disabled),
+  .delete-confirm-no:hover:not(:disabled) {
     background-color: var(--surface-hover);
     color: var(--text-primary);
   }
 
-  .rewind-confirm-yes:disabled {
+  .rewind-confirm-yes:disabled,
+  .delete-confirm-yes:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  /* The edit control. It is the player's own row's ONLY control, and it stays one: the row carries
-     the button in the same strip the companion's reply uses, and the field it opens replaces that
-     button rather than adding a second one beside it. The box is the 44 px touch minimum the rest of
-     the strip uses (`--touch-target-min`), so the strip stays a single row at 400 px. */
-  .edit-btn {
+  /* The edit and delete controls. Each is one of the player's own row's controls, and each stays
+     one: the row carries the button in the same strip the companion's reply uses, and the field the
+     edit opens replaces its button rather than adding a second one beside it. The box is the 44 px
+     touch minimum the rest of the strip uses (`--touch-target-min`), so the strip stays a single row
+     at 400 px. */
+  .edit-btn,
+  .delete-btn {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
@@ -940,13 +952,15 @@
     cursor: pointer;
   }
 
-  .edit-btn:hover:not(:disabled) {
+  .edit-btn:hover:not(:disabled),
+  .delete-btn:hover:not(:disabled) {
     color: var(--text-primary);
     background-color: var(--surface-hover);
     border-color: var(--border-strong);
   }
 
-  .edit-btn:disabled {
+  .edit-btn:disabled,
+  .delete-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
