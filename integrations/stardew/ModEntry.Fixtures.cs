@@ -1028,7 +1028,13 @@ public sealed partial class ModEntry : Mod
             // start has to reach. Choosing a start in a different piece of the Farm is what stranded run g4; the
             // assertion below then re-checks the composed world, so neither the choice nor the check is assumed.
             Point doorStandingSpot = NativeLocalMultiDayDoorStandingSpot(player, farm);
-            InitializeNativeLocalPlaySessionFixture(player, farm, new Vector2(doorStandingSpot.X, doorStandingSpot.Y));
+            InitializeNativeLocalPlaySessionFixture(
+                player,
+                farm,
+                new Vector2(doorStandingSpot.X, doorStandingSpot.Y),
+                // The composed world IS a day: it begins in bed and ends in bed. A field start is what the plain
+                // play-session lane does, and what this branch used to inherit by accident.
+                startAtHome: true);
             // (c) The composed world must let the companion GO HOME.
             //
             // Lane G0's whole point is that the companion ends its own day, and `advance_day` only begins a
@@ -3314,7 +3320,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
     /// chain, which is the point: the rung measures what the companion chooses to
     /// do with a farm, not whether a scripted sequence ran.
     /// </summary>
-    private void InitializeNativeLocalPlaySessionFixture(Farmer player, Farm farm, Vector2? requiredReachable = null)
+    private void InitializeNativeLocalPlaySessionFixture(Farmer player, Farm farm, Vector2? requiredReachable = null, bool startAtHome = false)
     {
         // Tools first: a session that cannot act is not a session. Same ids and
         // idempotence as the ladder-3 farming fixture so the world is one a real
@@ -3371,6 +3377,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // stacked; a farm that cannot host them fails closed instead of silently
         // presenting a poorer world than the audit claims.
         var provisioned = new List<string>();
+        var provisionedTiles = new List<Vector2>();
         // Where the session starts must be an OPEN crossroads, and the props must sit NEXT TO it. Two live runs
         // measured both halves of that: starting in the Farm's corner pocket gave `component_tiles=2` (the
         // cauliflower a few tiles away was genuinely unreachable, and the session spent turns on refusals that
@@ -3383,6 +3390,11 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                     : "fixture_native_local_play_session_start_tile_missing");
         // Recorded for the composed world's reachability assertion: the tile the session actually starts on, not one
         // re-derived after the props exist (a re-scan skips occupied tiles and would answer a different question).
+        // A composed multi-day world begins the day AT HOME, so the props are anchored on the door tile instead of
+        // on a crossroad the actor would have been warped to. Anchoring them elsewhere is what put the companion in
+        // the FIELD at 06:00 - a state no save produces - and it also cost the night its natural shape, because the
+        // companion then had to walk home before it could sleep.
+        if (startAtHome && requiredReachable is { } homeDoor) startTile = homeDoor;
         this.nativeLocalPlaySessionStartTile = startTile;
         Vector2? standingTile = null;
         for (int index = 0; index < 4; index += 1)
@@ -3395,6 +3407,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 throw new InvalidOperationException("fixture_native_local_play_session_not_weed");
             farm.objects.Add(spot.Value.TargetTile, weed);
             provisioned.Add($"weed={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            provisionedTiles.Add(spot.Value.TargetTile);
             standingTile ??= spot.Value.StandingTile;
         }
         {
@@ -3403,6 +3416,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 throw new InvalidOperationException("fixture_native_local_play_session_grass_spot_missing");
             farm.terrainFeatures.Add(spot.Value.TargetTile, new StardewValley.TerrainFeatures.Grass(1, 4));
             provisioned.Add($"grass={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            provisionedTiles.Add(spot.Value.TargetTile);
             standingTile ??= spot.Value.StandingTile;
         }
         // Ten stones, because one stone is not a day. A pickaxe spends about 4 stamina per swing at power 1
@@ -3416,6 +3430,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 throw new InvalidOperationException("fixture_native_local_play_session_stone_spot_missing");
             farm.objects.Add(spot.Value.TargetTile, ItemRegistry.Create<StardewValley.Object>("(O)2", 1));
             provisioned.Add($"stone={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            provisionedTiles.Add(spot.Value.TargetTile);
             standingTile ??= spot.Value.StandingTile;
         }
         // A few mature crops, placed explicitly (the scythe-crop fixture's recipe) rather than
@@ -3443,6 +3458,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 throw new InvalidOperationException("fixture_native_local_play_session_crop_not_ready");
             farm.objects.Remove(spot.Value.TargetTile);
             provisioned.Add($"crop={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            provisionedTiles.Add(spot.Value.TargetTile);
             standingTile ??= spot.Value.StandingTile;
             plantedCrops += 1;
         }
@@ -3461,7 +3477,24 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             .Cast<KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>?>()
             .FirstOrDefault();
 
-        player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)startTile.X, (int)startTile.Y, false));
+        // Fail closed: a prop the actor cannot walk to from where it really starts is a worse world than the arm log
+        // claims - the same shape the earlier `component_tiles=2` measurement produced.
+        if (startAtHome)
+        {
+            foreach (Vector2 tile in provisionedTiles)
+            {
+                if (!IsReachableFromStart(farm, startTile, tile))
+                    throw new InvalidOperationException(
+                        $"fixture_native_local_play_session_prop_unreachable_from_home:{tile.X},{tile.Y}");
+            }
+        }
+
+        // The actor STAYS where the multi-day Given armed it - at home, beside its bed - when the caller asked for a
+        // world that begins the way a day really does. Warping it to the props anchor is what put the companion in
+        // the FIELD at 06:00, a state no save produces, and it cost the night its natural shape: the companion had
+        // to walk home before it could sleep.
+        if (!startAtHome)
+            player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)startTile.X, (int)startTile.Y, false));
         provisioned.Add($"standing={(int)startTile.X},{(int)startTile.Y}");
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log($"GameBuddy native-local-player initialized play-session fixture before bridge attachment: {string.Join("; ", provisioned)}; ready_crop={(ready is null ? "none" : $"{(int)ready.Value.Key.X},{(int)ready.Value.Key.Y}")}; tools=hoe+can+scythe; seeds=2; planted_crops=4; standing={(int)standingTile.Value.X},{(int)standingTile.Value.Y}; no chain is scripted and production alone acts.", LogLevel.Info);

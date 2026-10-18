@@ -54,7 +54,9 @@ public sealed class MultiDayPlaySessionFixtureTests
         // (a) days can pass, and the first rollover raises the settlement menu exactly once.
         body.Should().Contain("InitializeNativeLocalMultiDayFixture(player, farm);");
         // (b) each new day still has work in it.
-        body.Should().Contain("InitializeNativeLocalPlaySessionFixture(player, farm, new Vector2(doorStandingSpot.X, doorStandingSpot.Y));");
+        body.Should().Contain("InitializeNativeLocalPlaySessionFixture(");
+body.Should().Contain("startAtHome: true);");
+body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
     }
 
     [Fact]
@@ -116,7 +118,7 @@ public sealed class MultiDayPlaySessionFixtureTests
         source.Should().Contain("if (requiredReachable is { } required && !IsReachableFromStart(farm, tile, required))");
         // ...and it runs AFTER both givens, because it is the composition it checks.
         int multiDay = source.IndexOf("InitializeNativeLocalMultiDayFixture(player, farm);", StringComparison.Ordinal);
-        int playSession = source.IndexOf("InitializeNativeLocalPlaySessionFixture(player, farm,", multiDay, StringComparison.Ordinal);
+        int playSession = source.IndexOf("InitializeNativeLocalPlaySessionFixture(", multiDay, StringComparison.Ordinal);
         int assertion = source.IndexOf("AssertNativeLocalMultiDayHomeReachable(player, farm);", playSession, StringComparison.Ordinal);
         assertion.Should().BeGreaterThan(playSession, "the check is about the composed world");
 
