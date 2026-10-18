@@ -37,7 +37,6 @@ const CALLERS: Readonly<Record<string, readonly string[]>> = Object.freeze({
     "CHAT_TRANSCRIPT_STAGE_DIRECTION",
     "CHAT_TRANSCRIPT_SCAFFOLDING",
   ]),
-  "tavern/provider-invocation.ts": Object.freeze(["CHAT_TRANSCRIPT_STAGE_DIRECTION", "CHAT_TRANSCRIPT_SCAFFOLDING"]),
 });
 
 /** The one value each named choice may carry. */
@@ -156,13 +155,17 @@ test("a third caller, a literal choice, a missing scaffolding name, or a flipped
     'export const NATIVE_BUBBLE_SCAFFOLDING = "unchanged" as const;',
     'export const CHAT_TRANSCRIPT_SCAFFOLDING = "drop" as const;',
   ].join("\n");
-  const bubbleOptions = "{\n  stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,\n  scaffolding: NATIVE_BUBBLE_SCAFFOLDING,\n}";
-  const chatOptions = "{\n  stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,\n  scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING,\n}";
+  const bubbleOptions =
+    "{\n  stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,\n  scaffolding: NATIVE_BUBBLE_SCAFFOLDING,\n}";
+  const chatOptions =
+    "{\n  stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,\n  scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING,\n}";
   const allowed: readonly SourceFile[] = [
     { path: "native-companion-content.ts", text: declarations },
     { path: "companion-loop.ts", text: `attachNativeCompanionContent(session, sinks, ${bubbleOptions});` },
-    { path: "tavern/p4-provider-start-execution.ts", text: `attachNativeCompanionContent(session, sinks, ${chatOptions});` },
-    { path: "tavern/provider-invocation.ts", text: `attachNativeCompanionContent(session, sinks, ${chatOptions});` },
+    {
+      path: "tavern/p4-provider-start-execution.ts",
+      text: `attachNativeCompanionContent(session, sinks, ${chatOptions});`,
+    },
   ];
   assert.deepEqual(auditPresentationCallSites(allowed), []);
 
@@ -175,7 +178,7 @@ test("a third caller, a literal choice, a missing scaffolding name, or a flipped
 
   const literalChoice = auditPresentationCallSites(
     allowed.map((file) =>
-      file.path === "tavern/provider-invocation.ts"
+      file.path === "tavern/p4-provider-start-execution.ts"
         ? { ...file, text: 'attachNativeCompanionContent(session, sinks, { stageDirection: "keep" });' }
         : file,
     ),
@@ -187,7 +190,10 @@ test("a third caller, a literal choice, a missing scaffolding name, or a flipped
   const missingScaffolding = auditPresentationCallSites(
     allowed.map((file) =>
       file.path === "tavern/p4-provider-start-execution.ts"
-        ? { ...file, text: "attachNativeCompanionContent(session, sinks, {\n  stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,\n});" }
+        ? {
+            ...file,
+            text: "attachNativeCompanionContent(session, sinks, {\n  stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,\n});",
+          }
         : file,
     ),
   );

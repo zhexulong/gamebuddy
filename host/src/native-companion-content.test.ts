@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { attachNativeCompanionContent, NATIVE_BUBBLE_SCAFFOLDING, type NativeCompanionContentEvent, type NativeCompanionContentOptions, type NativeCompanionContentSinks } from "./native-companion-content.js";
+import {
+  attachNativeCompanionContent,
+  NATIVE_BUBBLE_SCAFFOLDING,
+  type NativeCompanionContentEvent,
+  type NativeCompanionContentOptions,
+  type NativeCompanionContentSinks,
+} from "./native-companion-content.js";
 
 type Listener = (event: NativeCompanionContentEvent) => void;
 
@@ -198,13 +204,17 @@ test("final text comes from the final assistant message, excludes thinking/tool 
 test("strips roleplay stage direction when the surface cannot draw it (Game bubble / voice)", async () => {
   const fx = fakeSession();
   const finals: string[] = [];
-  const observer = attach(fx, {
-    onPreviewDelta: async () => undefined,
-    onFinalText: async (value) => {
-      finals.push(value);
+  const observer = attach(
+    fx,
+    {
+      onPreviewDelta: async () => undefined,
+      onFinalText: async (value) => {
+        finals.push(value);
+      },
+      onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
     },
-    onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
-  }, "strip");
+    "strip",
+  );
   observer.open();
   const final = assistant([text("*转过身微笑* 早安!今天天气真好。")]);
   fx.emit({ type: "message_start", message: assistant([text("")]) });
@@ -221,13 +231,17 @@ test("keeps the model's exact text, including its asterisk action beat, for the 
   // (no mounted tools) and the loss would be irreversible for every row written.
   const fx = fakeSession();
   const finals: string[] = [];
-  const observer = attach(fx, {
-    onPreviewDelta: async () => undefined,
-    onFinalText: async (value) => {
-      finals.push(value);
+  const observer = attach(
+    fx,
+    {
+      onPreviewDelta: async () => undefined,
+      onFinalText: async (value) => {
+        finals.push(value);
+      },
+      onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
     },
-    onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
-  }, "keep");
+    "keep",
+  );
   observer.open();
   const final = assistant([text("*转过身微笑* 早安!今天天气真好。")]);
   fx.emit({ type: "message_start", message: assistant([text("")]) });
@@ -339,29 +353,29 @@ test("never commits aborted, error, empty, control-text, or foreign assistant ou
   // `unsupported_content` (see `readSafeAssistantText`) while the test expected
   // the never-emitted `empty`, so the case had been red. The expectations now
   // match the observer's actual reasons; the guarantee under test is unchanged.
-    // Reason strings the observer actually emits: a reply whose only content is
-    // tool scaffolding dehydrates to nothing but carries a tool call ->
-    // `tool_only`; a reply with text that is rejected for control bytes ->
-    // `unsupported_content`. (`empty` was never emitted; HEAD's test expected it
-    // and was red.) The product guarantee is the same: none of these are
-    // committed, and no foreign output is admitted.
-    for (const [stopReason, content, expected] of [
-      ["aborted", [text("late")], "aborted"],
-      ["error", [text("late")], "error"],
-      ["stop", [thinking("private"), toolCall], "tool_only"],
-      ["stop", [text("bad\u0000text")], "unsupported_content"],
-    ] as const) {
+  // Reason strings the observer actually emits: a reply whose only content is
+  // tool scaffolding dehydrates to nothing but carries a tool call ->
+  // `tool_only`; a reply with text that is rejected for control bytes ->
+  // `unsupported_content`. (`empty` was never emitted; HEAD's test expected it
+  // and was red.) The product guarantee is the same: none of these are
+  // committed, and no foreign output is admitted.
+  for (const [stopReason, content, expected] of [
+    ["aborted", [text("late")], "aborted"],
+    ["error", [text("late")], "error"],
+    ["stop", [thinking("private"), toolCall], "tool_only"],
+    ["stop", [text("bad\u0000text")], "unsupported_content"],
+  ] as const) {
     const fx = fakeSession();
     const finals: string[] = [];
     const rejections: string[] = [];
     const observer = attach(fx, {
       onPreviewDelta: async () => undefined,
       onFinalText: async (value) => {
-      finals.push(value);
-    },
+        finals.push(value);
+      },
       onRejected: async (reason) => {
-      rejections.push(reason);
-    },
+        rejections.push(reason);
+      },
     });
     observer.open();
     const started = assistant([text("")]);
@@ -514,17 +528,21 @@ test("a caller without onIncrementalText keeps the exact preview/final semantics
   const fx = fakeSession();
   const previews: string[] = [];
   const finals: string[] = [];
-  const observer = attach(fx, {
-    onPreviewDelta: async (delta) => {
-      previews.push(delta);
+  const observer = attach(
+    fx,
+    {
+      onPreviewDelta: async (delta) => {
+        previews.push(delta);
+      },
+      // Exactly like the Chat consumer (p4-provider-start-execution): only
+      // onPreviewDelta/onFinalText/onRejected.
+      onFinalText: async (value) => {
+        finals.push(value);
+      },
+      onRejected: async () => undefined,
     },
-    // Exactly like the Chat consumers (p4-provider-start-execution /
-    // provider-invocation): only onPreviewDelta/onFinalText/onRejected.
-    onFinalText: async (value) => {
-      finals.push(value);
-    },
-    onRejected: async () => undefined,
-  }, "keep");
+    "keep",
+  );
   observer.open();
   observer.openPreviews();
   const trackedPartial = assistant([text("")]);

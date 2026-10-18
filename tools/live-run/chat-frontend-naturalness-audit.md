@@ -43,7 +43,8 @@ atomically replaces the client snapshot with no reorder/filter
 no such path exists here.
 
 One boundary can expose raw markers: the streaming bubble renders the **raw** provider fragment
-(`host/src/tavern/provider-invocation.ts:161-181` publishes `delta` with only NFC applied;
+(`host/src/tavern/p4-provider-start-execution.ts:300-328` publishes `delta` with only NFC applied - this is
+the same publish the audit originally read, in the duplicate runner the pre-live-switch Chat path used;
 `dialogue-web/.../ReferenceApp.tsx:213-224` concatenates it verbatim), while the committed durable text is
 dehydrated (`host/src/native-companion-content.ts:318-336`; `<thinking>…</thinking>` and `*beat*` removed —
 see `companion-speech-dehydration.test.ts:11,22`). A player would see `*转过身微笑* 早安!` and watch it
@@ -87,7 +88,7 @@ failed conformance capture — not the committed-reply journey.
 | Seam (file:line) | Mechanism flaw / blind spot | Prescribed fix & gate | Metric target |
 | --- | --- | --- | --- |
 | `tools/live-run/chat/run-chat-live-audit.mjs:1010` | SSE frames recorded without event type; streaming unjudgeable | Add a bounded `eventType` scalar to the frozen meta allow-list **and** the kernel table (`tools/lib/chat-run-audit.mjs`); gate on a parity test | classify 0/9 frames → 9/9 |
-| `host/src/tavern/provider-invocation.ts:161-181` vs `host/src/native-companion-content.ts:318-336` | Preview renders raw provider text; commit renders dehydrated text | Publish dehydrated fragments (or dehydrate at the render layer); test: concatenated deltas equal committed text | preview ≠ commit → preview == commit |
+| `host/src/tavern/p4-provider-start-execution.ts:300-328` vs `host/src/native-companion-content.ts:318-336` | Preview renders raw provider text; commit renders dehydrated text | Publish dehydrated fragments (or dehydrate at the render layer); test: concatenated deltas equal committed text | preview ≠ commit → preview == commit |
 | `dialogue-web/tests/companion-turn-browser.spec.ts:266-307` | Declares accessibility, never asserts it; ledger order-dependent | Call `assertAccessibilityBaseline(page,"chat")`; reset the ledger per test | chat axe gate 0 → 1 |
 | Chat loop (no browser step) | DOM never observed for any run | Extend the same harness (no fork): goto launchUrl, type the fixed prompt, click Send, then assert `ol.message-list > li[data-handle]` sequence == `/state.chat.transcript[].handle`, bubble text == `transcript[].text`, no empty bubble, no `_preview` handle post-terminal, no `{{`, `[DEBUG-`, `<|`, `<thinking>`, bare JSON | DOM assertions 0 → ≥5 per run |
 

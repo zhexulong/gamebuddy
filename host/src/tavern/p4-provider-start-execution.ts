@@ -4,7 +4,6 @@ import {
   CHAT_TRANSCRIPT_STAGE_DIRECTION,
 } from "../native-companion-content.js";
 import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
-import type { NativeChatPreview } from "./provider-invocation.js";
 import type { PiVariantBranch } from "../pi-session-variant-branch.internal.js";
 import { bindSettledPromptEntries, sessionEntryIds } from "../pi-session-variant-branch.internal.js";
 import type {
@@ -23,6 +22,12 @@ export type ProviderStartResult =
   | Readonly<{ outcome: "armed"; ledger: AttemptStartingTurn }>
   | Readonly<{ outcome: "not_started"; ledger: AttemptStartingTurn }>;
 export type ProviderStartLedger = AttemptStartingTurn | CompletedTurn | CancelledTurn | FailedTurn;
+
+/** Ephemeral delta projection; it has no message ID or durable authority. */
+export type NativeChatPreview = Readonly<{
+  turnId: string;
+  delta: string;
+}>;
 
 export type NativeChatPreviewPublisher = Readonly<{
   publish(preview: NativeChatPreview): void | Promise<void>;

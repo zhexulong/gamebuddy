@@ -20,7 +20,6 @@
     "src/tavern/initial-chat-exact-content-port.ts",
     "src/tavern/p4-provider-start-execution.ts",
     "src/tavern/p4-provider-start-execution.test.ts",
-    "src/tavern/provider-invocation.ts",
     "src/native-companion-content.ts"
   ]
 }

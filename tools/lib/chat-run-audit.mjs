@@ -358,7 +358,11 @@ function validateRunArtifact(value, errors) {
     if (!ALLOWED_ARTIFACT_FIELDS.has(key))
       pushError(errors, `artifact.${key}`, "unknown_field", "not part of artifact");
   }
-  if (typeof artifact.generation !== "string" || artifact.generation.length === 0 || artifact.generation.length > OPAQUE_MAX_LENGTH) {
+  if (
+    typeof artifact.generation !== "string" ||
+    artifact.generation.length === 0 ||
+    artifact.generation.length > OPAQUE_MAX_LENGTH
+  ) {
     pushError(
       errors,
       "artifact.generation",
@@ -473,8 +477,11 @@ function validateEvent(event, index, errors) {
     pushError(errors, `${path}.code`, "code_format_invalid", "code must match ^[a-z0-9_.:-]{1,160}$");
   } else if (!KNOWN_CODES.has(event.code)) {
     pushError(errors, `${path}.code`, "code_unknown", `${event.code} is not in the frozen vocabulary of §3.1`);
-  } else if (typeof event.kind === "string" && CHAT_RUN_AUDIT_KINDS.includes(event.kind)
-    && !CHAT_RUN_AUDIT_CODES_BY_KIND[event.kind].includes(event.code)) {
+  } else if (
+    typeof event.kind === "string" &&
+    CHAT_RUN_AUDIT_KINDS.includes(event.kind) &&
+    !CHAT_RUN_AUDIT_CODES_BY_KIND[event.kind].includes(event.code)
+  ) {
     // kind/code pairing IS enforced. §3.1 binds each code to the kind that owns
     // it, and the integrity gate now depends on that binding: a bare `code`
     // lookup let a `kind:"lifecycle", code:"isolation.breach"` event validate
@@ -505,7 +512,11 @@ function validateEvent(event, index, errors) {
       );
     }
   }
-  if (event.kind === "lifecycle" && event.code === "run.finished" && !PROVIDER_OBSERVABILITY_VALUES.includes(event.meta?.providerObservability)) {
+  if (
+    event.kind === "lifecycle" &&
+    event.code === "run.finished" &&
+    !PROVIDER_OBSERVABILITY_VALUES.includes(event.meta?.providerObservability)
+  ) {
     pushError(
       errors,
       `${path}.meta.providerObservability`,
@@ -867,9 +878,7 @@ function countProbeByDomain(probeEvents, domain, selector) {
  */
 function buildProbeSummary(events) {
   const probeEvents = events.filter((event) => event.kind === PROBE_KIND);
-  const digests = probeEvents
-    .map((event) => metaOf(event).manifestDigest)
-    .filter((value) => typeof value === "string");
+  const digests = probeEvents.map((event) => metaOf(event).manifestDigest).filter((value) => typeof value === "string");
   return {
     total: probeEvents.length,
     manifestDigests: Object.freeze([...new Set(digests)].sort()),
@@ -1231,7 +1240,7 @@ function detectProviderBoundaryUnsettled(context) {
       "the provider request was serialized and the attempt then never settled into a durable terminal, so no layer owns the outcome",
     recommendation:
       "audit the provider invocation settlement path and its deadline/cancellation handling: every sent request must reach a durable terminal",
-    seam: "host/src/tavern/provider-invocation.ts (provider round trip -> durable terminal)",
+    seam: "host/src/tavern/p4-provider-start-execution.ts (provider round trip -> durable terminal)",
     blindSpot:
       "provider tests resolve the attempt explicitly; none asserts the trace-level invariant `request.sent => terminal eventually observed`",
     gate: "deterministic gate: a sent provider request must settle into a durable terminal within the attempt deadline; the audit reports any sent-but-unsettled attempt",
@@ -1356,8 +1365,7 @@ function detectIsolationBreach(context) {
       "a memory read crossed a continuity or surface boundary the manifest declares as non-shared, so a companion surfaced a fact its own partition never held",
     recommendation:
       "audit the memory partition/scope key resolved at read time against the manifest's declared sharing, before treating the probe family as healthy",
-    seam:
-      "host/src/tavern/memory-management/memory-management.ts (partition-scoped read/projection) + the probe manifest sidecar the harness measured against",
+    seam: "host/src/tavern/memory-management/memory-management.ts (partition-scoped read/projection) + the probe manifest sidecar the harness measured against",
     blindSpot:
       "memory tests seed a single continuity, so a read that resolves the wrong partition key cannot occur in-test",
     gate: "deterministic gate: a probe fact declared non-shared must never be retrievable from the foreign partition; the audit fails closed on isolation.breach",
@@ -1563,9 +1571,7 @@ export function formatChatRunAuditReportText(report) {
   lines.push(
     `- Idle: longest frame-free span ${formatMs(report.waste.maxFrameGapMs)} (stall threshold ${formatMs(report.waste.idleStallThresholdMs)})`,
   );
-  lines.push(
-    `- Memory: ${formatMemoryEvidenceLine(summary.memory, report.waste.memoryConflicts)}`,
-  );
+  lines.push(`- Memory: ${formatMemoryEvidenceLine(summary.memory, report.waste.memoryConflicts)}`);
   lines.push(
     `- Recovery: ${report.waste.reloads} reload(s), ${report.waste.reloadMismatches} mismatch(es) against the durable terminal`,
   );

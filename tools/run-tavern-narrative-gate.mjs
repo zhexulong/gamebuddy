@@ -94,9 +94,9 @@ export const NARRATIVE_RUN_POSITIONS = Object.freeze({
  * The codes are named here, beside the kinds, rather than left implicit, so the
  * requirement can be as strict as the other two: the product mints exactly
  * `runtime_unavailable` when Pi's prompt settlement rejects AFTER the request
- * crossed the provider boundary (`host/src/tavern/provider-invocation.ts` and
- * `host/src/tavern/p4-provider-start-execution.ts` both fail the turn with that
- * reasonCode), which is what a credential the real endpoint refuses produces. A
+ * crossed the provider boundary (`host/src/tavern/p4-provider-start-execution.ts`
+ * fails the turn with that reasonCode), which is what a credential the real
+ * endpoint refuses produces. A
  * durable failure carrying any OTHER code - or a failure that never reached the
  * provider - is a different, incidental failure and must block. "Some failure
  * happened" is never the failing position this attempt is supposed to reach.

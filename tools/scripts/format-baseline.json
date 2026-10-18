@@ -295,8 +295,6 @@
     "host/src/tavern/pi-provider-store.ts",
     "host/src/tavern/player-turn-acceptance.test.ts",
     "host/src/tavern/provider-catalog.test.ts",
-    "host/src/tavern/provider-invocation.test.ts",
-    "host/src/tavern/provider-invocation.ts",
     "host/src/tavern/reference-pipeline-state.test.ts",
     "host/src/tavern/reference-pipeline-state.ts",
     "host/src/tavern/scenario-management/scenario-management.ts",
