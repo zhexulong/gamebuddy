@@ -58,10 +58,151 @@ export function CharactersSurfacePanel({
   return (
     <>
       <CharactersPanel api={api} csrfToken={csrfToken} locale={locale} />
+      <CompanionCardExportSection api={api} locale={locale} />
       <CompanionWorldBookSection api={api} csrfToken={csrfToken} locale={locale} />
       <CharacterWorldBookPanel api={api} csrfToken={csrfToken} locale={locale} read={read} />
     </>
   );
+}
+
+/**
+ * The character-card export: one control that saves the companion in play as a
+ * standard Tavern V3 card.
+ *
+ * The card is produced by the Host (`companion.card.export`) and delivered as the
+ * bytes it returned - the browser is the download surface, so this control hands
+ * the Host's own JSON text to a `Blob` and lets the browser save it under the
+ * filename the Host minted. Nothing is re-serialized on this side, so the saved
+ * file is exactly the card the Host built and the import route accepts it.
+ *
+ * The companion addressed is the one in play, taken from the roster's own opaque
+ * handle - the same handle every other companion read is addressed by - and the
+ * route resolves any listed companion, so a later per-row entry point needs no new
+ * contract. Every way the Host can refuse has its own sentence: there is no
+ * companion to export, her records could not be read, or they will not fit a card
+ * our import accepts.
+ */
+function CompanionCardExportSection({
+  api,
+  locale,
+}: {
+  api: ManagementPipelineApi;
+  locale: Locale;
+}): ReactElement | null {
+  const labels = characterLabels(locale);
+  const [target, setTarget] = useState<
+    Readonly<{ handle: string; name: string }> | "loading" | "absent" | "unavailable"
+  >("loading");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Readonly<{ ok: boolean; text: string }> | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const list = await api.listCompanions();
+        if (!active) return;
+        const current = list.companions.find((entry) => entry.isCurrent);
+        setTarget(current === undefined ? "absent" : { handle: current.handle, name: current.name });
+      } catch {
+        // A read that fails renders nothing rather than fabricating a capability.
+        if (active) setTarget("unavailable");
+      }
+    })();
+    return () => {
+      active = false;
+    };
+    // The client is the mount's own authority and is stable for the life of the surface.
+  }, [api]);
+
+  if (target === "loading" || target === "unavailable") return null;
+
+  /**
+   * Saves the Host's own card bytes through the browser's download surface: one
+   * object URL, one click on an anchor carrying the Host's filename, and the URL
+   * released on a later task so the download has already begun reading it.
+   */
+  const download = (fileName: string, text: string): void => {
+    const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const exportCard = (): void => {
+    if (target === "absent" || busy) return;
+    const handle = target.handle;
+    setBusy(true);
+    setNotice(null);
+    void (async () => {
+      let next: Readonly<{ ok: boolean; text: string }>;
+      try {
+        const card = await api.exportCompanionCard(handle);
+        download(card.fileName, card.card);
+        next = { ok: true, text: labels.exportSaved.replace("{{file}}", card.fileName) };
+      } catch (error) {
+        next = { ok: false, text: exportRefusal(labels, error) };
+      }
+      setBusy(false);
+      setNotice(next);
+    })();
+  };
+
+  return (
+    <section className="management-settings-section" aria-label={labels.exportTitle} data-companion-card-export-section>
+      <h3>{labels.exportTitle}</h3>
+      <p className="management-settings-hint">{labels.exportHint}</p>
+      {target === "absent" ? (
+        <p data-companion-card-export-nothing>{labels.exportNothing}</p>
+      ) : (
+        // One control, named for what it does. Its 44 px hit target is the shared
+        // button's own floor (`--touch-target-min`), so it matches every other
+        // control on this surface rather than a size invented here.
+        <div className="composer-actions">
+          <button
+            type="button"
+            className="small-button"
+            data-companion-card-export
+            aria-label={`${labels.exportCard}: ${target.name}`}
+            disabled={busy}
+            onClick={exportCard}
+          >
+            {busy ? labels.exportBusy : labels.exportCard}
+          </button>
+        </div>
+      )}
+      {notice !== null && (
+        <p role="status" data-companion-card-export-notice className={notice.ok ? "success-banner" : "error-banner"}>
+          {notice.text}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The player's sentence for one refused export. Each way the Host refuses is a
+ * different fact - there is no companion, her records could not be read, or they
+ * will not fit a card - and one "could not export" would send her looking for the
+ * wrong fault. A code this table does not know keeps the base sentence with the
+ * code appended.
+ */
+function exportRefusal(labels: CharacterLabels, error: unknown): string {
+  const code = error instanceof TavernProblemError ? error.code : null;
+  switch (code) {
+    case "companion_not_found":
+      return labels.exportNothing;
+    case "companion_record_unreadable":
+      return labels.exportUnreadable;
+    case "companion_card_too_large":
+      return labels.exportTooLarge;
+    default:
+      return problemTextWithCode(labels.exportFailed, error);
+  }
 }
 
 /**

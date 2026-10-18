@@ -238,6 +238,22 @@ export type CharacterLabels = Readonly<{
   companionWorldBookBindingPartial: string;
   companionWorldBookNotSaved: string;
 
+  /**
+   * The character-card export: one control on the Characters surface that saves
+   * the companion in play as a standard Tavern V3 card. Each way the Host can
+   * refuse is its own sentence - there is no companion, her records could not be
+   * read, or her records will not fit a card our import accepts.
+   */
+  exportTitle: string;
+  exportHint: string;
+  exportCard: string;
+  exportBusy: string;
+  exportSaved: string;
+  exportNothing: string;
+  exportUnreadable: string;
+  exportTooLarge: string;
+  exportFailed: string;
+
   /** The decoder's own disposition classes, in player words. */
   dispositionAccepted: string;
   dispositionPreserved: string;
@@ -439,6 +455,17 @@ const en: CharacterLabels = Object.freeze({
   companionWorldBookNotSaved:
     "Nothing was saved: her own book or her conversations' storage is unavailable. Try again.",
 
+  exportTitle: "Save her as a character card",
+  exportHint:
+    "Exports the companion in play as a standard SillyTavern V3 card (.json): her world book, scenario, openings and performance directive. You can import it again here or in any app that reads character cards.",
+  exportCard: "Export character card",
+  exportBusy: "Exporting…",
+  exportSaved: "Saved {{file}}.",
+  exportNothing: "There is no companion to export yet.",
+  exportUnreadable: "Her records could not be read, so no card was made.",
+  exportTooLarge: "Her records are too large to fit in a character card, so nothing was saved.",
+  exportFailed: "The character card could not be exported.",
+
   dispositionAccepted: "used",
   dispositionPreserved: "kept unchanged",
   dispositionDropped: "not used",
@@ -632,6 +659,17 @@ const zh: CharacterLabels = Object.freeze({
   companionWorldBookBindingPartial:
     "她的世界书已改动，但正在读取它的对话无法迁移到新版本。请重新启动 GameBuddy 后再继续这些对话。",
   companionWorldBookNotSaved: "没有保存：她的世界书或她对话的存储暂时不可用。请重试。",
+
+  exportTitle: "把她另存为角色卡",
+  exportHint:
+    "把在玩的伙伴导出为标准的 SillyTavern V3 角色卡（.json）：她的世界书、场景、开场白和演出指导。你可以在这里或任何读取角色卡的应用中重新导入它。",
+  exportCard: "导出角色卡",
+  exportBusy: "导出中…",
+  exportSaved: "已保存 {{file}}。",
+  exportNothing: "还没有可以导出的伙伴。",
+  exportUnreadable: "无法读取她的档案，未能生成角色卡。",
+  exportTooLarge: "她的档案太大，放不进一张角色卡，因此没有导出。",
+  exportFailed: "无法导出这张角色卡。",
 
   dispositionAccepted: "已使用",
   dispositionPreserved: "原样保留",

@@ -361,6 +361,12 @@ const PROBLEM_CODES = [
   // very text the edit would replace.
   "chat_edit_not_player_message",
   "chat_edit_turn_active",
+  // The delete's own three. The last is not about the point the player chose: a row whose Pi session
+  // entry the Host never recorded cannot be removed on its own, and refusing by name is better than
+  // removing whatever happens to sit at the same position.
+  "chat_delete_opening_retained",
+  "chat_delete_turn_active",
+  "chat_delete_binding_unavailable",
   // A durable companion record that is absent, incomplete or unreadable is a data-integrity fact,
   // not a retryable runtime outage.
   "companion_record_unreadable",
@@ -378,6 +384,9 @@ const PROBLEM_CODES = [
   "world_info_already_exists",
   "world_info_revision_conflict",
   "world_info_in_use",
+  // `companion.card.export` refuses by name when a companion's own records will not fit
+  // a Tavern card our import accepts.
+  "companion_card_too_large",
   // Transport: the over-ceiling request body the router refuses before any route runs.
   "payload_too_large",
 ] as const;
@@ -991,6 +1000,21 @@ export type ReferencePipelineApi = Readonly<{
     }>,
     options: Readonly<{ csrfToken: string }>,
   ): Promise<Readonly<{ apiVersion: 1; message: BrowserMessageV1 }>>;
+  /**
+   * POST /api/tavern/v1/messages/delete with CSRF. The named message leaves the conversation - from
+   * the transcript and from the model's own memory of it - while every other message stays where it
+   * is. The answer carries no row: the gap is the result, so the surface rereads the transcript
+   * rather than being told what now occupies the position.
+   */
+  delete(
+    command: Readonly<{
+      apiVersion: 1;
+      selectionGeneration: number;
+      messageHandle: string;
+      expectedOrder: number;
+    }>,
+    options: Readonly<{ csrfToken: string }>,
+  ): Promise<Readonly<{ apiVersion: 1 }>>;
   /** POST /api/tavern/v1/turns/:turnHandle/cancel with CSRF. */
   cancel(turnHandle: string, command: CancelTurnCommandV1, csrfToken: string): Promise<CancelTurnResultV1>;
   /** POST /api/tavern/v1/message-submission-status (no CSRF/idempotency headers). */
@@ -1120,6 +1144,21 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
           if (!isRecord(body) || body.apiVersion !== 1 || !isBrowserMessage(body.message))
             throw new TavernProtocolError();
           return Object.freeze({ apiVersion: 1 as const, message: body.message });
+        },
+        { "Content-Type": "application/json", "x-csrf-token": options.csrfToken },
+        command,
+      );
+    },
+    async delete(command, options) {
+      if (!isRecord(command) || !isOpaqueHandle(options.csrfToken)) throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/messages/delete",
+        200,
+        (body) => {
+          if (!isRecord(body) || body.apiVersion !== 1) throw new TavernProtocolError();
+          return Object.freeze({ apiVersion: 1 as const });
         },
         { "Content-Type": "application/json", "x-csrf-token": options.csrfToken },
         command,

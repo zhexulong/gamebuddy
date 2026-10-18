@@ -346,6 +346,19 @@ export type CompanionProfileV1 = Readonly<{
   worldBook: CompanionWorldBookV1;
 }>;
 /**
+ * One companion's own records exported as a standard Tavern V3 card.
+ *
+ * `card` is the card's own JSON TEXT - the exact bytes the player saves - so the
+ * Host is the one author of the card's serialization and the browser never rebuilds
+ * it. `fileName` is what the save dialog offers; `spec` is the format's own version.
+ */
+export type CompanionCardExportV1 = Readonly<{
+  apiVersion: 1;
+  spec: "chara_card_v3";
+  fileName: string;
+  card: string;
+}>;
+/**
  * The mounted companion's own performance directive, as the durable identity
  * profile holds it (the imported card's `system_prompt`). `source` is
  * provenance: `card` while the text is exactly what the card supplied,
@@ -946,6 +959,9 @@ const OPERATION_IDS = [
   // design/28 §2 the read-only character inspector: one roster companion's own authored
   // facts, which no other route projects for a companion who is not the mounted one.
   "companion.profile.read",
+  // design/28 §2 the character-card export: a roster companion's own records as a
+  // standard Tavern V3 card she can save and re-import.
+  "companion.card.export",
   "companion.create",
   // design/28 §2 companion directive: the mounted companion's own performance
   // directive (the reviewed card's `system_prompt`), read/edit/clear.
@@ -1002,6 +1018,7 @@ const LABEL_KEYS = [
   "tavern.operation.companion.worldbook.read",
   "tavern.operation.companion.worldbook.update",
   "tavern.operation.companion.profile.read",
+  "tavern.operation.companion.card.export",
   "tavern.operation.companion.create",
   "tavern.operation.character.import.stage",
   "tavern.operation.character.import.read",
@@ -1082,6 +1099,9 @@ const PROBLEM_CODES = [
   "chat_rewind_turn_active",
   "chat_edit_not_player_message",
   "chat_edit_turn_active",
+  "chat_delete_opening_retained",
+  "chat_delete_turn_active",
+  "chat_delete_binding_unavailable",
   // The managed World Info library's own refusals (`world-info.create`/`update`/`delete`/`detail`):
   // the item is gone, its title is taken, the edit raced a newer revision, or the mounted Chat
   // still reads it. Each reaches the player as its own code rather than as a generic failure.
@@ -1099,6 +1119,9 @@ const PROBLEM_CODES = [
   "companion_world_book_conflict",
   "companion_world_book_absent",
   "companion_world_book_binding_partial",
+  // `companion.card.export` refuses by name when a companion's own records will not fit a
+  // Tavern card our import accepts: a bounded, non-retryable fact about her data.
+  "companion_card_too_large",
   // Transport: the over-ceiling request body the management dispatcher refuses before any route
   // runs (`tavern-management-dialogue-web.ts:538`), sent outside its own schema check. It must be
   // named here or the typed 413 arrives as an opaque `TavernProtocolError` with no code to show;
@@ -1733,6 +1756,23 @@ function isCompanionProfile(value: unknown): value is CompanionProfileV1 {
     isCompanionProfileScenario(value.scenario) &&
     isCompanionProfileGreetings(value.greetings) &&
     isCompanionWorldBook(value.worldBook)
+  );
+}
+
+const COMPANION_CARD_EXPORT_KEYS = ["apiVersion", "spec", "fileName", "card"] as const;
+/**
+ * One companion's exported card. `card` is the card's own JSON text, bounded by the
+ * decoder's own JSON input ceiling - the same bound the Host's schema checks - so the
+ * mirror never refuses a card the import route would accept.
+ */
+function isCompanionCardExport(value: unknown): value is CompanionCardExportV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_CARD_EXPORT_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    value.spec === "chara_card_v3" &&
+    isLengthBoundedString(value.fileName, 1, 200) &&
+    isLengthBoundedString(value.card, 2, 2_097_152)
   );
 }
 
@@ -2682,6 +2722,11 @@ export function validateCompanionProfile(value: unknown): CompanionProfileV1 {
   return value;
 }
 
+export function validateCompanionCardExport(value: unknown): CompanionCardExportV1 {
+  if (!isCompanionCardExport(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validatePersona(value: unknown): PersonaV1 {
   if (!isPersona(value)) throw new TavernProtocolError();
   return value;
@@ -2946,6 +2991,11 @@ export type ManagementPipelineApi = Readonly<{
    * roster listed. It resolves any listed companion, not only the mounted one.
    */
   readCompanionProfile(handle: string): Promise<CompanionProfileV1>;
+  /**
+   * GET /api/tavern/v1/companions/:handle/card: one roster companion's own records as
+   * a standard Tavern V3 card, which the browser saves to disk. Read-only.
+   */
+  exportCompanionCard(handle: string): Promise<CompanionCardExportV1>;
   /** PUT /api/tavern/v1/companions/:handle/voice: edit or clear the directive, CASed on its revision. */
   updateCompanionVoice(
     handle: string,
@@ -3417,6 +3467,10 @@ export function createManagementPipelineApi(
     async readCompanionProfile(handle: string): Promise<CompanionProfileV1> {
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
       return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/profile`, 200, validateCompanionProfile);
+    },
+    async exportCompanionCard(handle: string): Promise<CompanionCardExportV1> {
+      if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
+      return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/card`, 200, validateCompanionCardExport);
     },
     async updateCompanionWorldBook(
       handle: string,
