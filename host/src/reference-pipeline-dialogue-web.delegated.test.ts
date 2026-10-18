@@ -12,6 +12,8 @@ import {
 } from "./composed-reference-game-browser.js";
 import { createReferencePipelineDialogueWebDelegatedHandler } from "./reference-pipeline-dialogue-web.delegated.js";
 import {
+  type DeleteMessageCommandV1,
+  type DeleteMessageResultV1,
   type EditMessageCommandV1,
   type EditMessageResultV1,
   type RegenerateMessageCommandV1,
@@ -543,7 +545,7 @@ test("delegated handler without a mounted pipeline service fails mutations close
 
 /**
  * A pipeline service that answers only the message-mutation half of the reference profile
- * (Regenerate, Swipe, Rewind and Edit), so a test can prove the dispatcher reaches them.
+ * (Regenerate, Swipe, Rewind, Edit and Delete), so a test can prove the dispatcher reaches them.
  */
 function mutationService(
   recorder: {
@@ -551,11 +553,13 @@ function mutationService(
     regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
     rewinds: RewindChatCommandV1[];
     edits: EditMessageCommandV1[];
+    deletes: DeleteMessageCommandV1[];
     closes: number;
   },
   swipeResult: SwipeSelectResultV1,
   rewind: { result: RewindChatResultV1; refusal?: string } = { result: REWIND_RESULT },
   edit: { result: EditMessageResultV1; refusal?: string } = { result: EDIT_RESULT },
+  remove: { result: DeleteMessageResultV1; refusal?: string } = { result: DELETE_RESULT },
 ): ChatPipelineService {
   return Object.freeze({
     async submitAfterResponseCommit() {
@@ -585,6 +589,11 @@ function mutationService(
       if (edit.refusal !== undefined) throw new Error(edit.refusal);
       return edit.result;
     },
+    async delete(command): Promise<DeleteMessageResultV1> {
+      recorder.deletes.push(command);
+      if (remove.refusal !== undefined) throw new Error(remove.refusal);
+      return remove.result;
+    },
     async close() {
       recorder.closes += 1;
     },
@@ -607,6 +616,12 @@ const EDIT_RESULT: EditMessageResultV1 = Object.freeze({
   }),
 });
 
+/**
+ * The delete's own answer. It names no row: the gap is the result, and the surface rereads the
+ * transcript rather than being told what now occupies the position.
+ */
+const DELETE_RESULT: DeleteMessageResultV1 = Object.freeze({ apiVersion: 1 });
+
 test("the production reference profile declares the message-mutation group and fits the canonical groups", () => {
   const production = composeReferenceTavernProfile();
   assert.equal(referenceTavernProfileFitsCanonicalGroups(production), true);
@@ -618,6 +633,7 @@ test("the production reference profile declares the message-mutation group and f
     "chat.regenerate",
     "chat.rewind",
     "chat.edit",
+    "chat.delete",
   ]);
   assert.deepEqual(production.operationIds, ["chat.submit", "chat.cancel"]);
 });
@@ -672,8 +688,9 @@ test("delegated handler answers the reference profile's Swipe and Regenerate rou
     regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
     rewinds: RewindChatCommandV1[];
     edits: EditMessageCommandV1[];
+    deletes: DeleteMessageCommandV1[];
     closes: number;
-  } = { swipes: [], regenerations: [], rewinds: [], edits: [], closes: 0 };
+  } = { swipes: [], regenerations: [], rewinds: [], edits: [], deletes: [], closes: 0 };
   const broker = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile: production }),
     bootstrapToken,
@@ -752,8 +769,9 @@ test("delegated handler answers the reference profile's Rewind route, and a refu
     regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
     rewinds: RewindChatCommandV1[];
     edits: EditMessageCommandV1[];
+    deletes: DeleteMessageCommandV1[];
     closes: number;
-  } = { swipes: [], regenerations: [], rewinds: [], edits: [], closes: 0 };
+  } = { swipes: [], regenerations: [], rewinds: [], edits: [], deletes: [], closes: 0 };
   const broker = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile: production }),
     bootstrapToken,
@@ -827,8 +845,9 @@ test("delegated handler answers the reference profile's Edit route, and every re
     regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
     rewinds: RewindChatCommandV1[];
     edits: EditMessageCommandV1[];
+    deletes: DeleteMessageCommandV1[];
     closes: number;
-  } = { swipes: [], regenerations: [], rewinds: [], edits: [], closes: 0 };
+  } = { swipes: [], regenerations: [], rewinds: [], edits: [], deletes: [], closes: 0 };
   const broker = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile: production }),
     bootstrapToken,
@@ -907,6 +926,98 @@ test("delegated handler answers the reference profile's Edit route, and every re
       assert.equal(((await refused.json()) as { code: string }).code, refusal);
     }
     assert.equal(recorder.edits.length, 4);
+  } finally {
+    await server.close();
+    assert.equal(recorder.closes, 1);
+  }
+});
+
+test("delegated handler answers the reference profile's Delete route, and every refusal keeps its own name", async () => {
+  const production = composeReferenceTavernProfile();
+  const remove: { result: DeleteMessageResultV1; refusal?: string } = { result: DELETE_RESULT };
+  const recorder: {
+    swipes: SwipeSelectCommandV1[];
+    regenerations: { command: RegenerateMessageCommandV1; idempotencyKey: string }[];
+    rewinds: RewindChatCommandV1[];
+    edits: EditMessageCommandV1[];
+    deletes: DeleteMessageCommandV1[];
+    closes: number;
+  } = { swipes: [], regenerations: [], rewinds: [], edits: [], deletes: [], closes: 0 };
+  const broker = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile: production }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+  });
+  const delegated = createReferencePipelineDialogueWebDelegatedHandler({
+    profile: production,
+    referenceStateFacade: facade,
+    pipelineService: mutationService(
+      recorder,
+      Object.freeze({ apiVersion: 1, message: Object.freeze({ ...EDIT_RESULT.message }) }),
+      { result: REWIND_RESULT },
+      { result: EDIT_RESULT },
+      remove,
+    ),
+    eventStream,
+    capability: broker.delegatedAuthCapability,
+  });
+  const server = await start(broker, delegated);
+  try {
+    const initial = await bootstrap(server.origin);
+    assert.equal(initial.status, 200);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const csrf = root.chat.csrfToken;
+    const command = { apiVersion: 1, selectionGeneration: 1, messageHandle: handle, expectedOrder: 2 };
+    const deleteRequest = (token: string, body: unknown) =>
+      fetch(`${server.origin}/api/tavern/v1/messages/delete`, {
+        method: "POST",
+        headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": token },
+        body: JSON.stringify(body),
+      });
+
+    // The route reaches the service and answers with nothing but the protocol version: the gap is the
+    // result, and the surface rereads the transcript rather than being told what occupies it.
+    const answered = await deleteRequest(csrf, command);
+    const answeredBody = await answered.text();
+    assert.equal(answered.status, 200, `delete must be served, got ${answered.status} ${answeredBody}`);
+    assert.deepEqual(JSON.parse(answeredBody), remove.result);
+    assert.deepEqual(recorder.deletes, [command]);
+
+    // A body the contract does not admit is refused before the service, not after it: a delete without
+    // the position the page rendered names no point to remove.
+    const malformed = await deleteRequest(csrf, {
+      apiVersion: 1,
+      selectionGeneration: 1,
+      messageHandle: handle,
+    });
+    assert.equal(malformed.status, 400);
+    assert.equal(((await malformed.json()) as { code: string }).code, "invalid_request");
+    assert.equal(recorder.deletes.length, 1);
+
+    // The wrong CSRF fails before the service too, as every mutation on this surface does.
+    const wrongCsrf = await deleteRequest("B".repeat(43), command);
+    assert.equal(wrongCsrf.status, 403);
+    assert.equal(((await wrongCsrf.json()) as { code: string }).code, "csrf_failed");
+    assert.equal(recorder.deletes.length, 1);
+
+    // Each refusal the Host names keeps its own code - including the one that is not about the player's
+    // choice at all: a row whose model entry was never recorded cannot be removed on its own.
+    for (const refusal of [
+      "chat_delete_opening_retained",
+      "chat_delete_turn_active",
+      "chat_delete_binding_unavailable",
+      "chat_message_not_found",
+      "chat_message_revision_conflict",
+    ] as const) {
+      remove.refusal = refusal;
+      const refused = await deleteRequest(csrf, command);
+      assert.equal(refused.status, 409, refusal);
+      assert.equal(((await refused.json()) as { code: string }).code, refusal);
+    }
+    assert.equal(recorder.deletes.length, 6);
   } finally {
     await server.close();
     assert.equal(recorder.closes, 1);

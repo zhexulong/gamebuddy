@@ -1,6 +1,7 @@
 import type { Static } from "typebox";
 import { join } from "node:path";
 import {
+  deleteMountedChatMessage,
   editMountedChatMessage,
   isCurrentMountedChatRuntimeLease,
   rewindMountedChatTranscript,
@@ -15,6 +16,8 @@ import {
   type BrowserTurnV1,
   type CancelTurnCommandV1,
   type ComposedTavernProfile,
+  type DeleteMessageCommandV1,
+  type DeleteMessageResultV1,
   type EditMessageCommandV1,
   type EditMessageResultV1,
   type MessageSubmissionStatusQueryV1Schema,
@@ -154,6 +157,15 @@ export type ChatPipelineService = Readonly<{
    * moved under the editor is refused instead of edited where the player never saw it.
    */
   edit?(command: EditMessageCommandV1): Promise<EditMessageResultV1>;
+  /**
+   * Removes exactly one message out of the middle of the mounted conversation - the row the player
+   * reads and that row's entry in the session the model sees, together - leaving every other message
+   * where it is. The named row is resolved through the lease's own handle projection and the position
+   * the browser read it at is part of the command, so a transcript that moved under the click is
+   * refused instead of leaving a hole where the player never looked. The row that leaves the model's
+   * path is named by its durable session-entry binding; a row with none is refused as exactly that.
+   */
+  delete?(command: DeleteMessageCommandV1): Promise<DeleteMessageResultV1>;
   /**
    * Rejects new admission and drains admitted acceptance, commit callbacks and
    * background start work before resolving. The mounted lease itself stays
@@ -679,6 +691,55 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       }
     },
 
+    async delete(command: DeleteMessageCommandV1): Promise<DeleteMessageResultV1> {
+      assertOpen();
+      if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+      if (!TavernBrowserValidatorsV1.DeleteMessageCommandV1Schema.Check(command)) throw unavailable();
+      if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
+      const state = await resumeState();
+      const target = state.messages.find(
+        (message: ChatThreadState["messages"][number]) =>
+          lease.browserProjection.projectMessageHandle(message.messageId) === command.messageHandle,
+      );
+      if (target === undefined) throw mutationRefusal("chat_message_not_found");
+      const order = state.messages.indexOf(target);
+      // The transcript is what a position means: a row that is no longer at the order the browser
+      // rendered it is a stale view, and deleting from it would remove a message the player never saw.
+      if (order !== command.expectedOrder) throw mutationRefusal("chat_message_revision_conflict");
+      // The greeting is the conversation's own opening, not one of the messages the player wrote or
+      // read: removing it would leave a thread whose recorded opening no longer exists.
+      if (target.kind === "opening") throw mutationRefusal("chat_delete_opening_retained");
+      // A turn that is not terminal is a reply still being written. Deleting a row out from under it
+      // would leave the model answering a line the transcript no longer carries.
+      const ledger = state.turnLedger;
+      if (ledger !== null && !isTerminalLedger(ledger)) throw mutationRefusal("chat_delete_turn_active");
+      try {
+        const next = await deleteMountedChatMessage(manifest, lease, {
+          messageId: target.messageId,
+          expectedOrder: order,
+        });
+        // The hole IS the result, so the durable read-back has to say exactly that: the named row is
+        // gone and every other row is still there, in the same order. Anything else - the row still
+        // present, or a second row gone with it, which is what a mis-named Pi entry would leave -
+        // is a disagreement the surface must not see, and it fails closed here.
+        const survivors = state.messages
+          .filter((message: ChatThreadState["messages"][number]) => message.messageId !== target.messageId)
+          .map((message: ChatThreadState["messages"][number]) => message.messageId);
+        if (
+          next.messages.length !== survivors.length ||
+          next.messages.some((message, index) => message.messageId !== survivors[index])
+        )
+          throw unavailable();
+        const result = Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION });
+        // Fail closed unless the committed representation satisfies its frozen contract schema; a
+        // partial or invalid projection never escapes.
+        if (!TavernBrowserValidatorsV1.DeleteMessageResultV1Schema.Check(result)) throw unavailable();
+        return result;
+      } catch (error) {
+        throw rethrowMutationRefusal(error);
+      }
+    },
+
     async close(): Promise<void> {
       if (closePromise !== undefined) return closePromise;
       closing = true;
@@ -850,12 +911,12 @@ function validateSubmitCommand(command: SubmitMessageCommandV1, lease: MountedCh
 }
 
 /**
- * The message-mutation refusals that name the point the player chose: the rewind's four and the
- * edit's two. They keep their own code all the way to the surface; every other failure (store shape,
- * session path, read-back, admission, unknown) collapses to the service's fail-closed code so no raw
- * path, identifier or content can escape. One list for both operations, because each forwards the
- * durable store's own refusals unchanged - and only codes a store or ingress can really produce
- * belong on it.
+ * The message-mutation refusals that name the point the player chose: the rewind's four, the edit's
+ * two and the delete's three. They keep their own code all the way to the surface; every other failure
+ * (store shape, session path, read-back, admission, unknown) collapses to the service's fail-closed code
+ * so no raw path, identifier or content can escape. One list for all three operations, because each
+ * forwards the durable store's own refusals unchanged - and only codes a store or ingress can really
+ * produce belong on it.
  */
 const CHAT_MESSAGE_MUTATION_REFUSALS: readonly string[] = [
   "chat_message_not_found",
@@ -864,6 +925,9 @@ const CHAT_MESSAGE_MUTATION_REFUSALS: readonly string[] = [
   "chat_rewind_turn_active",
   "chat_edit_not_player_message",
   "chat_edit_turn_active",
+  "chat_delete_opening_retained",
+  "chat_delete_turn_active",
+  "chat_delete_binding_unavailable",
 ];
 
 function mutationRefusal(code: string): Error {
