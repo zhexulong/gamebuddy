@@ -616,12 +616,12 @@ test("a settled prompt's own entries bind to the rows they carry, and an ambiguo
   const fixture = await createSession("gamebuddy-transcript-binding-", []);
   try {
     assert.deepEqual(fixture.modelMessages(), []);
-    const before = sessionEntryIds(fixture.session);
+    const before = sessionEntryIds(fixture.sessionManager);
     const playerEntry = appendPrompt(fixture.sessionManager, PROMPT_TEXT);
     const replyEntry = appendReply(fixture.sessionManager, FIRST_REPLY);
     fixture.session.refreshContext();
     assert.deepEqual(
-      bindSettledPromptEntries(fixture.session, before, { playerText: PROMPT_TEXT, replyText: FIRST_REPLY }),
+      bindSettledPromptEntries(fixture.sessionManager, before, { playerText: PROMPT_TEXT, replyText: FIRST_REPLY }),
       [
         { role: "player", entryId: playerEntry },
         { role: "companion", entryId: replyEntry },
@@ -629,21 +629,22 @@ test("a settled prompt's own entries bind to the rows they carry, and an ambiguo
     );
     // A reply the prompt did not commit (a turn that failed before its presentation) binds no reply
     // row at all, and the player row it DID append still binds.
-    assert.deepEqual(bindSettledPromptEntries(fixture.session, before, { playerText: PROMPT_TEXT, replyText: null }), [
-      { role: "player", entryId: playerEntry },
-    ]);
+    assert.deepEqual(
+      bindSettledPromptEntries(fixture.sessionManager, before, { playerText: PROMPT_TEXT, replyText: null }),
+      [{ role: "player", entryId: playerEntry }],
+    );
     // Two appended user entries carrying the same text are not a proof of which one is the row, so
     // the row binds nothing rather than "the newest" or "the first".
     const secondPlayerEntry = appendPrompt(fixture.sessionManager, PROMPT_TEXT);
     fixture.session.refreshContext();
     assert.deepEqual(
-      bindSettledPromptEntries(fixture.session, before, { playerText: PROMPT_TEXT, replyText: FIRST_REPLY }),
+      bindSettledPromptEntries(fixture.sessionManager, before, { playerText: PROMPT_TEXT, replyText: FIRST_REPLY }),
       [{ role: "companion", entryId: replyEntry }],
     );
     // And a text this prompt never appended binds nothing: the capture is what it produced, not what
     // the transcript happens to contain.
     assert.deepEqual(
-      bindSettledPromptEntries(fixture.session, before, {
+      bindSettledPromptEntries(fixture.sessionManager, before, {
         playerText: "A line this prompt never carried",
         replyText: "A reply this prompt never produced",
       }),

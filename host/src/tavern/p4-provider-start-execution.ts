@@ -259,7 +259,7 @@ export async function runMountedProviderStart(
     const variant = scope.facts.variant;
     const playerMessageId = variant?.anchorMessageId ?? scope.facts.messageId;
     const replyMessageId = variant === null ? responseMessageId : variant.targetMessageId;
-    const bindings = bindSettledPromptEntries(runtimeSession.session, entriesBefore, {
+    const bindings = bindSettledPromptEntries(runtimeSession.sessionManager, entriesBefore, {
       playerText: promptText,
       replyText: committedReplyText ?? null,
     });
@@ -528,7 +528,7 @@ export async function runMountedProviderStart(
     };
     // Every session entry that exists at this instant is, by append-only construction, NOT one this
     // prompt produced: the difference after it settles names exactly the entries it did.
-    entriesBefore = sessionEntryIds(runtimeSession.session);
+    entriesBefore = sessionEntryIds(runtimeSession.sessionManager);
     const promptSettled = settlePrompt();
     promptPromise = promptSettled.then(() => undefined);
     const first = await Promise.race([

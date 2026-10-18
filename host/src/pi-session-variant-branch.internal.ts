@@ -51,7 +51,12 @@
  * context-edit mechanism left behind.
  */
 
-import type { AgentSession, ContextEditableContent, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSession,
+  ContextEditableContent,
+  SessionEntry,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
 
 import { chatTranscriptAssistantText } from "./native-companion-content.js";
 
@@ -267,12 +272,19 @@ export function editPiTranscriptEntry(
 }
 
 /**
+ * The one Pi capability the binding capture reads: the session's own append-only entry list. Taking
+ * the manager rather than the session keeps the capture usable from a runner that holds the runtime
+ * session, without reaching through the agent session for something the runtime already exposes.
+ */
+export type PiSessionEntrySource = Pick<SessionManager, "getEntries">;
+
+/**
  * Every entry id a session currently carries, as the starting point for "what did this prompt
  * append". Pi's session is append-only, so a set difference across one prompt names the entries
  * that prompt produced and nothing else.
  */
-export function sessionEntryIds(session: PiVariantBranchSession): ReadonlySet<string> {
-  return new Set(session.sessionManager.getEntries().map((entry) => entry.id));
+export function sessionEntryIds(source: PiSessionEntrySource): ReadonlySet<string> {
+  return new Set(source.getEntries().map((entry) => entry.id));
 }
 
 /**
@@ -295,11 +307,11 @@ export function sessionEntryIds(session: PiVariantBranchSession): ReadonlySet<st
  * "the nth entry of that role", which is the positional stand-in this exists to replace.
  */
 export function bindSettledPromptEntries(
-  session: PiVariantBranchSession,
+  source: PiSessionEntrySource,
   entriesBefore: ReadonlySet<string>,
   expected: Readonly<{ playerText: string; replyText: string | null }>,
 ): readonly Readonly<{ role: "player" | "companion"; entryId: string }>[] {
-  const appended = session.sessionManager.getEntries().filter((entry) => !entriesBefore.has(entry.id));
+  const appended = source.getEntries().filter((entry) => !entriesBefore.has(entry.id));
   const bindings: Readonly<{ role: "player" | "companion"; entryId: string }>[] = [];
   const playerEntry = uniqueAppendedEntry(
     appended,

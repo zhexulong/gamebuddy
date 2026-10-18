@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import type {
   AttemptObservationV1,
   AttemptStartingTurn,
@@ -155,11 +156,30 @@ function createScope(overrides: ScopeOverrides = {}) {
     | { session?: Record<string, unknown>; [key: string]: unknown }
     | undefined;
   const suppliedSession = suppliedRuntime?.session;
+  /**
+   * These cases drive the runner, which reads the runtime session's own entry list and appends none of
+   * its entries, so the double models a manager whose list is readable and empty: the binding the
+   * runner records for what a prompt appended is then empty, and no ingress is asked to store anything.
+   */
+  const sessionManager = (suppliedRuntime?.sessionManager ??
+    Object.freeze({
+      getEntries: () => [],
+      getBranch: () => [],
+    })) as SessionManager;
+  /**
+   * The double deliberately supplies only the parts of a live runtime session these cases reach: an
+   * empty object when a case supplies none (the runner then finds no prompt port and records
+   * `not_started` before it ever reads an entry list).
+   */
+  const emptyRuntimeSession = Object.freeze({}) as unknown as ProviderInvocationScope["runtimeSession"];
   const runtimeSession =
     suppliedRuntime === undefined || suppliedSession === undefined
       ? suppliedRuntime
       : Object.freeze({
           ...suppliedRuntime,
+          sessionManager,
+          // A deliberate partial double of the session surface this runner reaches: the listener port
+          // and the prompt port a case supplies.
           session: Object.freeze({
             ...suppliedSession,
             subscribe:
@@ -343,7 +363,7 @@ function createScope(overrides: ScopeOverrides = {}) {
   const scope = Object.freeze({
     facts: overrides.facts ?? facts,
     deadlineAtMs: Date.now() + 120_000,
-    runtimeSession: runtimeSession ?? Object.freeze({}),
+    runtimeSession: runtimeSession ?? emptyRuntimeSession,
     transitionStore,
     transitionPresentation,
     readAcceptedMessageText: overrides.readAcceptedMessageText ?? (async () => "Hello"),
@@ -379,7 +399,14 @@ function createScope(overrides: ScopeOverrides = {}) {
     branchVariantAnchor:
       overrides.branchVariantAnchor ??
       (async () => Object.freeze({ status: "refused" as const, reason: "variant_position_has_no_variant" as const })),
-  }) as ProviderInvocationScope;
+    // The runner records the durable message -> entry binding through this ingress once its prompt has
+    // settled. These cases append no session entry, so the runner proves nothing and calls it with
+    // nothing; the double answers that, and a case that ever appends entries would have to say so.
+    recordTranscriptEntryBinding: async () => undefined,
+    // Deliberate partial double: it supplies only the scope members these cases reach, and its runtime
+    // session carries only the ports and the readable entry list the runner reads. The cast states that
+    // plainly rather than relying on an assertion TS happens to accept.
+  }) as unknown as ProviderInvocationScope;
   return { scope, transitions, presentationTransitions };
 }
 

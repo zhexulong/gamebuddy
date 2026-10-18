@@ -215,7 +215,7 @@ const mountPreamble = `
     return internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
       internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
         const session = scope.runtimeSession.session;
-        const entriesBefore = bindings.sessionEntryIds(session);
+        const entriesBefore = bindings.sessionEntryIds(scope.runtimeSession.sessionManager);
         const sessionManager = scope.runtimeSession.sessionManager;
         sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.now() });
         sessionManager.appendMessage({ role: "assistant", content: [{ type: "text", text: replyText }] });
@@ -223,7 +223,7 @@ const mountPreamble = `
         await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
         await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
         await scope.transitionPresentation({ operation: "commit_presentation", cancelEpoch: 0, message: { messageId: responseId, text: replyText, occurredAtMs: times[2] }, committedAtMs: times[2] });
-        const proven = bindings.bindSettledPromptEntries(session, entriesBefore, { playerText: promptText, replyText });
+        const proven = bindings.bindSettledPromptEntries(scope.runtimeSession.sessionManager, entriesBefore, { playerText: promptText, replyText });
         const rows = proven.map((binding) => Object.freeze({ messageId: binding.role === "player" ? playerRow.messageId : responseId, entryId: binding.entryId }));
         await scope.recordTranscriptEntryBinding(rows);
         await scope.transitionPresentation({ operation: "claim_completion", claimedAtMs: times[3] });
