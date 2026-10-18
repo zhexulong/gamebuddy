@@ -1340,6 +1340,11 @@ export async function stopMountedChatPresentationEpoch(
       if (ledger.status === "attempt_starting") {
         if (ledger.observation?.phase !== "armed")
           throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
+        // An `armed` turn has no separate claim step: this one transition both
+        // claims and cancels it, so both stamps are the same instant and come
+        // from one clock read. Two reads would let the pair straddle a
+        // millisecond boundary and misreport a single transition as two.
+        const cancelledAtMs = Date.now();
         const cancelled = await transitionMountedProviderStart(
           Object.freeze({
             authority: record.transitionAuthority.authority,
@@ -1355,7 +1360,7 @@ export async function stopMountedChatPresentationEpoch(
             runtimeOwner: ledger.attempt.runtimeOwner,
             attemptId: ledger.attempt.attemptId,
           }),
-          Object.freeze({ operation: "cancel", observedAtMs: Date.now(), cancelledAtMs: Date.now() }),
+          Object.freeze({ operation: "cancel", observedAtMs: cancelledAtMs, cancelledAtMs }),
         );
         if (cancelled.status !== "cancelled")
           throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
