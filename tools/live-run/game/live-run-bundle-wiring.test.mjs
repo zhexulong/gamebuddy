@@ -27,7 +27,16 @@ test("the action trace records the game clock at dispatch, from the bridge snaps
     2,
     "both trace entries must carry the clock",
   );
-  assert.equal((executeBlock.match(/dispatchedAtMs: Date\.now\(\)/gu) ?? []).length, 2);
+  assert.equal(
+    (executeBlock.match(/^\s+dispatchedAtMs,$/gmu) ?? []).length,
+    2,
+    "both trace entries must carry the DISPATCH stamp (captured before the call, not after it)",
+  );
+  assert.equal(
+    (executeBlock.match(/settledAtMs: Date\.now\(\),/gu) ?? []).length,
+    2,
+    "both trace entries must carry the settle stamp, so exec and think can be told apart",
+  );
   // An unreadable clock stays null rather than being invented: the bundle contract then refuses the trace.
   assert.doesNotMatch(executeBlock, /inGameTime: "6\d\d"/);
 });
@@ -186,4 +195,18 @@ test("the runner imports the same failure-dump module the replay engine and the 
   assert.match(dump, /export function buildReproPlan/);
   assert.match(engine, /import \{ decideReplayDispatch \} from "\.\/replay-clock\.mjs";/);
   assert.match(engine, /export async function replayActionTrace/);
+});
+
+test("the action cadence is split into exec, think and idle, stamped honestly", () => {
+  // A review asked why the companion "feels laggy" and the only answer the data could give was ONE number, which
+  // also lied: `dispatchedAtMs` was stamped when the RECEIPT returned, so the "gap" contained the next action's
+  // execution while the field name said otherwise. The runner now stamps it before the call, records `settledAtMs`,
+  // and publishes the split.
+  assert.match(SOURCE, /const dispatchedAtMs = Date\.now\(\);/);
+  const stampAt = SOURCE.indexOf("const dispatchedAtMs = Date.now();");
+  const callAt = SOURCE.indexOf("const receipt = await originalExecute(request);");
+  assert.ok(stampAt > 0 && callAt > stampAt, "the dispatch stamp must precede the call it names");
+  assert.match(SOURCE, /settledAtMs: Date\.now\(\),/);
+  assert.match(SOURCE, /actionCadence: summarizeActionCadence\(actionTrace\),/);
+  assert.match(SOURCE, /import \{ summarizeActionCadence \} from "\.\.\/\.\.\/lib\/action-cadence\.mjs";/);
 });

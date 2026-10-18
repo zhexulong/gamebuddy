@@ -28,6 +28,7 @@ import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
 import { assessMultiDayBaseline, MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "../../lib/multiday-baseline.mjs";
+import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
 import { chooseLevelUpResolution, parsePendingLevelUps } from "../../lib/level-up-evidence.mjs";
 import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
@@ -1606,6 +1607,11 @@ const traceClockFields = (clock) => ({
 const originalExecute = client.execute.bind(client);
 client.execute = async (request) => {
   const clock = dispatchClock();
+  // STAMPED BEFORE THE CALL, which is what the field name always claimed and what it did not do: the timestamp used
+  // to be taken after the receipt returned, so "the gap between two actions" silently contained the next action's
+  // execution. A review of this metric could not separate "the game is slow" from "the agent is slow" because the
+  // data had only one number, and that number meant neither of the two things it was read as.
+  const dispatchedAtMs = Date.now();
   // Recorded here because this IS the moment a replay has to return to: the world as the actor saw it right
   // before it acted. After teardown the bridge has cleared its state, so this is the only chance.
   rememberObservation();
@@ -1621,7 +1627,9 @@ client.execute = async (request) => {
       reasonCode: receipt?.reasonCode,
       evidence: receipt?.evidence?.detail,
       ...traceClockFields(clock),
-      dispatchedAtMs: Date.now(),
+      dispatchedAtMs,
+      // The other half, so `execMs` and `thinkMs` can be told apart (tools/lib/action-cadence.mjs).
+      settledAtMs: Date.now(),
     };
     actionTrace.push(entry);
     console.error("AGENT_EXECUTE", JSON.stringify(entry));
@@ -1635,7 +1643,9 @@ client.execute = async (request) => {
       state: "rejected",
       reasonCode,
       ...traceClockFields(clock),
-      dispatchedAtMs: Date.now(),
+      dispatchedAtMs,
+      // A refusal IS a terminal, so its arrival is the settled time: the span it closes is the wait for the answer.
+      settledAtMs: Date.now(),
     };
     actionTrace.push(entry);
     console.error("AGENT_EXECUTE", JSON.stringify(entry));
@@ -2358,6 +2368,10 @@ try {
     multiday: multidayOutcome,
     // The run's own narrative judgement, on the RESULT (the bundle carries the same object): the verdict folds it
     // in, so a caller reading `state` cannot miss it.
+    // The run's own cadence, split into the three spans that a single "gap" number conflated: the game doing the
+    // work, the agent deciding, and the dispatch-to-dispatch total. Published for EVERY scenario, because "the
+    // companion feels laggy" is a question about all of them.
+    actionCadence: summarizeActionCadence(actionTrace),
     historianRubric: Object.freeze({
       state: historianRubricOutcome?.state ?? "unmeasured",
       reasonCode: historianRubricOutcome?.reasonCode ?? null,
