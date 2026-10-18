@@ -35,7 +35,7 @@
  */
 import { Archive, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { type ReactElement, useEffect, useRef, useState } from "react";
-import { type Locale, type Messages } from "../i18n";
+import type { Locale, Messages } from "../i18n";
 import { ContextDrawer } from "./ContextDrawer";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { openingVariantWords } from "./opening-variant-labels";
@@ -242,7 +242,9 @@ export function ChatsSurfacePanel({
   // here to choose" - the companion has no record, the read failed, or she has exactly one opening -
   // and the New Chat control then stays the single button it has always been: an affordance with one
   // option is worse than none.
-  const [openings, setOpenings] = useState<readonly Readonly<{ label: string | null; text: string }>[] | null>(null);
+  const [openings, setOpenings] = useState<
+    readonly Readonly<{ label: string | null; text: string; optionId: string }>[] | null
+  >(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   /** The control that opens the picker; focus returns here when it closes. */
   const newChatRef = useRef<HTMLButtonElement>(null);
@@ -284,7 +286,12 @@ export function ChatsSurfacePanel({
     void (async () => {
       try {
         const greeting = await api.readGreeting();
-        if (active) setOpenings(greeting.present && greeting.variants.length > 1 ? greeting.variants : null);
+        if (active)
+          setOpenings(
+            greeting.present && greeting.variants.length > 1
+              ? greeting.variants.map((variant, position) => ({ ...variant, optionId: `opening-${position}` }))
+              : null,
+          );
       } catch {
         if (active) setOpenings(null);
       }
@@ -552,8 +559,10 @@ export function ChatsSurfacePanel({
           <div className="opening-options" role="list" data-testid="opening-picker-list">
             {openings.map((variant, index) => (
               // An opening pins to its position in the set: it has no durable id on this wire, the
-              // Host commits it by that very position, and two openings can share a label.
-              <div key={index} role="listitem">
+              // Host commits it by that very position, and two openings can share a label. The id is
+              // minted once, when the set is read (`openingOptions`), so React keys by that identity
+              // rather than by a loop index - the same discipline the editor rows follow.
+              <div key={variant.optionId} role="listitem">
                 <button
                   type="button"
                   className="opening-option"
