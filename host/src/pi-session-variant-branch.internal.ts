@@ -1,5 +1,14 @@
 /**
- * The Pi-side half of one same-position Chat variant turn.
+ * The Pi-side half of the two Chat operations that reshape a conversation for the model.
+ *
+ * One is a same-position variant turn (`branchPiVariantAnchor`), the other a rewind
+ * (`branchPiTranscriptTail`). Both are the same act: Pi appends the prompt and the reply as children
+ * of the current leaf, so a conversation that the player has shortened must shorten the session's
+ * ACTIVE PATH too - moving the leaf is the only way to make the next request carry the transcript
+ * the player reads. Both proofs refuse a session shape they cannot prove, and both hand their caller
+ * a `revert()` because the store and Pi cannot be atomic.
+ *
+ * The variant half, in detail:
  *
  * The visible transcript and the model's context are two authorities: the
  * transcript is the store's own message row, while what a request carries is
@@ -47,7 +56,10 @@ type PiVariantBranchRefusal =
   | "variant_position_has_no_variant"
   | "variant_reply_tail_unavailable"
   | "variant_reply_tail_text_mismatch"
-  | "variant_anchor_unavailable";
+  | "variant_anchor_unavailable"
+  | "rewind_nothing_dropped"
+  | "rewind_tail_unavailable"
+  | "rewind_tail_text_mismatch";
 
 export type PiVariantBranchResult =
   | Readonly<{
@@ -79,21 +91,7 @@ export function branchPiVariantAnchor(
   anchorText: string,
 ): PiVariantBranchResult {
   if (position.variantTexts.length === 0) return { status: "refused", reason: "variant_position_has_no_variant" };
-  const messages: Readonly<{
-    parentId: string | null;
-    reply: string | null;
-    player: string | null;
-  }>[] = [];
-  for (const entry of session.sessionManager.getBranch()) {
-    if (entry.type !== "message") continue;
-    messages.push(
-      Object.freeze({
-        parentId: entry.parentId,
-        reply: chatTranscriptAssistantText(entry.message),
-        player: chatTranscriptPlayerText(entry.message),
-      }),
-    );
-  }
+  const messages = branchMessageEntries(session);
   const tail = messages[messages.length - 1];
   if (tail === undefined || tail.reply === null) return { status: "refused", reason: "variant_reply_tail_unavailable" };
   if (!position.variantTexts.includes(tail.reply))
@@ -110,8 +108,74 @@ export function branchPiVariantAnchor(
     cursor -= 2;
   }
   if (anchor === tail) return { status: "refused", reason: "variant_anchor_unavailable" };
+  return branchedTo(session, anchor.parentId);
+}
+
+/**
+ * The rewind half: moves the active leaf to the entry before the first dropped message, so the
+ * dropped tail leaves the model's active path and the next request carries the shortened
+ * transcript exactly once.
+ *
+ * TRANSITIONAL BINDING, the same one `branchPiVariantAnchor` documents: no authority records which
+ * Pi entry a durable `tavern_messages` row corresponds to, so the proof is positional. The session
+ * branch's own newest message entries must carry the dropped messages, in order, with the exact
+ * role and text the transcript holds - Pi appends the prompt the Host passed and the reply the
+ * provider returned, so a healthy transcript's tail matches entry for entry. A shape it cannot
+ * prove refuses, and the caller must then leave the transcript unchanged.
+ *
+ * The dropped messages are the named row AND every row after it, which is why the proof is a suffix
+ * and not a single lookup: a session whose dropped tail is the newest thing on the branch is
+ * exactly the shape a rewind leaves behind, so a second rewind from the same point still matches.
+ */
+export function branchPiTranscriptTail(
+  session: PiVariantBranchSession,
+  dropped: readonly PiTranscriptMessage[],
+): PiVariantBranchResult {
+  if (dropped.length === 0) return { status: "refused", reason: "rewind_nothing_dropped" };
+  const messages = branchMessageEntries(session);
+  if (messages.length < dropped.length) return { status: "refused", reason: "rewind_tail_unavailable" };
+  const start = messages.length - dropped.length;
+  for (const [offset, expected] of dropped.entries()) {
+    const entry = messages[start + offset];
+    const actual = expected.role === "player" ? entry?.player : entry?.reply;
+    if (actual !== expected.text) return { status: "refused", reason: "rewind_tail_text_mismatch" };
+  }
+  // The first dropped message's parent is the last message the player keeps, so the leaf lands on
+  // the kept side of the boundary; the next prompt then appends as its child.
+  return branchedTo(session, messages[start]!.parentId);
+}
+
+/** One Chat transcript message a rewind drops, as the transcript itself holds it. */
+export type PiTranscriptMessage = Readonly<{ role: "player" | "companion"; text: string }>;
+
+/** The session branch's message entries in order, each with the text it contributed. */
+function branchMessageEntries(session: PiVariantBranchSession): readonly Readonly<{
+  parentId: string | null;
+  reply: string | null;
+  player: string | null;
+}>[] {
+  const messages: Readonly<{
+    parentId: string | null;
+    reply: string | null;
+    player: string | null;
+  }>[] = [];
+  for (const entry of session.sessionManager.getBranch()) {
+    if (entry.type !== "message") continue;
+    messages.push(
+      Object.freeze({
+        parentId: entry.parentId,
+        reply: chatTranscriptAssistantText(entry.message),
+        player: chatTranscriptPlayerText(entry.message),
+      }),
+    );
+  }
+  return messages;
+}
+
+/** Moves the leaf, and hands back the one call that puts it where it was. */
+function branchedTo(session: PiVariantBranchSession, entryId: string | null): PiVariantBranch {
   const previousLeafId = session.sessionManager.getLeafId();
-  branchTo(session, anchor.parentId);
+  branchTo(session, entryId);
   return Object.freeze({
     status: "branched",
     revert: (): void => {

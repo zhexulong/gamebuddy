@@ -5,7 +5,12 @@ import test from "node:test";
 
 import { type AgentSession, SessionManager, createAgentSession } from "@earendil-works/pi-coding-agent";
 
-import { branchPiVariantAnchor, type PiVariantPosition } from "./pi-session-variant-branch.internal.js";
+import {
+  branchPiTranscriptTail,
+  branchPiVariantAnchor,
+  type PiTranscriptMessage,
+  type PiVariantPosition,
+} from "./pi-session-variant-branch.internal.js";
 import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 
 const PROMPT_TEXT = "I waited at the bus stop until noon.";
@@ -115,6 +120,11 @@ function countRole(messages: readonly (readonly [string, unknown])[], role: stri
 
 function position(variantTexts: readonly string[]): PiVariantPosition {
   return Object.freeze({ variantTexts: Object.freeze([...variantTexts]) });
+}
+
+/** One dropped transcript message, as the durable transcript itself holds it. */
+function drop(role: "player" | "companion", text: string): PiTranscriptMessage {
+  return Object.freeze({ role, text });
 }
 
 /** The runner's own order for a regeneration: the branch first, then the prompt. */
@@ -334,6 +344,98 @@ test("a position whose session shape cannot be proven refuses and mutates nothin
     } finally {
       await userTail.close();
     }
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The rewind half of the same leaf placement, in the same terms: the dropped rows are the durable
+ * transcript's own tail, so the proof lives in the session branch's newest message entries, and the
+ * next request must carry the shortened conversation instead of the one the player rewound away.
+ */
+test("a rewind drops the transcript's tail from the model's active path, and the next prompt appends there", async () => {
+  const fixture = await createSession("gamebuddy-rewind-tail-", [FIRST_REPLY, SECOND_REPLY]);
+  try {
+    assert.equal(countRole(fixture.modelMessages(), "user"), 2);
+    const dropped = Object.freeze([
+      Object.freeze({ role: "player" as const, text: PROMPT_TEXT }),
+      Object.freeze({ role: "companion" as const, text: SECOND_REPLY }),
+    ]);
+    const branched = branchPiTranscriptTail(fixture.session, dropped);
+    assert.equal(branched.status, "branched");
+    // The dropped exchange has left the active path: one player line and one reply, and the dropped
+    // reply appears nowhere in the projection the next request carries.
+    const after = fixture.modelMessages();
+    assert.equal(countRole(after, "user"), 1);
+    assert.equal(countRole(after, "assistant"), 1);
+    assert.deepEqual(after, [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+    ]);
+    assert.equal(quoted(after).includes(SECOND_REPLY), false);
+    // The conversation continues from where the transcript now ends: the new pair is a child of the
+    // kept reply, not a sibling of the exchange the player removed.
+    appendPrompt(fixture.sessionManager, EARLIER_PROMPT_TEXT);
+    appendReply(fixture.sessionManager, REGENERATED_REPLY);
+    fixture.session.refreshContext();
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: REGENERATED_REPLY }]],
+    ]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * Every shape the rewind derivation cannot prove refuses, and a refusal is silent: no entry is
+ * appended, so the leaf, the entry count and the projection are byte-identical after. The whole
+ * branch is droppable too - a Chat whose transcript becomes empty puts the leaf back at the root,
+ * and `revert()` restores exactly what was there.
+ */
+test("a transcript tail the session does not carry refuses and mutates nothing", async () => {
+  const fixture = await createSession("gamebuddy-rewind-refusal-", [FIRST_REPLY]);
+  try {
+    const before = quoted(fixture.modelMessages());
+    const leafBefore = fixture.sessionManager.getLeafId();
+    const entriesBefore = fixture.sessionManager.getEntryCount();
+    const playerLine = Object.freeze({ role: "player" as const, text: PROMPT_TEXT });
+    const cases = [
+      { dropped: [] as readonly ReturnType<typeof drop>[], reason: "rewind_nothing_dropped" },
+      {
+        dropped: [playerLine, drop("companion", "a reply this session never carried")],
+        reason: "rewind_tail_text_mismatch",
+      },
+      {
+        dropped: [playerLine, drop("companion", FIRST_REPLY), playerLine],
+        reason: "rewind_tail_unavailable",
+      },
+      {
+        dropped: [drop("player", "a player line this session never carried"), drop("companion", FIRST_REPLY)],
+        reason: "rewind_tail_text_mismatch",
+      },
+    ] as const;
+    for (const item of cases) {
+      const result = branchPiTranscriptTail(fixture.session, item.dropped);
+      assert.equal(result.status, "refused", item.reason);
+      if (result.status === "refused") assert.equal(result.reason, item.reason);
+      assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore, item.reason);
+      assert.equal(fixture.sessionManager.getLeafId(), leafBefore, item.reason);
+      assert.equal(quoted(fixture.modelMessages()), before, item.reason);
+    }
+
+    // The whole branch is a legal drop - a transcript that becomes empty - and the leaf goes back
+    // to the root, so nothing the player rewound away is still in front of the model.
+    const emptied = branchPiTranscriptTail(fixture.session, [playerLine, drop("companion", FIRST_REPLY)]);
+    assert.equal(emptied.status, "branched");
+    assert.equal(fixture.sessionManager.getLeafId(), null);
+    assert.deepEqual(fixture.modelMessages(), []);
+    if (emptied.status === "branched") emptied.revert();
+    assert.equal(fixture.sessionManager.getLeafId(), leafBefore);
+    assert.equal(quoted(fixture.modelMessages()), before);
   } finally {
     await fixture.close();
   }

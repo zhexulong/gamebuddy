@@ -1339,3 +1339,194 @@ test("listThreadLastMessages returns each thread's last appended message in one 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+/**
+ * A rewind is the one Chat mutation that removes transcript rows, so it must remove the ledger
+ * those rows were the only evidence for, in the same transaction, or the next read refuses the
+ * whole thread (`validateTurnIntegrity`). Both turns below are real accepted turns - a durable turn
+ * row, an attempt, a committed presentation and its idempotency record - because that is the shape a
+ * rewind actually meets, and the reply rows are named by the caller exactly as the provider commit
+ * names them.
+ */
+test("a rewind drops the named message and every row after it, together with the turns only those rows evidenced", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-rewind-");
+  const continuityKey = createHash("sha256")
+    .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
+    .digest("hex");
+  const t0 = Date.now();
+  const s = createChatThreadStore(root, continuityKey, () => t0);
+  const reopened = createChatThreadStore(root, continuityKey, () => t0);
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit(request(opening));
+    const accept = (await import("./chat-thread-store.js")).acceptMountedPlayerMessage;
+    const binding = {
+      runtimeRoot: root,
+      playerId: "player_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      selectionGeneration: 1,
+    };
+    const claimBinding = {
+      ...binding,
+      runtimeBindingDigest: "b".repeat(64),
+      runtimeOwner: {
+        ownerToken: "owner_01",
+        runtimeInstanceId: "inst_01",
+        ownerPid: 1234,
+        ownerProcessStartIdentity: "pid_1234",
+      },
+    };
+    /** One complete turn: accept, claim, arm, run, commit the reply, complete. */
+    const turn = async (ordinal: number, text: string, replyId: string) => {
+      const key = `key${ordinal}`.padEnd(22, "x");
+      const accepted = await accept(binding, {
+        text,
+        locale: "en-US",
+        idempotencyKey: key,
+        expectedDraftRevision: ordinal - 1,
+        authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+      });
+      const claimed = await claimMountedAttempt(claimBinding);
+      const attempt = { ...claimBinding, attemptId: claimed.attempt.attemptId };
+      await transitionMountedProviderStart(attempt, { operation: "arm", observedAtMs: t0 + 1 });
+      await transitionMountedProviderStart(attempt, {
+        operation: "running",
+        statusClass: "success",
+        observedAtMs: t0 + 2,
+      });
+      await transitionMountedPresentation(attempt, {
+        operation: "commit_presentation",
+        cancelEpoch: 1,
+        message: { messageId: replyId, text: `${text} back`, occurredAtMs: t0 + 3 },
+        committedAtMs: t0 + 3,
+      });
+      await transitionMountedPresentation(attempt, { operation: "claim_completion", claimedAtMs: t0 + 4 });
+      await transitionMountedPresentation(attempt, { operation: "complete", completedAtMs: t0 + 5 });
+      return { key, playerId: accepted.messageId, turnId: accepted.turnId };
+    };
+
+    const first = await turn(1, "First line", "reply_01");
+    const second = await turn(2, "Second line", "reply_02");
+    const before = await s.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      before.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId, "reply_02"],
+    );
+    assert.equal(before.idempotency.length, 2);
+
+    // Rewinding to the second player line drops that turn's player row, its reply, the turn itself
+    // and its idempotency record; the first turn - rows and bookkeeping - is untouched.
+    const after = await s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
+      messageId: second.playerId,
+      expectedOrder: 3,
+    });
+    assert.deepEqual(
+      after.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01"],
+    );
+    assert.equal(after.turnLedger?.turnId, first.turnId);
+    assert.equal(after.turnLedger?.status, "completed");
+    assert.deepEqual(
+      after.idempotency.map((record) => record.key),
+      [first.key],
+    );
+    // The ledger rows really are gone, not merely unread: a later read of the same thread must not
+    // raise `invalid_chat_thread_turn_ledger`, and the drop is durable across connections.
+    const durable = await reopened.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      durable.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01"],
+    );
+    assert.equal(durable.idempotency.length, 1);
+    const tables = new DatabaseSync(join(root, "tavern", "v3", "continuities", continuityKey, "tavern.sqlite"));
+    try {
+      assert.equal((tables.prepare("SELECT COUNT(*) AS n FROM tavern_turns").get() as any).n, 1);
+      assert.equal((tables.prepare("SELECT COUNT(*) AS n FROM tavern_turn_presentations").get() as any).n, 1);
+    } finally {
+      tables.close();
+    }
+
+    // A rewind through the greeting the Chat opened on is refused: the recorded opening would
+    // outlive the message it names.
+    await assert.rejects(
+      () =>
+        s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
+          messageId: "opening_01",
+          expectedOrder: 0,
+        }),
+      /chat_rewind_opening_retained/,
+    );
+    // An unknown row, and a row that is not at the position the caller read.
+    await assert.rejects(
+      () =>
+        s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
+          messageId: "missing_01",
+          expectedOrder: 0,
+        }),
+      /chat_message_not_found/,
+    );
+    await assert.rejects(
+      () =>
+        s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
+          messageId: "reply_01",
+          expectedOrder: 3,
+        }),
+      /chat_message_revision_conflict/,
+    );
+
+    // A rewind cannot orphan a turn either: dropping a committed reply while its player line stays
+    // takes that turn's bookkeeping with it, and the transcript still reads back.
+    const third = await turn(3, "Third line", "reply_03");
+    const orphaned = await s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
+      messageId: "reply_03",
+      expectedOrder: 4,
+    });
+    assert.deepEqual(
+      orphaned.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", third.playerId],
+    );
+    assert.equal(orphaned.turnLedger?.turnId, first.turnId);
+    assert.deepEqual(
+      orphaned.idempotency.map((record) => record.key),
+      [first.key],
+    );
+
+    // A turn that has not reached its terminal state refuses the whole rewind: no row is dropped
+    // while a reply is being written.
+    const held = await accept(binding, {
+      text: "Fourth line",
+      locale: "en-US",
+      idempotencyKey: "key4".padEnd(22, "x"),
+      expectedDraftRevision: 3,
+      authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+    });
+    const heldState = await s.resumeThread("thread_01", "surface_01");
+    await assert.rejects(
+      () =>
+        s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
+          messageId: held.messageId,
+          expectedOrder: heldState.messages.findIndex((message) => message.messageId === held.messageId),
+        }),
+      /chat_rewind_turn_active/,
+    );
+    assert.deepEqual(
+      (await s.resumeThread("thread_01", "surface_01")).messages.map((message) => message.messageId),
+      heldState.messages.map((message) => message.messageId),
+    );
+
+    // The writer sits behind the mounted transition authority, exactly as the swipe writers do.
+    const revoked = createMountedTurnTransitionAuthority();
+    revoked.revoke();
+    await assert.rejects(
+      () => s.rewindTranscript!(revoked.authority, "thread_01", { messageId: "reply_01", expectedOrder: 2 }),
+      /p4_p5_transition_authority_unavailable/,
+    );
+  } finally {
+    reopened.close?.();
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});

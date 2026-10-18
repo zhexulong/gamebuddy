@@ -120,6 +120,16 @@ const ProblemCode = Type.Union([
   Type.Literal("chat_opening_locked"),
   Type.Literal("chat_opening_not_greeting"),
   Type.Literal("chat_opening_variant_not_found"),
+  // Rewinding the conversation to an earlier message (`chat.rewind`) is one mutation over two
+  // authorities - the visible transcript and the model's own session - so every way it can be
+  // refused is its own bounded fact about which point the player named: a handle this Chat does
+  // not carry, a view of the transcript that has already moved, a point with nothing after it,
+  // the greeting the Chat opened on, or a reply that is still being written.
+  Type.Literal("chat_message_not_found"),
+  Type.Literal("chat_message_revision_conflict"),
+  Type.Literal("chat_rewind_nothing_after"),
+  Type.Literal("chat_rewind_opening_retained"),
+  Type.Literal("chat_rewind_turn_active"),
   // A durable companion record that is absent, incomplete or unreadable is a data-integrity
   // fact, not a runtime outage: it is bounded and never retryable, so the player is not told
   // to retry something that cannot succeed by retrying.
@@ -1500,6 +1510,27 @@ export const RegenerateMessageCommandV1Schema = strictObject({
   messageHandle: OpaqueHandle,
 });
 /**
+ * Rewinding a conversation (`chat.rewind`): the named message and every message after it stop
+ * being part of the conversation - in the transcript the player reads AND in the model's own
+ * session, which is the invariant the whole operation exists for. A rewind that only hid rows in
+ * the projection would leave the model reading text the player can no longer see.
+ *
+ * `expectedOrder` is the transcript position the browser rendered that message at. The transcript
+ * is what the position means, so a message that has moved - because a turn landed between the read
+ * and the click - is refused rather than used as a rewind point the player never chose.
+ */
+export const RewindChatCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  messageHandle: OpaqueHandle,
+  expectedOrder: Revision,
+});
+export const RewindChatResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  /** The row that now ends the transcript, or `null` when the rewind emptied it. */
+  lastMessage: Type.Union([BrowserMessageV1Schema, Type.Null()]),
+});
+/**
  * New-chat opening variant choice. The browser names no durable greeting id and no chat id: the
  * mounted companion's own greeting set is resolved by the Host, and the mounted Chat is the one
  * the admission already bound. `targetIndex` is 0-based; `direction` steps from the committed
@@ -1644,6 +1675,11 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_opening_locked",
   "chat_opening_not_greeting",
   "chat_opening_variant_not_found",
+  "chat_message_not_found",
+  "chat_message_revision_conflict",
+  "chat_rewind_nothing_after",
+  "chat_rewind_opening_retained",
+  "chat_rewind_turn_active",
   "dialogue_busy",
   "connection_not_found",
   "connection_not_ready",
@@ -1894,6 +1930,20 @@ const RouteDescriptors = Object.freeze([
     query: noQuery,
     request: RegenerateMessageCommandV1Schema,
     success: { status: 202, contentType: "application/json", schema: SubmitResultV1Schema },
+  }),
+  route({
+    routeId: "chat.rewind",
+    method: "POST",
+    path: "/api/tavern/v1/messages/rewind",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: RewindChatCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: RewindChatResultV1Schema },
   }),
   route({
     routeId: "memory.read",
@@ -2610,6 +2660,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     SwipeSelectCommandV1Schema,
     SwipeSelectResultV1Schema,
     RegenerateMessageCommandV1Schema,
+    RewindChatCommandV1Schema,
+    RewindChatResultV1Schema,
     BrowserOpeningVariantV1Schema,
     ChatOpeningCommandV1Schema,
     ChatOpeningResultV1Schema,
@@ -2655,6 +2707,8 @@ export type SubmitMessageCommandV1 = Static<typeof SubmitMessageCommandV1Schema>
 export type SwipeSelectCommandV1 = Static<typeof SwipeSelectCommandV1Schema>;
 export type SwipeSelectResultV1 = Static<typeof SwipeSelectResultV1Schema>;
 export type RegenerateMessageCommandV1 = Static<typeof RegenerateMessageCommandV1Schema>;
+export type RewindChatCommandV1 = Static<typeof RewindChatCommandV1Schema>;
+export type RewindChatResultV1 = Static<typeof RewindChatResultV1Schema>;
 export type BrowserOpeningVariantV1 = Static<typeof BrowserOpeningVariantV1Schema>;
 export type ChatOpeningCommandV1 = Static<typeof ChatOpeningCommandV1Schema>;
 export type ChatOpeningResultV1 = Static<typeof ChatOpeningResultV1Schema>;
@@ -2880,13 +2934,12 @@ const REFERENCE_TAVERN_ROUTE_IDS = [
   "events",
 ] as const;
 /**
- * The optional message-mutation extension of the reference Chat profile: Swipe and Regenerate.
+ * The optional message-mutation extension of the reference Chat profile: Swipe, Regenerate and Rewind.
  *
- * The browser client posts both after a completed turn (its own Regenerate and Swipe controls), so
- * the dispatcher mounted on the composed Chat surface must reach them or the player's controls
- * answer 404. They are routes, not operations: the browser gates Regenerate on the `chat.submit`
- * affordance and Swipe on the message's own `swipeInfo`, so the Host projects no `state.operations`
- * row for either.
+ * The browser client posts all three from its own message controls, so the dispatcher mounted on the
+ * composed Chat surface must reach them or the player's controls answer 404. They are routes, not
+ * operations: the browser gates Regenerate on the `chat.submit` affordance and Swipe/Rewind on the
+ * message's own projection, so the Host projects no `state.operations` row for any of them.
  *
  * Declared as an optional group rather than folded into the core list so every existing reference
  * profile - the standalone handler's own declaration and the API-level test slices - stays a valid
@@ -2894,7 +2947,7 @@ const REFERENCE_TAVERN_ROUTE_IDS = [
  * declares must belong to exactly one group, which `referenceTavernProfileFitsCanonicalGroups`
  * enforces.
  */
-const REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS = ["chat.swipe", "chat.regenerate"] as const;
+const REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS = ["chat.swipe", "chat.regenerate", "chat.rewind"] as const;
 const REFERENCE_TAVERN_ROUTE_GROUPS = [
   REFERENCE_TAVERN_ROUTE_IDS,
   REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS,

@@ -42,6 +42,7 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "chat.cancel",
       "chat.swipe",
       "chat.regenerate",
+      "chat.rewind",
       "memory.read",
       "memory.mutate",
       "world-info.read",
@@ -216,6 +217,12 @@ test("problem codes and events are closed unions", () => {
     "connection_not_ready",
     "connection_conflict",
     "connection_limit_reached",
+    // The rewind refusals are the same kind of closed vocabulary: each names one point the player
+    // asked for and nothing else, so the surface can say which one happened.
+    "chat_message_not_found",
+    "chat_message_revision_conflict",
+    "chat_rewind_opening_retained",
+    "chat_rewind_turn_active",
   ] as const) {
     assert.equal(TAVERN_BROWSER_PROBLEM_CODES_V1.includes(code), true, code);
     assert.equal(
@@ -1071,6 +1078,20 @@ test("every route freezes the exact security, binding, and success policy matrix
       [],
       [],
       202,
+      "application/json",
+    ],
+    [
+      "chat.rewind",
+      "POST",
+      "/api/tavern/v1/messages/rewind",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
+      [],
+      200,
       "application/json",
     ],
     [

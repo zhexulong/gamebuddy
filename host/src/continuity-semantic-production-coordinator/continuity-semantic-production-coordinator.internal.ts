@@ -49,7 +49,11 @@ import type {
   ProductionSagaReadback,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { branchPiVariantAnchor } from "../pi-session-variant-branch.internal.js";
+import {
+  branchPiTranscriptTail,
+  branchPiVariantAnchor,
+  type PiTranscriptMessage,
+} from "../pi-session-variant-branch.internal.js";
 import { identityKey, type RuntimeSession } from "../runtime.js";
 import {
   acknowledgeMountedWorldInfoBinding,
@@ -1211,6 +1215,60 @@ export async function selectMountedSwipeVariant(
     ...(input.targetIndex === undefined ? {} : { targetIndex: input.targetIndex }),
     ...(input.direction === undefined ? {} : { direction: input.direction }),
   });
+}
+
+/**
+ * The one authorized rewind ingress. A rewind moves the model's own session leaf, and only a live
+ * mounted lease holds the exact runtime session whose leaf the mounted conversation owns; so a
+ * caller with a store but no live mount cannot reshape a conversation. Like the swipe ingress it
+ * neither creates nor selects a Chat.
+ *
+ * The order is the whole point. The durable read, the Pi leaf move and the durable truncation share
+ * one synchronous critical section - there is no `await` between the branch and the store write,
+ * and the Host runs on a single event loop - so nothing can be admitted between the session shape
+ * this rewind proved and the rows it removes. The store re-checks the ledger inside its own
+ * transaction, so a turn admitted by a write that slipped in before the read still refuses; that
+ * refusal rolls the transaction back, and the leaf is put where it was. A refused rewind therefore
+ * leaves both authorities exactly as it found them.
+ */
+export async function rewindMountedChatTranscript(
+  manifest: HostDeploymentManifest,
+  lease: MountedChatRuntimeLease,
+  input: Readonly<{ messageId: string; expectedOrder: number }>,
+): Promise<import("../tavern/chat-thread-store.js").ChatThreadState> {
+  const record = mountedChatRuntimeLeases.get(lease);
+  if (
+    record === undefined ||
+    !record.active ||
+    manifest.runtimeRoot !== record.runtimeRoot ||
+    manifest.principal.playerId !== record.principal.playerId ||
+    manifest.principal.companionId !== record.principal.companionId ||
+    manifest.principal.continuityId !== record.principal.continuityId ||
+    typeof input.messageId !== "string" ||
+    input.messageId.length === 0 ||
+    !Number.isSafeInteger(input.expectedOrder) ||
+    input.expectedOrder < 0
+  )
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_rewind_unavailable");
+  const runtimeSession = record.providerRuntimeSession;
+  if (runtimeSession === undefined)
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_rewind_unavailable");
+  const store = record.store();
+  const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
+  const dropped: PiTranscriptMessage[] = state.messages
+    .slice(input.expectedOrder)
+    .map((message) => Object.freeze({ role: message.role, text: message.text }));
+  const branched = branchPiTranscriptTail(runtimeSession.session, dropped);
+  if (branched.status !== "branched") {
+    process.stderr.write(`[rewind] branch refused: ${branched.reason}\n`);
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_rewind_unavailable");
+  }
+  try {
+    return await store.rewindTranscript!(record.transitionAuthority.authority, record.chatThreadId, input);
+  } catch (error) {
+    branched.revert();
+    throw error;
+  }
 }
 
 /**

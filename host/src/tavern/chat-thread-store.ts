@@ -692,6 +692,23 @@ export type ChatThreadStore = Readonly<{
     newText: string,
   ): Promise<ChatThreadState>;
   /**
+   * The durable half of a conversation rewind: drops the named message and every message after it.
+   *
+   * The transcript is the authority on where a conversation ends, so the caller names the exact row
+   * it read AND the position it read it at - a row that has moved since that read is refused rather
+   * than used as a rewind point the player never chose. The turn bookkeeping goes with the rows:
+   * every turn whose evidence the drop removes (its accepted player row, its committed presentation
+   * row, or a variant's target/anchor) is deleted with it, because a transcript cannot lose a row
+   * while `validateTurnIntegrity` still expects it, and the thread's current turn is restored to
+   * the newest survivor. A turn that is not terminal refuses the whole operation: a mounted turn is
+   * never silently truncated, and neither is the greeting opening the Chat started on.
+   */
+  rewindTranscript?(
+    authority: MountedTurnTransitionAuthority,
+    chatThreadId: string,
+    input: Readonly<{ messageId: string; expectedOrder: number }>,
+  ): Promise<ChatThreadState>;
+  /**
    * Ordinary exact-turn Stop mutation. It is intentionally independent from
    * the retired P4/P5 transition authority: the service supplies a current
    * mounted turn/attempt pair, SQLite decides the terminal winner, and the
@@ -2014,6 +2031,81 @@ export function createChatThreadStore(
         ).run(newText, nextIndex, chatThreadId, messageId);
         db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(now(), chatThreadId);
         return readStateFromDb(db, chatThreadId);
+      });
+    },
+
+    async rewindTranscript(authority, chatThreadId, input): Promise<ChatThreadState> {
+      assertMountedTurnTransitionAuthority(authority);
+      assertId("chatThreadId", chatThreadId);
+      assertId("messageId", input.messageId);
+      if (!Number.isSafeInteger(input.expectedOrder) || input.expectedOrder < 0)
+        throw new Error("invalid_chat_rewind_order");
+      return withDb((db) => {
+        const current = readStateFromDb(db, chatThreadId);
+        if ((current.thread.lifecycleStatus ?? "active") !== "active")
+          throw new Error("chat_thread_lifecycle_not_active");
+        const index = current.messages.findIndex((message) => message.messageId === input.messageId);
+        if (index < 0) throw new Error("chat_message_not_found");
+        if (index !== input.expectedOrder) throw new Error("chat_message_revision_conflict");
+        const ledger = current.turnLedger;
+        if (ledger !== null && !isTerminalLedger(ledger)) throw new Error("chat_rewind_turn_active");
+        const dropped = current.messages.slice(index);
+        if (dropped.some((message) => message.kind === "opening")) throw new Error("chat_rewind_opening_retained");
+        const droppedIds = new Set(dropped.map((message) => message.messageId));
+        // A turn survives only while every row it names survives. Its own `message_id` is the
+        // accepted player row - or, for a same-position variant turn, an opaque identity that names
+        // no row - so a variant turn is judged by the reply it re-generated and the player line it
+        // answered.
+        const doomedTurnIds = (
+          db
+            .prepare(
+              `SELECT t.turn_id AS turn_id, t.message_id AS message_id,
+                      v.target_message_id AS variant_target_id, v.anchor_message_id AS variant_anchor_id,
+                      p.message_id AS presentation_id
+                 FROM tavern_turns t
+                 LEFT JOIN tavern_turn_variants v ON v.turn_id = t.turn_id
+                 LEFT JOIN tavern_turn_presentations p ON p.turn_id = t.turn_id
+                WHERE t.thread_id = ?`,
+            )
+            .all(chatThreadId) as any[]
+        )
+          .filter(
+            (row) =>
+              droppedIds.has(row.message_id) ||
+              droppedIds.has(row.variant_target_id) ||
+              droppedIds.has(row.variant_anchor_id) ||
+              droppedIds.has(row.presentation_id),
+          )
+          .map((row) => row.turn_id as string);
+        // The idempotency record references its turn with ON DELETE RESTRICT, so it goes first; the
+        // turn's own attempts, observations, presentations and context plans cascade from it.
+        for (const turnId of doomedTurnIds)
+          db.prepare("DELETE FROM tavern_chat_submit_idempotency WHERE thread_id = ? AND turn_id = ?").run(
+            chatThreadId,
+            turnId,
+          );
+        for (const turnId of doomedTurnIds) db.prepare("DELETE FROM tavern_turns WHERE turn_id = ?").run(turnId);
+        for (const message of dropped)
+          db.prepare("DELETE FROM tavern_messages WHERE thread_id = ? AND message_id = ?").run(
+            chatThreadId,
+            message.messageId,
+          );
+        // The thread's current turn is its newest one, and the drop may have removed exactly that
+        // row. The newest survivor takes the pointer back - clearing first, because the partial
+        // unique index allows one current turn per thread - so no idempotency record outlives the
+        // ledger that reads it and a later submission still starts from a terminal turn.
+        db.prepare("UPDATE tavern_turns SET is_current = 0 WHERE thread_id = ?").run(chatThreadId);
+        db.prepare(
+          `UPDATE tavern_turns SET is_current = 1
+            WHERE turn_id = (SELECT turn_id FROM tavern_turns WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1)`,
+        ).run(chatThreadId);
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(now(), chatThreadId);
+        // The read-back is the assertion: it re-runs the same opening and ledger integrity checks
+        // every other read runs, so a transcript that lost a row its ledger still expects rolls
+        // this whole transaction back instead of committing a disagreement.
+        const readBack = readStateFromDb(db, chatThreadId);
+        if (readBack.messages.length !== index) throw new Error("chat_rewind_readback_mismatch");
+        return readBack;
       });
     },
 

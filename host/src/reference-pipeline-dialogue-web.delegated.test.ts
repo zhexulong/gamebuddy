@@ -578,7 +578,7 @@ test("the production reference profile declares the message-mutation group and f
   assert.equal(referenceTavernProfileFitsCanonicalGroups(production), true);
   // The declaration is the core Chat routes plus the message-mutation extension, in the canonical
   // order: a profile that grows a route without growing a group would fail the fit above.
-  assert.deepEqual(production.routeIds, [...tavernProfile.routeIds, "chat.swipe", "chat.regenerate"]);
+  assert.deepEqual(production.routeIds, [...tavernProfile.routeIds, "chat.swipe", "chat.regenerate", "chat.rewind"]);
   assert.deepEqual(production.operationIds, ["chat.submit", "chat.cancel"]);
 });
 

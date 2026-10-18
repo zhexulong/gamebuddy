@@ -18,6 +18,7 @@ export {
   createKnownSemanticGameProductionAuthorityFromDeploymentManifest,
   createSharedSemanticProductionAuthorityFromDeploymentManifest,
   isCurrentMountedChatRuntimeLease,
+  rewindMountedChatTranscript,
   selectMountedSwipeVariant,
   settleMountedAuthoredContext,
   stopMountedChatPresentationEpoch,
