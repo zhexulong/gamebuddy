@@ -5,22 +5,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { readArtifactConfig } from "./production-artifact.mjs";
+import { REQUIRED_VERIFICATION_ROOTS, readArtifactConfig } from "./production-artifact.mjs";
 import { assertCompleteTestArtifact, publishTestArtifact, recheckTestArtifactEntry, resolveTestArtifactEntry, stageFixtureRuntimeClosure } from "./production-artifact-test-support.mjs";
 import { publishVoiceGatewayFixture, verifyPublishedVoiceGateway, VOICE_GATEWAY_ADMISSION } from "./voice-artifact-fixture-publisher.mjs";
 import { withSyntheticVerifiedReleaseBundledRuntimeForTest } from "./node-runtime-release-acquisition.mjs";
 
 const hostRoot = fileURLToPath(new URL("..", import.meta.url));
 const scriptRoot = join(fileURLToPath(new URL(".", import.meta.url)), "");
-const REQUIRED_VERIFICATION_ROOTS = [
-  "tavern/player-turn-acceptance.js",
-  "tavern/provider-attempt-claim.js",
-  "tavern/chat-provider-start.js",
-  "tavern/composed-reference-game-static-shell-composition.js",
-  "reference-pipeline-dialogue-web.js",
-  "tavern-management-dialogue-web.js",
-  "tavern/static-artifact/index.js",
-];
 const BUNDLED_RUNTIME = {
   kind: "verified_host_bundled_node_runtime",
   sourceUrl: "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip",
@@ -119,12 +110,20 @@ async function withProductionPublisherProbe(run) {
   try {
     const source = await readFile(join(scriptRoot, "production-artifact.mjs"), "utf8");
     await writeFile(probePath, `${source}\nexport { copyVerifiedBundledRuntimeSource, publishProductionArtifactWithRuntimeCopier };\n`);
-    await cp(join(scriptRoot, "production-artifact-esm-resolution-probe.mjs"), join(probeRoot, "production-artifact-esm-resolution-probe.mjs"));
-    await cp(join(scriptRoot, "voice-artifact-fixture-publisher.mjs"), join(probeRoot, "voice-artifact-fixture-publisher.mjs"));
-  // The probe copy also resolves the closure-staging module relatively.
-  await cp(join(scriptRoot, "production-artifact-closure-staging.mjs"), join(probeRoot, "production-artifact-closure-staging.mjs"));
-  // The probe copy also resolves the closure-staging module relatively.
-  await cp(join(scriptRoot, "production-artifact-closure-staging.mjs"), join(probeRoot, "production-artifact-closure-staging.mjs"));
+    // Every RELATIVE import of the module under test has to be copied beside the probe: the probe sits in
+    // its own directory, so `./x.mjs` resolves inside it and nowhere else. The three below are exactly
+    // that list (production-artifact.mjs:7-9) - and `check-release-persona-hygiene.mjs` was missing here
+    // until tonight, which is why all seven tests in this file failed with
+    // `ERR_MODULE_NOT_FOUND ... .voice-production-probe-…/check-release-persona-hygiene.mjs` the first time
+    // the script phase ever ran.
+    for (const helper of [
+      "production-artifact-esm-resolution-probe.mjs",
+      "voice-artifact-fixture-publisher.mjs",
+      "production-artifact-closure-staging.mjs",
+      "check-release-persona-hygiene.mjs",
+    ]) {
+      await cp(join(scriptRoot, helper), join(probeRoot, helper));
+    }
     return await run(await import(`${pathToFileURL(probePath).href}?test=${Date.now()}`));
   } finally { await rm(probeRoot, { recursive: true, force: true }); }
 }

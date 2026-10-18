@@ -502,12 +502,21 @@ export async function runCompiledTests({
   });
 }
 
-export async function runScriptTests() {
+export async function runScriptTests({
+  // Same knob as the compiled phase: `--keep-going` collects every failing script file instead of
+  // stopping at the first one. It was missing here, which is why the first run that ever reached this
+  // phase reported one file and abandoned the other three batches.
+  keepGoing = process.argv.includes("--keep-going"),
+} = {}) {
   // Script tests run after the artifact lock is released. Some of them
   // intentionally invoke public package scripts to verify lock contention, and
   // one of them removes dist-test on purpose; overlapping those would create
   // the contention they are asserting about, so they stay serialized.
-  return await runTestBatches(await discoverTestFiles(defaultScriptTestRoot, ".test.mjs"), { suite: "scripts", concurrency: 1 });
+  return await runTestBatches(await discoverTestFiles(defaultScriptTestRoot, ".test.mjs"), {
+    suite: "scripts",
+    concurrency: 1,
+    keepGoing,
+  });
 }
 
 async function main() {

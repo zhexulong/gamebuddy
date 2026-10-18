@@ -8,21 +8,13 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import { DEFAULT_SUITE_TIMEOUT_MS, childAlreadyExited, runBoundedChild } from "./child-process-tool.mjs";
 import { buildProductionArtifact, resolveTypeScriptInvocation, verifyDeclaredMagicContextArtifact } from "./build-production-artifact.mjs";
-import { assertCompleteProductionArtifact, copyApprovedResources, createBrowserArtifactSnapshot, createInventory, describeInventoryDifference, parseEsmResolutionProbeResult, publishProductionArtifact as publishProductionArtifactWithoutRuntime, readArtifactConfig, recheckProductionEntry, resolveProductionEntry, resolveProductionModule, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
+import { assertCompleteProductionArtifact, copyApprovedResources, createBrowserArtifactSnapshot, createInventory, describeInventoryDifference, parseEsmResolutionProbeResult, publishProductionArtifact as publishProductionArtifactWithoutRuntime, readArtifactConfig, recheckProductionEntry, REQUIRED_VERIFICATION_ROOTS, resolveProductionEntry, resolveProductionModule, verifyArtifact, verifyWindowsReparseInspectorPair, verifyWindowsStaleLockReclaimerPair, verifyWindowsBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
 import { createIncompleteRuntimeFixture } from "./production-artifact-runtime-test-support.mjs";
 import { assertCompleteTestArtifact, publishTestArtifact, recheckTestArtifactEntry, resolveTestArtifactEntry, resolveTestArtifactModule, stageFixtureRuntimeClosure } from "./production-artifact-test-support.mjs";
 import { withSyntheticVerifiedReleaseBundledRuntimeForTest } from "./node-runtime-release-acquisition.mjs";
 import { createProductionChildEnvironment } from "./production-control-launch.mjs";
 
 const hostRoot = fileURLToPath(new URL("..", import.meta.url));
-const REQUIRED_VERIFICATION_ROOTS = [
-  "tavern/player-turn-acceptance.js",
-  "tavern/provider-attempt-claim.js",
-  "tavern/chat-provider-start.js",
-  "tavern/composed-reference-game-static-shell-composition.js",
-  "tavern-management-dialogue-web.js",
-  "tavern/static-artifact/index.js",
-];
 
 const BUNDLED_RUNTIME = {
   kind: "verified_host_bundled_node_runtime",

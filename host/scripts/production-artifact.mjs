@@ -43,7 +43,14 @@ const digest = (content) => createHash("sha256").update(content).digest("hex");
 const configuredEntry = (entryRoots, entry) => typeof entry === "string" && entryRoots.includes(entry) && basename(entry) === entry && !entry.includes("/") && !entry.includes("\\") && !entry.includes("..");
 const configuredVerificationRoot = (value) => typeof value === "string"
   && /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.js$/.test(value);
-const REQUIRED_VERIFICATION_ROOTS = Object.freeze([
+/**
+ * The verification roots a canonical config must declare, in order. Exported because two suites build a
+ * fixture config and each used to keep its OWN copy of this list - and one of them kept seven entries
+ * after this list dropped `reference-pipeline-dialogue-web.js`, so every test in that file failed with
+ * `invalid_production_artifact_config` as soon as the script phase ran at all. The list the validator
+ * enforces is the one authority; a suite that needs it imports it.
+ */
+export const REQUIRED_VERIFICATION_ROOTS = Object.freeze([
   "tavern/player-turn-acceptance.js",
   "tavern/provider-attempt-claim.js",
   "tavern/chat-provider-start.js",
