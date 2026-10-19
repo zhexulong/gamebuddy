@@ -49,8 +49,11 @@ public static class BodyProgramJournalPersistence
 
             HashSet<string> ids = new(StringComparer.Ordinal);
             foreach (BodyProgramJournalProgram program in state.Programs)
-                if (program is null || program.Program is null || !ids.Add(program.Program.ProgramId) || !ValidateProgram(program, state.PolicyIdentity))
-                { reason = "invalid_program"; return false; }
+            {
+                string? programRefusal = null;
+                if (program is null || program.Program is null || !ids.Add(program.Program.ProgramId) || !ValidateProgram(program, state.PolicyIdentity, out programRefusal))
+                { reason = "invalid_program:" + (programRefusal ?? "unknown"); return false; }
+            }
 
             long expectedCursor = 1;
             foreach (BodyProgramJournalEvent @event in state.Events)
@@ -102,16 +105,22 @@ public static class BodyProgramJournalPersistence
     internal static VerifiedBodyProgram FreezeVerified(VerifiedBodyProgram program) => new(program.ProgramId, program.CatalogRevision,
         Array.AsReadOnly(program.Nodes.Select(node => new VerifiedBodyProgramNode(node.NodeId, node.ActionId, BodyProgramValidation.FreezeMap(node.CanonicalArguments), Array.AsReadOnly(node.DependsOn.ToArray()), BodyProgramValidation.FreezeMap(node.Bindings), BodyProgramValidation.FreezeMap(node.DerivedResourceClaims))).ToArray()));
 
-    private static bool ValidateProgram(BodyProgramJournalProgram program, BodyProgramPolicyIdentity journalPolicy)
+    private static bool ValidateProgram(BodyProgramJournalProgram program, BodyProgramPolicyIdentity journalPolicy, out string? refusal)
     {
+        refusal = null;
         if (program.Program is null || !IsValidVerified(program.Program) || HasUnorderedResourceConflict(program.Program.Nodes) || !Enum.IsDefined(program.State) || program.StopEpoch < 0
-            || program.Nodes is null || program.Facts is null || program.Nodes.Count != program.Program.Nodes.Count) return false;
+            || program.Nodes is null || program.Facts is null || program.Nodes.Count != program.Program.Nodes.Count) { refusal = "program_header"; return false; }
 
         Dictionary<string, BodyProgramJournalNode> nodes = new(StringComparer.Ordinal);
         foreach (BodyProgramJournalNode node in program.Nodes)
             if (node is null || !nodes.TryAdd(node.NodeId, node)) return false;
-        if (!program.Program.Nodes.All(descriptor => nodes.TryGetValue(descriptor.NodeId, out BodyProgramJournalNode? node) && ValidateNode(program, descriptor, node, journalPolicy))) return false;
-        if (HasRejectionInconsistency(program.Program.Nodes, nodes)) return false;
+        foreach (VerifiedBodyProgramNode descriptor in program.Program.Nodes)
+            if (!nodes.TryGetValue(descriptor.NodeId, out BodyProgramJournalNode? candidate) || !ValidateNode(program, descriptor, candidate, journalPolicy, out refusal))
+            {
+                refusal = "node:" + descriptor.NodeId + "/" + (refusal ?? "?");
+                return false;
+            }
+        if (HasRejectionInconsistency(program.Program.Nodes, nodes, program.State)) { refusal = "rejection_inconsistency"; return false; }
 
         HashSet<string> factKeys = new(StringComparer.Ordinal);
         foreach (RuntimeFact fact in program.Facts)
@@ -122,12 +131,12 @@ public static class BodyProgramJournalPersistence
                 || value is null || !BodyProgramValidation.IsValidCanonicalValue(value, value.Kind)) return false;
         }
 
-        return program.State switch
+        bool stateValid = program.State switch
         {
             BodyProgramState.Active => HasExecutableWork(program)
-                && nodes.Values.All(node => node.State is not (BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Cancelled)),
+                && nodes.Values.All(node => node.State is not (BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Abandoned)),
             BodyProgramState.Succeeded => nodes.Values.All(node => node.State == BodyProgramNodeState.Succeeded),
-             BodyProgramState.Failed => nodes.Values.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected)
+             BodyProgramState.Failed => nodes.Values.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected or BodyProgramNodeState.Abandoned)
                  && !HasExecutableWork(program),
             BodyProgramState.Cancelled => nodes.Values.Any(node => node.State == BodyProgramNodeState.Cancelled),
             BodyProgramState.RecoveryRequired => nodes.Values.Any(node => node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.RecoveryRequired)
@@ -137,12 +146,15 @@ public static class BodyProgramJournalPersistence
                 && nodes.Values.All(node => node.State is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.RecoveryRequired),
             _ => false,
         };
+        if (!stateValid) refusal = "state_rule:" + program.State;
+        return stateValid;
     }
 
-    private static bool ValidateNode(BodyProgramJournalProgram program, VerifiedBodyProgramNode descriptor, BodyProgramJournalNode node, BodyProgramPolicyIdentity journalPolicy)
+    private static bool ValidateNode(BodyProgramJournalProgram program, VerifiedBodyProgramNode descriptor, BodyProgramJournalNode node, BodyProgramPolicyIdentity journalPolicy, out string? refusal)
     {
+        refusal = null;
         if (!BodyProgramValidation.IsIdentifier(node.NodeId) || node.NodeId != descriptor.NodeId || !Enum.IsDefined(node.State) || node.NodeAttempt < 0 || node.AdmissionAttempt < 0
-            || (node.GrantId is not null && !BodyProgramValidation.IsIdentifier(node.GrantId))) return false;
+            || (node.GrantId is not null && !BodyProgramValidation.IsIdentifier(node.GrantId))) { refusal = "identity"; return false; }
 
         bool hasAttempt = node.NodeAttempt > 0;
         if (!hasAttempt)
@@ -150,7 +162,7 @@ public static class BodyProgramJournalPersistence
             if (node.AdmissionAttempt != 0 || node.CanonicalBoundArguments is not null || node.AttemptPolicyIdentity is not null || node.ClaimOwnership is not null
                 || node.DerivedDeadlineMs is not null
                 || node.ReceiptId is not null || node.Evidence is not null || node.PostconditionVerification is not null || node.RejectionCode is not null)
-                return false;
+                { refusal = "unattempted_shape"; return false; }
         }
         else
         {
@@ -163,11 +175,11 @@ public static class BodyProgramJournalPersistence
                 || !descriptor.CanonicalArguments.Keys.OrderBy(key => key, StringComparer.Ordinal).SequenceEqual(node.CanonicalBoundArguments.Keys.OrderBy(key => key, StringComparer.Ordinal), StringComparer.Ordinal)
                 || node.CanonicalBoundArguments.Any(pair => !BodyProgramValidation.IsIdentifier(pair.Key) || pair.Value is null || !BodyProgramValidation.IsValidCanonicalValue(pair.Value, pair.Value.Kind)
                     || !descriptor.CanonicalArguments.TryGetValue(pair.Key, out BodyProgramCanonicalValue? declared) || declared is null || pair.Value.Kind != declared.Kind))
-                return false;
+                { refusal = "attempt_shape"; return false; }
         }
 
         if (node.ExecutionBinding is not null && (!BodyProgramValidation.IsValidExecutionBinding(node.ExecutionBinding) || node.ExecutionBinding.NodeId != node.NodeId
-            || node.ExecutionBinding.NodeAttempt != node.NodeAttempt || node.ExecutionBinding.ProgramId != program.Program.ProgramId)) return false;
+            || node.ExecutionBinding.NodeAttempt != node.NodeAttempt || node.ExecutionBinding.ProgramId != program.Program.ProgramId)) { refusal = "binding"; return false; }
 
         bool hasProof = node.ReceiptId is not null || node.Evidence is not null || node.PostconditionVerification is not null;
         bool hasCompleteProof = BodyProgramValidation.IsOpaqueTerminalProof(node.ReceiptId) && BodyProgramValidation.IsOpaqueTerminalProof(node.Evidence)
@@ -175,23 +187,28 @@ public static class BodyProgramJournalPersistence
         if (node.State == BodyProgramNodeState.Rejected)
         {
             if (!hasAttempt || node.RejectionCode is null || !BodyProgramValidation.IsValidRejectionCode(node.RejectionCode)
-                || node.RecoveryDiagnostic is not null || hasProof || node.GrantId is not null || node.ExecutionBinding is not null) return false;
+                || node.RecoveryDiagnostic is not null || hasProof || node.GrantId is not null || node.ExecutionBinding is not null) { refusal = "rejected_shape"; return false; }
         }
         else if (node.State == BodyProgramNodeState.SkippedDependency)
         {
             if (hasAttempt || node.NodeAttempt != 0 || node.AdmissionAttempt != 0 || node.GrantId is not null || node.ExecutionBinding is not null
                 || node.CanonicalBoundArguments is not null || node.AttemptPolicyIdentity is not null || node.ClaimOwnership is not null
                 || node.DerivedDeadlineMs is not null
-                || hasProof || node.RecoveryDiagnostic is not null || node.RejectionCode is not null) return false;
+                || hasProof || node.RecoveryDiagnostic is not null || node.RejectionCode is not null) { refusal = "skipped_shape"; return false; }
         }
         else if (node.State == BodyProgramNodeState.Succeeded)
         {
-            if (!hasAttempt || node.RejectionCode is not null || node.GrantId is not null || node.ExecutionBinding is null || !hasCompleteProof || node.RecoveryDiagnostic is not null) return false;
+            if (!hasAttempt || node.RejectionCode is not null || node.GrantId is not null || node.ExecutionBinding is null || !hasCompleteProof || node.RecoveryDiagnostic is not null) { refusal = "succeeded_shape"; return false; }
         }
         else if (node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running
             or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled)
         {
-            if (node.RejectionCode is not null || hasProof || node.RecoveryDiagnostic is not null) return false;
+            if (node.RejectionCode is not null || hasProof || node.RecoveryDiagnostic is not null) { refusal = "ordinary_shape"; return false; }
+        }
+        else if (node.State == BodyProgramNodeState.Abandoned)
+        {
+            // An abandonment is only meaningful for a node that WAS dispatched: no attempt, nothing to abandon.
+            if (!hasAttempt || node.ExecutionBinding is null || node.RejectionCode is not null || hasProof || node.RecoveryDiagnostic is not null) { refusal = "abandoned_shape"; return false; }
         }
         else if (node.State == BodyProgramNodeState.RecoveryRequired && (node.RejectionCode is not null || hasProof))
         {
@@ -219,6 +236,11 @@ public static class BodyProgramJournalPersistence
                 return !hasAttempt && node.NodeAttempt == 0 && node.AdmissionAttempt == 0 && node.GrantId is null && node.ExecutionBinding is null;
             case BodyProgramNodeState.RecoveryRequired:
                 return hasAttempt && BodyProgramValidation.IsOpaqueDiagnostic(node.RecoveryDiagnostic) && node.GrantId is null;
+            case BodyProgramNodeState.Abandoned:
+                // The execution binding is REQUIRED here: the whole point of the state is that it records a dispatch that
+                // happened and whose outcome will never be known. Grant released, no proof, no diagnostic (the reason is
+                // on the program-level abandoned event).
+                return hasAttempt && node.GrantId is null && node.ExecutionBinding is not null;
             default:
                 return false;
         }
@@ -242,7 +264,7 @@ public static class BodyProgramJournalPersistence
       /// dispatched would look runnable, so it fails closed on reopen instead of
       /// letting a reader see a rejected node with runnable-looking descendants.
       /// </summary>
-      private static bool HasRejectionInconsistency(IReadOnlyList<VerifiedBodyProgramNode> descriptors, Dictionary<string, BodyProgramJournalNode> nodes)
+      private static bool HasRejectionInconsistency(IReadOnlyList<VerifiedBodyProgramNode> descriptors, Dictionary<string, BodyProgramJournalNode> nodes, BodyProgramState programState)
       {
           Dictionary<string, VerifiedBodyProgramNode> byId = descriptors.ToDictionary(descriptor => descriptor.NodeId, StringComparer.Ordinal);
           Dictionary<string, bool> rejectedAncestor = new(StringComparer.Ordinal);
@@ -252,8 +274,11 @@ public static class BodyProgramJournalPersistence
               BodyProgramJournalNode node = nodes[descriptor.NodeId];
               if (node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running
                   && HasAncestorIn(descriptor.NodeId, byId, nodes, rejectedAncestor, state => state == BodyProgramNodeState.Rejected)) return true;
-              if (node.State == BodyProgramNodeState.SkippedDependency
-                  && !HasAncestorIn(descriptor.NodeId, byId, nodes, rejectedOrRecoveryAncestor, state => state is BodyProgramNodeState.Rejected or BodyProgramNodeState.RecoveryRequired)) return true;
+              // A node that was skipped needs a reason UPSTREAM, unless the program itself ended as Failed - then the
+              // program-level fact is the reason, which is what lets an abandoned program close its never-attempted nodes
+              // instead of leaving them Pending (and therefore the program still having work, which is the poison).
+              if (node.State == BodyProgramNodeState.SkippedDependency && programState != BodyProgramState.Failed
+                  && !HasAncestorIn(descriptor.NodeId, byId, nodes, rejectedOrRecoveryAncestor, state => state is BodyProgramNodeState.Rejected or BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Abandoned)) return true;
           }
           return false;
       }
@@ -285,7 +310,7 @@ public static class BodyProgramJournalPersistence
       private static bool IsClaimOwnershipValidForState(BodyProgramNodeState state, BodyProgramClaimOwnershipState ownership) => state switch
       {
           BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running => ownership == BodyProgramClaimOwnershipState.Acquired,
-          BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.RecoveryRequired => ownership == BodyProgramClaimOwnershipState.Released,
+          BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Abandoned => ownership == BodyProgramClaimOwnershipState.Released,
           // Rejected nodes never acquired (the Host veto lands while the node
           // is still AwaitingHostAdmission), so both NotAcquired and Released
           // are valid on the durable record. Cancelled covers both shapes too:
@@ -295,8 +320,8 @@ public static class BodyProgramJournalPersistence
           _ => ownership == BodyProgramClaimOwnershipState.NotAcquired,
       };
       private static bool IsValidEventKind(string? kind) => kind is "accepted" or "stopped" or "admission_challenge" or "admission_rejected"
-          or "node_skipped" or "host_admitted" or "native_dispatch" or "node_completed" or "node_settled";
-      private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency;
+          or "node_skipped" or "host_admitted" or "native_dispatch" or "node_completed" or "node_settled" or "abandoned";
+      private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.Abandoned;
 
     internal static bool IsValidVerified(VerifiedBodyProgram? program) => program is not null && BodyProgramValidation.IsIdentifier(program.ProgramId) && program.CatalogRevision >= 0
         && program.Nodes is { Count: >= 1 and <= BodyProgramValidation.MaximumNodes } && program.Nodes.All(node => node is not null && BodyProgramValidation.IsIdentifier(node.NodeId) && BodyProgramValidation.IsIdentifier(node.ActionId)

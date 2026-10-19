@@ -1152,7 +1152,7 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
-    public void ReopenRejectsSkippedDependencyWithoutRejectedOrRecoveryRequiredAncestor()
+    public void ReopenAcceptsSkippedDependencyWhenTheProgramItselfEndedAsFailed()
     {
         BodyProgramActionCatalog catalog = DisjointClaimsCatalog();
         var store = new MemoryStore();
@@ -1167,7 +1167,12 @@ public sealed class BodyProgramAuthorityTests
         root["programs"]!.AsArray()[0]!.AsObject()["program"]!.AsObject()["nodes"]!.AsArray()[1]!.AsObject()["dependsOn"] = new JsonArray();
         store.Set(root.ToJsonString());
 
-        Open(store, catalog: catalog).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+        // AMENDED 2026-10-19 (ADR-006 amendment): a skipped node needs an eligible ancestor UNLESS the program itself
+        // ended as Failed - then the program-level fact is the reason, which is what lets an abandoned program close its
+        // never-attempted nodes instead of leaving them Pending (and the program therefore still having work, which was
+        // the poison). Breaking the dependency edge is still a shape the journal accepts in that state; the rule keeps
+        // its teeth for every other program state.
+        Open(store, catalog: catalog).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
     }
 
     [Fact]

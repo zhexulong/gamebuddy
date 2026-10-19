@@ -471,6 +471,73 @@ public sealed class OpenBodyProgramJournalAuthority
     }
 
     /// <summary>
+    /// Abandon a program whose unknown nodes can never be settled: the explicit exit from
+    /// <see cref="BodyProgramState.RecoveryRequired"/> (ADR-006 amendment, approved 2026-10-19).
+    /// </summary>
+    /// <remarks>
+    /// Why this exists: a node whose outcome cannot be determined is settled as RecoveryRequired, which makes the whole
+    /// authority non-mutable - so <see cref="Submit"/> answers EVERY later submission for this save with
+    /// Quarantined/authority_unavailable, for ever, and the only repair was to clear the journal from outside. The
+    /// settlement states ignorance honestly; ignorance must not be a life sentence.
+    /// <para>
+    /// What it is NOT: not a retry, and not a success. A node that was dispatched becomes \`Abandoned\` - terminal, its
+    /// attempt and execution binding RETAINED (the fact that it was dispatched is the truth being recorded), its grant
+    /// released, and no receipt, evidence or postcondition, so no success can ever be claimed from it. A node that was
+    /// never dispatched becomes \`SkippedDependency\`, the state for work that will not run because what it depended on
+    /// did not succeed. The program becomes \`Failed\` and the scope is writable again once no program still holds an
+    /// unknown node.
+    /// </para>
+    /// <para>
+    /// Only a poisoned program may be abandoned: an Active one has its own stop machinery, and bypassing that would skip
+    /// the stop epoch.
+    /// </para>
+    /// </remarks>
+    public BodyProgramControllerResult<BodyProgramStatusSnapshot> TryAbandonProgram(string programId, string reasonCode)
+    {
+        this.ThrowIfLifecycleUnavailable();
+        if (!BodyProgramValidation.IsIdentifier(programId) || !BodyProgramValidation.IsIdentifier(reasonCode))
+            return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.InvalidInput);
+        // Looked up WITHOUT `TryProgram`: that helper answers "is this program Active", and an abandonable program is by
+        // definition not.
+        BodyProgramJournalProgram? program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == programId);
+        if (program is null)
+            return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.NotFound);
+        if (program.State != BodyProgramState.RecoveryRequired)
+            return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.InvalidInput);
+
+        BodyProgramJournalNode[] settled = program.Nodes
+            .Select(node => IsTerminal(node.State)
+                ? node
+                : node.NodeAttempt >= 1
+                    // The diagnostic the recovery settlement wrote is CLEARED: in this format a non-success terminal may not carry one, and the reason now lives in the program-level `abandoned` event.
+                    ? node with { State = BodyProgramNodeState.Abandoned, GrantId = null, RecoveryDiagnostic = null }
+                    : node with { State = BodyProgramNodeState.SkippedDependency, GrantId = null })
+            .ToArray();
+        BodyProgramJournalProgram abandoned = program with
+        {
+            State = BodyProgramState.Failed,
+            Nodes = Array.AsReadOnly(settled),
+        };
+        BodyProgramJournalState next = ReplaceProgram(this.state, abandoned);
+        // One `node_settled` per node that HAD an attempt (the journal's address rule forbids naming a node that never
+        // attempted), plus the program-level `abandoned` event that carries the reason.
+        foreach (BodyProgramJournalNode node in settled)
+        {
+            if (node.NodeAttempt < 1) continue;
+            if (program.Nodes.Single(item => item.NodeId == node.NodeId).State == node.State) continue;
+            next = AppendEvent(next, programId, "node_settled", node.NodeId, node.NodeAttempt);
+        }
+        next = AppendEvent(next, programId, "abandoned", null, null);
+        if (!TryPersist(next))
+            return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.PersistenceWriteFailed);
+        // Writable again only once NO program still holds an unknown node.
+        this.OpenStatus = this.state.Programs.Any(item => item.State == BodyProgramState.RecoveryRequired)
+            ? BodyProgramJournalOpenStatus.RecoveryRequired
+            : BodyProgramJournalOpenStatus.Opened;
+        return BodyProgramControllerResult.Success(SnapshotFor(this.state.Programs.Single(item => item.Program.ProgramId == programId)));
+    }
+
+    /// <summary>
     /// Re-entry gate the controller performs for a bound Running node before
     /// each continuation visit. It revalidates the exact same gate initial
     /// dispatch runs (mutable authority, current policy vs granted/stated
@@ -596,7 +663,10 @@ public sealed class OpenBodyProgramJournalAuthority
     }
     private bool PolicyMatches(BodyProgramPolicyIdentity current, BodyProgramPolicyIdentity expected) => current.IsValid && expected.IsValid && current.Equals(expected) && !this.policyIdentityChanged;
     private bool TryProgram(string id, out BodyProgramJournalProgram? program) { program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == id); return program is not null && program.State == BodyProgramState.Active; }
-    private bool TryPersist(BodyProgramJournalState next) { if (!BodyProgramJournalPersistence.TryValidate(next, out _) || !BodyProgramJournalPersistence.MatchesCatalogProgram(next, this.catalog, this.scope)) { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } try { if (!this.store.TryWrite(BodyProgramJournalPersistence.Encode(next, this.catalog, this.scope))) { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } this.state = BodyProgramJournalPersistence.FreezeState(next); return true; } catch { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } }
+    /// <summary>Why the last persistence attempt was refused, when one was.</summary>
+    internal string? LastPersistenceRefusal { get; private set; }
+
+    private bool TryPersist(BodyProgramJournalState next) { if (!BodyProgramJournalPersistence.TryValidate(next, out string? refusal) || !BodyProgramJournalPersistence.MatchesCatalogProgram(next, this.catalog, this.scope)) { this.LastPersistenceRefusal = refusal ?? "catalog_mismatch"; this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } try { if (!this.store.TryWrite(BodyProgramJournalPersistence.Encode(next, this.catalog, this.scope))) { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } this.state = BodyProgramJournalPersistence.FreezeState(next); return true; } catch { this.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed; return false; } }
     private static BodyProgramJournalState Empty(BridgeScope scope, BodyProgramPolicyIdentity policy) => new(BodyProgramJournalPersistence.SchemaVersion, scope, policy, 0, Array.Empty<BodyProgramJournalProgram>(), Array.Empty<BodyProgramJournalEvent>());
     private static BodyProgramJournalState AppendEvent(BodyProgramJournalState source, string programId, string kind, string? nodeId, int? attempt) { long cursor = source.EventHighWater + 1; long revision = source.Programs.Single(program => program.Program.ProgramId == programId).Program.CatalogRevision; return source with { EventHighWater = cursor, Events = Array.AsReadOnly(source.Events.Append(new BodyProgramJournalEvent(cursor, programId, kind, revision, nodeId, attempt)).ToArray()) }; }
     private static BodyProgramJournalState ReplaceProgram(BodyProgramJournalState source, BodyProgramJournalProgram replacement) => source with { Programs = Array.AsReadOnly(source.Programs.Select(item => item.Program.ProgramId == replacement.Program.ProgramId ? replacement : item).ToArray()) };
@@ -617,7 +687,7 @@ public sealed class OpenBodyProgramJournalAuthority
     }
     private BodyProgramStatusSnapshot SnapshotFor(BodyProgramJournalProgram program) => new(program.Program.ProgramId, program.State, program.Program.CatalogRevision, program.StopEpoch, this.state.EventHighWater, Array.AsReadOnly(program.Nodes.ToArray()));
     private static NodeAdmissionChallenge Challenge(BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor, BodyProgramPolicyIdentity policy, IReadOnlyDictionary<string, BodyProgramCanonicalValue> materialized) => new(program.Program.ProgramId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt, program.StopEpoch, program.Program.CatalogRevision, policy, descriptor.ActionId, materialized, descriptor.DerivedResourceClaims, node.DerivedDeadlineMs ?? throw new InvalidOperationException("admission challenge without derived deadline"));
-     private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency;
+    private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.Abandoned;
       private static bool HasExecutableWork(BodyProgramJournalProgram program)
       {
           if (program.Nodes.Any(node => node.State is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running)) return true;

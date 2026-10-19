@@ -86,7 +86,29 @@ public enum BodyProgramSubmitCode { Accepted, Rejected, Idempotent, Conflict, Pe
 public sealed record BodyProgramSubmitResult(BodyProgramSubmitCode Code, BodyProgramVerificationReport Verification, BodyProgramStatusSnapshot? Snapshot);
 
 public enum BodyProgramState { Active = 1, Succeeded = 2, Failed = 3, Cancelled = 4, RecoveryRequired = 5, Quarantined = 6 }
-public enum BodyProgramNodeState { Pending = 1, AwaitingHostAdmission = 2, HostAdmitted = 3, Running = 4, Succeeded = 5, Failed = 6, Cancelled = 7, RecoveryRequired = 8, Rejected = 9, SkippedDependency = 10 }
+public enum BodyProgramNodeState
+    {
+        Pending = 1,
+        AwaitingHostAdmission = 2,
+        HostAdmitted = 3,
+        Running = 4,
+        Succeeded = 5,
+        Failed = 6,
+        Cancelled = 7,
+        RecoveryRequired = 8,
+        Rejected = 9,
+        SkippedDependency = 10,
+        /// <summary>
+        /// Dispatched, and its outcome can never be determined. Terminal, durable value 11 (ADR-006 amendment).
+        ///
+        /// Why it exists: a node whose outcome cannot be determined is settled as RecoveryRequired, which makes the whole
+        /// authority non-mutable - every later submission for that save answered Quarantined/authority_unavailable, for ever,
+        /// with no path out. The settlement states ignorance honestly, but ignorance must not be a life sentence. This state
+        /// records "this WAS dispatched (attempt and binding retained) and the truth will never be known", so the program can
+        /// end as Failed and the save scope becomes writable again.
+        /// </summary>
+        Abandoned = 11,
+    }
 public enum BodyProgramNodeOutcome { Succeeded = 1, Failed = 2, Cancelled = 3, Uncertain = 4 }
 public enum BodyProgramClaimOwnershipState { NotAcquired = 1, Acquired = 2, Released = 3 }
 

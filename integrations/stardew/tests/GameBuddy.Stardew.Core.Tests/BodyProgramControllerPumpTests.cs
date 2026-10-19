@@ -1033,4 +1033,57 @@ public sealed class BodyProgramControllerPumpTests
         authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
             .Should().Be(BodyProgramNodeState.Succeeded);
     }
+
+    [Fact]
+    public void AnAbandonedProgramReleasesTheScopeWithoutRetryingTheUnknownNode()
+    {
+        // The approved exit (ADR-006 amendment, 2026-10-19): a node whose outcome can never be determined is ABANDONED,
+        // and the save scope becomes writable again - which used to require clearing the journal from outside the
+        // product. The state is honest about what happened: the attempt and the execution binding are RETAINED, so the
+        // record says "dispatched, truth never established", and no success can be claimed from it.
+        var clock = new TimeBox { Value = 10 };
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = OpenBodyProgramJournalAuthority.Open(store, MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
+        var admission = new ImmediateAdmissionTransport();
+        var executor = new DeadlineDrivenSteppingExecutor(new MachineNodeExecutor("opaque-machine-7"), clock, overrunMs: 1100);
+        var controller = new FarmhandBodyProgramController(authority, admission, executor);
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        controller.Update();
+        controller.Update();
+        controller.Update();
+        authority.Status("program").Snapshot!.State.Should().Be(BodyProgramState.RecoveryRequired);
+
+        BodyProgramControllerResult<BodyProgramStatusSnapshot> abandoned =
+            authority.TryAbandonProgram("program", "operator_abandoned_unknown_node");
+        abandoned.Code.Should().Be(BodyProgramControllerResultCode.Succeeded, $"refusal={authority.LastPersistenceRefusal}");
+
+        BodyProgramStatusSnapshot status = authority.Status("program").Snapshot!;
+        status.State.Should().Be(BodyProgramState.Failed);
+        BodyProgramJournalNode load = status.Nodes.Single(node => node.NodeId == "load");
+        load.State.Should().Be(BodyProgramNodeState.Abandoned);
+        load.NodeAttempt.Should().Be(1);
+        load.ExecutionBinding.Should().NotBeNull("the dispatch is the fact this state exists to record");
+        load.GrantId.Should().BeNull();
+        load.ReceiptId.Should().BeNull();
+        load.Evidence.Should().BeNull();
+        load.PostconditionVerification.Should().BeNull();
+        foreach (BodyProgramJournalNode node in status.Nodes.Where(candidate => candidate.State != BodyProgramNodeState.Succeeded))
+            (node.State == BodyProgramNodeState.Abandoned || node.State == BodyProgramNodeState.SkippedDependency)
+                .Should().BeTrue($"node {node.NodeId} ended as {node.State}");
+
+        // THE POINT: the scope is mutable again, so the next submission is accepted instead of Quarantined.
+        authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+        authority.Submit(MachineProgram()).Code.Should().NotBe(BodyProgramSubmitCode.Quarantined);
+
+        // No retry was created for the unknown node: the executor still saw exactly one load.
+        executor.LoadVisits.Should().Be(1);
+
+        // ...and the exit is durable, so a restart does not resurrect the poison.
+        OpenBodyProgramJournalAuthority reopened = OpenBodyProgramJournalAuthority.Open(store, MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
+        reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+        reopened.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "load").State.Should().Be(BodyProgramNodeState.Abandoned);
+
+        // A program that is not poisoned may not be abandoned: an Active one has its own stop machinery.
+        authority.TryAbandonProgram("missing", "gone").Code.Should().Be(BodyProgramControllerResultCode.NotFound);
+    }
 }
