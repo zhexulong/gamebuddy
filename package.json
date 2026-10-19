@@ -150,6 +150,7 @@
     "test:smoke-syntax": "node --test tools/check-smoke-syntax.test.mjs tools/check-host-production-module-loader.test.mjs",
     "test:stardew-action-candidates": "node --test integrations/stardew/action-development/tests/stardew-action-candidates.test.mjs",
     "test:stardew-action-gate-descriptors": "node --test tools/stardew-action-gate-descriptors.test.mjs",
+    "test:stardew-action-gates-batch": "node --test tools/run-stardew-action-gates-batch.test.mjs",
     "test:stardew-action-inventory-reconciliation": "node --test integrations/stardew/action-development/tests/stardew-action-inventory-reconciliation.test.mjs",
     "test:stardew-action-promotion": "node --test tools/check-stardew-action-promotion.test.mjs",
     "test:stardew-action-seam-terminals": "node --test integrations/stardew/action-development/tests/stardew-action-seam-terminals-audit.test.mjs",
