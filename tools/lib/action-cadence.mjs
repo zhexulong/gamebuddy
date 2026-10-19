@@ -53,12 +53,22 @@ export function summarizeActionCadence(entries) {
     // previous action's execution and the number would mean nothing.
     if (settled !== null && next.dispatchedAtMs >= settled) think.push(next.dispatchedAtMs - settled);
   }
+  // `sum` alongside `median`/`max` because the pre-registered question ("how much of the run was the model thinking?")
+  // is a SUM over the run divided by the wall clock, and a median cannot be turned into that sum without inventing
+  // the distribution. Published here so the metric is computable from any run's own artifacts, with no trace file to
+  // find and no estimator to argue about.
+  const span = (values) =>
+    Object.freeze({
+      median: median(values),
+      max: values.length === 0 ? null : Math.max(...values),
+      sum: values.reduce((total, value) => total + value, 0),
+    });
   return Object.freeze({
     actions: ordered.length,
     measured: exec.length,
     unmeasured,
-    execMs: Object.freeze({ median: median(exec), max: exec.length === 0 ? null : Math.max(...exec) }),
-    thinkMs: Object.freeze({ median: median(think), max: think.length === 0 ? null : Math.max(...think) }),
-    idleMs: Object.freeze({ median: median(idle), max: idle.length === 0 ? null : Math.max(...idle) }),
+    execMs: span(exec),
+    thinkMs: span(think),
+    idleMs: span(idle),
   });
 }

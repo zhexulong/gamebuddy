@@ -17,6 +17,8 @@ test("the three spans are separated: execution, thinking, and the dispatch-to-di
   assert.equal(cadence.unmeasured, 0);
   assert.equal(cadence.execMs.median, 300);
   assert.equal(cadence.execMs.max, 400);
+  // The SUM is what the pre-registered metric divides by the wall clock, and a median cannot stand in for it.
+  assert.equal(cadence.execMs.sum, 800, "the fixture executes 300 + 400 + 100 milliseconds of game work");
   assert.equal(cadence.thinkMs.median, Math.round((3700 + 600) / 2));
   assert.equal(cadence.idleMs.median, Math.round((4000 + 1000) / 2));
 });
