@@ -793,18 +793,29 @@ export async function startDesktopPresentationAdmission(
     // dispatchers, never a lane another owner built.
     close: async () => undefined,
   });
-  const stablePipelineService: ChatPipelineService = Object.freeze({
-    submitAfterResponseCommit: (command, idempotencyKey, commit202) =>
-      currentLane().pipelineService.submitAfterResponseCommit(command, idempotencyKey, commit202),
-    readSubmissionStatus: (query) => currentLane().pipelineService.readSubmissionStatus(query),
-    cancel: (turnHandle, command) => currentLane().pipelineService.cancel(turnHandle, command),
-    // Swipe selection and Regenerate are Chat-owned mutations the reference surface serves through
-    // the same lane-swapped service: the delegated dispatcher must reach the current lane's own
-    // implementation rather than a snapshot taken at admission time.
-    selectSwipe: (command) => currentLane().pipelineService.selectSwipe!(command),
-    regenerate: (command, idempotencyKey) => currentLane().pipelineService.regenerate!(command, idempotencyKey),
-    close: async () => undefined,
-  });
+  // Every optional member a route can reach MUST be forwarded here, and the type says so: a member the
+  // delegated dispatcher can call but this object omits fails closed with `runtime_unavailable`, which is
+  // exactly what rewind/edit/delete did on the first real turn-driven run after they landed (three lanes
+  // added the member to `ChatPipelineService` and to their own route tests, and the composed shell - the
+  // only place that builds the object the dispatcher actually receives - was never told). A missing forward
+  // is now a compile error rather than a screenshot.
+  type ForwardedChatPipelineMember = "selectSwipe" | "regenerate" | "rewind" | "edit" | "delete";
+  const stablePipelineService: ChatPipelineService & Required<Pick<ChatPipelineService, ForwardedChatPipelineMember>> =
+    Object.freeze({
+      submitAfterResponseCommit: (command, idempotencyKey, commit202) =>
+        currentLane().pipelineService.submitAfterResponseCommit(command, idempotencyKey, commit202),
+      readSubmissionStatus: (query) => currentLane().pipelineService.readSubmissionStatus(query),
+      cancel: (turnHandle, command) => currentLane().pipelineService.cancel(turnHandle, command),
+      // Swipe selection, Regenerate, rewind, edit and delete are Chat-owned mutations the reference surface
+      // serves through the same lane-swapped service: the delegated dispatcher must reach the current lane's
+      // own implementation rather than a snapshot taken at admission time.
+      selectSwipe: (command) => currentLane().pipelineService.selectSwipe!(command),
+      regenerate: (command, idempotencyKey) => currentLane().pipelineService.regenerate!(command, idempotencyKey),
+      rewind: (command) => currentLane().pipelineService.rewind!(command),
+      edit: (command) => currentLane().pipelineService.edit!(command),
+      delete: (command) => currentLane().pipelineService.delete!(command),
+      close: async () => undefined,
+    });
   const stableManagementOptions = createStableManagementOptions(currentLane);
   // The avatar face, mounted on the shell's own `/assets/companions/` path space.
   // It resolves through whichever lane is current, exactly like the management
