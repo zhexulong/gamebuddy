@@ -5,7 +5,9 @@ import type { StardewSteamSource } from "./index.js";
 
 const manifest = '"appid" "413150" "installdir" "Stardew Valley"';
 
-function source(roots: readonly (readonly ["steam-registry" | "steam-vdf", string])[]): StardewSteamSource {
+function source(
+  roots: readonly (readonly ["steam-registry" | "steam-vdf" | "known-location", string])[],
+): StardewSteamSource {
   return Object.freeze({ read: async () => Object.freeze({ roots, diagnostics: [] as const }) });
 }
 
@@ -15,7 +17,10 @@ test("binds each source root to its own manifest and only publishes valid roots"
     ["C:\\Bad\\steamapps\\appmanifest_413150.acf", '"appid" "1"'],
   ]);
   const provider = createStardewInstallationDiscoveryProvider({
-    source: source([["steam-vdf", "C:\\Good"], ["steam-vdf", "C:\\Bad"]]),
+    source: source([
+      ["steam-vdf", "C:\\Good"],
+      ["steam-vdf", "C:\\Bad"],
+    ]),
     readFile: async (path) => files.get(path) ?? Promise.reject(new Error("missing")),
   });
   const result = await provider.discover();
@@ -28,7 +33,10 @@ test("reads manifests from the canonical normalized source root", async () => {
   const paths: string[] = [];
   const provider = createStardewInstallationDiscoveryProvider({
     source: source([["steam-vdf", "c:\\Steam"]]),
-    readFile: async (path) => { paths.push(path); return manifest; },
+    readFile: async (path) => {
+      paths.push(path);
+      return manifest;
+    },
   });
   const result = await provider.discover();
   assert.deepEqual(paths, ["C:\\Steam\\steamapps\\appmanifest_413150.acf"]);
@@ -38,8 +46,15 @@ test("reads manifests from the canonical normalized source root", async () => {
 test("does not read manifests for invalid source roots", async () => {
   const paths: string[] = [];
   const provider = createStardewInstallationDiscoveryProvider({
-    source: source([["steam-vdf", "C:\\Steam\\..\\Other"], ["steam-vdf", "relative"], ["steam-vdf", "C:\\Steam\\"]]),
-    readFile: async (path) => { paths.push(path); return manifest; },
+    source: source([
+      ["steam-vdf", "C:\\Steam\\..\\Other"],
+      ["steam-vdf", "relative"],
+      ["steam-vdf", "C:\\Steam\\"],
+    ]),
+    readFile: async (path) => {
+      paths.push(path);
+      return manifest;
+    },
   });
   const result = await provider.discover();
   assert.deepEqual(paths, []);
@@ -49,7 +64,13 @@ test("does not read manifests for invalid source roots", async () => {
 
 test("empty source roots produce no candidates without reading manifests", async () => {
   let reads = 0;
-  const provider = createStardewInstallationDiscoveryProvider({ source: source([]), readFile: async () => { reads += 1; return manifest; } });
+  const provider = createStardewInstallationDiscoveryProvider({
+    source: source([]),
+    readFile: async () => {
+      reads += 1;
+      return manifest;
+    },
+  });
   const result = await provider.discover();
   assert.deepEqual(result.candidates, []);
   assert.deepEqual(result.diagnostics, ["no-candidates"]);
@@ -57,7 +78,10 @@ test("empty source roots produce no candidates without reading manifests", async
 });
 
 test("fails closed on oversized app manifests", async () => {
-  const provider = createStardewInstallationDiscoveryProvider({ source: source([["steam-registry", "C:\\Steam"]]), readFile: async () => "x".repeat(4 * 1024 * 1024 + 1) });
+  const provider = createStardewInstallationDiscoveryProvider({
+    source: source([["steam-registry", "C:\\Steam"]]),
+    readFile: async () => "x".repeat(4 * 1024 * 1024 + 1),
+  });
   const result = await provider.discover();
   assert.equal(result.candidates.length, 0);
   assert.deepEqual(result.diagnostics, ["invalid-app-manifest", "no-candidates"]);
@@ -66,7 +90,9 @@ test("fails closed on oversized app manifests", async () => {
 test("reports source diagnostics and manifest failures without exposing locators", async () => {
   const provider = createStardewInstallationDiscoveryProvider({
     source: source([["steam-registry", "C:\\Steam"]]),
-    readFile: async () => { throw new Error("manifest missing"); },
+    readFile: async () => {
+      throw new Error("manifest missing");
+    },
   });
   const result = await provider.discover();
   assert.equal(result.candidates.length, 0);
@@ -74,12 +100,33 @@ test("reports source diagnostics and manifest failures without exposing locators
   assert.equal(Object.keys(result.candidates).includes("root"), false);
 });
 
+test("binds a known-location source root to its own manifest like any other source", async () => {
+  const paths: string[] = [];
+  const provider = createStardewInstallationDiscoveryProvider({
+    source: source([["known-location", "D:\\Steam"]]),
+    readFile: async (path) => {
+      paths.push(path);
+      return manifest;
+    },
+  });
+  const result = await provider.discover();
+  assert.deepEqual(paths, ["D:\\Steam\\steamapps\\appmanifest_413150.acf"]);
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0]?.source, "known-location");
+});
 
 test("maps a source failure to unavailable and no-candidates without reading manifests", async () => {
   let read = false;
   const provider = createStardewInstallationDiscoveryProvider({
-    source: { read: async () => { throw new Error("source failure"); } },
-    readFile: async () => { read = true; return manifest; },
+    source: {
+      read: async () => {
+        throw new Error("source failure");
+      },
+    },
+    readFile: async () => {
+      read = true;
+      return manifest;
+    },
   });
   const result = await provider.discover();
   assert.deepEqual(result.candidates, []);

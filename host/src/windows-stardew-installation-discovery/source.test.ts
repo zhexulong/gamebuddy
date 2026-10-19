@@ -11,8 +11,14 @@ test("non-Windows source is unavailable without querying registry or files", asy
   let read = false;
   const source = createWindowsSteamInstallationSource({
     platform: "linux",
-    readRegistryRoots: async () => { queried = true; return registryRoots; },
-    readFile: async () => { read = true; return libraryFolders; },
+    readRegistryRoots: async () => {
+      queried = true;
+      return registryRoots;
+    },
+    readFile: async () => {
+      read = true;
+      return libraryFolders;
+    },
   });
   assert.deepEqual(await source.read(), { roots: [], diagnostics: ["source-unavailable"] });
   assert.equal(queried, false);
@@ -42,7 +48,10 @@ test("Windows source reads bounded registry roots and library folders with stabl
   const source = createWindowsSteamInstallationSource({
     platform: "win32",
     readRegistryRoots: async () => registryRoots,
-    readFile: async (path) => { read.push(path); return libraryFolders; },
+    readFile: async (path) => {
+      read.push(path);
+      return libraryFolders;
+    },
   });
   const result = await source.read();
   assert.deepEqual(result.diagnostics, []);
@@ -62,7 +71,10 @@ test("Windows source skips malformed registry values without aborting discovery"
   const source = createWindowsSteamInstallationSource({
     platform: "win32",
     readRegistryRoots: async () => ["d:/steam", "not-a-path", "D:\\Steam"],
-    readFile: async (path) => { reads.push(path); return libraryFolders; },
+    readFile: async (path) => {
+      reads.push(path);
+      return libraryFolders;
+    },
   });
   const result = await source.read();
   assert.deepEqual(result.roots, [
@@ -79,7 +91,10 @@ test("Windows source preserves exact MAX_PATH roots but rejects overlong roots",
   const exact = createWindowsSteamInstallationSource({
     platform: "win32",
     readRegistryRoots: async () => [exactRoot],
-    readFile: async () => { exactRead = true; return ""; },
+    readFile: async () => {
+      exactRead = true;
+      return "";
+    },
   });
   assert.deepEqual(await exact.read(), {
     roots: [["steam-registry", exactRoot]],
@@ -92,36 +107,117 @@ test("Windows source preserves exact MAX_PATH roots but rejects overlong roots",
   const overlong = createWindowsSteamInstallationSource({
     platform: "win32",
     readRegistryRoots: async () => [overlongRoot],
-    readFile: async () => { overlongRead = true; return ""; },
+    readKnownLocationRoots: async () => [],
+    readFile: async () => {
+      overlongRead = true;
+      return "";
+    },
   });
   assert.deepEqual(await overlong.read(), { roots: [], diagnostics: ["registry-unavailable", "source-unavailable"] });
   assert.equal(overlongRead, false);
 
-  const oversized = createWindowsSteamInstallationSource({ platform: "win32", readRegistryRoots: async () => ["C:\\Steam"], readFile: async () => "x".repeat(4 * 1024 * 1024 + 1) });
-  assert.deepEqual(await oversized.read(), { roots: [["steam-registry", "C:\\Steam"]], diagnostics: ["vdf-malformed", "source-unavailable"] });
+  const oversized = createWindowsSteamInstallationSource({
+    platform: "win32",
+    readRegistryRoots: async () => ["C:\\Steam"],
+    readFile: async () => "x".repeat(4 * 1024 * 1024 + 1),
+  });
+  assert.deepEqual(await oversized.read(), {
+    roots: [["steam-registry", "C:\\Steam"]],
+    diagnostics: ["vdf-malformed", "source-unavailable"],
+  });
 });
 
 test("Windows source reports registry unavailable, permission failure, and malformed metadata", async () => {
-  const unavailable = createWindowsSteamInstallationSource({ platform: "win32", readRegistryRoots: async () => { throw new Error("access denied"); } });
-  assert.deepEqual(await unavailable.read(), { roots: [], diagnostics: ["registry-unavailable", "source-unavailable"] });
+  const unavailable = createWindowsSteamInstallationSource({
+    platform: "win32",
+    readRegistryRoots: async () => {
+      throw new Error("access denied");
+    },
+    readKnownLocationRoots: async () => [],
+  });
+  assert.deepEqual(await unavailable.read(), {
+    roots: [],
+    diagnostics: ["registry-unavailable", "source-unavailable"],
+  });
 
   const unreadable = createWindowsSteamInstallationSource({
     platform: "win32",
     readRegistryRoots: async () => ["C:\\Steam"],
-    readFile: async () => { throw new Error("access denied"); },
+    readFile: async () => {
+      throw new Error("access denied");
+    },
   });
-  assert.deepEqual(await unreadable.read(), { roots: [["steam-registry", "C:\\Steam"]], diagnostics: ["vdf-unreadable", "source-unavailable"] });
+  assert.deepEqual(await unreadable.read(), {
+    roots: [["steam-registry", "C:\\Steam"]],
+    diagnostics: ["vdf-unreadable", "source-unavailable"],
+  });
 
   const malformed = createWindowsSteamInstallationSource({
     platform: "win32",
     readRegistryRoots: async () => ["C:\\Steam"],
     readFile: async () => '"libraryfolders" { "0" { "path" "not-a-windows-path" } }',
   });
-  assert.deepEqual(await malformed.read(), { roots: [["steam-registry", "C:\\Steam"]], diagnostics: ["vdf-malformed", "source-unavailable"] });
+  assert.deepEqual(await malformed.read(), {
+    roots: [["steam-registry", "C:\\Steam"]],
+    diagnostics: ["vdf-malformed", "source-unavailable"],
+  });
+});
+
+test("Windows source falls back to bounded known locations when the registry names no Steam client", async () => {
+  const reads: string[] = [];
+  const source = createWindowsSteamInstallationSource({
+    platform: "win32",
+    readRegistryRoots: async () => [],
+    readKnownLocationRoots: async () => ["C:\\Program Files (x86)\\Steam", "D:\\Steam"],
+    readFile: async (path) => {
+      reads.push(path);
+      if (path === "D:\\Steam\\steamapps\\libraryfolders.vdf") return libraryFolders;
+      throw new Error("not a readable Steam client");
+    },
+  });
+  assert.deepEqual(await source.read(), {
+    roots: [
+      ["known-location", "D:\\Steam"],
+      ["steam-vdf", "E:\\Library 中文"],
+    ],
+    diagnostics: ["registry-unavailable"],
+  });
+  assert.deepEqual(reads, [
+    "C:\\Program Files (x86)\\Steam\\steamapps\\libraryfolders.vdf",
+    "D:\\Steam\\steamapps\\libraryfolders.vdf",
+  ]);
+});
+
+test("an empty registry with no known Steam client is still source-unavailable", async () => {
+  const source = createWindowsSteamInstallationSource({
+    platform: "win32",
+    readRegistryRoots: async () => [],
+    readKnownLocationRoots: async () => [],
+  });
+  assert.deepEqual(await source.read(), { roots: [], diagnostics: ["registry-unavailable", "source-unavailable"] });
+});
+
+test("a known location that is not a readable Steam client is skipped, not named as a source failure", async () => {
+  const reads: string[] = [];
+  const source = createWindowsSteamInstallationSource({
+    platform: "win32",
+    readRegistryRoots: async () => [],
+    readKnownLocationRoots: async () => ["C:\\Steam"],
+    readFile: async (path) => {
+      reads.push(path);
+      throw new Error("access denied");
+    },
+  });
+  assert.deepEqual(await source.read(), { roots: [], diagnostics: ["registry-unavailable", "source-unavailable"] });
+  assert.deepEqual(reads, ["C:\\Steam\\steamapps\\libraryfolders.vdf"]);
 });
 
 test("Windows source smoke is skipped outside Windows", { skip: process.platform !== "win32" }, async () => {
   const result = await createWindowsSteamInstallationSource().read();
-  assert.ok(result.diagnostics.every((diagnostic) => ["registry-unavailable", "vdf-unreadable", "vdf-malformed", "source-unavailable"].includes(diagnostic)));
+  assert.ok(
+    result.diagnostics.every((diagnostic) =>
+      ["registry-unavailable", "vdf-unreadable", "vdf-malformed", "source-unavailable"].includes(diagnostic),
+    ),
+  );
   assert.ok(result.roots.every(([, root]) => /^[A-Z]:\\/.test(root)));
 });
