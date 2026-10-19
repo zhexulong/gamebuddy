@@ -7,5 +7,6 @@
     <AssemblyName>GameBuddy.WindowsStardewFolderPicker</AssemblyName>
     <RootNamespace>GameBuddy.WindowsStardewFolderPicker</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 </Project>
