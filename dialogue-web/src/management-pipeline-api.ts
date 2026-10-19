@@ -626,7 +626,6 @@ type ChatListV1 = Readonly<{
 
 type RenameChatTitleCommandV1 = Readonly<{
   apiVersion: 1;
-  selectionGeneration: number;
   chatHandle: string;
   expectedManagementRevision: number;
   title: string;
@@ -1128,6 +1127,9 @@ const PROBLEM_CODES = [
   "chat_delete_opening_retained",
   "chat_delete_turn_active",
   "chat_delete_binding_unavailable",
+  // Chat management names any Chat of the partition by its own handle (not only the mounted one);
+  // a handle that names none is bounded and player-actionable, not a selection conflict.
+  "chat_not_found",
   // The managed World Info library's own refusals (`world-info.create`/`update`/`delete`/`detail`):
   // the item is gone, its title is taken, the edit raced a newer revision, or the mounted Chat
   // still reads it. Each reaches the player as its own code rather than as a generic failure.
@@ -1249,13 +1251,7 @@ const CHAT_LIST_ENTRY_KEYS = [
   "preview",
 ] as const;
 const CHAT_LIST_KEYS = ["apiVersion", "chats"] as const;
-const RENAME_COMMAND_KEYS = [
-  "apiVersion",
-  "selectionGeneration",
-  "chatHandle",
-  "expectedManagementRevision",
-  "title",
-] as const;
+const RENAME_COMMAND_KEYS = ["apiVersion", "chatHandle", "expectedManagementRevision", "title"] as const;
 const CHAT_TITLE_KEYS = ["apiVersion", "title", "managementRevision"] as const;
 const SWIPE_INFO_KEYS = ["currentIndex", "totalSwipes", "label", "hasPrevious", "hasNext"] as const;
 const OPENING_VARIANT_KEYS = ["variantId", "index", "count", "label", "locked"] as const;
@@ -2242,7 +2238,6 @@ function isRenameChatTitleCommand(value: unknown): value is RenameChatTitleComma
     isRecord(value) &&
     hasExactKeys(value, RENAME_COMMAND_KEYS) &&
     value.apiVersion === TAVERN_BROWSER_API_VERSION &&
-    isPositiveSafeInteger(value.selectionGeneration) &&
     isOpaqueHandle(value.chatHandle) &&
     isNonNegativeSafeInteger(value.expectedManagementRevision) &&
     isNfcUtf8Text(value.title, 1) &&
@@ -3107,7 +3102,6 @@ export type ManagementPipelineApi = Readonly<{
   transitionChatLifecycle(
     chatHandle: string,
     operation: "archive" | "restore" | "trash",
-    selectionGeneration: number,
     expectedManagementRevision: number,
     csrfToken: string,
   ): Promise<ChatRetentionResultV1>;
@@ -3723,14 +3717,12 @@ export function createManagementPipelineApi(
     async transitionChatLifecycle(
       chatHandle: string,
       operation: "archive" | "restore" | "trash",
-      selectionGeneration: number,
       expectedManagementRevision: number,
       csrfToken: string,
     ): Promise<ChatRetentionResultV1> {
       if (
         !isOpaqueHandle(chatHandle) ||
         !isOpaqueHandle(csrfToken) ||
-        !isNonNegativeSafeInteger(selectionGeneration) ||
         !isNonNegativeSafeInteger(expectedManagementRevision) ||
         !isOneOf(operation, RETENTION_OPERATIONS)
       )
@@ -3744,7 +3736,6 @@ export function createManagementPipelineApi(
         { "Content-Type": "application/json", "x-csrf-token": csrfToken },
         {
           apiVersion: TAVERN_BROWSER_API_VERSION,
-          selectionGeneration,
           expectedManagementRevision,
         },
       );

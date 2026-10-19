@@ -179,8 +179,8 @@ function chatRowStamp(updatedAtMs: number, labels: Messages, nowMs: number): str
  * transitions, over the mounted profile's own routes.
  *
  * Rename ordering (frozen): the entry's managementRevision from the last
- * validated list -> PUT /chat/title with the exact selectionGeneration and
- * handle -> the validated durable read-back replaces the entry, so the list
+ * validated list -> PUT /chat/title with the target's own handle and that
+ * revision -> the validated durable read-back replaces the entry, so the list
  * never shows a guessed revision or title; any rejection re-reads the
  * authoritative list before the failure is reported.
  *
@@ -189,9 +189,12 @@ function chatRowStamp(updatedAtMs: number, labels: Messages, nowMs: number): str
  * control is absent; `undefined` means this mount cannot see that projection and
  * the served list is the capability (see the file header).
  *
- * The rename is the MOUNTED row's alone. `chat.rename` addresses the mounted selection by handle and
- * generation, so a pencil on any other row could only be refused; the row's own surface selects, which
- * is how the player reaches a Chat they can rename (see the row's own note for the measurement).
+ * Every row's rename, archive and trash name that row's own Chat, not the mounted
+ * one: the command carries the row's handle and CASes its own management revision, so
+ * cleaning up history never means switching into each Chat first, and a target that is
+ * not the mounted row leaves the mounted conversation - and its live stream - exactly as
+ * it is. Only a transition of the MOUNTED row moves the shell, through
+ * `onCurrentChatRemoved` (see the row's own note).
  */
 export function ChatsSurfacePanel({
   api,
@@ -212,7 +215,7 @@ export function ChatsSurfacePanel({
   api: ManagementPipelineApi;
   csrfToken: string;
   labels: Messages;
-  /** The mounted selection's generation: every rename and lifecycle CAS carries it. */
+  /** The mounted selection's generation: the mounted operations (`chat.create`, `chat.select`, `chat.opening`) carry it. */
   selectionGeneration: number;
   currentChatHandle: string;
   renameAvailable?: boolean;
@@ -358,7 +361,6 @@ export function ChatsSurfacePanel({
         const result = await api.renameChatTitle(
           {
             apiVersion: 1,
-            selectionGeneration,
             chatHandle: handle,
             expectedManagementRevision: entry.managementRevision,
             title,
@@ -500,7 +502,7 @@ export function ChatsSurfacePanel({
     }
     void (async () => {
       try {
-        await api.transitionChatLifecycle(handle, operation, selectionGeneration, entry.managementRevision, csrfToken);
+        await api.transitionChatLifecycle(handle, operation, entry.managementRevision, csrfToken);
         // The transition removed the chat from the active list (metadata-only
         // mutation), so reconcile against the durable list.
         await reread();
@@ -634,15 +636,14 @@ export function ChatsSurfacePanel({
             const isSelected = chat.handle === currentChatHandle;
             const isSelecting = chat.handle === selecting;
             /*
-             * The rename belongs to the mounted Chat and to no other row: `chat.rename` addresses the
-             * mounted selection by handle and generation (`chat-management-service.ts`), so a pencil on
-             * another row could only ever be refused with `selection_conflict` - a control the wire
-             * refuses is a promise the panel cannot keep. The row's own surface already selects, which is
-             * how the player reaches a Chat they can rename, so the honest affordance is the one that can
-             * succeed. The editor is held to the same row: a stale editor left on a row the mount has
-             * moved off would offer a Save the wire refuses.
+             * Every row carries its own rename: `chat.rename` names the target by its own handle and
+             * CASes that Chat's management revision (`chat-management-service.ts`), so a pencil on a row
+             * the mount is not on is served like any other and leaves the mounted conversation untouched.
+             * The list carries only active Chats, so the pencil appears on every non-archived/trashed row.
+             * The editor is held to its own row: a stale editor left on a row the mount has moved off
+             * would offer a Save that CASes a revision the player can no longer see.
              */
-            const renameHere = isSelected && renameAvailable !== false;
+            const renameHere = renameAvailable !== false;
             // The confirmation belongs to exactly one row, and while it is armed that row's
             // rename/archive/trash strip steps aside: the confirmation is the row's only action
             // until it is answered.

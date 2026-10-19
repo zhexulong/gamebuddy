@@ -361,8 +361,10 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // greeting refusal (chat_edit_opening_retained, when a companion's reply became editable) moved
   // it 58 to 59, and the avatar upload's two (companion_avatar_too_large, the picture over the
   // avatar module's own ceiling, and companion_avatar_malformed, bytes that are not a complete
-  // PNG) moved it 59 to 61 - and it still fails the moment the reader stops seeing a member.
-  assert.equal(tavern.size, 61, `the tavern problem union should have 61 members, read ${tavern.size}`);
+  // PNG) moved it 59 to 61, and the chat-management rename/archive/trash working on any Chat of the
+  // partition rather than only the mounted one moved it 61 to 62 (`chat_not_found`, the handle that
+  // names no Chat) - and it still fails the moment the reader stops seeing a member.
+  assert.equal(tavern.size, 62, `the tavern problem union should have 62 members, read ${tavern.size}`);
   assert.equal(game.size, 23, `the game problem union should have 23 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");

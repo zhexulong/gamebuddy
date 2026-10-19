@@ -148,7 +148,6 @@ test("the product Chats surface renames through chat/title and moves the convers
   await expect.poll(() => titleWrites.length).toBe(1);
   expect(titleWrites[0]).toEqual({
     apiVersion: 1,
-    selectionGeneration: 1,
     chatHandle,
     expectedManagementRevision: 1,
     title: "A renamed product chat",
@@ -486,7 +485,7 @@ test("the Chats row's archive cannot fire without its confirmation step", async 
 
   await surface.getByTestId("chat-retention-confirm-yes").click();
   await expect.poll(() => archives.length).toBe(1);
-  expect(archives[0]).toEqual({ apiVersion: 1, selectionGeneration: 1, expectedManagementRevision: 1 });
+  expect(archives[0]).toEqual({ apiVersion: 1, expectedManagementRevision: 1 });
 });
 
 /**
@@ -616,7 +615,7 @@ test("a non-current Chats row is archived with its own handle and revision", asy
   await mounted.getByTestId("chat-retention-confirm-yes").click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]?.url).toContain(`/api/tavern/v1/chats/${chatHandle}/archive`);
-  expect(writes[0]?.body).toEqual({ apiVersion: 1, selectionGeneration: 1, expectedManagementRevision: 4 });
+  expect(writes[0]?.body).toEqual({ apiVersion: 1, expectedManagementRevision: 4 });
   expect(writes.filter((write) => write.url.includes(otherHandle))).toEqual([]);
 });
 

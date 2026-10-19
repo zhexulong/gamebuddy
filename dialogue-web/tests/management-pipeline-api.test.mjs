@@ -107,8 +107,17 @@ test("management mutation observer receives only successful content-free operati
     if (path.includes("/chat/title")) return response({ apiVersion: 1, title: null, managementRevision: 2 });
     throw new Error("unexpected_route");
   }, (observation) => observations.push(observation));
-  await api.renameChatTitle({ apiVersion: 1, selectionGeneration: 1, chatHandle: HANDLE, expectedManagementRevision: 1, title: "Renamed" }, HANDLE);
+  await api.renameChatTitle({ apiVersion: 1, chatHandle: HANDLE, expectedManagementRevision: 1, title: "Renamed" }, HANDLE);
   assert.deepEqual(observations, [{ operationId: "chat.rename", outcome: "passed", projectionRevision: "2" }]);
+  // The mounted-only selection generation is gone from the command: an old sender that still carries
+  // it is refused by the client before any fetch, so the strip cannot be silently undone on one side.
+  await assert.rejects(
+    api.renameChatTitle(
+      { apiVersion: 1, selectionGeneration: 1, chatHandle: HANDLE, expectedManagementRevision: 1, title: "Renamed" },
+      HANDLE,
+    ),
+    TavernProtocolError,
+  );
 });
 
 test("management Memory validators and client reject malformed, noncanonical, and non-strict mutations before fetch", async () => {

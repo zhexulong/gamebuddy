@@ -377,6 +377,9 @@ const PROBLEM_CODES = [
   "chat_delete_opening_retained",
   "chat_delete_turn_active",
   "chat_delete_binding_unavailable",
+  // Chat management names any Chat of the partition by its own handle (not only the mounted one);
+  // a handle that names none is bounded and player-actionable, not a selection conflict.
+  "chat_not_found",
   // A durable companion record that is absent, incomplete or unreadable is a data-integrity fact,
   // not a retryable runtime outage.
   "companion_record_unreadable",
