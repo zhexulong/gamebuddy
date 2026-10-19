@@ -600,7 +600,11 @@ export function ChatsSurfacePanel({
                     {preview.action !== null && (
                       <MarkdownMessage className="opening-option-action" text={preview.action} />
                     )}
-                    <MarkdownMessage className="opening-option-line" testId="opening-option-line" text={preview.spoken} />
+                    <MarkdownMessage
+                      className="opening-option-line"
+                      testId="opening-option-line"
+                      text={preview.spoken}
+                    />
                   </button>
                 </div>
               );
