@@ -64,6 +64,20 @@ public sealed class FarmhandBodyProgramController
         this.executor = executor;
     }
 
+    /// <summary>
+    /// Whether a native action may be dispatched on THIS tick, supplied by the host that owns the world.
+    ///
+    /// Why the program path needs it: a successor is dispatched as soon as its predecessor settles, and a
+    /// predecessor often settles on the same frame its native animation starts. Re-entering the actor during that
+    /// animation is refused by the router (`player_not_actionable` - a one-frame cooldown: measured 2026-10-19, the
+    /// refusal arrived one tick after the previous harvest and the actor was movable again a second later). The
+    /// refusal is now an honest node failure rather than a poisoned scope, but a failure stops the successor chain,
+    /// so the pass is SKIPPED while the world is mid-animation instead of forcing a refusal a node cannot retry.
+    ///
+    /// Null means "always dispatchable", which is what a harness without a world wants.
+    /// </summary>
+    public Func<bool>? CanDispatchNow { get; init; }
+
     public BodyProgramJournalOpenStatus OpenStatus => this.authority.OpenStatus;
 
     /// <summary>Revokes this controller's exact authority tuple and drains any active update.</summary>
@@ -158,6 +172,9 @@ public sealed class FarmhandBodyProgramController
         {
             if (!this.authority.IsLifecycleOpen) return;
             if (node.State != BodyProgramNodeState.AwaitingHostAdmission) continue;
+            // The world gets its say BEFORE the transport result is taken: taking it and then skipping would consume
+            // the admission and strand the node awaiting a result that no longer exists.
+            if (this.CanDispatchNow is { } canDispatch && !canDispatch()) return;
             BodyNodeAdmissionResult? admissionResult = this.admission!.TryTakeResult(programId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt);
             if (!this.authority.IsLifecycleOpen) return;
             if (admissionResult is null) continue;

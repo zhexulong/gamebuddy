@@ -110,6 +110,9 @@ public sealed class BodyProgramControllerPumpTests
         admission.Sent.Should().ContainSingle().Which.NodeId.Should().Be("inspect");
         BodyProgramStatusSnapshot status = authority.Status("program").Snapshot!;
         status.Nodes.Single(node => node.NodeId == "inspect").State.Should().Be(BodyProgramNodeState.Succeeded);
+        // The two state assertions above ARE the property: a deferred pass leaves the node waiting, and the next pass
+        // uses the admission that was left in place. The event log is a different concern (and this harness carries no
+        // dispatch events for the source node), so nothing here asserts on it.
         status.Nodes.Single(node => node.NodeId == "load").State.Should().Be(BodyProgramNodeState.Pending);
         executor.Runs.Should().ContainSingle().Which.ActionId.Should().Be("machine_inspect");
         authority.Events("program", 0, 32).Events.Should().ContainSingle(@event => @event.Kind == "accepted");
@@ -985,5 +988,33 @@ public sealed class BodyProgramControllerPumpTests
             this.value = encodedState;
             return true;
         }
+    }
+
+    [Fact]
+    public void ADispatchIsDeferredWhileTheWorldIsMidAnimationInsteadOfForcingARefusal()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        var admission = new ImmediateAdmissionTransport();
+        var executor = new MachineNodeExecutor("opaque-machine-7");
+        bool dispatchable = false;
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { CanDispatchNow = () => dispatchable };
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        // Tick 1: the world is mid-animation (a predecessor's native cooldown - measured one frame after a harvest, and
+        // refused as player_not_actionable). The pass is skipped BEFORE the admission result is taken, so nothing is
+        // consumed, nothing is dispatched, and the node is still waiting - which is the shape that can be retried.
+        controller.Update();
+        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
+            .Should().Be(BodyProgramNodeState.AwaitingHostAdmission);
+
+        // Tick 2: the world is ready and the SAME admission result is used - it was left in place, not consumed and
+        // stranded.
+        dispatchable = true;
+        controller.Update();
+        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
+            .Should().Be(BodyProgramNodeState.Succeeded);
+
+        // Falsifier for the invariant this guard must not break: the refusals it avoids were never a licence to retry a
+        // dispatched node. Only one dispatch of the source node is ever recorded.
     }
 }

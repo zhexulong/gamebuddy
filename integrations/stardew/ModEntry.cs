@@ -1281,7 +1281,14 @@ public sealed partial class ModEntry : Mod
             farmhandBodyProgramController = new FarmhandBodyProgramController(
                 bodyProgramAuthority,
                 state.BridgeSession,
-                new RouteReenteringBodyProgramExecutor(router, state.Executions));
+                new RouteReenteringBodyProgramExecutor(router, state.Executions))
+            {
+                // The world decides when a successor may be dispatched. A predecessor often settles on the same frame
+                // its native animation starts, and re-entering the actor then is refused with `player_not_actionable`
+                // (one frame after a harvest, measured 2026-10-19); a refused node cannot be retried, so the pump waits
+                // a tick instead of stopping the chain. Same trio the flat path treats as not-actionable.
+                CanDispatchNow = static () => Game1.player is { CanMove: true } && Game1.activeClickableMenu is null && !Game1.eventUp,
+            };
             this.Monitor.Log("GameBuddy body program journal opened for this scope; program_submit/status/events routes are live.", LogLevel.Info);
         }
         state.BodyProgramController = farmhandBodyProgramController;
