@@ -77,11 +77,16 @@ type NormalizedEvent = Readonly<{
   input?: PlayerInput;
 }>;
 
-const MAX_PENDING_INPUTS = 128;
-const MAX_PENDING_RECEIPTS = 128;
-const MAX_PENDING_SEMANTIC_EVENTS = 128;
-const MAX_PENDING_LIFECYCLE = 128;
-const MAX_PENDING_WORLD_FACTS = 32;
+// Sized from measurement, not from taste. A real run (`g97cross`) produced 870 facts in 535 s - about 1.6 per second,
+// three of them per dispatch (accepted -> running -> succeeded) plus outcome semantics - while a single turn held them
+// because a turn here can think for 60+ s. At 128 that window was crossed by ANY long turn, so the bridge closed
+// mid-run (`g98cross`, with the drop rule already in: the window had nothing superseded left to evict, which is the
+// honest refusal but the wrong outcome). 512 covers five minutes of the measured arrival rate at a stalled turn.
+export const MAX_PENDING_INPUTS = 128;
+export const MAX_PENDING_RECEIPTS = 512;
+export const MAX_PENDING_SEMANTIC_EVENTS = 512;
+export const MAX_PENDING_LIFECYCLE = 128;
+export const MAX_PENDING_WORLD_FACTS = 32;
 
 export interface CompanionTurnSink {
   /**

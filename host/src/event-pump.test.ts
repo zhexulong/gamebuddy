@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CompanionEventPump } from "./event-pump.js";
+import { CompanionEventPump, MAX_PENDING_RECEIPTS, MAX_PENDING_SEMANTIC_EVENTS } from "./event-pump.js";
 
 test("event pump steers player input and attaches the latest snapshot", async () => {
   const pump = new CompanionEventPump();
@@ -366,7 +366,7 @@ test("event pump follows up a blocked terminal receipt without waiting for an un
 
 test("event pump classifies terminal receipt overflow separately from all nonterminal overflow classes", () => {
   const terminalPump = new CompanionEventPump();
-  for (let index = 0; index < 128; index++) {
+  for (let index = 0; index < MAX_PENDING_RECEIPTS; index++) {
     terminalPump.enqueueFact({
       source: "stardew_mod",
       kind: "execution_receipt",
@@ -385,28 +385,28 @@ test("event pump classifies terminal receipt overflow separately from all nonter
     payload: { state: "failed" },
   });
   assert.equal(terminalPump.droppedFacts, 1);
-  assert.equal(terminalPump.pendingCount, 128);
+  assert.equal(terminalPump.pendingCount, MAX_PENDING_RECEIPTS);
 
   // Facts a later fact SUPERSEDES are the ones that may be dropped: a non-terminal receipt (its terminal is still to
   // come) and a lifecycle notice. Measured 2026-10-19 (`g97cross`): 870 facts in one run, 470 of them receipts,
   // arriving while a turn was in flight - and closing the whole bridge over them ended that run short of its night.
-  for (const [kind, payload] of [
-    ["execution_receipt", { state: "meaningful_progress" }],
-    ["lifecycle", { state: "adapter_notice" }],
+  for (const [kind, payload, bound] of [
+    ["execution_receipt", { state: "meaningful_progress" }, MAX_PENDING_RECEIPTS],
+    ["lifecycle", { state: "adapter_notice" }, 128],
   ] as const) {
     const pump = new CompanionEventPump();
-    for (let index = 0; index < 128; index++) {
+    for (let index = 0; index < bound; index++) {
       pump.enqueueFact({ source: "stardew_mod", kind, correlationId: `${kind}_${index}`, revision: 1, payload });
     }
     pump.enqueueFact({ source: "stardew_mod", kind, correlationId: `${kind}_overflow`, revision: 1, payload });
     assert.equal(pump.droppedFacts, 1, kind);
-    assert.equal(pump.pendingCount, 128, kind);
+    assert.equal(pump.pendingCount, bound, kind);
   }
 
   // A semantic event that is NOT progress still fails closed: `warped` says something no later fact repeats, so a
   // window full of them holds nothing that may be evicted and the bridge refuses rather than losing one.
   const eventPump = new CompanionEventPump();
-  for (let index = 0; index < 128; index++) {
+  for (let index = 0; index < MAX_PENDING_SEMANTIC_EVENTS; index++) {
     eventPump.enqueueFact({
       source: "stardew_mod",
       kind: "semantic_event",
@@ -438,7 +438,7 @@ test("event pump classifies terminal receipt overflow separately from all nonter
     revision: 1,
     payload: { kind: "warped" },
   });
-  for (let index = 0; index < 127; index++) {
+  for (let index = 0; index < MAX_PENDING_RECEIPTS - 1; index++) {
     mixedPump.enqueueFact({
       source: "stardew_mod",
       kind: "execution_receipt",
@@ -455,7 +455,7 @@ test("event pump classifies terminal receipt overflow separately from all nonter
     payload: { state: "failed" },
   });
   assert.equal(mixedPump.droppedFacts, 1);
-  assert.equal(mixedPump.pendingCount, 128);
+  assert.equal(mixedPump.pendingCount, MAX_PENDING_RECEIPTS);
 });
 
 test("event pump keeps a long run's PROGRESS observations from filling the pending window", () => {
@@ -494,7 +494,7 @@ test("event pump keeps a long run's PROGRESS observations from filling the pendi
   // progress slots above are already held in this one, and this block is about the outcome class alone: 128
   // outcomes fill the window exactly, and the 129th is the honest overflow.
   const outcomePump = new CompanionEventPump();
-  for (let index = 0; index < 128; index++) {
+  for (let index = 0; index < MAX_PENDING_SEMANTIC_EVENTS; index++) {
     outcomePump.enqueueFact({
       source: "stardew_mod",
       kind: "semantic_event",
