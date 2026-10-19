@@ -105,6 +105,14 @@ export async function launchStardewLiveRun({
   });
 
   const pid = child.pid ?? 0;
+  // DRAIN stdout. This is the freeze's root cause (2026-10-19). SMAPI writes its log to disk, but it ALSO writes to the
+  // console, and a pipe nobody reads fills: once the OS buffer is full (~64 KiB) the write blocks IN THE KERNEL on the
+  // game thread, which is exactly what the freeze looks like - a thread in WaitReason.Executive for the whole stall (46 of
+  // 48 unresponsive samples in one run), the engine render counter stopped, no Mod log line ever written, and the Mod's
+  // own watchdog silent because the game thread never returned. Reproduced directly: a child writing to an unread pipe
+  // never exits, while the same child with `stdout.resume()` exits immediately. Nothing in this file reads child.stdout,
+  // so draining it changes nothing else.
+  child.stdout?.resume();
   let stderrTail = "";
   child.stderr.on("data", (chunk) => {
     stderrTail = (stderrTail + chunk.toString()).slice(-4096);
