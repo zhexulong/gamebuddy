@@ -14,7 +14,12 @@ import {
   TavernBrowserValidatorsV1,
   type WorldInfoStateV1,
 } from "./browser-contract/index.js";
-import { type ChatThreadState, type ChatTurnLedger, createChatThreadStore } from "./chat-thread-store.js";
+import {
+  type ChatThreadState,
+  type ChatTurnLedger,
+  createChatThreadStore,
+  visibleReplyTruncation,
+} from "./chat-thread-store.js";
 import type { WorldInfoBindingManagementService } from "./world-info-binding/world-info-binding-management-service.js";
 
 type TavernManagementBinding = Readonly<{
@@ -96,12 +101,8 @@ export async function createTavernManagementStateFacade(
   // A profile that declares either World Info route without a bound service
   // must fail closed before any durable I/O: the capability cannot be
   // advertised without the exact service backing it.
-  if (
-    profile.routeIds.includes("world-info.read") ||
-    profile.routeIds.includes("world-info.bind")
-  ) {
-    if (worldInfoService === undefined)
-      throw new Error("tavern_management_composition_unavailable");
+  if (profile.routeIds.includes("world-info.read") || profile.routeIds.includes("world-info.bind")) {
+    if (worldInfoService === undefined) throw new Error("tavern_management_composition_unavailable");
   }
   const resolvedWorldInfoService = worldInfoService;
 
@@ -171,7 +172,7 @@ async function project(
 ): Promise<TavernManagementState> {
   const projection = lease.browserProjection;
   const transcript = Object.freeze(state.messages.map((message, order) => projectMessage(lease, message, order)));
-  const turn = projectTurn(lease, state.turnLedger);
+  const turn = projectTurn(lease, state.messages, state.turnLedger);
   const operations = projectOperations(profile);
   const worldInfoState = worldInfoService === undefined ? null : await v1WorldInfo(worldInfoService);
   const value = Object.freeze({
@@ -249,8 +250,17 @@ function projectMessage(
   });
 }
 
-/** Frozen durable TurnLedger → BrowserTurnV1 projection (design/72 §7). */
-function projectTurn(lease: MountedChatRuntimeLease, ledger: ChatTurnLedger | null): BrowserTurnV1 | null {
+/**
+ * Frozen durable TurnLedger → BrowserTurnV1 projection (design/72 §7). Its
+ * `truncated` fact comes from the ledger's own presentation record: the reply
+ * the player can see was written by THIS generation, and `Regenerate` starts a
+ * turn of its own whose record replaces it.
+ */
+function projectTurn(
+  lease: MountedChatRuntimeLease,
+  messages: ChatThreadState["messages"],
+  ledger: ChatTurnLedger | null,
+): BrowserTurnV1 | null {
   if (ledger === null) return null;
   const state =
     ledger.status === "accepted_queued" || ledger.status === "attempt_starting"
@@ -268,6 +278,7 @@ function projectTurn(lease: MountedChatRuntimeLease, ledger: ChatTurnLedger | nu
     projectionRevision: 1,
     canCancel: false,
     ...(ledger.status === "failed" ? { problemCode: ledger.reasonCode } : {}),
+    ...(visibleReplyTruncation(messages, ledger) === true ? { truncated: true as const } : {}),
   });
 }
 
@@ -320,11 +331,12 @@ function projectOperations(profile: ComposedTavernProfile): readonly TavernBrows
       operations.push(
         Object.freeze({
           operationId,
-          labelKey: operationId === "chat.archive"
-            ? "tavern.operation.chat.archive"
-            : operationId === "chat.restore"
-              ? "tavern.operation.chat.restore"
-              : "tavern.operation.chat.trash",
+          labelKey:
+            operationId === "chat.archive"
+              ? "tavern.operation.chat.archive"
+              : operationId === "chat.restore"
+                ? "tavern.operation.chat.restore"
+                : "tavern.operation.chat.trash",
           availability: "available",
           routeId: operationId,
         }),

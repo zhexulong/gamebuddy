@@ -249,6 +249,18 @@ export const BrowserTurnV1Schema = strictObject({
       Type.Literal("storage_unavailable"),
     ]),
   ),
+  /**
+   * Additive v1 fact about the generation that produced the reply the player can
+   * read: the model stopped at its own output ceiling, so that reply is a prefix
+   * of what she was writing and asking again is how to get a whole one. It is
+   * present only when the provider said so; absent means every other stop reason,
+   * and also a provider that reported none, because a cut-off reply and a
+   * finished one cannot be told apart from the text - and an absent fact says
+   * nothing rather than claiming the reply is complete. It describes THIS turn's
+   * own generation, so a later regenerate of the same reply is a turn of its own
+   * and neither inherits nor lends the fact.
+   */
+  truncated: Type.Optional(Type.Literal(true)),
 });
 export const BrowserDraftV1Schema = strictObject({
   apiVersion: ApiVersion,

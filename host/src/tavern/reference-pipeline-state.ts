@@ -16,7 +16,12 @@ import {
   TavernBrowserValidatorsV1,
 } from "./browser-contract/index.js";
 import type { ChatEventStream } from "./chat-event-stream.js";
-import { type ChatThreadState, type ChatTurnLedger, createChatThreadStore } from "./chat-thread-store.js";
+import {
+  type ChatThreadState,
+  type ChatTurnLedger,
+  createChatThreadStore,
+  visibleReplyTruncation,
+} from "./chat-thread-store.js";
 import { formatSwipeLabel } from "./message-tree.js";
 import { TavernArtifactStore } from "./artifact-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
@@ -135,15 +140,7 @@ export async function createReferencePipelineStateFacade(
         // Durable reads do not hold the mount capability. A concurrent close
         // revokes the lease before projection, so never project stale data.
         assertReferencePipelineLeaseAfterDurableRead(lease);
-        return project(
-          lease,
-          companionDisplayName,
-          profile,
-          state,
-          eventStream,
-          voiceSurface,
-          openingGreeting,
-        );
+        return project(lease, companionDisplayName, profile, state, eventStream, voiceSurface, openingGreeting);
       } catch {
         throw unavailable();
       }
@@ -223,7 +220,7 @@ function project(
       projectMessage(lease, message, order, openingGreeting ?? null, openingLocked),
     ),
   );
-  const turn = projectTurn(lease, profile, state.turnLedger);
+  const turn = projectTurn(lease, profile, state.messages, state.turnLedger);
   const operations = projectOperations(profile, state.turnLedger);
   const value = Object.freeze({
     selection: Object.freeze({
@@ -260,8 +257,7 @@ function project(
 function projectVoice(voiceSurface: VoiceSurfaceReader): ReferencePipelineState["voice"] {
   const current = voiceSurface();
   if (current === null) return null;
-  if (current.state !== "unavailable" && current.state !== "ready" && current.state !== "speaking")
-    throw unavailable();
+  if (current.state !== "unavailable" && current.state !== "ready" && current.state !== "speaking") throw unavailable();
   return Object.freeze({ state: current.state });
 }
 
@@ -355,11 +351,14 @@ async function readOpeningGreeting(
  * `projectionRevision` is the literal 1 (a browser-projection fact, not a
  * durable claim); `canCancel` is always false (no cancel operation mounted);
  * `problemCode` appears only for the durable `failed` terminal classification,
- * whose reason codes exactly match the TypeBox contract union.
+ * whose reason codes exactly match the TypeBox contract union; `truncated`
+ * appears only while this turn's own generation is the one that produced the
+ * visible reply and it stopped at the model's length ceiling.
  */
 function projectTurn(
   lease: MountedChatRuntimeLease,
   profile: ComposedTavernProfile,
+  messages: ChatThreadState["messages"],
   ledger: ChatTurnLedger | null,
 ): BrowserTurnV1 | null {
   if (ledger === null) return null;
@@ -379,6 +378,7 @@ function projectTurn(
     // A Stop is available once the exact prompt reaches durable arm.
     canCancel: profile.operationIds.includes("chat.cancel") && isCancellableLedger(ledger),
     ...(ledger.status === "failed" ? { problemCode: ledger.reasonCode } : {}),
+    ...(visibleReplyTruncation(messages, ledger) === true ? { truncated: true as const } : {}),
   });
 }
 

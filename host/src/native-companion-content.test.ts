@@ -619,3 +619,33 @@ test("incremental activation never opens a sentence boundary inside a thinking f
   assert.deepEqual(inlines, ["早安!"]);
   assert.deepEqual(finals, []);
 });
+
+test("hands every final text the stop reason Pi recorded, and only `length` can say the reply is a prefix", async () => {
+  // The one thing that tells a cut-off reply from a finished one: the model's
+  // own stop reason. A provider that reports none, and Pi's own `"stop"`, are
+  // the same answer to the surface - nothing about a length ceiling - because
+  // the text alone never distinguishes them. One observer commits one final
+  // text per turn, so each case drives its own.
+  for (const [message, expected] of [
+    [assistant([text("cut off mid-")], "length"), ["cut off mid-", "length"]],
+    [assistant([text("finished.")], "stop"), ["finished.", "stop"]],
+    [Object.freeze({ role: "assistant" as const, content: [text("no reason")] }), ["no reason", "stop"]],
+  ] as const) {
+    const fx = fakeSession();
+    const finals: Array<readonly [string, string]> = [];
+    const observer = attach(fx, {
+      onPreviewDelta: async () => undefined,
+      onFinalText: async (value, stopReason) => {
+        finals.push(Object.freeze([value, stopReason] as const));
+      },
+      onRejected: async () => assert.fail("unexpected rejection"),
+    });
+    observer.open();
+    // An identity-free lifecycle, so this case is about the stop reason alone and
+    // not about whether the provider also stamped a response id.
+    fx.emit({ type: "message_start", message: Object.freeze({ role: "assistant" as const, content: [text("")] }) });
+    fx.emit({ type: "message_end", message });
+    await observer.close();
+    assert.deepEqual(finals, [expected]);
+  }
+});

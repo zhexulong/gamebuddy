@@ -57,6 +57,7 @@ import {
   DEFAULT_WORLDBOOK_SCAN_DEPTH,
   type FailedTurn,
   type TavernStableWorldBookBinding,
+  visibleReplyTruncation,
 } from "./chat-thread-store.js";
 import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import { createPlayerTurnAcceptor } from "./player-turn-acceptance.js";
@@ -443,8 +444,8 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       const ledger = state.turnLedger;
       if (ledger === null || lease.browserProjection.projectTurnHandle(ledger.turnId) !== turnHandle)
         throw unavailable();
-      if (!isNonTerminalLedger(ledger)) return projectTurn(lease, ledger);
-      if (!isCancellableLedger(ledger) || !("attempt" in ledger)) return projectTurn(lease, ledger);
+      if (!isNonTerminalLedger(ledger)) return projectTurn(lease, state.messages, ledger);
+      if (!isCancellableLedger(ledger) || !("attempt" in ledger)) return projectTurn(lease, state.messages, ledger);
       const expected = Object.freeze({ turnId: ledger.turnId, attemptId: ledger.attempt.attemptId });
       // The coordinator owns the active Pi prompt and the P5 presentation
       // admission. Stop through its one mounted authority so revocation, the
@@ -471,7 +472,10 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
         winner = reread.turnLedger;
       }
       assertChatPipelineServiceLeaseAfterDurableRead(lease);
-      const result = projectTurn(lease, winner);
+      // The transcript is what the turn's own projection reads beside its
+      // ledger; a Stop claims a cancel and appends no row, so the state read
+      // above is still this thread's transcript.
+      const result = projectTurn(lease, state.messages, winner);
       if (eventStream !== undefined && profile.routeIds.includes("events"))
         eventStream.publish({
           eventType: "turn.state_changed",
@@ -781,7 +785,7 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       apiVersion: TAVERN_BROWSER_API_VERSION,
       disposition,
       message: projectMessage(lease, message, order),
-      turn: projectTurn(lease, state.turnLedger),
+      turn: projectTurn(lease, state.messages, state.turnLedger),
     });
     // Fail closed unless the committed representation satisfies its frozen
     // contract schema; a partial or invalid projection never escapes.
@@ -810,7 +814,7 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       apiVersion: TAVERN_BROWSER_API_VERSION,
       disposition,
       message: projectMessage(lease, message, order),
-      turn: projectTurn(lease, state.turnLedger),
+      turn: projectTurn(lease, state.messages, state.turnLedger),
     });
     // Fail closed unless the committed representation satisfies its frozen
     // contract schema; a partial or invalid projection never escapes.
@@ -845,7 +849,7 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
         eventStream.publish({
           eventType: "turn.state_changed",
           selectionGeneration: lease.browserProjection.selectionGeneration,
-          payload: projectTurn(lease, state.turnLedger),
+          payload: projectTurn(lease, state.messages, state.turnLedger),
         });
       }
     }
@@ -876,7 +880,11 @@ function projectMessage(
  * is the literal 1; older internal intermediate states map to the five MVP
  * browser states and never create separate UI lifecycle outcomes.
  */
-function projectTurn(lease: MountedChatRuntimeLease, ledger: ChatTurnLedger): BrowserTurnV1 {
+function projectTurn(
+  lease: MountedChatRuntimeLease,
+  messages: ChatThreadState["messages"],
+  ledger: ChatTurnLedger,
+): BrowserTurnV1 {
   const state =
     ledger.status === "accepted_queued" || ledger.status === "attempt_starting"
       ? "queued"
@@ -892,6 +900,7 @@ function projectTurn(lease: MountedChatRuntimeLease, ledger: ChatTurnLedger): Br
     projectionRevision: 1,
     canCancel: isCancellableLedger(ledger),
     ...(ledger.status === "failed" ? { problemCode: ledger.reasonCode } : {}),
+    ...(visibleReplyTruncation(messages, ledger) === true ? { truncated: true as const } : {}),
   });
 }
 

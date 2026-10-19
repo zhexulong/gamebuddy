@@ -70,6 +70,16 @@ export type NativeCompanionContentOptions = Readonly<{
   scaffolding: ScaffoldingPresentation;
 }>;
 
+/**
+ * Pi's assistant-message `stopReason`, as its own `message-types.md` declares it.
+ * The one member these sinks act on is `"length"`: the provider stopped at the
+ * model's output ceiling, so what the player can read is a prefix of what was
+ * being written. Every other member means "not that", and a message that reports
+ * no reason at all is read as `"stop"` - saying nothing is the honest answer
+ * there, because the text itself never tells a cut-off reply from a finished one.
+ */
+export type NativeAssistantStopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred";
+
 export type NativeCompanionContentSinks = Readonly<{
   /**
    * Ephemeral player-visible streaming hint; it is never durable authority.
@@ -84,8 +94,15 @@ export type NativeCompanionContentSinks = Readonly<{
    * Chat consumers never provide it.
    */
   onIncrementalText?(text: string): void | Promise<void>;
-  /** The one final safe native assistant text value, emitted at most once. */
-  onFinalText(text: string): void | Promise<void>;
+  /**
+   * The one final safe native assistant text value, emitted at most once, with
+   * the stop reason Pi recorded for the message it came from. The reason is the
+   * only source of `"length"`, which is what makes a reply the player can read a
+   * prefix rather than a whole; a surface with no durable place for the fact
+   * ignores it, and one whose provider reported none receives `"stop"` and
+   * therefore says nothing rather than guessing from the text.
+   */
+  onFinalText(text: string, stopReason: NativeAssistantStopReason): void | Promise<void>;
   /** No content is supplied to this sink. */
   onRejected(
     reason: "aborted" | "error" | "empty" | "empty_text" | "tool_only" | "unsupported_content" | "identity_mismatch",
@@ -323,7 +340,7 @@ export function attachNativeCompanionContent(
         return;
       }
       finalizing = true;
-      const stopReason = typeof finalMessage.stopReason === "string" ? finalMessage.stopReason : "stop";
+      const stopReason = readStopReason(finalMessage.stopReason);
       if (stopReason === "aborted") {
         dispatch(async () => await sinks.onRejected("aborted"));
         return;
@@ -343,7 +360,7 @@ export function attachNativeCompanionContent(
           dispatch(async () => await sinks.onIncrementalText!(present(sentence)));
         }
         const residual = messageAccumulator.flush();
-        if (!presentIsEmpty(residual)) dispatch(async () => await sinks.onFinalText(present(residual)));
+        if (!presentIsEmpty(residual)) dispatch(async () => await sinks.onFinalText(present(residual), stopReason));
         return;
       }
       const text = readSafeAssistantText(finalMessage, stripStageDirection, dropScaffolding);
@@ -356,7 +373,7 @@ export function attachNativeCompanionContent(
         dispatch(async () => await sinks.onRejected(reason));
         return;
       }
-      dispatch(async () => await sinks.onFinalText(text));
+      dispatch(async () => await sinks.onFinalText(text, stopReason));
     }
   };
 
@@ -440,6 +457,21 @@ function readSafeAssistantText(
   )
     return null;
   return value;
+}
+
+function readStopReason(value: unknown): NativeAssistantStopReason {
+  switch (value) {
+    case "pending":
+    case "stop":
+    case "length":
+    case "toolUse":
+    case "error":
+    case "aborted":
+    case "deferred":
+      return value;
+    default:
+      return "stop";
+  }
 }
 
 function isAssistantLifecycleMessage(value: unknown): value is AssistantMessage {

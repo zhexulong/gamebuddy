@@ -145,6 +145,22 @@ test("text format rejects unpaired UTF-16 surrogates before normalization and UT
   assert.equal(validator.Check(submit("😀")), true);
 });
 
+test("the turn's length-ceiling fact is an additive optional member, in either combination with the failure code", () => {
+  const turn = TavernBrowserFixtureV1.turn();
+  const check = (value: unknown) => TavernBrowserValidatorsV1.BrowserTurnV1Schema.Check(value);
+  assert.equal(check(turn), true);
+  assert.equal(check({ ...turn, truncated: true }), true);
+  // `true` is the only member: the field is present exactly when the model stopped at
+  // its output ceiling, so an explicit `false` is not a fact this contract has.
+  assert.equal(check({ ...turn, truncated: false }), false);
+  assert.equal(check({ ...turn, truncated: "yes" }), false);
+  assert.equal(check({ ...turn, truncated: 1 }), false);
+  // The two optional facts are independent: a failed turn is never a truncated one in
+  // production, but the contract carries two additive members rather than an exclusive arm.
+  assert.equal(check({ ...turn, problemCode: "interrupted" }), true);
+  assert.equal(check({ ...turn, problemCode: "interrupted", truncated: true }), true);
+});
+
 test("opaque values are canonical unpadded base64url and idempotency is exactly a canonical 128-bit value", () => {
   const state = TavernBrowserFixtureV1.snapshot();
   assert.equal(TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check(state), true);

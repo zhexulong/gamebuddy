@@ -18,6 +18,7 @@ import {
   createProfileAwareChatThreadCreationCapability,
   transitionMountedProviderStart as rawTransitionMountedProviderStart,
   transitionMountedPresentation as rawTransitionMountedPresentation,
+  visibleReplyTruncation,
 } from "./chat-thread-store.js";
 import { createMountedTurnTransitionAuthority } from "./chat-thread-store.mounted-turn-transition.internal.js";
 
@@ -507,7 +508,7 @@ test("the Chat persistence path stores the model's own text, action beat include
     // A real reply's shape: two asterisk beats around quoted speech.
     const modelText =
       "*正蹲在田埂边用小花铲抠一块顽固的碎石，听到声音抬起头，茶褐色的发尾沾了点泥星子。*\n\n“嗯？醒啦。”\n\n*她把铲子往腰侧工具包里一插，站起来拍了拍膝盖上的土。*\n\n“锅里有昨晚上剩的防风草汤，热一热就能喝。”";
-    const presented = await chatPresentationOf(modelText);
+    const presented = (await chatPresentationOf(modelText)).text;
     assert.ok(typeof presented === "string", "the observer commits the model's final assistant text");
     if (presented !== modelText)
       assert.fail(
@@ -575,7 +576,7 @@ test("the Chat persistence path drops model scaffolding and keeps the action bea
       "**今日提醒**：锅里有昨晚上剩的防风草汤。\n\n" +
       "---\n\n" +
       "*她把铲子往腰侧工具包里一插，站起来拍了拍膝盖上的土。*";
-    const presented = await chatPresentationOf(modelText);
+    const presented = (await chatPresentationOf(modelText)).text;
     assert.ok(typeof presented === "string", "the observer commits the model's final assistant text");
 
     const committedAt = base + 10;
@@ -631,15 +632,132 @@ test("the Chat persistence path drops model scaffolding and keeps the action bea
 });
 
 /**
+ * The fact that makes a cut-off reply visible, asserted where it has to survive:
+ * the durable store.
+ *
+ * The failure this catches: a reply the model stopped at its output ceiling is
+ * written exactly like a finished one, so the player cannot tell whether asking
+ * again is worth their click - and a fact the Host held only in memory would be
+ * gone at the reload the client performs. The reader is the real
+ * `attachNativeCompanionContent` configured with the production Chat choices, the
+ * fact is recorded on the turn's own presentation record (the record of the
+ * generation that produced the reply), and every assertion reads a freshly
+ * reopened store.
+ */
+test("the Chat persistence path records a length-ceiling cut on the turn's own generation, and a reopened store keeps it", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-turn-truncated-");
+  try {
+    const { attemptId, base } = await prepareRunning(root);
+    const reply = "她刚说要带我去谷仓看看，然后话就";
+    const presented = await chatPresentationOf(reply, "length");
+    assert.equal(presented.stopReason, "length", "the seam hands the generation's own stop reason through");
+    assert.equal(presented.text, reply);
+
+    const committedAt = base + 10;
+    const messageId = "chat_native_attempt_truncated";
+    const committed = await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      {
+        operation: "commit_presentation",
+        cancelEpoch: 0,
+        message: { messageId, text: presented.text as string, occurredAtMs: committedAt },
+        committedAtMs: committedAt,
+        truncated: true,
+      },
+    );
+    if (committed.status !== "presentation_committed") assert.fail("expected a committed presentation");
+    assert.equal(committed.presentation.truncated, true);
+
+    // What the player's transcript is built from: the durable store, reopened.
+    const reopened = await openStore(root).resumeThread("thread_01", "surface_01");
+    if (reopened.turnLedger === null || reopened.turnLedger.status !== "presentation_committed")
+      assert.fail("expected the committed presentation to survive a reopen");
+    assert.equal(reopened.turnLedger.presentation.truncated, true);
+    // And what the browser reads off it: the fact, while that reply is the text on screen.
+    assert.equal(visibleReplyTruncation(reopened.messages, reopened.turnLedger), true);
+    const row = reopened.messages.find((message) => message.messageId === messageId);
+    assert.equal(row?.text, reply);
+  } finally {
+    await removeTestRoot(root);
+  }
+});
+
+test("a reply the model finished carries no length-ceiling fact at all", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-turn-finished-");
+  try {
+    const { attemptId, base } = await prepareRunning(root);
+    const committedAt = base + 10;
+    const committed = await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      {
+        operation: "commit_presentation",
+        cancelEpoch: 0,
+        message: { messageId: "chat_native_attempt_finished", text: "她说完就笑了。", occurredAtMs: committedAt },
+        committedAtMs: committedAt,
+      },
+    );
+    if (committed.status !== "presentation_committed") assert.fail("expected a committed presentation");
+    // Absent rather than false: the record carries a fact or it carries none,
+    // and "not truncated" is not a second way of saying "finished".
+    assert.equal("truncated" in committed.presentation, false);
+    const reopened = await openStore(root).resumeThread("thread_01", "surface_01");
+    if (reopened.turnLedger === null) assert.fail("expected a durable turn");
+    assert.equal(visibleReplyTruncation(reopened.messages, reopened.turnLedger), undefined);
+  } finally {
+    await removeTestRoot(root);
+  }
+});
+
+test("a variant's length-ceiling fact is its own, and is not published once the player swipes away from it", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-variant-truncated-");
+  try {
+    const { attemptId, store, base } = await prepareRunningVariant(root);
+    const committedAt = base + 10;
+    const committed = await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      {
+        operation: "commit_variant",
+        cancelEpoch: 0,
+        variant: { targetMessageId: "response_01", text: "Second reply, cut off", occurredAtMs: committedAt },
+        committedAtMs: committedAt,
+        truncated: true,
+      },
+    );
+    if (committed.status !== "presentation_committed") assert.fail("expected a committed presentation");
+    assert.equal(committed.presentation.truncated, true);
+
+    const reopened = await openStore(root).resumeThread("thread_01", "surface_01");
+    if (reopened.turnLedger === null) assert.fail("expected a durable turn");
+    assert.equal(visibleReplyTruncation(reopened.messages, reopened.turnLedger), true);
+
+    // The row shows the FIRST reply again: the variant's fact describes a text the
+    // player is no longer reading, so the projection states nothing about a length
+    // ceiling rather than describing the wrong text.
+    const swiped = await store.selectSwipe!(testTransitionAuthority.authority, "thread_01", "response_01", {
+      direction: "prev",
+    });
+    assert.equal(swiped.messages[2]!.text, "First reply.");
+    if (swiped.turnLedger === null) assert.fail("expected a durable turn");
+    assert.equal(visibleReplyTruncation(swiped.messages, swiped.turnLedger), undefined);
+  } finally {
+    await removeTestRoot(root);
+  }
+});
+
+/**
  * Runs the real Chat presentation observer over one Pi assistant message and
  * returns the text it hands the persistence lane. `CHAT_TRANSCRIPT_STAGE_DIRECTION`
  * and `CHAT_TRANSCRIPT_SCAFFOLDING` are the production decisions, so this reader
  * cannot agree with a lane that has been changed to strip, or to let the model's
  * own scaffolding through.
  */
-async function chatPresentationOf(modelText: string): Promise<string | undefined> {
+async function chatPresentationOf(
+  modelText: string,
+  stopReason: "stop" | "length" = "stop",
+): Promise<Readonly<{ text: string | undefined; stopReason: string | undefined }>> {
   const listeners = new Set<(event: NativeCompanionContentEvent) => void>();
   const finals: string[] = [];
+  const handedReasons: string[] = [];
   const rejections: string[] = [];
   const observer = attachNativeCompanionContent(
     Object.freeze({
@@ -650,8 +768,9 @@ async function chatPresentationOf(modelText: string): Promise<string | undefined
     }),
     {
       onPreviewDelta: async () => undefined,
-      onFinalText: async (value) => {
+      onFinalText: async (value, reason) => {
         finals.push(value);
+        handedReasons.push(reason);
       },
       onRejected: async (reason) => {
         rejections.push(reason);
@@ -663,7 +782,7 @@ async function chatPresentationOf(modelText: string): Promise<string | undefined
   const message = Object.freeze({
     role: "assistant" as const,
     content: [Object.freeze({ type: "text" as const, text: modelText })],
-    stopReason: "stop",
+    stopReason,
     responseId: "assistant_action_beat",
   });
   for (const listener of [...listeners]) {
@@ -672,7 +791,7 @@ async function chatPresentationOf(modelText: string): Promise<string | undefined
   }
   await observer.close();
   assert.deepEqual(rejections, [], "the Chat presentation must not reject a reply that carries a beat");
-  return finals[0];
+  return Object.freeze({ text: finals[0], stopReason: handedReasons[0] });
 }
 
 /**

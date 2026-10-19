@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import {
+  CHAT_THREAD_SCHEMA_VERSION,
   claimMountedAttempt,
   createChatThreadStore,
   createProfileAwareChatThreadCreationCapability,
@@ -675,9 +676,10 @@ test("coordinator-branded World Info acknowledgement applies only the exact desi
 
 // A live v4 root holds ONE binding row per thread, and that row belongs to ONE
 // source family (the v4 CHECK required it); v5 keeps one row per slot. The fixture
-// below builds the real current root and then re-shapes ONLY the one table v5
-// changed (plus the recorded version), which is exactly the difference a live v4
-// root has, so the migration runs against a real old-shaped file.
+// below builds the real current root and then re-shapes ONLY the tables that a
+// later schema version changed (v5's binding row, v6's message-entry binding, v7's
+// presentation column) plus the recorded version, which is exactly the difference a
+// live v4 root has, so the migration runs against a real old-shaped file.
 //
 // The first version of this fixture wrote ONE thread carrying both families and
 // then tried to fold them back into a single v4 row: that cannot exist. The
@@ -788,6 +790,9 @@ test("a v4 root keeps the companion's own book and the attached managed item acr
       -- A genuine v4 root predates the message -> session-entry binding (schema v6), so the fixture drops
       -- it too: the migration under test has to add it back, not find it already there.
       DROP TABLE tavern_message_entries;
+      -- A genuine v4 root also predates the generation's own stop fact (schema v7), so the fixture drops
+      -- that column too: the migration under test has to add it back, not find it already there.
+      ALTER TABLE tavern_turn_presentations DROP COLUMN truncated;
       PRAGMA user_version = 4;
     `);
     } finally {
@@ -813,7 +818,7 @@ test("a v4 root keeps the companion's own book and the attached managed item acr
       const slots = (
         inspected.prepare("SELECT slot FROM tavern_thread_world_info_bindings ORDER BY slot, thread_id").all() as any[]
       ).map((row) => row.slot);
-      assert.equal(version, 6);
+      assert.equal(version, CHAT_THREAD_SCHEMA_VERSION);
       assert.deepEqual(slots, ["companion", "managed"]);
     } finally {
       inspected.close();

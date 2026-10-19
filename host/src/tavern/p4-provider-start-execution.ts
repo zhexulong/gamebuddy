@@ -331,7 +331,7 @@ export async function runMountedProviderStart(
           }
           previewPublished = true;
         },
-        onFinalText: async (text) => {
+        onFinalText: async (text, stopReason) => {
           // Also finalize the voice sink so the speech job is settled.
           if (speechSink !== undefined) {
             try {
@@ -348,6 +348,12 @@ export async function runMountedProviderStart(
           if (reservation === undefined) return;
           try {
             const committedAtMs = Date.now();
+            // The one generation this turn records ended either at its own last
+            // token or at the model's length ceiling, and Pi said which. That
+            // fact belongs to THIS generation's durable presentation record, so a
+            // later Regenerate - a turn of its own, with a record of its own -
+            // neither inherits it nor lends it back.
+            const truncated = stopReason === "length" ? { truncated: true as const } : {};
             // A same-position variant turn re-generates an existing reply: it
             // appends a swipe to that exact message instead of inserting a new
             // companion row. The target comes only from the coordinator-bound
@@ -366,6 +372,7 @@ export async function runMountedProviderStart(
                       occurredAtMs: committedAtMs,
                     },
                     committedAtMs,
+                    ...truncated,
                   }
                 : {
                     operation: "commit_variant",
@@ -376,6 +383,7 @@ export async function runMountedProviderStart(
                       occurredAtMs: committedAtMs,
                     },
                     committedAtMs,
+                    ...truncated,
                   },
             );
             if (committed.status !== "presentation_committed")

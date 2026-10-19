@@ -26,7 +26,7 @@ function nativeText(text: string) {
 function nativeAssistant(
   content: readonly ReturnType<typeof nativeText>[],
   responseId = "assistant_01",
-  stopReason: "stop" | "aborted" | "error" = "stop",
+  stopReason: "stop" | "length" | "aborted" | "error" = "stop",
 ) {
   return Object.freeze({
     role: "assistant" as const,
@@ -843,6 +843,59 @@ test("Chat commits the model's exact text, keeping its asterisk action beat", as
   );
 });
 
+test("a generation that stopped at the model's length ceiling records that fact on its own commit", async () => {
+  // The player's real pain: a reply cut off by the model's output ceiling is
+  // indistinguishable from a finished one, so nothing tells them whether to ask
+  // again. The fact comes from Pi's own stop reason and nothing else, and it is
+  // written together with the reply it describes - on this turn's presentation
+  // record, which is the record of the one generation that produced that reply.
+  for (const [stopReason, expected] of [
+    ["length", true],
+    ["stop", false],
+  ] as const) {
+    let observer: Observer | undefined;
+    const { scope, presentationTransitions } = createScope({
+      presentationCommitted: () => true,
+      runtimeSession: Object.freeze({
+        installTavernProviderStartObserver(onStart: Observer) {
+          observer = onStart;
+          return () => undefined;
+        },
+        session: (() => {
+          const listeners = new Set<(event: unknown) => void>();
+          const emit = (event: unknown): void => {
+            for (const listener of [...listeners]) listener(event);
+          };
+          return Object.freeze({
+            subscribe(listener: (event: unknown) => void) {
+              listeners.add(listener);
+              return () => listeners.delete(listener);
+            },
+            async prompt() {
+              const partial = nativeAssistant([nativeText("")]);
+              emit({ type: "message_start", message: partial });
+              emit({
+                type: "message_end",
+                message: nativeAssistant([nativeText("Half a reply.")], "assistant_01", stopReason),
+              });
+              observer?.(Object.freeze({ statusClass: "success" as const }));
+            },
+          });
+        })(),
+      }),
+    });
+
+    const result = await runMountedProviderStart(scope);
+
+    assert.equal(result.outcome, "completed");
+    const commit = presentationTransitions[0];
+    assert.equal(commit?.operation, "commit_presentation");
+    // The fact is present or absent, never a second spelling of "finished".
+    assert.equal(commit !== undefined && "truncated" in commit, expected, stopReason);
+    assert.equal(commit?.operation === "commit_presentation" && commit.message.text, "Half a reply.", stopReason);
+  }
+});
+
 test("P4c terminalizes a rejected prompt after an observation as durable runtime failure", async () => {
   let observer: Observer | undefined;
   let promptCalls = 0;
@@ -1096,7 +1149,7 @@ test("the pre-fix reading is what this gate catches: a Stop's own abort becomes 
  * and the provider-start observer that classifies the answer. `events` receives the
  * name of each Host step a variant turn orders, so a test can read that order.
  */
-function variantRuntimeSession(reply: string, events: string[] = []): object {
+function variantRuntimeSession(reply: string, events: string[] = [], stopReason: "stop" | "length" = "stop"): object {
   let observer: Observer | undefined;
   return Object.freeze({
     installTavernProviderStartObserver(onStart: Observer) {
@@ -1117,7 +1170,7 @@ function variantRuntimeSession(reply: string, events: string[] = []): object {
           events.push("prompt");
           const partial = nativeAssistant([nativeText("")]);
           emit({ type: "message_start", message: partial });
-          emit({ type: "message_end", message: nativeAssistant([nativeText(reply)]) });
+          emit({ type: "message_end", message: nativeAssistant([nativeText(reply)], "assistant_01", stopReason) });
           observer?.(Object.freeze({ statusClass: "success" as const }));
         },
       });
@@ -1165,6 +1218,32 @@ test("a variant turn branches before its prompt and never mints a new message id
   if (commit?.operation === "commit_variant") {
     assert.equal(commit.variant.targetMessageId, "response_01");
     assert.equal(commit.variant.text, "Regenerated reply.");
+  }
+});
+
+test("a variant turn's own stop reason is the variant's, and the reply it replaced is not described by it", async () => {
+  // Regenerate re-asks one position. The variant is a NEW generation with a
+  // record of its own, so a variant the model cut off at its length ceiling is
+  // truncated on its own terms - and a variant the model finished writes no
+  // fact, whatever the reply it replaced had.
+  for (const [stopReason, expected] of [
+    ["length", true],
+    ["stop", false],
+  ] as const) {
+    const { scope, presentationTransitions } = createScope({
+      facts: variantFacts,
+      presentationCommitted: () => true,
+      branchVariantAnchor: async () => branchedVariant(),
+      runtimeSession: variantRuntimeSession("Regenerated reply.", [], stopReason),
+    });
+
+    const result = await runMountedProviderStart(scope);
+
+    assert.equal(result.outcome, "completed", stopReason);
+    const commit = presentationTransitions[0];
+    assert.equal(commit?.operation, "commit_variant", stopReason);
+    assert.equal(commit !== undefined && "truncated" in commit, expected, stopReason);
+    assert.equal(commit?.operation === "commit_variant" && commit.variant.targetMessageId, "response_01", stopReason);
   }
 });
 

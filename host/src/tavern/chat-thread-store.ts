@@ -14,7 +14,7 @@ import {
  * append-only messages, swipe variants, and turn lifecycle; it neither reads
  * Pi/Magic Context state nor implements message edit/branch or any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 6 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 7 as const;
 export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
@@ -470,12 +470,22 @@ export type RunningTurn = Readonly<{
  * P5's bounded presentation sub-record. `expressionId` equals the durable
  * companion message identifier; `cancelEpoch` is bound at admission and
  * revalidated immediately before commit; it is never provider content.
+ *
+ * `truncated` is the one fact this record carries about the GENERATION that
+ * wrote the text: the provider stopped at the model's output ceiling, so the
+ * reply the player can read is a prefix rather than a whole. It is absent for
+ * every other stop reason, and for a generation whose provider reported none -
+ * a cut-off reply and a finished one are indistinguishable in the text alone,
+ * so nothing is claimed when the reason is unknown. Because one turn is one
+ * generation, a later Regenerate is a turn with a record of its own and neither
+ * inherits nor lends this fact.
  */
 export type PresentationCommitV1 = Readonly<{
   expressionId: string;
   messageId: string;
   cancelEpoch: number;
   committedAtMs: number;
+  truncated?: true;
 }>;
 
 export type PresentationCommittedTurn = Omit<RunningTurn, "status"> &
@@ -932,12 +942,16 @@ export type PresentationTransition =
       cancelEpoch: number;
       message: Readonly<{ messageId: string; text: string; occurredAtMs: number }>;
       committedAtMs: number;
+      /** The generation's own stop reason, when it was the model's length ceiling. */
+      truncated?: true;
     }>
   | Readonly<{
       operation: "commit_variant";
       cancelEpoch: number;
       variant: Readonly<{ targetMessageId: string; text: string; occurredAtMs: number }>;
       committedAtMs: number;
+      /** The variant's own stop reason, when it was the model's length ceiling. */
+      truncated?: true;
     }>
   | Readonly<{ operation: "claim_completion"; claimedAtMs: number }>
   | Readonly<{ operation: "complete"; completedAtMs: number }>
@@ -1373,6 +1387,19 @@ const MESSAGE_ENTRIES_TABLE_V6 = `
     );
 `;
 
+/**
+ * v6 recorded nothing about WHY a generation stopped, so a reply cut off by the
+ * model's length ceiling was written exactly like a finished one and the player
+ * could not tell whether to ask again. v7 adds that one fact to the presentation
+ * record - the record of the generation itself - and nothing else changes. A v6
+ * root's existing rows start at 0: their stop reason was never observed, and the
+ * surface says nothing about a length ceiling it cannot prove.
+ */
+const TURN_PRESENTATION_TRUNCATION_V7 = `
+    ALTER TABLE tavern_turn_presentations
+      ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0 CHECK(truncated IN (0, 1));
+`;
+
 function initSchema(db: DatabaseSync): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   const version = Number(versionRow?.user_version ?? 0);
@@ -1382,9 +1409,17 @@ function initSchema(db: DatabaseSync): void {
   }
   // v5 recorded no message -> Pi entry binding at all, so a single mid-transcript
   // delete had no way to name the session entry the row it removes was carried by
-  // and could only guess from a position. v6 adds the binding; nothing else changes.
+  // and could only guess from a position. v6 adds the binding; v7 adds the
+  // generation's own stop fact to the presentation record. Nothing else changes.
   if (version === 5) {
     db.exec(MESSAGE_ENTRIES_TABLE_V6);
+    db.exec(TURN_PRESENTATION_TRUNCATION_V7);
+    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
+    assertNormalizedSchema(db);
+    return;
+  }
+  if (version === 6) {
+    db.exec(TURN_PRESENTATION_TRUNCATION_V7);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1395,6 +1430,7 @@ function initSchema(db: DatabaseSync): void {
   if (version === 4) {
     migrateWorldInfoBindingsToSlots(db);
     db.exec(MESSAGE_ENTRIES_TABLE_V6);
+    db.exec(TURN_PRESENTATION_TRUNCATION_V7);
     assertNormalizedSchema(db);
     return;
   }
@@ -1558,7 +1594,8 @@ ${WORLD_INFO_BINDINGS_TABLE_V5}
       expression_id TEXT NOT NULL,
       message_id TEXT NOT NULL,
       cancel_epoch INTEGER NOT NULL CHECK(cancel_epoch >= 0),
-      committed_at_ms INTEGER NOT NULL
+      committed_at_ms INTEGER NOT NULL,
+      truncated INTEGER NOT NULL DEFAULT 0 CHECK(truncated IN (0, 1))
     );
 
     CREATE TABLE tavern_turn_terminalizations (
@@ -1723,6 +1760,15 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     (db.prepare("PRAGMA table_info(tavern_turn_variants)").all() as any[]).map((column) => column.name),
   );
   if (["turn_id", "target_message_id", "anchor_message_id"].some((column) => !variantColumns.has(column)))
+    throw new Error("chat_thread_schema_mismatch");
+  const presentationColumns = new Set(
+    (db.prepare("PRAGMA table_info(tavern_turn_presentations)").all() as any[]).map((column) => column.name),
+  );
+  if (
+    ["turn_id", "expression_id", "message_id", "cancel_epoch", "committed_at_ms", "truncated"].some(
+      (column) => !presentationColumns.has(column),
+    )
+  )
     throw new Error("chat_thread_schema_mismatch");
   const bindingColumns = new Set(
     (db.prepare("PRAGMA table_info(tavern_thread_world_info_bindings)").all() as any[]).map((column) => column.name),
@@ -2979,7 +3025,8 @@ export function createChatThreadStore(
             if (
               current.turnLedger?.status !== "presentation_committed" ||
               current.turnLedger.presentation.expressionId !== command.message.messageId ||
-              current.turnLedger.presentation.cancelEpoch !== command.cancelEpoch
+              current.turnLedger.presentation.cancelEpoch !== command.cancelEpoch ||
+              (current.turnLedger.presentation.truncated ?? false) !== (command.truncated ?? false)
             )
               throw new Error("chat_thread_message_id_conflict");
             nextLedger = current.turnLedger;
@@ -2992,6 +3039,7 @@ export function createChatThreadStore(
               messageId: command.message.messageId,
               cancelEpoch: command.cancelEpoch,
               committedAtMs: command.committedAtMs,
+              ...(command.truncated === true ? { truncated: true as const } : {}),
             }),
           );
           nextLedger = freezePresentationCommittedTurn({
@@ -3029,6 +3077,7 @@ export function createChatThreadStore(
             if (
               ledger.presentation.expressionId !== command.variant.targetMessageId ||
               ledger.presentation.cancelEpoch !== command.cancelEpoch ||
+              (ledger.presentation.truncated ?? false) !== (command.truncated ?? false) ||
               target.text !== command.variant.text
             )
               throw new Error("chat_variant_commit_conflict");
@@ -3042,6 +3091,7 @@ export function createChatThreadStore(
               messageId: command.variant.targetMessageId,
               cancelEpoch: command.cancelEpoch,
               committedAtMs: command.committedAtMs,
+              ...(command.truncated === true ? { truncated: true as const } : {}),
             }),
           );
           nextLedger = freezePresentationCommittedTurn({
@@ -3110,7 +3160,7 @@ export function createChatThreadStore(
             acceptedAtMs: ledger.acceptedAtMs,
             attempt: ledger.attempt,
             observation: ledger.observation,
-            presentation: presentationOf(ledger),
+            presentation: presentedCommit(ledger),
             reasonCode: command.reasonCode,
             failedAtMs: command.failedAtMs,
           });
@@ -3384,14 +3434,15 @@ function persistTurn(db: DatabaseSync, threadId: string, ledger: ChatTurnLedger)
       "statusClass" in ledger.observation ? ledger.observation.statusClass : null,
       ledger.observation.observedAtMs,
     );
-  const presentation = presentationOf(ledger);
+  const presentation = presentedCommit(ledger);
   if (presentation)
-    db.prepare("INSERT INTO tavern_turn_presentations VALUES (?, ?, ?, ?, ?)").run(
+    db.prepare("INSERT INTO tavern_turn_presentations VALUES (?, ?, ?, ?, ?, ?)").run(
       ledger.turnId,
       presentation.expressionId,
       presentation.messageId,
       presentation.cancelEpoch,
       presentation.committedAtMs,
+      presentation.truncated === true ? 1 : 0,
     );
   db.prepare("INSERT INTO tavern_turn_terminalizations VALUES (?, ?, ?, ?, ?, ?, ?)").run(
     ledger.turnId,
@@ -3457,6 +3508,7 @@ function readTurnLedger(db: DatabaseSync, row: any): ChatTurnLedger {
         messageId: presentation.message_id,
         cancelEpoch: presentation.cancel_epoch,
         committedAtMs: presentation.committed_at_ms,
+        ...(presentation.truncated === 1 ? { truncated: true as const } : {}),
       }
     : null;
 
@@ -4587,7 +4639,15 @@ function isTerminalLedger(ledger: ChatTurnLedger): boolean {
   return ledger.status === "completed" || ledger.status === "cancelled" || ledger.status === "failed";
 }
 
-function presentationOf(ledger: Exclude<ChatTurnLedger, AcceptedQueuedTurn>): PresentationCommitV1 | null {
+/**
+ * The durable presentation record the ledger holds, or null while the turn has
+ * committed none. It is the record of the ONE generation that produced the
+ * reply the player can see - one turn is one generation - which is why the
+ * browser projections read a reply's truncation fact from here rather than
+ * from the reply row, whose swipes outlive any single generation.
+ */
+function presentedCommit(ledger: ChatTurnLedger | null): PresentationCommitV1 | null {
+  if (ledger === null || !isTurnWithAttempt(ledger)) return null;
   if (
     ledger.status === "presentation_committed" ||
     ledger.status === "completion_claimed" ||
@@ -4597,6 +4657,33 @@ function presentationOf(ledger: Exclude<ChatTurnLedger, AcceptedQueuedTurn>): Pr
   if (ledger.status === "cancel_claimed" || ledger.status === "cancelled" || ledger.status === "failed")
     return ledger.presentation;
   return null;
+}
+
+/**
+ * The truncation fact a ledger contributes to the reply the browser is showing,
+ * or `undefined` when it contributes none.
+ *
+ * Two things must hold at once, and neither is a guess. The generation this
+ * ledger records must be the one that wrote the visible text: a same-position
+ * Regenerate appends its own swipe to the reply row and makes it active, so the
+ * newest swipe standing is what makes the text on screen this generation's, and
+ * a player who swiped back is reading a text this generation did not write. And
+ * that generation must have ended at the model's length ceiling - the one fact
+ * Pi's stop reason gives, which is never inferred from the text. Anything else -
+ * a finished generation, a generation whose provider reported no stop reason at
+ * all, a turn that committed nothing, another generation's text on screen -
+ * contributes nothing, because silence is the honest answer where the fact is
+ * not the browser's to state.
+ */
+export function visibleReplyTruncation(
+  messages: readonly ChatThreadMessage[],
+  ledger: ChatTurnLedger | null,
+): true | undefined {
+  const presentation = presentedCommit(ledger);
+  if (presentation?.truncated !== true) return undefined;
+  const row = messages.find((message) => message.messageId === presentation.messageId);
+  if (row === undefined) return undefined;
+  return (row.activeSwipeIndex ?? 0) === (row.swipes?.length ?? 1) - 1 ? true : undefined;
 }
 
 function timestampFor(command: PresentationTransition): number {
@@ -4632,10 +4719,11 @@ function validatePresentationTransition(value: PresentationTransition): Presenta
       const cancelEpoch = value.cancelEpoch;
       const committedAtMs = value.committedAtMs;
       if (
-        !onlyKeys(value, ["operation", "cancelEpoch", "message", "committedAtMs"]) ||
+        !onlyKeys(value, ["operation", "cancelEpoch", "message", "committedAtMs", "truncated"]) ||
         !Number.isSafeInteger(cancelEpoch) ||
         (cancelEpoch as number) < 0 ||
         !isTimestamp(committedAtMs) ||
+        (value.truncated !== undefined && value.truncated !== true) ||
         !onlyKeys(message, ["messageId", "text", "occurredAtMs"])
       )
         break;
@@ -4650,6 +4738,7 @@ function validatePresentationTransition(value: PresentationTransition): Presenta
           messageId: message.messageId as string,
           cancelEpoch: cancelEpoch as number,
           committedAtMs: committedAtMs as number,
+          ...(value.truncated === true ? { truncated: true as const } : {}),
         }),
       );
       return Object.freeze({
@@ -4661,6 +4750,7 @@ function validatePresentationTransition(value: PresentationTransition): Presenta
           occurredAtMs: message.occurredAtMs as number,
         }),
         committedAtMs: committedAtMs as number,
+        ...(value.truncated === true ? { truncated: true as const } : {}),
       });
     }
     case "commit_variant": {
@@ -4669,10 +4759,11 @@ function validatePresentationTransition(value: PresentationTransition): Presenta
       const cancelEpoch = value.cancelEpoch;
       const committedAtMs = value.committedAtMs;
       if (
-        !onlyKeys(value, ["operation", "cancelEpoch", "variant", "committedAtMs"]) ||
+        !onlyKeys(value, ["operation", "cancelEpoch", "variant", "committedAtMs", "truncated"]) ||
         !Number.isSafeInteger(cancelEpoch) ||
         (cancelEpoch as number) < 0 ||
         !isTimestamp(committedAtMs) ||
+        (value.truncated !== undefined && value.truncated !== true) ||
         !onlyKeys(variant, ["targetMessageId", "text", "occurredAtMs"])
       )
         break;
@@ -4690,6 +4781,7 @@ function validatePresentationTransition(value: PresentationTransition): Presenta
           occurredAtMs: variant.occurredAtMs as number,
         }),
         committedAtMs: committedAtMs as number,
+        ...(value.truncated === true ? { truncated: true as const } : {}),
       });
     }
     case "claim_completion":
@@ -4756,7 +4848,12 @@ function assertP5ReadBack(
   ) {
     const committedExpressionId =
       operation === "commit_presentation" ? command.message.messageId : command.variant.targetMessageId;
+    const committedTruncated = command.truncated === true;
     if (ledger.presentation.expressionId !== committedExpressionId) throw new Error("chat_p5_readback_mismatch");
+    // The commit's own generation fact is part of what must round-trip through
+    // storage: a read-back that dropped it would leave a cut-off reply the
+    // surface can no longer say anything about.
+    if ((ledger.presentation.truncated ?? false) !== committedTruncated) throw new Error("chat_p5_readback_mismatch");
   }
   if (operation === "fail" && ledger.status === "failed" && ledger.reasonCode !== command.reasonCode)
     throw new Error("chat_p5_readback_mismatch");
@@ -4769,20 +4866,28 @@ function freezePresentationCommit(value: PresentationCommitV1): PresentationComm
     !isId(value.messageId) ||
     !Number.isSafeInteger(value.cancelEpoch) ||
     value.cancelEpoch < 0 ||
-    !isTimestamp(value.committedAtMs)
+    !isTimestamp(value.committedAtMs) ||
+    (value.truncated !== undefined && value.truncated !== true)
   )
     throw new Error("invalid_presentation_commit");
-  return Object.freeze({ ...value });
+  return Object.freeze({
+    expressionId: value.expressionId,
+    messageId: value.messageId,
+    cancelEpoch: value.cancelEpoch,
+    committedAtMs: value.committedAtMs,
+    ...(value.truncated === true ? { truncated: true as const } : {}),
+  });
 }
 
 function validatePresentationCommit(value: unknown): PresentationCommitV1 {
-  if (!isRecord(value) || !onlyKeys(value, ["expressionId", "messageId", "cancelEpoch", "committedAtMs"]))
+  if (!isRecord(value) || !onlyKeys(value, ["expressionId", "messageId", "cancelEpoch", "committedAtMs", "truncated"]))
     throw new Error("invalid_presentation_commit");
   return freezePresentationCommit({
     expressionId: value.expressionId as string,
     messageId: value.messageId as string,
     cancelEpoch: value.cancelEpoch as number,
     committedAtMs: value.committedAtMs as number,
+    ...(value.truncated === true ? { truncated: true as const } : {}),
   });
 }
 
@@ -4973,7 +5078,7 @@ function validateTurnIntegrity(
   );
   if (matching.length !== 1) throw new Error("invalid_chat_thread_turn_ledger");
   if (isTurnWithAttempt(turnLedger)) {
-    const presentation = presentationOf(turnLedger);
+    const presentation = presentedCommit(turnLedger);
     if (presentation !== null) {
       const bubble = messages.find((message) => message.messageId === presentation.messageId);
       if (bubble === undefined || bubble.role !== "companion" || bubble.kind !== "response")
