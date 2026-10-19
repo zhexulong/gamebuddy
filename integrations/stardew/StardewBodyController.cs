@@ -123,6 +123,28 @@ internal sealed class StardewBodyController
             return false;
         }
 
+        // ASK THE CHEAP QUESTION FIRST.
+        //
+        // The engine finder below searches synchronously on the game thread with a 40 000-node budget, and a target
+        // with no route at all makes it spend that whole budget before returning null - tens of seconds of frozen
+        // frames, or worse. That is the shape the multi-day runs die in: every frozen log ends at a dequeued
+        // navigation execution (measured 2026-10-19), i.e. inside this method.
+        //
+        // The Mod already owns a bounded cardinal flood that answers the cheaper question - is the target's
+        // neighbourhood even in the actor's walkable component - and it is the same probe the refusal evidence below
+        // already reports. Asking it first costs a bounded flood and keeps the engine call for the cases that can
+        // actually succeed.
+        if (AssessNativeReachability(localPlayer, specification) is { ComponentContainsTarget: false } unreachable)
+        {
+            reasonCode = "no_native_path";
+            evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName};native=not_attempted;probe=cardinal_flood;route_exists_cardinal=false;component_tiles={unreachable.ComponentTiles};target_enclosed={unreachable.TargetEnclosed.ToString().ToLowerInvariant()};gate=reachability_flood"
+                + (unreachable.TargetEnclosed ? $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}" : string.Empty)
+                + $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
+                + $";target_walkable={(IsWalkableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
+                + $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile)}";
+            return false;
+        }
+
         PathFindController plannedPath = this.BuildNativePath(specification, localPlayer);
         if (plannedPath.pathToEndPoint is null || plannedPath.pathToEndPoint.Count == 0)
         {
