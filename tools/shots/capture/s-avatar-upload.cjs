@@ -61,7 +61,13 @@ function pngOf(color) {
   ]);
 }
 
-const digestOf = (bytes) => createHash("sha256").update(bytes).digest("hex").slice(0, 16);
+// The FULL sha256: it is what the face publishes as the ETag, so comparing the digest is how "the bytes
+// the face served are the bytes the picker handed over" is proven. The log shows the first 16 hex for
+// readability; the comparison must never use a truncated form (an earlier version of this driver compared
+// byte LENGTHS, and the two 1x1 fixtures happened to be the same length - so it printed a false negative
+// for a replacement that had in fact worked).
+const digestOf = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const shortDigest = (digest) => digest.slice(0, 16);
 
 const CONTROL_HELPER = `
 window.__avatarControlOf = () => {
@@ -131,7 +137,6 @@ const faceOf = async (url) => {
     })),
   );
   say(JSON.stringify(roster, null, 1));
-
   // A companion without a picture is the case this feature exists for. If the roster has none, say so
   // rather than silently measuring the one that already had a preset picture.
   const withoutPicture = roster.filter((row) => !row.hasPicture);
@@ -174,7 +179,8 @@ const faceOf = async (url) => {
 
   say("=== ITEM: a real PNG goes in ===");
   const firstPng = pngOf([200, 90, 120]);
-  say(`the file handed to the picker: bytes=${firstPng.length} sha256=${digestOf(firstPng)}`);
+  const firstDigest = digestOf(firstPng);
+  say(`the file handed to the picker: bytes=${firstPng.length} sha256=${shortDigest(firstDigest)}`);
   await picker.setInputFiles({ name: "chosen-picture.png", mimeType: "image/png", buffer: firstPng });
   await page.waitForTimeout(2600);
   const afterUpload = await page.evaluate(() => window.__avatarControlOf());
@@ -190,12 +196,15 @@ const faceOf = async (url) => {
     say(`the face for that address: ${JSON.stringify(face.first)}`);
     say(`revalidated with the same ETag: ${JSON.stringify(face.revalidated)}`);
     const served = face.first;
-    say(`the served bytes are the file handed over (by the first 16 hex of sha256 vs the bytes' length): servedBytes=${served.byteLength} uploadedBytes=${firstPng.length} equal=${served.byteLength === firstPng.length}`);
+    say(
+      `the face serves the file handed over: etagMatchesTheDigest=${served.etag === `"${firstDigest}"`} etag=${JSON.stringify(served.etag)} digest=${JSON.stringify(firstDigest)} bytes=${served.byteLength}/${firstPng.length}`,
+    );
   }
 
   say("=== ITEM: a second, different picture replaces it (the revalidation claim) ===");
   const secondPng = pngOf([40, 160, 90]);
-  say(`the second file: bytes=${secondPng.length} sha256=${digestOf(secondPng)}`);
+  const secondDigest = digestOf(secondPng);
+  say(`the second file: bytes=${secondPng.length} sha256=${shortDigest(secondDigest)}`);
   await picker.setInputFiles({ name: "another-picture.png", mimeType: "image/png", buffer: secondPng });
   await page.waitForTimeout(2600);
   const afterSecond = await page.evaluate(() => window.__avatarControlOf());
@@ -203,7 +212,9 @@ const faceOf = async (url) => {
   if (afterSecond.avatar?.src != null) {
     const face = await page.evaluate(faceOf, afterSecond.avatar.src);
     say(`the face after the replacement: ${JSON.stringify(face.first)}`);
-    say(`same address, different bytes served: ${face.first.byteLength === secondPng.length && face.first.byteLength !== firstPng.length}`);
+    say(
+      `the replacement is served, decided by content: etagMatchesTheNewDigest=${face.first.etag === `"${secondDigest}"`} etagChanged=${face.first.etag !== `"${firstDigest}"`} etag=${JSON.stringify(face.first.etag)}`,
+    );
   }
   await shot(page, "90-avatar-upload-replaced-1440x900.png");
 
