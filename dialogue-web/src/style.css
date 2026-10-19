@@ -799,6 +799,14 @@
     margin-top: 4px;
   }
 
+  /* While a row is being rewritten the strip IS the editor, so it takes the bubble's own place in
+   the flow (MessageBubble): the 4 px that separate a strip from the bubble above it go with the
+   bubble, and the field starts exactly where the words it holds were read. Without this the editor
+   sat 4 px below the box the bubble had, which is the gap this ruling is about. */
+  .message-actions-editing {
+    margin-top: 0;
+  }
+
   /* The reply's own length-ceiling line. It is not a failure notice: the reply is real and on
    screen, just unfinished, so it takes the muted secondary tone of the row's other metadata and
    none of the problem styling. It is a block of its own BELOW the control strip, so the pager,

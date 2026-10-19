@@ -26,6 +26,12 @@ import { expect, test, type Page } from "@playwright/test";
  * 4. `stays open until the transcript holds what was sent` - the words the player rewrote are theirs
  *    until the Host says otherwise: on a refusal the field keeps them, and it closes only when the row
  *    the reread returned carries exactly what was saved.
+ * 5. `the bubble gives way to the editor in place` - the owner's ruling (audit 2026-10-19): the row used
+ *    to keep rendering the bubble AND open the field under it, so the same words stood on screen twice
+ *    and the row grew to the bubble plus a two-row editor. The bubble is not rendered while the editor
+ *    is open, the editor's field starts at the top of the box the bubble had, and Cancel or Escape
+ *    brings the bubble back at that same box. The copies that are really painted are counted, so
+ *    "once" is a number rather than a claim.
  */
 
 const CONVERSATION = [
@@ -46,6 +52,17 @@ type EditProbe = {
     stripHeight: number;
   } | null;
   editForm(handle: string): { value: string | null; save: string | null; cancel: string | null } | null;
+  editInPlace(
+    handle: string,
+    text: string,
+  ): {
+    row: { top: number; bottom: number; height: number };
+    bubble: { top: number; bottom: number; height: number } | null;
+    field: { top: number; bottom: number; height: number } | null;
+    textNodes: number;
+    carriers: readonly string[];
+    copies: number;
+  } | null;
   editCalls(): readonly { handle: string; order: number; text: string }[];
   resetEditCalls(): void;
   applyEditedText(handle: string, text: string): void;
@@ -137,6 +154,59 @@ test("opening the editor gives the words the player wrote, and nothing is sent u
   expect(await page.evaluate(() => window.chatProbe.editForm("h1"))).toBeNull();
   expect(await page.evaluate(() => window.chatProbe.editControl("h1"))).not.toBeNull();
   expect(await page.evaluate(() => window.chatProbe.editCalls())).toEqual([]);
+});
+
+test("the bubble gives way to the editor in place, and Escape restores it at the same box", async ({ page }) => {
+  await openConversation(page);
+
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 400, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const where = `${viewport.width}x${viewport.height}`;
+
+    // Both sides of the exchange share the one editor, so both are measured: the player's own row
+    // and her reply.
+    for (const target of [
+      { handle: "h1", text: "Where are we?" },
+      { handle: "h2", text: "On the pier." },
+    ]) {
+      const copies = () =>
+        page.evaluate((ask) => window.chatProbe.editInPlace(ask.handle, ask.text), target);
+
+      const closed = await copies();
+      expect(closed, where).not.toBeNull();
+      // Closed: the words are on screen once, in the bubble.
+      expect(closed?.copies, where).toBe(1);
+      expect(closed?.field, where).toBeNull();
+
+      await page.click(`[data-handle="${target.handle}"] [data-testid="message-edit"]`);
+      const open = await copies();
+      console.log(
+        `MEASURE in-place ${where} ${target.handle}: row ${closed?.row.height} -> ${open?.row.height} | ` +
+          `bubble ${JSON.stringify(closed?.bubble)} -> ${JSON.stringify(open?.bubble)} | ` +
+          `field ${JSON.stringify(open?.field)} | copies ${open?.copies} (text nodes ${open?.textNodes}, carriers ${JSON.stringify(open?.carriers)})`,
+      );
+      // The bubble is GONE rather than repeated, so the words stand on screen once - in the field,
+      // which is the one place they can be read while the row is being rewritten.
+      expect(open?.bubble, where).toBeNull();
+      expect(open?.textNodes, where).toBe(0);
+      expect(open?.copies, where).toBe(1);
+      expect(open?.field?.height, where).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
+      // The editor takes the bubble's own place in the flow: the field starts at the top of the box
+      // the bubble had, instead of stacking under it and growing the row by both heights.
+      expect(open?.field?.top, where).toBe(closed?.bubble?.top);
+
+      // Escape is the other way out, and it is lossless: the bubble comes back at the box it had.
+      await page.keyboard.press("Escape");
+      const restored = await copies();
+      expect(restored?.field, where).toBeNull();
+      expect(restored?.copies, where).toBe(1);
+      expect(restored?.bubble, where).toEqual(closed?.bubble);
+      expect(restored?.row.height, where).toBe(closed?.row.height);
+    }
+  }
 });
 
 test("the save sends the words and the position the page rendered, and closes on the transcript that holds them", async ({

@@ -304,6 +304,11 @@ export const MessageBubble = memo(function MessageBubble({
     setEditor(Object.freeze({ text: message.text, sent: null }));
   };
   /**
+   * True while this row's strip IS the editor: the bubble has given way to it and the strip takes
+   * the bubble's own place in the flow (`.message-actions-editing`).
+   */
+  const editing = editor !== null;
+  /**
    * The editor closes on the one fact that says the edit landed: the row the transcript now carries
    * holds exactly the words that were sent, and no mutation is in flight. A refusal therefore leaves
    * the field and the player's words exactly as they typed them - a reply still being written costs
@@ -314,6 +319,31 @@ export const MessageBubble = memo(function MessageBubble({
     if (pending !== null || message.text !== editor.sent) return;
     setEditor(null);
   }, [editor, pending, message.text]);
+  /**
+   * Escape closes the field exactly as Cancel does, and the row OWNS that key while the field is
+   * open.
+   *
+   * The listener is on the document rather than on the editor's own box: the control that opened
+   * the field is the control the field REPLACED, so the press leaves focus on nothing in
+   * particular, and a key that only worked while the caret happened to be in the field would be a
+   * keyboard path that depends on where the pointer last landed. It is inert while the mutation is
+   * in flight, which is the state Cancel is disabled in - one rule, two ways of asking for it.
+   *
+   * `stopPropagation` is the same ownership the drawer and the AppBar's folded disclosure take: the
+   * shell's own Escape steps out of another surface, and a half-typed correction must not be what
+   * it steps out on top of.
+   */
+  useEffect(() => {
+    if (!editing) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      if (pending !== null) return;
+      setEditor(null);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [editing, pending]);
   // Whether this message's strip has a pager at all: the strip exists for its own
   // controls, so a message with neither keeps no empty row under the bubble.
   const hasControls =
@@ -354,13 +384,22 @@ export const MessageBubble = memo(function MessageBubble({
         )}
         {/* Both sides author text, and a `*beat*` is the same format on both:
             the same sanitised Markdown renderer reads a person's words exactly as
-            it reads the companion's, so the identical beat cannot render two ways. */}
-        <MarkdownMessage
-          className="message-bubble"
-          text={message.text}
-          trailingHtml={CARET_MARKUP}
-          lang={languageTag}
-        />
+            it reads the companion's, so the identical beat cannot render two ways.
+
+            While this row is being rewritten the bubble GIVES WAY to the editor: the words then
+            stand on screen once, in the field, because the editor takes the bubble's own place in
+            the flow. The owner ruled it (audit 2026-10-19): the row kept rendering the bubble and
+            opened the field under it, so the same words were printed twice and the row grew to the
+            bubble PLUS a two-row editor - half of a 400x800 screen. Cancel or Escape brings the
+            bubble back at the box it had. */}
+        {!editing && (
+          <MarkdownMessage
+            className="message-bubble"
+            text={message.text}
+            trailingHtml={CARET_MARKUP}
+            lang={languageTag}
+          />
+        )}
         {/* One strip under the bubble for everything a companion message can do
             to itself: choose another opening, swipe the set, ask again. The pager
             used to sit in the author line above the bubble while regenerate sat
@@ -370,7 +409,7 @@ export const MessageBubble = memo(function MessageBubble({
             going back to an earlier variant after asking again meant crossing the
             bubble. */}
         {!isPlayer && !deleteArmed && (hasControls || onRegenerate || rewindPoint !== undefined || rewindArmed) && (
-          <div className="message-actions">
+          <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
             {/* Her editor replaces the WHOLE strip rather than joining it, on the same rule the
                 player's row follows: the pager, the variant switcher, regenerate, the rewind and the
                 destructive Delete are exactly the controls an open Save/Cancel pair must not sit
@@ -572,7 +611,7 @@ export const MessageBubble = memo(function MessageBubble({
             uses rather than a second row of buttons: the words are already on the page, so the
             affordances that change them belong under them. */}
         {isPlayer && !deleteArmed && (onEdit !== undefined || deletePoint !== undefined) && (
-          <div className="message-actions">
+          <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
             {onEdit !== undefined &&
               (editor !== null ? (
                 <MessageEditor

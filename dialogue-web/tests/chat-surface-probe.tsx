@@ -450,12 +450,14 @@ const chatProbe = {
     rerender?.();
   },
   /**
-   * The open editor's field against the bubble it sits under and the strip it replaced. The field's own
-   * box is the subject: a slot narrower than the words being rewritten is the defect this measures.
+   * The open editor's field against the box the row's bubble had. The field's own box is the
+   * subject: a slot narrower than the words being rewritten is the defect this measures. The
+   * bubble is `null` while the editor is open, because the editor takes its place rather than
+   * sitting under it (the in-place ruling) - so a caller printing this prints "none", not a 0x0.
    */
   editFieldBox(handle: string): {
     field: { width: number; height: number; left: number; right: number };
-    bubble: { width: number; height: number; left: number; right: number };
+    bubble: { width: number; height: number; left: number; right: number } | null;
     strip: { width: number; height: number };
   } | null {
     const li = document.querySelector(`li[data-handle="${handle}"]`);
@@ -463,11 +465,62 @@ const chatProbe = {
     if (field === null || field === undefined) return null;
     const bubble = li?.querySelector(".message-bubble");
     const strip = li?.querySelector(".message-actions");
-    const empty = { width: 0, height: 0, left: 0, right: 0 };
     return {
       field: boxOf(field),
-      bubble: bubble === null || bubble === undefined ? empty : boxOf(bubble),
+      bubble: bubble === null || bubble === undefined ? null : boxOf(bubble),
       strip: strip === null || strip === undefined ? { width: 0, height: 0 } : boxOf(strip),
+    };
+  },
+  /**
+   * The row as it is being rewritten: the boxes the in-place edit is measured against, and how
+   * many copies of the row's words are ON SCREEN.
+   *
+   * A text node counts only while it is really painted (a node inside a `display: none` or
+   * otherwise clipped subtree has no client rect), and the editor's field counts as the one other
+   * place the words can be read - a field's value is not a text node, which is why the two are
+   * counted separately and added. A text node INSIDE a form control is that field's own value, so
+   * it is not counted twice: the field half of the sum is what carries it. One copy is the shape:
+   * the bubble gives way to the editor, and two is the defect this measures - the same words
+   * printed above the field that holds them.
+   */
+  editInPlace(
+    handle: string,
+    text: string,
+  ): {
+    row: { top: number; bottom: number; height: number };
+    bubble: { top: number; bottom: number; height: number } | null;
+    field: { top: number; bottom: number; height: number } | null;
+    textNodes: number;
+    carriers: readonly string[];
+    copies: number;
+  } | null {
+    const row = document.querySelector<HTMLElement>(`li[data-handle="${handle}"]`);
+    if (row === null) return null;
+    const box = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      return { top: Math.round(rect.top), bottom: Math.round(rect.bottom), height: Math.round(rect.height) };
+    };
+    const bubble = row.querySelector<HTMLElement>(".message-bubble");
+    const field = row.querySelector<HTMLTextAreaElement>('[data-testid="message-edit-field"]');
+    let textNodes = 0;
+    const carriers: string[] = [];
+    const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      if (!(node.textContent ?? "").includes(text)) continue;
+      const parent = node.parentElement;
+      if (parent === null || parent.getClientRects().length === 0) continue;
+      if (parent.closest("textarea, input, select") !== null) continue;
+      textNodes += 1;
+      carriers.push(`${parent.tagName.toLowerCase()}.${parent.className}`);
+    }
+    const inField = field !== null && field.value.includes(text);
+    return {
+      row: box(row),
+      bubble: bubble === null ? null : box(bubble),
+      field: field === null ? null : box(field),
+      textNodes,
+      carriers,
+      copies: textNodes + (inField ? 1 : 0),
     };
   },
   /** The number of transcript rows the list actually holds (the optimistic row is not one). */

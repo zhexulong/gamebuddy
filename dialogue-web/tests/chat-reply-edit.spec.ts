@@ -13,9 +13,10 @@ import { expect, test, type Page } from "@playwright/test";
  *    edit control on the other side of the exchange: 44 px, an accessible name that says the model
  *    reads the rewritten words from the next turn on, and NO second control (tonight's reviews
  *    complained twice about that strip becoming a wall of buttons). Opened, the strip IS the editor -
- *    the pager, the switcher, regenerate, the rewind and the destructive Delete step aside - and the
- *    field takes the panel's own measure instead of the 187 px slot it was. Measured from the layout
- *    at both widths, printed, and asserted.
+ *    the pager, the switcher, regenerate, the rewind and the destructive Delete step aside AND the
+ *    bubble gives up its place to the field (the in-place ruling) - and the field takes the panel's
+ *    own measure instead of the 187 px slot it was. Measured from the layout at both widths, printed,
+ *    and asserted.
  * 2. `rewrites that row in place` - the same handle, the same position, ONE bubble, the same number of
  *    rows, and the editor closes on the row the authoritative reread returned. An edit that appended a
  *    second bubble, or that left the editor open over a refusal, is the defect this measures.
@@ -64,7 +65,7 @@ type ReplyEditProbe = {
   editForm(handle: string): { value: string | null; save: string | null; cancel: string | null } | null;
   editFieldBox(handle: string): {
     field: { width: number; height: number; left: number; right: number };
-    bubble: { width: number; height: number; left: number; right: number };
+    bubble: { width: number; height: number; left: number; right: number } | null;
     strip: { width: number; height: number };
   } | null;
   editCalls(): readonly { handle: string; order: number; text: string }[];
@@ -115,7 +116,7 @@ test("her reply's edit control is one control in the strip she already has, with
     console.log(
       `MEASURE journey4.1 ${where}: control ${control?.width}x${control?.height} strip ${control?.stripHeight} | ` +
         `field ${box?.field.width}x${box?.field.height} left ${box?.field.left} right ${box?.field.right} | ` +
-        `bubble ${box?.bubble.width} left ${box?.bubble.left} right ${box?.bubble.right} | ` +
+        `bubble ${box?.bubble === null || box?.bubble === undefined ? "none (the editor took its place)" : box.bubble.width} | ` +
         `player bubble ${playerBubble?.width} strip ${playerStrip?.height} | ` +
         `rows ${rows.length} handles ${rows.map((row) => row.handle).join(",")}`,
     );
@@ -396,6 +397,11 @@ test("a refusal keeps its own sentence, and the conversation it refused is uncha
   await settle(1);
   await expect(page.locator('[data-testid="message-edit-form"]')).toHaveCount(1);
   await expect(page.locator('[data-testid="message-edit-field"]')).toHaveValue("At the pier.");
+  // While the editor is open the row shows the EDITOR, not its bubble (the in-place ruling), so the
+  // conversation is compared with the editor closed: Cancel brings the row's own words back, and the
+  // comparison is then exactly the one this test is about - a refused edit changed nothing.
+  await page.click('[data-testid="message-edit-cancel"]');
+  await expect(page.locator('[data-testid="message-edit-form"]')).toHaveCount(0);
   const after = await transcript();
   console.log(
     `MEASURE journey4.5a: rows ${before.rows} -> ${after.rows} handles ${after.handles.join(",")} words ${JSON.stringify(
@@ -410,6 +416,7 @@ test("a refusal keeps its own sentence, and the conversation it refused is uncha
   // The same refusal when the reread cannot run either: now the sentence IS what the player has, and a
   // stale order says the conversation moved on rather than "something went wrong".
   stateFails = true;
+  await startEdit();
   await save();
   await settle(2);
   await expect(page.getByRole("alert")).toContainText("The conversation moved");
