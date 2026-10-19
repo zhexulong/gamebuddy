@@ -716,8 +716,10 @@ export function fixtureActions(action) {
   // single-player night rollover's own LevelUpMenu over `connectNativeLocalClient`, and it is
   // registered in STARDEW_PUBLISHED_ACTION_GATES like every other gated action. So the fixture
   // owns it - the same action set its runner declares in EXPECTED_ACTIONS.
-  if (action === "respond_level_up")
-    return ["advance_day", "respond_level_up", "move_to_tile", "observe_scene"];
+  if (action === "respond_level_up") return ["advance_day", "respond_level_up", "move_to_tile", "observe_scene"];
+  // The MILESTONE half runs the SAME action set over a different world (the milestone skill left below 10 with its
+  // level-5 profession unchosen), so it is an action key of its own - exactly like the move-stall pair above.
+  if (action === "respond_level_up_branch") return ["advance_day", "respond_level_up", "move_to_tile", "observe_scene"];
   if (action === "advance_day") return ["advance_day"];
   throw new Error("invalid_native_local_fixture_action");
 }
@@ -787,6 +789,11 @@ export function fixtureScenario(actions, action) {
   // `respond_level_up` MUST be keyed off the action here, before the `advance_day` fallback below:
   // its action set contains advance_day, so that fallback would claim it and arm the ordinary
   // move-only world - where no level-up can ever be pending, unlike the world this action needs.
+  // The MILESTONE half: the same world as `respond_level_up` EXCEPT that the milestone skill sits at level 4 with its
+  // level-5 profession unchosen, which is the only world where `branch_a`/`branch_b` are live choices at all. It MUST
+  // be keyed here, before the `respond_level_up` branch below, or that branch would claim it and arm the ordinary
+  // world - where the action can only ever answer `modal_not_level_up` for a milestone.
+  if (action === "respond_level_up_branch") return "native_level_up_branch_v1";
   if (action === "respond_level_up") return "native_respond_level_up_v1";
   // The lifecycle action owns its own route and preconditions; it needs no
   // fixture scenario beyond the ordinary move-only world.
