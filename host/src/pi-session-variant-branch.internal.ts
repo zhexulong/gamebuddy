@@ -58,7 +58,7 @@ import type {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 
-import { chatTranscriptAssistantText } from "./native-companion-content.js";
+import { chatTranscriptAssistantText, chatTranscriptPlayerText } from "./native-companion-content.js";
 
 /** Every variant text one durable reply position has committed, oldest first. */
 export type PiVariantPosition = Readonly<{ variantTexts: readonly string[] }>;
@@ -476,25 +476,4 @@ function branchTo(session: PiVariantBranchSession, entryId: string | null): void
   if (entryId === null) session.sessionManager.resetLeaf();
   else session.sessionManager.branch(entryId);
   session.refreshContext();
-}
-
-/**
- * The exact text the durable Chat transcript holds for one Pi user message, or
- * `null` when the message is not the player's own line. Pi persists the prompt
- * the Host passed (`agent-session.js` `_prepareRun`), which is the store's own
- * player row text, so the comparison is exact.
- */
-function chatTranscriptPlayerText(message: unknown): string | null {
-  if (typeof message !== "object" || message === null) return null;
-  const value = message as { role?: unknown; content?: unknown };
-  if (value.role !== "user") return null;
-  if (typeof value.content === "string") return value.content.length === 0 ? null : value.content;
-  if (!Array.isArray(value.content)) return null;
-  const parts: string[] = [];
-  for (const part of value.content) {
-    if (typeof part !== "object" || part === null) continue;
-    const entry = part as { type?: unknown; text?: unknown };
-    if (entry.type === "text" && typeof entry.text === "string") parts.push(entry.text);
-  }
-  return parts.length === 0 ? null : parts.join("");
 }

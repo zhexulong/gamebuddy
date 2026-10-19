@@ -56,6 +56,7 @@ import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
 import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/continuity-semantic-production-store.js";
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
+import { anchorPiSessionGreeting } from "./pi-session-greeting-anchor.internal.js";
 import { modelProviderEntry, mergeModelProviderEntry } from "./tavern/pi-provider-store.js";
 import { protectedToolsForRun } from "./magic-context-protected-tools.js";
 
@@ -598,6 +599,31 @@ export async function createChatRuntimeConstructionInternal(
       const freshCatalog = await construction.materializeDesiredStableContextForPiSession(piSessionId);
       return replaceGameBuddyAuthoredStableCatalog(currentCapability, freshCatalog.scope, freshCatalog);
     };
+    // The greeting the Chat opened on becomes the conversation's own first assistant message, before
+    // any prompt exists, so the model knows what it just said to the player: the player's first reply
+    // has no referent otherwise, and as a system-prompt fact the model reads the greeting as setting,
+    // echoes it and confuses persons. It is a read-only history anchor (Order 0) - written once, while
+    // the session carries no line of the conversation, never rewritten, and never attributable to a
+    // turn: an attempt owns exactly the entries that existed before its prompt, and the ledger has no
+    // row for this one. `pi-session-greeting-anchor.internal.ts` owns that guard and its proof.
+    //
+    // Two orderings are deliberate. It is written last in the construction, so a mount that fails
+    // before this leaves no session file behind. And its own failure does not fail the mount: the
+    // anchor is context, not authority, and the conversation the player already has must still open
+    // (the same rule the durable entry binding follows in `recordSettledPromptEntries`).
+    if (construction.openingGreeting !== null) {
+      try {
+        const anchor = anchorPiSessionGreeting(runtime.session, construction.openingGreeting);
+        if (anchor.status === "withheld" && anchor.reason === "greeting_superseded")
+          process.stderr.write(
+            "[greeting] the session's own first line carries words the transcript's opening row no longer holds\n",
+          );
+      } catch (error) {
+        process.stderr.write(
+          `[greeting] the session anchor was not written: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
+    }
     return Object.freeze({
       runtime,
       authoredContextCapability,

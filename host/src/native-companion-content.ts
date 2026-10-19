@@ -407,6 +407,33 @@ export function attachNativeCompanionContent(
 }
 
 /**
+ * The exact text the durable Chat transcript holds for one Pi user message, or
+ * `null` when the message is not the player's own line. Pi persists the prompt
+ * the Host passed (`agent-session.js` `_prepareRun`), which is the store's own
+ * player row text, so the comparison is exact.
+ *
+ * The pair of projections lives here, beside the row each one writes: a Pi
+ * entry is compared against the transcript row it produced (`pi-session-variant-branch.internal.ts`)
+ * and against the line a mount anchors the session with (`pi-session-greeting-anchor.internal.ts`),
+ * and each comparison is exact only while every reader runs the one projection the row was written
+ * from.
+ */
+export function chatTranscriptPlayerText(message: unknown): string | null {
+  if (typeof message !== "object" || message === null) return null;
+  const value = message as { role?: unknown; content?: unknown };
+  if (value.role !== "user") return null;
+  if (typeof value.content === "string") return value.content.length === 0 ? null : value.content;
+  if (!Array.isArray(value.content)) return null;
+  const parts: string[] = [];
+  for (const part of value.content) {
+    if (typeof part !== "object" || part === null) continue;
+    const entry = part as { type?: unknown; text?: unknown };
+    if (entry.type === "text" && typeof entry.text === "string") parts.push(entry.text);
+  }
+  return parts.length === 0 ? null : parts.join("");
+}
+
+/**
  * The exact text the durable Chat transcript holds for one Pi assistant message,
  * or `null` when that message carries none this surface can persist.
  *

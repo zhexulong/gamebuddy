@@ -1131,6 +1131,7 @@ test(
     refusedUnknown, refusedOrder, refusedOpening, refusedGeneration,
     afterTexts: afterState.messages.map((message) => message.text),
     afterKinds: afterState.messages.map((message) => message.kind),
+    opening: beforeState.messages[0].text,
     settledTexts: settled.messages.map((message) => message.text),
     settledLedgerStatus: settled.turnLedger === null ? null : settled.turnLedger.status,
     openingKind: beforeState.messages[0].kind,
@@ -1160,14 +1161,16 @@ test(
     // The dropped turn is gone from the ledger too, and the kept one is the thread's current turn.
     assert.equal(output.settledLedgerStatus, "completed");
 
-    // The model's context, read from the session JSONL the next mount would read.
+    // The model's context, read from the session JSONL the next mount would read: the greeting the
+    // mount anchored heads it (Order 0, no transcript row and no turn of its own), and then the turns.
     assert.deepEqual(output.modelBefore, [
+      output.opening,
       "Synthetic player request",
       "First synthetic reply.",
       "A second line the player takes back.",
       "Second synthetic reply.",
     ]);
-    assert.deepEqual(output.modelAfter, ["Synthetic player request", "First synthetic reply."]);
+    assert.deepEqual(output.modelAfter, [output.opening, "Synthetic player request", "First synthetic reply."]);
     assert.equal(
       JSON.stringify(output.modelAfter).includes("Second synthetic reply."),
       false,
@@ -1296,6 +1299,7 @@ test(
     settledTexts: settled.messages.map((message) => message.text),
     settledSwipes: settled.messages.map((message) => message.swipes),
     settledLedgerStatus: settled.turnLedger === null ? null : settled.turnLedger.status,
+    opening: beforeState.messages[0].text,
     editedHandle: handleOf(beforeState.messages[1].messageId),
     editedMessageId: beforeState.messages[1].messageId,
     startCalls,
@@ -1369,15 +1373,18 @@ test(
     assert.deepEqual((output.settledSwipes as unknown[]).slice(0, 5), output.replySwipes);
     assert.equal(output.settledLedgerStatus, "completed");
 
-    // The model's context, read from the session JSONL the next mount would read: the new words for
-    // the player's line and for her reply, never the old ones.
+    // The model's context, read from the session JSONL the next mount would read: the greeting the
+    // mount anchored heads it, and then the new words for the player's line and for her reply, never
+    // the old ones.
     assert.deepEqual(output.modelBefore, [
+      output.opening,
       "Synthetic player request",
       "First synthetic reply.",
       "A second line the player keeps.",
       "Second synthetic reply.",
     ]);
     assert.deepEqual(output.modelAfter, [
+      output.opening,
       "Synthetic player request, corrected.",
       "First synthetic reply.",
       "A second line the player keeps.",
@@ -1386,6 +1393,7 @@ test(
     // Her reply is prompted as the assistant entry it is, so the edit replaces THAT entry's words and
     // leaves every other entry on the active path where it was.
     assert.deepEqual(output.modelAfterReply, [
+      output.opening,
       "Synthetic player request, corrected.",
       "First synthetic reply, corrected.",
       "A second line the player keeps.",
@@ -1404,8 +1412,9 @@ test(
     assert.match(named(output.refusedUnproven), /chat_pipeline_service_unavailable/);
     // The refusals between the reply edit and the third turn left the session's active path exactly
     // where that edit put it; the two entries after it are the third turn's own prompt and answer.
-    assert.deepEqual((output.modelAfterRefusals as string[]).slice(0, 4), output.modelAfterReply);
+    assert.deepEqual((output.modelAfterRefusals as string[]).slice(0, 5), output.modelAfterReply);
     assert.deepEqual(output.modelAfterRefusals, [
+      output.opening,
       "Synthetic player request, corrected.",
       "First synthetic reply, corrected.",
       "A second line the player keeps.",
@@ -1431,8 +1440,9 @@ test(
 
 /**
  * The same edit through the real mounted coordinator, in the one session shape a real mount leaves:
- * the Host's own system prompt is the branch's own first message entry, ahead of the exchanges. It is
- * a message entry no durable transcript row names, so it must not shift the position an edit proves
+ * the greeting is the branch's own first message entry (the mount's read-only history anchor, Order 0),
+ * and the Host's own system prompt follows the entries it was appended around. The system prompt is a
+ * message entry no durable transcript row names, so it must not shift the position an edit proves
  * against; while it did, every edit refused as the runtime's own failure in the product run this
  * fixture mirrors (its session file reads `system, user, assistant, ...`).
  */
@@ -1485,18 +1495,23 @@ test(
   await fx.authority.close();
   process.stdout.write(JSON.stringify({
     editedFirst, editedSecond, modelBefore, modelAfterFirst, modelAfterSecond, startCalls,
+    opening: beforeState.messages[0].text,
     beforeTexts: beforeState.messages.map((message) => message.text),
     afterTexts: afterState.messages.map((message) => message.text),
   }));
 `);
     assert.equal(output.startCalls, 2);
+    // The branch's own head is the greeting the mount anchored, and then the Host's own system prompt:
+    // one entry no transcript row names, ahead of the conversation.
+    const greetingHead: readonly (readonly [string, string])[] = [["assistant", output.opening as string]];
     const systemHead: readonly (readonly [string, string])[] = [
       ["system", "You are the companion in this scene; speak only for yourself."],
     ];
 
-    // This test's premise, read from the session file alone: the Host's system prompt is the branch's
-    // own first message entry, ahead of the conversation.
+    // This test's premise, read from the session file alone: the greeting anchor is the branch's own
+    // first message entry, and the system prompt follows it, ahead of the exchanges.
     assert.deepEqual(output.modelBefore, [
+      ...greetingHead,
       ...systemHead,
       ["user", "Synthetic player request"],
       ["assistant", "First synthetic reply."],
@@ -1514,6 +1529,7 @@ test(
     assert.equal(editedFirst.value?.message.order, 1);
     assert.equal(editedFirst.value?.message.role, "player");
     assert.deepEqual(output.modelAfterFirst, [
+      ...greetingHead,
       ...systemHead,
       ["user", "Synthetic player request, corrected."],
       ["assistant", "First synthetic reply."],
@@ -1525,6 +1541,7 @@ test(
     assert.equal(editedSecond.value?.message.text, "A second line the player keeps, corrected.");
     assert.equal(editedSecond.value?.message.order, 3);
     assert.deepEqual(output.modelAfterSecond, [
+      ...greetingHead,
       ...systemHead,
       ["user", "Synthetic player request, corrected."],
       ["assistant", "First synthetic reply."],
@@ -1655,6 +1672,7 @@ test(
     refusedUnknown, refusedOrder, refusedOpening, refusedGeneration, refusedUnbound, refusedTurnActive,
     beforeTexts: beforeState.messages.map((message) => message.text),
     beforeKinds: beforeState.messages.map((message) => message.kind),
+    opening: beforeState.messages[0].text,
     afterTexts: afterState.messages.map((message) => message.text),
     unboundTexts: unboundTexts.messages.map((message) => message.text),
     heldTexts: heldState.messages.map((message) => message.text),
@@ -1708,10 +1726,12 @@ test(
     // The kept turn is the thread's current one, and the turn whose reply was removed went with it.
     assert.equal(output.deletedLedgerStatus, "completed");
 
-    // The model's context, read from the session JSONL the next mount would read: that ONE entry is
-    // gone and the entries on either side of it are still there. A rewind-shaped implementation - or
-    // one that appended nothing durable - fails exactly here.
+    // The model's context, read from the session JSONL the next mount would read: the greeting the
+    // mount anchored heads it, and below that ONE entry is gone while the entries on either side of it
+    // are still there. A rewind-shaped implementation - or one that appended nothing durable - fails
+    // exactly here.
     assert.deepEqual(output.modelBefore, [
+      output.opening,
       "Synthetic player request",
       "First synthetic reply.",
       "A second line the player keeps.",
@@ -1720,6 +1740,7 @@ test(
       "Third synthetic reply.",
     ]);
     assert.deepEqual(output.modelAfter, [
+      output.opening,
       "Synthetic player request",
       "First synthetic reply.",
       "A second line the player keeps.",
@@ -1758,5 +1779,158 @@ test(
     assert.deepEqual(output.settledTexts, output.heldTexts);
     // The answer never carried the durable row it removed.
     assert.equal(typeof (output as { removedMessageId?: string }).removedMessageId, "string");
+  },
+);
+
+/**
+ * The greeting's real-root proof, and the one the task exists for: turn one's model context carries
+ * what the companion just said to the player.
+ *
+ * The mount writes the greeting into the Chat's own Pi session as its first `assistant` message - a
+ * read-only history anchor (Order 0) - while the conversation still carries nothing of its own. Three
+ * things are asserted on that one run, all read from what the runtime actually left behind:
+ *
+ *  - the session JSONL's active path, before any player message: the greeting alone, with no turn,
+ *    attempt, idempotency record or transcript row of its own - the ledger is untouched;
+ *  - the live context the first prompt reads (`agent.state.messages`), which carries it before the
+ *    player's line exists, and then turn one's context in the order the model reads it:
+ *    `assistant(greeting)` before `user(first message)`;
+ *  - a reload: the same Chat is mounted again over the same root and finds its own write, so the
+ *    greeting is in the session exactly once and no second session file appears.
+ */
+test(
+  "a mount anchors the greeting as the session's own first assistant message, once",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const { readdir, readFile, stat } = await import("node:fs/promises");
+  const { join: joinPath } = await import("node:path");
+  const { buildSessionProjection } = await import(piUrl);
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  const resume = () => fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const opening = (await resume()).messages[0].text;
+  const textOf = (message) => Array.isArray(message.content) ? message.content.filter((part) => part.type === "text").map((part) => part.text).join("") : String(message.content);
+  const sessionLeaves = async () => (await readdir(fx.root, { recursive: true })).filter((leaf) => leaf.endsWith(".jsonl"));
+  /** The session file's own entries, in the order the file holds them. */
+  const sessionEntries = async () => {
+    const leaves = await sessionLeaves();
+    if (leaves.length === 0) return [];
+    const files = await Promise.all(leaves.map(async (leaf) => ({ leaf, at: (await stat(joinPath(fx.root, leaf))).mtimeMs })));
+    files.sort((left, right) => right.at - left.at);
+    return (await readFile(joinPath(fx.root, files[0].leaf), "utf8")).split("\\n").filter((line) => line.length > 0).map((line) => JSON.parse(line)).filter((entry) => entry.type !== "session");
+  };
+  /** What a session re-opened on that file would send: the leaf is the file's last entry. */
+  const modelPairs = async () => {
+    const entries = await sessionEntries();
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const leafId = entries.length === 0 ? null : entries[entries.length - 1].id;
+    return buildSessionProjection(entries, leafId, byId).messages.map((message) => [message.role, textOf(message)]);
+  };
+  const durableBeforeAnyTurn = await resume();
+  const mountedBeforeAnyTurn = {
+    files: (await sessionLeaves()).length,
+    model: await modelPairs(),
+    entries: (await sessionEntries()).map((entry) => ({ type: entry.type, role: entry.message === undefined ? null : entry.message.role, api: entry.message === undefined ? null : entry.message.api })),
+    rows: durableBeforeAnyTurn.messages.map((message) => ({ kind: message.kind, text: message.text === opening ? "<opening>" : message.text })),
+    ledger: durableBeforeAnyTurn.turnLedger === null ? null : "present",
+    idempotency: durableBeforeAnyTurn.idempotency.length,
+  };
+  // Turn one, with Pi's own half of it appended the way the provider path leaves it - and the live
+  // context read first, which is what this prompt sends.
+  await service.submitAfterResponseCommit(commandFor(fx, {}), "anchoroneaaaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  const liveBeforeFirstPrompt = await internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
+    internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
+      const live = scope.runtimeSession.session.agent.state.messages.map((message) => [message.role, textOf(message)]);
+      const sessionManager = scope.runtimeSession.sessionManager;
+      sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: "Synthetic player request" }], timestamp: Date.now() });
+      sessionManager.appendMessage({ role: "assistant", content: [{ type: "text", text: "First synthetic reply." }] });
+      const times = [await nextTime(), await nextTime(), await nextTime(), await nextTime(), await nextTime()];
+      await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
+      await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
+      await scope.transitionPresentation({ operation: "commit_presentation", cancelEpoch: 0, message: { messageId: "reply_01", text: "First synthetic reply.", occurredAtMs: times[2] }, committedAtMs: times[2] });
+      await scope.transitionPresentation({ operation: "claim_completion", claimedAtMs: times[3] });
+      await scope.transitionPresentation({ operation: "complete", completedAtMs: times[4] });
+      return live;
+    }),
+  );
+  const modelAfterFirstTurn = await modelPairs();
+  const afterFirstTurn = await resume();
+  const firstIdentity = { chatThreadId: fx.lease.chatThreadId, chatSurfaceSessionId: fx.lease.chatSurfaceSessionId };
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+
+  // The reload: the same Chat is mounted again over the same root, and reads its own session file back.
+  const successorAuthority = await createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(fx.manifest);
+  const successorLease = await successorAuthority.startMountedChatRuntime();
+  const remounted = {
+    files: (await sessionLeaves()).length,
+    model: await modelPairs(),
+    greetings: (await sessionEntries()).filter((entry) => entry.message !== undefined && textOf(entry.message) === opening).length,
+    identity: { chatThreadId: successorLease.chatThreadId, chatSurfaceSessionId: successorLease.chatSurfaceSessionId },
+  };
+  await successorLease.close();
+  await successorAuthority.close();
+  process.stdout.write(JSON.stringify({
+    opening, mountedBeforeAnyTurn, liveBeforeFirstPrompt, modelAfterFirstTurn, remounted, firstIdentity, startCalls,
+    rowsAfterFirstTurn: afterFirstTurn.messages.map((message) => message.kind),
+    ledgerAfterFirstTurn: afterFirstTurn.turnLedger === null ? null : afterFirstTurn.turnLedger.status,
+  }));
+`);
+    // Before any player message: one session file, and its active path is the greeting alone - the
+    // conversation's own first assistant message, with the mount's own provenance rather than a
+    // provider's.
+    const mountedBeforeAnyTurn = output.mountedBeforeAnyTurn as {
+      files: number;
+      model: readonly (readonly [string, string])[];
+      entries: readonly { type: string; role: string | null; api: string | null }[];
+      rows: readonly { kind: string; text: string }[];
+      ledger: string | null;
+      idempotency: number;
+    };
+    assert.equal(mountedBeforeAnyTurn.files, 1);
+    assert.deepEqual(mountedBeforeAnyTurn.model, [["assistant", output.opening]]);
+    // The file's own message entries are exactly the anchor. Pi's state-only setup entries (the model
+    // choice, the thinking level) ride in the same file and carry no message at all, which is why the
+    // file appears with them the moment the anchor makes the session a conversation.
+    assert.deepEqual(
+      mountedBeforeAnyTurn.entries.filter((entry) => entry.type === "message"),
+      [{ type: "message", role: "assistant", api: "gamebuddy-authored" }],
+    );
+    // And the ledger is untouched by it: the opening row, no turn, no idempotency record.
+    assert.deepEqual(mountedBeforeAnyTurn.rows, [{ kind: "opening", text: "<opening>" }]);
+    assert.equal(mountedBeforeAnyTurn.ledger, null);
+    assert.equal(mountedBeforeAnyTurn.idempotency, 0);
+
+    // The live context the first prompt reads carries the greeting, before the player's line exists.
+    assert.deepEqual(output.liveBeforeFirstPrompt, [["assistant", output.opening]]);
+
+    // Turn one's context, in the order the model reads it: what the companion just said to the player,
+    // then the player's own words, then her reply. This is the assertion the run that prompted the task
+    // failed.
+    assert.deepEqual(output.modelAfterFirstTurn, [
+      ["assistant", output.opening],
+      ["user", "Synthetic player request"],
+      ["assistant", "First synthetic reply."],
+    ]);
+    assert.equal(output.startCalls, 1);
+    assert.deepEqual(output.rowsAfterFirstTurn, ["opening", "player", "response"]);
+    assert.equal(output.ledgerAfterFirstTurn, "completed");
+
+    // The reload: the same Chat over the same session file, its anchor already there - exactly one
+    // greeting entry, and no second session file for the second mount.
+    const remounted = output.remounted as {
+      files: number;
+      model: readonly (readonly [string, string])[];
+      greetings: number;
+      identity: { chatThreadId: string; chatSurfaceSessionId: string };
+    };
+    assert.deepEqual(remounted.identity, output.firstIdentity);
+    assert.equal(remounted.files, 1);
+    assert.equal(remounted.greetings, 1);
+    assert.deepEqual(remounted.model, output.modelAfterFirstTurn);
   },
 );

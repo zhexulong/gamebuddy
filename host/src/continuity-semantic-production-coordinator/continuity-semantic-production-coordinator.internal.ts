@@ -57,6 +57,7 @@ import {
   rewindPiTranscriptTail,
   type PiTranscriptMessage,
 } from "../pi-session-variant-branch.internal.js";
+import { greetingAnchorOccupiesFirstTranscriptEntry } from "../pi-session-greeting-anchor.internal.js";
 import { identityKey, type RuntimeSession } from "../runtime.js";
 import {
   acknowledgeMountedWorldInfoBinding,
@@ -1306,6 +1307,13 @@ export async function rewindMountedChatTranscript(
     throw refuseMountedMutation("rewind session-missing", "semantic_chat_runtime_rewind_unavailable");
   const store = record.store();
   const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
+  // Row zero is the greeting the Chat opened on, and it is also the session's own anchor (the
+  // conversation's first assistant message, Order 0). A rewind drops a suffix, so the one suffix that
+  // would hold it is the whole conversation: it would omit every entry the model carries - the anchor
+  // included - and leave those omissions as the file's last entries. A rewind neither drops nor
+  // re-anchors it, and it names that refusal the way the store and the browser already do.
+  if (state.messages[input.expectedOrder]?.kind === "opening")
+    throw refuseMountedMutation("rewind target-opening", "chat_rewind_opening_retained");
   const dropped: PiTranscriptMessage[] = state.messages
     .slice(input.expectedOrder)
     .map((message) => Object.freeze({ role: message.role, text: message.text }));
@@ -1374,11 +1382,15 @@ export async function editMountedChatMessage(
     (target.role === "player" && target.kind === "player") ||
     (target.role === "companion" && target.kind === "response");
   if (!editable) throw refuseMountedMutation("edit target-not-editable", "chat_edit_not_player_message");
-  // The greeting is never prompted into the session, so the entry's own position is the number of
-  // transcript rows before it that a prompt could carry.
-  const entryIndex = state.messages
+  // The greeting is never prompted into the session as a turn, but the mount anchors it there as the
+  // conversation's own first assistant message (`pi-session-greeting-anchor.internal.ts`), so the
+  // entry's own position is the number of transcript rows before it that a prompt could carry, plus
+  // that one anchor when it holds a position among them.
+  const rowsBeforeTarget = state.messages
     .slice(0, input.expectedOrder)
     .filter((message) => message.kind !== "opening").length;
+  const entryIndex =
+    rowsBeforeTarget + (greetingAnchorOccupiesFirstTranscriptEntry(runtimeSession.sessionManager) ? 1 : 0);
   const edited = editPiTranscriptEntry(
     runtimeSession.session,
     entryIndex,

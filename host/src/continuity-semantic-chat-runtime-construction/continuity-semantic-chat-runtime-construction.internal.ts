@@ -18,7 +18,7 @@ import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-bind
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
 import { hasUnrenderedMacro, macroTable, renderMacros, type MacroTable } from "../tavern/macro-engine.js";
 import { readWorldBook, worldBookMetadata, type WorldBookEntry } from "../worldbook.js";
-import { createChatThreadStore, type ChatThreadStore } from "../tavern/chat-thread-store.js";
+import { createChatThreadStore, type ChatThreadState, type ChatThreadStore } from "../tavern/chat-thread-store.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
 
 /**
@@ -38,6 +38,13 @@ export type ExactChatRuntimeConstruction = Readonly<{
   materializeStableContextForPiSession(piSessionId: string): Promise<TavernAuthoredContextCatalog>;
   /** Construction-private desired-state rebuild used only after terminal settlement. */
   materializeDesiredStableContextForPiSession(piSessionId: string): Promise<TavernAuthoredContextCatalog>;
+  /**
+   * The greeting this Chat opened on, exactly as its own row zero holds it; `null` when it opened on
+   * nothing. The mount anchors these words as the session's first assistant message, so the row the
+   * player reads is the one authority for them (`validateOpeningConsistency`, `chat-thread-store`,
+   * makes row zero the opening whenever the opening selection is a greeting).
+   */
+  openingGreeting: string | null;
   /**
    * Releases the construction's own store. The construction keeps one store for
    * its whole lifetime, so the consumer that owns the mounted runtime owns this
@@ -219,6 +226,7 @@ async function buildExactChatRuntimeConstruction(
     }),
     materializeStableContextForPiSession,
     materializeDesiredStableContextForPiSession,
+    openingGreeting: openingGreetingOf(state),
     closeChatThreadStore: () => threads.close?.(),
     ...(options.tavernNarrativeGateNonceSha256 === undefined
       ? {}
@@ -270,6 +278,20 @@ function sameWorldInfoBinding(
       left.provenance === right.provenance
     );
   return false;
+}
+
+/**
+ * The greeting a Chat opened on, read from row zero of the very state this construction validated.
+ *
+ * The row and not the thread's `openingSelection` is what the player reads, and the store's own read
+ * path already proved they agree; a thread that opened on nothing carries no opening row at all and
+ * yields `null`, which is the mount's "nothing to anchor".
+ */
+function openingGreetingOf(state: ChatThreadState): string | null {
+  const opening = state.messages[0];
+  return state.thread.openingSelection.kind === "greeting" && opening !== undefined && opening.kind === "opening"
+    ? opening.text
+    : null;
 }
 
 function assertExactPermit(execution: ChatRuntimeBindingExecution, permit: ProductionChatRuntimePermit): void {
