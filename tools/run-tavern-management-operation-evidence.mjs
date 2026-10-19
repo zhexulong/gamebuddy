@@ -952,6 +952,124 @@ async function exerciseOperations(origin, client) {
       throw new Error("companion_profile_worldbook_revision_invalid");
   });
 
+  // companion.card.export: the same roster companion's own records taken out as a standard Tavern
+  // V3 card, in the JSON form the request names. The card is a projection of records that already
+  // exist, so the postcondition is the card's own fields against her records read live in this
+  // same step - her name, her openings in order, and her own world book - not the parse of a reply
+  // that could have been assembled from anything.
+  //
+  // One seam runs through that comparison, and it is named rather than assumed: the card carries
+  // the AUTHORED text (the export service reads the durable records), while the read routes render
+  // the run's macro table at their own seam. The greeting store projects its variants verbatim on
+  // both sides, and her book carries no `{{...}}` placeholder, so the two spellings coincide for
+  // this run's companion; a book that gained one reports the mismatch by name instead of passing
+  // quietly.
+  await attempt("companion.card.export", async () => {
+    const handle = await currentCompanionHandle();
+    const profile = await readJson(origin, client, `/api/tavern/v1/companions/${handle}/profile`);
+    const greeting = await readJson(origin, client, "/api/tavern/v1/greeting");
+    const held = await readJson(origin, client, `/api/tavern/v1/companions/${handle}/worldbook`);
+    const exported = await readJson(origin, client, `/api/tavern/v1/companions/${handle}/card?format=json`);
+    if (exported === null || typeof exported !== "object") throw new Error("card_export_unavailable");
+    // The reply names the form the request named, and the JSON arm is the card's own text: a
+    // reply that carried the PNG envelope too would be two answers to one question.
+    if (exported.format !== "json") throw new Error("card_export_format_not_json");
+    if (exported.cardFileBase64 !== undefined) throw new Error("card_export_form_mixed");
+    if (typeof exported.fileName !== "string" || !exported.fileName.endsWith(".json"))
+      throw new Error("card_export_file_name_not_json");
+    // The format's own version, declared by the reply and by the card text it handed over: one
+    // card, not two spellings of a version.
+    if (exported.spec !== "chara_card_v3") throw new Error("card_export_spec_invalid");
+    let card;
+    try {
+      card = JSON.parse(exported.card);
+    } catch {
+      throw new Error("card_export_card_unparsable");
+    }
+    if (card === null || typeof card !== "object") throw new Error("card_export_card_not_an_object");
+    if (card.spec !== exported.spec) throw new Error("card_export_spec_mismatch");
+    const data = card.data;
+    if (data === null || typeof data !== "object") throw new Error("card_export_data_missing");
+    // Her name, as the inspector beside it serves it.
+    if (data.name !== profile?.name) throw new Error("card_export_name_mismatch");
+    // Her openings, in order: the first is the card's `first_mes` and the rest are
+    // `alternate_greetings` - the spec's own split, which the import folds back into one set.
+    if (greeting?.present !== true) throw new Error("card_export_greeting_unavailable");
+    const variants = Array.isArray(greeting.variants) ? greeting.variants : [];
+    if (variants.length === 0) throw new Error("card_export_greeting_variants_missing");
+    if (data.first_mes !== variants[0].text) throw new Error("card_export_first_opening_mismatch");
+    const alternates = variants.slice(1).map((variant) => variant.text);
+    const alternateOpenings = data.alternate_greetings;
+    // A single opening writes no `alternate_greetings` at all; several write exactly her own, in
+    // her own order.
+    if (
+      alternates.length === 0
+        ? alternateOpenings !== undefined
+        : JSON.stringify(alternateOpenings) !== JSON.stringify(alternates)
+    )
+      throw new Error("card_export_alternate_openings_mismatch");
+    // Her own world book, entry for entry, under the spec's own field names.
+    if (held?.present !== true) throw new Error("card_export_world_book_missing");
+    const entries = Array.isArray(held.entries) ? held.entries : [];
+    if (entries.length === 0) throw new Error("card_export_world_book_entries_missing");
+    const exportedEntries = data.character_book?.entries;
+    if (!Array.isArray(exportedEntries) || exportedEntries.length !== entries.length)
+      throw new Error("card_export_book_entry_count_mismatch");
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      const projected = exportedEntries[index];
+      if (projected?.comment !== entry.title) throw new Error("card_export_book_title_mismatch");
+      if (projected?.content !== entry.content) throw new Error("card_export_book_content_mismatch");
+      if ((projected?.constant === true) !== (entry.constant === true))
+        throw new Error("card_export_book_constant_mismatch");
+      // A keyless entry omits the field rather than writing an empty list, exactly as the durable
+      // book stores it - the worldbook validator refuses an empty key list.
+      const keys = Array.isArray(entry.keys) ? entry.keys : [];
+      if (keys.length === 0 ? projected?.keys !== undefined : JSON.stringify(projected?.keys) !== JSON.stringify(keys))
+        throw new Error("card_export_book_keys_mismatch");
+    }
+  });
+
+  // companion.avatar.update: the player's own picture for a roster companion, at the same
+  // roster-wide addressing the inspector and the card export above use. The reply is a digest, and
+  // the digest of the bytes that were SENT is also what a Host that merely echoed its input would
+  // answer - so the durable fact is read back from the one URL the runtime asset face serves for
+  // that handle, and it is the bytes IT serves that are hashed. Unlike the world-book edit above,
+  // nothing is put back afterwards: replacing her picture is this operation, and the run's own
+  // disposable root is the only place it lands.
+  const AVATAR_PICTURE_PNG_BASE64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  await attempt("companion.avatar.update", async () => {
+    const handle = await currentCompanionHandle();
+    // A real 1x1 PNG - signature, IHDR, IDAT, IEND, each with its own valid CRC - so nothing in
+    // the run has to be told the picture is a stub.
+    const picture = Buffer.from(AVATAR_PICTURE_PNG_BASE64, "base64");
+    const uploaded = await sendJson(origin, client, "PUT", `/api/tavern/v1/companions/${handle}/avatar`, {
+      apiVersion: 1,
+      // Re-encoded from the bytes it decodes to: the route accepts only the canonical spelling of
+      // a file, and a payload it cannot decode is a different, shorter picture.
+      avatarBase64: picture.toString("base64"),
+    });
+    if (uploaded === null || typeof uploaded !== "object") throw new Error("avatar_update_unavailable");
+    if (uploaded.handle !== handle) throw new Error("avatar_update_handle_mismatch");
+    if (typeof uploaded.digest !== "string" || !/^[0-9a-f]{64}$/.test(uploaded.digest))
+      throw new Error("avatar_update_digest_invalid");
+    // The digest describes the picture that was sent: the service answers a read-back of the file
+    // it just wrote, so a reply that named anything else fails here.
+    if (uploaded.digest !== createHash("sha256").update(picture).digest("hex"))
+      throw new Error("avatar_update_digest_not_the_written_picture");
+    // The durable half: the asset face that draws this companion serves exactly those bytes at the
+    // one URL it owns for her, and publishes the same digest as that URL's ETag.
+    const face = await deadlineFetch(`${origin}/assets/companions/${handle}/avatar.png`, {
+      headers: { Origin: origin },
+    });
+    if (face.status !== 200) throw new Error("avatar_update_face_unavailable");
+    const served = Buffer.from(await face.arrayBuffer());
+    if (createHash("sha256").update(served).digest("hex") !== uploaded.digest)
+      throw new Error("avatar_update_not_durable");
+    if (face.headers.get("etag") !== `"${uploaded.digest}"`) throw new Error("avatar_update_face_etag_mismatch");
+  });
+
   // character.voice.read / .update: the mounted companion's own performance directive, held on her
   // identity profile and edited against that profile's exact revision. The read proves the surface;
   // the write must advance the profile revision AND read back through the read route.
