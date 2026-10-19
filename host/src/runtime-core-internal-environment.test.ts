@@ -12,6 +12,7 @@ import {
   formatGameWeather,
   reloadMagicContextInRuntimeRoot,
 } from "./runtime-core.internal.js";
+import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
  * The Magic Context bootstrap owns the runtime's SQLite root, and the extension
@@ -91,20 +92,58 @@ test("the Magic Context bootstrap leaves no storage override behind when none wa
 });
 
 test("formatGameClock renders Native 24h clock as 12h with period", () => {
-  assert.equal(formatGameClock(600), "6:00 AM");
-  assert.equal(formatGameClock(1200), "12:00 PM");
-  assert.equal(formatGameClock(1700), "5:00 PM");
-  assert.equal(formatGameClock(0), "12:00 AM");
-  assert.equal(formatGameClock(1930), "7:30 PM");
-  assert.equal(formatGameClock(2600), "2:00 AM");
+  assert.equal(formatGameClock(600, false), "6:00 AM");
+  assert.equal(formatGameClock(1200, false), "12:00 PM");
+  assert.equal(formatGameClock(1700, false), "5:00 PM");
+  assert.equal(formatGameClock(0, false), "12:00 AM");
+  assert.equal(formatGameClock(1930, false), "7:30 PM");
+  assert.equal(formatGameClock(2600, false), "2:00 AM");
+});
+
+test("formatGameClock localizes the clock as a 24h reading plus the game day's time-of-day band", () => {
+  assert.equal(formatGameClock(600, true), "06:00（清晨）");
+  assert.equal(formatGameClock(900, true), "09:00（上午）");
+  assert.equal(formatGameClock(1200, true), "12:00（中午）");
+  assert.equal(formatGameClock(1500, true), "15:00（下午）");
+  assert.equal(formatGameClock(1800, true), "18:00（傍晚）");
+  assert.equal(formatGameClock(2200, true), "22:00（深夜）");
+  // The game's own late-night wrap (24:00/25:00/26:00 = 12/1/2 AM) is the same
+  // deep night as 20:00-23:59, so the band wraps with the clock.
+  assert.equal(formatGameClock(2400, true), "00:00（深夜）");
+  assert.equal(formatGameClock(2600, true), "02:00（深夜）");
+});
+
+test("the localized clock fact can actually fire the evening world-book entry, and the English one cannot", () => {
+  // "a key the book matches" is read from the owner's own compiled book, not a
+  // hand-kept list: a renamed key turns this red instead of drifting silently.
+  const entry = DEFAULT_COMPANION_PRESET.worldBook.entries.find(
+    (candidate) => candidate.title === "晚霞收工与作息节律",
+  );
+  assert.ok(entry !== undefined, "the owner's evening book entry must exist");
+  const keys = entry.keys ?? [];
+  assert.deepEqual(keys, ["晚霞", "傍晚", "收工", "深夜", "睡觉"]);
+  const evening = { timeOfDay: 1800, dayOfMonth: 19, seasonIndex: 2, year: 1, weather: "sunny", location: "Farm" };
+  const zhFacts = formatGameEnvironmentFacts(evening, true);
+  assert.ok(zhFacts.includes("18:00（傍晚）"), `the Chinese clock line carries the band: ${zhFacts}`);
+  assert.ok(
+    keys.some((key) => zhFacts.includes(key)),
+    `Chinese facts must carry a book key so the evening entry can trigger: ${zhFacts}`,
+  );
+  const enFacts = formatGameEnvironmentFacts(evening, false);
+  assert.equal(
+    keys.filter((key) => enFacts.includes(key)).length,
+    0,
+    `English facts must carry no Chinese book key: ${enFacts}`,
+  );
 });
 
 test("formatGameClock rejects out-of-range clocks", () => {
-  assert.equal(formatGameClock(-5), "");
-  assert.equal(formatGameClock(9999), "");
-  assert.equal(formatGameClock(60123), "");
-  assert.equal(formatGameClock(18.5), "");
-  assert.equal(formatGameClock(Number.NaN), "");
+  assert.equal(formatGameClock(-5, false), "");
+  assert.equal(formatGameClock(9999, false), "");
+  assert.equal(formatGameClock(60123, false), "");
+  assert.equal(formatGameClock(18.5, false), "");
+  assert.equal(formatGameClock(Number.NaN, false), "");
+  assert.equal(formatGameClock(9999, true), "");
 });
 
 test("formatGameDate localizes season name and order", () => {
@@ -170,7 +209,7 @@ test("formatGameEnvironmentFacts localizes stamina and marks persistent fatigue"
     },
     true,
   );
-  assert.equal(facts, "6:00 AM；1年第1天 春季；天气：雨天；位置: Farm；体力: 12（已疲惫）");
+  assert.equal(facts, "06:00（清晨）；1年第1天 春季；天气：雨天；位置: Farm；体力: 12（已疲惫）");
 });
 
 test("formatGameEnvironmentFacts omits stamina when the snapshot does not carry it", () => {

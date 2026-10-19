@@ -204,18 +204,43 @@ const WEATHER_NAMES_EN: Record<string, string> = {
   unknown: "unknown weather",
 };
 
-/** Native 24h game clock "600"/"2600" → 12h with period; 2600 (2 AM) is the last legal clock. */
-export function formatGameClock(timeOfDay: number): string {
+/**
+ * The native clock, localized like its sibling facts. English keeps the game's
+ * own 12h reading (`6:00 PM`); Chinese carries the 24h reading plus the game
+ * day's time-of-day band. The band is required, not decorative: the companion's
+ * `晚霞收工与作息节律` book entry is gated on `傍晚`/`深夜`, and a 12h `6:00 PM`
+ * clock fact contains neither, so without it the clock could never fire that
+ * entry. 2600 (2 AM) is the last legal clock.
+ */
+export function formatGameClock(timeOfDay: number, zh: boolean): string {
   if (!Number.isSafeInteger(timeOfDay) || timeOfDay < 0) return "";
   const h24 = Math.floor(timeOfDay / 100);
   const minute = timeOfDay % 100;
   if (h24 > 26 || minute > 59) return "";
-  // 24:00/25:00/26:00 are the late-night wrap hours (2 AM); period is decided
-  // on the RAW 24h hour, not the 12h remainder.
+  // 24:00/25:00/26:00 are the late-night wrap hours (2 AM); both the displayed
+  // hour and the period are decided on the RAW 24h hour, not the 12h remainder.
   const raw = h24 % 24;
+  const padded = (value: number): string => String(value).padStart(2, "0");
+  if (zh) return `${padded(raw)}:${padded(minute)}（${chineseTimeOfDayBand(raw)}）`;
   const period = raw < 12 ? "AM" : "PM";
   const h12 = raw % 12 === 0 ? 12 : raw % 12;
-  return `${h12}:${String(minute).padStart(2, "0")} ${period}`;
+  return `${h12}:${padded(minute)} ${period}`;
+}
+
+/**
+ * The game day's time-of-day bands, keyed on the native hour (0-23 after the
+ * wrap). Stardew's day opens at 06:00 and its last legal clock is 02:00 (native
+ * 2600), so the bands follow that day rather than a calendar day: the deep-night
+ * band wraps across midnight (20:00-04:59), because 24:00-26:00 are the same
+ * hours of the same night as 20:00-23:59 and not a new morning.
+ */
+function chineseTimeOfDayBand(rawHour: number): string {
+  if (rawHour >= 5 && rawHour <= 7) return "清晨";
+  if (rawHour >= 8 && rawHour <= 11) return "上午";
+  if (rawHour >= 12 && rawHour <= 13) return "中午";
+  if (rawHour >= 14 && rawHour <= 16) return "下午";
+  if (rawHour >= 17 && rawHour <= 19) return "傍晚";
+  return "深夜";
 }
 
 export function formatGameDate(day: number, seasonIndex: number, year: number, zh: boolean): string {
@@ -260,7 +285,7 @@ export type GameEnvironmentFactsSource = Pick<
 
 export function formatGameEnvironmentFacts(source: GameEnvironmentFactsSource, zh: boolean): string {
   const facts = [
-    formatGameClock(source.timeOfDay),
+    formatGameClock(source.timeOfDay, zh),
     formatGameDate(source.dayOfMonth, source.seasonIndex, source.year, zh),
     formatGameWeather(source.weather, zh),
     `${zh ? "位置" : "location"}: ${source.location}`,
