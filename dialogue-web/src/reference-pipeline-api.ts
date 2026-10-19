@@ -357,8 +357,10 @@ const PROBLEM_CODES = [
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
-  // The edit's own two: the row is not the player's own words, or a reply is being written from the
-  // very text the edit would replace.
+  // The edit's own three: the row is the greeting the Chat opened on (which has its own editor, on
+  // the Characters surface), the row is neither the player's own words nor her reply, or a reply is
+  // being written from the very text the edit would replace.
+  "chat_edit_opening_retained",
   "chat_edit_not_player_message",
   "chat_edit_turn_active",
   // The delete's own three. The last is not about the point the player chose: a row whose Pi session
@@ -398,8 +400,8 @@ const TURN_KEYS_WITH_PROBLEM_CODE = ["handle", "state", "projectionRevision", "c
 const DRAFT_KEYS = ["apiVersion", "revision", "text"] as const;
 const OPERATION_KEYS = ["operationId", "labelKey", "availability", "routeId"] as const;
 const NAVIGATION_ITEM_KEYS = ["itemId", "labelKey", "availability"] as const;
-const WORLD_INFO_KEYS = ["state", "items"] as const;
-const WORLD_INFO_ITEM_KEYS = ["handle", "title", "summary"] as const;
+const WORLD_INFO_KEYS = ["state", "revision", "items"] as const;
+const WORLD_INFO_ITEM_KEYS = ["handle", "title", "summary", "selected", "pending"] as const;
 const SNAPSHOT_KEYS = [
   "apiVersion",
   "build",
@@ -633,7 +635,9 @@ function isWorldInfoItem(value: unknown): boolean {
     hasExactKeys(value, WORLD_INFO_ITEM_KEYS) &&
     isOpaqueHandle(value.handle) &&
     isLengthBoundedString(value.title, 1, 256) &&
-    (value.summary === null || isLengthBoundedString(value.summary, 0, 512))
+    (value.summary === null || isLengthBoundedString(value.summary, 0, 512)) &&
+    typeof value.selected === "boolean" &&
+    typeof value.pending === "boolean"
   );
 }
 
@@ -641,6 +645,7 @@ function isWorldInfo(value: unknown): boolean {
   if (!isRecord(value) || !hasExactKeys(value, WORLD_INFO_KEYS)) return false;
   return (
     isOneOf(value.state, WORLD_INFO_STATES) &&
+    isOpaqueHandle(value.revision) &&
     Array.isArray(value.items) &&
     value.items.length <= MAX_ARRAY_ITEMS &&
     value.items.every(isWorldInfoItem)

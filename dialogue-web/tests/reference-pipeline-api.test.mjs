@@ -342,7 +342,7 @@ test("validateSnapshot rejects extra and missing fields", async () => {
     snapshot({ chat: { extra: true } }),
     snapshot({ chat: { companion: { extra: true } } }),
     snapshot({ chat: { draft: { extra: true } } }),
-    snapshot({ chat: { worldInfo: { state: "selected", items: [], extra: true } } }),
+    snapshot({ chat: { worldInfo: { state: "selected", revision: HANDLE, items: [], extra: true } } }),
     snapshot({ memory: { extra: true } }),
     snapshot({ operations: [snapshot().operations[0], { ...snapshot().operations[0], extra: true }] }),
     snapshot({ navigation: [{ ...snapshot().navigation[0], extra: true }] }),
@@ -363,6 +363,37 @@ test("validateSnapshot rejects extra and missing fields", async () => {
   ];
   for (const value of cases) {
     assert.throws(() => validateSnapshot(value), TavernProtocolError);
+  }
+});
+
+test("validateSnapshot accepts the World Info projection the contract declares, key for key", () => {
+  // The defect this holds: the mirror's `WORLD_INFO_KEYS` was a stale subset (`state` + `items`),
+  // so the `revision` every declared projection carries failed `hasExactKeys` and took the whole
+  // snapshot read down - the reference surface went dark on a legal response. The item shape had
+  // drifted the same way (`selected` and `pending` were both missing). No test exercised a legal
+  // non-null `worldInfo`, which is why neither gate caught it.
+  const worldInfo = {
+    state: "selected",
+    revision: HANDLE,
+    items: [
+      { handle: HANDLE, title: "Pelican Town", summary: null, selected: true, pending: false },
+      { handle: HANDLE, title: "The beach", summary: "Synthetic summary", selected: false, pending: true },
+    ],
+  };
+  const parsed = validateSnapshot(snapshot({ chat: { worldInfo } }));
+  assert.deepEqual(parsed.chat.worldInfo, worldInfo);
+
+  // Every declared key is required, exactly as the contract's strict object declares it.
+  for (const dropped of ["state", "revision", "items"]) {
+    const { [dropped]: _dropped, ...rest } = worldInfo;
+    assert.throws(() => validateSnapshot(snapshot({ chat: { worldInfo: rest } })), TavernProtocolError);
+  }
+  for (const dropped of ["handle", "title", "summary", "selected", "pending"]) {
+    const { [dropped]: _dropped, ...rest } = worldInfo.items[0];
+    assert.throws(
+      () => validateSnapshot(snapshot({ chat: { worldInfo: { ...worldInfo, items: [rest] } } })),
+      TavernProtocolError,
+    );
   }
 });
 
@@ -387,7 +418,24 @@ test("validateSnapshot rejects non-canonical opaque handles", () => {
     snapshot({ selection: { generation: 1.5 } }),
     snapshot({ chat: { transcript: [{ ...message, handle: BAD_HANDLE }] } }),
     snapshot({ chat: { turn: { handle: "too-short", state: "queued", projectionRevision: 1, canCancel: false } } }),
-    snapshot({ chat: { worldInfo: { state: "selected", items: [{ handle: BAD_HANDLE, title: "t", summary: null }] } } }),
+    snapshot({
+      chat: {
+        worldInfo: {
+          state: "selected",
+          revision: BAD_HANDLE,
+          items: [{ handle: HANDLE, title: "t", summary: null, selected: false, pending: false }],
+        },
+      },
+    }),
+    snapshot({
+      chat: {
+        worldInfo: {
+          state: "selected",
+          revision: HANDLE,
+          items: [{ handle: BAD_HANDLE, title: "t", summary: null, selected: false, pending: false }],
+        },
+      },
+    }),
     snapshot({ memory: { projectionRevision: BAD_HANDLE } }),
     snapshot({ browserSession: { expiresAtMs: -1 } }),
     snapshot({ chat: { draft: { revision: -1 } } }),
@@ -403,7 +451,7 @@ test("validateSnapshot enforces exact union variants", () => {
     snapshot({ chat: { transcript: [{ ...message, locale: "fr" }] } }),
     snapshot({ chat: { turn: { state: "in_progress", projectionRevision: 1, canCancel: false } } }),
     snapshot({ chat: { turn: { state: "failed", problemCode: "bogus", projectionRevision: 1, canCancel: false } } }),
-    snapshot({ chat: { worldInfo: { state: "unknown", items: [] } } }),
+    snapshot({ chat: { worldInfo: { state: "unknown", revision: HANDLE, items: [] } } }),
     snapshot({ operations: [{ operationId: "chat.send", labelKey: "tavern.nav.chat", availability: "available", routeId: "x" }] }),
     snapshot({ operations: [{ operationId: "chat.submit", labelKey: "tavern.nav.chat", availability: "maybe", routeId: "chat.submit" }] }),
     snapshot({ operations: [{ operationId: "chat.submit", labelKey: "tavern.nav.chat", availability: "available", routeId: "UPPER" }] }),

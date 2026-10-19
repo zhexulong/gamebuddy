@@ -375,12 +375,16 @@ const en = {
   problemChatRewindOpeningRetainedDetail: "The greeting this conversation started on cannot be removed.",
   problemChatRewindTurnActiveTitle: "A reply is still being written",
   problemChatRewindTurnActiveDetail: "Stop the reply that is in flight, then rewind.",
-  // The edit's own two refusals: the row is not the player's own words, or a reply is being written
-  // from the very text the edit would replace.
-  problemChatEditNotPlayerMessageTitle: "That is not your message",
-  problemChatEditNotPlayerMessageDetail: "Only the messages you wrote can be edited.",
+  // The edit's own three refusals: the row is the greeting the conversation opened on (which has its
+  // own editor, on the Characters surface), the row is neither the player's own words nor her reply,
+  // or a reply is being written from the very text the edit would replace.
+  problemChatEditOpeningRetainedTitle: "That is the opening",
+  problemChatEditOpeningRetainedDetail:
+    "The greeting this conversation started on is edited on the Characters surface, not here.",
+  problemChatEditNotPlayerMessageTitle: "That message cannot be edited",
+  problemChatEditNotPlayerMessageDetail: "Only the messages you and she exchanged are yours to correct.",
   problemChatEditTurnActiveTitle: "A reply is still being written",
-  problemChatEditTurnActiveDetail: "Wait for the reply to finish, then edit your message.",
+  problemChatEditTurnActiveDetail: "Wait for the reply to finish, then edit the message.",
   // The delete's own three refusals. The last one is not about the player's choice at all: a message
   // the Host never recorded a session entry for cannot be removed on its own, and saying so is
   // better than removing a different part of what the model reads.
@@ -946,10 +950,12 @@ const zh: Messages = {
   problemChatRewindOpeningRetainedDetail: "对话开始时的那句问候不能删除。",
   problemChatRewindTurnActiveTitle: "还有一条回复正在生成",
   problemChatRewindTurnActiveDetail: "请先停止正在生成的回复，再回退。",
-  problemChatEditNotPlayerMessageTitle: "这不是你的消息",
-  problemChatEditNotPlayerMessageDetail: "只能编辑你自己发送的消息。",
+  problemChatEditOpeningRetainedTitle: "这是开场问候",
+  problemChatEditOpeningRetainedDetail: "对话开始时的那句问候由「角色」页单独编辑，不在这里修改。",
+  problemChatEditNotPlayerMessageTitle: "这条消息不能编辑",
+  problemChatEditNotPlayerMessageDetail: "只有你们彼此交换过的消息才可以改写。",
   problemChatEditTurnActiveTitle: "还有一条回复正在生成",
-  problemChatEditTurnActiveDetail: "请等这条回复生成完成后，再编辑你的消息。",
+  problemChatEditTurnActiveDetail: "请等这条回复生成完成后，再编辑这条消息。",
   problemChatDeleteOpeningRetainedTitle: "这是开场问候",
   problemChatDeleteOpeningRetainedDetail: "对话开始时的那句问候不能删除。",
   problemChatDeleteTurnActiveTitle: "还有一条回复正在生成",

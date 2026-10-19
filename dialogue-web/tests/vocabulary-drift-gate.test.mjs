@@ -27,7 +27,16 @@
  *  - `PROBLEM_CODES`/`TURN_PROBLEM_CODES` are `problem-code.7`'s subject, against a
  *    wider authority (the contract union plus the router's transport-only
  *    `payload_too_large`), so they are not repeated here;
- *  - the `*_KEYS` key allowlists are `contract-mirror-keys-gate.test.mjs`'s subject;
+ *  - the `*_KEYS` key allowlists belong to `contract-mirror-keys-gate.test.mjs`, which derives the
+ *    shape from the exported schemas and fails a validator stricter than the contract. That rule
+ *    can only see a key set that IS a shape's required keys, so a mirror that names FEWER keys than
+ *    the contract requires drops quietly out of its reach - measured, not assumed: the subset rule
+ *    reports 443 findings across the four modules, because a command's key set is a subset of many
+ *    shapes. A key allowlist whose whole authority is one declared object shape is therefore gated
+ *    HERE, by name, against that shape's declared key names (`WORLD_INFO_KEYS` and its item); the
+ *    drift that lived there was exactly the invisible kind - the mirror's `["state", "items"]`
+ *    against `WorldInfoStateV1Schema`'s `state` + `revision` + `items`, which made `revision` fail the
+ *    mirror's exact-key check and took the reference surface's whole snapshot read down;
  *  - `LABEL_KEYS` and `REFERENCE_PIPELINE_OPERATION_IDS` are projections of the
  *    *profile* the reference client serves (`chat_core`, which declares no
  *    `world-info.*`/`companion.*` operation), not of the contract's ~50-member unions.
@@ -55,8 +64,14 @@ export const MIRROR_FILES = [
 
 /**
  * Each mirrored vocabulary: the mirror's own declaration name, and the contract
- * declaration it mirrors. `property` names one property of a TypeBox schema or const;
- * without it the named const is itself a `Type.Union([Type.Literal(...)])`.
+ * declaration it mirrors. The locator reads the members one of three ways:
+ *  - `property` names one property of a TypeBox schema, whose `Type.Literal(...)` arguments are
+ *    the members;
+ *  - `properties` reads the declared KEY NAMES of the object shape a declaration hands to its
+ *    schema helper - a vocabulary the contract spells as an object's keys rather than as a union
+ *    of literals (`WorldInfoStateV1Schema`) - and `within` names one property of that shape whose
+ *    own object shape is the one meant;
+ *  - with neither, the named const is itself a `Type.Union([Type.Literal(...)])`.
  */
 export const MIRRORED_VOCABULARIES = [
   { mirror: "MESSAGE_ROLES", contract: { name: "BrowserMessageV1Schema", property: "role" } },
@@ -73,6 +88,11 @@ export const MIRRORED_VOCABULARIES = [
   { mirror: "EVENT_TYPES", contract: { name: "BrowserEventV1Schema", property: "eventType" } },
   { mirror: "RESYNC_REASONS", contract: { name: "BrowserEventV1Schema", property: "reason" } },
   { mirror: "SUBMIT_LOCALES", contract: { name: "SubmitMessageCommandV1Schema", property: "locale" } },
+  { mirror: "WORLD_INFO_KEYS", contract: { name: "WorldInfoStateV1Schema", properties: true } },
+  {
+    mirror: "WORLD_INFO_ITEM_KEYS",
+    contract: { name: "WorldInfoStateV1Schema", properties: true, within: "items" },
+  },
 ];
 
 /**
@@ -140,11 +160,41 @@ function stringValues(node) {
   return found;
 }
 
+/** The first object literal a node hands to its schema helper: the shape's own properties. */
+function objectShapeOf(node) {
+  let found = null;
+  walk(node, (inner) => {
+    if (found === null && ts.isObjectLiteralExpression(inner)) found = inner;
+  });
+  return found;
+}
+
+/** The object shape inside one named property of an object shape (`items`, in `WorldInfoStateV1Schema`). */
+function objectShapeWithin(shape, name) {
+  let found = null;
+  walk(shape, (inner) => {
+    if (found !== null) return;
+    if (ts.isPropertyAssignment(inner) && inner.name.getText() === name) found = objectShapeOf(inner.initializer);
+  });
+  return found;
+}
+
+/** The keys an object shape declares: the vocabulary of a contract that spells one as a strict object. */
+function declaredKeys(shape) {
+  return shape.properties.filter((property) => ts.isPropertyAssignment(property)).map((property) => property.name.getText());
+}
+
 /** The contract's declared members of one vocabulary, read out of the contract's own source. */
 export function contractVocabulary(locator, contract = CONTRACT) {
   const sourceFile = sourceOf(contract);
   const members = new Set();
   for (const declaration of declarationsNamed(sourceFile, locator.name)) {
+    if (locator.properties === true) {
+      const outer = objectShapeOf(declaration);
+      const shape = locator.within === undefined ? outer : outer === null ? null : objectShapeWithin(outer, locator.within);
+      if (shape !== null) for (const key of declaredKeys(shape)) members.add(key);
+      continue;
+    }
     const scopes = locator.property === undefined ? [declaration] : propertiesNamed(declaration, locator.property);
     for (const scope of scopes) for (const value of literalValues(scope)) members.add(value);
   }
@@ -185,6 +235,16 @@ test("vocabulary-drift.1: the contract's declarations are read, not assumed", (t
   assert.equal(derived.get("EVENT_TYPES").size, 5, "BrowserEventV1Schema declares five eventType members");
   assert.equal(derived.get("RESYNC_REASONS").size, 4, "the resync payload declares four reasons");
   assert.equal(derived.get("SUBMIT_LOCALES").size, 2, "chat.submit accepts two locales");
+  assert.deepEqual(
+    [...derived.get("WORLD_INFO_KEYS")].sort(),
+    ["items", "revision", "state"],
+    "the object-shape derivation reads the schema's declared key names, not a literal union",
+  );
+  assert.deepEqual(
+    [...derived.get("WORLD_INFO_ITEM_KEYS")].sort(),
+    ["handle", "pending", "selected", "summary", "title"],
+    "and `within` reads the key names of the shape one property hands to its own schema helper",
+  );
   for (const entry of MIRRORED_VOCABULARIES)
     assert.ok(derived.get(entry.mirror).size >= 2, `${entry.mirror} derived an empty or single-member union`);
   const declared = MIRRORED_VOCABULARIES.map((entry) => entry.mirror);
