@@ -667,3 +667,113 @@ test("the swipe switcher draws one pair of arrows, not the Host's arrows inside 
   expect(measured.text, "the right arrow belongs to the button, not to the label").not.toContain("▶");
   expect(measured.buttons, "the switcher is still the two real buttons").toEqual(["上一个变体", "下一个变体"]);
 });
+
+// --- defect 6, the narrow control strip and the player's own line (owner ruling, 2026-10-19) ---
+
+/**
+ * The strip under a reply is as short as the reply itself, and the player's own
+ * line is as wide as the line.
+ *
+ * Two measurements of one screen at 400x800:
+ *
+ *  - **the strip.** Her reply's controls wrapped onto a second row - 96 px under a
+ *    46 px bubble, on a message whose own text is two lines at that width - because
+ *    the four buttons spent their width on their words. The words were never what
+ *    named them: each already carries an `aria-label` (and the same string as its
+ *    `title`) that is longer and more specific than the visible word, so the
+ *    narrow window retires the word and keeps the name. The assertion is therefore
+ *    on the RESULT (one row, every target 44 px, every control named) and not on
+ *    the mechanism: a strip that put the words back, or that bought the row with a
+ *    24 px glyph, fails.
+ *  - **the player's bubble.** The row's body is a flex column and `align-items`
+ *    defaults to `stretch`, so a two-character line ran out to whatever was widest
+ *    under it - the strip - instead of to the words. The bubble is now as wide as
+ *    the message; the force kept here is that its OUTER edge does not move (the
+ *    avatar beside it stays where it was) and that a long line still takes the
+ *    whole column it is given.
+ */
+test("defect 6: the narrow strip is one row and the player's own line is as wide as the line", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 800 });
+  await mountShell(page, {
+    root: composedRoot({
+      transcript: [
+        { role: "companion", text: "门廊上的那盏灯还亮着。" },
+        { role: "player", text: "你好" },
+        { role: "companion", text: "早上的光从山脊上过来。", swipes: { index: 1, total: 3 } },
+        { role: "player", text: "今天棚子里的番茄全红了，我摘了一整篮，等会儿带去镇上卖掉，顺便把去年冬天欠的账还了。" },
+        { role: "companion", text: "那就带上篮子，正午前出发。" },
+      ],
+    }),
+  });
+
+  const measured = await page.evaluate(() => {
+    const round = (value: number) => Math.round(value);
+    const box = (node: Element) => {
+      const rect = node.getBoundingClientRect();
+      return { left: round(rect.left), right: round(rect.right), width: round(rect.width), height: round(rect.height) };
+    };
+    const rows = [...document.querySelectorAll<HTMLElement>("ol.message-list > li")];
+    // The reply the fixture gives a swipe set: the one row that carries the pager
+    // AND the rewind AND the edit AND the delete - the strip's worst case.
+    const swiped = rows[2]!;
+    const strip = swiped.querySelector<HTMLElement>(".message-actions")!;
+    const controls = [...strip.children].map((child) => {
+      const rect = child.getBoundingClientRect();
+      return {
+        className: child.className,
+        name: (child.getAttribute("aria-label") ?? "").trim(),
+        width: round(rect.width),
+        height: round(rect.height),
+        centre: Math.round(rect.top + rect.height / 2),
+      };
+    });
+    const playerRows = rows.filter((row) => row.classList.contains("player"));
+    const readPlayer = (row: HTMLElement) => {
+      const body = row.querySelector<HTMLElement>(".message-body")!;
+      const bubble = row.querySelector<HTMLElement>(".message-bubble")!;
+      const avatar = row.querySelector<HTMLElement>(".avatar-small")!;
+      return { body: box(body), bubble: box(bubble), avatar: box(avatar) };
+    };
+    return {
+      strip: { box: box(strip), rows: new Set(controls.map((control) => control.centre)).size, controls },
+      short: readPlayer(playerRows[0]!),
+      long: readPlayer(playerRows[1]!),
+      listWidth: round(document.querySelector<HTMLElement>("ol.message-list")!.getBoundingClientRect().width),
+    };
+  });
+  console.log(`[defect-6 narrow] ${JSON.stringify(measured)}`);
+
+  // One row, and its controls are the whole of it: the strip is as tall as one
+  // 44 px target (the pager's own box is 46), not two stacked ones.
+  expect(measured.strip.rows, `the strip is one row (${JSON.stringify(measured.strip.controls)})`).toBe(1);
+  expect(measured.strip.box.height, "so the strip is one target tall, not two").toBeLessThanOrEqual(50);
+  expect(measured.strip.controls.length, "and it still holds every control it had").toBe(4);
+  for (const control of measured.strip.controls) {
+    // The name is the meaning, and it is a real sentence rather than the glyph the
+    // narrow form leaves visible.
+    expect(control.name, `${control.className} keeps an accessible name`).not.toBe("");
+    expect(control.name, `${control.className}'s name is not the bare glyph`).not.toMatch(/^[‹›<>←→×✔✎🗑]+$/u);
+    expect(control.height, `${control.className} clears the 44 px floor`).toBeGreaterThanOrEqual(44);
+    expect(control.width, `${control.className} is a target, not a squeezed glyph`).toBeGreaterThanOrEqual(44);
+  }
+  expect(measured.strip.box.width, "the strip is inside the reply's own column").toBeLessThanOrEqual(
+    measured.listWidth,
+  );
+
+  // The player's own line: as wide as the line, and no wider.
+  expect(
+    measured.short.bubble.width,
+    `a two-character line is a two-character bubble (${measured.short.bubble.width} px)`,
+  ).toBeLessThan(measured.long.bubble.width);
+  expect(measured.short.bubble.width, "and it is not the strip's width either").toBeLessThan(measured.short.body.width);
+  // The outer edge is what the avatar hangs off: it does not move.
+  expect(measured.short.bubble.right, "the short line still ends at the row's own outer edge").toBe(
+    measured.long.bubble.right,
+  );
+  expect(measured.short.avatar.left, "and the avatar is where it always was").toBe(measured.long.avatar.left);
+  // A long line is unchanged: it fills the column the row gives it.
+  expect(
+    measured.long.bubble.width,
+    `a long line still fills its body (${measured.long.bubble.width} in ${measured.long.body.width})`,
+  ).toBe(measured.long.body.width);
+});

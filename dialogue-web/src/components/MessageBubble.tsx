@@ -413,7 +413,12 @@ export const MessageBubble = memo(function MessageBubble({
             1440x900 on a regenerated reply: pager 389..435 above a 439..485
             bubble, regenerate 493..537 under it, their centres 145 px apart - and
             going back to an earlier variant after asking again meant crossing the
-            bubble. */}
+            bubble.
+
+            Each control's visible word is its own `action-word` span so the narrow
+            window can retire the word and keep the control: the `aria-label` is what
+            names these four, and style.css's narrow strip block is where that is
+            argued and measured. */}
         {!isPlayer && !deleteArmed && (hasControls || onRegenerate || rewindPoint !== undefined || rewindArmed) && (
           <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
             {/* Her editor replaces the WHOLE strip rather than joining it, on the same rule the
@@ -539,7 +544,7 @@ export const MessageBubble = memo(function MessageBubble({
                     ) : (
                       <RefreshCw size={14} aria-hidden="true" />
                     )}
-                    {labels.regenerateVariant}
+                    <span className="action-word">{labels.regenerateVariant}</span>
                   </button>
                 )}
                 {!rewindArmed && rewindPoint !== undefined && (
@@ -558,7 +563,7 @@ export const MessageBubble = memo(function MessageBubble({
                     ) : (
                       <Undo2 size={14} aria-hidden="true" />
                     )}
-                    {labels.rewindHere}
+                    <span className="action-word">{labels.rewindHere}</span>
                   </button>
                 )}
                 {/* Her reply's own edit control, in the strip she already has rather than a second row of
@@ -582,7 +587,7 @@ export const MessageBubble = memo(function MessageBubble({
                     ) : (
                       <Pencil size={14} aria-hidden="true" />
                     )}
-                    {labels.editMessage}
+                    <span className="action-word">{labels.editMessage}</span>
                   </button>
                 )}
                 {!rewindArmed && deletePoint !== undefined && (
@@ -601,7 +606,7 @@ export const MessageBubble = memo(function MessageBubble({
                     ) : (
                       <Trash2 size={14} aria-hidden="true" />
                     )}
-                    {labels.deleteMessage}
+                    <span className="action-word">{labels.deleteMessage}</span>
                   </button>
                 )}
                 {!rewindArmed && waitingNote !== null && (
@@ -650,7 +655,7 @@ export const MessageBubble = memo(function MessageBubble({
                   ) : (
                     <Pencil size={14} aria-hidden="true" />
                   )}
-                  {labels.editMessage}
+                  <span className="action-word">{labels.editMessage}</span>
                 </button>
               ))}
             {/* While the editor is open the strip is the editor: a destructive Delete sitting beside
@@ -672,7 +677,7 @@ export const MessageBubble = memo(function MessageBubble({
                 ) : (
                   <Trash2 size={14} aria-hidden="true" />
                 )}
-                {labels.deleteMessage}
+                <span className="action-word">{labels.deleteMessage}</span>
               </button>
             )}
           </div>

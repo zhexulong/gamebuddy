@@ -5355,6 +5355,63 @@
     margin-inline: auto;
   }
 
+  /* ==========================================================================
+   The control strip's narrow form, and the player's own short line (owner ruling, 2026-10-19)
+
+   **The strip.** At 400 px her reply's controls wrapped onto a second row: the
+   strip measured 96 px tall under a 46 px bubble, on a message row the reply may
+   itself be two lines of. The labels are what did it - the pager went icon-only
+   for exactly this reason when the switcher was built - so on the narrow window the
+   other four controls take the same form.
+
+   Icon-only, not a smaller label set, because the words were never what named these
+   controls: each of the four already carries an `aria-label` (and the same string
+   as its `title`) that is LONGER and more specific than its visible word - "删除这条
+   消息：模型从下一轮开始不再读到它" against "删除" - so retiring the word changes no
+   accessible name at all, and it is locale-proof in a way an abbreviated catalogue
+   string would not be. The four glyphs are the product's own marks for these acts
+   (a refresh, an undo arrow, a pencil, a bin), and the pager next to them has
+   shipped on chevrons alone since it was built.
+
+   Each control keeps its 44 px target, and the arithmetic is why that is possible:
+   the reply's body gives the strip 301 px at 400 px, and the strip's worst case is
+   the pager (136 px) plus three 44 px targets plus three 6 px gaps = 286 px. Three
+   is the ceiling on those targets: Regenerate is mounted only on the one row the
+   Host's regenerate handle points at (the transcript's last), and the rewind is
+   never offered there (it removes the message and everything after it, which on the
+   last message is the delete's own act), so the two never stand in one strip.
+   `.regenerate-btn` is the one of the four without a `min-width` - its natural
+   icon-only width is 40 px - so the narrow block gives it the same 44 px the other
+   three declare.
+
+   **The player's own line.** The row's body is a flex column, and `align-items`
+   defaults to `stretch`: the bubble ran out to whatever was widest under it, which
+   was the control strip, not the words. Measured at 400x800: "你好" painted a
+   146 px bubble inside a 184 px row for a 28 px word. The bubble is the message, so
+   it is now as wide as the message - `fit-content`, aligned to the body's outer
+   edge, which is the avatar's own edge on a mirrored row, so the avatar does not
+   move. A long message is unchanged: `fit-content` clamps to the width the body
+   already gives it (measured at 1440x900, a five-line line still 618 px in a 618 px
+   body; at 400x800, 301 px in a 301 px body).
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+  .message.player .message-bubble {
+    align-self: flex-end;
+    width: fit-content;
+  }
+
+  @media (max-width: 480px) {
+    .message-actions .action-word {
+      display: none;
+    }
+
+    .message-actions .regenerate-btn {
+      min-width: var(--touch-target-min);
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .tavern-app-shell :is(button, summary):active:not(:disabled) {
       translate: none;
