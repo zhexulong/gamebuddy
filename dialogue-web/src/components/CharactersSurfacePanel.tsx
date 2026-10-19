@@ -1,5 +1,5 @@
 import { ChevronDown } from "lucide-react";
-import { type ReactElement, useEffect, useState } from "react";
+import { type ReactElement, useCallback, useEffect, useState } from "react";
 import type { Locale } from "../i18n";
 import type {
   CompanionWorldBookV1,
@@ -817,7 +817,7 @@ function CharacterWorldBookPanel({
   // second arm replaces the first and no stale arm can fire on another row.
   const [armed, setArmed] = useState<string | null>(null);
 
-  const readOnce = async (): Promise<WorldBookView> => {
+  const readOnce = useCallback(async (): Promise<WorldBookView> => {
     try {
       const source = await read();
       setGeneration(source.selectionGeneration);
@@ -825,7 +825,7 @@ function CharacterWorldBookPanel({
     } catch {
       return { kind: "error" };
     }
-  };
+  }, [read]);
 
   useEffect(() => {
     let active = true;
@@ -837,8 +837,9 @@ function CharacterWorldBookPanel({
       active = false;
     };
     // The reader is the mount's own authority for its World Info revision and is
-    // stable for the life of the surface; a re-read is driven by the bind below.
-  }, []);
+    // stable for the life of the surface, so this is the mount's one read; a
+    // re-read is driven by the bind below.
+  }, [readOnce]);
 
   const bind = (sourceHandle: string | null): void => {
     if (view.kind !== "ready") return;
