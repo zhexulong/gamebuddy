@@ -1316,10 +1316,23 @@ function measureEnvironmentFacts() {
       return "";
     }
   };
-  const adapter = query("(Get-CimInstance Win32_VideoController | Select-Object -First 1).Name");
-  const width = query("(Get-CimInstance Win32_VideoController | Select-Object -First 1).CurrentHorizontalResolution");
-  const height = query("(Get-CimInstance Win32_VideoController | Select-Object -First 1).CurrentVerticalResolution");
-  const resolution = width !== "" && height !== "" ? `${width}x${height}` : "";
+  const controller = query(
+    "Get-CimInstance Win32_VideoController | Where-Object { $_.CurrentHorizontalResolution -gt 0 } | Select-Object -First 1 | ConvertTo-Json -Compress",
+  );
+  let parsedController = null;
+  try {
+    parsedController = controller === "" ? null : JSON.parse(controller);
+  } catch {
+    parsedController = null;
+  }
+  const adapter = typeof parsedController?.Name === "string" ? parsedController.Name : "";
+  const width = Number(parsedController?.CurrentHorizontalResolution ?? 0);
+  const height = Number(parsedController?.CurrentVerticalResolution ?? 0);
+  // ONE controller, chosen because it REPORTS a resolution. The first version asked for `Select-Object -First 1` and took
+  // the adapter from it: on a laptop with two adapters that picked the discrete GPU, which reports an adapter name and no
+  // current mode - so the bundle was refused as `env_fact_not_measured` while the measurement itself was fine (measured
+  // 2026-10-19: `ENV_FACTS_EMPTY {adapter: "NVIDIA GeForce RTX 5060 Laptop GPU", resolution: ""}`).
+  const resolution = width > 0 && height > 0 ? `${String(width)}x${String(height)}` : "";
   if (adapter === "" || resolution === "")
     console.error(
       `ENV_FACTS_EMPTY ${JSON.stringify({ adapter: adapter.slice(0, 40), resolution: resolution.slice(0, 20) })}`,
