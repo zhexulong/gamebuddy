@@ -723,6 +723,11 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // before DayStarted, so it can never be handled after the terminal). Not a new action;
   // it grants no capability.
   multi_day: "run-stardew-native-local-player-multi-day-smoke.mjs",
+  // `respond_level_up`'s MILESTONE half: the same action over the branch world (the milestone skill left below 10 with
+  // its level-5 profession unchosen), which is the only world where `branch_a`/`branch_b` are live choices. An action
+  // key of its own because the fixture selects its world by action - and EXPERIMENTAL because the branch is a proof of
+  // the published action, not a second published action.
+  respond_level_up_branch: "run-stardew-native-local-player-respond-level-up-branch-smoke.mjs",
   // WIA world-interruption live proofs (world-interruption-arbitration.md
   // §4.1 ② / §4.3): drive the SAME published move_to_tile action over fixtures
   // that stage a world-change mid-move, measuring that the running body loop
