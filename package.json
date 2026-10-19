@@ -181,6 +181,7 @@
     "test:stardew-gameplay-surface-rules": "node --test tools/stardew-gameplay-surface-rules.test.mjs",
     "test:stardew-gameplay-surface-selector": "node --test tools/stardew-gameplay-surface-selector.test.mjs",
     "test:stardew-gate-failure-taxonomy": "node --test tools/stardew-gate-failure-taxonomy.test.mjs",
+    "test:stardew-lifecycle-cold-session": "node --test tools/run-stardew-lifecycle-cold-session.test.mjs",
     "test:stardew-loop-closure": "node --test tools/check-stardew-loop-closure.test.mjs",
     "test:stardew-loop-closure-mutation": "node tools/check-stardew-loop-closure.mutation.mjs",
     "test:stardew-method-resolution": "node --test integrations/stardew/action-development/tests/stardew-method-resolution.test.mjs",
