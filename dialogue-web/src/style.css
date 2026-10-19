@@ -5323,6 +5323,38 @@
     }
   }
 
+  /* ==========================================================================
+   The companion's world-book notice joins the authoring form's measure (item 5)
+
+   `[data-companion-world-book-draft]` above takes the form measure and centres
+   itself in the region, but the notice that reports the save's outcome is its
+   SIBLING in the section, so it was the one block in that column still spanning
+   the whole region: measured at 1440x900, the draft sat at 400..1040 (640 px) and
+   the refusal banner about that draft at 16..1424 (1408 px) - a sentence and the
+   form it describes on two different columns.
+
+   It takes the same declarations, which is the family the surface-level notices
+   already take (`.surface-content > .error-banner`, above): the measure, and the
+   centring that puts it on the column the draft is drawn in. At 400x800 the
+   region is already narrower than the measure, so nothing moves there.
+
+   The rule is not scoped to the open editor on purpose: the notice is the same
+   block when the save SUCCEEDED and the editor has closed, and a banner that
+   changes column depending on which word it carries is the same defect one state
+   over.
+
+   Measured, mounted, at 1440x900: the refusal banner moves from 16..1424 to
+   400..1040, exactly the draft's own box.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+  [data-companion-world-book-notice] {
+    width: 100%;
+    max-width: var(--management-form-measure);
+    margin-inline: auto;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .tavern-app-shell :is(button, summary):active:not(:disabled) {
       translate: none;

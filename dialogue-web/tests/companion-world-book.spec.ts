@@ -527,6 +527,18 @@ test("a save refused because the book changed says the book changed, not that it
   await expect(notice).toContainText("没有保存");
   await expect(notice).not.toContainText("无法保存");
 
+  // And it is the draft's own column, not the region's: the authoring form takes
+  // the management measure and centres itself, and the sentence that reports its
+  // outcome has to be the same box. Measured at 1440x900 before this, the draft sat
+  // at 400..1040 and this banner at 16..1424 - the region's whole width, 768 px
+  // wider than the form it was about.
+  const draftBox = await block.locator("[data-companion-world-book-draft]").boundingBox();
+  const noticeBox = await notice.boundingBox();
+  console.log(`[world-book-notice] draft=${JSON.stringify(draftBox)} notice=${JSON.stringify(noticeBox)}`);
+  expect(draftBox, "the draft is on screen to compare against").not.toBeNull();
+  expect(Math.round(noticeBox!.x), "the refusal sits on the draft's own column").toBe(Math.round(draftBox!.x));
+  expect(Math.round(noticeBox!.width), "and takes the draft's own measure").toBe(Math.round(draftBox!.width));
+
   // The read-back is the truth: the list shows the book that is actually there, while the
   // editor still CASes on the revision it was opened on, so a second save refuses again
   // rather than overwriting the change nobody showed her.
