@@ -990,6 +990,11 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     resize: vertical;
+    /* The field ring, not the browser's outline: this is the one text field whose
+       focus was the element-level outline while every other field in the product
+       draws the shared `--focus-ring` border/box-shadow pair (the unified list in
+       `theme.polish`). */
+    outline: none;
   }
 
   .message-edit-actions {
@@ -3041,7 +3046,9 @@
   .form-select:focus,
   .surface-model-field input:focus,
   .surface-model-field select:focus,
-  .game-create-form input:focus {
+  .game-create-form input:focus,
+  .surface-advanced-editor:focus,
+  .message-edit-field:focus {
     border-color: var(--focus-ring);
     box-shadow: 0 0 0 1px var(--focus-ring);
   }
@@ -3236,12 +3243,14 @@
     line-height: 1.55;
     padding: 10px 12px;
     outline: none;
-    transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+    transition:
+      border-color var(--motion-duration-fast) var(--motion-ease-out),
+      box-shadow var(--motion-duration-fast) var(--motion-ease-out);
   }
 
-  .surface-advanced-editor:focus {
-    border-color: var(--focus-ring);
-  }
+  /* The ring itself is the shared focus rule above (`.surface-advanced-editor:focus`
+   in the unified list): this editor was the one control that declared only a
+   border colour, so its keyboard focus was a 1 px tint and not the product's ring. */
 
   /* Connection rows: the same card treatment the model editor gets, plus the
    ready/failed readiness borders that stay a second carrier to the status word. */
@@ -3374,6 +3383,20 @@
   [data-connection-settings],
   [data-model-profiles],
   .surface-content > .button-group {
+    width: 100%;
+    max-width: var(--management-form-measure);
+    margin-inline: auto;
+  }
+
+  /* A surface's own notice is a block like the list and the cards under it: the
+   Chats surface's refused rename painted a 1408 px strip at 1440x900 while the
+   card the sentence was about measured 640 px, so the notice and the thing it
+   described sat on two different columns. It takes the management measure and the
+   centring every block around it has; at 400x800 the region is already narrower
+   than the measure, so nothing moves there. */
+  .surface-content > .error-banner,
+  .surface-content > .success-banner,
+  .surface-content > .warning-banner {
     width: 100%;
     max-width: var(--management-form-measure);
     margin-inline: auto;

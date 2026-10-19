@@ -28,11 +28,12 @@
  * an `outline: none` on it is outside this gate - reported in the diagnostic with
  * its selector, so a scoped-out site is visible rather than silent.
  *
- * The one finding below is a real inconsistency reported to the owner rather than
- * fixed here (`dialogue-web/src/style.css` is another lane's file): the advanced Pi
- * JSON editor is the only control missing from the stylesheet's own list of
- * ring-restoring focus rules, so its focus signal is a border colour only. The gate
- * asserts it still reproduces, so the entry cannot outlive its fix.
+ * The one finding this gate carried (`REPORTED_FOCUS_SITES`) was the advanced Pi
+ * JSON editor, which the owner reported and another lane then fixed: it now joins
+ * the stylesheet's unified focus list and draws the same `--focus-ring`
+ * border/box-shadow pair every other field draws. The list is kept, empty, so the
+ * next site that loses its ring is reported as itself and not silently identical
+ * to a site that has since been fixed.
  *
  * False positives, and how each is handled:
  *  - the ring may be declared anywhere in a focus rule, in any layer: the check is
@@ -59,16 +60,13 @@ const STYLESHEET = join(SRC, "style.css");
  * `{ selector, declarations, reason }`: the declarations the finding is made of,
  * so the gate follows the rule by its content rather than by its position in the
  * stylesheet - an unrelated CSS edit shifts line numbers, never declarations.
- * The gate fails if one stops reproducing.
+ * The gate fails if one stops reproducing, so an entry cannot outlive its fix.
+ *
+ * Empty: the advanced Pi JSON editor was the one entry, and it now draws the
+ * shared `--focus-ring` pair, so it stopped being a finding. The mechanism stays
+ * for the next one.
  */
-const REPORTED_FOCUS_SITES = [
-  {
-    selector: ".surface-advanced-editor",
-    declarations: [["outline", "none"]],
-    reason:
-      "the advanced Pi JSON editor removes its outline and its only focus rule sets border-color, so keyboard focus reads as a 1px colour change; it is also the one control missing from the stylesheet's unified ring list (`.form-input:focus, .form-textarea:focus, .form-select:focus, ...` + `box-shadow`)",
-  },
-];
+const REPORTED_FOCUS_SITES = [];
 
 /** Comments blanked so a `;` or `{}` inside them cannot confuse the reader. */
 function blankComments(css) {
