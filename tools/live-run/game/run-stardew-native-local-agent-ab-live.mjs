@@ -1248,25 +1248,39 @@ let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
  * anything, and an absent process answers `responded: null` rather than guessing.
  */
 function sampleGameProcess() {
-  try {
-    const rows = execFileSync(
+  /**
+   * Three different answers, three different values.
+   *
+   * `responding: false` is a live process that is not pumping messages - the signature of the engine-side freeze.
+   * `responding: null` with `note: "no_game_process"` is a game that is not running. `note: "probe_unavailable"` is the
+   * query itself failing, which is NOT evidence about the world: measured 2026-10-19 (g70probe), the sampler recorded
+   * `game_responding=null` during a freeze in which the game was alive, collapsing two of these into one value.
+   */
+  const query = () =>
+    execFileSync(
       "powershell",
       [
         "-NoProfile",
         "-Command",
         "Get-Process -Name StardewModdingAPI,Stardew* -ErrorAction SilentlyContinue | Select-Object -First 1 -Property Responding,CPU | ConvertTo-Json -Compress",
       ],
-      { encoding: "utf8", timeout: 5_000 },
+      { encoding: "utf8", timeout: 8_000 },
     );
-    const parsed = JSON.parse(rows.trim() === "" ? "null" : rows);
-    if (parsed === null) return Object.freeze({ responding: null, cpuSeconds: null });
-    return Object.freeze({
-      responding: parsed.Responding === true,
-      cpuSeconds: typeof parsed.CPU === "number" ? parsed.CPU : null,
-    });
-  } catch {
-    return Object.freeze({ responding: null, cpuSeconds: null });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const rows = query();
+      const parsed = JSON.parse(rows.trim() === "" ? "null" : rows);
+      if (parsed === null) return Object.freeze({ responding: null, cpuSeconds: null, note: "no_game_process" });
+      return Object.freeze({
+        responding: parsed.Responding === true,
+        cpuSeconds: typeof parsed.CPU === "number" ? parsed.CPU : null,
+        note: null,
+      });
+    } catch {
+      // A failed query is not evidence; try once more, then say so.
+    }
   }
+  return Object.freeze({ responding: null, cpuSeconds: null, note: "probe_unavailable" });
 }
 
 function sampleModHeartbeat() {
@@ -1993,7 +2007,8 @@ const stallSampler = setInterval(() => {
   const game = sampleGameProcess();
   worldStallReason =
     `world_stopped_advancing:silent_ms=${String(liveness.silentMs)}:last_heartbeat=${liveness.line}` +
-    `:game_responding=${String(game.responding)}:game_cpu_s=${String(Math.round(game.cpuSeconds ?? -1))}`;
+    `:game_responding=${String(game.responding)}:game_cpu_s=${String(Math.round(game.cpuSeconds ?? -1))}` +
+    (game.note === null ? "" : `:game_probe=${String(game.note)}`);
 }, 5_000);
 stallSampler.unref?.();
 // The run's own narrative judgement, made once before the verdict and published in the bundle. Declared out here so
