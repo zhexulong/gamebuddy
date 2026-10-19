@@ -1907,6 +1907,76 @@ test("a launch refused as not staged names activation as the reason instead of a
   await expect(panel).not.toContainText("The game launch result is uncertain");
 });
 
+/**
+ * The refusal a first run really produces, measured in the live product (2026-10-19, the composed Game
+ * surface at HEAD): with no Stardew installation registered for the session, pressing "Enable companion
+ * play" answers `409 {"code":"state_unavailable","cause":"stardew_bootstrap_registration_unavailable"}`
+ * (`scratch/probe-game-activation.mjs`). Activation reserves and stages the owned Player Host against the
+ * registered installation, so with none bound the attempt can only be refused - the player has not set the
+ * game up yet, and the installation panel on this same surface is where they do that.
+ *
+ * The failure this catches: that refusal rendered as "companion play could not be enabled. The latest
+ * authoritative game state is shown." - a dead-end fault over a state the player fixes on this very screen.
+ * It now states the missing prerequisite and names the control that supplies it, the way the cabin handoff
+ * renders its own not-yet state.
+ */
+test("an activation refused for a missing installation reads as the prerequisite, and lays out as one status line", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/lifecycle/activate", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ code: "state_unavailable", cause: "stardew_bootstrap_registration_unavailable" }),
+    }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+  const panel = page.getByRole("region", { name: "Game state" });
+  await panel.getByRole("button", { name: "Enable companion play" }).click();
+
+  const statusLine = panel.locator('[data-guide-step="1"] .game-status');
+  await expect(statusLine).toHaveCount(1);
+  const measurement = await statusLine.evaluate((node) => {
+    const box = node.getBoundingClientRect();
+    const step = node.closest('[data-guide-step="1"]');
+    return Object.freeze({
+      tone: node.getAttribute("data-tone"),
+      textLength: node.textContent?.length ?? 0,
+      width: box.width,
+      height: box.height,
+      stepWidth: step === null ? 0 : step.getBoundingClientRect().width,
+    });
+  });
+  console.log(`[activation-not-configured] ${JSON.stringify(measurement)}`);
+
+  // A missing installation is a state to act on, not a failure to report: the line carries the informative
+  // tone the cabin handoff's own not-yet state carries, and it says which prerequisite is missing and where
+  // the player supplies it.
+  expect(measurement.tone).toBe("info");
+  await expect(statusLine).toContainText("Companion play needs a Stardew Valley installation");
+  await expect(statusLine).toContainText("Choose your game folder in Game installation below");
+  await expect(panel).not.toContainText("Companion play could not be enabled");
+  // It is really laid out inside step 1: a line that renders, fits the step, and is not a zero-height ghost.
+  expect(measurement.textLength).toBeGreaterThan(0);
+  expect(measurement.height).toBeGreaterThan(0);
+  expect(measurement.width).toBeGreaterThan(0);
+  expect(measurement.width).toBeLessThanOrEqual(measurement.stepWidth);
+  // The refusal is not a dead end: once the installation is chosen the same control is what the player presses.
+  await expect(panel.getByRole("button", { name: "Enable companion play" })).toBeVisible();
+});
+
 test("an activation refusal stays a drawer fact with its own reason, and an unmounted seam says so", async ({ page }) => {
   const scenarios = [
     { refusal: { status: 409, code: "game_unavailable" }, expected: "Companion play could not be enabled" },
