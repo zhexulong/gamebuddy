@@ -201,9 +201,35 @@ internal sealed class DisposableInstalledGuardianGeneration : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
-        if (generationsJunction is not null && Directory.Exists(generationsJunction)) Directory.Delete(generationsJunction);
-        if (generationsTarget is not null && Directory.Exists(generationsTarget)) Directory.Delete(generationsTarget, recursive: true);
-        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        if (generationsJunction is not null) DeleteTreeWhenReleased(generationsJunction, recursive: false);
+        if (generationsTarget is not null) DeleteTreeWhenReleased(generationsTarget, recursive: true);
+        DeleteTreeWhenReleased(root, recursive: true);
         return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// Deletes a generation tree once the process that held it has let go. A child the supervisor
+    /// killed is torn down by the kernel asynchronously, so its handles can still refuse deletion for
+    /// a moment after the supervisor observed its exit. Measured 2026-10-19: the silence-watch case
+    /// failed in THIS teardown rather than in its own assertion, with
+    /// <c>IOException: The process cannot access the file 'desktop-host-entry.internal.js' because it
+    /// is being used by another process</c>. The wait is bounded, so a child that never releases its
+    /// files still fails the test instead of being hidden by the retry.
+    /// </summary>
+    private static void DeleteTreeWhenReleased(string path, bool recursive)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (Directory.Exists(path))
+        {
+            try
+            {
+                Directory.Delete(path, recursive);
+                return;
+            }
+            catch (Exception error) when ((error is IOException or UnauthorizedAccessException) && DateTimeOffset.UtcNow < deadline)
+            {
+                Thread.Sleep(25);
+            }
+        }
     }
 }

@@ -21,32 +21,27 @@
   </ItemGroup>
 
   <!--
-    Payload: the exact generation tree the installer lays into the program root.
-    Release defaults to the repository's production generation root; the scratch
-    exercise points it at a disposable directory. The payload is embedded as one
-    resource named `payload.zip`, so Setup.exe is a single self-contained
-    distributable that carries what it installs.
+    Payload: the player-distribution archive `host/scripts/package-player-distribution.mjs`
+    seals from one published generation plus the launcher bundle. Setup.exe embeds exactly
+    that archive as one resource named `payload.zip`, so what a player installs is the
+    artifact the packaging step checked for completeness and leaks - not a second archive
+    the installer would build here from a tree nothing verified. `pnpm build:player-distribution`
+    produces it; -p:GameBuddyPlayerDistributionPayload=&lt;payload.zip&gt; points at another one.
   -->
   <PropertyGroup>
-    <GameBuddyGenerationPayload Condition="'$(GameBuddyGenerationPayload)' == ''">$(MSBuildThisFileDirectory)..\..\..\host\dist</GameBuddyGenerationPayload>
+    <GameBuddyPlayerDistributionPayload Condition="'$(GameBuddyPlayerDistributionPayload)' == ''">$(MSBuildThisFileDirectory)..\..\dist\payload.zip</GameBuddyPlayerDistributionPayload>
   </PropertyGroup>
 
-  <Target Name="EmbedGenerationPayload" BeforeTargets="PrepareForBuild">
-    <PropertyGroup>
-      <GameBuddyPayloadArchive>$(IntermediateOutputPath)payload.zip</GameBuddyPayloadArchive>
-    </PropertyGroup>
-    <Error Condition="'$(Configuration)' == 'Release' and !Exists('$(GameBuddyGenerationPayload)\current.json')"
+  <Target Name="EmbedPlayerDistributionPayload" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(Configuration)' == 'Release' and !Exists('$(GameBuddyPlayerDistributionPayload)')"
            Code="GBPAY001"
-           Text="installer_payload_unavailable: no generation payload with a current.json pointer was found at '$(GameBuddyGenerationPayload)'. Pass -p:GameBuddyGenerationPayload=&lt;generation root&gt;. A Release Setup.exe is never built without the generation it installs." />
-    <MakeDir Directories="$(IntermediateOutputPath)" />
-    <Exec Condition="Exists('$(GameBuddyGenerationPayload)\current.json')"
-          Command="tar -a -c -f &quot;$(GameBuddyPayloadArchive)&quot; -C &quot;$(GameBuddyGenerationPayload)&quot; ." />
-    <ItemGroup Condition="Exists('$(GameBuddyPayloadArchive)')">
-      <EmbeddedResource Include="$(GameBuddyPayloadArchive)" LogicalName="payload.zip" />
+           Text="installer_payload_unavailable: no player-distribution payload archive was found at '$(GameBuddyPlayerDistributionPayload)'. Run `pnpm build:player-distribution`, or pass -p:GameBuddyPlayerDistributionPayload=&lt;payload.zip&gt;. A Release Setup.exe is never built without the generation it installs." />
+    <ItemGroup Condition="Exists('$(GameBuddyPlayerDistributionPayload)')">
+      <EmbeddedResource Include="$(GameBuddyPlayerDistributionPayload)" LogicalName="payload.zip" />
     </ItemGroup>
-    <Warning Condition="'$(Configuration)' != 'Release' and !Exists('$(GameBuddyGenerationPayload)\current.json')"
+    <Warning Condition="'$(Configuration)' != 'Release' and !Exists('$(GameBuddyPlayerDistributionPayload)')"
              Code="GBPAY002"
-             Text="installer_payload_absent: the Debug build has no generation payload, so the produced Setup.exe can only be used for the uninstall path." />
+             Text="installer_payload_absent: the Debug build has no player-distribution payload, so the produced Setup.exe can only be used for the uninstall path." />
   </Target>
 
   <!--

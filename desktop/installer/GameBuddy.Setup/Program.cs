@@ -58,15 +58,27 @@ internal static class Program
 
     private static void Install(SetupLayout layout, SetupRequest request)
     {
-        var payload = OpenPayload();
+        LayPayloadIntoProgramRoot(OpenPayload(), layout);
+        InstallUninstaller(layout);
+        SetupRegistration.Write(layout, request.DisplayVersion ?? CurrentDisplayVersion());
+    }
+
+    /// <summary>
+    /// The half of the install that is the payload's own contract with the program root:
+    /// lay the archive down, then require the result to be one the launcher can admit. It
+    /// is separated from the registration and the uninstaller copy because those two write
+    /// the current user's registry and copy this process's own image, while this half runs
+    /// against a scratch root and a synthetic archive - the case the project's
+    /// <c>InternalsVisibleTo</c> seam exists for.
+    /// </summary>
+    internal static void LayPayloadIntoProgramRoot(Stream payload, SetupLayout layout)
+    {
         // The ancestors are established first so a reparse point anywhere on the
         // fixed layout is refused before anything is written.
         layout.EnsureOrdinaryAncestors(layout.ProgramRoot);
         Directory.CreateDirectory(layout.ProgramRoot);
         ExtractPayload(payload, layout.ProgramRoot);
         VerifyInstalledProgramRoot(layout.ProgramRoot);
-        InstallUninstaller(layout);
-        SetupRegistration.Write(layout, request.DisplayVersion ?? CurrentDisplayVersion());
     }
 
     private static void Uninstall(SetupLayout layout, SetupRequest request)
@@ -342,6 +354,17 @@ internal static class Program
 
         var generationRoot = Path.Combine(programRoot, SetupLayout.GenerationsDirectoryName, generation);
         if (!Directory.Exists(generationRoot))
+        {
+            throw new SetupException(SetupFailure.PayloadUnavailable);
+        }
+
+        // The pointer and its generation are what the launcher SELECTS; the launcher itself is
+        // what the player double-clicks, and the registration this install writes names the
+        // program root as the product's install location. A payload holding a generation but no
+        // launcher entry - the shape a bare generation root has, which is what this build's
+        // payload default used to name - would register an entry that can never start, for a
+        // reason the player cannot act on. So the entry is required here, not at launch.
+        if (!File.Exists(Path.Combine(programRoot, SetupLayout.LauncherEntryRelativePath)))
         {
             throw new SetupException(SetupFailure.PayloadUnavailable);
         }

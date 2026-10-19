@@ -37,7 +37,10 @@ public sealed class RuntimeSupervisorEnvironmentTests
     private static string[] SortedKeys(IEnumerable<string> keys) =>
         keys.OrderBy(key => key, StringComparer.Ordinal).ToArray();
 
-    private static void AssertDeclaredBlock(IReadOnlyDictionary<string, string> environment, params string[] conditionalKeys)
+    // Shared with the supervisor's own live-launch case: the declared block has ONE authority in
+    // the tests, because the copy that lived in HostBootstrapSupervisorTests went stale when three
+    // names were added here and reported a healthy launch as broken.
+    internal static void AssertDeclaredBlock(IReadOnlyDictionary<string, string> environment, params string[] conditionalKeys)
     {
         Assert.Empty(FrozenWireKeys.Except(environment.Keys));
         Assert.All(environment.Keys, key => Assert.Contains(key, FrozenWireKeys.Concat(ForwardedAmbientKeys).Concat(conditionalKeys)));

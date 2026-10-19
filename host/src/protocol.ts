@@ -218,6 +218,13 @@ export type Snapshot = Readonly<{
   capabilities: readonly string[];
   catalogRevision: number;
   enabledActionIds: readonly string[];
+  /**
+   * The engine's pending level-ups, as `skill@level` (0 Farming … 5 Luck) - what the next night boundary will ask the
+   * companion to decide. Published 2026-10-19 because the harness was learning this pair by PARSING THE REFUSAL receipt
+   * of `dismiss_modal`: the pair is a product fact, not a failure to be reverse-engineered. Older Mod snapshots may omit
+   * the field, and an empty array means "nothing pending".
+   */
+  pendingLevelUps?: readonly string[];
   /** Older Mod snapshots may omit fields added after the initial bridge contract. */
   currentTool?: string | null;
   inventorySlots?: number;
@@ -1557,6 +1564,7 @@ const SNAPSHOT_KEYS = [
   "actionable",
   "capabilities",
   "catalogRevision",
+  "pendingLevelUps",
   "enabledActionIds",
   "presentationLocale",
   "timeOfDay",
@@ -3248,6 +3256,10 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "dailyQuestTargets", maxItems: 16, accepts: isDailyQuestTargetFact },
   { field: "specialOrderTargets", maxItems: 16, accepts: isSpecialOrderTargetFact },
   { field: "activeSpecialOrderKeys", maxItems: 16, accepts: (entry) => typeof entry === "string" && entry.length > 0 },
+  // The engine's pending level-ups, as `skill@level`. Bounded at 8 (the engine's own list is a handful) and checked
+  // against the vocabulary the receipts already publish, so a malformed entry is a named snapshot refusal rather than a
+  // fact the companion reads.
+  { field: "pendingLevelUps", maxItems: 8, accepts: (entry) => typeof entry === "string" && /^\d+@\d+$/u.test(entry) },
   { field: "museumRewardTargets", maxItems: 16, accepts: isMuseumRewardTargetFact },
   { field: "tailoringTargets", maxItems: 32, accepts: isTailoringTargetFact, narrate: namedEntryReason },
   { field: "colorTargets", maxItems: 32, accepts: isColorTargetFact, narrate: namedEntryReason },

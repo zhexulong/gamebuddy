@@ -570,7 +570,12 @@ public sealed record BridgeSnapshot(
     
     // The sewing-machine targets this actor can act on right now: defaulted and LAST for the same reason as
     // its siblings above - the positional list is already closed by the parameters before it.
-    ,IReadOnlyList<BridgeTailoringTarget>? TailoringTargets = null);
+    ,IReadOnlyList<BridgeTailoringTarget>? TailoringTargets = null,
+    // The level-ups the engine will ask about at the next night boundary, as `skill@level` (0 Farming … 5 Luck). The
+    // engine pushes one LevelUpMenu per entry in `player.newLevels` (Game1.cs:9130-9134), and until this field existed
+    // the harness learned the pending pair by PARSING THE REFUSAL receipt of `dismiss_modal` - reading a fact out of a
+    // failure. Defaulted and LAST for the same reason as its siblings above.
+    IReadOnlyList<string>? PendingLevelUps = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,

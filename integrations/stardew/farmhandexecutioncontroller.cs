@@ -2159,6 +2159,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ActorDispositionActionOwned: this.disposition.ModalActionOwned,
             DailyQuestTargets: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? DiscoverDailyQuestTargets() : null,
             AcceptedDailyQuest: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? Game1.player.acceptedDailyQuest.Value : null,
+            PendingLevelUps: DescribePendingLevelUps(player),
             SpecialOrderTargets: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverSpecialOrderTargets() : null,
             ActiveSpecialOrderKeys: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverActiveSpecialOrderKeys() : null,
             MuseumRewardTargets: advertisedCapabilities.Contains("claim_museum_reward", StringComparer.Ordinal) ? DiscoverMuseumRewardTargets(player) : null,
@@ -2167,6 +2168,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ColorTargets: advertisedCapabilities.Contains("color_placed_object", StringComparer.Ordinal) ? DiscoverColorTargets(player) : null
         );
     }
+
+    /// <summary>
+    /// The level-ups the engine will ask about at the next night boundary, as `skill@level`.
+    ///
+    /// Why the product publishes this: `Game1.showEndOfNightStuff` pushes one LevelUpMenu per entry in
+    /// `player.newLevels` (Game1.cs:9130-9134), and the harness had to learn the pending pair by PARSING THE REFUSAL
+    /// receipt of `dismiss_modal` - reading a fact out of a failure. The pair is a product fact, so it is projected here,
+    /// bounded, in the same `skill@level` vocabulary the receipts already use (0 Farming … 5 Luck, matching
+    /// `getSkillNumberFromName`).
+    /// </summary>
+    private static IReadOnlyList<string> DescribePendingLevelUps(Farmer player) =>
+        player.newLevels.Count == 0
+            ? Array.Empty<string>()
+            : player.newLevels.Take(8).Select(entry => $"{entry.X}@{entry.Y}").ToArray();
 
     private BridgeSnapshot CreateWorldNotReadyBridgeSnapshot(FarmhandCapabilityPublication capabilityPublication)
     {
@@ -2190,7 +2205,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // admission rejects with world_not_ready, so no consumer plans from this.
         TimeOfDay: 0, DayOfMonth: 0, SeasonIndex: 0, Year: 0,
         Weather: "unknown",
-        PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, WorldObjectTargets: null, ActorDispositionKind: "idle", DailyQuestTargets: null, AcceptedDailyQuest: null);
+        PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, WorldObjectTargets: null, ActorDispositionKind: "idle", DailyQuestTargets: null, AcceptedDailyQuest: null, PendingLevelUps: null);
     }
 
     private static StardewValley.Warp? ResolveDoorWarp(StardewValley.GameLocation location, Microsoft.Xna.Framework.Point point)

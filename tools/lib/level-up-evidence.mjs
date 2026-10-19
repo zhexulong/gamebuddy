@@ -37,6 +37,23 @@ export function evidenceDetail(evidence) {
 }
 
 /**
+ * The pending pairs as the PRODUCT publishes them.
+ *
+ * `snapshot.pendingLevelUps` is the Mod's own projection of `Farmer.newLevels` (`skill@level`, bounded at 8), which is
+ * where this fact belongs - the refusal-based parse above exists only because that projection did not, and it made the
+ * harness read a fact out of a failure. Both feed `chooseLevelUpResolution`, and the snapshot is what the watcher now
+ * uses; the parse stays for the callers that only have a receipt in hand.
+ */
+export function readPendingLevelUpsFromSnapshot(snapshot) {
+  const entries = snapshot?.pendingLevelUps;
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .map((entry) => /^(\d{1,2})@(\d{1,2})$/u.exec(String(entry)))
+    .filter((match) => match !== null)
+    .map((match) => ({ skill: Number.parseInt(match[1], 10), level: Number.parseInt(match[2], 10) }));
+}
+
+/**
  * The pair to resolve, or a named reason there is none.
  *
  * A MILESTONE is deliberately NOT a resolution the watcher may take: the two branches at levels 5 and 10 are a

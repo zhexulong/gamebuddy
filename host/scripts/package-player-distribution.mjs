@@ -18,17 +18,18 @@ import {
  * package under `native/stardew-mod/GameBuddy`. What it does NOT carry, and what this
  * step therefore adds, is the launcher entry the player double-clicks
  * (`GameBuddy.Desktop.exe`, a separate .NET build artifact) laid beside `current.json`
- * at the payload root - the exact shape `GameBuddy.Setup` embeds as `payload.zip` and
- * extracts into `%LOCALAPPDATA%\Programs\GameBuddy` (`desktop/installer/GameBuddy.Setup`).
+ * at the payload root - the exact tree `GameBuddy.Setup` lays into
+ * `%LOCALAPPDATA%\Programs\GameBuddy` (`desktop/installer/GameBuddy.Setup`).
  *
  * The static leak gate is the EXISTING one: this script imports the scanner from
  * `verify-self-contained-generation.mjs` and refuses to seal an archive whose blocking
  * categories (repository_path / machine_profile_path / launch_surface_interpreter) hit.
  * It never re-walks the closure itself.
  *
- * The archive is produced by the same mechanism the installer uses
- * (`tar -a -c -f payload.zip -C <payload root> .`), so this step introduces no archive
- * library and no new dependency.
+ * The sealed archive IS the installer's `payload.zip`: `GameBuddy.Setup` embeds the
+ * artifact this step produces instead of re-archiving a tree of its own, so the
+ * completeness and leak verdicts recorded here are the ones the installed payload has.
+ * Windows' own `tar -a` does the archiving, so this step adds no archive library.
  */
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -106,9 +107,8 @@ async function stagePayload({ generationOutputRoot, launcherBundle, stageRoot })
 
 /**
  * The one archive step. `tar -a` selects the archive format from the `.zip`
- * extension and is the exact command the installer's own build uses to produce
- * its embedded `payload.zip`, so a payload this script seals is one the installer
- * already knows how to open.
+ * extension, so the payload the installer embeds is written by the platform's own
+ * archiver and this step introduces no archive library.
  */
 export function archiveInvocation({ archivePath, payloadRoot, platform = process.platform, environment = process.env }) {
   if (typeof archivePath !== "string" || !archivePath.toLowerCase().endsWith(".zip")) fail("archive_must_be_zip");

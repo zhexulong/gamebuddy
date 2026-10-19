@@ -30,7 +30,7 @@ import { createHash } from "node:crypto";
 import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
 import { assessMultiDayBaseline, MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "../../lib/multiday-baseline.mjs";
 import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
-import { chooseLevelUpResolution, parsePendingLevelUps } from "../../lib/level-up-evidence.mjs";
+import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
 import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
@@ -1498,22 +1498,22 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
    * branch would be the harness deciding for it. A milestone is therefore reported by name and the run stops -
    * the multi-day Given pins the five skills at 10 precisely so one cannot arise.
    *
-   * The pair comes from the Mod's own refusal for this menu: `dismiss_modal` genuinely cannot close it, and its
-   * refusal publishes `pending_level_ups=N;level_up=<skill>@<level>` from `Farmer.newLevels`. Reading the pair
-   * from that receipted statement keeps the harness out of the snapshot protocol; projecting the pending pair
-   * into the snapshot is the better home for it (the boundary card requires exactly that for the companion), and
-   * this is the interim while the action is being proven live.
+   * The pair is read from the PRODUCT's own projection: the Mod publishes `pendingLevelUps` (`skill@level`, bounded at
+   * 8) on every snapshot, which is the home the boundary card requires for it. Until 2026-10-19 the watcher learned the
+   * pair by calling `dismiss_modal` and parsing its refusal - a fact read out of a failure - and that probe is gone.
    */
   const respondLevelUp = async () => {
-    const probe = await world.dismiss("LevelUpMenu");
-    // The pair, through the pure parse: the evidence is an OBJECT in the fact log, and stringifying it was the
-    // bug that made run g10 stop one step short (it reported `level_up_pair_not_published` while the Mod had
-    // published `level_up=4@6`).
-    const decision = chooseLevelUpResolution(parsePendingLevelUps(probe?.receipt?.evidence ?? probe?.receipt));
+    // The pair, from the PRODUCT's own projection (`snapshot.pendingLevelUps`). The probe that used to read it is gone:
+    // it learned the pair by calling `dismiss_modal` and parsing the REFUSAL - reading a fact out of a failure - and the
+    // boundary card requires the pending pair to be the companion's own input anyway. The projection landed in the Mod
+    // and the Host's snapshot contract (bounded at 8, `skill@level`), so the watcher now reads a fact like any other.
+    const pending = readPendingLevelUpsFromSnapshot(await observeQuietly());
+    const decision = chooseLevelUpResolution(pending);
     if (decision.reasonCode !== null) {
       return Object.freeze({
-        receipt: probe?.receipt ?? null,
-        reasonCode: decision.reasonCode,
+        receipt: null,
+        reasonCode:
+          decision.reasonCode === "level_up_pair_not_published" ? "level_up_pair_not_in_snapshot" : decision.reasonCode,
         choice: null,
         levelUp: decision.levelUp,
       });

@@ -6,7 +6,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { chooseLevelUpResolution, evidenceDetail, parsePendingLevelUps } from "./level-up-evidence.mjs";
+import {
+  chooseLevelUpResolution,
+  evidenceDetail,
+  parsePendingLevelUps,
+  readPendingLevelUpsFromSnapshot,
+} from "./level-up-evidence.mjs";
+
+test("the snapshot's own projection is read as pairs, and a malformed entry is not a pair", () => {
+  // This is the reader the watcher now uses: the Mod publishes `skill@level` on every snapshot, so the harness no longer
+  // has to learn the pending pair by parsing a refusal. Malformed entries are dropped rather than guessed at, and a
+  // snapshot without the field reads as `[]` (older Mods) - which `chooseLevelUpResolution` then names.
+  assert.deepEqual(readPendingLevelUpsFromSnapshot({ pendingLevelUps: ["4@6", "2@10"] }), [
+    { skill: 4, level: 6 },
+    { skill: 2, level: 10 },
+  ]);
+  assert.deepEqual(readPendingLevelUpsFromSnapshot({}), []);
+  assert.deepEqual(readPendingLevelUpsFromSnapshot(undefined), []);
+  assert.deepEqual(readPendingLevelUpsFromSnapshot({ pendingLevelUps: ["nonsense", "4-6"] }), []);
+});
 
 test("the pair is read from the fact log's { detail } shape", () => {
   const detail = "modal_type=LevelUpMenu;dismissible=false;pending_level_ups=1;level_up=4@6";

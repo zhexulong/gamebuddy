@@ -54,19 +54,17 @@ public sealed class HostBootstrapSupervisorTests
         var entry = Path.Combine(generation.GenerationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js");
         Assert.Equal(new[] { entry }, positional);
 
-        // The child environment is a DECLARED block, not the launcher's environment.
-        // What was wrong was what the declaration omitted: the Host composes the
-        // GAME's child environment itself and fails closed without PATH, WINDIR and
-        // USERPROFILE, so in the Desktop topology the game could never start. The
-        // declared set is now the wire block plus exactly what the Host forwards to the
-        // game (the guardian admits the same names at that boundary) and what it needs
-        // to reach the player's provider through a proxy.
+        // The child environment is a DECLARED block, not the launcher's environment: the same
+        // contract RuntimeSupervisorEnvironmentTests owns over the builder, asserted here over the
+        // child that actually received it. What was wrong was what the declaration omitted: the Host
+        // composes the GAME's child environment itself and fails closed without PATH, WINDIR and
+        // USERPROFILE, so in the Desktop topology the game could never start. The declared set is the
+        // frozen wire block plus exactly what the Host forwards to the game (the guardian admits the
+        // same names at that boundary) and what it needs to reach the player's provider through a
+        // proxy or carry the environment-managed credential.
         var environment = report.RootElement.GetProperty("environment");
-        var names = environment.EnumerateObject().Select(property => property.Name).OrderBy(name => name, StringComparer.Ordinal).ToArray();
-        var declared = new List<string> { "GAMEBUDDY_HOST_DEPLOYMENT_MANIFEST", "GAMEBUDDY_HOST_GAME_SESSION_MODE", "GAMEBUDDY_HOST_SURFACE", "LOCALAPPDATA", "PATH", "SystemRoot", "TEMP", "TMP", "USERPROFILE", "WINDIR" };
-        foreach (var optional in new[] { "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY" })
-            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(optional))) declared.Add(optional);
-        Assert.Equal(declared.OrderBy(name => name, StringComparer.Ordinal), names);
+        RuntimeSupervisorEnvironmentTests.AssertDeclaredBlock(
+            environment.EnumerateObject().ToDictionary(property => property.Name, property => property.Value.GetString()!));
         // The values the Host requires to compose a Stardew child environment reach it:
         // this is the launcher's half of that contract.
         foreach (var carried in new[] { "PATH", "WINDIR", "USERPROFILE" })

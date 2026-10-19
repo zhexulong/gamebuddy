@@ -22,6 +22,9 @@ internal sealed class SetupLayout
     internal const string PointerFileName = "current.json";
     internal const string PointerSchema = "gamebuddy-host-production-current/v2";
     internal const string GenerationsDirectoryName = "generations";
+    // The entry the player double-clicks. `host/scripts/package-player-distribution.mjs`
+    // lays it at the payload root, so it is at the program root once extracted.
+    internal const string LauncherEntryRelativePath = "GameBuddy.Desktop.exe";
 
     private SetupLayout(string localApplicationData)
     {
