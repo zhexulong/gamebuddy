@@ -331,6 +331,11 @@ const en = {
   editMessageField: "Your message",
   editMessageSave: "Save",
   editMessageCancel: "Cancel",
+  // Her reply's own control. The same operation on the other side of the exchange, so the same words
+  // apart from the two that name whose side it is: whose words the field holds, and that the model
+  // reads the rewritten ones from the next turn on.
+  editReplyName: "Edit this reply: the model reads the new words from the next turn on",
+  editReplyField: "Her reply",
   // The delete control: a message's own strip, one button, and the one row it removes. A delete is
   // destructive and has no undo, so the arm states exactly what goes - this message, not the
   // conversation after it - and only the confirm sends it, the same shape the Chats row's trash uses.
@@ -917,6 +922,8 @@ const zh: Messages = {
   editMessageField: "你的消息",
   editMessageSave: "保存",
   editMessageCancel: "取消",
+  editReplyName: "编辑这条回复：模型从下一轮开始读到你改写后的文字",
+  editReplyField: "她的回复",
   // 删除控件：消息自己的操作条上一个按钮，只删这一条。删除不可撤销，所以先确认、并说清删掉的是什么
   // ——是这一条，而不是它之后的整个对话，与会话行上的删除同一形状。
   deleteMessage: "删除",

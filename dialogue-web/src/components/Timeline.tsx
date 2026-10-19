@@ -70,6 +70,9 @@ export function Timeline({
     editMessageField: string;
     editMessageSave: string;
     editMessageCancel: string;
+    /** Her reply's own edit control: the same operation on the other side of the exchange. */
+    editReplyName: string;
+    editReplyField: string;
     /** The delete control and the confirmation it opens. */
     deleteMessage: string;
     deleteMessageName: string;

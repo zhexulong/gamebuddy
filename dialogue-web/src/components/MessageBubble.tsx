@@ -35,6 +35,76 @@ function swipePosition(label: string): string {
 }
 
 /**
+ * The editor a row's strip becomes while the player is rewriting that row's words.
+ *
+ * It is ONE control on both sides of the conversation - the player's own message and her reply - so the
+ * field, the two answers and the 44 px floor are one presentation; the only thing the two rows state
+ * differently is the label naming whose words the field holds. The strip IS the editor: the row's other
+ * controls are what it replaces, because a destructive control rendered beside Save and Cancel is a
+ * mis-click waiting to happen.
+ */
+function MessageEditor({
+  text,
+  onTextChange,
+  onSave,
+  onCancel,
+  canSave,
+  busy,
+  fieldLabel,
+  saveLabel,
+  cancelLabel,
+}: Readonly<{
+  text: string;
+  onTextChange: (text: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  /** False while the field is empty or holds exactly the words the row already carries. */
+  canSave: boolean;
+  busy: boolean;
+  fieldLabel: string;
+  saveLabel: string;
+  cancelLabel: string;
+}>) {
+  return (
+    <div className="message-edit" data-testid="message-edit-form">
+      <textarea
+        className="message-edit-field"
+        data-testid="message-edit-field"
+        aria-label={fieldLabel}
+        value={text}
+        disabled={busy}
+        rows={2}
+        onChange={(event) => onTextChange(event.target.value)}
+      />
+      <div className="message-edit-actions">
+        <button
+          type="button"
+          className="action-btn edit-save-btn"
+          data-testid="message-edit-save"
+          disabled={busy || !canSave}
+          onClick={onSave}
+          title={saveLabel}
+          aria-label={saveLabel}
+        >
+          {saveLabel}
+        </button>
+        <button
+          type="button"
+          className="action-btn edit-cancel-btn"
+          data-testid="message-edit-cancel"
+          disabled={busy}
+          onClick={onCancel}
+          title={cancelLabel}
+          aria-label={cancelLabel}
+        >
+          {cancelLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Memoised so a streaming delta - which re-renders the conversation with a new
  * preview - cannot re-render a settled message and re-parse its Markdown. The
  * transcript's message objects are immutable and keep their identity across a
@@ -162,6 +232,14 @@ export const MessageBubble = memo(function MessageBubble({
     editMessageField: string;
     editMessageSave: string;
     editMessageCancel: string;
+    /**
+     * Her reply's own edit control. Its words differ from the player's in exactly two places: the
+     * accessible name says the press changes words the model will read, and the field's label says
+     * whose words the field holds - an edit of her reply is the same operation on the other side of
+     * the exchange. The visible word is the same "Edit" either way.
+     */
+    editReplyName: string;
+    editReplyField: string;
     deleteMessage: string;
     deleteMessageName: string;
     deleteConfirmPrompt: string;
@@ -199,6 +277,14 @@ export const MessageBubble = memo(function MessageBubble({
    */
   const deletePoint = onDelete !== undefined && message.order > 0 ? message.order : undefined;
   /**
+   * Her reply's edit point. The greeting the Chat opened on is NOT one: it has its own editor on the
+   * Characters surface, and the Host refuses an edit of it by name (`chat_edit_opening_retained`), so
+   * the control is absent rather than offered and refused - an affordance that exists only to refuse
+   * is worse than none. The transcript's first row is that greeting, and it is the same premise the
+   * rewind and the delete already read.
+   */
+  const editReplyPoint = onEdit !== undefined && !isPlayer && message.order > 0 ? message.order : undefined;
+  /**
    * The editor is this row's own presentation state: it holds the words the player is rewriting, and
    * it exists only while the row does - a row a rewind dropped takes its open editor with it. The
    * order the page rendered is sent with the save, so a row that moved under the editor is refused by
@@ -221,7 +307,8 @@ export const MessageBubble = memo(function MessageBubble({
   }, [editor, pending, message.text]);
   // Whether this message's strip has a pager at all: the strip exists for its own
   // controls, so a message with neither keeps no empty row under the bubble.
-  const hasControls = openingChoice !== undefined || swipeSet !== undefined || deletePoint !== undefined;
+  const hasControls =
+    openingChoice !== undefined || swipeSet !== undefined || deletePoint !== undefined || editReplyPoint !== undefined;
   // The Host's per-message language, painted on the text only: the author line
   // and the swipe/regenerate controls are player-facing UI words and must keep
   // the surface's own language. `und` paints nothing (browserMessageLanguageTag),
@@ -275,153 +362,200 @@ export const MessageBubble = memo(function MessageBubble({
             bubble. */}
         {!isPlayer && !deleteArmed && (hasControls || onRegenerate || rewindPoint !== undefined || rewindArmed) && (
           <div className="message-actions">
-            {/* An armed rewind is this message's only control: the pager and regenerate step aside
+            {/* Her editor replaces the WHOLE strip rather than joining it, on the same rule the
+                player's row follows: the pager, the variant switcher, regenerate, the rewind and the
+                destructive Delete are exactly the controls an open Save/Cancel pair must not sit
+                beside. */}
+            {editReplyPoint !== undefined && editor !== null ? (
+              <MessageEditor
+                text={editor.text}
+                busy={busy}
+                canSave={editor.text.trim().length > 0 && editor.text !== message.text}
+                fieldLabel={labels.editReplyField}
+                saveLabel={labels.editMessageSave}
+                cancelLabel={labels.editMessageCancel}
+                onTextChange={(text) => setEditor({ text, sent: editor.sent })}
+                onCancel={() => setEditor(null)}
+                onSave={() => {
+                  setEditor({ text: editor.text, sent: editor.text });
+                  onEdit?.(message.handle, message.order, editor.text);
+                }}
+              />
+            ) : (
+              <>
+                {/* An armed rewind is this message's only control: the pager and regenerate step aside
                 for the confirmation the same way a Chats row's own strip does. */}
-            {rewindArmed && (
-              <div className="message-confirm" data-testid="message-rewind-confirm">
-                <p className="message-confirm-prompt" role="status">
-                  {labels.rewindConfirmPrompt}
-                </p>
-                <div className="message-confirm-actions">
-                  <button
-                    type="button"
-                    className="action-btn rewind-confirm-yes"
-                    data-testid="message-rewind-confirm-yes"
-                    disabled={busy}
-                    onClick={() => onRewindConfirm?.(message.handle, message.order)}
-                    title={labels.rewindConfirmYes}
-                    aria-label={labels.rewindConfirmYes}
-                  >
-                    {labels.rewindConfirmYes}
-                  </button>
-                  <button
-                    type="button"
-                    className="action-btn rewind-confirm-no"
-                    data-testid="message-rewind-confirm-no"
-                    onClick={() => onRewindCancel?.()}
-                    title={labels.rewindConfirmNo}
-                    aria-label={labels.rewindConfirmNo}
-                  >
-                    {labels.rewindConfirmNo}
-                  </button>
-                </div>
-              </div>
-            )}
-            {!rewindArmed && openingChoice && (
-              <div className="swipe-controls" aria-label={labels.swipeNavigation}>
-                {/* The glyph is the visible control and the number between the two
+                {rewindArmed && (
+                  <div className="message-confirm" data-testid="message-rewind-confirm">
+                    <p className="message-confirm-prompt" role="status">
+                      {labels.rewindConfirmPrompt}
+                    </p>
+                    <div className="message-confirm-actions">
+                      <button
+                        type="button"
+                        className="action-btn rewind-confirm-yes"
+                        data-testid="message-rewind-confirm-yes"
+                        disabled={busy}
+                        onClick={() => onRewindConfirm?.(message.handle, message.order)}
+                        title={labels.rewindConfirmYes}
+                        aria-label={labels.rewindConfirmYes}
+                      >
+                        {labels.rewindConfirmYes}
+                      </button>
+                      <button
+                        type="button"
+                        className="action-btn rewind-confirm-no"
+                        data-testid="message-rewind-confirm-no"
+                        onClick={() => onRewindCancel?.()}
+                        title={labels.rewindConfirmNo}
+                        aria-label={labels.rewindConfirmNo}
+                      >
+                        {labels.rewindConfirmNo}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {!rewindArmed && openingChoice && (
+                  <div className="swipe-controls" aria-label={labels.swipeNavigation}>
+                    {/* The glyph is the visible control and the number between the two
                     is the state; the words live in the accessible name. Long labels
                     here are what wrapped the strip to two rows at 400 px, and in a
                     narrow chat the dialogue is what the player is reading - this is
                     Tavern's own `\u2039 1/3 \u203a` for the same reason. */}
-                <button
-                  type="button"
-                  className="swipe-btn"
-                  disabled={busy || openingChoice.index <= 0}
-                  onClick={() => onOpeningVariant?.(message.handle, "prev")}
-                  aria-label={labels.swipePrevious}
-                  title={labels.swipePrevious}
-                >
-                  <ChevronLeft size={14} aria-hidden="true" />
-                </button>
-                <span className="swipe-indicator">{openingVariantWords(openingChoice, labels)}</span>
-                <button
-                  type="button"
-                  className="swipe-btn"
-                  disabled={busy || openingChoice.index >= openingChoice.count - 1}
-                  onClick={() => onOpeningVariant?.(message.handle, "next")}
-                  aria-label={labels.swipeNext}
-                  title={labels.swipeNext}
-                >
-                  <ChevronRight size={14} aria-hidden="true" />
-                </button>
-              </div>
-            )}
-            {!rewindArmed && swipeSet && (
-              <div className="swipe-controls" aria-label={labels.swipeNavigation}>
-                <button
-                  type="button"
-                  className="swipe-btn"
-                  disabled={busy || !swipeSet.hasPrevious}
-                  onClick={() => onSwipe?.(message.handle, "prev")}
-                  aria-label={labels.swipePrevious}
-                  title={labels.swipePrevious}
-                >
-                  <ChevronLeft size={14} aria-hidden="true" />
-                </button>
-                <span className="swipe-indicator">{swipePosition(swipeSet.label)}</span>
-                <button
-                  type="button"
-                  className="swipe-btn"
-                  disabled={busy || !swipeSet.hasNext}
-                  onClick={() => onSwipe?.(message.handle, "next")}
-                  aria-label={labels.swipeNext}
-                  title={labels.swipeNext}
-                >
-                  <ChevronRight size={14} aria-hidden="true" />
-                </button>
-              </div>
-            )}
-            {!rewindArmed && onRegenerate && (
-              <button
-                type="button"
-                className="action-btn regenerate-btn"
-                disabled={busy}
-                {...(pending === "regenerate" ? { "data-busy": "true" as const } : {})}
-                onClick={() => onRegenerate(message.handle)}
-                title={labels.regenerateVariant}
-                aria-label={labels.regenerateVariant}
-              >
-                {pending === "regenerate" ? (
-                  <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                ) : (
-                  <RefreshCw size={14} aria-hidden="true" />
+                    <button
+                      type="button"
+                      className="swipe-btn"
+                      disabled={busy || openingChoice.index <= 0}
+                      onClick={() => onOpeningVariant?.(message.handle, "prev")}
+                      aria-label={labels.swipePrevious}
+                      title={labels.swipePrevious}
+                    >
+                      <ChevronLeft size={14} aria-hidden="true" />
+                    </button>
+                    <span className="swipe-indicator">{openingVariantWords(openingChoice, labels)}</span>
+                    <button
+                      type="button"
+                      className="swipe-btn"
+                      disabled={busy || openingChoice.index >= openingChoice.count - 1}
+                      onClick={() => onOpeningVariant?.(message.handle, "next")}
+                      aria-label={labels.swipeNext}
+                      title={labels.swipeNext}
+                    >
+                      <ChevronRight size={14} aria-hidden="true" />
+                    </button>
+                  </div>
                 )}
-                {labels.regenerateVariant}
-              </button>
-            )}
-            {!rewindArmed && rewindPoint !== undefined && (
-              <button
-                type="button"
-                className="action-btn rewind-btn"
-                data-testid="message-rewind"
-                disabled={busy}
-                {...(pending === "rewind" ? { "data-busy": "true" as const } : {})}
-                onClick={() => onRewind?.(message.handle, message.order)}
-                title={rewindName}
-                aria-label={rewindName}
-              >
-                {pending === "rewind" ? (
-                  <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                ) : (
-                  <Undo2 size={14} aria-hidden="true" />
+                {!rewindArmed && swipeSet && (
+                  <div className="swipe-controls" aria-label={labels.swipeNavigation}>
+                    <button
+                      type="button"
+                      className="swipe-btn"
+                      disabled={busy || !swipeSet.hasPrevious}
+                      onClick={() => onSwipe?.(message.handle, "prev")}
+                      aria-label={labels.swipePrevious}
+                      title={labels.swipePrevious}
+                    >
+                      <ChevronLeft size={14} aria-hidden="true" />
+                    </button>
+                    <span className="swipe-indicator">{swipePosition(swipeSet.label)}</span>
+                    <button
+                      type="button"
+                      className="swipe-btn"
+                      disabled={busy || !swipeSet.hasNext}
+                      onClick={() => onSwipe?.(message.handle, "next")}
+                      aria-label={labels.swipeNext}
+                      title={labels.swipeNext}
+                    >
+                      <ChevronRight size={14} aria-hidden="true" />
+                    </button>
+                  </div>
                 )}
-                {labels.rewindHere}
-              </button>
-            )}
-            {!rewindArmed && deletePoint !== undefined && (
-              <button
-                type="button"
-                className="action-btn delete-btn"
-                data-testid="message-delete"
-                disabled={busy}
-                {...(pending === "delete" ? { "data-busy": "true" as const } : {})}
-                onClick={() => onDelete?.(message.handle, message.order)}
-                title={labels.deleteMessageName}
-                aria-label={labels.deleteMessageName}
-              >
-                {pending === "delete" ? (
-                  <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                ) : (
-                  <Trash2 size={14} aria-hidden="true" />
+                {!rewindArmed && onRegenerate && (
+                  <button
+                    type="button"
+                    className="action-btn regenerate-btn"
+                    disabled={busy}
+                    {...(pending === "regenerate" ? { "data-busy": "true" as const } : {})}
+                    onClick={() => onRegenerate(message.handle)}
+                    title={labels.regenerateVariant}
+                    aria-label={labels.regenerateVariant}
+                  >
+                    {pending === "regenerate" ? (
+                      <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                    ) : (
+                      <RefreshCw size={14} aria-hidden="true" />
+                    )}
+                    {labels.regenerateVariant}
+                  </button>
                 )}
-                {labels.deleteMessage}
-              </button>
-            )}
-            {!rewindArmed && waitingNote !== null && (
-              <span className="message-waiting" role="status">
-                {waitingNote}
-              </span>
+                {!rewindArmed && rewindPoint !== undefined && (
+                  <button
+                    type="button"
+                    className="action-btn rewind-btn"
+                    data-testid="message-rewind"
+                    disabled={busy}
+                    {...(pending === "rewind" ? { "data-busy": "true" as const } : {})}
+                    onClick={() => onRewind?.(message.handle, message.order)}
+                    title={rewindName}
+                    aria-label={rewindName}
+                  >
+                    {pending === "rewind" ? (
+                      <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                    ) : (
+                      <Undo2 size={14} aria-hidden="true" />
+                    )}
+                    {labels.rewindHere}
+                  </button>
+                )}
+                {/* Her reply's own edit control, in the strip she already has rather than a second row of
+                buttons, and in the same spot the player row's edit control takes (immediately before
+                the destructive Delete, which is where both rows end their strip). It is absent on the
+                opening, and it is the ONLY control this change adds: the words are one more thing a
+                row can do to itself, not a new group of them. */}
+                {!rewindArmed && editReplyPoint !== undefined && (
+                  <button
+                    type="button"
+                    className="action-btn edit-btn"
+                    data-testid="message-edit"
+                    disabled={busy}
+                    {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
+                    onClick={openEditor}
+                    title={labels.editReplyName}
+                    aria-label={labels.editReplyName}
+                  >
+                    {pending === "edit" ? (
+                      <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                    ) : (
+                      <Pencil size={14} aria-hidden="true" />
+                    )}
+                    {labels.editMessage}
+                  </button>
+                )}
+                {!rewindArmed && deletePoint !== undefined && (
+                  <button
+                    type="button"
+                    className="action-btn delete-btn"
+                    data-testid="message-delete"
+                    disabled={busy}
+                    {...(pending === "delete" ? { "data-busy": "true" as const } : {})}
+                    onClick={() => onDelete?.(message.handle, message.order)}
+                    title={labels.deleteMessageName}
+                    aria-label={labels.deleteMessageName}
+                  >
+                    {pending === "delete" ? (
+                      <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                    ) : (
+                      <Trash2 size={14} aria-hidden="true" />
+                    )}
+                    {labels.deleteMessage}
+                  </button>
+                )}
+                {!rewindArmed && waitingNote !== null && (
+                  <span className="message-waiting" role="status">
+                    {waitingNote}
+                  </span>
+                )}
+              </>
             )}
           </div>
         )}
@@ -432,44 +566,20 @@ export const MessageBubble = memo(function MessageBubble({
           <div className="message-actions">
             {onEdit !== undefined &&
               (editor !== null ? (
-                <div className="message-edit" data-testid="message-edit-form">
-                  <textarea
-                    className="message-edit-field"
-                    data-testid="message-edit-field"
-                    aria-label={labels.editMessageField}
-                    value={editor.text}
-                    disabled={busy}
-                    rows={2}
-                    onChange={(event) => setEditor({ text: event.target.value, sent: editor.sent })}
-                  />
-                  <div className="message-edit-actions">
-                    <button
-                      type="button"
-                      className="action-btn edit-save-btn"
-                      data-testid="message-edit-save"
-                      disabled={busy || editor.text.trim().length === 0 || editor.text === message.text}
-                      onClick={() => {
-                        setEditor({ text: editor.text, sent: editor.text });
-                        onEdit(message.handle, message.order, editor.text);
-                      }}
-                      title={labels.editMessageSave}
-                      aria-label={labels.editMessageSave}
-                    >
-                      {labels.editMessageSave}
-                    </button>
-                    <button
-                      type="button"
-                      className="action-btn edit-cancel-btn"
-                      data-testid="message-edit-cancel"
-                      disabled={busy}
-                      onClick={() => setEditor(null)}
-                      title={labels.editMessageCancel}
-                      aria-label={labels.editMessageCancel}
-                    >
-                      {labels.editMessageCancel}
-                    </button>
-                  </div>
-                </div>
+                <MessageEditor
+                  text={editor.text}
+                  busy={busy}
+                  canSave={editor.text.trim().length > 0 && editor.text !== message.text}
+                  fieldLabel={labels.editMessageField}
+                  saveLabel={labels.editMessageSave}
+                  cancelLabel={labels.editMessageCancel}
+                  onTextChange={(text) => setEditor({ text, sent: editor.sent })}
+                  onCancel={() => setEditor(null)}
+                  onSave={() => {
+                    setEditor({ text: editor.text, sent: editor.text });
+                    onEdit(message.handle, message.order, editor.text);
+                  }}
+                />
               ) : (
                 <button
                   type="button"
