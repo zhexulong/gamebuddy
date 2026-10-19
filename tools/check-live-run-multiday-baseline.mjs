@@ -24,6 +24,19 @@ const checks = [];
 const check = (id, ok, detail) =>
   checks.push({ id, status: ok ? "passed" : "failed", ...(detail === undefined ? {} : { detail }) });
 
+/**
+ * May a day boundary advance in this window mode?
+ *
+ * Only `foreground` may, and that is a fact about the engine rather than a preference: the fade the day boundary runs
+ * inside advances only while the window is ACTIVE (SW_SHOW + SetForegroundWindow), while `hidden`/`background` and even
+ * `visible` (SW_SHOWNOACTIVATE) leave it parked at the fade. Measured 2026-10-19: every run that crossed a night did so
+ * in foreground mode, and hidden-mode runs froze at the fade instead. A multi-day PASS therefore means "multi-day works
+ * in the one window mode where it can", which is why it is asserted rather than assumed.
+ */
+export function windowModeAllowsADayCrossing(mode) {
+  return mode === "foreground";
+}
+
 const EVIDENCE = (overrides = {}) =>
   [
     "state=passed",
@@ -219,6 +232,17 @@ function fixtureChecks() {
     parseReceiptEvidence("day_after=6").day_after === "6" &&
       parseReceiptEvidence({ detail: "day_after=6" }).day_after === "6",
   );
+
+  // 5. The window-mode precondition is falsifiable, so the rule above cannot be a constant: hidden and background (and
+  // the merely-visible mode the launcher used to fall back to) all have to read as unable to cross a day.
+  check(
+    "only_foreground_can_cross_a_day",
+    windowModeAllowsADayCrossing("foreground") &&
+      !windowModeAllowsADayCrossing("hidden") &&
+      !windowModeAllowsADayCrossing("background") &&
+      !windowModeAllowsADayCrossing("visible") &&
+      !windowModeAllowsADayCrossing(undefined),
+  );
 }
 
 async function runDirChecks(runDir) {
@@ -227,6 +251,11 @@ async function runDirChecks(runDir) {
   check("bundle_is_valid", violations.length === 0, codes.join(",") || undefined);
   if (bundle === null) return;
   check("bundle_verdict_is_passed", bundle.verdict?.state === "passed", String(bundle.verdict?.state));
+  check(
+    "run_used_a_window_mode_the_engine_advances_a_day_in",
+    windowModeAllowsADayCrossing(bundle.env?.windowMode),
+    `windowMode=${String(bundle.env?.windowMode)}`,
+  );
   const multiday = bundle.multiday ?? null;
   check(
     "run_reports_a_crossing",
