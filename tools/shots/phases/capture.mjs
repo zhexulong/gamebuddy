@@ -38,6 +38,7 @@ const DRIVERS = [
   { key: "p-rewind-delete", file: "p-rewind-delete.cjs", out: "p-rewind-delete.txt" },
   { key: "q-companion-world-book", file: "q-companion-world-book.cjs", out: "q-companion-world-book.txt" },
   { key: "r-card-export", file: "r-card-export.cjs", out: "r-card-export.txt" },
+  { key: "s-avatar-upload", file: "s-avatar-upload.cjs", out: "s-avatar-upload.txt" },
 ];
 
 async function exists(path) {
