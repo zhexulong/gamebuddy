@@ -181,6 +181,13 @@ const ProblemCode = Type.Union([
   // carries them without a picture - so it is not collapsed into storage/runtime
   // unavailable.
   Type.Literal("companion_card_image_absent"),
+  // `companion.avatar.update` refuses a picture it will not keep by name, and each
+  // refusal is a different fact about the file the player picked: it is over the same
+  // ceiling the avatar module reads by, or its bytes are not a structurally complete
+  // PNG. Neither is a runtime outage - retrying the same file cannot fix either - so
+  // neither is collapsed into storage/runtime unavailable.
+  Type.Literal("companion_avatar_too_large"),
+  Type.Literal("companion_avatar_malformed"),
 ]);
 
 /**
@@ -746,6 +753,11 @@ const OperationId = Type.Union([
   // card: the same handle addressing as the inspector, because the whole point is to
   // take her work out of the product.
   Type.Literal("companion.card.export"),
+  // Give one roster companion a picture, addressed by the same handle the roster
+  // projected - any listed companion, whoever she is, because the roster and the
+  // inspector show every companion and a hand-made one should stop being a monogram
+  // by the player's own choice.
+  Type.Literal("companion.avatar.update"),
   Type.Literal("companion.create"),
   Type.Literal("character.import.stage"),
   Type.Literal("character.import.read"),
@@ -800,6 +812,7 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.companion.worldbook.update"),
   Type.Literal("tavern.operation.companion.profile.read"),
   Type.Literal("tavern.operation.companion.card.export"),
+  Type.Literal("tavern.operation.companion.avatar.update"),
   Type.Literal("tavern.operation.companion.create"),
   Type.Literal("tavern.operation.character.import.stage"),
   Type.Literal("tavern.operation.character.import.read"),
@@ -1219,6 +1232,47 @@ export const CompanionCardExportV1Schema = Type.Union([
     cardFileBase64: Type.String({ minLength: 2, maxLength: CARD_FILE_BASE64_MAX_CHARS }),
   }),
 ]);
+/**
+ * `companion.avatar.update`: the player's own picture for one roster companion.
+ *
+ * The payload is the WHOLE picture, base64 - the same spelling `character.import.stage`
+ * uses for a PNG card, because it is the same thing arriving the same way: bytes the
+ * browser read from the player's own disk. `avatarBase64` is bounded by the avatar
+ * module's own ceiling, base64-inflated (`ceil(N/3)*4`), and that ceiling is the card
+ * decoder's own `inputBytesPng` - the avatar IS the card's picture, so the number that
+ * bounds an importable card is the number that bounds its picture. This module cannot
+ * import that one (`host/src/tavern/companion-avatar/index.ts` reaches `node:fs`), so
+ * `browser-contract/index.test.ts` holds `MAX_COMPANION_AVATAR_BYTES` and this bound to
+ * the same number.
+ *
+ * The bound is enforced twice before any picture is written: the transport reads at most
+ * `MAX_COMPANION_AVATAR_UPLOAD_BODY_BYTES`, and this schema refuses an encoded string
+ * longer than a whole-ceiling picture encodes to. Neither is a check on a body that was
+ * already buffered without a limit.
+ */
+export const MAX_COMPANION_AVATAR_BASE64_CHARS = Math.ceil(ST_CARD_DECODER_LIMITS_V1.inputBytesPng / 3) * 4;
+/** The avatar upload's whole request ceiling: an at-ceiling base64 picture plus its JSON envelope. */
+export const MAX_COMPANION_AVATAR_UPLOAD_BODY_BYTES = MAX_COMPANION_AVATAR_BASE64_CHARS + 8_192;
+export const CompanionAvatarUploadCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  avatarBase64: Type.String({ minLength: 1, maxLength: MAX_COMPANION_AVATAR_BASE64_CHARS }),
+});
+/**
+ * The read-back of one stored picture: which companion it belongs to, and the digest of
+ * the bytes now on disk.
+ *
+ * The digest is the fact both directions share: it is the `ETag` the runtime asset face
+ * publishes for `/assets/companions/<handle>/avatar.png`, so a browser holding the
+ * previous picture revalidates against the same value an upload answered with, and "she
+ * has a new picture" is never something the client has to guess. There is deliberately
+ * no `expectedRevision`: a picture is not a conflict-prone document, so a replacement is
+ * unconditional and this digest is the honest record of what replaced what.
+ */
+export const CompanionAvatarV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  handle: OpaqueHandle,
+  digest: Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]{64}$" }),
+});
 /**
  * The mounted companion's own performance directive, as the durable identity
  * profile holds it (the imported card's `system_prompt`).
@@ -2540,6 +2594,21 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CompanionCardExportV1Schema },
   }),
   route({
+    routeId: "companion.avatar.update",
+    method: "PUT",
+    path: "/api/tavern/v1/companions/:companionHandle/avatar",
+    operationId: "companion.avatar.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    request: CompanionAvatarUploadCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: CompanionAvatarV1Schema },
+  }),
+  route({
     routeId: "companion.create",
     method: "POST",
     path: "/api/tavern/v1/companions",
@@ -2861,6 +2930,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     UpdateCompanionWorldBookCommandV1Schema,
     CompanionProfileV1Schema,
     CompanionCardExportV1Schema,
+    CompanionAvatarUploadCommandV1Schema,
+    CompanionAvatarV1Schema,
     CompanionVoiceV1Schema,
     CompanionCharacterVoiceV1Schema,
     UpdateCompanionVoiceCommandV1Schema,
@@ -3051,6 +3122,8 @@ export type CompanionProfileV1 = Readonly<{
 }>;
 /** One companion's records as a standard Tavern V3 card, plus how to save it. */
 export type CompanionCardExportV1 = Static<typeof CompanionCardExportV1Schema>;
+export type CompanionAvatarUploadCommandV1 = Static<typeof CompanionAvatarUploadCommandV1Schema>;
+export type CompanionAvatarV1 = Static<typeof CompanionAvatarV1Schema>;
 export type TavernConnectionSetupFieldV1 = Static<typeof TavernConnectionSetupFieldV1Schema>;
 export type TavernConnectionApiShapeV1 = Static<typeof TavernConnectionApiShapeV1Schema>;
 export type TavernConnectionThinkingLevelV1 = Static<typeof TavernConnectionThinkingLevelV1Schema>;

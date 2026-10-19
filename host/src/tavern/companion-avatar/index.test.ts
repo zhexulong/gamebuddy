@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import test from "node:test";
@@ -31,6 +32,9 @@ const identity = Object.freeze({
 });
 
 const handle = `${"B".repeat(42)}A`;
+
+/** The one digest of a picture's bytes, computed independently of the module. */
+const digestOf = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 
 function serviceFor(root: string, known: Readonly<Record<string, string | undefined>>) {
   return createCompanionAvatarService({
@@ -91,6 +95,50 @@ test("a written avatar reads back byte for byte, and an absent one is absent", a
     assert.equal(read?.state, "present");
     assert.deepEqual(await readFile(path), Buffer.from(picture));
     assert.deepEqual(read?.state === "present" ? read.bytes : undefined, Buffer.from(picture));
+    // The digest travels with the bytes: it is what the asset face publishes as
+    // its ETag and what an upload answers with.
+    assert.equal(read?.state === "present" ? read.digest : undefined, digestOf(picture));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an upload validates before it writes, and answers the digest of the bytes now on disk", async () => {
+  const root = await canonicalTestRoot("tavern-avatar-update-");
+  try {
+    const service = serviceFor(root, { [handle]: identity.companionId });
+    const path = companionAvatarPath(root, identity.playerId, identity);
+    const keeping = pngCardFile(JSON.stringify({ spec: "chara_card_v3", data: { name: "Rin" } }));
+    const replacement = pngPictureFile();
+
+    // A handle the roster never projected names no companion, so nothing is written.
+    assert.equal(await service.update(`${"C".repeat(42)}A`, replacement), null);
+    assert.deepEqual(await service.read(handle), { state: "absent" });
+
+    const first = await service.update(handle, keeping);
+    assert.equal(first?.digest, digestOf(keeping));
+    assert.deepEqual(await readFile(path), Buffer.from(keeping));
+
+    // A file that is not a picture, and one over the card decoder's own ceiling, are
+    // both refused by name - and neither touches the picture she already has. A
+    // failed upload changes nothing.
+    await assert.rejects(
+      service.update(handle, Buffer.from('{"data":{"name":"Rin"}}', "utf8")),
+      /companion_avatar_malformed/,
+    );
+    await assert.rejects(
+      service.update(handle, Buffer.alloc(MAX_COMPANION_AVATAR_BYTES + 1)),
+      /companion_avatar_too_large/,
+    );
+    assert.deepEqual(await readFile(path), Buffer.from(keeping));
+
+    // The replacement is the whole file, and the digest describes what is there now.
+    const second = await service.update(handle, replacement);
+    assert.equal(second?.digest, digestOf(replacement));
+    assert.notEqual(second?.digest, first?.digest);
+    assert.deepEqual(await readFile(path), Buffer.from(replacement));
+    const read = await service.read(handle);
+    assert.equal(read?.state === "present" ? read.digest : undefined, digestOf(replacement));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

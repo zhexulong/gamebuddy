@@ -98,6 +98,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "companion.worldbook.read"
     | "companion.worldbook.update"
     | "companion.profile.read"
+    | "companion.avatar.update"
     | "companion.create"
     | "character.import.stage"
     | "character.import.read"
@@ -149,6 +150,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.companion.worldbook.read"
     | "tavern.operation.companion.worldbook.update"
     | "tavern.operation.companion.profile.read"
+    | "tavern.operation.companion.avatar.update"
     | "tavern.operation.companion.create"
     | "tavern.operation.character.import.stage"
     | "tavern.operation.character.import.read"
@@ -346,6 +348,17 @@ export type CompanionProfileV1 = Readonly<{
   worldBook: CompanionWorldBookV1;
 }>;
 /**
+ * The read-back of one stored picture: which companion it belongs to, and the digest of
+ * the bytes now on disk.
+ *
+ * The digest is the same value the Host's runtime asset face publishes as the `ETag` of
+ * `/assets/companions/<handle>/avatar.png`, so it is what a surface compares when it
+ * wants to know whether her picture really changed - and it is the key that makes the
+ * new picture appear at once: the image element is remounted under it, the browser
+ * revalidates the URL it already has, and the changed digest is served as new bytes.
+ */
+export type CompanionAvatarV1 = Readonly<{ apiVersion: 1; handle: string; digest: string }>;
+/**
  * One companion's own records exported as a standard Tavern V3 card, in the form
  * the caller asked for.
  *
@@ -394,6 +407,14 @@ export type UpdateCompanionVoiceCommandV1 =
  */
 export const MAX_CARD_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_CARD_FILE_BASE64_CHARS = Math.ceil(MAX_CARD_FILE_BYTES / 3) * 4;
+/**
+ * The largest picture the avatar route accepts. It is the card file's own ceiling rather
+ * than a second number: the Host's avatar module derives its bound from the same card
+ * decoder limit (`ST_CARD_DECODER_LIMITS_V1.inputBytesPng`), because an avatar IS the
+ * card's picture. The picker refuses a larger file before reading a byte of it, so the
+ * refusal is a sentence rather than a 45 MB round trip.
+ */
+export const MAX_AVATAR_FILE_BYTES = MAX_CARD_FILE_BYTES;
 
 /**
  * `character.import.stage`'s body, mirrored from the Host's own union.
@@ -1129,6 +1150,11 @@ const PROBLEM_CODES = [
   // with no picture has none the Host will put there. The JSON card carries her records
   // without a picture, so this is a bounded fact about her records, not a runtime outage.
   "companion_card_image_absent",
+  // `companion.avatar.update` refuses a picture it will not keep by name: the file is over
+  // the ceiling the avatar module reads by, or its bytes are not a complete PNG. Both are
+  // bounded, non-retryable facts about the file the player picked.
+  "companion_avatar_too_large",
+  "companion_avatar_malformed",
   // Transport: the over-ceiling request body the management dispatcher refuses before any route
   // runs (`tavern-management-dialogue-web.ts:538`), sent outside its own schema check. It must be
   // named here or the typed 413 arrives as an opaque `TavernProtocolError` with no code to show;
@@ -2744,6 +2770,24 @@ export function validateCompanionCardExport(value: unknown): CompanionCardExport
   return value;
 }
 
+const COMPANION_AVATAR_KEYS = ["apiVersion", "handle", "digest"] as const;
+/** The avatar read-back: the handle it stored for, and the sha256 the Host computed. */
+function isCompanionAvatar(value: unknown): value is CompanionAvatarV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_AVATAR_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isOpaqueHandle(value.handle) &&
+    typeof value.digest === "string" &&
+    /^[0-9a-f]{64}$/u.test(value.digest)
+  );
+}
+
+export function validateCompanionAvatar(value: unknown): CompanionAvatarV1 {
+  if (!isCompanionAvatar(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validatePersona(value: unknown): PersonaV1 {
   if (!isPersona(value)) throw new TavernProtocolError();
   return value;
@@ -3008,6 +3052,13 @@ export type ManagementPipelineApi = Readonly<{
    * roster listed. It resolves any listed companion, not only the mounted one.
    */
   readCompanionProfile(handle: string): Promise<CompanionProfileV1>;
+  /**
+   * PUT /api/tavern/v1/companions/:handle/avatar: replaces that roster companion's
+   * picture - any listed companion, not only the mounted one - and answers the digest of
+   * the bytes now on disk. The picture goes as one base64 payload, the same spelling the
+   * card import uses for a card file, because it is the same thing arriving the same way.
+   */
+  uploadCompanionAvatar(handle: string, avatarBase64: string, csrfToken: string): Promise<CompanionAvatarV1>;
   /**
    * GET /api/tavern/v1/companions/:handle/card: one roster companion's own records as
    * a standard Tavern V3 card, which the browser saves to disk. Read-only.
@@ -3484,6 +3535,25 @@ export function createManagementPipelineApi(
     async readCompanionProfile(handle: string): Promise<CompanionProfileV1> {
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();
       return exchange(fetchLike, "GET", `/api/tavern/v1/companions/${handle}/profile`, 200, validateCompanionProfile);
+    },
+    async uploadCompanionAvatar(handle: string, avatarBase64: string, csrfToken: string): Promise<CompanionAvatarV1> {
+      if (
+        !isOpaqueHandle(handle) ||
+        !isOpaqueHandle(csrfToken) ||
+        !isLengthBoundedString(avatarBase64, 1, MAX_CARD_FILE_BASE64_CHARS)
+      )
+        throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        `/api/tavern/v1/companions/${handle}/avatar`,
+        200,
+        validateCompanionAvatar,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        { apiVersion: TAVERN_BROWSER_API_VERSION, avatarBase64 },
+      );
+      observe("companion.avatar.update", "passed", result.digest.slice(0, 16));
+      return result;
     },
     async exportCompanionCard(handle: string, format: "json" | "png"): Promise<CompanionCardExportV1> {
       if (!isOpaqueHandle(handle)) throw new TavernProtocolError();

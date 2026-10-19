@@ -25,6 +25,19 @@ import type { CompanionAvatarService } from "./index.js";
  * the only way to name it is a per-mount HMAC handle the roster minted. There is
  * nothing behind this face an unauthenticated peer could not already read from
  * the same user account's disk.
+ *
+ * **Caching, and why it is not `immutable`.** The URL is stable for a companion -
+ * one handle, one `avatar.png` - but the BYTES behind it are not: the player may
+ * replace her picture at that same URL. `immutable` claimed the opposite ("written
+ * once and never change under it"), and a browser that believed it would draw the
+ * old picture for a year after an upload. So the face answers `no-cache` - the
+ * honest header for a mutable resource, meaning "revalidate before you use it" -
+ * and publishes the digest of the bytes it just read as the `ETag`. A browser
+ * that already holds the picture comes back with `If-None-Match` and gets a
+ * bodiless `304` when it is unchanged, or this `200` with the new bytes when it is
+ * not. That is also what the client sends: no URL rewriting, no cache-busting
+ * query (this face refuses a query string on purpose), and no version plumbing
+ * through every surface that draws her.
  */
 const COMPANION_AVATAR_ROUTE_PREFIX = "/assets/companions/" as const;
 
@@ -48,7 +61,15 @@ export type CompanionAvatarRequestHandler = Readonly<{
   handle(request: IncomingMessage, response: ServerResponse): void;
 }>;
 
-export function createCompanionAvatarRequestHandler(service: CompanionAvatarService): CompanionAvatarRequestHandler {
+/**
+ * The face's own view of the picture service: it reads, and nothing else. It is
+ * deliberately narrower than `CompanionAvatarService` (which also writes) because the
+ * player's upload reaches the file through the management route, never through a face
+ * whose whole job is to serve bytes at a stable URL.
+ */
+export function createCompanionAvatarRequestHandler(
+  service: Pick<CompanionAvatarService, "read">,
+): CompanionAvatarRequestHandler {
   return Object.freeze({
     handle(request, response) {
       void serve(service, request, response).catch((error: unknown) => {
@@ -62,7 +83,7 @@ export function createCompanionAvatarRequestHandler(service: CompanionAvatarServ
 }
 
 async function serve(
-  service: CompanionAvatarService,
+  service: Pick<CompanionAvatarService, "read">,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
@@ -90,18 +111,34 @@ async function serve(
   // answers with the monogram - there is nothing to distinguish for the player,
   // and nothing about either is an error.
   if (read === null || read.state === "absent") return sendStatus(response, 404);
-  response.writeHead(200, {
+  const etag = `"${read.digest}"`;
+  const headers = {
     ...SECURITY_HEADERS,
     "Content-Type": "image/png",
-    // The URL names one companion, and a companion's identity is minted once per
-    // provision: a re-import creates a NEW companion namespace and therefore a
-    // NEW handle, so the bytes behind a given URL are written once and never
-    // change under it. Immutable caching is the honest header for that, and it
-    // is also what keeps a roster of cards from re-fetching every picture.
-    "Cache-Control": "public, max-age=31536000, immutable",
-    "Content-Length": String(read.bytes.length),
-  });
+    "Cache-Control": "no-cache",
+    ETag: etag,
+  };
+  // Nothing changed for a browser that already holds this exact picture, and a
+  // bodiless 304 is what says so. A replaced picture has a different digest, so
+  // the same conditional request takes the 200 below with the new bytes: the old
+  // picture cannot survive an upload.
+  if (matchesEtag(request.headers["if-none-match"], etag)) return void response.writeHead(304, headers).end();
+  response.writeHead(200, { ...headers, "Content-Length": String(read.bytes.length) });
   response.end(read.bytes);
+}
+
+/**
+ * Whether a conditional request already holds exactly this picture.
+ *
+ * `If-None-Match` is a list of entity-tags, and a browser sends the one it stored;
+ * `*` asks whether the resource exists at all, which for a read that just produced
+ * these bytes is the same answer. A weak tag (`W/"…"`) is deliberately not
+ * honoured: this face never sends one, and matching it as a strong tag would claim
+ * a byte identity the caller did not assert.
+ */
+function matchesEtag(header: string | string[] | undefined, etag: string): boolean {
+  if (typeof header !== "string") return false;
+  return header.split(",").some((candidate) => candidate.trim() === etag || candidate.trim() === "*");
 }
 
 function sendStatus(response: ServerResponse, status: number, headers: Readonly<Record<string, string>> = {}): void {

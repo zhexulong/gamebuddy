@@ -357,10 +357,12 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // refusals moved it from 44 to 48, the world book's own edit refusals moved it 48 to 51, the
   // edit's two moved it 51 to 53, the card export's one (companion_card_too_large) moved it
   // 53 to 54, the delete's three moved it 54 to 57, the PNG card's own refusal
-  // (companion_card_image_absent, the picture-less export) moved it 57 to 58, and the edit's own
+  // (companion_card_image_absent, the picture-less export) moved it 57 to 58, the edit's own
   // greeting refusal (chat_edit_opening_retained, when a companion's reply became editable) moved
-  // it 58 to 59 - and it still fails the moment the reader stops seeing a member.
-  assert.equal(tavern.size, 59, `the tavern problem union should have 59 members, read ${tavern.size}`);
+  // it 58 to 59, and the avatar upload's two (companion_avatar_too_large, the picture over the
+  // avatar module's own ceiling, and companion_avatar_malformed, bytes that are not a complete
+  // PNG) moved it 59 to 61 - and it still fails the moment the reader stops seeing a member.
+  assert.equal(tavern.size, 61, `the tavern problem union should have 61 members, read ${tavern.size}`);
   assert.equal(game.size, 23, `the game problem union should have 23 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");

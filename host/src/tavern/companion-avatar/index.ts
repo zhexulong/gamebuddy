@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstat, open } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -22,14 +23,21 @@ import { resolveTavernPaths } from "../tavern-paths.js";
  * **Re-import, and what it leaves behind.** Importing the same card again
  * provisions a NEW companion: a new identity namespace, hence a new
  * `companionRoot`, hence a new picture. The previous companion's file is neither
- * overwritten (nothing is written to a namespace that already exists) nor deleted
- * - it lives exactly as long as the companion record it belongs to, because the
- * companion's directory is the unit of deletion and nothing here deletes one. So
- * no garbage collector is added for this file: a sweep would have to reason about
- * which companions are still reachable, while the directory already answers that
- * by existing or not. If a companion-delete operation is ever added, this picture
- * goes with the directory, and that operation - not this module - owns the
- * decision. (Nothing deletes a companion root today: the roster has no delete.)
+ * overwritten (nothing in the import path writes to a namespace that already
+ * exists) nor deleted - it lives exactly as long as the companion record it
+ * belongs to, because the companion's directory is the unit of deletion and
+ * nothing here deletes one. So no garbage collector is added for this file: a
+ * sweep would have to reason about which companions are still reachable, while
+ * the directory already answers that by existing or not. If a companion-delete
+ * operation is ever added, this picture goes with the directory, and that
+ * operation - not this module - owns the decision. (Nothing deletes a companion
+ * root today: the roster has no delete.)
+ *
+ * **The player's own replacement.** `update` below is the one write that lands on
+ * an existing companion, and it replaces exactly her one picture file: she stops
+ * being a monogram by choice. That is why the face can no longer call its bytes
+ * immutable - see `face.ts` - and why a read answers the digest of the bytes it
+ * read rather than only the bytes.
  */
 export const COMPANION_AVATAR_FILE_NAME = "avatar.png" as const;
 
@@ -77,7 +85,18 @@ export function isCompletePngFile(bytes: Uint8Array): boolean {
 
 export type CompanionAvatarOwner = Readonly<{ companionId: string; continuityId: string }>;
 
-export type CompanionAvatarRead = Readonly<{ state: "present"; bytes: Buffer }> | Readonly<{ state: "absent" }>;
+/**
+ * A picture as it is on disk, with the digest of exactly those bytes.
+ *
+ * The digest is not decoration: it is the `ETag` the asset face publishes for the
+ * URL a browser already holds, so "the same picture" and "a new one" are told
+ * apart by one fact both sides compute the same way.
+ */
+export type CompanionAvatarRead =
+  | Readonly<{ state: "present"; bytes: Buffer; digest: string }>
+  | Readonly<{ state: "absent" }>;
+
+export type CompanionAvatarUpdate = Readonly<{ state: "present"; digest: string }>;
 
 export type CompanionAvatarService = Readonly<{
   /**
@@ -90,6 +109,24 @@ export type CompanionAvatarService = Readonly<{
    * facts, and only the first one is an ordinary state.
    */
   read(handle: string): Promise<CompanionAvatarRead | null>;
+  /**
+   * Replaces the companion's picture, where the asset face reads it, and answers
+   * the digest of what is now on disk.
+   *
+   * `null` is the same answer `read` gives for a handle the roster never
+   * projected: a handle can never name a durable companion the roster never
+   * showed.
+   *
+   * The bytes are validated HERE, not by the caller: this module owns the one
+   * answer to what a picture is, and it throws the named refusal
+   * (`companion_avatar_too_large`, `companion_avatar_malformed`) rather than
+   * storing something the face would refuse to serve.
+   *
+   * There is no compare-and-swap: a picture is not a conflict-prone document, so
+   * the last picture written is the one she has, and the published digest is what
+   * makes that honest rather than silent.
+   */
+  update(handle: string, bytes: Uint8Array): Promise<CompanionAvatarUpdate | null>;
 }>;
 
 /**
@@ -131,6 +168,20 @@ export function createCompanionAvatarService(
         options.runtimeRoot,
       );
     },
+    async update(handle: string, bytes: Uint8Array): Promise<CompanionAvatarUpdate | null> {
+      const companion = await options.resolveCompanion(handle);
+      if (companion === null) return null;
+      if (bytes.length > MAX_COMPANION_AVATAR_BYTES) throw new Error("companion_avatar_too_large");
+      if (!isCompletePngFile(bytes)) throw new Error("companion_avatar_malformed");
+      const path = companionAvatarPath(options.runtimeRoot, options.playerId, companion);
+      await writeAvatarFile(path, bytes, options.runtimeRoot);
+      // The answer is a read-back, not an echo of the input: the digest describes
+      // the file that is there now, so the caller and the asset face can never
+      // disagree about what "she has this picture" means.
+      const written = await readAvatarFile(path, options.runtimeRoot);
+      if (written.state !== "present") throw new Error("companion_avatar_unreadable");
+      return Object.freeze({ state: "present", digest: written.digest });
+    },
   });
 }
 
@@ -139,10 +190,14 @@ export function createCompanionAvatarService(
  *
  * The lock creates and verifies the companion's own directory before the write
  * (the directory may not exist yet: a card that carried no scenario and no
- * greeting never caused one to be created), and the write itself is the same
- * exclusive-temporary-then-rename as every other durable artifact here uses.
- * Called once, at provision: a companion namespace is never adopted or
- * overwritten, so one companion root holds one name and one picture.
+ * greeting never caused one to be created, and a companion the player gives a
+ * picture to for the first time has none either), and the write itself is the
+ * same exclusive-temporary-then-rename as every other durable artifact here uses.
+ *
+ * Called at provision (the reviewed card's own picture) and by `update` (the
+ * player's own choice). Both write the one file at the one path, so the picture
+ * an upload replaces is replaced whole or not at all: one companion root holds
+ * one name and one picture.
  */
 export async function writeAvatarFile(path: string, bytes: Uint8Array, containmentRoot: string): Promise<void> {
   await withPathLock(
@@ -185,7 +240,18 @@ export async function readAvatarFile(path: string, containmentRoot: string): Pro
   if (!Number.isSafeInteger(size) || size > MAX_COMPANION_AVATAR_BYTES) throw new Error("companion_avatar_too_large");
   const bytes = await readExactly(path, size);
   if (!isCompletePngFile(bytes)) throw new Error("companion_avatar_malformed");
-  return Object.freeze({ state: "present", bytes });
+  return Object.freeze({ state: "present", bytes, digest: avatarDigest(bytes) });
+}
+
+/**
+ * The one digest of a picture's own bytes: sha256, lowercase hex.
+ *
+ * It is the value the asset face publishes as its `ETag` and the value an upload
+ * answers with, so a browser revalidating a picture it already holds compares one
+ * number against the same number - not two spellings of "changed".
+ */
+function avatarDigest(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 /** Reads one file's declared size exactly, through a handle that stays the file it opened. */

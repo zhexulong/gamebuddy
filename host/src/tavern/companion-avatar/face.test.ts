@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { request as httpRequest, createServer } from "node:http";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
-import { pngCardFile } from "../../test-support/png-card.test-support.js";
+import { pngCardFile, pngPictureFile } from "../../test-support/png-card.test-support.js";
 import { companionAvatarPath, createCompanionAvatarService, type CompanionAvatarService } from "./index.js";
 import { createCompanionAvatarRequestHandler, ownsCompanionAvatarRequest } from "./face.js";
 
@@ -17,11 +18,20 @@ const identity = Object.freeze({
 const handle = `${"B".repeat(42)}A`;
 const unknownHandle = `${"C".repeat(42)}A`;
 
+/** The one digest the face publishes, computed here from the bytes a test wrote. */
+const digestOf = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
+const etagOf = (bytes: Uint8Array): string => `"${digestOf(bytes)}"`;
+
 type Response = Readonly<{ status: number; headers: Record<string, string | string[] | undefined>; body: Buffer }>;
 
-async function request(port: number, path: string, method = "GET"): Promise<Response> {
+async function request(
+  port: number,
+  path: string,
+  method = "GET",
+  headers: Record<string, string> = {},
+): Promise<Response> {
   return await new Promise<Response>((resolveRequest, reject) => {
-    const request = httpRequest({ host: "127.0.0.1", port, path, method }, (response) => {
+    const request = httpRequest({ host: "127.0.0.1", port, path, method, headers }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer) => chunks.push(chunk));
       response.on("end", () =>
@@ -84,12 +94,27 @@ test("the avatar face serves one companion's picture and refuses everything else
       const served = await request(port, avatar);
       assert.equal(served.status, 200);
       assert.equal(served.headers["content-type"], "image/png");
-      assert.equal(served.headers["cache-control"], "public, max-age=31536000, immutable");
+      // The player may replace her picture at this same URL, so the face must NOT
+      // claim the bytes are immutable: it publishes the digest of the bytes it just
+      // read and asks a browser to revalidate against it before every use.
+      assert.equal(served.headers["cache-control"], "no-cache");
+      assert.equal(served.headers.etag, etagOf(picture));
       assert.equal(served.headers["content-length"], String(picture.length));
       assert.equal(served.headers["x-content-type-options"], "nosniff");
       assert.equal(served.headers["cross-origin-resource-policy"], "same-origin");
       assert.match(String(served.headers["content-security-policy"]), /default-src 'self'/);
       assert.deepEqual(served.body, Buffer.from(picture));
+
+      // A browser that already holds THIS picture revalidates and gets the facts
+      // back with no body; one that holds something else gets the bytes.
+      const unchanged = await request(port, avatar, "GET", { "If-None-Match": etagOf(picture) });
+      assert.equal(unchanged.status, 304);
+      assert.equal(unchanged.headers.etag, etagOf(picture));
+      assert.equal(unchanged.headers["cache-control"], "no-cache");
+      assert.equal(unchanged.body.length, 0);
+      const stale = await request(port, avatar, "GET", { "If-None-Match": etagOf(Buffer.from("some other picture")) });
+      assert.equal(stale.status, 200);
+      assert.deepEqual(stale.body, Buffer.from(picture));
 
       // Every one of these is the same face answering for a path it does not
       // have, and none of them may resolve outside the companion root.
@@ -169,6 +194,36 @@ test("no picture is an ordinary 404; an unreadable picture is a distinct 500 wit
     });
   } finally {
     process.stderr.write = original;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a replaced picture is a new ETag, so a browser holding the old one is served the new bytes", async () => {
+  const root = await canonicalTestRoot("tavern-avatar-face-replaced-");
+  try {
+    const service = serviceFor(root, [handle]);
+    const first = pngCardFile(JSON.stringify({ spec: "chara_card_v3", data: { name: "Rin" } }));
+    const second = pngPictureFile();
+    const avatar = `/assets/companions/${handle}/avatar.png`;
+    await withServer(service, async (port) => {
+      const written = await service.update(handle, first);
+      assert.equal(written?.digest, digestOf(first));
+      assert.equal((await request(port, avatar)).headers.etag, etagOf(first));
+
+      const replaced = await service.update(handle, second);
+      assert.equal(replaced?.digest, digestOf(second));
+      assert.notEqual(replaced?.digest, written?.digest);
+
+      // Same URL, different bytes. A browser that holds the first picture
+      // revalidates against the digest it stored and is served the second one, so
+      // an upload cannot leave the old picture on screen.
+      const servedSecond = await request(port, avatar, "GET", { "If-None-Match": etagOf(first) });
+      assert.equal(servedSecond.status, 200);
+      assert.equal(servedSecond.headers.etag, etagOf(second));
+      assert.deepEqual(servedSecond.body, Buffer.from(second));
+      assert.equal((await request(port, avatar, "GET", { "If-None-Match": etagOf(second) })).status, 304);
+    });
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -195,6 +195,7 @@ type TavernManagementDomains = Readonly<
       | "stCardImportService"
       | "stCardImportHistoryService"
       | "confirmStCardImport"
+      | "companionAvatarService"
     >
   > & {
     managementService: ChatManagementService;
@@ -202,13 +203,6 @@ type TavernManagementDomains = Readonly<
     worldInfoService: WorldInfoBindingManagementService;
     modelProfileStore: ModelProfileStore;
     playerPreferenceStore: PlayerPreferenceStore;
-    /**
-     * The companion's own picture, read through the roster's handles. Built here
-     * beside `resolveCompanion` (the only reverse map), but served by the
-     * composition shell's own `/assets/companions/` face rather than by any
-     * management route - it is not a JSON operation.
-     */
-    companionAvatarService: CompanionAvatarService;
     /** Present only when the shared semantic authority supplied the ADR 0009 selection capability. */
     chatSelectProvisioner?: TavernManagementDialogueWebOptions["chatSelectProvisioner"];
   }
@@ -725,7 +719,7 @@ export async function startDesktopPresentationAdmission(
         worldInfoService,
         input.chatSelection,
       );
-      const { chatSelectProvisioner, companionAvatarService, ...domainsWithoutSelection } = domains;
+      const { chatSelectProvisioner, ...domainsWithoutSelection } = domains;
       owned.push(...domainOwned);
       // The connection service owns the player's provider/model/credential
       // selection for the exact mounted Chat runtime. ADR-0010 makes a connection
@@ -758,7 +752,10 @@ export async function startDesktopPresentationAdmission(
         referenceStateFacade,
         pipelineService,
         management,
-        companionAvatarService,
+        // The shell's asset face READS the same service the avatar route WRITES: one
+        // reverse map, one file, one digest, so the picture an upload stores is
+        // exactly the picture that handle's URL then serves.
+        companionAvatarService: domains.companionAvatarService,
         owned: Object.freeze(owned),
       });
     } catch (error) {
@@ -913,6 +910,7 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
   companionWorldBookService: ["read", "update"],
   companionProfileService: ["read"],
   companionCardExportService: ["read"],
+  companionAvatarService: ["update"],
   newCompanionProvisioner: ["create"],
   newChatProvisioner: ["create"],
   chatSelectProvisioner: ["select"],
@@ -1029,6 +1027,10 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       // The card export follows the inspector: a read-only projection of one roster
       // companion's own records into a standard Tavern V3 card.
       "companion.card.export",
+      // The player's own picture for a roster companion follows the card export in that
+      // same canonical order: the one write in this group, and the one that takes a
+      // hand-made companion off the monogram.
+      "companion.avatar.update",
     ],
     operationIds: [
       "draft.save",
@@ -1078,6 +1080,7 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "world-info.delete",
       "companion.profile.read",
       "companion.card.export",
+      "companion.avatar.update",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds. The

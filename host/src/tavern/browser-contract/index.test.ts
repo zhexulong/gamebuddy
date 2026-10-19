@@ -72,6 +72,7 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "companion.worldbook.update",
       "companion.profile.read",
       "companion.card.export",
+      "companion.avatar.update",
       "companion.create",
       "character.voice.read",
       "character.voice.update",
@@ -1517,6 +1518,20 @@ test("every route freezes the exact security, binding, and success policy matrix
       "application/json",
     ],
     [
+      "companion.avatar.update",
+      "PUT",
+      "/api/tavern/v1/companions/:companionHandle/avatar",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      ["companionHandle"],
+      [],
+      200,
+      "application/json",
+    ],
+    [
       "companion.create",
       "POST",
       "/api/tavern/v1/companions",
@@ -2028,6 +2043,44 @@ test("import operations carry CSRF-bound write routes and safe projections", () 
     "losses",
     "name",
   ]);
+});
+test("the avatar upload's bound is the avatar module's own ceiling, and the route is the roster-addressed write", async () => {
+  // The contract cannot import the avatar module (it reaches `node:fs`), so both
+  // numbers are read here and held equal: the picture this route admits at its
+  // ceiling is exactly the picture `readAvatarFile` will read back.
+  const { MAX_COMPANION_AVATAR_BYTES } = await import("../companion-avatar/index.js");
+  const { MAX_COMPANION_AVATAR_BASE64_CHARS, MAX_COMPANION_AVATAR_UPLOAD_BODY_BYTES } = await import("./index.js");
+  assert.equal(MAX_COMPANION_AVATAR_BASE64_CHARS, Math.ceil(MAX_COMPANION_AVATAR_BYTES / 3) * 4);
+  assert.ok(MAX_COMPANION_AVATAR_UPLOAD_BODY_BYTES > MAX_COMPANION_AVATAR_BASE64_CHARS);
+  const upload = TavernBrowserContractV1.schemas.CompanionAvatarUploadCommandV1Schema as unknown as {
+    readonly properties: Readonly<Record<string, { readonly maxLength: number; readonly minLength: number }>>;
+  };
+  // The validator refuses an encoded picture longer than a whole-ceiling one encodes
+  // to, and admits a real one; the route's read limit is the same bound plus its envelope.
+  assert.equal(upload.properties.avatarBase64?.maxLength, MAX_COMPANION_AVATAR_BASE64_CHARS);
+  const validator = Compile(TavernBrowserContractV1.schemas.CompanionAvatarUploadCommandV1Schema);
+  assert.equal(validator.Check({ apiVersion: 1, avatarBase64: "A" }), true);
+  assert.equal(
+    validator.Check({ apiVersion: 1, avatarBase64: "A".repeat(MAX_COMPANION_AVATAR_BASE64_CHARS + 4) }),
+    false,
+  );
+
+  const route = TavernBrowserContractV1.routes.find(
+    (candidate) => candidate.routeId === "companion.avatar.update",
+  ) as unknown as Readonly<{ method: string; path: string; operationId?: string; csrf: string }>;
+  assert.ok(route);
+  assert.equal(route.method, "PUT");
+  assert.equal(route.path, "/api/tavern/v1/companions/:companionHandle/avatar");
+  assert.equal(route.operationId, "companion.avatar.update");
+  assert.equal(route.csrf, "required");
+  // The reply's whole vocabulary: which companion, and the digest the asset face
+  // publishes as that URL's ETag. No path, no size, no durable identity.
+  assert.deepEqual(
+    Object.keys(
+      (TavernBrowserContractV1.schemas.CompanionAvatarV1Schema as unknown as { properties: object }).properties,
+    ).sort(),
+    ["apiVersion", "digest", "handle"],
+  );
 });
 test("the companion language is the same bounded BCP-47 shape on the wire and in the store", async () => {
   // The contract must stay dependency-free (a dialogue-web test loads it directly under

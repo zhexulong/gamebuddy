@@ -390,6 +390,11 @@ const PROBLEM_CODES = [
   // a Tavern card our import accepts, and again when the PNG form has no picture to carry.
   "companion_card_too_large",
   "companion_card_image_absent",
+  // `companion.avatar.update` refuses a picture it will not keep by name: the file is over
+  // the ceiling the avatar module reads by, or its bytes are not a complete PNG. Neither is
+  // a runtime outage - retrying the same file cannot fix either.
+  "companion_avatar_too_large",
+  "companion_avatar_malformed",
   // Transport: the over-ceiling request body the router refuses before any route runs.
   "payload_too_large",
 ] as const;

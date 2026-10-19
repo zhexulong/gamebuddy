@@ -16,6 +16,8 @@ import {
   type CompanionDetailV1,
   type CompanionWorldBookV1,
   type CompanionCardExportV1,
+  type CompanionAvatarV1,
+  type CompanionAvatarUploadCommandV1,
   type CompanionListV1,
   type CompanionProfileV1,
   type CompanionCharacterVoiceV1,
@@ -30,6 +32,7 @@ import {
   type GreetingUpdateCommandV1,
   type GreetingV1,
   isComposedTavernProfile,
+  MAX_COMPANION_AVATAR_UPLOAD_BODY_BYTES,
   MAX_ST_CARD_IMPORT_BODY_BYTES,
   type MemoryMutationCommandV1,
   type MemoryReadV1,
@@ -71,6 +74,7 @@ import {
 } from "./tavern/browser-contract/index.js";
 import type { CompanionCardFormat } from "./tavern/companion-card-export.js";
 import type { CompanionCardExportResult } from "./tavern/companion-card-export-service.js";
+import type { CompanionAvatarService } from "./tavern/companion-avatar/index.js";
 import { TavernConnectionRevisionConflict } from "./tavern/connection-store.js";
 import { TAVERN_PROVIDER_CATALOG } from "./tavern/provider-catalog.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
@@ -253,6 +257,15 @@ const MANAGEMENT_COMPANION_PROFILE_ROUTES = ["companion.profile.read"] as const;
  * control the Host cannot serve.
  */
 const MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES = ["companion.card.export"] as const;
+/**
+ * Optional avatar extension: only a profile that declares this route mounts
+ * `PUT /api/tavern/v1/companions/:companionHandle/avatar`, the player's own picture
+ * for ANY companion the roster listed. It appends after the card export in the same
+ * frozen canonical order, and like every other option a profile that advertises it
+ * without the bound service fails closed at composition rather than showing a control
+ * the Host cannot serve.
+ */
+const MANAGEMENT_COMPANION_AVATAR_ROUTES = ["companion.avatar.update"] as const;
 const bootstrapRequestValidator = Compile(
   (TavernBrowserContractV1.routes.find((route) => route.routeId === "bootstrap")! as { request: TSchema }).request,
 );
@@ -290,6 +303,7 @@ const updateCompanionVoiceValidator = Compile(TavernBrowserContractV1.schemas.Up
 const updateCompanionWorldBookValidator = Compile(
   TavernBrowserContractV1.schemas.UpdateCompanionWorldBookCommandV1Schema,
 );
+const companionAvatarUploadValidator = Compile(TavernBrowserContractV1.schemas.CompanionAvatarUploadCommandV1Schema);
 
 /**
  * The one Host-owned Chat/Game model profile store this dispatcher accepts. It
@@ -412,6 +426,20 @@ export type TavernManagementDialogueWebOptions = Readonly<{
   companionCardExportService?: Readonly<{
     read(handle: string, format: CompanionCardFormat): Promise<CompanionCardExportResult | null>;
   }>;
+  /**
+   * The companion's own picture, written by the player who is looking at her
+   * (`companion.avatar.update`). It is the SAME service the runtime asset face reads:
+   * one reverse map from the roster's per-mount handle, so the picture an upload
+   * stores for a handle is exactly the picture that handle's URL later serves - and
+   * the digest this route answers with is the `ETag` the face publishes for it.
+   *
+   * Unlike the inspector's read this is a write, and unlike the world book's edit it
+   * is not restricted to the mounted companion: the roster and the inspector show
+   * every companion, and a JSON-imported or hand-made one stops being a monogram by
+   * the player's own choice. Present only when the mounted profile declares the
+   * route; the route stays unavailable otherwise.
+   */
+  companionAvatarService?: CompanionAvatarService;
   /**
    * Host-owned new-companion provisioner. The browser sends a display name
    * only; the Host mints every durable identity and returns the safe name.
@@ -632,6 +660,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const companionWorldBookService = options.companionWorldBookService;
   const companionProfileService = options.companionProfileService;
   const companionCardExportService = options.companionCardExportService;
+  const companionAvatarService = options.companionAvatarService;
   const newCompanionProvisioner = options.newCompanionProvisioner;
   const newChatProvisioner = options.newChatProvisioner;
   const chatSelectProvisioner = options.chatSelectProvisioner;
@@ -762,6 +791,16 @@ export function createTavernManagementDialogueWebRequestHandler(
   for (const routeId of MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES) {
     if (profile.routeIds.includes(routeId)) {
       if (companionCardExportService === undefined) throw new Error("tavern_management_composition_unavailable");
+      if (!profile.operationIds.includes(routeId)) throw new Error("tavern_management_composition_unavailable");
+    }
+  }
+  // And the avatar is the same shape one step further: a profile that advertises the
+  // player's own picture for a roster companion must bind the exact service (the one
+  // the asset face reads) and declare the route as an operation, or the surface would
+  // offer an upload the dispatcher cannot serve.
+  for (const routeId of MANAGEMENT_COMPANION_AVATAR_ROUTES) {
+    if (profile.routeIds.includes(routeId)) {
+      if (companionAvatarService === undefined) throw new Error("tavern_management_composition_unavailable");
       if (!profile.operationIds.includes(routeId)) throw new Error("tavern_management_composition_unavailable");
     }
   }
@@ -1496,6 +1535,51 @@ export function createTavernManagementDialogueWebRequestHandler(
         }
       }
       {
+        const avatarHandle = matchCompanionAvatarRoute(request.method, url.pathname);
+        if (avatarHandle !== null) {
+          // companion.avatar.update: the player's own picture for a roster companion.
+          // The exact opaque handle the roster projected resolves to THAT companion,
+          // whoever she is - the same addressing the inspector and the card export use -
+          // because the roster and the inspector show every companion and an upload must
+          // not require her to be the mounted one. A CSRF-bound write: it replaces the
+          // file the runtime asset face serves at that handle's own URL, and answers the
+          // digest of the bytes now on disk - the same value the face publishes as that
+          // URL's ETag.
+          if (url.search !== "") return sendProblem(response, 400, "invalid_request");
+          if (!isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+          const session = admitRequest(request, origin);
+          if (session === null) return sendProblem(response, 401, "unauthorized");
+          if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+            return sendProblem(response, 403, "csrf_failed");
+          if (
+            !profile.routeIds.includes("companion.avatar.update") ||
+            !profile.operationIds.includes("companion.avatar.update") ||
+            companionAvatarService === undefined
+          )
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          // The reader caps the request at the avatar ceiling's own base64 envelope, so a
+          // picture that could never be kept is refused while the body is being read
+          // rather than after a whole one has been buffered and then measured.
+          const body = await readJsonBody(request, MAX_COMPANION_AVATAR_UPLOAD_BODY_BYTES);
+          if (!companionAvatarUploadValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+          const picture = decodeCanonicalBase64((body as CompanionAvatarUploadCommandV1).avatarBase64);
+          // Base64 that is not canonical does not decode to the picture the player picked,
+          // so it is refused rather than silently shortened - the same rule the card
+          // import applies to the same spelling.
+          if (picture === undefined) return sendProblem(response, 400, "invalid_request");
+          const updated = await companionAvatarService.update(avatarHandle, picture);
+          if (updated === null) return sendProblem(response, 404, "companion_not_found");
+          const result: CompanionAvatarV1 = Object.freeze({
+            apiVersion: TAVERN_BROWSER_API_VERSION,
+            handle: avatarHandle,
+            digest: updated.digest,
+          });
+          if (!TavernBrowserValidatorsV1.CompanionAvatarV1Schema.Check(result))
+            throw new Error("companion_avatar_service_unavailable");
+          return sendJson(response, 200, result);
+        }
+      }
+      {
         const voiceHandle = matchCompanionVoiceRoute(request.method, url.pathname);
         if (voiceHandle !== null) {
           // The mounted companion's own performance directive. The exact opaque
@@ -2177,9 +2261,9 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
   // them, in the frozen canonical order: core, output devices, language,
   // connections, model profiles, companions/personas/retention, card import,
   // new-chat opening, new chat, chat selection, World Info authoring, companion
-  // profile, card export. A partially applied group, an undeclared route or a
-  // reordered list fails closed, so no route is mounted that this dispatcher
-  // cannot serve.
+  // profile, card export, companion avatar. A partially applied group, an undeclared
+  // route or a reordered list fails closed, so no route is mounted that this
+  // dispatcher cannot serve.
   const coreRoutes = withMemory
     ? profile.operationIds.includes("memory.mutate")
       ? MANAGEMENT_ROUTE_IDS
@@ -2203,6 +2287,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES,
     MANAGEMENT_COMPANION_PROFILE_ROUTES,
     MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES,
+    MANAGEMENT_COMPANION_AVATAR_ROUTES,
   ] as const;
   const operationGroups = [
     coreOperations,
@@ -2219,6 +2304,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_WORLD_INFO_AUTHORING_ROUTES,
     MANAGEMENT_COMPANION_PROFILE_ROUTES,
     MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES,
+    MANAGEMENT_COMPANION_AVATAR_ROUTES,
   ] as const;
   if (!isCanonicalGroupSelection(profile.routeIds, routeGroups, coreRoutes)) return false;
   if (!isCanonicalGroupSelection(profile.operationIds, operationGroups, coreOperations)) return false;
@@ -2339,6 +2425,13 @@ function matchCompanionCardExportRoute(method: string | undefined, pathname: str
   return match === null ? null : match[1]!;
 }
 
+/** companion.avatar.update: one roster companion's picture, replaced by the player. */
+function matchCompanionAvatarRoute(method: string | undefined, pathname: string): string | null {
+  if (method !== "PUT") return null;
+  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})\/avatar$/.exec(pathname);
+  return match === null ? null : match[1]!;
+}
+
 /** character.import.read: GET the staged candidate's safe review data. */
 function matchImportIdRoute(method: string | undefined, pathname: string): string | null {
   if (method !== "GET") return null;
@@ -2451,6 +2544,15 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   // The book was written and the restoring write then failed too, so the threads that
   // still pin the previous revision are the one state a retry cannot fix. It is named
   // rather than reported as a clean storage failure.
+  // A picture the player picked is either one this Host will keep or a bounded,
+  // non-retryable fact about that file: it is over the avatar module's own ceiling, or
+  // its bytes are not a structurally complete PNG. Neither can be retried into validity,
+  // and "her picture could not be saved" would point at nothing the player can act on.
+  if (message === "companion_avatar_too_large") return { status: 413, code: "companion_avatar_too_large" };
+  if (message === "companion_avatar_malformed") return { status: 422, code: "companion_avatar_malformed" };
+  // A stored picture that is present and unusable is the same kind of durable fact as any
+  // other unreadable companion record: retrying cannot make it valid.
+  if (message === "companion_avatar_unreadable") return { status: 503, code: "companion_record_unreadable" };
   if (message === "companion_world_book_binding_partial")
     return { status: 503, code: "companion_world_book_binding_partial" };
   if (message === "companion_world_book_binding_unavailable") return { status: 503, code: "storage_unavailable" };
@@ -2608,21 +2710,27 @@ async function hasRequestBody(request: IncomingMessage): Promise<boolean> {
 }
 
 /**
- * The stage command's two arms as the one input the import service takes.
+ * The bytes one base64 payload names, or `undefined` when it is not the canonical
+ * spelling of a file.
  *
- * The PNG arm's base64 must be canonical. `Buffer.from(value, "base64")`
- * silently DROPS whatever it does not recognize, so a payload that is not
- * exactly what the browser sent would be imported as a different, shorter file -
- * a card whose bytes are not the ones the player picked. Re-encoding and
- * comparing is what makes "the file the Host decoded" equal "the file the player
- * chose".
+ * `Buffer.from(value, "base64")` silently DROPS whatever it does not recognize, so a
+ * payload that is not exactly what the browser sent would be read as a different,
+ * shorter file - a card or a picture whose bytes are not the ones the player picked.
+ * Re-encoding and comparing is what makes "the file the Host decoded" equal "the file
+ * the player chose". One spelling, shared by the card import and the avatar upload.
  */
-function stageStCardImportInput(command: StageStCardImportCommandV1): string | Uint8Array | undefined {
-  if (command.cardSource === "json") return command.card;
-  const encoded = command.cardFileBase64;
+function decodeCanonicalBase64(encoded: string): Uint8Array | undefined {
   if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(encoded) || encoded.length % 4 !== 0) return undefined;
   const bytes = Buffer.from(encoded, "base64");
   return bytes.toString("base64") === encoded ? bytes : undefined;
+}
+
+/**
+ * The stage command's two arms as the one input the import service takes.
+ */
+function stageStCardImportInput(command: StageStCardImportCommandV1): string | Uint8Array | undefined {
+  if (command.cardSource === "json") return command.card;
+  return decodeCanonicalBase64(command.cardFileBase64);
 }
 function authenticate(
   request: IncomingMessage,
