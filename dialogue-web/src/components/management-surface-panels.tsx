@@ -188,6 +188,10 @@ function chatRowStamp(updatedAtMs: number, labels: Messages, nowMs: number): str
  * management profile that publishes no `chat.rename` passes `false` and the
  * control is absent; `undefined` means this mount cannot see that projection and
  * the served list is the capability (see the file header).
+ *
+ * The rename is the MOUNTED row's alone. `chat.rename` addresses the mounted selection by handle and
+ * generation, so a pencil on any other row could only be refused; the row's own surface selects, which
+ * is how the player reaches a Chat they can rename (see the row's own note for the measurement).
  */
 export function ChatsSurfacePanel({
   api,
@@ -629,11 +633,21 @@ export function ChatsSurfacePanel({
           rows.map(({ chat, name }) => {
             const isSelected = chat.handle === currentChatHandle;
             const isSelecting = chat.handle === selecting;
+            /*
+             * The rename belongs to the mounted Chat and to no other row: `chat.rename` addresses the
+             * mounted selection by handle and generation (`chat-management-service.ts`), so a pencil on
+             * another row could only ever be refused with `selection_conflict` - a control the wire
+             * refuses is a promise the panel cannot keep. The row's own surface already selects, which is
+             * how the player reaches a Chat they can rename, so the honest affordance is the one that can
+             * succeed. The editor is held to the same row: a stale editor left on a row the mount has
+             * moved off would offer a Save the wire refuses.
+             */
+            const renameHere = isSelected && renameAvailable !== false;
             // The confirmation belongs to exactly one row, and while it is armed that row's
             // rename/archive/trash strip steps aside: the confirmation is the row's only action
             // until it is answered.
             const armedHere = confirmation !== null && confirmation.handle === chat.handle;
-            const editingHere = editing !== null && editing.handle === chat.handle;
+            const editingHere = renameHere && editing !== null && editing.handle === chat.handle;
             /*
              * The row's whole surface is the select control: its title, its stamp and
              * its preview are one gesture, because the preview is most of the row's
@@ -653,7 +667,7 @@ export function ChatsSurfacePanel({
                 className={`chat-item-card ${isSelected ? "selected" : ""}`}
                 onClick={rowSelects ? () => selectChat(chat.handle) : undefined}
               >
-                {editing !== null && editing.handle === chat.handle && renameAvailable !== false ? (
+                {editingHere ? (
                   <>
                     <input
                       type="text"
@@ -707,7 +721,7 @@ export function ChatsSurfacePanel({
                       )}
                       {armedHere ? null : (
                         <div className="chat-item-actions">
-                          {renameAvailable !== false && (
+                          {renameHere && (
                             <button
                               type="button"
                               className="icon-button-small"

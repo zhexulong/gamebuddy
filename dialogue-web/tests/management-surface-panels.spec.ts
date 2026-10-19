@@ -2287,3 +2287,83 @@ test("the armed World Info delete puts its confirmation on its own block, measur
     await expect(confirm).toHaveCount(0);
   }
 });
+
+/**
+ * The rename control belongs to the row the wire can rename - and only to it.
+ *
+ * The measured defect: every row carried the pencil, while `chat.rename` accepts only the MOUNTED
+ * Chat. The Host requires the command's `chatHandle` and `selectionGeneration` to equal the mounted
+ * lease's (`chat-management-service.ts`), so a rename aimed at any other row was refused with
+ * `selection_conflict`: a real run answered 409 for a non-selected row's pencil and 200 for the
+ * selected row's, on a panel that offered both.
+ *
+ * The shape chosen is "absent on a row the wire would refuse", not "a pencil that selects the Chat
+ * first": the row's own surface is already the selection gesture, so a second control that only
+ * switches would be the same lie in a different costume. The assertions, and the failure each one
+ * catches:
+ *  - exactly one pencil on the surface, and it is the selected row's: catches the affordance coming
+ *    back to every row;
+ *  - the selected row's pencil still renames through `/chat/title` with the mounted handle, and the
+ *    200 read-back is what the row then shows: catches a "fix" that removes the action instead of
+ *    making it honest;
+ *  - the non-selected row still carries its own archive arm: catches taking that row's whole action
+ *    strip away with the pencil.
+ */
+test("only the row the mounted Chat owns offers the rename control", async ({ page }) => {
+  const otherHandle = `${"F".repeat(42)}A`;
+  const titleWrites: unknown[] = [];
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedDraft) }),
+  );
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        chats: [
+          { handle: chatHandle, title: "Mounted chat", status: "active", managementRevision: 4, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." },
+          { handle: otherHandle, title: "Older chat", status: "active", managementRevision: 9, isSelected: false, updatedAtMs: 1_759_913_600_000, preview: "A quieter morning than this one." },
+        ],
+      }),
+    }),
+  );
+  await page.route("**/api/tavern/v1/chat/title", async (route) => {
+    titleWrites.push(route.request().postDataJSON());
+    await route.fulfill(json200({ apiVersion: 1, title: "Renamed from the row", managementRevision: 5 }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+  const mounted = surface.getByTestId("chat-item").filter({ hasText: "Mounted chat" });
+  const older = surface.getByTestId("chat-item").filter({ hasText: "Older chat" });
+
+  // The control counts on both rows, after the change: one rename control, on the mounted row - the
+  // row whose Chat the wire can rename - and none on the row it would refuse.
+  await expect(surface.getByTitle("Rename Chat")).toHaveCount(1);
+  await expect(mounted.getByTitle("Rename Chat")).toHaveCount(1);
+  await expect(older.getByTitle("Rename Chat")).toHaveCount(0);
+  await expect(older.getByRole("button", { name: "Archive", exact: true })).toBeVisible();
+
+  await mounted.getByTitle("Rename Chat").click();
+  // The editor replaces the row's own title, so the field is located on the surface - and the write
+  // below names the mounted row's handle and revision, which is what proves whose editor this is.
+  await surface.locator("input.form-input").fill("Renamed from the row");
+  await surface.getByRole("button", { name: "Save" }).click();
+
+  await expect.poll(() => titleWrites.length).toBe(1);
+  expect(titleWrites[0]).toEqual({
+    apiVersion: 1,
+    selectionGeneration: 1,
+    chatHandle,
+    expectedManagementRevision: 4,
+    title: "Renamed from the row",
+  });
+  await expect(surface.getByTestId("chat-select").filter({ hasText: "Renamed from the row" })).toHaveCount(1);
+  // Nothing was ever aimed at the row the wire refuses.
+  expect(titleWrites.filter((write) => (write as { chatHandle?: string }).chatHandle === otherHandle)).toEqual([]);
+});
