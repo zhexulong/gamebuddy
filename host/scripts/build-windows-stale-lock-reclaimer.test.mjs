@@ -363,12 +363,27 @@ test("stale-lock reclaimer manifest is strict, fixed, and canonical", () => {
 });
 
 /** Temporarily moves the whole output root aside so the next build call must
- * publish again; the caller is responsible for restoring it. A fresh
- * publication reserves a previously absent output with exclusive creation, so
- * leaving an empty directory behind is itself a rejected pre-existing object. */
+ * publish again; an already absent output root is already in that state, so
+ * there is nothing to move. A fresh publication reserves a previously absent
+ * output with exclusive creation, so leaving an empty directory behind is
+ * itself a rejected pre-existing object. */
 async function movePairAside(aside) {
   await rm(aside, { recursive: true, force: true });
+  if ((await lstat(outputRoot).catch(() => undefined)) === undefined) return;
   await rename(outputRoot, aside);
+}
+
+/** Returns the pair the builder had published before the output root was moved
+ * aside, so a run that dies between the move and its rebuild still leaves a
+ * complete pair behind; every compiled test refuses to load without one. The
+ * caller removes whatever the restore did not consume. */
+async function restoreOutputRoot(asides) {
+  if ((await lstat(outputRoot).catch(() => undefined)) !== undefined) return;
+  for (const aside of asides) {
+    if ((await lstat(aside).catch(() => undefined)) === undefined) continue;
+    await rename(aside, outputRoot);
+    return;
+  }
 }
 
 test("production builder rejects an output-root junction before publish and preserves the external sentinel", { skip: process.platform !== "win32" }, async (t) => {
@@ -552,6 +567,7 @@ test("production builder uses the globally locked SDK, reuses a verified pair, a
     }
     throw error;
   } finally {
+    await restoreOutputRoot([firstAside, initialAside]).catch(() => undefined);
     await rm(firstAside, { recursive: true, force: true }).catch(() => undefined);
     await rm(initialAside, { recursive: true, force: true }).catch(() => undefined);
   }

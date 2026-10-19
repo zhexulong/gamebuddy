@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -215,7 +215,9 @@ function verifiedSpawn(facts: FixedPairFacts): SpawnHelper {
  * whose physical identity equals its canonical path; the manifest must
  * byte-exactly match the canonical manifest of the current helper digest; and
  * the production inventory must still declare the exact verified pair. Any
- * missing, changed, linked, reparse, or ambiguous object fails closed.
+ * missing, changed, linked, reparse, or ambiguous object fails closed. A known
+ * regression aside left beside the pair is refused by name rather than as an
+ * unexplained absence.
  */
 function verifyFixedPair(
   input: Readonly<{
@@ -227,6 +229,12 @@ function verifyFixedPair(
     inventoryPath: string | undefined;
   }>,
 ): FixedPairFacts {
+  const asides = asidesBesidePair(input.pairRoot);
+  if (asides.length > 0) {
+    throw new Error(
+      `${unavailable().message}: an interrupted regression run left ${asides.join(", ")} beside the helper pair - remove them or run \`node scripts/build-windows-stale-lock-reclaimer.mjs\` to rebuild the pair`,
+    );
+  }
   verifyDirectoryChainSync(input.root, input.pairRoot);
   verifyRegularSync(input.executable);
   verifyRegularSync(input.manifest);
@@ -247,6 +255,24 @@ function verifyFixedPair(
     sha256,
     inventoryPath: input.inventoryPath,
   });
+}
+
+/**
+ * The repository's regression tests move the fixed output root into a
+ * `.build-test-*-aside` directory beside it under `native/windows-stale-lock-reclaimer/.dist`. A
+ * killed or failed run leaves one behind with the output root moved away, so every compiled test
+ * dies at import with the plain, unexplained refusal; naming the leftover is the whole fix.
+ */
+const asideDirectoryPattern = /^\.build-test-[a-z-]+-aside$/u;
+
+function asidesBesidePair(pairRoot: string): readonly string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(dirname(pairRoot));
+  } catch {
+    return [];
+  }
+  return entries.filter((entry) => asideDirectoryPattern.test(entry)).sort();
 }
 
 function canonicalManifest(sha256: string): string {

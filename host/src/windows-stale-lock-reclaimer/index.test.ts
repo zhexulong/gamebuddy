@@ -278,6 +278,47 @@ test(
 );
 
 test(
+  "published adapter names the regression aside left beside the helper pair",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const fixture = await makePublishedPairFixture();
+    // The pair is complete and canonical; the aside alone is the refusal, because it proves an
+    // interrupted run moved the output root away before this mint.
+    const aside = resolve(fixture.pairRoot, "..", ".build-test-repro-initial-aside");
+    try {
+      await mkdir(aside);
+      await assert.rejects(createPublishedWindowsStaleLockReclaimer(fixture.root), (error: Error) => {
+        assert.match(error.message, /windows_stale_lock_reclaimer_unavailable/);
+        assert.ok(error.message.includes(".build-test-repro-initial-aside"));
+        assert.ok(error.message.includes("node scripts/build-windows-stale-lock-reclaimer.mjs"));
+        return true;
+      });
+      await rm(aside, { recursive: true });
+      const capability = await createPublishedWindowsStaleLockReclaimer(fixture.root);
+      assert.equal(reclaimerState(capability)?.executable, fixture.helperPath);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "published adapter keeps the plain refusal when no regression aside is present",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const root = await realpath(await mkdtemp(resolve(tmpdir(), "gamebuddy-reclaimer-published-clean-")));
+    try {
+      await assert.rejects(createPublishedWindowsStaleLockReclaimer(root), (error: Error) => {
+        assert.equal(error.message, "windows_stale_lock_reclaimer_unavailable");
+        return true;
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   "published adapter fails closed on a tampered generation inventory",
   { skip: process.platform !== "win32" },
   async () => {
@@ -500,10 +541,11 @@ function syntheticChild(
     kill: () => {
       lifecycle.push("killed");
       onKill?.();
-      if (outcome === "timeout" || outcome === "overflow") queueMicrotask(() => {
-        lifecycle.push("closed");
-        child.emit("close", null, outcome === "timeout" ? "SIGTERM" : null);
-      });
+      if (outcome === "timeout" || outcome === "overflow")
+        queueMicrotask(() => {
+          lifecycle.push("closed");
+          child.emit("close", null, outcome === "timeout" ? "SIGTERM" : null);
+        });
       else if (outcome === "overflow-waiting-close") {
         // The test controls close explicitly to make the serialization assertion deterministic.
       }
@@ -518,10 +560,11 @@ function syntheticChild(
     else child.stdout.end(responseLine(outcome));
     if (outcome === "stderr") child.stderr.end("unexpected");
     else child.stderr.end();
-    if (outcome !== "overflow" && outcome !== "overflow-waiting-close") queueMicrotask(() => {
-      lifecycle.push("closed");
-      child.emit("close", outcome === "nonzero" ? 1 : 0, null);
-    });
+    if (outcome !== "overflow" && outcome !== "overflow-waiting-close")
+      queueMicrotask(() => {
+        lifecycle.push("closed");
+        child.emit("close", outcome === "nonzero" ? 1 : 0, null);
+      });
   });
   return child as unknown as ChildProcess;
 }
