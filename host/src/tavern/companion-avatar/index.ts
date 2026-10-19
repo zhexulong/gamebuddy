@@ -96,7 +96,7 @@ export type CompanionAvatarRead =
   | Readonly<{ state: "present"; bytes: Buffer; digest: string }>
   | Readonly<{ state: "absent" }>;
 
-export type CompanionAvatarUpdate = Readonly<{ state: "present"; digest: string }>;
+type CompanionAvatarUpdate = Readonly<{ state: "present"; digest: string }>;
 
 export type CompanionAvatarService = Readonly<{
   /**
