@@ -302,6 +302,11 @@ public sealed partial class ModEntry : Mod
     public override void Entry(IModHelper helper)
     {
         this.config = helper.ReadConfig<ModConfig>();
+        // The engine-loop probe installs unconditionally and owns its own Harmony instance: it answers whether the
+        // engine's own per-frame update still runs during a freeze, so it may not be gated behind the feature it is
+        // helping to debug. Its first placement was inside the native-chat ingress block, which is guarded, and the
+        // counter then honestly read zero because nothing had been patched.
+        EngineLoopProbe.TryInstall(new Harmony(this.ModManifest.UniqueID + ".engine-loop"), this.Monitor);
         this.salientEventHooks = new StardewSalientEventHooks(
             helper.Events,
             this.salientEventFilter,
@@ -390,8 +395,6 @@ public sealed partial class ModEntry : Mod
             harmony.Patch(textSubmitTarget, postfix: new HarmonyMethod(textSubmitPostfix));
             harmony.Patch(textBoxDelegateTarget, prefix: new HarmonyMethod(textBoxDelegatePostfix));
 
-        // The engine loop probe: does the engine's own per-frame update still run while everything else looks frozen?
-        EngineLoopProbe.TryInstall(harmony, this.Monitor);
             nativeChatIngressOwner = this;
             this.nativeChatObservationInstalled = true;
             this.Monitor.Log("GameBuddy enabled native chat text observation.", LogLevel.Info);
