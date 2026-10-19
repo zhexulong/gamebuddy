@@ -86,7 +86,10 @@ const transcript = () =>
     text: (row.querySelector(".message-bubble")?.innerText ?? "").trim(),
   }));
 
-const clickButtonNamed = (selector, text) => {
+// Playwright's `page.evaluate(fn, arg)` accepts exactly ONE argument: passing two throws
+// "Too many arguments. If you need to pass more than 1 argument to the function wrap them in an object".
+// The call site below passes the scope and the button's name, so they travel as one object.
+const clickButtonNamed = ({ selector, text }) => {
   const scope = document.querySelector(selector);
   if (scope === null) return "no_scope";
   const button = [...scope.querySelectorAll("button")].find((node) => (node.textContent ?? "").trim() === text);
@@ -199,7 +202,9 @@ const clickOption = (index) => {
   const edited = await page.evaluate(openingEditorFacts);
   say(`rows discarded: ${removed}`);
   say(JSON.stringify(edited, null, 1));
-  say(`saving the one-opening set: ${await page.evaluate(clickButtonNamed, "[data-opening-editor]", "保存开场白")}`);
+  say(
+    `saving the one-opening set: ${await page.evaluate(clickButtonNamed, { selector: "[data-opening-editor]", text: "保存开场白" })}`,
+  );
   await page.waitForTimeout(2200);
   const saved = await page.evaluate(openingEditorFacts);
   say(JSON.stringify(saved, null, 1));
