@@ -132,7 +132,12 @@ test("CompanionLoop forwards only final native assistant content from an exact c
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_1", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
-        const trackedPartial = { id: "assistant_1", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        const trackedPartial = {
+          id: "assistant_1",
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+          stopReason: "stop",
+        };
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -147,7 +152,12 @@ test("CompanionLoop forwards only final native assistant content from an exact c
         });
         emit({
           type: "message_end",
-          message: { id: "assistant_1", role: "assistant", content: [{ type: "text", text: "I am here." }], stopReason: "stop" },
+          message: {
+            id: "assistant_1",
+            role: "assistant",
+            content: [{ type: "text", text: "I am here." }],
+            stopReason: "stop",
+          },
         });
         emit({ type: "agent_settled" });
       },
@@ -211,7 +221,12 @@ test("CompanionLoop streams companion speech deltas to the voice sink and finali
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_voice", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
-        const trackedPartial = { id: "assistant_voice", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        const trackedPartial = {
+          id: "assistant_voice",
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+          stopReason: "stop",
+        };
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -352,7 +367,12 @@ test("CompanionLoop presents incremental sentences without any voice sink", asyn
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_incr", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
-        const trackedPartial = { id: "assistant_incr", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        const trackedPartial = {
+          id: "assistant_incr",
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+          stopReason: "stop",
+        };
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -421,7 +441,12 @@ test("CompanionLoop presents only the buffered residual when no sentence ever co
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_residual", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
-        const trackedPartial = { id: "assistant_residual", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        const trackedPartial = {
+          id: "assistant_residual",
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+          stopReason: "stop",
+        };
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -487,7 +512,12 @@ test("CompanionLoop presents incremental sentences as they arrive and the messag
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_chunk", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
-        const trackedPartial = { id: "assistant_chunk", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        const trackedPartial = {
+          id: "assistant_chunk",
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+          stopReason: "stop",
+        };
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -571,7 +601,12 @@ test("CompanionLoop finalizes the voice job exactly once with identical incremen
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_dup", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
-        const trackedPartial = { id: "assistant_dup", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        const trackedPartial = {
+          id: "assistant_dup",
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+          stopReason: "stop",
+        };
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -850,7 +885,12 @@ test("CompanionLoop grants a bounded presentation lease to salient sensory world
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_salient_1", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
-        const trackedPartial = { id: "assistant_salient_1", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        const trackedPartial = {
+          id: "assistant_salient_1",
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+          stopReason: "stop",
+        };
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -861,11 +901,21 @@ test("CompanionLoop grants a bounded presentation lease to salient sensory world
         emit({
           type: "message_update",
           message: trackedPartial,
-          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "早安!今天也要加油。", partial: trackedPartial },
+          assistantMessageEvent: {
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "早安!今天也要加油。",
+            partial: trackedPartial,
+          },
         });
         emit({
           type: "message_end",
-          message: { id: "assistant_salient_1", role: "assistant", content: [{ type: "text", text: "早安!今天也要加油。" }], stopReason: "stop" },
+          message: {
+            id: "assistant_salient_1",
+            role: "assistant",
+            content: [{ type: "text", text: "早安!今天也要加油。" }],
+            stopReason: "stop",
+          },
         });
         emit({ type: "agent_settled" });
       },
@@ -975,9 +1025,7 @@ test("CompanionLoop records a Magic Context refusal as refused, not as the abort
   // Upstream v0.48.0 refuses a turn rather than sending it unmanaged: the guard appends a display-only
   // `magic-context-turn-refused` entry and then calls `ctx.abort()`, so Pi settles the run as aborted.
   // Reading that abort as the ending reports a refusal as the player's own STOP.
-  const loop = new CompanionLoop(
-    settledSession(async () => {}, { aborted: true }, [refusalEvent()]) as never,
-  );
+  const loop = new CompanionLoop(settledSession(async () => {}, { aborted: true }, [refusalEvent()]) as never);
   loop.pump.enqueuePlayerInput({
     source: "player_text",
     inputId: "input_01",
@@ -1436,7 +1484,12 @@ test("CompanionLoop downgrades a stale final presentation after the turn settled
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_tail", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
-        const trackedPartial = { id: "assistant_tail", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        const trackedPartial = {
+          id: "assistant_tail",
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+          stopReason: "stop",
+        };
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -1450,7 +1503,12 @@ test("CompanionLoop downgrades a stale final presentation after the turn settled
         // The reply arrives as one final text (no deltas before message_end).
         emit({
           type: "message_end",
-          message: { id: "assistant_tail", role: "assistant", content: [{ type: "text", text: "收好啦。" }], stopReason: "stop" },
+          message: {
+            id: "assistant_tail",
+            role: "assistant",
+            content: [{ type: "text", text: "收好啦。" }],
+            stopReason: "stop",
+          },
         });
         emit({ type: "agent_settled" });
       },
@@ -1504,7 +1562,12 @@ test("CompanionLoop still propagates a non-presentation drain error", async () =
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
         const partial = { id: "assistant_drain_err", role: "assistant", content: [], stopReason: "stop" };
         emit({ type: "message_start", message: partial });
-        const trackedPartial = { id: "assistant_drain_err", role: "assistant", content: [{ type: "text", text: "" }], stopReason: "stop" };
+        const trackedPartial = {
+          id: "assistant_drain_err",
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+          stopReason: "stop",
+        };
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -1517,7 +1580,12 @@ test("CompanionLoop still propagates a non-presentation drain error", async () =
         });
         emit({
           type: "message_end",
-          message: { id: "assistant_drain_err", role: "assistant", content: [{ type: "text", text: "x" }], stopReason: "stop" },
+          message: {
+            id: "assistant_drain_err",
+            role: "assistant",
+            content: [{ type: "text", text: "x" }],
+            stopReason: "stop",
+          },
         });
         emit({ type: "agent_settled" });
       },
@@ -1550,7 +1618,6 @@ test("CompanionLoop still propagates a non-presentation drain error", async () =
   await assert.rejects(() => loop.flush(), /unexpected_drain_failure/);
 });
 
-
 test("a turn whose provider stream failed resolves as error, never as a completed answer", async () => {
   // The exact shape measured in a real ladder-6 run: the final assistant message carried
   // `stopReason: "error"` and zero usage. Pi already classified it; this loop used to throw that away
@@ -1577,11 +1644,14 @@ test("a turn whose provider stream failed resolves as error, never as a complete
       };
     },
   };
-  const loop = new CompanionLoop(session as never, {
-    beginPlayerBatch() {},
-    endBatch() {},
-    async presentNativeAssistantContent() {},
-  } as never);
+  const loop = new CompanionLoop(
+    session as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent() {},
+    } as never,
+  );
   loop.pump.enqueuePlayerInput({
     source: "player_text",
     inputId: "player_failed_turn",
@@ -1602,11 +1672,14 @@ test("a turn whose provider stream failed resolves as error, never as a complete
       emit({ type: "agent_settled" });
     },
   };
-  const abortingLoop = new CompanionLoop(aborting as never, {
-    beginPlayerBatch() {},
-    endBatch() {},
-    async presentNativeAssistantContent() {},
-  } as never);
+  const abortingLoop = new CompanionLoop(
+    aborting as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent() {},
+    } as never,
+  );
   abortingLoop.pump.enqueuePlayerInput({
     source: "player_text",
     inputId: "player_aborted_turn",
@@ -1623,15 +1696,21 @@ test("a turn whose provider stream failed resolves as error, never as a complete
     async sendUserMessage(text: string) {
       emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
       emit({ type: "message_start", message: { role: "assistant", content: [] } });
-      emit({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "我在这儿。" }] } });
+      emit({
+        type: "message_end",
+        message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "我在这儿。" }] },
+      });
       emit({ type: "agent_settled" });
     },
   };
-  const answeringLoop = new CompanionLoop(answering as never, {
-    beginPlayerBatch() {},
-    endBatch() {},
-    async presentNativeAssistantContent() {},
-  } as never);
+  const answeringLoop = new CompanionLoop(
+    answering as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent() {},
+    } as never,
+  );
   answeringLoop.pump.enqueuePlayerInput({
     source: "player_text",
     inputId: "player_answered_turn",
@@ -1641,4 +1720,69 @@ test("a turn whose provider stream failed resolves as error, never as a complete
     timestampMs: Date.now(),
   });
   assert.equal(await answeringLoop.flush(), "completed");
+});
+
+test("CompanionLoop binds the turn's volatile authored context to the delivered batch and releases it when the turn settles", async () => {
+  const order: string[] = [];
+  let delivered: string | undefined;
+  const bound: Array<{ turnId: string; text: string }> = [];
+  const cleared: string[] = [];
+  const loop = new CompanionLoop(
+    settledSession(async (text) => {
+      order.push("deliver");
+      delivered = text;
+    }) as never,
+    undefined,
+    undefined,
+    undefined,
+    {
+      bind(turnId, text) {
+        order.push("bind");
+        bound.push({ turnId, text });
+      },
+      clear(turnId) {
+        order.push("clear");
+        cleared.push(turnId);
+      },
+    },
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "player_volatile_turn",
+    eventId: "player_volatile_turn",
+    text: "今天下雨了",
+    locale: "zh-CN",
+    timestampMs: 1,
+  });
+  assert.equal(await loop.flush(), "completed");
+  // The selection is bound to the EXACT batch Pi consumes, before delivery, and released once the
+  // turn settled - so a later turn can never inherit an earlier turn's selection.
+  assert.deepEqual(order, ["bind", "deliver", "clear"]);
+  assert.equal(bound.length, 1);
+  assert.equal(bound[0]?.text, delivered);
+  const batchId = (JSON.parse(delivered ?? "{}") as { batchId?: string }).batchId;
+  assert.equal(typeof batchId, "string");
+  assert.equal(bound[0]?.turnId, batchId);
+  assert.deepEqual(cleared, [batchId]);
+});
+
+test("a failing volatile bind is a degraded turn, never a failed one", async () => {
+  const loop = new CompanionLoop(settledSession() as never, undefined, undefined, undefined, {
+    bind() {
+      throw new Error("gamebuddy_authored_context_cross_turn");
+    },
+    clear() {
+      throw new Error("gamebuddy_authored_context_cross_turn");
+    },
+  });
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "player_volatile_failure",
+    eventId: "player_volatile_failure",
+    text: "今天下雨了",
+    locale: "zh-CN",
+    timestampMs: 1,
+  });
+  // The companion's own turn outranks one turn of extra background.
+  assert.equal(await loop.flush(), "completed");
 });

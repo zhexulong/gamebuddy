@@ -39,6 +39,20 @@ export type CompanionPiSession = Pick<AgentSession, "sendUserMessage"> &
   Partial<Pick<AgentSession, "abort" | "clearQueue" | "waitForIdle" | "subscribe">>;
 
 /**
+ * The Game surface's per-turn authored-context binding.
+ *
+ * The keyword-gated entries of the companion's own world book are selected from the
+ * text the companion is handed for exactly ONE delivered turn, and released when that
+ * turn settles, so no later turn can inherit an earlier turn's selection. The Game
+ * runtime supplies this port only when a reviewed world book was actually published;
+ * a surface without one never selects anything.
+ */
+export type CompanionTurnVolatileContext = Readonly<{
+  bind(turnId: string, deliveredBatch: string): void;
+  clear(turnId: string): void;
+}>;
+
+/**
  * Thin Host orchestration: a labelled batch becomes one explicitly classified Pi turn.
  * It intentionally has no goals, planner state, or game-success inference.
  */
@@ -53,6 +67,7 @@ export class CompanionLoop {
     turnObserver?: CompanionTurnObserver,
     private readonly liveSourceEvidence?: CompanionLiveSourceEvidenceSink,
     private readonly voiceSink?: import("./voice.js").ChatVoiceSpeechPublisher,
+    private readonly volatileContext?: CompanionTurnVolatileContext,
   ) {
     this.#turnObserver = turnObserver;
   }
@@ -176,6 +191,22 @@ export class CompanionLoop {
     try {
       if (tracksPlayerDelivery) this.#queuedPlayerDelivery = true;
       this.#cancelQueuedDelivery = resolveCancelled;
+      // Bind this turn's keyword-gated world-book entries to the exact batch Pi is about
+      // to consume, the way the Chat surface binds its own volatile sources immediately
+      // before `session.prompt`. The batch id is this turn's own identity, so two turns
+      // can never share a selection, and the binding is released in the `finally` below.
+      // A failure here degrades the turn's background; it must never decide the turn - but it
+      // must not be SILENT either: her book not reaching a turn is exactly the kind of quiet loss
+      // this feature exists to remove, so the failure names itself on stderr and the turn goes on.
+      if (batchId !== undefined) {
+        try {
+          this.volatileContext?.bind(batchId, batch);
+        } catch (error) {
+          process.stderr.write(
+            `[game-volatile] bind failed for batch ${batchId}: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+        }
+      }
       if (this.session.subscribe === undefined) {
         // Tests and non-production adapters without Pi's event stream retain
         // legacy send completion semantics; they cannot mint live evidence, and
@@ -217,71 +248,75 @@ export class CompanionLoop {
             // CompanionLoop intentionally have no Game presentation surface,
             // so absence means "no projection", never a synthetic fallback.
             if (this.#turnObserver?.presentNativeAssistantContent !== undefined) {
-              nativeContentObserver = attachNativeCompanionContent(this.session as AgentSession, {
-                // Raw Game companion deltas still feed the same streaming TTS
-                // lane when a voice sink is attached; without one they stay
-                // unprojected at delta granularity.
-                onPreviewDelta: async (delta) => {
-                  if (this.voiceSink === undefined) return;
-                  try {
-                    await voiceBegin;
-                    await this.voiceSink.append(delta.normalize("NFC"));
-                  } catch {
-                    // Voice degradation is graceful.
-                  }
-                },
-                // Under incremental activation every completed sentence emitted
-                // from the delta lane is already a final presentation piece;
-                // it crosses the same source-lineage presenter as the final
-                // text, in arrival order, and is never re-chunked.
-                onIncrementalText: async (piece) => {
-                  const content = Object.freeze({ sourceEventId, text: piece });
-                  await this.#turnObserver?.presentNativeAssistantContent?.(content);
-                },
-                onFinalText: async (text) => {
-                  // One consumed batch admits a sequence of native expressions:
-                  // the dehydrated final text — under incremental activation the
-                  // message_end residual — is chunked at deterministic sentence
-                  // boundaries (companion-speech-chunker) so the game sees short,
-                  // conversational pieces in order instead of one wall of text.
-                  // Serialization is guaranteed by the observer's callbackTail
-                  // (native-companion-content) and the observer itself emits one
-                  // message_end per Pi turn (its `finalizing` flag), so multiple
-                  // onFinalText calls here are the ordered chunks, not foreign
-                  // batches. Voice finalizes exactly once after the last piece.
-                  const chunks = chunkCompanionSpeech(text);
-                  const pieces = chunks.length === 0 ? [text] : chunks;
-                  let lastPresentation: Promise<void> | undefined;
-                  for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex += 1) {
-                    const piece = pieces[pieceIndex]!;
-                    // Voice finalizes after the last piece of this batch once,
-                    // so cleanup (finally) never cancels an already-finalized job.
-                    // Compare by index, not by text: two identical chunks must
-                    // not both look like the last one.
-                    const isLastPiece = pieceIndex === pieces.length - 1;
-                    if (this.voiceSink !== undefined && isLastPiece) {
-                      try {
-                        await voiceBegin;
-                        await this.voiceSink.finalize();
-                        voiceFinalized = true;
-                      } catch {
-                        // Voice degradation is graceful.
-                      }
+              nativeContentObserver = attachNativeCompanionContent(
+                this.session as AgentSession,
+                {
+                  // Raw Game companion deltas still feed the same streaming TTS
+                  // lane when a voice sink is attached; without one they stay
+                  // unprojected at delta granularity.
+                  onPreviewDelta: async (delta) => {
+                    if (this.voiceSink === undefined) return;
+                    try {
+                      await voiceBegin;
+                      await this.voiceSink.append(delta.normalize("NFC"));
+                    } catch {
+                      // Voice degradation is graceful.
                     }
+                  },
+                  // Under incremental activation every completed sentence emitted
+                  // from the delta lane is already a final presentation piece;
+                  // it crosses the same source-lineage presenter as the final
+                  // text, in arrival order, and is never re-chunked.
+                  onIncrementalText: async (piece) => {
                     const content = Object.freeze({ sourceEventId, text: piece });
-                    const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
-                    if (presentation !== undefined) lastPresentation = presentation;
-                    await presentation;
-                  }
-                  if (lastPresentation !== undefined) nativeContentFinal = lastPresentation;
+                    await this.#turnObserver?.presentNativeAssistantContent?.(content);
+                  },
+                  onFinalText: async (text) => {
+                    // One consumed batch admits a sequence of native expressions:
+                    // the dehydrated final text — under incremental activation the
+                    // message_end residual — is chunked at deterministic sentence
+                    // boundaries (companion-speech-chunker) so the game sees short,
+                    // conversational pieces in order instead of one wall of text.
+                    // Serialization is guaranteed by the observer's callbackTail
+                    // (native-companion-content) and the observer itself emits one
+                    // message_end per Pi turn (its `finalizing` flag), so multiple
+                    // onFinalText calls here are the ordered chunks, not foreign
+                    // batches. Voice finalizes exactly once after the last piece.
+                    const chunks = chunkCompanionSpeech(text);
+                    const pieces = chunks.length === 0 ? [text] : chunks;
+                    let lastPresentation: Promise<void> | undefined;
+                    for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex += 1) {
+                      const piece = pieces[pieceIndex]!;
+                      // Voice finalizes after the last piece of this batch once,
+                      // so cleanup (finally) never cancels an already-finalized job.
+                      // Compare by index, not by text: two identical chunks must
+                      // not both look like the last one.
+                      const isLastPiece = pieceIndex === pieces.length - 1;
+                      if (this.voiceSink !== undefined && isLastPiece) {
+                        try {
+                          await voiceBegin;
+                          await this.voiceSink.finalize();
+                          voiceFinalized = true;
+                        } catch {
+                          // Voice degradation is graceful.
+                        }
+                      }
+                      const content = Object.freeze({ sourceEventId, text: piece });
+                      const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
+                      if (presentation !== undefined) lastPresentation = presentation;
+                      await presentation;
+                    }
+                    if (lastPresentation !== undefined) nativeContentFinal = lastPresentation;
+                  },
+                  onRejected: (reason) => {
+                    // `aborted`/`error` are the transport-level endings; the remaining reasons are
+                    // content rejections (empty, tool-only, identity mismatch) that all mean the turn
+                    // produced nothing presentable — recorded as a failure, never as a quiet success.
+                    recordOutcome(reason === "aborted" || reason === "error" ? reason : "error");
+                  },
                 },
-                onRejected: (reason) => {
-                  // `aborted`/`error` are the transport-level endings; the remaining reasons are
-                  // content rejections (empty, tool-only, identity mismatch) that all mean the turn
-                  // produced nothing presentable — recorded as a failure, never as a quiet success.
-                  recordOutcome(reason === "aborted" || reason === "error" ? reason : "error");
-                },
-              }, { stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION, scaffolding: NATIVE_BUBBLE_SCAFFOLDING });
+                { stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION, scaffolding: NATIVE_BUBBLE_SCAFFOLDING },
+              );
               nativeContentObserver.open();
               // Previews unlock the delta lane for every Game surface, not only
               // voice: incremental presentation consumes completed sentences from
@@ -392,6 +427,13 @@ export class CompanionLoop {
       // the turn completed. `unobserved` is impossible here — reaching this point means the turn ran.
       return turnOutcome ?? "completed";
     } finally {
+      if (batchId !== undefined) {
+        try {
+          this.volatileContext?.clear(batchId);
+        } catch {
+          /* settled turn: release is best-effort and a stale binding fails closed upstream */
+        }
+      }
       if (this.#cancelQueuedDelivery === resolveCancelled) this.#cancelQueuedDelivery = undefined;
       if (tracksPlayerDelivery) this.#queuedPlayerDelivery = false;
       unsubscribe?.();
@@ -422,7 +464,8 @@ export class CompanionLoop {
   }
 }
 
-function isExactBatchMessage(message: unknown, expectedBatch: string): boolean {  if (!message || typeof message !== "object" || Array.isArray(message)) return false;
+function isExactBatchMessage(message: unknown, expectedBatch: string): boolean {
+  if (!message || typeof message !== "object" || Array.isArray(message)) return false;
   const record = message as Readonly<{ role?: unknown; content?: unknown }>;
   if (record.role !== "user") return false;
   // Pi's `sendUserMessage(string)` canonicalizes its payload to exactly this

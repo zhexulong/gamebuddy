@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import test from "node:test";
 import { rm } from "node:fs/promises";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+import { readAuthoredContextRegistry } from "../test-support/authored-context-catalog.test-support.js";
 import { canonicalHash, TavernArtifactStore } from "./artifact-store.js";
 import {
   buildGameSurfaceAuthoredCatalog,
@@ -376,7 +378,7 @@ test("compiles exact v2 Chat catalog with reference-free scope and deterministic
   );
   threads.close?.();
 });
-test("buildGameSurfaceAuthoredCatalog mounts only the reviewed always-on WorldBook as a lorebook_constant m[0] source", async () => {
+test("buildGameSurfaceAuthoredCatalog mounts the reviewed always-on WorldBook as a lorebook_constant m[0] source and its keyword entries as per-turn volatile candidates", async () => {
   const worldBook = validateWorldBook({
     schemaVersion: 1,
     worldBookId: "default-companion",
@@ -424,7 +426,17 @@ test("buildGameSurfaceAuthoredCatalog mounts only the reviewed always-on WorldBo
   assert.match(source?.content ?? "", /player-reviewed companion backdrop/);
   assert.match(source?.content ?? "", /琥珀与玩家是共同开拓农场的青梅竹马合伙人。/);
   assert.doesNotMatch(source?.content ?? "", /雨天喜欢在门廊煮热茶看雨。/);
-  assert.deepEqual(catalog.volatileSources, []);
+  // The keyword-gated entry is not dropped, it is the per-turn half: the Game scope
+  // composes volatile candidates with the SAME `deriveVolatileWorldInfoSources` the Chat
+  // scope uses, so the entry the constant-only Game catalog used to lose entirely is now
+  // selectable for a turn. Its trigger words are the card's title when it names none, and
+  // its total order key continues AFTER the stable source (one increasing sequence).
+  assert.equal(catalog.volatileSources.length, 1);
+  assert.equal(catalog.volatileSources[0]?.kind, "lorebook_entry");
+  assert.equal(catalog.volatileSources[0]?.content, "雨天喜欢在门廊煮热茶看雨。");
+  assert.deepEqual(catalog.volatileSources[0]?.selectionKeys, ["雨天安排"]);
+  assert.equal(catalog.volatileSources[0]?.totalOrderKey, "0002");
+  assert.equal(catalog.volatileSources[0]?.sourceId, `${worldBook.worldBookId}_entry_1`);
   // Canonical hash is deterministic: same input -> same catalog.
   const again = buildGameSurfaceAuthoredCatalog(
     {
@@ -535,6 +547,91 @@ test("buildGameSurfaceAuthoredCatalog renders worldbook macros, drops an unrende
     /game_authored_context_unrendered_macro/,
   );
 });
+test("a Game keyword entry is PUBLISHED as a live per-turn candidate, and the vendor's own selector binds it to the turn whose world state names it", async () => {
+  // The Game-surface defect this pins: the Game catalog carried NO volatile candidates at all, so the
+  // card's keyword-gated entries could never reach the companion however correct the rest of the chain
+  // was. This drives the vendor's OWN publisher and per-turn selector - the same capability the Game
+  // runtime now holds - so "the entry reached the model" is a claim about the published catalog and the
+  // extension's reader channel, not about a helper in this file.
+  const worldBook = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "gamebuddy-worldbook-companion-game",
+    revision: 4,
+    alwaysOnPremise: "山谷的四季轮转。",
+    entries: [
+      {
+        entryId: "e-constant",
+        title: "农场誓约",
+        content: "琥珀与玩家一同开垦这片荒地。",
+        scope: "setting",
+        provenance: "reviewed-import",
+        tokenBudget: "small",
+        constant: true,
+      },
+      {
+        entryId: "e-rain",
+        title: "雨天恩赐与安排",
+        content: "下雨时山谷的雨水浸透整座农场，省去一整天的浇灌。",
+        scope: "setting",
+        provenance: "reviewed-import",
+        tokenBudget: "small",
+        keys: ["下雨", "雨天", "暴雨"],
+      },
+    ],
+  });
+  const scope = {
+    continuityId: "continuity",
+    sessionId: "pi-session-game-volatile",
+    surface: "game" as const,
+    threadId: "game-session",
+    profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+  };
+  const catalog = buildGameSurfaceAuthoredCatalog(scope, {
+    metadata: worldBookMetadata(worldBook),
+    book: worldBook,
+  });
+  const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/tavern");
+  // A vendor rejection here (its v2 validator re-derives the catalog's canonical form) would mean the
+  // Game catalog's hash and shape do not match what the extension accepts.
+  const capability = publishGameBuddyAuthoredStableCatalog(scope, catalog);
+  try {
+    assert.equal(catalog.volatileSources.length, 1);
+    assert.deepEqual(catalog.volatileSources[0]?.selectionKeys, ["下雨", "雨天", "暴雨"]);
+    // Nothing is selected before a turn owns it.
+    assert.equal(readAuthoredContextRegistry()?.volatileTurns.get(scope.sessionId), undefined);
+    // The turn's world state names the card's own trigger word, so the vendor's selector binds exactly
+    // that entry - and the same text is what the extension injects as <runtime-environment>.
+    const bound = capability.materializeVolatileForTurn(
+      "turn_0001",
+      "现在正在下雨，土地已经湿透了。",
+      "天气：雨天；体力: 20（已疲惫）",
+    );
+    assert.deepEqual(
+      bound.refs.map((ref) => ref.sourceId),
+      [`${worldBook.worldBookId}_entry_1`],
+    );
+    assert.equal(
+      bound.refs[0]?.canonicalHash,
+      createHash("sha256").update(catalog.volatileSources[0]!.content, "utf8").digest("hex"),
+    );
+    // The binding is the one the extension's m[1] reader consumes, keyed by the exact Pi session.
+    const registryBinding = readAuthoredContextRegistry()?.volatileTurns.get(scope.sessionId);
+    assert.equal(registryBinding?.turnId, "turn_0001");
+    assert.deepEqual(
+      (registryBinding?.sourceRefs ?? []).map((ref) => (ref as Readonly<{ sourceId: string }>).sourceId),
+      [`${worldBook.worldBookId}_entry_1`],
+    );
+    capability.clearVolatileForTurn("turn_0001");
+    assert.equal(readAuthoredContextRegistry()?.volatileTurns.get(scope.sessionId), undefined);
+    // A turn whose delivered text names nothing selects nothing: the entry is chosen, never always-on.
+    const quiet = capability.materializeVolatileForTurn("turn_0002", "平静的一天，什么也没发生。", "天气：晴天");
+    assert.deepEqual(quiet.refs, []);
+    capability.clearVolatileForTurn("turn_0002");
+  } finally {
+    await capability.clear();
+  }
+});
+
 test("native WorldBookBinding materializes constant entries into lorebook_constant and keyword entries as volatile", async () => {
   const root = await canonicalTestRoot("gamebuddy-native-catalog-");
   const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };

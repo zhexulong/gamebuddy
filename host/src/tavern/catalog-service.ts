@@ -496,11 +496,18 @@ function hash(value: string): string {
  * `lorebook_constant` stable source — not in the Tier 1 system prompt, and not
  * behind a lookup tool the model has to remember to call. Only reviewed
  * always-on background (the card's `constant` entries plus the WorldBook's own
- * always-on premise) earns a permanent seat; keyword-gated entries stay behind
- * the worldbook tools.
+ * always-on premise) earns a permanent seat; the card's keyword-gated entries
+ * become per-turn volatile candidates, exactly as they do on the Chat surface,
+ * so the companion sharing the farm is told what her own card says about the
+ * rain, the stamina, the season and the town when those are what is happening
+ * now instead of waiting for the model to choose a lookup tool.
  *
  * The catalog reuses the tavern hashing and budget rules so the vendor
- * `gamebuddy-authored-context-catalog/v2` validator accepts it unchanged.
+ * `gamebuddy-authored-context-catalog/v2` validator accepts it unchanged, and
+ * the volatile half is built by the SAME `deriveVolatileWorldInfoSources` the
+ * Chat surface uses: the Game scope invents no second selection rule. The
+ * volatile total order keys continue AFTER the stable source so the catalog
+ * keeps one strictly increasing sequence.
  */
 export function buildGameSurfaceAuthoredCatalog(
   binding: TavernStableContextBinding,
@@ -508,19 +515,30 @@ export function buildGameSurfaceAuthoredCatalog(
   macros: Readonly<{ char: string | null }> = { char: null },
 ): TavernAuthoredContextCatalog {
   if (binding.surface !== "game") throw new Error("game_authored_context_surface_mismatch");
-  const constantEntries = worldBook.book.entries
-    .filter((entry) => entry.constant === true)
-    .map((entry) => ({
+  // An entry the macro set cannot fully render is dropped instead of shipped
+  // with a raw `{{...}}` placeholder as the companion's authored context. The
+  // rule covers both halves: the always-on entries and the keyword-gated ones.
+  const renderedEntries = worldBook.book.entries.flatMap((entry) => {
+    const title = renderWorldBookText(entry.title, macros);
+    const content = renderWorldBookText(entry.content, macros);
+    return hasUnrenderedMacro(title) || hasUnrenderedMacro(content) ? [] : [Object.freeze({ entry, title, content })];
+  });
+  const constantEntries = renderedEntries
+    .filter(({ entry }) => entry.constant === true)
+    .map(({ entry, title, content }) => ({ entryId: entry.entryId, title, content }));
+  const keywordEntries = renderedEntries
+    .filter(({ entry }) => entry.constant !== true)
+    .map(({ entry, title, content }) => ({
       entryId: entry.entryId,
-      title: renderWorldBookText(entry.title, macros),
-      content: renderWorldBookText(entry.content, macros),
-    }))
-    // An entry the macro set cannot fully render is dropped instead of shipped
-    // with a raw `{{...}}` placeholder as the companion's authored context.
-    .filter((entry) => !hasUnrenderedMacro(entry.title) && !hasUnrenderedMacro(entry.content));
+      title,
+      content,
+      // The card's own trigger words ride along; the title is only a fallback.
+      ...(entry.keys === undefined || entry.keys.length === 0 ? {} : { keys: entry.keys }),
+    }));
+  const alwaysOnPremise = renderWorldBookText(worldBook.book.alwaysOnPremise, macros);
   const content = canonicalJson({
     worldBookId: worldBook.book.worldBookId,
-    alwaysOnPremise: renderWorldBookText(worldBook.book.alwaysOnPremise, macros),
+    alwaysOnPremise,
     entries: constantEntries,
   });
   const sources: Array<TavernAuthoredContextCatalog["stableSources"][number]> = [
@@ -542,16 +560,35 @@ export function buildGameSurfaceAuthoredCatalog(
   for (const item of sources) {
     if (hasUnrenderedMacro(item.content)) throw new Error("game_authored_context_unrendered_macro");
   }
+  const volatileSources =
+    keywordEntries.length === 0
+      ? Object.freeze([] as TavernAuthoredContextCatalog["volatileSources"])
+      : deriveVolatileWorldInfoSources(
+          Object.freeze({
+            binding: Object.freeze({
+              worldBookId: worldBook.metadata.worldBookId,
+              revision: worldBook.metadata.revision,
+              canonicalHash: worldBook.metadata.canonicalHash,
+              // The companion's own book reaches the Game the same way it reaches a Chat - as
+              // the reviewed import's durable artifact - so it carries the same provenance.
+              provenance: "reviewed-import" as const,
+            }),
+            alwaysOnPremise,
+            keywordEntries: Object.freeze(keywordEntries),
+          }),
+          worldBook.book.worldBookId,
+          sources.length,
+        );
   const body = {
     version: "gamebuddy-authored-context-catalog/v2" as const,
     scope: binding,
     stableSources: sources,
-    volatileSources: [],
+    volatileSources,
   };
   return Object.freeze({
     ...body,
     canonicalHash: hash(canonicalJson(body)),
     stableSources: Object.freeze(sources),
-    volatileSources: Object.freeze([]),
+    volatileSources: Object.freeze(volatileSources),
   });
 }

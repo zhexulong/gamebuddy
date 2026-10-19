@@ -12,7 +12,7 @@ import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integrati
 import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
 import type { CompanionInterruption } from "../companion-interruption.js";
-import { CompanionLoop } from "../companion-loop.js";
+import { CompanionLoop, type CompanionTurnVolatileContext } from "../companion-loop.js";
 import {
   createFarmhandCompanionPresentationPort,
   createFarmhandPresentationEpochAdmission,
@@ -32,6 +32,7 @@ import type {
 } from "../game-integration-adapter.js";
 import type { GameConnection } from "../game-connection.js";
 import type { RuntimeSession } from "../runtime.js";
+import { formatGameEnvironmentFacts } from "../runtime-core.internal.js";
 import { identityProfileMetadata } from "../identity-profile.js";
 import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
 import { createMaterializedGameCompanionRuntime } from "../game-runtime-fixed-tools.internal.js";
@@ -46,6 +47,7 @@ import {
   type BodyProgramEventsRequest,
   type BodyProgramStatusRequest,
   type FarmhandPolicyIdentity,
+  type Snapshot,
 } from "../protocol.js";
 import {
   consumeGameVoicePresentationAttachment,
@@ -495,6 +497,7 @@ export function createHostGameRuntimeMaterializer(
           runtime: RuntimeSession;
           turnTracker: GameTurnLineageTracker;
           clearAuthoredContext?: () => Promise<void>;
+          volatileAuthoredContext?: CompanionTurnVolatileContext;
         }>;
         try {
           constructed = await createMaterializedGameRuntime(
@@ -540,7 +543,13 @@ export function createHostGameRuntimeMaterializer(
           options.gameVoicePresentation === undefined
             ? undefined
             : consumeGameVoicePresentationAttachment(options.gameVoicePresentation);
-        const loop = new CompanionLoop(runtime.session, undefined, liveSourceAttester, gameVoicePayload?.streamingSink);
+        const loop = new CompanionLoop(
+          runtime.session,
+          undefined,
+          liveSourceAttester,
+          gameVoicePayload?.streamingSink,
+          constructed.volatileAuthoredContext,
+        );
         const lifecycle = new IntegrationLifecycleSnapshot(execution.connection.module, execution.connection);
         const host = new CompanionHostService(
           loop,
@@ -791,7 +800,14 @@ async function createMaterializedGameRuntime(
     Readonly<{ resolvedPolicy: IntegrationActionPolicy }>,
   identityProfile?: import("./../identity-profile.js").IdentityProfile,
   worldBook?: import("./../worldbook.js").WorldBookBinding,
-): Promise<Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>> {
+): Promise<
+  Readonly<{
+    runtime: RuntimeSession;
+    turnTracker: GameTurnLineageTracker;
+    clearAuthoredContext?: () => Promise<void>;
+    volatileAuthoredContext?: CompanionTurnVolatileContext;
+  }>
+> {
   const identity = Object.freeze({
     continuityId: principal.continuityId,
     companionId: principal.companionId,
@@ -865,10 +881,18 @@ async function createMaterializedGameRuntime(
   // Publication is process-local and keyed by the exact Pi session; the
   // returned clear is registered with the runtime disposal so a closed Game
   // session leaves no authored materialization behind.
-  const clearAuthoredContext =
+  //
+  // The capability itself is retained, not just its clear: the SAME catalog now
+  // also carries the card's keyword-gated entries as per-turn volatile candidates,
+  // and binding one turn's selection to its exact delivered batch is what makes
+  // them reach this surface at all. Without the retained capability the published
+  // volatile candidates would sit in the registry with no one to select them.
+  const authoredContext =
     assembledWorldBook === undefined
       ? undefined
-      : await (async (): Promise<() => Promise<void>> => {
+      : await (async (): Promise<
+          import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability
+        > => {
           const profileMetadata = identityProfileMetadata(runtime.profile);
           const scope = Object.freeze({
             continuityId: identity.continuityId,
@@ -886,8 +910,7 @@ async function createMaterializedGameRuntime(
           });
           const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/tavern");
           try {
-            const capability = publishGameBuddyAuthoredStableCatalog(catalog.scope, catalog);
-            return () => capability.clear();
+            return publishGameBuddyAuthoredStableCatalog(catalog.scope, catalog);
           } catch (error) {
             // A failed publication must not leave a live runtime behind: the
             // caller only receives a runtime from a successful mount.
@@ -898,8 +921,43 @@ async function createMaterializedGameRuntime(
   return Object.freeze({
     runtime,
     turnTracker,
-    ...(clearAuthoredContext === undefined ? {} : { clearAuthoredContext }),
+    ...(authoredContext === undefined
+      ? {}
+      : {
+          clearAuthoredContext: async (): Promise<void> => {
+            await authoredContext.clear();
+          },
+          volatileAuthoredContext: Object.freeze({
+            bind: (turnId: string, deliveredBatch: string): void => {
+              authoredContext.materializeVolatileForTurn(turnId, deliveredBatch, gameTurnWorldStateText(connection));
+            },
+            clear: (turnId: string): void => {
+              authoredContext.clearVolatileForTurn(turnId);
+            },
+          }),
+        }),
   });
+}
+
+/**
+ * The live world-state line the companion is handed each turn.
+ *
+ * This is the exact text Magic Context injects for the same turn: the runtime registers
+ * `formatGameEnvironmentFacts` over the authenticated Mod snapshot as its environment-facts
+ * provider (`runtime-core.internal.ts:1010-1017`), and the vendored transform pass writes what
+ * that provider returns as `<runtime-environment>`. Selecting the companion's own world-book
+ * entries against it therefore keys them on what is happening now - the weather, the clock,
+ * the season, her actor's stamina, where they are - AND on text the model demonstrably reads,
+ * rather than on a state the browser or a caller supplied. An absent snapshot renders nothing
+ * instead of inventing state, exactly as the provider does.
+ *
+ * Exported so the Game channel's corpus is verifiable by name rather than only through a
+ * mounted runtime.
+ */
+export function gameTurnWorldStateText(connection: GameConnection): string {
+  const snapshot = (connection as { state?: { snapshot?: Snapshot | null } }).state?.snapshot;
+  if (snapshot === null || snapshot === undefined) return "";
+  return formatGameEnvironmentFacts(snapshot, (snapshot.presentationLocale ?? "").toLowerCase().startsWith("zh"));
 }
 
 function isFarmhandPresentationBridge(value: unknown): value is FarmhandPresentationBridge {

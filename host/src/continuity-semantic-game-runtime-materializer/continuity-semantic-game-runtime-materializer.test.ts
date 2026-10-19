@@ -35,6 +35,7 @@ import { StardewExecutionRecoverySupervisor } from "../stardew-execution-recover
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { createTestGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer.test-support.js";
+import { gameTurnWorldStateText } from "./continuity-semantic-game-runtime-materializer.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 
@@ -969,4 +970,38 @@ test("connected dispatch validates Unicode scalar text and fails closed when no 
   } finally {
     await missingWorkerBinding.close();
   }
+});
+
+test("the Game channel's per-turn world-state corpus is the line Magic Context injects, and an absent or non-Stardew snapshot invents nothing", () => {
+  // The Game surface selects her keyword-gated world-book entries against the SAME world-state
+  // line Magic Context injects for that turn (`<runtime-environment>`), which is what makes
+  // entries keyed on the weather, the clock, the season or her actor's stamina reachable at all.
+  const text = gameTurnWorldStateText({
+    state: {
+      snapshot: {
+        revision: 3,
+        location: "Farm",
+        tile: { x: 1, y: 2 },
+        stamina: 20,
+        exhausted: true,
+        health: 100,
+        actionable: true,
+        capabilities: [],
+        timeOfDay: 1500,
+        dayOfMonth: 3,
+        seasonIndex: 0,
+        year: 1,
+        weather: "rain",
+        presentationLocale: "zh-CN",
+      },
+    },
+  } as never);
+  assert.match(text, /天气：雨天/);
+  assert.match(text, /体力: 20（已疲惫）/);
+  assert.match(text, /位置: Farm/);
+  assert.match(text, /春季/);
+  // An absent snapshot and a non-Stardew connection state render nothing rather than inventing it.
+  assert.equal(gameTurnWorldStateText({ state: { snapshot: null } } as never), "");
+  assert.equal(gameTurnWorldStateText({ state: undefined } as never), "");
+  assert.equal(gameTurnWorldStateText({ state: {} } as never), "");
 });
