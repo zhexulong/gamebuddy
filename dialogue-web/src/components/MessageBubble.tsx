@@ -272,11 +272,17 @@ export const MessageBubble = memo(function MessageBubble({
   const swipeSet = swipeInfo !== undefined && swipeInfo.totalSwipes > 1 ? swipeInfo : undefined;
   /**
    * The rewind point is the message the conversation is cut back TO, so the greeting is never one
-   * (the Host refuses it), a row that is not part of the transcript is never one, and a point with
-   * nothing after it is not a rewind at all.
+   * (the Host refuses it), a row that is not part of the transcript is never one, and a point that
+   * would remove nothing but the row it is named after is not a rewind at all - the count has to be
+   * more than this row.
+   *
+   * That last one is the owner's ruling (audit 2026-10-19): on the transcript's LAST row a rewind and
+   * a delete are the same act - both remove that one message - so the row offers the delete alone.
+   * The two controls were indistinguishable there, and the rewind exists for cutting a conversation
+   * back, which is exactly what the delete already does to a single row.
    */
   const rewindPoint =
-    onRewind !== undefined && removedCount > 0 && message.order > 0 && !isPlayer ? removedCount : undefined;
+    onRewind !== undefined && removedCount > 1 && message.order > 0 && !isPlayer ? removedCount : undefined;
   const rewindName = labels.rewindHereName.replace("{{count}}", String(removedCount));
   /**
    * The delete point is the message the player is looking at, and it is never the opening: the row at

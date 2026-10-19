@@ -324,12 +324,15 @@ const en = {
   chatReplyCutOff: "Her reply was cut off by the model's length limit. Regenerate for a complete one.",
   // The rewind control: a message's own strip, one button, and what pressing it will remove. A
   // rewind is destructive and has no undo, so the arm states the consequence and only the confirm
-  // sends it - the same shape the Chats row's archive/trash uses.
+  // sends it - the same shape the Chats row's archive/trash uses. The confirm says what it removes
+  // in the owner's own words (audit 2026-10-19): it used to read "Remove / Keep" for an action that
+  // removes this message AND everything after it, which named neither the point the conversation is
+  // cut back to nor the difference between it and the single-message delete beside it.
   rewindHere: "Rewind to here",
   rewindHereName: "Rewind to here: removes this message and everything after it ({{count}} in all)",
-  rewindConfirmPrompt: "Remove this message and everything after it? This cannot be undone.",
-  rewindConfirmYes: "Remove",
-  rewindConfirmNo: "Keep",
+  rewindConfirmPrompt: "Rewind to before this (deletes this message and everything after it)",
+  rewindConfirmYes: "Confirm rewind",
+  rewindConfirmNo: "Cancel",
   // The edit control: the player's own row carries one button, and pressing it opens the field their
   // words came from. Its accessible name says what saving does to the conversation - the model reads
   // the new words from the next turn on - because an edit that only changed the bubble would be a lie.
@@ -922,12 +925,13 @@ const zh: Messages = {
   // Host 依据模型自己的停止原因发布这个事实，绝不从文字里推测。
   chatReplyCutOff: "她的回复写到长度上限就被截断了。点「重新生成」可以得到完整的一条。",
   // 回退控件：消息自己的操作条上一个按钮，并说清按下去会删掉什么。回退不可撤销，所以先确认再发送，与
-  // 会话行上的归档/删除同一形状。
+  // 会话行上的归档/删除同一形状。确认框用的是主人原话（2026-10-19 审计）：它原本写「删除 / 保留」，而那
+  // 个动作删掉的是这一条及其之后的全部内容——既没说出对话退回到哪个点，也没说出它和旁边那条单条删除的区别。
   rewindHere: "回退到这里",
   rewindHereName: "回退到这里：删除这条消息及其之后的全部内容（共 {{count}} 条）",
-  rewindConfirmPrompt: "删除这条消息及其之后的全部内容？此操作无法撤销。",
-  rewindConfirmYes: "删除",
-  rewindConfirmNo: "保留",
+  rewindConfirmPrompt: "回退到此之前（删除本条及之后）",
+  rewindConfirmYes: "确认回退",
+  rewindConfirmNo: "取消",
   // 编辑控件：玩家自己的那一行只带一个按钮，按下后打开写这句话的输入框。无障碍名称说清保存后对话会发生什么
   // ——模型从下一轮开始读到你改写后的文字，因为只改气泡不改模型所见就是一种欺骗。
   editMessage: "编辑",

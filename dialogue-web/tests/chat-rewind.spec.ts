@@ -13,8 +13,11 @@ import { expect, test, type Page } from "@playwright/test";
  *    (`--touch-target-min`).
  * 2. `is offered where a rewind is possible, and nowhere else` - not on the greeting (message zero:
  *    the Host refuses it, because the conversation's own opening would outlive the row it names),
- *    not on a player row (the strip belongs to the companion's own message), and not when the
- *    caller could not count what follows.
+ *    not on a player row (the strip belongs to the companion's own message), not when the caller
+ *    could not count what follows, and NOT on the transcript's own last row: there the rewind and
+ *    the delete are the same act - both remove that one message - so the row offers the delete
+ *    alone (the owner's ruling; the two controls were indistinguishable on it). The count a rewind
+ *    can carry is therefore two or more, and the smallest legal one is what this pins.
  * 3. `arms, replaces the row's own controls, and sends the point it was shown at` - the first press
  *    only arms; the confirmation states the consequence and the row's pager/regenerate step aside
  *    while it is up; the confirm sends the handle AND the order the page rendered it at (the Host
@@ -39,6 +42,14 @@ type RewindProbe = {
     label: string | null;
     width: number;
     height: number;
+  } | null;
+  deleteControl(handle: string): {
+    ariaLabel: string | null;
+    title: string | null;
+    label: string | null;
+    width: number;
+    height: number;
+    stripHeight: number;
   } | null;
   rewindConfirm(handle: string): {
     prompt: string | null;
@@ -78,9 +89,25 @@ test("the rewind control names what it will remove, and its target is the touch 
   expect(control?.width).toBeGreaterThanOrEqual(44);
   expect(control?.height).toBeGreaterThanOrEqual(44);
 
-  // The transcript's own last reply would remove exactly one row, and the name says so.
-  const tail = await page.evaluate(() => window.chatProbe.rewindControl("h4"));
-  expect(tail?.ariaLabel).toContain("1");
+  // The transcript's own last reply is NOT a rewind point: the cut would remove exactly the row it
+  // is named after, which is the delete's own act, so the row offers the delete and nothing else
+  // (the owner's ruling - on that row the two controls were the same act twice). The count a legal
+  // rewind carries is therefore two or more, and the row one step from the tail is where the
+  // smallest one is measured: it would remove itself and the row after it.
+  expect(await page.evaluate(() => window.chatProbe.rewindControl("h4"))).toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.deleteControl("h4"))).not.toBeNull();
+
+  await page.evaluate(() =>
+    window.chatProbe.setConversation([
+      { role: "companion", text: "An opening greet." },
+      { role: "player", text: "Where are we?" },
+      { role: "companion", text: "On the pier." },
+      { role: "player", text: "And now?" },
+    ]),
+  );
+  const smallest = await page.evaluate(() => window.chatProbe.rewindControl("h2"));
+  expect(smallest, "the reply one step from the tail is still a rewind point").not.toBeNull();
+  expect(smallest?.ariaLabel).toContain("2");
 });
 
 test("the rewind is offered where a rewind is possible, and nowhere else", async ({ page }) => {
@@ -91,6 +118,13 @@ test("the rewind is offered where a rewind is possible, and nowhere else", async
   // A player row carries no companion strip at all.
   expect(await page.evaluate(() => window.chatProbe.rewindControl("h1"))).toBeNull();
   expect(await page.evaluate(() => window.chatProbe.rewindControl("h3"))).toBeNull();
+  // A reply in the middle of the conversation is a legal point, and that is what makes the two
+  // absences above an absence of the CONTROL rather than of the rule.
+  expect(await page.evaluate(() => window.chatProbe.rewindControl("h2"))).not.toBeNull();
+  // The transcript's last row is a legal point for the DELETE and not for the rewind: the two
+  // would do the same thing there, so the row keeps the delete alone.
+  expect(await page.evaluate(() => window.chatProbe.rewindControl("h4"))).toBeNull();
+  expect(await page.evaluate(() => window.chatProbe.deleteControl("h4"))).not.toBeNull();
 
   // Counted on the page that renders it: the rows a rewind removes are the ones after this one.
   const rows = await page.locator("ol.message-list > li").count();
@@ -105,10 +139,11 @@ test("arming replaces the row's own controls with the confirmation, and only the
 
   const armed = await page.evaluate(() => window.chatProbe.rewindConfirm("h2"));
   expect(armed).not.toBeNull();
-  expect(armed?.prompt).toContain("Remove this message and everything after it");
-  expect(armed?.prompt).toContain("cannot be undone");
-  expect(armed?.yes).toBe("Remove");
-  expect(armed?.no).toBe("Keep");
+  // The confirmation names the point AND what it removes, in the words the owner ruled on; its two
+  // answers are the rewind itself and the way out.
+  expect(armed?.prompt).toBe("Rewind to before this (deletes this message and everything after it)");
+  expect(armed?.yes).toBe("Confirm rewind");
+  expect(armed?.no).toBe("Cancel");
   // The confirmation is the row's only control while it is up: the pager and regenerate step aside.
   expect(armed?.ordinaryControls).toBe(0);
   expect(await page.evaluate(() => window.chatProbe.rewindCalls())).toEqual([

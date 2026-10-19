@@ -76,3 +76,34 @@ test("the zero-message anchor keeps its companion placeholder in both locales", 
     );
   }
 });
+
+/**
+ * The rewind's confirmation, in the owner's words (audit 2026-10-19).
+ *
+ * The defect: the confirm read 「删除 / 保留」 for an action that removes this message AND every
+ * message after it, which named neither the point the conversation is cut back to nor the difference
+ * between it and the single-message delete beside it. The ruling is exact wording, so it is pinned
+ * exactly in the catalogue the players read it in; the English catalogue is held to the same force -
+ * the prompt names the point and the removal, and the two answers are the rewind and the way out -
+ * rather than to a translation of the Chinese sentence.
+ */
+test("the rewind's confirmation says what it removes, in both catalogues", () => {
+  const zh = messages("zh-CN");
+  assert.equal(zh.rewindConfirmPrompt, "回退到此之前（删除本条及之后）");
+  assert.equal(zh.rewindConfirmYes, "确认回退");
+  assert.equal(zh.rewindConfirmNo, "取消");
+
+  const en = messages("en");
+  assert.equal(en.rewindConfirmPrompt, "Rewind to before this (deletes this message and everything after it)");
+  assert.equal(en.rewindConfirmYes, "Confirm rewind");
+  assert.equal(en.rewindConfirmNo, "Cancel");
+
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    // The control's own name already states the removal and the count it would make; the confirm may
+    // not be a second, vaguer sentence about the same press.
+    assert.match(labels.rewindHereName, /removes this message and everything after it|删除这条消息及其之后的全部内容/u);
+    assert.match(labels.rewindHereName, /\{\{count\}\}/u);
+    assert.notEqual(labels.rewindConfirmYes, labels.rewindConfirmNo);
+  }
+});
