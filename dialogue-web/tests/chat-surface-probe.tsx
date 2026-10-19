@@ -1,3 +1,9 @@
+/** The border box of one element, in the four numbers a layout assertion needs. */
+function boxOf(element: Element): { width: number; height: number; left: number; right: number; top: number; bottom: number } {
+  const { width, height, left, right, top, bottom } = element.getBoundingClientRect();
+  return { width, height, left, right, top, bottom };
+}
+
 /**
  * A mounted probe for the chat surface presentation primitives.
  *
@@ -367,6 +373,73 @@ const chatProbe = {
       ordinaryControls:
         (li?.querySelectorAll('.swipe-controls, .regenerate-btn, [data-testid="message-rewind"]').length ?? 0),
     };
+  },
+  /**
+   * A variant switch, as the authoritative reread reports it: the row keeps its handle, its position and
+   * the swipe set the Host published, and only the active index and that variant's own words move. The
+   * Host is what selects the words - the surface never rewrites a variant locally.
+   */
+  swipeTo(handle: string, currentIndex: number, text: string): void {
+    const existing = model.transcript.find((m) => m.handle === handle);
+    const total = existing?.swipeInfo?.totalSwipes ?? 3;
+    const switched: BrowserMessageV1 = Object.freeze({
+      handle,
+      role: existing?.role ?? "companion",
+      text,
+      locale: existing?.locale ?? "und",
+      order: existing?.order ?? 0,
+      revision: existing?.revision ?? 1,
+      swipeInfo: Object.freeze({
+        currentIndex,
+        totalSwipes: total,
+        label: `${currentIndex + 1}/${total}`,
+        hasPrevious: currentIndex > 0,
+        hasNext: currentIndex < total - 1,
+      }),
+    });
+    const idx = model.transcript.findIndex((m) => m.handle === handle);
+    const transcript =
+      idx === -1 ? [...model.transcript, switched] : model.transcript.map((m, i) => (i === idx ? switched : m));
+    model = { ...model, transcript };
+    rerender?.();
+  },
+  /**
+   * The open editor's field against the bubble it sits under and the strip it replaced. The field's own
+   * box is the subject: a slot narrower than the words being rewritten is the defect this measures.
+   */
+  editFieldBox(handle: string): {
+    field: { width: number; height: number; left: number; right: number };
+    bubble: { width: number; height: number; left: number; right: number };
+    strip: { width: number; height: number };
+  } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const field = li?.querySelector('[data-testid="message-edit-field"]');
+    if (field === null || field === undefined) return null;
+    const bubble = li?.querySelector(".message-bubble");
+    const strip = li?.querySelector(".message-actions");
+    const empty = { width: 0, height: 0, left: 0, right: 0 };
+    return {
+      field: boxOf(field),
+      bubble: bubble === null || bubble === undefined ? empty : boxOf(bubble),
+      strip: strip === null || strip === undefined ? { width: 0, height: 0 } : boxOf(strip),
+    };
+  },
+  /** The number of transcript rows the list actually holds (the optimistic row is not one). */
+  transcriptRowCount(): number {
+    return document.querySelectorAll("ol.message-list > li[data-handle]").length;
+  },
+  /**
+   * The transcript as the page renders it: each row's handle and position, the words in its bubble, and
+   * how many bubbles that row draws (one is the shape; a second is the copy an in-place edit must not
+   * leave behind).
+   */
+  transcriptRows(): readonly { handle: string; index: number; text: string | null; bubbles: number }[] {
+    return [...document.querySelectorAll("ol.message-list > li[data-handle]")].map((row, index) => ({
+      handle: row.getAttribute("data-handle") ?? "",
+      index,
+      text: row.querySelector(".message-bubble")?.textContent ?? null,
+      bubbles: row.querySelectorAll(".message-bubble").length,
+    }));
   },
   /** A transcript entry with swipe variants, so the swipe controls are offered. */
   withSwipes(handle: string, text: string): void {
