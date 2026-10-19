@@ -1247,6 +1247,33 @@ let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
  * Read-only, and matched by name because the runner does not receive the launched pid: nothing here kills or signals
  * anything, and an absent process answers `responded: null` rather than guessing.
  */
+/**
+ * The threads of the game process and what they are waiting on.
+ *
+ * The decisive reading after g80stall: BOTH timer-thread files stopped - the engine-frame writer and the watchdog's
+ * fallback - while the process stayed alive, which points at the managed side as a whole rather than one blocked
+ * thread. A thread-state census taken during the stall separates the remaining cases: every thread parked on one
+ * lock (a managed deadlock), threads waiting on I/O, or a suspended runtime.
+ */
+function sampleGameThreads() {
+  try {
+    const rows = execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        "$p = Get-Process -Name StardewModdingAPI,Stardew* -ErrorAction SilentlyContinue | Select-Object -First 1; " +
+          'if ($p) { $p.Threads | Group-Object ThreadState,WaitReason | ForEach-Object { "$($_.Count)x$($_.Name)" } } ',
+      ],
+      { encoding: "utf8", timeout: 8_000 },
+    );
+    const text = rows.trim().replace(/\s+/gu, " ").slice(0, 400);
+    return text === "" ? "unavailable" : text;
+  } catch {
+    return "unavailable";
+  }
+}
+
 function sampleGameProcess() {
   /**
    * Three different answers, three different values.
@@ -2005,10 +2032,12 @@ const stallSampler = setInterval(() => {
   const liveness = sampleModHeartbeat();
   if (liveness.silentMs < MOD_HEARTBEAT_STALL_MS) return;
   const game = sampleGameProcess();
+  const threads = sampleGameThreads();
   worldStallReason =
     `world_stopped_advancing:silent_ms=${String(liveness.silentMs)}:last_heartbeat=${liveness.line}` +
     `:game_responding=${String(game.responding)}:game_cpu_s=${String(Math.round(game.cpuSeconds ?? -1))}` +
-    (game.note === null ? "" : `:game_probe=${String(game.note)}`);
+    (game.note === null ? "" : `:game_probe=${String(game.note)}`) +
+    `:game_threads=${threads}`;
 }, 5_000);
 stallSampler.unref?.();
 // The run's own narrative judgement, made once before the verdict and published in the bundle. Declared out here so
