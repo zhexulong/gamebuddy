@@ -222,6 +222,16 @@ const forceLongPreview = () => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("e-chats-rows.txt");
+  // Every request this page makes, so "a non-mounted mutation produces no selection" can be a fact about the
+  // wire rather than an inference from the DOM (`selectRequests` above filters this list).
+  const wire = [];
+  page.on("request", (request) => {
+    try {
+      wire.push({ route: new URL(request.url()).pathname, method: request.method() });
+    } catch {
+      // A request whose URL does not parse is not a route this check is about.
+    }
+  });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};undefined`);
   await activateSurface(page, "会话");
@@ -334,6 +344,69 @@ const forceLongPreview = () => {
   const stillUnnamed = renamed.rows.filter((row) => row.titleText !== RENAME).map((row) => row.titleText);
   say(`the remaining unnamed row(s): ${JSON.stringify(stillUnnamed)} (renumbered to 1-based list order)`);
   await shot(page, "41-chats-renamed-1440x900.png");
+
+  // === ITEM: a management operation on a row that is NOT the mounted Chat ===
+  //
+  // The owner's ruling covers all three commands: an operation names that row's own Chat, and the mounted
+  // Chat - its lease and its stream - is left alone. Read the Host's own projection of the mounted
+  // conversation before and after (the product's state route plus the rows the transcript renders), and read
+  // the wire for the one request the ruling forbids: a selection.
+  const listBefore = await page.evaluate(rowControls);
+  const selectedIndex = listBefore.rows.findIndex((row) => row.selected);
+  const otherIndex = listBefore.rows.findIndex((row) => !row.selected);
+  const snapshotBefore = await mountedSnapshot(page);
+  say("=== ITEM: a row that is not the mounted Chat ===");
+  say(`rows=${listBefore.rows.length} selected=${selectedIndex} notSelected=${otherIndex}`);
+  say(
+    `the mounted Chat before: ${JSON.stringify({ title: snapshotBefore.durable.title, kept: (snapshotBefore.durable.transcript ?? []).length, rendered: snapshotBefore.dom.length })}`,
+  );
+  say(
+    `(the Chats list is the surface on screen, so ${snapshotBefore.dom.length} transcript rows are rendered here - the durable half is what carries the comparison)`,
+  );
+
+  if (selectedIndex < 0 || otherIndex < 0) {
+    say("named skip: this list has no second, unselected row, so the non-mounted half cannot be driven");
+  } else {
+    const OTHER_TITLE = "不是我在的那一行";
+    const wireBeforeRename = wire.length;
+    say(`renaming row ${otherIndex}: ${await page.evaluate(renameRow, { index: otherIndex })}`);
+    await page.waitForTimeout(600);
+    say(`commit: ${await page.evaluate(commitRename, { title: OTHER_TITLE })}`);
+    let listAfterRename = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await page.waitForTimeout(1500);
+      listAfterRename = await page.evaluate(rowControls);
+      if (listAfterRename.rows.some((row) => row.title === OTHER_TITLE)) break;
+    }
+    const snapshotAfterRename = await mountedSnapshot(page);
+    say(`that row carries its own title now: ${listAfterRename.rows.some((row) => row.title === OTHER_TITLE)}`);
+    say(
+      `the mounted row is the same row and still selected: ${listAfterRename.rows.findIndex((row) => row.selected) === selectedIndex}`,
+    );
+    say(`the mounted Chat is byte-identical after the rename: ${JSON.stringify(snapshotAfterRename) === JSON.stringify(snapshotBefore)}`);
+    say(`selection requests the rename produced: ${JSON.stringify(selectRequests(wire.slice(wireBeforeRename)))}`);
+    await shot(page, "41b-chats-renamed-a-row-you-are-not-in-1440x900.png");
+
+    const wireBeforeArchive = wire.length;
+    say(`archiving row ${otherIndex}: ${await page.evaluate(armControl, { index: otherIndex, label: ARCHIVE_LABEL })}`);
+    await page.waitForTimeout(800);
+    say(`the armed confirmation, and whose row it is: ${JSON.stringify(await page.evaluate(retentionConfirmFacts))}`);
+    say(`confirming: ${await page.evaluate(commitRetention)}`);
+    let listAfterArchive = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await page.waitForTimeout(1500);
+      listAfterArchive = await page.evaluate(rowControls);
+      if (!listAfterArchive.rows.some((row) => row.title === OTHER_TITLE)) break;
+    }
+    const snapshotAfterArchive = await mountedSnapshot(page);
+    say(`rows now: ${JSON.stringify(listAfterArchive.rows.map((row) => row.title))}`);
+    say(`the archived row left the list: ${!listAfterArchive.rows.some((row) => row.title === OTHER_TITLE)}`);
+    say(
+      `the mounted Chat is byte-identical after the archive: ${JSON.stringify(snapshotAfterArchive) === JSON.stringify(snapshotBefore)}`,
+    );
+    say(`selection requests the archive produced: ${JSON.stringify(selectRequests(wire.slice(wireBeforeArchive)))}`);
+    await shot(page, "41c-chats-archived-a-row-you-are-not-in-1440x900.png");
+  }
 
   flush();
   await browser.close().catch(() => undefined);
