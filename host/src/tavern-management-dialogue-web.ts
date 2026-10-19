@@ -2045,7 +2045,6 @@ export function createTavernManagementDialogueWebRequestHandler(
           const result = await managementService.transitionLifecycle(
             Object.freeze({
               apiVersion: wire.apiVersion,
-              selectionGeneration: wire.selectionGeneration,
               chatHandle: retentionRoute.chatHandle,
               expectedManagementRevision: wire.expectedManagementRevision,
               operation: retentionRoute.operation,
@@ -2521,6 +2520,10 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "payload_too_large") return { status: 413, code: "payload_too_large" };
   if (message === "invalid_request") return { status: 400, code: "invalid_request" };
   if (message === "chat_management_selection_conflict") return { status: 409, code: "selection_conflict" };
+  // Chat management (rename/archive/restore/trash) names a target by its own handle now, so a
+  // handle that names no Chat of this partition is the bounded, player-actionable 404 a missing
+  // target deserves - not a 409 selection conflict about a selection the request never made.
+  if (message === "chat_not_found") return { status: 404, code: "chat_not_found" };
   if (message === "chat_management_revision_conflict") return { status: 409, code: "draft_conflict" };
   // The companion directive is CASed on the exact profile revision the browser read;
   // a stale edit is a bounded, player-actionable refusal rather than a lost write.

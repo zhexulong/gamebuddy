@@ -169,10 +169,10 @@ async function mounted(body: string): Promise<Record<string, unknown>> {
   }
 }
 
-test("mounted management service lists durable metadata only and renames the exact mounted Chat through the management CAS", async () => {
+test("mounted management service lists durable metadata only and renames any Chat of the partition through the management CAS", async () => {
   const results = await mounted(`
     const handle = lease.browserProjection.chatHandle;
-    const generation = lease.browserProjection.selectionGeneration;
+    const secondHandle = lease.browserProjection.projectChatHandle("thread_02", "surface_02");
     const list = await service.listChats({ apiVersion: 1, state: "active" });
     const listValue = list;
      const secondStore = store();
@@ -183,13 +183,20 @@ test("mounted management service lists durable metadata only and renames the exa
     const two = await service.listChats({ apiVersion: 1 });
     const durableMounted = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
     const durableSecond = await store().resumeThread("thread_02", "surface_02");
-    const rename = await service.renameChatTitle({ apiVersion: 1, selectionGeneration: generation, chatHandle: handle, expectedManagementRevision: 1, title: "Renamed Farm Chat" });
+    const rename = await service.renameChatTitle({ apiVersion: 1, chatHandle: handle, expectedManagementRevision: 1, title: "Renamed Farm Chat" });
     const readBack = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    const wrongGeneration = await code(() => service.renameChatTitle({ apiVersion: 1, selectionGeneration: generation + 1, chatHandle: handle, expectedManagementRevision: 1, title: "X" }));
-    const foreignHandle = await code(() => service.renameChatTitle({ apiVersion: 1, selectionGeneration: generation, chatHandle: "B".repeat(43), expectedManagementRevision: 1, title: "X" }));
-    const staleRevision = await code(() => service.renameChatTitle({ apiVersion: 1, selectionGeneration: generation, chatHandle: handle, expectedManagementRevision: 1, title: "Another" }));
-    const unchanged = await code(() => service.renameChatTitle({ apiVersion: 1, selectionGeneration: generation, chatHandle: handle, expectedManagementRevision: 2, title: "Renamed Farm Chat" }));
-    const invalidTitle = await code(() => service.renameChatTitle({ apiVersion: 1, selectionGeneration: generation, chatHandle: handle, expectedManagementRevision: 2, title: "   " }));
+    // The rename names ANY Chat of the partition by its own handle, not only the mounted one: the
+    // second Chat is renamed while the mounted Chat - title and revision - are left exactly as they
+    // were, because no selection is consulted or changed.
+    const nonMountedRename = await service.renameChatTitle({ apiVersion: 1, chatHandle: secondHandle, expectedManagementRevision: 1, title: "The other one" });
+    const mountedAfter = await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
+    const secondAfter = await store().resumeThread("thread_02", "surface_02");
+    // The SAME request twice is the stale-revision conflict, not a second write.
+    const twiceSame = await code(() => service.renameChatTitle({ apiVersion: 1, chatHandle: secondHandle, expectedManagementRevision: 1, title: "The other one" }));
+    const unknownHandle = await code(() => service.renameChatTitle({ apiVersion: 1, chatHandle: "B".repeat(43), expectedManagementRevision: 1, title: "X" }));
+    const staleRevision = await code(() => service.renameChatTitle({ apiVersion: 1, chatHandle: handle, expectedManagementRevision: 1, title: "Another" }));
+    const unchanged = await code(() => service.renameChatTitle({ apiVersion: 1, chatHandle: handle, expectedManagementRevision: 2, title: "Renamed Farm Chat" }));
+    const invalidTitle = await code(() => service.renameChatTitle({ apiVersion: 1, chatHandle: handle, expectedManagementRevision: 2, title: "   " }));
     const facadeState = await facade.read();
     process.stdout.write(JSON.stringify({
       listValue,
@@ -197,8 +204,12 @@ test("mounted management service lists durable metadata only and renames the exa
       rename,
       readBackTitle: readBack.thread.title,
       readBackRevision: readBack.thread.managementRevision,
-      wrongGeneration,
-      foreignHandle,
+      nonMountedRename,
+      mountedUnchangedAfterNonMounted: readBack.thread.title === mountedAfter.thread.title && readBack.thread.managementRevision === mountedAfter.thread.managementRevision,
+      secondTitle: secondAfter.thread.title,
+      secondRevision: secondAfter.thread.managementRevision,
+      twiceSame,
+      unknownHandle,
       staleRevision,
       unchanged,
       invalidTitle,
@@ -245,8 +256,18 @@ test("mounted management service lists durable metadata only and renames the exa
   assert.equal(rename.managementRevision, 2);
   assert.equal(results.readBackTitle, "Renamed Farm Chat");
   assert.equal(results.readBackRevision, 2);
-  assert.equal((results.wrongGeneration as { error: string }).error, "chat_management_selection_conflict");
-  assert.equal((results.foreignHandle as { error: string }).error, "chat_management_selection_conflict");
+  // The rename names any Chat of the partition by its own handle: a non-mounted target advances THAT
+  // Chat's revision and leaves the mounted Chat - title and revision - exactly as it was.
+  const nonMountedRename = results.nonMountedRename as { title: string; managementRevision: number };
+  assert.equal(nonMountedRename.title, "The other one");
+  assert.equal(nonMountedRename.managementRevision, 2);
+  assert.equal(results.secondTitle, "The other one");
+  assert.equal(results.secondRevision, 2);
+  assert.equal(results.mountedUnchangedAfterNonMounted, true, "renaming a non-mounted Chat moved the mounted one");
+  // The SAME request twice is the stale-revision conflict, not a second write, and a handle no Chat
+  // of the partition carries is a bounded not-found rather than a selection conflict.
+  assert.equal((results.twiceSame as { error: string }).error, "chat_management_revision_conflict");
+  assert.equal((results.unknownHandle as { error: string }).error, "chat_not_found");
   assert.equal((results.staleRevision as { error: string }).error, "chat_management_revision_conflict");
   assert.equal((results.unchanged as { error: string }).error, "chat_management_revision_conflict");
   assert.equal((results.invalidTitle as { error: string }).error, "invalid_request");

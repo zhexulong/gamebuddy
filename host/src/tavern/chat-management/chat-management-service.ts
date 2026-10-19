@@ -23,14 +23,13 @@ import {
 } from "../browser-contract/index.js";
 
 /**
- * Service-level retention command: the wire body (revision + selection
- * generation) plus the exact mounted handle and the operation named by the
- * route. Kept separate from the browser contract type so the wire shape can
- * never carry a handle the browser could forge.
+ * Service-level retention command: the wire body (revision) plus the exact
+ * target handle the route named and the operation it named. Kept separate from
+ * the browser contract type so the wire shape can never carry a handle the
+ * browser could forge.
  */
 export type ChatRetentionServiceCommand = Readonly<{
   apiVersion: number;
-  selectionGeneration: number;
   chatHandle: string;
   expectedManagementRevision: number;
   operation: "archive" | "restore" | "trash";
@@ -53,7 +52,7 @@ export type ChatManagementService = Readonly<{
   /** Metadata-only list of the exact companion/continuity's active Chats. */
   /** Rejects new admission and drains admitted dispatches before resolving. */
   listChats(query: ChatListQueryV1): Promise<ChatListV1>;
-  /** Exact mounted-Chat title rename with selection generation, handle and management-revision CAS. */
+  /** Title rename of any Chat of the mounted companion/continuity, by handle and that Chat's own management-revision CAS. */
   renameChatTitle(command: RenameChatTitleCommandV1): Promise<ChatTitleV1>;
   /**
    * Durable Chat lifecycle retention (archive / restore / trash) through the
@@ -122,16 +121,10 @@ export function createChatManagementService(options: ChatManagementServiceOption
     discardDraftMutation === undefined
   )
     throw unavailable();
-  const titleService = createChatTitleManagementService(
-    Object.freeze({
-      resumeThread: store.resumeThread,
-      renameThreadTitle,
-    }),
-    {
-      chatThreadId: lease.chatThreadId,
-      chatSurfaceSessionId: lease.chatSurfaceSessionId,
-    },
-  );
+  const titleServiceFor = (
+    target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>,
+  ): ReturnType<typeof createChatTitleManagementService> =>
+    createChatTitleManagementService(Object.freeze({ resumeThread: store.resumeThread, renameThreadTitle }), target);
 
   let closed = false;
 
@@ -142,6 +135,31 @@ export function createChatManagementService(options: ChatManagementServiceOption
   /** Shared post-await guard; production lease authority stays coordinator-private. */
   const assertLeaseAfterDurableRead = (): void => {
     if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+  };
+
+  /**
+   * Resolves the opaque handle a management command names to the exact durable
+   * thread/surface pair of THIS companion/continuity. The handle is a per-mount
+   * projection carrying no durable identifier, so the only read that can invert it
+   * is the thread list this service already projects: each thread's own handle is
+   * recomputed and matched. No lease is consulted - the command may name any Chat,
+   * not only the mounted one - so a handle that no Chat of the partition carries is
+   * `chat_not_found`, not a selection conflict about a selection the request never
+   * made. Archived and trashed threads are included, so `restore` can still name
+   * the Chat it needs.
+   */
+  const resolveChatTarget = async (handle: string): Promise<ChatThread> => {
+    const threads = await listThreads();
+    const target = threads.find(
+      (thread) =>
+        thread.chatThreadId !== undefined &&
+        thread.chatSurfaceSessionId !== undefined &&
+        thread.companionId === manifest.principal.companionId &&
+        thread.continuityId === manifest.principal.continuityId &&
+        lease.browserProjection.projectChatHandle(thread.chatThreadId, thread.chatSurfaceSessionId) === handle,
+    );
+    if (target === undefined) throw new Error("chat_not_found");
+    return target;
   };
 
   const listChats = async (query: ChatListQueryV1): Promise<ChatListV1> => {
@@ -231,10 +249,12 @@ export function createChatManagementService(options: ChatManagementServiceOption
 
   const renameChatTitle = async (command: RenameChatTitleCommandV1): Promise<ChatTitleV1> => {
     assertOpen();
-    validateRenameCommand(command, lease);
+    validateRenameCommand(command);
     if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
     try {
-      const metadata = await titleService.setTitle({
+      const target = await resolveChatTarget(command.chatHandle);
+      assertLeaseAfterDurableRead();
+      const metadata = await titleServiceFor(target).setTitle({
         title: command.title,
         expectedRevision: command.expectedManagementRevision,
       });
@@ -253,13 +273,15 @@ export function createChatManagementService(options: ChatManagementServiceOption
 
   const transitionLifecycle = async (command: ChatRetentionServiceCommand): Promise<ChatRetentionResultV1> => {
     assertOpen();
-    validateRetentionCommand(command, lease);
+    validateRetentionCommand(command);
     if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
     if (typeof store.transitionLifecycle !== "function") throw unavailable();
     try {
+      const target = await resolveChatTarget(command.chatHandle);
+      assertLeaseAfterDurableRead();
       const thread = await store.transitionLifecycle({
-        chatThreadId: lease.chatThreadId,
-        chatSurfaceSessionId: lease.chatSurfaceSessionId,
+        chatThreadId: target.chatThreadId,
+        chatSurfaceSessionId: target.chatSurfaceSessionId,
         companionId: manifest.principal.companionId,
         continuityId: manifest.principal.continuityId,
         expectedManagementRevision: command.expectedManagementRevision,
@@ -390,34 +412,27 @@ function projectDraft(draft: Readonly<{ revision: number; text: string | null }>
   return result;
 }
 
-function validateRenameCommand(command: RenameChatTitleCommandV1, lease: MountedChatRuntimeLease): void {
+function validateRenameCommand(command: RenameChatTitleCommandV1): void {
   if (command === null || typeof command !== "object" || Array.isArray(command)) throw unavailable();
   if (command.apiVersion !== TAVERN_BROWSER_API_VERSION) throw unavailable();
-  if (!Number.isSafeInteger(command.selectionGeneration) || command.selectionGeneration < 1) throw unavailable();
   if (!Number.isSafeInteger(command.expectedManagementRevision) || command.expectedManagementRevision < 0)
     throw unavailable();
   if (typeof command.title !== "string" || command.title.length === 0 || command.title.length > 120)
     throw unavailable();
-  // Exact-binding selection: browser input can never name another generation
-  // or another Chat than the one mounted by the coordinator.
-  if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
-  if (command.chatHandle !== lease.browserProjection.chatHandle) throw selectionConflict();
 }
 
-function validateRetentionCommand(command: ChatRetentionServiceCommand, lease: MountedChatRuntimeLease): void {
+function validateRetentionCommand(command: ChatRetentionServiceCommand): void {
   if (command === null || typeof command !== "object" || Array.isArray(command)) throw unavailable();
   if (command.apiVersion !== TAVERN_BROWSER_API_VERSION) throw unavailable();
-  if (!Number.isSafeInteger(command.selectionGeneration) || command.selectionGeneration < 1) throw unavailable();
   if (!Number.isSafeInteger(command.expectedManagementRevision) || command.expectedManagementRevision < 0)
     throw unavailable();
   if (command.operation !== "archive" && command.operation !== "restore" && command.operation !== "trash")
     throw unavailable();
-  if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
-  if (command.chatHandle !== lease.browserProjection.chatHandle) throw selectionConflict();
 }
 
 function rethrowRetentionError(error: unknown): Error {
   if (!(error instanceof Error)) return unavailable();
+  if (error.message === "chat_not_found") return error;
   if (error.message === "chat_thread_management_revision_conflict")
     return new Error("chat_management_revision_conflict");
   if (error instanceof ExactThreadSurfaceMismatchError) return selectionConflict();
@@ -446,6 +461,7 @@ function rethrowDraftError(error: unknown): Error {
 
 function rethrowRenameError(error: unknown): Error {
   if (!(error instanceof Error)) return unavailable();
+  if (error.message === "chat_not_found") return error;
   if (error.message === "chat_thread_management_revision_conflict" || error.message === "chat_thread_title_unchanged")
     // Existing player-visible revision-CAS conflict semantics: the browser
     // expectation does not match durable management state; re-read and retry.

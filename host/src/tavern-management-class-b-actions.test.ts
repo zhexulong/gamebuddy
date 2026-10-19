@@ -232,7 +232,6 @@ const CLASS_B_REQUESTS: Readonly<Record<string, ClassBAction>> = Object.freeze({
       path: "/api/tavern/v1/chat/title",
       body: {
         apiVersion: 1,
-        selectionGeneration: 1,
         chatHandle: HANDLE,
         expectedManagementRevision: 1,
         title: "class-b-title",
@@ -244,7 +243,7 @@ const CLASS_B_REQUESTS: Readonly<Record<string, ClassBAction>> = Object.freeze({
     request: () => ({
       method: "POST",
       path: `/api/tavern/v1/chats/${HANDLE}/archive`,
-      body: { apiVersion: 1, selectionGeneration: 1, expectedManagementRevision: 1 },
+      body: { apiVersion: 1, expectedManagementRevision: 1 },
     }),
     readBack: (body) => assert.equal(body.status, "archived"),
   },
@@ -252,7 +251,7 @@ const CLASS_B_REQUESTS: Readonly<Record<string, ClassBAction>> = Object.freeze({
     request: () => ({
       method: "POST",
       path: `/api/tavern/v1/chats/${HANDLE}/restore`,
-      body: { apiVersion: 1, selectionGeneration: 1, expectedManagementRevision: 1 },
+      body: { apiVersion: 1, expectedManagementRevision: 1 },
     }),
     readBack: (body) => assert.equal(body.status, "active"),
   },
@@ -260,7 +259,7 @@ const CLASS_B_REQUESTS: Readonly<Record<string, ClassBAction>> = Object.freeze({
     request: () => ({
       method: "POST",
       path: `/api/tavern/v1/chats/${HANDLE}/trash`,
-      body: { apiVersion: 1, selectionGeneration: 1, expectedManagementRevision: 1 },
+      body: { apiVersion: 1, expectedManagementRevision: 1 },
     }),
     readBack: (body) => assert.equal(body.status, "trashed"),
   },

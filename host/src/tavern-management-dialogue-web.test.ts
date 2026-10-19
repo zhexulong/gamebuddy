@@ -446,7 +446,6 @@ test("management handler exposes the draft-capable profile and CSRF-protected mu
       },
       body: JSON.stringify({
         apiVersion: 1,
-        selectionGeneration: 1,
         chatHandle: handle,
         expectedManagementRevision: 1,
         title: "New Farm Chat",
@@ -475,7 +474,7 @@ test("management handler exposes the draft-capable profile and CSRF-protected mu
   assert.equal(recorder.closes, 1);
 });
 
-test("management handler maps foreign binding, wrong generation and stale revision to existing problem semantics", async () => {
+test("management handler maps a missing target, a foreign binding and a stale revision to bounded problem semantics", async () => {
   const recorder = {
     lists: 0,
     renames: 0,
@@ -514,7 +513,6 @@ test("management handler maps foreign binding, wrong generation and stale revisi
       { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
       {
         apiVersion: 1,
-        selectionGeneration: 1,
         chatHandle: handle,
         expectedManagementRevision: 1,
         title: "New Farm Chat",
@@ -530,7 +528,20 @@ test("management handler maps foreign binding, wrong generation and stale revisi
 
   recorder.renameError = new Error("chat_management_selection_conflict");
   assert.equal(await problemFor(rename({ chatHandle: `${"A".repeat(42)}E` })), "selection_conflict");
-  assert.equal(await problemFor(rename({ selectionGeneration: 99 })), "selection_conflict");
+  // The mounted-only selection generation is gone from the command: a stale sender that still carries
+  // it is refused 400 rather than accepted as a second, ignored selector.
+  recorder.renameError = undefined;
+  const staleField = new ControlledResponse("finish");
+  await dispatch(handler, rename({ selectionGeneration: 99 }), staleField);
+  assert.equal(staleField.status, 400);
+  assert.equal((JSON.parse(staleField.body) as { code: string }).code, "invalid_request");
+  // A handle that names no Chat of this partition is a bounded 404, not a selection conflict about a
+  // selection the request never made.
+  recorder.renameError = new Error("chat_not_found");
+  const unknownTarget = new ControlledResponse("finish");
+  await dispatch(handler, rename({ chatHandle: `${"A".repeat(42)}E` }), unknownTarget);
+  assert.equal(unknownTarget.status, 404);
+  assert.equal((JSON.parse(unknownTarget.body) as { code: string }).code, "chat_not_found");
   recorder.renameError = new Error("chat_management_revision_conflict");
   assert.equal(await problemFor(rename({ expectedManagementRevision: 7 })), "draft_conflict");
   await handler.close();
@@ -604,7 +615,6 @@ test("management handler enforces session, CSRF, origin and exact query/body val
           { cookie, "x-csrf-token": csrf },
           {
             apiVersion: 1,
-            selectionGeneration: 1,
             chatHandle: handle,
             expectedManagementRevision: 1,
             title: "New Farm Chat",
@@ -623,7 +633,6 @@ test("management handler enforces session, CSRF, origin and exact query/body val
           { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": "B".repeat(43) },
           {
             apiVersion: 1,
-            selectionGeneration: 1,
             chatHandle: handle,
             expectedManagementRevision: 1,
             title: "New Farm Chat",
@@ -640,7 +649,7 @@ test("management handler enforces session, CSRF, origin and exact query/body val
           "PUT",
           "/api/tavern/v1/chat/title",
           { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
-          { apiVersion: 1, selectionGeneration: 1, chatHandle: handle, expectedManagementRevision: 1 },
+          { apiVersion: 1, chatHandle: handle, expectedManagementRevision: 1 },
         ),
       )
     ).status,
