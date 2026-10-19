@@ -158,11 +158,11 @@ export class CompanionEventPump {
       // Measured 2026-10-19 (`g97cross`): 870 facts in one run, 470 of them receipts, arriving while a turn was in
       // flight (a turn here thinks for 60+ s). The window is what makes a long turn safe; closing the whole bridge on it
       // is not what "bounded" has to mean, and it ended that run short of its night.
-      if (!isTerminalExecutionFact(fact)) {
+      if (isSupersededFact(fact)) {
         this.#droppedFacts += 1;
         return;
       }
-      const evictable = [...destination.entries()].find(([, entry]) => !isTerminalExecutionFact(entry));
+      const evictable = [...destination.entries()].find(([, entry]) => isSupersededFact(entry));
       if (evictable === undefined)
         throw new Error(
           fact.kind === "execution_receipt" ? "event_pump_terminal_overflow" : "event_pump_event_overflow",
@@ -426,4 +426,18 @@ function compareEvents(left: NormalizedEvent, right: NormalizedEvent): number {
     left.revision - right.revision ||
     left.eventId.localeCompare(right.eventId)
   );
+}
+
+/**
+ * May this fact be dropped when a window is full?
+ *
+ * Only facts a LATER fact supersedes: progress observations of a live execution, a non-terminal receipt (its terminal is
+ * still to come), and a lifecycle notice. Everything else carries something no other fact will say again - a terminal
+ * receipt is the authority for its execution, and an execution's OUTCOME semantic event is how the companion learns it
+ * ended - so those evict a superseded entry instead, and only close the bridge when the window holds nothing else.
+ */
+function isSupersededFact(fact: WorldFact): boolean {
+  if (fact.kind === "execution_receipt") return !isTerminalExecutionFact(fact);
+  if (fact.kind === "semantic_event") return isProgressSemanticEvent(fact);
+  return fact.kind === "lifecycle";
 }

@@ -375,36 +375,57 @@ test("event pump classifies terminal receipt overflow separately from all nonter
       payload: { state: "meaningful_progress" },
     });
   }
-  assert.throws(
-    () =>
-      terminalPump.enqueueFact({
-        source: "stardew_mod",
-        kind: "execution_receipt",
-        correlationId: "terminal_overflow",
-        revision: 1,
-        payload: { state: "failed" },
-      }),
-    /event_pump_terminal_overflow/,
-  );
+  // A TERMINAL receipt arriving at a window full of NON-terminal receipts evicts the oldest of those instead of
+  // closing the bridge, and counts it: the terminal is the authority for its execution, the progress it replaces is not.
+  terminalPump.enqueueFact({
+    source: "stardew_mod",
+    kind: "execution_receipt",
+    correlationId: "terminal_overflow",
+    revision: 1,
+    payload: { state: "failed" },
+  });
+  assert.equal(terminalPump.droppedFacts, 1);
+  assert.equal(terminalPump.pendingCount, 128);
 
+  // Facts a later fact SUPERSEDES are the ones that may be dropped: a non-terminal receipt (its terminal is still to
+  // come) and a lifecycle notice. Measured 2026-10-19 (`g97cross`): 870 facts in one run, 470 of them receipts,
+  // arriving while a turn was in flight - and closing the whole bridge over them ended that run short of its night.
   for (const [kind, payload] of [
     ["execution_receipt", { state: "meaningful_progress" }],
-    ["semantic_event", { kind: "warped" }],
     ["lifecycle", { state: "adapter_notice" }],
   ] as const) {
     const pump = new CompanionEventPump();
     for (let index = 0; index < 128; index++) {
       pump.enqueueFact({ source: "stardew_mod", kind, correlationId: `${kind}_${index}`, revision: 1, payload });
     }
-    // AMENDED 2026-10-19: a NON-terminal fact that arrives at a full window is DROPPED AND COUNTED, not thrown. It only
-    // describes state a later fact describes again, so the arrival is the cheapest thing to lose - while closing the
-    // whole bridge over it is what ended a real run short of its night (`g97cross`: 870 facts in one run, 470 of them
-    // receipts, arriving while a turn was in flight). The window still bounds the queue; the failure just stopped being
-    // total.
     pump.enqueueFact({ source: "stardew_mod", kind, correlationId: `${kind}_overflow`, revision: 1, payload });
     assert.equal(pump.droppedFacts, 1, kind);
     assert.equal(pump.pendingCount, 128, kind);
   }
+
+  // A semantic event that is NOT progress still fails closed: `warped` says something no later fact repeats, so a
+  // window full of them holds nothing that may be evicted and the bridge refuses rather than losing one.
+  const eventPump = new CompanionEventPump();
+  for (let index = 0; index < 128; index++) {
+    eventPump.enqueueFact({
+      source: "stardew_mod",
+      kind: "semantic_event",
+      correlationId: `semantic_${index}`,
+      revision: 1,
+      payload: { kind: "warped" },
+    });
+  }
+  assert.throws(
+    () =>
+      eventPump.enqueueFact({
+        source: "stardew_mod",
+        kind: "semantic_event",
+        correlationId: "semantic_overflow",
+        revision: 1,
+        payload: { kind: "warped" },
+      }),
+    /event_pump_event_overflow/,
+  );
 
   // A TERMINAL receipt arriving at a full window still never closes the bridge over a NON-terminal entry: it evicts the
   // oldest of those instead, and counts that. Terminals are the authority for their execution, so losing one would leave
