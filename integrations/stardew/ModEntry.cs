@@ -72,10 +72,12 @@ public sealed partial class ModEntry : Mod
         // One line per stalled tick: the phase is the answer, and repeating it every period would only add noise.
         if (Interlocked.Exchange(ref this.tickWatchdogLastStalledTick, tick) == tick)
             return;
-        this.Monitor.Log(
-            "GameBuddy tick " + tick + " has been running for " + (elapsed / 1000) + "s; last phase=" + this.tickWatchdogPhaseForReport()
-                + "; recent=" + this.RecentStageSequenceForReport() + ".",
-            LogLevel.Warn);
+        // The timer thread does NOT log: SMAPI's logger is shared with the console, and a timer callback writing there
+        // is a cross-thread lock this thread must not take (the reviewer named it and my own evidence agrees - during
+        // every freeze the watchdog's log line was missing even when its file write would have been possible). The
+        // report is written here and LOGGED by the game thread on its next tick.
+        Volatile.Write(ref this.pendingStalledTickReport, "GameBuddy tick " + tick + " has been running for " + (elapsed / 1000)
+            + "s; last phase=" + this.tickWatchdogPhaseForReport() + "; recent=" + this.RecentStageSequenceForReport() + ".");
         // ...and to a FILE as well, because the logger may be exactly what is stuck. Measured 2026-10-19 (g78gate): the
         // engine kept rendering at 60 fps while this lane went silent mid-work, this report never appeared, and SMAPI's log
         // stopped at the same instant - so a logger that blocks would hide the very stall the watchdog exists to report. A
@@ -284,6 +286,9 @@ public sealed partial class ModEntry : Mod
     // 2026-10-19 (g67gate): the log ended at `capability_publication_done` while the hang was in one of the six steps
     // after it, none of which had printed. Memory is cheap here; disk writes on the game thread are not.
     private readonly string[] recentStageSequence = new string[24];
+
+    /// <summary>A stalled-tick report the watchdog thread left for the game thread to log.</summary>
+    private string? pendingStalledTickReport;
 
     // The engine's own frame counter, incremented by a Harmony postfix on `Game1.Update` and written to a file by the
     // timer below. Why a FILE and not the Mod log: during the freeze the Mod's tick is not running, so nothing inside
@@ -1560,7 +1565,9 @@ public sealed partial class ModEntry : Mod
             }
             this.LogNativeLocalPlayerReadinessIfBlocked();
             ScreenEmbodimentState nativeLocalState = this.GetEmbodimentState();
-            this.LogStageOnce("capability_publication");
+            string? stalledReport = Interlocked.Exchange(ref this.pendingStalledTickReport, null);
+        if (stalledReport is not null) this.Monitor.Log(stalledReport, LogLevel.Warn);
+        this.LogStageOnce("capability_publication");
         this.LogStageOnce("capability_publication");
         this.RefreshFarmhandCapabilityPublication(nativeLocalState, e.Ticks);
         this.LogStageOnce("capability_publication_done", force: true);
