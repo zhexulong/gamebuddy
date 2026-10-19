@@ -42,11 +42,47 @@ public sealed partial class ModEntry : Mod
         Volatile.Write(ref this.tickWatchdogPhase, phase);
     }
 
+    /// <summary>Counts engine frames. No I/O, so it costs the game thread a single increment.</summary>
+    private static void EngineFramePostfix() => Interlocked.Increment(ref engineFrameCount);
+
+    /// <summary>
+    /// Writes the engine frame counter to its own file, from a timer thread.
+    ///
+    /// Read after a freeze as: did the count keep growing? Growing means the engine's per-frame update still ran, so the
+    /// stall is inside a subsystem (or SMAPI's event dispatch) rather than in the process being stuck before a frame.
+    /// </summary>
+    private void WriteEngineProbe()
+    {
+        try
+        {
+            long frames = Interlocked.Read(ref engineFrameCount);
+            if (frames == this.engineProbeLastWrittenFrames) return;
+            this.engineProbeLastWrittenFrames = frames;
+            string directory = Path.Combine(Constants.DataPath, "ErrorLogs");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(
+                Path.Combine(directory, "gamebuddy-engine-loop.txt"),
+                $"{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()};frames={frames}" + Environment.NewLine);
+        }
+        catch
+        {
+            // A probe that throws on the game thread is worse than a probe that is silent.
+        }
+    }
+
     private void BeginTickWatchdog()
     {
         if (this.tickWatchdog is not null)
             return;
-        this.tickWatchdog = new Timer(_ => this.ReportStalledTick(), null, TickWatchdogPeriodMs, TickWatchdogPeriodMs);
+        this.tickWatchdog = new Timer(
+            _ =>
+            {
+                this.WriteEngineProbe();
+                this.ReportStalledTick();
+            },
+            null,
+            TickWatchdogPeriodMs,
+            TickWatchdogPeriodMs);
     }
 
     private void ReportStalledTick()
@@ -244,6 +280,13 @@ public sealed partial class ModEntry : Mod
     // 2026-10-19 (g67gate): the log ended at `capability_publication_done` while the hang was in one of the six steps
     // after it, none of which had printed. Memory is cheap here; disk writes on the game thread are not.
     private readonly string[] recentStageSequence = new string[24];
+
+    // The engine's own frame counter, incremented by a Harmony postfix on `Game1.Update` and written to a file by the
+    // timer below. Why a FILE and not the Mod log: during the freeze the Mod's tick is not running, so nothing inside
+    // it can report; a timer thread can. Why only a counter on the game thread: an earlier instrument wrote ~500 lines a
+    // second synchronously and became part of the problem it was measuring.
+    private static long engineFrameCount;
+    private long engineProbeLastWrittenFrames = -1;
     private int recentStageCursor;
 
     /// <summary>
@@ -373,6 +416,24 @@ public sealed partial class ModEntry : Mod
             Harmony harmony = new(this.ModManifest.UniqueID + ".native-chat-ingress");
             harmony.Patch(textSubmitTarget, postfix: new HarmonyMethod(textSubmitPostfix));
             harmony.Patch(textBoxDelegateTarget, prefix: new HarmonyMethod(textBoxDelegatePostfix));
+
+        // The engine loop probe: does `Game1.Update` still run while everything else looks frozen?
+        try
+        {
+            MethodInfo? engineUpdate = AccessTools.Method(
+                typeof(StardewValley.Game1),
+                "Update",
+                new[] { typeof(Microsoft.Xna.Framework.GameTime) });
+            MethodInfo? enginePostfix = AccessTools.Method(typeof(ModEntry), nameof(EngineFramePostfix));
+            if (engineUpdate is not null && enginePostfix is not null)
+                harmony.Patch(engineUpdate, postfix: new HarmonyMethod(enginePostfix));
+            else
+                this.Monitor.Log("GameBuddy engine-loop probe could not be installed; the freeze diagnosis will lack it.", LogLevel.Warn);
+        }
+        catch (Exception error)
+        {
+            this.Monitor.Log($"GameBuddy engine-loop probe failed to install: {error.GetType().Name}.", LogLevel.Warn);
+        }
             nativeChatIngressOwner = this;
             this.nativeChatObservationInstalled = true;
             this.Monitor.Log("GameBuddy enabled native chat text observation.", LogLevel.Info);
