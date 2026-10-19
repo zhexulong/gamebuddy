@@ -86,7 +86,14 @@ public sealed partial class ModEntry : Mod
         // Throttled, EXCEPT when the caller says this line has to be there: an execution in flight is exactly the
         // case where the last line of a frozen log must be the marker immediately before the engine call that hung,
         // not a stale heartbeat. Four runs froze with `phase=pipe_drain` as their final word because of that throttle.
-        if (!force && now - this.nativeLocalPlayerFixtureLastStageUnixMs < 2_000L)
+        // Forced lines bypass the 2 s throttle but not a FLOOR of their own: without it a forced marker prints once
+        // per step per TICK, which is up to dozens of synchronous log writes a second - measured 2026-10-19: 51 668
+        // stage lines against 55 heartbeats, i.e. the instrument was writing far more than the thing it observes, and
+        // synchronous SMAPI writes at that rate can themselves cost frames in the very window being diagnosed. The floor
+        // keeps the property that matters (the last line of a frozen log names the step) while making the volume
+        // proportionate.
+        long floorMs = force ? 250L : 2_000L;
+        if (now - this.nativeLocalPlayerFixtureLastStageUnixMs < floorMs)
             return;
         this.nativeLocalPlayerFixtureLastStageUnixMs = now;
         this.Monitor.Log(
