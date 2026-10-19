@@ -448,6 +448,22 @@
     font-size: 12px;
   }
 
+  /* The companion inspector's picture. It is the one surface where a player looks at her picture
+   closely - and the one where they just uploaded it - so it is drawn as a portrait instead of the
+   28 px glyph the roster row and the transcript use. 128 px is the largest size the owner's ruling
+   allows, and the drawer's own 387 px content column still keeps the upload control beside it on
+   one line (128 + the row's 6 px gap + the control's own 104 px of 387), so the hero costs height -
+   which the drawer's scroll absorbs - and never a second row. The radius is the card's, because a
+   6 px corner on a 128 px plate is not a rounding, and the monogram is the same fallback in the
+   same element at this size. */
+  .avatar-hero {
+    width: 128px;
+    height: 128px;
+    min-width: 128px;
+    font-size: 48px;
+    border-radius: var(--radius-md);
+  }
+
   /* A companion's real picture, inside the monogram's own plate: the plate keeps
    the row's geometry whether a picture is there or not, so a roster that gains
    pictures and one that has none do not lay out differently. `object-fit: cover`

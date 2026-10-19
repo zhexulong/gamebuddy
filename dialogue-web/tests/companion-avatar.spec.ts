@@ -12,7 +12,9 @@ import { expect, test, type Page } from "@playwright/test";
  *    it takes PNG and nothing else;
  *  - the picture the player picked is ON SCREEN at once (`naturalWidth > 0`, and after a
  *    second, differently shaped picture, its real dimensions), through the same
- *    `CompanionAvatar` every other surface draws her with;
+ *    `CompanionAvatar` every other surface draws her with - and at HERO size here (128 px), because
+ *    this drawer is the one place a player looks at her closely, while the upload control's own
+ *    geometry is unchanged by it;
  *  - the client is served the caching answer it depends on: her absence is a 404 that is
  *    never remembered, and her picture keeps its one URL, is served `no-cache`, and
  *    carries the DIGEST of its own bytes as its `ETag`;
@@ -227,6 +229,37 @@ test("the player gives a companion a picture, and the new picture is on screen a
   expect(box, "the control is laid out").not.toBeNull();
   expect(box!.height, "the control meets the 44 px floor").toBeGreaterThanOrEqual(44);
   expect(box!.width, "the control meets the 44 px floor").toBeGreaterThanOrEqual(44);
+
+  // Her picture is a HERO here rather than a row glyph: this is the one surface where a player looks
+  // at it closely, and the one where they just uploaded it. 128 px, drawn by the same avatar element
+  // (and so the same monogram fallback) the rest of the product draws her with.
+  const hero = await section.locator(".avatar").boundingBox();
+  console.log(`[companion-avatar] hero box=${JSON.stringify(hero)}`);
+  expect(hero, "her picture is laid out").not.toBeNull();
+  expect(hero!.width, "her picture is drawn at hero size, not the 28 px row size").toBe(128);
+  expect(hero!.height, "and it is square").toBe(128);
+  // The upload control's own geometry is unchanged by that: the same control, measured with the hero
+  // beside it and with the 28 px plate the row used before - the plate being the only difference -
+  // keeps exactly its own box. So the hero costs the drawer height and never the control's width, and
+  // the control was never stretched by the plate it stands beside.
+  await section.locator(".avatar").evaluate((node) => {
+    node.className = "avatar avatar-small";
+  });
+  const plate = await section.locator(".avatar").boundingBox();
+  const withRowPlate = await trigger.boundingBox();
+  await section.locator(".avatar").evaluate((node) => {
+    node.className = "avatar avatar-hero";
+  });
+  expect(Math.round(plate!.width), "the row plate really is the smaller one").toBe(28);
+  // Its own SIZE is what may not move: the sub-pixel is the antialiased label, and the box's x/y move
+  // with the row the plate sizes (the drawer centres its content), which is the plate's doing.
+  expect(Math.abs(withRowPlate!.width - box!.width), "the trigger's width is its own label's, at any plate").toBeLessThan(0.5);
+  expect(withRowPlate!.height, "and its height is its own 44 px floor").toBe(box!.height);
+  expect(box!.height, "the trigger is not stretched by a 128 px plate").toBe(44);
+  expect(
+    Math.abs(hero!.y + hero!.height / 2 - (box!.y + box!.height / 2)),
+    "the picture and its trigger share the row's centre line",
+  ).toBeLessThanOrEqual(1);
 
   // The picker takes PNG and nothing else, and is emptied after a pick so the same file
   // can be chosen again.

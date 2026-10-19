@@ -176,7 +176,11 @@ function CompanionAvatarSection({
       <h3>{labels.avatarTitle}</h3>
       <p className="management-settings-hint">{labels.avatarHint}</p>
       <div className="composer-actions">
-        <CompanionAvatar handle={companion.handle} name={companion.name} className="avatar-small" digest={digest} />
+        {/* Her picture at hero size: this drawer is the one surface where a player looks at it
+            closely - and the one where they just uploaded it - so it is drawn as a portrait rather
+            than as the 28 px glyph the roster row and the transcript use. It is the SAME avatar
+            element (and so the same monogram fallback) with a size class, not a second renderer. */}
+        <CompanionAvatar handle={companion.handle} name={companion.name} className="avatar-hero" digest={digest} />
         <button
           type="button"
           className="small-button"
