@@ -83,6 +83,29 @@ test("the runner verdict is the last record on stdout that carries one", () => {
   assert.equal(parseRunnerResult('{"state":42}'), null);
 });
 
+test("the launcher's own fixture records are never read as the runner's verdict", () => {
+  // The exact record order a live `move_to_tile` run produced: the runner's pass,
+  // then the launcher's window evidence, fixture restore and save cleanup. Reading
+  // the last record as the verdict made a real pass report as not-passed.
+  const stdout = [
+    '{"state":"prepared","bindingPath":"C:\\\\fixtures\\\\x.native-local-binding.json","contract":"..."}',
+    '{"state":"passed","topology":"native_local_player_fixture","success":{"terminal":{"state":"succeeded","reasonCode":"target_reached"}}}',
+    '{"timestamp":"2026-10-19T13:56:42.0941663Z","windowMode":"hidden","tag":"hidden","gameWindow":{"processId":22420}}',
+    '{"state":"restored","backup":"C:\\\\fixtures\\\\native-local-move-to-tile-fixture-backup","backupRemoved":true}',
+    '{"state":"cleaned","saveName":"GameBuddyFixtureStable2_451844707","workingSavePath":"C:\\\\Saves\\\\GameBuddyFixtureStable2_451844707"}',
+  ].join("\n");
+  assert.deepEqual(parseRunnerResult(stdout), { verdict: "passed" });
+  // A fixture-transaction record alone is never a verdict, so it can never manufacture a pass.
+  for (const record of [
+    '{"state":"restored","backupRemoved":true}',
+    '{"state":"cleaned"}',
+    '{"state":"verified"}',
+    '{"state":"bootstrap_prepared"}',
+    '{"state":"template_initialized"}',
+  ])
+    assert.equal(parseRunnerResult(record), null, `${record} must not be a runner verdict`);
+});
+
 test("only the launcher's own lifecycle schema counts as a lifecycle result", () => {
   // The launcher publishes this record through the action-development package's
   // write-lifecycle-result.mjs; the literal pins the contract this driver reads.

@@ -99,6 +99,21 @@ export const RUNNER_CAN_OPEN_GATES = Object.freeze([
   }),
 ]);
 
+/**
+ * The words a gate's runner reports as its own verdict.
+ *
+ * The smoke runners report `state` and the `equip_tool` package child reports
+ * `verdict`. Across the 90 runner files the published gate table names, the only
+ * `state` words that appear are `passed` and `blocked` (plus `failed` for the
+ * package child's verdict). Every OTHER record on the launcher's stdout is one of
+ * the launcher's own fixture-transaction records - `prepared`, `bootstrap_prepared`,
+ * `verified`, `restored`, `cleaned`, ... - and the launcher prints those AFTER the
+ * runner's result, which is how the first live run of this driver read a real
+ * `succeeded/target_reached` pass as not-passed. A word outside this set is not a
+ * verdict, so it can never manufacture a pass; it shows up as missing evidence.
+ */
+const RUNNER_VERDICTS = new Set(["passed", "blocked", "failed"]);
+
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -126,25 +141,24 @@ function readTextFile(path) {
   }
 }
 
-/**
- * The runner's own verdict: the smoke runners report `state`, the `equip_tool`
- * package child reports `verdict`. Anything else is not a verdict.
- */
 function observedVerdict(record) {
   if (!isPlainObject(record)) return null;
-  if (typeof record.state === "string") return record.state;
-  if (typeof record.verdict === "string") return record.verdict;
+  for (const key of ["state", "verdict"]) {
+    const value = record[key];
+    if (typeof value === "string" && RUNNER_VERDICTS.has(value)) return value;
+  }
   return null;
 }
 
 /**
- * The LAST record on the launcher's stdout that carries a verdict.
+ * The LAST record on the launcher's stdout that carries a runner verdict.
  *
  * The generic launcher branch runs the smoke runner as a child over an inherited
  * stdout, so the runner's one-line result is the last such record; PowerShell may
- * prefix warnings and the launcher prints a window-evidence record afterwards that
- * carries no verdict. Same rule as `tools/_ladder-live-orchestrator.mjs` and
- * `tools/run-stardew-multiplayer-gate.mjs`.
+ * prefix warnings, and the launcher appends its own fixture-transaction records
+ * (window evidence, restore, save cleanup) after it - none of which is a verdict.
+ * Same scanning rule as `tools/_ladder-live-orchestrator.mjs` and
+ * `tools/run-stardew-multiplayer-gate.mjs`, restricted to the runner vocabulary.
  */
 export function parseRunnerResult(stdout) {
   const lines = String(stdout ?? "").split(/\r?\n/u);
