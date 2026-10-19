@@ -1205,6 +1205,12 @@ function captureModLogFacts(runDir) {
       saveGameMenu: tail(/SaveGameMenu/i),
       saveBoundary: tail(/save_boundary|SaveBoundaryFrameBudget|save boundary/i),
       sleepLifecycle: tail(/sleep lifecycle/i, 6),
+      // The two lines a freeze is diagnosed from, straight into the result instead of only into the archived log: the
+      // last step the tick NAMED (a stage marker) and the last thing the Mod say through the pipe ingress path.
+      lastStage: (rows.filter((row) => row.includes("DEBUG-native-local-stage")).slice(-1)[0] ?? "")
+        .trim()
+        .slice(0, 300),
+      lastIngress: (rows.filter((row) => row.includes("native chat ingress")).slice(-1)[0] ?? "").trim().slice(0, 300),
       lastFrameState: lastWith("game_mode="),
       lastSavingState: lastWith("saving="),
     });
