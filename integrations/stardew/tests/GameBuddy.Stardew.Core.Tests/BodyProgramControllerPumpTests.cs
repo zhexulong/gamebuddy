@@ -1017,4 +1017,20 @@ public sealed class BodyProgramControllerPumpTests
         // Falsifier for the invariant this guard must not break: the refusals it avoids were never a licence to retry a
         // dispatched node. Only one dispatch of the source node is ever recorded.
     }
+
+    [Fact]
+    public void ADeferralIsBoundedSoANonActionableWorldCannotHoldANode()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        var admission = new ImmediateAdmissionTransport();
+        var executor = new MachineNodeExecutor("opaque-machine-7");
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { CanDispatchNow = () => false };
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        // The world never becomes ready. Waiting is bounded (the native cooldown is about a second; an unbounded wait
+        // would be a strand), so past the bound the node is dispatched regardless and cannot be held for ever.
+        for (int pass = 0; pass < 200; pass += 1) controller.Update();
+        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
+            .Should().Be(BodyProgramNodeState.Succeeded);
+    }
 }

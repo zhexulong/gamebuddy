@@ -78,6 +78,18 @@ public sealed class FarmhandBodyProgramController
     /// </summary>
     public Func<bool>? CanDispatchNow { get; init; }
 
+    /// <summary>
+    /// How many passes one node ATTEMPT may be deferred for the world\u0027s sake.
+    ///
+    /// Bounded on purpose: the cooldown this waits out is about a second of native animation, and an unbounded wait
+    /// would let a permanently non-actionable world hold a node forever - which is a strand, not a wait. Past this
+    /// many passes the node is dispatched anyway, and if the world really is busy the refusal is recorded as the
+    /// honest node failure it is (the terminal shape fix is what makes that survivable).
+    /// </summary>
+    private const int MaxCadenceDeferrals = 90;
+
+    private readonly Dictionary<string, int> cadenceDeferrals = new(StringComparer.Ordinal);
+
     public BodyProgramJournalOpenStatus OpenStatus => this.authority.OpenStatus;
 
     /// <summary>Revokes this controller's exact authority tuple and drains any active update.</summary>
@@ -173,8 +185,18 @@ public sealed class FarmhandBodyProgramController
             if (!this.authority.IsLifecycleOpen) return;
             if (node.State != BodyProgramNodeState.AwaitingHostAdmission) continue;
             // The world gets its say BEFORE the transport result is taken: taking it and then skipping would consume
-            // the admission and strand the node awaiting a result that no longer exists.
-            if (this.CanDispatchNow is { } canDispatch && !canDispatch()) return;
+            // the admission and strand the node awaiting a result that no longer exists. The deferral is bounded, so a
+            // world that never becomes ready delays a node instead of holding it for ever.
+            if (this.CanDispatchNow is { } canDispatch && !canDispatch())
+            {
+                string deferralKey = $"{programId}\u001f{node.NodeId}\u001f{node.NodeAttempt}";
+                int deferred = this.cadenceDeferrals.TryGetValue(deferralKey, out int seen) ? seen : 0;
+                if (deferred < MaxCadenceDeferrals)
+                {
+                    this.cadenceDeferrals[deferralKey] = deferred + 1;
+                    return;
+                }
+            }
             BodyNodeAdmissionResult? admissionResult = this.admission!.TryTakeResult(programId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt);
             if (!this.authority.IsLifecycleOpen) return;
             if (admissionResult is null) continue;
