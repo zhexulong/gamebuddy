@@ -1241,6 +1241,34 @@ let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
  *
  * Counting rather than parsing timestamps keeps it independent of the log's clock format and of midnight.
  */
+/**
+ * Whether the game process is answering Windows messages, and how much CPU it has burned.
+ *
+ * Read-only, and matched by name because the runner does not receive the launched pid: nothing here kills or signals
+ * anything, and an absent process answers `responded: null` rather than guessing.
+ */
+function sampleGameProcess() {
+  try {
+    const rows = execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        "Get-Process -Name StardewModdingAPI,Stardew* -ErrorAction SilentlyContinue | Select-Object -First 1 -Property Responding,CPU | ConvertTo-Json -Compress",
+      ],
+      { encoding: "utf8", timeout: 5_000 },
+    );
+    const parsed = JSON.parse(rows.trim() === "" ? "null" : rows);
+    if (parsed === null) return Object.freeze({ responding: null, cpuSeconds: null });
+    return Object.freeze({
+      responding: parsed.Responding === true,
+      cpuSeconds: typeof parsed.CPU === "number" ? parsed.CPU : null,
+    });
+  } catch {
+    return Object.freeze({ responding: null, cpuSeconds: null });
+  }
+}
+
 function sampleModHeartbeat() {
   try {
     const lines = readFileSync(MOD_LOG_PATH(), "utf8")
@@ -1946,6 +1974,28 @@ let multidayOutcome = null;
  * 319` before the run was killed. The night watcher had a liveness check; the turn waiter did not.
  */
 let worldStallReason = null;
+
+//
+// Sampled on a timer, not only where the run happens to be waiting.
+//
+// The check first lived in the night watcher and in the turn-wait loop, so a freeze that began while neither was
+// active went unreported: measured 2026-10-19 (g67gate), the Mod log stopped for five minutes with the game process
+// unresponsive and the run said nothing. A timer makes the answer independent of the code path.
+//
+// It also samples the GAME PROCESS, because the Mod cannot report this class of freeze: in g69ring the Mod log stopped
+// and the tick watchdog never fired, which means the Mod's tick had already finished when the stall began - the game's
+// own update loop is what stopped. `game_responding=false` with a growing CPU count is that signature, and it tells a
+// reader whether the hang is inside the Mod or outside it.
+const stallSampler = setInterval(() => {
+  if (worldStallReason !== null) return;
+  const liveness = sampleModHeartbeat();
+  if (liveness.silentMs < MOD_HEARTBEAT_STALL_MS) return;
+  const game = sampleGameProcess();
+  worldStallReason =
+    `world_stopped_advancing:silent_ms=${String(liveness.silentMs)}:last_heartbeat=${liveness.line}` +
+    `:game_responding=${String(game.responding)}:game_cpu_s=${String(Math.round(game.cpuSeconds ?? -1))}`;
+}, 5_000);
+stallSampler.unref?.();
 // The run's own narrative judgement, made once before the verdict and published in the bundle. Declared out here so
 // the failure path can report it too (the catch may run before the verdict block).
 let historianRubricOutcome = null;

@@ -62,11 +62,30 @@ public sealed partial class ModEntry : Mod
         if (Interlocked.Exchange(ref this.tickWatchdogLastStalledTick, tick) == tick)
             return;
         this.Monitor.Log(
-            $"GameBuddy tick {tick} has been running for {elapsed / 1000}s; last phase={this.tickWatchdogPhaseForReport()}.",
+            "GameBuddy tick " + tick + " has been running for " + (elapsed / 1000) + "s; last phase=" + this.tickWatchdogPhaseForReport()
+                + "; recent=" + this.RecentStageSequenceForReport() + ".",
             LogLevel.Warn);
     }
 
     private string tickWatchdogPhaseForReport() => Volatile.Read(ref this.tickWatchdogPhase) ?? "unknown";
+
+    /// <summary>
+    /// The steps this lane has entered recently, oldest first, for a watchdog report.
+    ///
+    /// Why the phase alone is not enough: the lane's seven steps run inside a millisecond, and the on-disk markers are
+    /// throttled for volume, so a frozen log can end at a step whose successors never had a chance to print. This
+    /// sequence is kept in memory without I/O and is dumped only when a tick stops returning - exactly when it is needed.
+    /// </summary>
+    private string RecentStageSequenceForReport()
+    {
+        var ordered = new System.Collections.Generic.List<string>(this.recentStageSequence.Length);
+        for (int offset = 0; offset < this.recentStageSequence.Length; offset += 1)
+        {
+            string? entry = this.recentStageSequence[(this.recentStageCursor + offset) % this.recentStageSequence.Length];
+            if (entry is not null) ordered.Add(entry);
+        }
+        return ordered.Count == 0 ? "(none)" : string.Join(">", ordered);
+    }
 
     /// <summary>
     /// Name the stage the tick is about to enter, and prove it was REACHED, on the last line the log keeps.
@@ -96,6 +115,9 @@ public sealed partial class ModEntry : Mod
         if (now - this.nativeLocalPlayerFixtureLastStageUnixMs < floorMs)
             return;
         this.nativeLocalPlayerFixtureLastStageUnixMs = now;
+        // Lock-free write: the watchdog thread reads this while the game thread writes it, and a Queue being mutated
+        // during enumeration throws. A fixed ring of slots is safe to read in any state.
+        this.recentStageSequence[this.recentStageCursor++ % this.recentStageSequence.Length] = phase;
         this.Monitor.Log(
             $"[DEBUG-native-local-stage] stage={phase};tick={Interlocked.Read(ref this.tickWatchdogTick)}",
             LogLevel.Trace);
@@ -217,6 +239,12 @@ public sealed partial class ModEntry : Mod
     private long nativeLocalPlayerFixtureLastReadinessLogUnixMs;
     private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
     private long nativeLocalPlayerFixtureLastStageUnixMs;
+    // The recent step sequence, kept in memory because the LAST LINE of a frozen log is not enough: the lane runs seven
+    // steps inside a millisecond, and a throttle that prints only one of them cannot say which one hung. Recorded on
+    // 2026-10-19 (g67gate): the log ended at `capability_publication_done` while the hang was in one of the six steps
+    // after it, none of which had printed. Memory is cheap here; disk writes on the game thread are not.
+    private readonly string[] recentStageSequence = new string[24];
+    private int recentStageCursor;
 
     /// <summary>
     /// Tick watchdog state: the phase the current tick is in, and when that tick started.
