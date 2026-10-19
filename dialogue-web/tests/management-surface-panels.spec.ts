@@ -2288,27 +2288,24 @@ test("the armed World Info delete puts its confirmation on its own block, measur
 });
 
 /**
- * The rename control belongs to the row the wire can rename - and only to it.
+ * Every active row offers the rename control, and the row's own Chat is what it renames.
  *
- * The measured defect: every row carried the pencil, while `chat.rename` accepts only the MOUNTED
- * Chat. The Host requires the command's `chatHandle` and `selectionGeneration` to equal the mounted
- * lease's (`chat-management-service.ts`), so a rename aimed at any other row was refused with
- * `selection_conflict`: a real run answered 409 for a non-selected row's pencil and 200 for the
- * selected row's, on a panel that offered both.
+ * Earlier, `chat.rename` accepted only the MOUNTED Chat: the Host required the command's
+ * `chatHandle` and `selectionGeneration` to equal the mounted lease's
+ * (`chat-management-service.ts`), so the pencil was withheld from every other row because a rename
+ * aimed at one could only be refused with `selection_conflict`.
  *
- * The shape chosen is "absent on a row the wire would refuse", not "a pencil that selects the Chat
- * first": the row's own surface is already the selection gesture, so a second control that only
- * switches would be the same lie in a different costume. The assertions, and the failure each one
+ * The command now names its target by that Chat's own handle and CASes its own management revision,
+ * and the list carries only active Chats, so every shown row renames its own conversation - an
+ * archived or trashed row is not in this list at all. The assertions, and the failure each one
  * catches:
- *  - exactly one pencil on the surface, and it is the selected row's: catches the affordance coming
- *    back to every row;
- *  - the selected row's pencil still renames through `/chat/title` with the mounted handle, and the
- *    200 read-back is what the row then shows: catches a "fix" that removes the action instead of
- *    making it honest;
- *  - the non-selected row still carries its own archive arm: catches taking that row's whole action
- *    strip away with the pencil.
+ *  - a pencil on every shown row: catches the affordance staying gated to the selected row;
+ *  - the row's pencil renames through `/chat/title` with THAT row's handle and revision, and the 200
+ *    read-back is what the row then shows: catches a write that reuses the mounted row's identity;
+ *  - the row keeps its own archive arm: catches taking a row's whole action strip away with the
+ *    pencil.
  */
-test("only the row the mounted Chat owns offers the rename control", async ({ page }) => {
+test("every active row offers the rename control, and a non-selected row renames its own Chat", async ({ page }) => {
   const otherHandle = `${"F".repeat(42)}A`;
   const titleWrites: unknown[] = [];
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
@@ -2341,28 +2338,231 @@ test("only the row the mounted Chat owns offers the rename control", async ({ pa
   const mounted = surface.getByTestId("chat-item").filter({ hasText: "Mounted chat" });
   const older = surface.getByTestId("chat-item").filter({ hasText: "Older chat" });
 
-  // The control counts on both rows, after the change: one rename control, on the mounted row - the
-  // row whose Chat the wire can rename - and none on the row it would refuse.
-  await expect(surface.getByTitle("Rename Chat")).toHaveCount(1);
+  // Every shown row carries the pencil, and the list carries only active Chats: a Chat is renamed by
+  // its own handle now, so there is no row whose pencil the wire would refuse.
+  await expect(surface.getByTitle("Rename Chat")).toHaveCount(2);
   await expect(mounted.getByTitle("Rename Chat")).toHaveCount(1);
-  await expect(older.getByTitle("Rename Chat")).toHaveCount(0);
+  await expect(older.getByTitle("Rename Chat")).toHaveCount(1);
   await expect(older.getByRole("button", { name: "Archive", exact: true })).toBeVisible();
 
-  await mounted.getByTitle("Rename Chat").click();
   // The editor replaces the row's own title, so the field is located on the surface - and the write
-  // below names the mounted row's handle and revision, which is what proves whose editor this is.
+  // below names the OLDER row's own handle and revision, which is what proves whose editor this is.
+  await older.getByTitle("Rename Chat").click();
   await surface.locator("input.form-input").fill("Renamed from the row");
   await surface.getByRole("button", { name: "Save" }).click();
 
   await expect.poll(() => titleWrites.length).toBe(1);
   expect(titleWrites[0]).toEqual({
     apiVersion: 1,
-    selectionGeneration: 1,
-    chatHandle,
-    expectedManagementRevision: 4,
+    chatHandle: otherHandle,
+    expectedManagementRevision: 9,
     title: "Renamed from the row",
   });
   await expect(surface.getByTestId("chat-select").filter({ hasText: "Renamed from the row" })).toHaveCount(1);
-  // Nothing was ever aimed at the row the wire refuses.
-  expect(titleWrites.filter((write) => (write as { chatHandle?: string }).chatHandle === otherHandle)).toEqual([]);
 });
+
+/**
+ * Renaming a row the mount is NOT on must not move the mounted conversation.
+ *
+ * `chat.rename` now names the target by its own handle and CASes that Chat's own
+ * management revision, so the pencil is offered on every active row. The
+ * assertions, and the failure each one catches:
+ *  - a non-selected row carries its own pencil: catches the rename staying
+ *    gated to the mounted row;
+ *  - the request carries that row's handle and revision and no mounted-only
+ *    selection generation: catches a confirm that reuses the mounted row's
+ *    identity or a field the wire no longer has;
+ *  - the row's own title changes while the mounted row keeps its: catches a fold
+ *    that moved the wrong row;
+ *  - no `chat/select` is issued and the mounted Chat's single live subscription is
+ *    the same one it opened with (never closed, never re-subscribed): catches a
+ *    rename that unloaded or reloaded the conversation the player is actually in.
+ */
+test("renaming a Chat the mount is not on leaves the mounted conversation and its live stream untouched", async ({ page }) => {
+  const otherHandle = `${"E".repeat(42)}A`;
+  const streamEpoch = `${"S".repeat(42)}A`;
+  const cursor = `${"F".repeat(42)}A`;
+  const titleWrites: unknown[] = [];
+  const selects: unknown[] = [];
+  let otherTitle: string | null = "Older chat";
+
+  const projection = () => ({
+    ...composedRoot,
+    chat: { ...composedChat, eventStream: { epoch: streamEpoch, cursor } },
+  });
+
+  await page.addInitScript(() => {
+    const state = window as unknown as { __streams: Array<{ url: string; closed: boolean }> };
+    state.__streams = [];
+    class SyntheticEventSource {
+      onerror: ((event: unknown) => void) | null = null;
+      __index = -1;
+      constructor(url: string | URL) {
+        this.__index = state.__streams.length;
+        state.__streams.push({ url: String(url), closed: false });
+      }
+      addEventListener(): void {}
+      removeEventListener(): void {}
+      close(): void {
+        state.__streams[this.__index]!.closed = true;
+      }
+    }
+    window.EventSource = SyntheticEventSource as unknown as typeof EventSource;
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(projection())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(projection())));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        chats: [
+          { handle: chatHandle, title: "The mounted one", status: "active", managementRevision: 4, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." },
+          { handle: otherHandle, title: otherTitle, status: "active", managementRevision: 9, isSelected: false, updatedAtMs: 1_759_913_600_000, preview: "A quieter morning than this one." },
+        ],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/chat/title", async (route) => {
+    titleWrites.push(route.request().postDataJSON());
+    otherTitle = "A renamed older chat";
+    return route.fulfill(json200({ apiVersion: 1, title: otherTitle, managementRevision: 10 }));
+  });
+  await page.route("**/api/tavern/v1/chat/select", (route) => {
+    selects.push(route.request().postDataJSON());
+    return route.fulfill(json200({ apiVersion: 1, status: "switched" }));
+  });
+
+  const streamState = async (): Promise<Array<{ url: string; closed: boolean }>> =>
+    await page.evaluate(() => (window as unknown as { __streams: Array<{ url: string; closed: boolean }> }).__streams);
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+  await expect.poll(streamState).toHaveLength(1);
+
+  const other = surface.getByTestId("chat-item").filter({ hasText: "Older chat" });
+  await expect(other.getByTitle("Rename Chat")).toBeVisible();
+  await other.getByTitle("Rename Chat").click();
+  // The editor replaces the row's own title, so the field is located on the surface (the row's text is
+  // the input's value then, not the row's own text, so a hasText filter would stop matching it).
+  await surface.locator("input.form-input").fill("A renamed older chat");
+  await surface.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect.poll(() => titleWrites.length).toBe(1);
+  expect(titleWrites[0]).toEqual({
+    apiVersion: 1,
+    chatHandle: otherHandle,
+    expectedManagementRevision: 9,
+    title: "A renamed older chat",
+  });
+  await expect(surface.getByTestId("chat-select").filter({ hasText: "A renamed older chat" })).toBeVisible();
+
+  const mounted = surface.getByTestId("chat-item").filter({ hasText: "The mounted one" });
+  await expect(mounted).toHaveAttribute("data-selected", "true");
+  expect(selects, "renaming another row issued a selection request").toEqual([]);
+  const streams = await streamState();
+  expect(streams).toHaveLength(1);
+  expect(streams[0]?.closed, "the mounted conversation's subscription was closed").toBe(false);
+  expect(streams[0]?.url).toContain(`cursor=${cursor}`);
+});
+
+/**
+ * Archiving or trashing a row the mount is NOT on must not touch the mounted Chat.
+ *
+ * The transition names the row's own handle and CASes its own revision, and the
+ * shell is only told to migrate when the removed Chat IS the mounted one, so a
+ * history cleanup never switches the player out of the conversation they are in.
+ * The assertions, and the failure each one catches:
+ *  - the request carries that row's own handle and revision and no selection
+ *    generation: catches a confirm that reuses the mounted identity;
+ *  - the row leaves the active list: catches a transition reported but not landed;
+ *  - zero `chat/select` requests and one unchanged live subscription: catches a
+ *    non-mounted removal that reloaded or re-subscribed the mounted conversation.
+ */
+for (const operation of ["archive", "trash"] as const) {
+  test(`${operation === "archive" ? "archiving" : "trashing"} a Chat the mount is not on leaves the mounted conversation and its live stream untouched`, async ({ page }) => {
+    const otherHandle = `${"E".repeat(42)}A`;
+    const streamEpoch = `${"S".repeat(42)}A`;
+    const cursor = `${"F".repeat(42)}A`;
+    const writes: Array<{ url: string; body: unknown }> = [];
+    const selects: unknown[] = [];
+    let removed = false;
+
+    const projection = () => ({
+      ...composedRoot,
+      chat: { ...composedChat, eventStream: { epoch: streamEpoch, cursor } },
+    });
+
+    await page.addInitScript(() => {
+      const state = window as unknown as { __streams: Array<{ url: string; closed: boolean }> };
+      state.__streams = [];
+      class SyntheticEventSource {
+        onerror: ((event: unknown) => void) | null = null;
+        __index = -1;
+        constructor(url: string | URL) {
+          this.__index = state.__streams.length;
+          state.__streams.push({ url: String(url), closed: false });
+        }
+        addEventListener(): void {}
+        removeEventListener(): void {}
+        close(): void {
+          state.__streams[this.__index]!.closed = true;
+        }
+      }
+      window.EventSource = SyntheticEventSource as unknown as typeof EventSource;
+    });
+
+    await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(projection())));
+    await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(projection())));
+    await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+    await page.route("**/api/tavern/v1/chats?*", (route) =>
+      route.fulfill(
+        json200({
+          apiVersion: 1,
+          chats: removed
+            ? [{ handle: chatHandle, title: "The mounted one", status: "active", managementRevision: 4, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." }]
+            : [
+                { handle: chatHandle, title: "The mounted one", status: "active", managementRevision: 4, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." },
+                { handle: otherHandle, title: "Older chat", status: "active", managementRevision: 9, isSelected: false, updatedAtMs: 1_759_913_600_000, preview: "A quieter morning than this one." },
+              ],
+        }),
+      ),
+    );
+    await page.route(`**/api/tavern/v1/chats/${otherHandle}/${operation}`, (route) => {
+      writes.push({ url: route.request().url(), body: route.request().postDataJSON() });
+      removed = true;
+      return route.fulfill(
+        json200({ apiVersion: 1, handle: otherHandle, status: operation === "archive" ? "archived" : "trashed", managementRevision: 10 }),
+      );
+    });
+    await page.route("**/api/tavern/v1/chat/select", (route) => {
+      selects.push(route.request().postDataJSON());
+      return route.fulfill(json200({ apiVersion: 1, status: "switched" }));
+    });
+
+    const streamState = async (): Promise<Array<{ url: string; closed: boolean }>> =>
+      await page.evaluate(() => (window as unknown as { __streams: Array<{ url: string; closed: boolean }> }).__streams);
+
+    await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+    const surface = page.getByTestId("chats-surface");
+    await expect(surface).toBeVisible();
+    await expect.poll(streamState).toHaveLength(1);
+
+    const other = surface.getByTestId("chat-item").filter({ hasText: "Older chat" });
+    await other.getByRole("button", { name: operation === "archive" ? "Archive" : "Trash", exact: true }).click();
+    await other.getByTestId("chat-retention-confirm-yes").click();
+
+    await expect.poll(() => writes.length).toBe(1);
+    expect(writes[0]?.url).toContain(`/api/tavern/v1/chats/${otherHandle}/${operation}`);
+    expect(writes[0]?.body).toEqual({ apiVersion: 1, expectedManagementRevision: 9 });
+    await expect(surface.getByTestId("chat-item")).toHaveCount(1);
+    expect(selects, `${operation} of another row issued a selection request`).toEqual([]);
+    const streams = await streamState();
+    expect(streams).toHaveLength(1);
+    expect(streams[0]?.closed, "the mounted conversation's subscription was closed").toBe(false);
+    expect(streams[0]?.url).toContain(`cursor=${cursor}`);
+    await expect(surface.getByTestId("chat-item").first()).toHaveAttribute("data-selected", "true");
+  });
+}
