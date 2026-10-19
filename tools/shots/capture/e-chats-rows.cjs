@@ -3,9 +3,13 @@
 // shows a raw `*` or `{{`. The row meta line is clamped to two lines (height, line clamp, chars
 // inside the box, plus a forced 160-char preview probe — the wire's own maximum), and the meta
 // colour's contrast against its card is measured at both widths.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript } = require("./common.cjs");
 
 const RENAME = "重命名契约行";
+/** The three controls every active row carries, by the accessible name the surface gives them. */
+const RENAME_LABEL = "重命名会话";
+const ARCHIVE_LABEL = "归档";
+const TRASH_LABEL = "删除";
 
 const readRows = () => {
   const surface = document.querySelector('[data-testid="chats-surface"]');
@@ -62,17 +66,6 @@ const readRows = () => {
   };
 };
 
-const renameRow = ({ index }) => {
-  const surface = document.querySelector('[data-testid="chats-surface"]');
-  const rows = [...surface.querySelectorAll('[data-testid="chat-item"]')];
-  const row = rows[index];
-  if (row === undefined) return "no_such_row";
-  const pencil = [...row.querySelectorAll("button")].find((button) => (button.getAttribute("aria-label") ?? "").includes("重命名"));
-  if (pencil === undefined) return "no_rename_button";
-  pencil.click();
-  return "armed";
-};
-
 const commitRename = ({ title }) => {
   const input = document.querySelector('[data-testid="chats-surface"] input[type="text"]');
   if (input === null) return "no_input";
@@ -85,6 +78,96 @@ const commitRename = ({ title }) => {
   save.click();
   return "saved";
 };
+
+/**
+ * Every row and the controls that row carries.
+ *
+ * The owner's ruling is that a row's rename, archive and trash name THAT row's own Chat, so the
+ * controls are read per row rather than from one row: `data-selected` is the panel's own statement of
+ * which Chat the mount is on, and it is what tells the driver which rows this measurement must leave
+ * alone.
+ */
+const rowControls = () => {
+  const surface = document.querySelector('[data-testid="chats-surface"]');
+  if (surface === null) return { present: false, rows: [] };
+  const rows = [...surface.querySelectorAll('[data-testid="chat-item"]')];
+  return {
+    present: true,
+    rows: rows.map((row, index) => ({
+      index,
+      title: (row.querySelector(".chat-item-title")?.textContent ?? "").trim(),
+      selected: (row.getAttribute("data-selected") ?? "") === "true",
+      selectable: (row.getAttribute("data-selectable") ?? "") === "true",
+      controls: [...row.querySelectorAll(".chat-item-actions button")].map(
+        (button) => (button.getAttribute("aria-label") ?? (button.textContent ?? "").trim()),
+      ),
+      armed: row.querySelector('[data-testid="chat-retention-confirm"]') !== null,
+    })),
+  };
+};
+
+/** Click one named control in one row. */
+const armControl = ({ index, label }) => {
+  const surface = document.querySelector('[data-testid="chats-surface"]');
+  if (surface === null) return "no_chats_surface";
+  const row = [...surface.querySelectorAll('[data-testid="chat-item"]')][index];
+  if (row === undefined) return "no_such_row";
+  const button = [...row.querySelectorAll(".chat-item-actions button")].find(
+    (candidate) => (candidate.getAttribute("aria-label") ?? "") === label,
+  );
+  if (button === undefined) return `no_control:${label}`;
+  if (button.disabled) return `disabled:${label}`;
+  button.click();
+  return "clicked";
+};
+
+/** The armed archive/trash confirmation, and which row it belongs to. */
+const retentionConfirmFacts = () => {
+  const block = document.querySelector('[data-testid="chat-retention-confirm"]');
+  if (block === null) return { present: false };
+  const row = block.closest('[data-testid="chat-item"]');
+  const rect = (node) => {
+    if (node === null) return null;
+    const r = node.getBoundingClientRect();
+    return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+  };
+  return {
+    present: true,
+    rowTitle: (row?.querySelector(".chat-item-title")?.textContent ?? "").trim(),
+    prompt: (block.querySelector('[role="status"]')?.textContent ?? "").trim(),
+    yes: (block.querySelector('[data-testid="chat-retention-confirm-yes"]')?.textContent ?? "").trim(),
+    no: (block.querySelector('[data-testid="chat-retention-confirm-no"]')?.textContent ?? "").trim(),
+    box: rect(block),
+    controlsInThatRowWhileArmed: row === null ? null : row.querySelectorAll(".chat-item-actions button").length,
+  };
+};
+
+const commitRetention = () => {
+  const yes = document.querySelector('[data-testid="chat-retention-confirm-yes"]');
+  if (yes === null) return "no_confirm";
+  yes.click();
+  return "confirmed";
+};
+
+/** The select requests the wire carries - the one thing a non-mounted mutation must not produce. */
+const selectRequests = (wire) => wire.filter((entry) => entry.route.includes("/chat/select"));
+
+/**
+ * What the mount is showing, in both halves the ruling is about: the Host's own projection of the
+ * mounted Chat (title + transcript, read through the product's own state route) and the rows the
+ * transcript renders. Byte-identity is the comparison of these two serializations.
+ */
+async function mountedSnapshot(page) {
+  const durable = await readDurableTranscript(page);
+  const dom = await page.evaluate(() =>
+    [...document.querySelectorAll(".message-list > li.message")].map((row) => ({
+      handle: row.getAttribute("data-handle"),
+      role: row.className.includes("player") ? "player" : "companion",
+      text: (row.querySelector(".message-bubble")?.innerText ?? "").trim(),
+    })),
+  );
+  return { durable, dom };
+}
 
 const forceLongPreview = () => {
   // In-page measurement only: the wire admits at most 160 characters of preview

@@ -77,6 +77,59 @@ const stripFacts = (selector) => {
   };
 };
 
+const PLAYER_ROW = ".message-list > li.message.player";
+
+/**
+ * The row's own editor, measured the way the product's own mounted suite measures it
+ * (`dialogue-web/tests/chat-surface-probe.tsx::editInPlace`): the bubble's box, the field's box, the
+ * TEXT nodes that paint the words, and `copies` - those nodes plus the one the field's value holds,
+ * because a textarea's value is not a text node. Closed, `copies` is 1 (the bubble); open, the bubble
+ * is gone and the words stand once, in the field.
+ */
+const editInPlace = ({ selector, text }) => {
+  const row = document.querySelector(selector);
+  if (row === null) return { present: false };
+  const box = (element) => {
+    if (element === null) return null;
+    const rect = element.getBoundingClientRect();
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      w: Math.round(rect.width),
+      h: Math.round(rect.height),
+      top: Math.round(rect.top),
+    };
+  };
+  const bubble = row.querySelector(".message-bubble");
+  const field = row.querySelector('[data-testid="message-edit-field"]');
+  let textNodes = 0;
+  const carriers = [];
+  const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    if (!(node.textContent ?? "").includes(text)) continue;
+    const parent = node.parentElement;
+    if (parent === null || parent.getClientRects().length === 0) continue;
+    if (parent.closest("textarea, input, select") !== null) continue;
+    textNodes += 1;
+    carriers.push(`${parent.tagName.toLowerCase()}.${parent.className}`);
+  }
+  const inField = field !== null && field.value.includes(text);
+  const strip = row.querySelector(".message-actions");
+  return {
+    present: true,
+    row: box(row),
+    bubble: box(bubble),
+    field: box(field),
+    bubblePresent: bubble !== null,
+    fieldValue: field === null ? null : field.value,
+    textNodes,
+    carriers,
+    copies: textNodes + (inField ? 1 : 0),
+    stripMarginTop: strip === null ? null : getComputedStyle(strip).marginTop,
+    stripButtonsBesideTheEditor: row.querySelectorAll(".message-actions > button").length,
+  };
+};
+
 const editorFacts = () => {
   const form = document.querySelector('[data-testid="message-edit-form"]');
   if (form === null) return { present: false };
@@ -170,9 +223,13 @@ const editorFacts = () => {
   say(`controls in the player row's strip: ${stripBefore.controlCount} -> ${JSON.stringify(stripBefore.controls.map((control) => `${control.name} ${control.box.w}x${control.box.h}`))}`);
   await shot(page, "86-player-row-strip-1440x900.png");
 
-  const row = page.locator(".message-list > li.message.player").first();
+  const row = page.locator(PLAYER_ROW).first();
   const edit = row.locator('[data-testid="message-edit"]');
   say(`edit control count in that row: ${await edit.count()}`);
+  const closedInPlace = await page.evaluate(editInPlace, { selector: PLAYER_ROW, text: original });
+  say(
+    `closed:  row=${JSON.stringify(closedInPlace.row)} bubble=${JSON.stringify(closedInPlace.bubble)} field=${JSON.stringify(closedInPlace.field)} copies=${closedInPlace.copies} textNodes=${closedInPlace.textNodes} carriers=${JSON.stringify(closedInPlace.carriers)}`,
+  );
   await edit.first().click();
   await page.waitForTimeout(900);
 
@@ -181,6 +238,40 @@ const editorFacts = () => {
   say(JSON.stringify(editorOpen, null, 1));
   say(`the field starts on the words the row shows: ${editorOpen.field?.value === original}`);
   say(`save is not offered while nothing has changed: ${editorOpen.save?.disabled === true}`);
+
+  // ---- the owner's ruling: the bubble gives way to the editor, and Escape is lossless ----
+  const inPlace = await page.evaluate(editInPlace, { selector: PLAYER_ROW, text: original });
+  say("=== ITEM: the editor in the bubble's own place, and the copies of the words on screen ===");
+  say(
+    `open:    row=${JSON.stringify(inPlace.row)} bubble=${JSON.stringify(inPlace.bubble)} field=${JSON.stringify(inPlace.field)} copies=${inPlace.copies} textNodes=${inPlace.textNodes} carriers=${JSON.stringify(inPlace.carriers)}`,
+  );
+  say(`the bubble is GONE rather than repeated: bubblePresent=${inPlace.bubblePresent}`);
+  say(
+    `the editor takes the bubble's own place in the flow: field.top=${inPlace.field?.top} bubble.top was=${closedInPlace.bubble?.top} sameTop=${inPlace.field?.top === closedInPlace.bubble?.top}`,
+  );
+  say(
+    `the words stand on screen once: copies ${closedInPlace.copies} -> ${inPlace.copies} (text nodes carrying them ${closedInPlace.textNodes} -> ${inPlace.textNodes})`,
+  );
+  say(
+    `the row's own height: before=${closedInPlace.row.h} while editing=${inPlace.row.h}; the strip under it marginTop=${inPlace.stripMarginTop} buttons beside the editor=${inPlace.stripButtonsBesideTheEditor}`,
+  );
+  say(`the field holds the row's own words: ${inPlace.fieldValue === original}`);
+
+  say("=== ITEM: Escape brings the bubble back at the box it had ===");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(900);
+  const restored = await page.evaluate(editInPlace, { selector: PLAYER_ROW, text: original });
+  say(
+    `after Escape: bubblePresent=${restored.bubblePresent} bubble=${JSON.stringify(restored.bubble)} field=${JSON.stringify(restored.field)} copies=${restored.copies} rowHeight=${restored.row.h}`,
+  );
+  say(`the bubble came back at the box it had: ${JSON.stringify(restored.bubble) === JSON.stringify(closedInPlace.bubble)}`);
+  say(`the row came back to its own height: ${restored.row.h === closedInPlace.row.h}`);
+  say(
+    `the surface and the transcript are still mounted after Escape: ${await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null && document.querySelectorAll('.message-list > li.message').length > 0)}`,
+  );
+  await edit.first().click();
+  await page.waitForTimeout(900);
+  say(`the editor is open again for the rest of the flow: ${(await page.evaluate(editorFacts)).present}`);
   await row.scrollIntoViewIfNeeded().catch(() => undefined);
   await shot(page, "86-message-editor-open-1440x900.png");
   await page.setViewportSize({ width: 400, height: 800 });

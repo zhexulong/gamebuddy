@@ -71,11 +71,14 @@ const shortDigest = (digest) => digest.slice(0, 16);
 
 const CONTROL_HELPER = `
 window.__avatarControlOf = () => {
+  const section = document.querySelector("[data-companion-inspector-avatar]");
   const choose = document.querySelector("[data-companion-avatar-choose]");
   const file = document.querySelector("[data-companion-avatar-file]");
   const notice = document.querySelector("[data-companion-avatar-notice]");
   const image = document.querySelector("[data-companion-inspector-avatar] img.avatar-image");
   const plate = document.querySelector("[data-companion-inspector-avatar] .avatar");
+  const uploadRow = section === null ? null : section.querySelector(".composer-actions");
+  const drawer = document.querySelector('[data-testid="companion-inspector"]');
   return {
     control: choose === null ? null : {
       ...window.__shots.rect(choose),
@@ -96,6 +99,16 @@ window.__avatarControlOf = () => {
       naturalHeight: image.naturalHeight,
       box: window.__shots.rect(image),
     },
+    // Ruling 3: the drawer draws her as a hero portrait (128 px, `.avatar-hero`), and the upload
+    // control stands BESIDE it - the plate's own box and the row the two of them share are what makes
+    // that a measurement rather than a reading of the stylesheet.
+    plate: plate === null ? null : {
+      ...window.__shots.rect(plate),
+      classes: String(plate.className),
+      monogram: image === null ? (plate.textContent ?? "").trim() : null,
+    },
+    uploadRow: uploadRow === null ? null : window.__shots.rect(uploadRow),
+    drawer: drawer === null ? null : window.__shots.rect(drawer),
     monogram: image === null ? (plate?.textContent ?? "").trim() : null,
   };
 };
@@ -167,6 +180,21 @@ const faceOf = async (url) => {
   say(
     `control present=${before.control !== null} box=${JSON.stringify(before.control)} picker=${JSON.stringify(before.picker)} monogram=${JSON.stringify(before.monogram)}`,
   );
+  const besideTheHero =
+    before.control !== null &&
+    before.plate !== null &&
+    before.control.x >= before.plate.right &&
+    before.control.y + before.control.h / 2 <= before.plate.bottom &&
+    before.control.y + before.control.h / 2 >= before.plate.y;
+  say(
+    `the drawer's picture at hero size: plate=${before.plate?.w}x${before.plate?.h} classes=${JSON.stringify(before.plate?.classes ?? null)} monogram=${JSON.stringify(before.plate?.monogram ?? null)}`,
+  );
+  say(
+    `the upload control beside it: control.x=${before.control?.x} plate.right=${before.plate?.right} control.y=${before.control?.y} plate=${JSON.stringify(before.plate === null ? null : { y: before.plate.y, bottom: before.plate.bottom })} beside=${besideTheHero}`,
+  );
+  say(
+    `the row both share: ${JSON.stringify(before.uploadRow)}; the drawer's own column: ${JSON.stringify(before.drawer)}`,
+  );
   await shot(page, "90-avatar-upload-control-1440x900.png");
 
   const picker = page.locator("[data-companion-avatar-file]").first();
@@ -188,6 +216,9 @@ const faceOf = async (url) => {
   say(`notice: ${JSON.stringify(afterUpload.notice?.text ?? null)}`);
   say(
     `her picture: hasImage=${afterUpload.avatar !== null} decoded=${(afterUpload.avatar?.naturalWidth ?? 0) > 0} src=${JSON.stringify(afterUpload.avatar?.src ?? null)}`,
+  );
+  say(
+    `after the upload the portrait is still the hero plate: plate=${afterUpload.plate?.w}x${afterUpload.plate?.h} image=${JSON.stringify(afterUpload.avatar?.box ?? null)} control=${JSON.stringify(afterUpload.control)} sameRow=${afterUpload.uploadRow !== null && afterUpload.uploadRow.h >= afterUpload.plate?.h}`,
   );
   await shot(page, "90-avatar-upload-after-upload-1440x900.png");
 

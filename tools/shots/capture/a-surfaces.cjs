@@ -17,12 +17,36 @@ const measure = (testid) => {
   const region = document.querySelector(`section[data-testid="${testid}"]`);
   if (region === null) return { present: false };
   const frame = region.parentElement;
+  const header = region.querySelector(".surface-header");
   const h2 = region.querySelector(".surface-header h2");
   const content = region.querySelector(".surface-content");
   const style = h2 === null ? null : getComputedStyle(h2);
+  const headerStyle = header === null ? null : getComputedStyle(header);
+  const headerBox = header === null ? null : window.__shots.rect(header);
+  const headingBox = h2 === null ? null : window.__shots.rect(h2);
+  const labelledBy = region.getAttribute("aria-labelledby");
+  const labelNode = labelledBy === null ? null : document.getElementById(labelledBy);
   return {
     present: true,
     headingText: h2 === null ? null : h2.textContent,
+    // Owner's ruling 4: at the narrow breakpoint the surface's own heading must no longer be DRAWN,
+    // while the region keeps its accessible name. "Drawn" is the sheet's own recipe read back:
+    // the header leaves the visual flow (position absolute) and its box is clipped away
+    // (clip-path inset(50%)) - the two computed declarations a screenshot can only guess at.
+    heading: {
+      box: headingBox,
+      headerBox,
+      headerPosition: headerStyle === null ? null : headerStyle.position,
+      headerClipPath: headerStyle === null ? null : headerStyle.clipPath,
+      headerDisplay: headerStyle === null ? null : headerStyle.display,
+      painted: headerBox !== null && headerBox.w > 0 && headerBox.h > 0 && (headerStyle?.clipPath ?? "none") === "none",
+      inTheVisualFlow: headerStyle === null ? null : headerStyle.position !== "absolute",
+      offsetParentIsNotNull: h2 === null ? null : h2.offsetParent !== null,
+      clientRects: h2 === null ? null : h2.getClientRects().length,
+      tabIndex: h2 === null ? null : h2.tabIndex,
+    },
+    regionAccessibleName: labelNode === null ? null : (labelNode.textContent ?? null),
+    contentTop: content === null ? null : window.__shots.rect(content).y,
     region: window.__shots.rect(region),
     frame: window.__shots.rect(frame),
     content: content === null ? null : {
@@ -131,6 +155,9 @@ async function activate(page, label) {
       const facts = await page.evaluate(measure, surface.testid);
       say(`--- ${surface.label} (${surface.testid}) @ ${size.tag} via ${how}`);
       say(JSON.stringify(facts));
+      say(
+        `${surface.label} @ ${size.tag}: surfaceHeader position=${facts.heading?.headerPosition} clipPath=${facts.heading?.headerClipPath} box=${JSON.stringify(facts.heading?.headerBox)} headingBox=${JSON.stringify(facts.heading?.box)} headingPainted=${facts.heading?.painted} headingInTheVisualFlow=${facts.heading?.inTheVisualFlow} headingClientRects=${facts.heading?.clientRects} regionAccessibleName=${JSON.stringify(facts.regionAccessibleName)} contentTop=${facts.contentTop}`,
+      );
       await shot(page, `10-${surface.key}-${size.tag}.png`);
     }
   }

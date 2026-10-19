@@ -162,6 +162,15 @@ const durableRows = async (page) => {
   const deletable = rows.find((row) => row.delete !== null) ?? null;
   say(`rows carrying a rewind control: ${JSON.stringify(rows.filter((row) => row.rewind !== null).map((row) => ({ index: row.index, ariaLabel: row.rewind.name })))}`);
   say(`rows carrying a delete control: ${JSON.stringify(rows.filter((row) => row.delete !== null).map((row) => row.index))}`);
+  // Owner's ruling 2, second half: on the LAST message the rewind and the delete are the same act, so
+  // that row offers the delete alone. The fact is read off the last row's own strip, not assumed.
+  const lastRow = rows.length === 0 ? null : rows[rows.length - 1];
+  say(
+    `the transcript's own last row (index ${lastRow?.index}): role=${lastRow?.role} rewind=${JSON.stringify(lastRow?.rewind?.name ?? null)} delete=${JSON.stringify(lastRow?.delete?.name ?? null)} edit=${JSON.stringify(lastRow?.edit?.name ?? null)}`,
+  );
+  say(
+    `the last row offers the delete alone (no rewind there): ${lastRow !== null && lastRow.delete !== null && lastRow.rewind === null}`,
+  );
 
   // ---- DELETE: one row out of the middle ----
   say("=== ITEM: the delete — armed, then confirmed ===");
@@ -177,6 +186,9 @@ const durableRows = async (page) => {
     await page.waitForTimeout(700);
     const armed = await page.evaluate(confirmFacts, "message-delete-confirm");
     say(JSON.stringify(armed, null, 1));
+    say(
+      `the delete confirmation's own words: prompt=${JSON.stringify(armed.prompt)} confirm=${JSON.stringify(armed.yes.text)} cancel=${JSON.stringify(armed.no.text)}`,
+    );
     say(`the armed confirmation is the row's only control (buttons beside it: ${armed.otherControlsInTheRowWhileArmed})`);
     await shot(page, "87-delete-armed-1440x900.png");
 
@@ -227,6 +239,10 @@ const durableRows = async (page) => {
     await page.waitForTimeout(700);
     const armed = await page.evaluate(confirmFacts, "message-rewind-confirm");
     say(JSON.stringify(armed, null, 1));
+    say(
+      `the rewind confirmation's own words: prompt=${JSON.stringify(armed.prompt)} confirm=${JSON.stringify(armed.yes.text)} cancel=${JSON.stringify(armed.no.text)}`,
+    );
+    say(`the rewind control's accessible name says what it removes: ${JSON.stringify(rewindableNow.rewind.name)}`);
     say(`the armed confirmation is the row's only control (buttons beside it: ${armed.otherControlsInTheRowWhileArmed})`);
     await shot(page, "87-rewind-armed-1440x900.png");
 

@@ -30,6 +30,7 @@ const bookFacts = () => {
   }));
   const edit = section.querySelector("[data-companion-world-book-edit]");
   const notice = section.querySelector('[data-companion-world-book-notice]');
+  const draft = section.querySelector("[data-companion-world-book-draft]");
   return {
     present: true,
     heading: (section.querySelector("h3")?.textContent ?? "").trim(),
@@ -38,9 +39,13 @@ const bookFacts = () => {
     disclosureOpen: section.querySelector("[data-companion-world-book-disclosure]")?.open ?? null,
     entryCount: entries.length,
     entries,
-    editorOpen: section.querySelector("[data-companion-world-book-draft]") !== null,
+    editorOpen: draft !== null,
     editControl: edit === null ? null : { text: (edit.textContent ?? "").trim(), box: rect(edit) },
-    notice: notice === null ? null : { text: (notice.textContent ?? "").trim(), role: notice.getAttribute("role") },
+    notice: notice === null ? null : { text: (notice.textContent ?? "").trim(), role: notice.getAttribute("role"), box: rect(notice) },
+    // Ruling 5: the sentence that reports a save's outcome has to stand on the authoring form's own
+    // column (`max-width: 640px; margin-inline: auto`), not on the region's whole width - which is
+    // what the two boxes below are compared against each other for.
+    draftBox: rect(draft),
     section: rect(section),
   };
 };
@@ -60,6 +65,7 @@ const draftFacts = () => {
   return {
     present: true,
     heading: (draft.querySelector("h3")?.textContent ?? "").trim(),
+    box: rect(draft),
     rowCount: rows.length,
     rows: rows.map((row) => ({
       title: row.querySelector('input[type="text"]')?.value ?? null,
@@ -191,6 +197,7 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
   await page.waitForTimeout(1000);
   const draftOpen = await page.evaluate(draftFacts);
   say(JSON.stringify(draftOpen, null, 1));
+  say(`the draft's own column: ${JSON.stringify(draftOpen.box)} (the form measure, centred in the region)`);
   const target = 1;
   const originalBody = draftOpen.rows[target]?.body ?? "";
   const originalKeys = draftOpen.rows[target]?.keys ?? "";
@@ -209,6 +216,7 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
   const durableAfterEdit = await page.evaluate(durableBook, handle);
   const editedEntry = durableAfterEdit.entries[target] ?? null;
   say(`notice: ${JSON.stringify(afterEdit.notice?.text ?? null)}`);
+  say(`the success notice's own box: ${JSON.stringify(afterEdit.notice?.box ?? null)} (the editor has closed, so there is no draft to compare against)`);
   say(`durable revision ${durableBefore.revision} -> ${durableAfterEdit.revision}`);
   say(`durable entry ${target}: keys=${JSON.stringify(editedEntry?.keys)} constant=${editedEntry?.constant} chars=${editedEntry?.chars}`);
   // Read the WHOLE body back, not its first 40 characters: this driver appends a sentence to the end of a
@@ -315,6 +323,12 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
       `the refused save's own HTTP status: ${observed.writeStatus} (code=${JSON.stringify(observed.writeCode)}); the corrective re-read after it: ${observed.lastStatus}`,
     );
     say(`the sentence the surface shows: ${JSON.stringify(refused.notice?.text ?? null)}`);
+    say(
+      `the notice's own box: ${JSON.stringify(refused.notice?.box ?? null)}; the region: ${JSON.stringify(refused.section)}; the draft's own column: ${JSON.stringify(refused.draftBox)}`,
+    );
+    say(
+      `the refusal banner sits on the draft's column: ${refused.notice?.box != null && refused.draftBox != null && refused.notice.box.x === refused.draftBox.x && refused.notice.box.w === refused.draftBox.w}`,
+    );
     say(`the editor is STILL open on its own revision (nothing silently rebased): ${refused.editorOpen}`);
     await shot(page, "88-world-book-refusal-stale-revision-1440x900.png");
     // The same editor, reopened on the book that is there now, saves the same change: the refusal
