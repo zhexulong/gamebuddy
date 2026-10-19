@@ -121,6 +121,27 @@ const armControl = ({ index, label }) => {
   return "clicked";
 };
 
+/**
+ * Open one row's rename editor.
+ *
+ * Self-contained like every other page function here: the pencil is found by the panel's own accessible
+ * name for it (the driver's RENAME_LABEL is the same string), and the label is inlined because a
+ * serialized function cannot see module scope - the same reason `commitRename` inlines the save label.
+ */
+const renameRow = ({ index }) => {
+  const surface = document.querySelector('[data-testid="chats-surface"]');
+  if (surface === null) return "no_chats_surface";
+  const row = [...surface.querySelectorAll('[data-testid="chat-item"]')][index];
+  if (row === undefined) return "no_such_row";
+  const button = [...row.querySelectorAll(".chat-item-actions button")].find(
+    (candidate) => (candidate.getAttribute("aria-label") ?? "") === "重命名会话",
+  );
+  if (button === undefined) return "no_rename_control";
+  if (button.disabled) return "rename_disabled";
+  button.click();
+  return "opened";
+};
+
 /** The armed archive/trash confirmation, and which row it belongs to. */
 const retentionConfirmFacts = () => {
   const block = document.querySelector('[data-testid="chat-retention-confirm"]');

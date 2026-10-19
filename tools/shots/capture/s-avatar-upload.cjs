@@ -99,7 +99,7 @@ window.__avatarControlOf = () => {
       naturalHeight: image.naturalHeight,
       box: window.__shots.rect(image),
     },
-    // Ruling 3: the drawer draws her as a hero portrait (128 px, `.avatar-hero`), and the upload
+    // Ruling 3: the drawer draws her as a hero portrait (128 px, the avatar-hero class), and the upload
     // control stands BESIDE it - the plate's own box and the row the two of them share are what makes
     // that a measurement rather than a reading of the stylesheet.
     plate: plate === null ? null : {
