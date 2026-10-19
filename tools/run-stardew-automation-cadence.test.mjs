@@ -12,6 +12,7 @@ import test from "node:test";
 import { parseBatchArgs } from "./run-stardew-action-gates-batch.mjs";
 import {
   ACTION_GATE_BATCH_SCHEMA,
+  actionsNotJudgedByCadence,
   BLOCK_ENTRIES,
   BLOCKS_NOT_IN_CADENCE,
   buildBlockInvocation,
@@ -192,6 +193,23 @@ test("the B2 block judges the published gates the shared-world lane does not own
       }),
     /action_gate_scope_empty/,
   );
+});
+
+test("a pass says which published actions its cadence did not judge", () => {
+  const scope = resolveActionGateScope();
+  // The plan's cadence table makes B4 release-only, so a nightly pass runs no block that judges the
+  // two actions B4 owns. That is the plan's own cadence - and it is written down, so a nightly green
+  // never reads as "the whole published surface still opens" (plan §7: absence is never a pass).
+  assert.deepEqual(actionsNotJudgedByCadence(CADENCE_BLOCKS.nightly, scope), Object.keys(MULTIPLAYER_GATE_ACTIONS));
+  assert.deepEqual(actionsNotJudgedByCadence(CADENCE_BLOCKS.release, scope), []);
+  // Narrowed to B4 alone, the pass judges the two B4 owns and none of the other 89.
+  assert.deepEqual(actionsNotJudgedByCadence(["b4_shared_world"], scope), scope.judged);
+  // Every published action is named exactly once as judged or as not judged in this cadence.
+  for (const blocks of [CADENCE_BLOCKS.nightly, CADENCE_BLOCKS.release, ["b2_action_gates"], ["b4_shared_world"]]) {
+    const notJudged = actionsNotJudgedByCadence(blocks, scope);
+    const judged = [...scope.judged, ...scope.ownedElsewhere].filter((actionId) => !notJudged.includes(actionId));
+    assert.deepEqual([...judged, ...notJudged].sort(), [...scope.judged, ...scope.ownedElsewhere].sort());
+  }
 });
 
 test("each block's verdict is the record its OWN authority publishes", () => {
@@ -511,6 +529,7 @@ test("a block whose entry is not wired refuses the pass before anything runs", a
   // A refused pass publishes the SAME rollup shape, scope included: a reader never has to tell a
   // refusal's shape from a pass's.
   assert.deepEqual(rollup.actionGateScope.ownedElsewhere, Object.keys(MULTIPLAYER_GATE_ACTIONS));
+  assert.deepEqual(rollup.actionGateScope.notInThisCadence, Object.keys(MULTIPLAYER_GATE_ACTIONS));
   assert.equal(exitCode, 2);
 });
 
@@ -567,8 +586,10 @@ test("a passing pass is green, in the plan's order, with the block's own codes i
     rollup.blocksNotInCadence.map((entry) => entry.block),
     ["b1_offline_gates", "b5_game_surface", "b6_lifecycle_cold_session"],
   );
-  // So is the action-subject boundary: what B2 judged, and what it handed to B4 instead.
+  // So is the action-subject boundary: what B2 judged, what it handed to B4 instead, and what this
+  // cadence did not judge at all (B4 does not run in a nightly pass).
   assert.deepEqual(rollup.actionGateScope.ownedElsewhere, Object.keys(MULTIPLAYER_GATE_ACTIONS));
+  assert.deepEqual(rollup.actionGateScope.notInThisCadence, Object.keys(MULTIPLAYER_GATE_ACTIONS));
   assert.equal(
     rollup.actionGateScope.judged.length + rollup.actionGateScope.ownedElsewhere.length,
     STARDEW_PUBLISHED_ACTION_GATES.length,
@@ -696,4 +717,6 @@ test("a release pass runs every ladder scenario and both shared-world actions", 
   // lane does not own, and the two it does are the two B4 ran.
   assert.deepEqual(b2Only, resolveActionGateScope().judged);
   assert.deepEqual(rollup.actionGateScope.ownedElsewhere, Object.keys(MULTIPLAYER_GATE_ACTIONS));
+  // A release pass runs a block that judges each side of the split, so it leaves nothing unjudged.
+  assert.deepEqual(rollup.actionGateScope.notInThisCadence, []);
 });

@@ -133,6 +133,23 @@ export function resolveActionGateScope({
 }
 
 /**
+ * The published actions no block of THIS pass judges.
+ *
+ * `resolveActionGateScope` splits the published surface by which lane owns each action; this names
+ * what that split leaves unrun in the cadence being run. The plan's cadence table makes B4
+ * release-only, so a nightly pass judges 89 of the 91 published actions and the two B4 owns are
+ * simply not asked that night. That is the plan's own cadence — but it has to be written down, or a
+ * nightly green reads as "the whole published surface still opens" when two of its actions were
+ * never run at all (§7: absence is never a pass).
+ */
+export function actionsNotJudgedByCadence(blocks, scope) {
+  const judged = [];
+  if (blocks.includes("b2_action_gates")) judged.push(...scope.judged);
+  if (blocks.includes("b4_shared_world")) judged.push(...scope.ownedElsewhere);
+  return Object.freeze([...scope.judged, ...scope.ownedElsewhere].filter((actionId) => !judged.includes(actionId)));
+}
+
+/**
  * The blocks this driver composes: the ONE existing entry, the code a block is named by when
  * it reports no code of its own, and this driver's harness bound for it.
  *
@@ -614,6 +631,14 @@ export async function runCadence({
   // once, here, for every block.
   const runDir = realpathSync(request.runDir);
   log(`[stardew-automation-cadence] cadence=${request.cadence} blocks=${request.blocks.join(",")} runDir=${runDir}`);
+  // What this pass judges, and what it does not: the split of the published surface by lane, plus
+  // the actions this cadence runs no block for at all.
+  const actionGateScope = Object.freeze({
+    ...request.actionGateScope,
+    notInThisCadence: actionsNotJudgedByCadence(request.blocks, request.actionGateScope),
+  });
+  if (actionGateScope.notInThisCadence.length > 0)
+    log(`[stardew-automation-cadence] not judged by this cadence: ${actionGateScope.notInThisCadence.join(",")}`);
 
   // A block whose entry is not wired refuses the pass before any of it runs: a pass that skipped
   // the missing block and reported the rest as green would be absence-as-pass (§7).
@@ -625,7 +650,7 @@ export async function runCadence({
         cadence: request.cadence,
         runId: request.runId,
         runDir,
-        actionGateScope: request.actionGateScope,
+        actionGateScope,
       }),
       exitCode: 2,
     };
@@ -689,7 +714,7 @@ export async function runCadence({
           : `cadence_block_not_passed:${first.block}${first.target === null ? "" : `:${first.target}`}`,
       runId: request.runId,
       runDir,
-      actionGateScope: request.actionGateScope,
+      actionGateScope,
       rows: Object.freeze(rows),
       counts: countStates(rows),
       failedBlocks,
