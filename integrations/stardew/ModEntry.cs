@@ -76,6 +76,22 @@ public sealed partial class ModEntry : Mod
             "GameBuddy tick " + tick + " has been running for " + (elapsed / 1000) + "s; last phase=" + this.tickWatchdogPhaseForReport()
                 + "; recent=" + this.RecentStageSequenceForReport() + ".",
             LogLevel.Warn);
+        // ...and to a FILE as well, because the logger may be exactly what is stuck. Measured 2026-10-19 (g78gate): the
+        // engine kept rendering at 60 fps while this lane went silent mid-work, this report never appeared, and SMAPI's log
+        // stopped at the same instant - so a logger that blocks would hide the very stall the watchdog exists to report. A
+        // plain append from this timer thread needs nothing the game thread holds.
+        try
+        {
+            string directory = Path.Combine(Constants.DataPath, "ErrorLogs");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(
+                Path.Combine(directory, "gamebuddy-stalled-ticks.txt"),
+                $"{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()};tick={tick};elapsed_ms={elapsed};phase={this.tickWatchdogPhaseForReport()};recent={this.RecentStageSequenceForReport()}" + Environment.NewLine);
+        }
+        catch
+        {
+            // The log line above is the primary report; this is the fallback that survives a blocked logger.
+        }
     }
 
     private string tickWatchdogPhaseForReport() => Volatile.Read(ref this.tickWatchdogPhase) ?? "unknown";
