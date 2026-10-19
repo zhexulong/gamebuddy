@@ -101,6 +101,14 @@ export type BrowserTurnV1 = Readonly<{
   projectionRevision: number;
   canCancel: boolean;
   problemCode?: "interrupted" | "no_visible_presentation" | "runtime_unavailable" | "storage_unavailable";
+  /**
+   * The generation that wrote the reply the player can see stopped at the model's length
+   * ceiling, so that reply is a prefix of what she was writing. The Host publishes it only
+   * while that generation's text is the one on screen; absence is every other stop reason,
+   * a provider that reported none, and a generation whose text the player has swiped away
+   * from - none of which is a claim that the reply is complete.
+   */
+  truncated?: true;
 }>;
 
 export type BrowserDraftV1 = Readonly<{
@@ -401,7 +409,12 @@ const PROBLEM_CODES = [
 
 const MESSAGE_KEYS = ["handle", "role", "text", "locale", "order", "revision"] as const;
 const TURN_KEYS = ["handle", "state", "projectionRevision", "canCancel"] as const;
-const TURN_KEYS_WITH_PROBLEM_CODE = ["handle", "state", "projectionRevision", "canCancel", "problemCode"] as const;
+/**
+ * The two additive optional facts a turn may carry, in any combination: the durable failure
+ * classification, and the generation's own stop fact. A mirror that knew only one of them
+ * would refuse a legal turn the moment the Host sent the other.
+ */
+const TURN_OPTIONAL_KEYS = ["problemCode", "truncated"] as const;
 const DRAFT_KEYS = ["apiVersion", "revision", "text"] as const;
 const OPERATION_KEYS = ["operationId", "labelKey", "availability", "routeId"] as const;
 const NAVIGATION_ITEM_KEYS = ["itemId", "labelKey", "availability"] as const;
@@ -595,10 +608,16 @@ function isBrowserMessage(value: unknown): value is BrowserMessageV1 {
 
 function isBrowserTurn(value: unknown): value is BrowserTurnV1 {
   if (!isRecord(value)) return false;
-  if (!hasExactKeys(value, TURN_KEYS) && !hasExactKeys(value, TURN_KEYS_WITH_PROBLEM_CODE)) return false;
+  const keys = Object.keys(value);
+  if (!TURN_KEYS.every((key) => keys.includes(key))) return false;
+  if (keys.length !== TURN_KEYS.length + TURN_OPTIONAL_KEYS.filter((key) => key in value).length) return false;
   if (!isOpaqueHandle(value.handle) || !isOneOf(value.state, TURN_STATES)) return false;
   if (!isNonNegativeSafeInteger(value.projectionRevision) || typeof value.canCancel !== "boolean") return false;
   if ("problemCode" in value && !isOneOf(value.problemCode, TURN_PROBLEM_CODES)) return false;
+  // `true` is the only member the Host publishes: the field is present exactly when the model
+  // stopped at its length ceiling, so an explicit `false` is not a fact this contract has and a
+  // mirror that accepted one would be inventing a claim the Host never made.
+  if ("truncated" in value && value.truncated !== true) return false;
   return true;
 }
 

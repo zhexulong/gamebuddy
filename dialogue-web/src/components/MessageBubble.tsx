@@ -132,6 +132,7 @@ export const MessageBubble = memo(function MessageBubble({
   pending = null,
   streaming = false,
   waitingNote = null,
+  truncatedNote = null,
   as = "li",
   labels,
 }: {
@@ -208,6 +209,14 @@ export const MessageBubble = memo(function MessageBubble({
    * grey box the player sent became a wine bubble under a monogram a moment later.
    */
   waitingNote?: string | null;
+  /**
+   * The line a reply carries when the generation that wrote it stopped at the model's length
+   * ceiling: information about the reply the player is reading, never a failure and never a
+   * control - it names the Regenerate button this same row already offers. The Host publishes
+   * the fact from the model's own stop reason and only while this row still shows that
+   * generation's text, so the caller hands it here already decided. Absent for every other row.
+   */
+  truncatedNote?: string | null;
   /**
    * The element the row renders as. The transcript's rows are `<li>` of its own
    * `<ol>`; the optimistic row is the same presentation *outside* that list,
@@ -657,6 +666,17 @@ export const MessageBubble = memo(function MessageBubble({
               </div>
             </div>
           </div>
+        )}
+        {/* The reply's own length-ceiling line. It is information rather than a fault - the reply
+            is real and on screen, it is just a prefix - so it is neither styled nor placed like
+            the failure notice. It sits BELOW the control strip so the strip keeps exactly the
+            geometry it already had (the pager, Regenerate, the rewind and Delete in one row under
+            the bubble), and it carries no control of its own: the Regenerate it names is the
+            button directly above it. */}
+        {!isPlayer && truncatedNote !== null && (
+          <p className="message-truncated" data-testid="message-truncated">
+            {truncatedNote}
+          </p>
         )}
       </div>
     </Row>

@@ -1347,6 +1347,7 @@ export function ComposedReferenceGameApp() {
                 pending={chatMutation}
                 pendingPlayerMessage={pendingOptimisticMessage}
                 notice={pollFailure ? labels().chatFailed : (terminalTurnNotice ?? openingNotice)}
+                replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
                 onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
                 onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
                 onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}

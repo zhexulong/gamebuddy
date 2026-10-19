@@ -64,6 +64,8 @@ type BrowserTurnV1 = Readonly<{
   projectionRevision: number;
   canCancel: boolean;
   problemCode?: "interrupted" | "no_visible_presentation" | "runtime_unavailable" | "storage_unavailable";
+  /** The generation that wrote the visible reply stopped at the model's length ceiling. */
+  truncated?: true;
 }>;
 
 type TavernBrowserOperationV1 = Readonly<{
@@ -1165,7 +1167,8 @@ const PROBLEM_CODES = [
 
 const MESSAGE_KEYS = ["handle", "role", "text", "locale", "order", "revision"] as const;
 const TURN_KEYS = ["handle", "state", "projectionRevision", "canCancel"] as const;
-const TURN_KEYS_WITH_PROBLEM_CODE = ["handle", "state", "projectionRevision", "canCancel", "problemCode"] as const;
+/** The two additive optional turn facts, in any combination; see `reference-pipeline-api.ts`. */
+const TURN_OPTIONAL_KEYS = ["problemCode", "truncated"] as const;
 const OPERATION_KEYS = ["operationId", "labelKey", "availability", "routeId"] as const;
 const NAVIGATION_ITEM_KEYS = ["itemId", "labelKey", "availability"] as const;
 const WORLD_INFO_KEYS = ["state", "revision", "items"] as const;
@@ -1471,10 +1474,13 @@ function isBrowserMessage(value: unknown): value is BrowserMessageV1 {
 
 function isBrowserTurn(value: unknown): value is BrowserTurnV1 {
   if (!isRecord(value)) return false;
-  if (!hasExactKeys(value, TURN_KEYS) && !hasExactKeys(value, TURN_KEYS_WITH_PROBLEM_CODE)) return false;
+  const keys = Object.keys(value);
+  if (!TURN_KEYS.every((key) => keys.includes(key))) return false;
+  if (keys.length !== TURN_KEYS.length + TURN_OPTIONAL_KEYS.filter((key) => key in value).length) return false;
   if (!isOpaqueHandle(value.handle) || !isOneOf(value.state, TURN_STATES)) return false;
   if (!isNonNegativeSafeInteger(value.projectionRevision) || typeof value.canCancel !== "boolean") return false;
   if ("problemCode" in value && !isOneOf(value.problemCode, TURN_PROBLEM_CODES)) return false;
+  if ("truncated" in value && value.truncated !== true) return false;
   return true;
 }
 

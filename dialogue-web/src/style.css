@@ -799,6 +799,25 @@
     margin-top: 4px;
   }
 
+  /* The reply's own length-ceiling line. It is not a failure notice: the reply is real and on
+   screen, just unfinished, so it takes the muted secondary tone of the row's other metadata and
+   none of the problem styling. It is a block of its own BELOW the control strip, so the pager,
+   Regenerate, the rewind and Delete keep exactly the row they already had, and it carries no
+   control at all - the Regenerate it names is the button above it.
+
+   `contain: inline-size` is what keeps that promise: the row is shrink-to-fit, so a line whose
+   max-content is longer than the reply would widen the row, re-wrap the reply's own bubble and
+   stretch the strip under it. With its inline size excluded from the parent's intrinsic width, this
+   line takes the width the reply already had and wraps inside it - the bubble, the strip and every
+   control in it keep the exact boxes they had before the line existed. */
+  .message-truncated {
+    contain: inline-size;
+    margin: var(--space-1) 0 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-secondary);
+  }
+
   .regenerate-btn {
     display: inline-flex;
     align-items: center;

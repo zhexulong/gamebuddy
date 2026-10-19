@@ -463,6 +463,20 @@ test("validateSnapshot enforces exact union variants", () => {
   }
 });
 
+test("validateSnapshot carries the turn's length-ceiling fact additively and refuses a false one", () => {
+  const turn = { handle: HANDLE, state: "completed", projectionRevision: 1, canCancel: false };
+  assert.doesNotThrow(() => validateSnapshot(snapshot({ chat: { turn } })));
+  assert.doesNotThrow(() => validateSnapshot(snapshot({ chat: { turn: { ...turn, truncated: true } } })));
+  // The two additive optional facts are independent members, not one exclusive arm.
+  assert.doesNotThrow(() =>
+    validateSnapshot(snapshot({ chat: { turn: { ...turn, problemCode: "interrupted", truncated: true } } })),
+  );
+  // `true` is the only member the Host publishes; `false` would be a claim it never made.
+  for (const truncated of [false, "true", 1, null]) {
+    assert.throws(() => validateSnapshot(snapshot({ chat: { turn: { ...turn, truncated } } })), TavernProtocolError);
+  }
+});
+
 test("validateDraft is strict and closed", () => {
   assert.doesNotThrow(() => validateDraft({ apiVersion: 1, revision: 7, text: null }));
   assert.doesNotThrow(() => validateDraft({ apiVersion: 1, revision: 0, text: "Saved locally by Host." }));

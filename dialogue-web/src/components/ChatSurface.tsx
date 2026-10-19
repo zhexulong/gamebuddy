@@ -25,6 +25,7 @@ export function ChatSurface({
   pending,
   pendingPlayerMessage,
   notice,
+  replyTruncated,
   onSwipe,
   onRegenerate,
   onOpeningVariant,
@@ -66,6 +67,12 @@ export function ChatSurface({
   pendingPlayerMessage?: Readonly<{ idempotencyKey: string; text: string }> | null;
   /** The one turn-failure line the surface reports, or null for none. */
   notice: string | null;
+  /**
+   * True while the Host says the mounted turn's own generation stopped at the model's length
+   * ceiling: the reply it wrote is a prefix, and the sentence about that belongs on that reply's
+   * own row rather than in this one failure-or-notice line at the bottom of the surface.
+   */
+  replyTruncated: boolean;
   onSwipe: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate: (messageHandle: string) => void;
   onOpeningVariant: (messageHandle: string, direction: "prev" | "next") => void;
@@ -119,6 +126,7 @@ export function ChatSurface({
         onDeleteCancel={onDeleteCancel}
         deleteArmedHandle={deleteArmedHandle}
         pendingPlayerMessage={pendingPlayerMessage}
+        replyTruncated={replyTruncated}
       />
       {notice !== null && (
         <p className="reference-turn-notice" role="status">

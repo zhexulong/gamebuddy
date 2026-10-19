@@ -66,6 +66,12 @@ type Model = Readonly<{
   rewindArmedHandle: string | null;
   /** The one message whose delete is armed, exactly as the shell projects it to Timeline. */
   deleteArmedHandle: string | null;
+  /**
+   * The Host's turn fact `BrowserTurnV1.truncated`, exactly as the composed shell projects it to
+   * ChatSurface: true while the generation that wrote the visible reply stopped at the model's
+   * length ceiling. The probe never decides it from the text - a journey sets it.
+   */
+  replyTruncated: boolean;
 }>;
 
 let model: Model = {
@@ -75,6 +81,7 @@ let model: Model = {
   pending: null,
   rewindArmedHandle: null,
   deleteArmedHandle: null,
+  replyTruncated: false,
 };
 let rerender: (() => void) | null = null;
 
@@ -151,6 +158,7 @@ function Probe() {
         }}
         deleteArmedHandle={model.deleteArmedHandle}
         pending={model.pending}
+        replyTruncated={model.replyTruncated}
       />
       <Composer
         value={drafted}
@@ -190,6 +198,44 @@ const chatProbe = {
   setPreview(text: string | null): void {
     model = { ...model, preview: text === null ? null : { turnHandle: "T", text } };
     rerender?.();
+  },
+  /**
+   * The Host's turn fact, set exactly as the shell would: the surface never
+   * derives a length ceiling from the text, so a journey can only turn the fact
+   * on or off and then look at what the row renders.
+   */
+  setReplyTruncated(value: boolean): void {
+    model = { ...model, replyTruncated: value };
+    rerender?.();
+  },
+  /**
+   * The reply row's own boxes, as painted: the bubble, the control strip under it, the Regenerate
+   * button inside that strip, and - when the reply carries it - the length-ceiling line with its
+   * words. A journey reads this twice, with the fact on and off, because the line belongs under the
+   * reply and the controls above it must not move by one pixel when it appears.
+   */
+  truncatedReplyRow(handle: string): {
+    note: { text: string | null; box: ReturnType<typeof boxOf> } | null;
+    bubble: ReturnType<typeof boxOf>;
+    strip: ReturnType<typeof boxOf>;
+    regenerate: ReturnType<typeof boxOf> | null;
+  } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const bubble = li?.querySelector(".message-bubble");
+    const strip = li?.querySelector(".message-actions");
+    if (li === null || bubble === null || bubble === undefined || strip === null || strip === undefined) return null;
+    const note = li.querySelector('[data-testid="message-truncated"]');
+    const regenerate = li.querySelector(".regenerate-btn");
+    return {
+      note: note === null ? null : { text: note.textContent, box: boxOf(note) },
+      bubble: boxOf(bubble),
+      strip: boxOf(strip),
+      regenerate: regenerate === null ? null : boxOf(regenerate),
+    };
+  },
+  /** The sentence in each catalogue, so a journey can pin both languages' words. */
+  truncatedSentence(locale: "en" | "zh-CN"): string {
+    return messages(locale).chatReplyCutOff;
   },
   setVoice(state: VoiceSurfaceStateV1 | null): void {
     model = { ...model, voice: state };

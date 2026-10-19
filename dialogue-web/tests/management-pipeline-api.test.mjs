@@ -201,6 +201,17 @@ test("management World Info snapshot mirror accepts the published opaque state a
   assert.equal(createManagementPipelineSession(validated).snapshot, validated);
 });
 
+test("management snapshot carries the turn's length-ceiling fact additively and refuses a false one", () => {
+  const turn = { handle: HANDLE, state: "completed", projectionRevision: 1, canCancel: false };
+  const withTurn = (value) => ({ ...snapshot(), chat: { ...snapshot().chat, turn: value } });
+  assert.doesNotThrow(() => validateSnapshot(withTurn({ ...turn })));
+  assert.doesNotThrow(() => validateSnapshot(withTurn({ ...turn, truncated: true })));
+  assert.doesNotThrow(() => validateSnapshot(withTurn({ ...turn, problemCode: "interrupted", truncated: true })));
+  for (const truncated of [false, "true", 1]) {
+    assert.throws(() => validateSnapshot(withTurn({ ...turn, truncated })), TavernProtocolError);
+  }
+});
+
 test("management World Info validators reject incomplete, noncanonical, and non-strict values", () => {
   assert.throws(() => validateWorldInfoState({ state: "none", items: [] }), TavernProtocolError);
   assert.throws(() => validateWorldInfoState(worldInfo({ revision: BAD_HANDLE })), TavernProtocolError);

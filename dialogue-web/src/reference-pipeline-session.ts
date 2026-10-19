@@ -57,6 +57,8 @@ export type BrowserTurnV1 = Readonly<{
   projectionRevision: number;
   canCancel: boolean;
   problemCode?: "interrupted" | "no_visible_presentation" | "runtime_unavailable" | "storage_unavailable";
+  /** The generation that wrote the visible reply stopped at the model's length ceiling. */
+  truncated?: true;
 }>;
 
 export type SubmitResultV1 = Readonly<{

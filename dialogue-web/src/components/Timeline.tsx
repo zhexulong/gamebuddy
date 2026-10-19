@@ -34,6 +34,7 @@ export function Timeline({
   deleteArmedHandle = null,
   pending = null,
   pendingPlayerMessage = null,
+  replyTruncated = false,
 }: {
   transcript: readonly BrowserMessageV1[];
   preview?: Readonly<{ turnHandle: string; text: string }> | null;
@@ -55,6 +56,12 @@ export function Timeline({
     swipePrevious: string;
     swipeNext: string;
     regenerateVariant: string;
+    /**
+     * The line a reply carries when the generation that wrote it stopped at the model's length
+     * ceiling. It names the Regenerate control on the same row, so it is not a separate word for
+     * a separate action.
+     */
+    chatReplyCutOff: string;
     /** The catalogue's words for the Host's own greeting-variant labels. */
     openingVariantDefault: string;
     openingVariantAlternate: string;
@@ -131,6 +138,13 @@ export function Timeline({
    * line that never moved with it.
    */
   pendingPlayerMessage?: Readonly<{ idempotencyKey: string; text: string }> | null;
+  /**
+   * True while the Host says the mounted turn's own generation stopped at the model's length
+   * ceiling. The sentence it makes belongs to the reply THAT generation wrote, which is the row
+   * the turn committed - and the Host already withholds the fact once the player swipes to a
+   * different variant of it, so nothing here has to decide which text the fact describes.
+   */
+  replyTruncated?: boolean;
 }) {
   // The anchor names the companion the way the transcript will: the profile's
   // own name, or the catalog's word for an unnamed one, so the invitation's own
@@ -249,6 +263,16 @@ export function Timeline({
     regenerateHandler !== undefined && transcript.length > 1 && transcript[transcript.length - 1]?.role === "companion"
       ? transcript[transcript.length - 1]!.handle
       : null;
+  /**
+   * The row the mounted turn's generation wrote. A turn commits exactly one reply, and that reply
+   * is the transcript's last message when it is a companion's - the same premise `regenerateHandle`
+   * reads one line above - which is why the sentence and the Regenerate button it names stand on
+   * the same row rather than on two.
+   */
+  const truncatedHandle =
+    replyTruncated && transcript.length > 1 && transcript[transcript.length - 1]?.role === "companion"
+      ? transcript[transcript.length - 1]!.handle
+      : null;
 
   // Track the reader's own position: every scroll (a wheel, a drag, a keyboard
   // page-down or our own programmatic follow) updates whether they are at the
@@ -331,6 +355,7 @@ export function Timeline({
               onDeleteConfirm={deleteConfirmHandler}
               onDeleteCancel={onDeleteCancel === undefined ? undefined : handleDeleteCancel}
               deleteArmed={deleteArmedHandle === message.handle}
+              truncatedNote={message.handle === truncatedHandle ? labels.chatReplyCutOff : null}
               removedCount={transcript.length - message.order}
             />
           ))}
