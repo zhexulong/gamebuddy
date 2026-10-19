@@ -144,6 +144,12 @@ const ProblemCode = Type.Union([
   Type.Literal("chat_delete_opening_retained"),
   Type.Literal("chat_delete_turn_active"),
   Type.Literal("chat_delete_binding_unavailable"),
+  // Chat management (`chat.rename` / `chat.archive` / `chat.restore` / `chat.trash`) names any
+  // Chat of the mounted companion/continuity by its opaque handle, not only the mounted one. A
+  // handle that names no Chat of this partition is a bounded, player-actionable "not found" - the
+  // request never named a selection, so a selection conflict would describe a request that was
+  // not made.
+  Type.Literal("chat_not_found"),
   // A durable companion record that is absent, incomplete or unreadable is a data-integrity
   // fact, not a runtime outage: it is bounded and never retryable, so the player is not told
   // to retry something that cannot succeed by retrying.
@@ -1389,10 +1395,11 @@ export const GreetingUpdateCommandV1Schema = strictObject({
  * Chat lifecycle retention body. The exact Chat is named by the route path
  * handle and the operation by the route suffix (mirroring the connection
  * routes); the body carries only the CAS facts a browser can legitimately hold.
+ * There is no selection generation: the target is named by its own handle, which
+ * may be any Chat of the mounted companion/continuity - not only the mounted one.
  */
 export const ChatRetentionCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
-  selectionGeneration: PositiveGeneration,
   expectedManagementRevision: Revision,
 });
 export const ChatRetentionResultV1Schema = strictObject({
@@ -1651,7 +1658,6 @@ export const ChatListV1Schema = strictObject({
 });
 export const RenameChatTitleCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
-  selectionGeneration: PositiveGeneration,
   chatHandle: OpaqueHandle,
   expectedManagementRevision: Revision,
   title: TitleText,
@@ -1932,6 +1938,7 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_delete_opening_retained",
   "chat_delete_turn_active",
   "chat_delete_binding_unavailable",
+  "chat_not_found",
   "companion_record_unreadable",
   "character_voice_conflict",
   "companion_world_book_conflict",

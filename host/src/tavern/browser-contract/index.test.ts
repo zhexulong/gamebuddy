@@ -633,17 +633,35 @@ test("memory state requires a read-backed opaque projection revision before it c
   );
 });
 
-test("title rename binds exact selection, generation, revision and bounded NFC title", () => {
+test("retention names the target by its own route handle and CASes its own revision, with no selection generation", () => {
+  const command = { apiVersion: 1, expectedManagementRevision: 3 };
+  assert.equal(TavernBrowserValidatorsV1.ChatRetentionCommandV1Schema.Check(command), true);
+  // The Chat is named by the route path handle, which may be any Chat of the partition - not only
+  // the mounted one - so the mounted-only generation is gone and a stale sender that still carries
+  // it is refused.
+  assert.equal(
+    TavernBrowserValidatorsV1.ChatRetentionCommandV1Schema.Check({ ...command, selectionGeneration: 1 }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.ChatRetentionCommandV1Schema.Check({ ...command, expectedManagementRevision: -1 }),
+    false,
+  );
+});
+
+test("title rename binds the exact Chat handle, its own revision and a bounded NFC title", () => {
   const command = {
     apiVersion: 1,
-    selectionGeneration: 1,
     chatHandle: handle,
     expectedManagementRevision: 3,
     title: "Farm Morning Chat",
   };
   assert.equal(TavernBrowserValidatorsV1.RenameChatTitleCommandV1Schema.Check(command), true);
+  // The command names its target by handle and CASes on that Chat's own management revision. The
+  // mounted-only selection generation is no longer part of the shape, so a sender still carrying it
+  // is refused rather than quietly accepted as a second, ignored selector.
   assert.equal(
-    TavernBrowserValidatorsV1.RenameChatTitleCommandV1Schema.Check({ ...command, selectionGeneration: 0 }),
+    TavernBrowserValidatorsV1.RenameChatTitleCommandV1Schema.Check({ ...command, selectionGeneration: 1 }),
     false,
   );
   assert.equal(TavernBrowserValidatorsV1.RenameChatTitleCommandV1Schema.Check({ ...command, chatHandle: "A" }), false);
