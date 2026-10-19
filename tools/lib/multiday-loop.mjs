@@ -47,6 +47,44 @@ export function closeIsEngineCommitted(receipt) {
   return /clearing=true|close_effect=engine_shipping_commit/u.test(text);
 }
 
+/**
+ * Settle the menu holding the actor, or name why it could not be settled.
+ *
+ * Split out of the watch loop because this is the only branch that dispatches, and it carries the product's own
+ * receipt semantics: a refusal is REPORTED rather than retried into a loop, and a close the ENGINE owns (the
+ * settlement menu's commit, which is what saves the night) is WAITED FOR rather than re-sent - three "successful"
+ * dismissals of the same menu is what recorded a working night as uncleared (measured 2026-10-18, g42stall).
+ */
+async function settleHeldMenu({ world, menuType, menus, attempts, committed, now, deadline, sleep, pollIntervalMs }) {
+  if (committed.has(menuType)) {
+    return (await committedCloseStalled({ now, deadline, sleep, pollIntervalMs }))
+      ? `rollover_menu_not_cleared:${menuType}`
+      : null;
+  }
+  const sent = attempts.get(menuType) ?? 0;
+  if (sent >= MAX_DISMISS_ATTEMPTS) return `rollover_menu_not_cleared:${menuType}`;
+  attempts.set(menuType, sent + 1);
+  const outcome = await world.dismiss(menuType);
+  const entry = menus.find((candidate) => candidate.menuType === menuType);
+  entry.dismissReceipt = outcome.receipt ?? null;
+  entry.dismissReasonCode = outcome.reasonCode ?? null;
+  if (outcome.reasonCode !== null && outcome.reasonCode !== undefined) return outcome.reasonCode;
+  if (closeIsEngineCommitted(outcome?.receipt)) committed.add(menuType);
+  return null;
+}
+
+/**
+ * Wait one poll for a close the engine owns.
+ *
+ * Returns true only when the harness's own deadline has passed - the bounded, named outcome - so the loop keeps its
+ * shape: wait, re-observe, and let the crossing check decide.
+ */
+async function committedCloseStalled({ now, deadline, sleep, pollIntervalMs }) {
+  if (now() >= deadline) return true;
+  await sleep(pollIntervalMs);
+  return false;
+}
+
 /** The menu the actor is held by, in the shape the Mod reports it. */
 export function readHeldMenu(snapshot) {
   if (snapshot === null || typeof snapshot !== "object") return null;
@@ -154,30 +192,18 @@ export async function watchRollover(
     }
 
     if (decision.kind === "dismiss") {
-      // A committed close is WAITED FOR. Re-sending it would stack outro commits on a menu the engine is already
-      // closing, and counting those as failed attempts is what recorded a working night as uncleared.
-      if (committed.has(menuType)) {
-        if (now() >= deadline) {
-          return Object.freeze({ crossed: false, reasonCode: `rollover_menu_not_cleared:${menuType}`, menus });
-        }
-        await sleep(pollIntervalMs);
-        continue;
-      }
-      const sent = attempts.get(menuType) ?? 0;
-      if (sent >= MAX_DISMISS_ATTEMPTS) {
-        return Object.freeze({ crossed: false, reasonCode: `rollover_menu_not_cleared:${menuType}`, menus });
-      }
-      attempts.set(menuType, sent + 1);
-      const outcome = await world.dismiss(menuType);
-      const entry = menus.find((candidate) => candidate.menuType === menuType);
-      entry.dismissReceipt = outcome.receipt ?? null;
-      entry.dismissReasonCode = outcome.reasonCode ?? null;
-      // A refusal is reported, not retried into a loop: the product's own receipt is the answer.
-      if (outcome.reasonCode !== null && outcome.reasonCode !== undefined) {
-        return Object.freeze({ crossed: false, reasonCode: outcome.reasonCode, menus });
-      }
-      // ...and a close the engine owns is not a failure: stop dispatching and let it complete.
-      if (closeIsEngineCommitted(outcome?.receipt)) committed.add(menuType);
+      const stalled = await settleHeldMenu({
+        world,
+        menuType,
+        menus,
+        attempts,
+        committed,
+        now,
+        deadline,
+        sleep,
+        pollIntervalMs,
+      });
+      if (stalled !== null) return Object.freeze({ crossed: false, reasonCode: stalled, menus });
     }
 
     // The night is over once the world says so. A menu still holding the actor is not over, whatever the
