@@ -135,13 +135,28 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
 
   // The page's own session token, learned from the requests the surface itself sends: nothing is
   // read from a file, a config or an environment variable, and the value is never printed.
-  const observed = { token: null, lastStatus: null, lastRevision: null };
+  const observed = { token: null, lastStatus: null, lastRevision: null, writeStatus: null, writeCode: null };
   page.on("request", (request) => {
     const token = request.headers()["x-csrf-token"];
     if (typeof token === "string" && token.length > 0) observed.token = token;
   });
   page.on("response", async (response) => {
     if (!response.url().includes("/worldbook")) return;
+    const method = response.request().method();
+    // Per METHOD, not "the last /worldbook response": after a refused write the panel re-reads the book,
+    // so a single `lastStatus` ends up holding the corrective GET's 200 and the driver then reports it as
+    // "the status of the refused save". That misreading reached a four-reviewer pass as a contract
+    // violation (409 expected, 200 reported) while the route answers 409 correctly. The write's own
+    // status is the fact; the read's is context.
+    if (method === "PUT" || method === "POST") {
+      observed.writeStatus = response.status();
+      try {
+        observed.writeCode = (await response.json())?.code ?? null;
+      } catch {
+        observed.writeCode = null;
+      }
+      return;
+    }
     observed.lastStatus = response.status();
     try {
       observed.lastRevision = (await response.json())?.revision ?? null;
@@ -296,7 +311,9 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
     await page.locator("[data-companion-world-book-save]").first().click();
     await page.waitForTimeout(3000);
     const refused = await page.evaluate(bookFacts);
-    say(`the observed HTTP status of the refused save: ${observed.lastStatus}`);
+    say(
+      `the refused save's own HTTP status: ${observed.writeStatus} (code=${JSON.stringify(observed.writeCode)}); the corrective re-read after it: ${observed.lastStatus}`,
+    );
     say(`the sentence the surface shows: ${JSON.stringify(refused.notice?.text ?? null)}`);
     say(`the editor is STILL open on its own revision (nothing silently rebased): ${refused.editorOpen}`);
     await shot(page, "88-world-book-refusal-stale-revision-1440x900.png");
