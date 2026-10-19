@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 // The producer is a live harness: it mounts the real generation and drives the
 // real loopback API, so it cannot be unit-tested end to end. What CAN be tested
@@ -217,4 +219,76 @@ test("the world-info coverage boundary is recorded, not hidden", () => {
   assert.match(body, /COVERAGE BOUNDARY/);
   assert.match(body, /bindExact/, "the uncovered path must be named");
   assert.match(body, /sourceHandle: null/);
+});
+
+/**
+ * The management command bodies this producer sends must be EXACTLY the shapes the
+ * browser contract declares.
+ *
+ * This is the assertion whose absence let a schema change break the release gate
+ * silently: the producer sends a raw JSON body to a `strictObject` schema, so a
+ * field added or dropped on either side turns the step into a 400 at release time
+ * with no pre-release test to notice. The keys are DERIVED - each from the
+ * contract's own `strictObject` declaration and from the producer's own attempt
+ * block - so this file carries no second key list that could drift on its own.
+ */
+const CONTRACT_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "host",
+  "src",
+  "tavern",
+  "browser-contract",
+  "index.ts",
+);
+
+/** The declared property keys of one `export const <name> = strictObject({ ... });`. */
+function contractSchemaKeys(name) {
+  const source = readFileSync(CONTRACT_PATH, "utf8");
+  const marker = `export const ${name} = strictObject({`;
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, `${name} must be declared by the contract`);
+  const open = source.indexOf("{", start + marker.length - 1);
+  let depth = 0;
+  let end = -1;
+  for (let index = open; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    else if (source[index] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        end = index;
+        break;
+      }
+    }
+  }
+  assert.notEqual(end, -1, `${name} schema body is unterminated`);
+  return [...source.slice(open + 1, end).matchAll(/^\s*([A-Za-z][A-Za-z0-9]*)\s*:/gm)].map((m) => m[1]).sort();
+}
+
+/** The top-level keys of the object literal one attempt block hands to `sendJson`. */
+function producerBodyKeys(operationId) {
+  const body = attemptBody(operationId);
+  const match = /await sendJson\([\s\S]*?,\s*\{([\s\S]*?)\}\s*,?\s*\)/.exec(body);
+  assert.notEqual(match, null, `${operationId} must send an object body through sendJson`);
+  return [...match[1].matchAll(/^\s*([A-Za-z][A-Za-z0-9]*)\s*(?::|,)/gm)].map((m) => m[1]).sort();
+}
+
+test("the management command bodies the producer sends are exactly the contract's declared shapes", (t) => {
+  const renameKeys = contractSchemaKeys("RenameChatTitleCommandV1Schema");
+  const retentionKeys = contractSchemaKeys("ChatRetentionCommandV1Schema");
+  t.diagnostic(
+    `operation-evidence.4: contract declares chat.rename [${renameKeys.join(", ")}] and chat retention [${retentionKeys.join(", ")}]`,
+  );
+  assert.deepEqual(
+    producerBodyKeys("chat.rename"),
+    renameKeys,
+    "the chat.rename body drifted from RenameChatTitleCommandV1Schema",
+  );
+  for (const operationId of ["chat.archive", "chat.restore", "chat.trash"]) {
+    assert.deepEqual(
+      producerBodyKeys(operationId),
+      retentionKeys,
+      `the ${operationId} body drifted from ChatRetentionCommandV1Schema`,
+    );
+  }
 });

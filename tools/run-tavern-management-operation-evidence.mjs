@@ -269,12 +269,12 @@ async function exerciseOperations(origin, client) {
   });
 
   // chat.rename: the CAS revision is the SELECTED CHAT LIST ENTRY's
-  // `managementRevision` (from `/chats`), not anything on the snapshot.
+  // `managementRevision` (from `/chats`), not anything on the snapshot, and the
+  // command names its target by that entry's own handle - there is no mounted-only
+  // selection generation on the wire any more.
   await attempt("chat.rename", async () => {
     const snapshot = await readJson(origin, client, "/api/tavern/v1/state");
-    const generation = snapshot?.selection?.generation;
     const chatHandle = snapshot?.selection?.chatHandle;
-    if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error("selection_generation_unavailable");
     if (typeof chatHandle !== "string" || chatHandle.length === 0) throw new Error("chat_handle_unavailable");
     const list = await readJson(origin, client, "/api/tavern/v1/chats?apiVersion=1");
     const entries = Array.isArray(list?.chats) ? list.chats : Array.isArray(list) ? list : [];
@@ -284,7 +284,6 @@ async function exerciseOperations(origin, client) {
       throw new Error("management_revision_unavailable");
     await sendJson(origin, client, "PUT", "/api/tavern/v1/chat/title", {
       apiVersion: 1,
-      selectionGeneration: generation,
       chatHandle,
       expectedManagementRevision: entry.managementRevision,
       title: "Live Run",
@@ -1137,19 +1136,20 @@ async function exerciseOperations(origin, client) {
     if (row.isSelected !== true) throw new Error("chat_select_selection_not_durable");
   });
 
-  // Chat lifecycle retention: the exact mounted chat's handle + management
-  // revision come from the chat list; each transition CASes that revision and
-  // asserts the durable status in the reply. Archive then restore then trash,
-  // so the final state is trashed and every transition is real. The active
-  // list only carries active chats, so after archiving the next revision is
-  // threaded from the previous transition's result instead of a re-read.
+  // Chat lifecycle retention: the target's handle + management revision come
+  // from the chat list; each transition CASes that revision and asserts the
+  // durable status in the reply. Archive then restore then trash, so the final
+  // state is trashed and every transition is real. The active list only carries
+  // active chats, so after archiving the next revision is threaded from the
+  // previous transition's result instead of a re-read. The command names the
+  // target by its own handle and revision - no mounted-only selection
+  // generation - so this still drives the mounted chat, and a later run could
+  // equally drive any other.
   let retainedChat;
   const currentChat = async () => {
     if (retainedChat !== undefined) return retainedChat;
     const snapshot = await readJson(origin, client, "/api/tavern/v1/state");
-    const generation = snapshot?.selection?.generation;
     const chatHandle = snapshot?.selection?.chatHandle;
-    if (!Number.isSafeInteger(generation) || generation <= 0) throw new Error("selection_generation_unavailable");
     if (typeof chatHandle !== "string" || chatHandle.length === 0) throw new Error("chat_handle_unavailable");
     const list = await readJson(origin, client, "/api/tavern/v1/chats?apiVersion=1");
     const entries = Array.isArray(list?.chats) ? list.chats : Array.isArray(list) ? list : [];
@@ -1157,45 +1157,42 @@ async function exerciseOperations(origin, client) {
     if (entry === undefined) throw new Error("selected_chat_entry_unavailable");
     if (!Number.isInteger(entry.managementRevision) || entry.managementRevision < 0)
       throw new Error("management_revision_unavailable");
-    return { generation, chatHandle, managementRevision: entry.managementRevision };
+    return { chatHandle, managementRevision: entry.managementRevision };
   };
 
   await attempt("chat.archive", async () => {
-    const { generation, chatHandle, managementRevision } = await currentChat();
+    const { chatHandle, managementRevision } = await currentChat();
     const result = await sendJson(origin, client, "POST", `/api/tavern/v1/chats/${chatHandle}/archive`, {
       apiVersion: 1,
-      selectionGeneration: generation,
       expectedManagementRevision: managementRevision,
     });
     if (result === null || typeof result !== "object") throw new Error("chat_archive_unavailable");
     if (result.status !== "archived") throw new Error("chat_archive_not_applied");
     if (!Number.isInteger(result.managementRevision) || result.managementRevision <= managementRevision)
       throw new Error("chat_archive_revision_unadvanced");
-    retainedChat = Object.freeze({ generation, chatHandle, managementRevision: result.managementRevision });
+    retainedChat = Object.freeze({ chatHandle, managementRevision: result.managementRevision });
   });
 
   await attempt("chat.restore", async () => {
-    const { generation, chatHandle, managementRevision } = await currentChat();
+    const { chatHandle, managementRevision } = await currentChat();
     const result = await sendJson(origin, client, "POST", `/api/tavern/v1/chats/${chatHandle}/restore`, {
       apiVersion: 1,
-      selectionGeneration: generation,
       expectedManagementRevision: managementRevision,
     });
     if (result === null || typeof result !== "object") throw new Error("chat_restore_unavailable");
     if (result.status !== "active") throw new Error("chat_restore_not_applied");
     if (!Number.isInteger(result.managementRevision) || result.managementRevision <= managementRevision)
       throw new Error("chat_restore_revision_unadvanced");
-    retainedChat = Object.freeze({ generation, chatHandle, managementRevision: result.managementRevision });
+    retainedChat = Object.freeze({ chatHandle, managementRevision: result.managementRevision });
   });
 
   await attempt("chat.trash", async () => {
     // Trash is legal directly from active (resolveLifecycleTransition:
     // trash from active or archived), and the previous restore left the chat
     // active with a threaded revision, so this is a single real transition.
-    const { generation, chatHandle, managementRevision } = await currentChat();
+    const { chatHandle, managementRevision } = await currentChat();
     const result = await sendJson(origin, client, "POST", `/api/tavern/v1/chats/${chatHandle}/trash`, {
       apiVersion: 1,
-      selectionGeneration: generation,
       expectedManagementRevision: managementRevision,
     });
     if (result === null || typeof result !== "object") throw new Error("chat_trash_unavailable");
