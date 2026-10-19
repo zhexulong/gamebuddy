@@ -25,9 +25,11 @@ import {
   planCadence,
   publishedResultPath,
   readBlockVerdict,
+  resolveActionGateScope,
   runCadence,
 } from "./run-stardew-automation-cadence.mjs";
 import { MULTIPLAYER_GATE_ACTIONS, parseGateArgs } from "./run-stardew-multiplayer-gate.mjs";
+import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 
 const SAVE_NAME = "GameBuddyFixtureCadence_445094166";
 const FARMHAND_ID = "123456789";
@@ -137,6 +139,59 @@ test("a cadence's steps are the plan's cadence table", () => {
     ],
   );
   assert.deepEqual(Object.keys(MULTIPLAYER_GATE_ACTIONS), ["send_multiplayer_chat", "talk_to_npc"]);
+});
+
+test("the B2 block judges the published gates the shared-world lane does not own", () => {
+  const scope = resolveActionGateScope();
+  const published = STARDEW_PUBLISHED_ACTION_GATES.map((gate) => gate.actionId);
+  // The split is DERIVED from the two tables it reads: the published surface, and the actions the
+  // shared-world lane's own table says it can start. Neither list is written here.
+  assert.deepEqual(scope.ownedElsewhere, Object.keys(MULTIPLAYER_GATE_ACTIONS));
+  assert.deepEqual(
+    scope.judged,
+    published.filter((actionId) => !scope.ownedElsewhere.includes(actionId)),
+  );
+  assert.deepEqual([...scope.judged, ...scope.ownedElsewhere].sort(), [...published].sort());
+  assert.equal(scope.judged.length + scope.ownedElsewhere.length, STARDEW_PUBLISHED_ACTION_GATES.length);
+
+  // The B2 block's own parser is the authority on what its entry accepts: an unscoped pass runs
+  // exactly the judged set, in the published table's own order, and never the two B4 owns.
+  const unscoped = cadenceRequest({ blocks: ["b2_action_gates"] });
+  const unscopedRequest = parseCadenceArgs(unscoped.args, unscoped.env);
+  const b2 = buildBlockInvocation({
+    block: "b2_action_gates",
+    target: null,
+    request: unscopedRequest,
+    runDir: unscopedRequest.runDir,
+  });
+  assert.deepEqual(parseBatchArgs(b2.args.slice(1), unscoped.env).only, scope.judged);
+
+  // An operator who narrows the pass keeps their own scope: naming one of the two B4 owns is the
+  // batch's own documented way to say "this red is known and intended", so it must survive.
+  const narrowed = cadenceRequest({ blocks: ["b2_action_gates"], only: ["send_multiplayer_chat"] });
+  const narrowedRequest = parseCadenceArgs(narrowed.args, narrowed.env);
+  const narrowedB2 = buildBlockInvocation({
+    block: "b2_action_gates",
+    target: null,
+    request: narrowedRequest,
+    runDir: narrowedRequest.runDir,
+  });
+  assert.deepEqual(parseBatchArgs(narrowedB2.args.slice(1), narrowed.env).only, ["send_multiplayer_chat"]);
+
+  // Two tables that disagree, or a split that leaves B2 nothing to judge, refuse by name.
+  assert.throws(
+    () => resolveActionGateScope({ sharedWorld: ["not_a_published_action"] }),
+    /shared_world_action_not_published:not_a_published_action/,
+  );
+  assert.throws(
+    () =>
+      resolveActionGateScope({
+        published: STARDEW_PUBLISHED_ACTION_GATES.filter(
+          (gate) => MULTIPLAYER_GATE_ACTIONS[gate.actionId] !== undefined,
+        ),
+      }),
+    /action_gate_scope_empty/,
+  );
 });
 
 test("each block's verdict is the record its OWN authority publishes", () => {
@@ -453,6 +508,9 @@ test("a block whose entry is not wired refuses the pass before anything runs", a
   assert.equal(rollup.reasonCode, "cadence_block_entry_missing:b2_action_gates");
   assert.deepEqual(rollup.rows, []);
   assert.deepEqual(rollup.counts, { total: 0, passed: 0, blocked: 0 });
+  // A refused pass publishes the SAME rollup shape, scope included: a reader never has to tell a
+  // refusal's shape from a pass's.
+  assert.deepEqual(rollup.actionGateScope.ownedElsewhere, Object.keys(MULTIPLAYER_GATE_ACTIONS));
   assert.equal(exitCode, 2);
 });
 
@@ -508,6 +566,12 @@ test("a passing pass is green, in the plan's order, with the block's own codes i
   assert.deepEqual(
     rollup.blocksNotInCadence.map((entry) => entry.block),
     ["b1_offline_gates", "b5_game_surface", "b6_lifecycle_cold_session"],
+  );
+  // So is the action-subject boundary: what B2 judged, and what it handed to B4 instead.
+  assert.deepEqual(rollup.actionGateScope.ownedElsewhere, Object.keys(MULTIPLAYER_GATE_ACTIONS));
+  assert.equal(
+    rollup.actionGateScope.judged.length + rollup.actionGateScope.ownedElsewhere.length,
+    STARDEW_PUBLISHED_ACTION_GATES.length,
   );
   // Each block's own evidence survives in the run directory.
   assert.match(readFileSync(join(rollup.runDir, "b2_action_gates.log"), "utf8"), /all_gates_passed/u);
@@ -603,11 +667,13 @@ test("a release pass runs every ladder scenario and both shared-world actions", 
     extra: ["--expected-farmhand-id", FARMHAND_ID],
   });
   const launched = [];
+  let b2Only = null;
   const { rollup, exitCode } = await runCadence({
     argv: args,
     env,
-    runBlock: async ({ block, target }) => {
+    runBlock: async ({ block, target, args: blockArgs }) => {
       launched.push(`${block}${target === null ? "" : `:${target}`}`);
+      if (block === "b2_action_gates") b2Only = parseBatchArgs(blockArgs.slice(1), env).only;
       if (block === "b4_shared_world")
         return {
           exitCode: 0,
@@ -626,4 +692,8 @@ test("a release pass runs every ladder scenario and both shared-world actions", 
   assert.equal(rollup.state, "passed");
   assert.equal(rollup.counts.total, 1 + LADDER_SCENARIOS.length + Object.keys(MULTIPLAYER_GATE_ACTIONS).length);
   assert.equal(exitCode, 0);
+  // One owner per action, whichever cadence runs: B2 judged the published gates the shared-world
+  // lane does not own, and the two it does are the two B4 ran.
+  assert.deepEqual(b2Only, resolveActionGateScope().judged);
+  assert.deepEqual(rollup.actionGateScope.ownedElsewhere, Object.keys(MULTIPLAYER_GATE_ACTIONS));
 });

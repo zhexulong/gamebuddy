@@ -39,6 +39,21 @@
  *     it here would make this file a second owner of the pinned prepare/restore ordering
  *     (§4 seam 4). Reported, not faked.
  *
+ * THE ACTION-SUBJECT BOUNDARY (§7: a gate whose suite runs nowhere is worse than a failing gate)
+ * ------------------------------------------------------------------------------------------
+ * The published surface is not one lane's subject. Two of its actions — `send_multiplayer_chat`
+ * and `talk_to_npc` — are published and live-verified, and a single-player fixture can never
+ * exhibit their native seam (`Multiplayer.sendChatMessage` returns without sending unless
+ * `Game1.IsClient`/`Game1.IsServer` holds), which is why the B2 batch's own header says a full pass
+ * is expected to name those two not-passed. A B2 block that judged them would make every nightly
+ * pass red on a healthy machine, and a pass that is red by construction is one an operator learns
+ * to ignore: it would say nothing about the gates that CAN open. The lane that owns those two
+ * publishes exactly which actions they are (`MULTIPLAYER_GATE_ACTIONS`, which is also what this
+ * pass's b4 block runs), so the B2 scope is DERIVED from the two existing tables rather than written
+ * here: B2 judges the published gates that lane does not own, B4 judges those, and a table that
+ * names an action the other does not refuses the pass by name rather than running a silently
+ * smaller scope.
+ *
  * ONLY ONE BLOCK AT A TIME. The Mod's bridge is a single named pipe and the fixture root is a
  * single-owner transaction (§7), so the blocks run strictly one after another. Each block's own
  * entry arbitrates the fixture root and waits for it (`launch-ladder-live.mjs` waits for a free
@@ -61,6 +76,7 @@ import { fileURLToPath } from "node:url";
 import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
 import { normalizeLiveRunWindowMode } from "./lib/stardew-live-run.mjs";
 import { killProcessTree } from "./lib/windows-process-tree.mjs";
+import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 import { selectGates } from "./run-stardew-action-gates-batch.mjs";
 import { MULTIPLAYER_GATE_ACTIONS } from "./run-stardew-multiplayer-gate.mjs";
 
@@ -94,6 +110,27 @@ export const LADDER_SCENARIOS = Object.freeze([
 
 /** Both shared-world actions, from the gate's own table rather than a second copy of it. */
 const SHARED_WORLD_ACTIONS = Object.freeze(Object.keys(MULTIPLAYER_GATE_ACTIONS));
+
+/**
+ * The published gates the B2 block judges, and the actions this pass hands to its B4 block.
+ *
+ * Both tables are READ, never copied: `STARDEW_PUBLISHED_ACTION_GATES` is the published surface
+ * (the same authority the batch, the promotion gate and the shared-world gate read) and
+ * `MULTIPLAYER_GATE_ACTIONS` is the shared-world lane's own list of the actions it can start.
+ * A table that names an action the other does not, or a split that leaves B2 nothing to judge, is
+ * a refusal by name — never a silently smaller scope.
+ */
+export function resolveActionGateScope({
+  published = STARDEW_PUBLISHED_ACTION_GATES,
+  sharedWorld = SHARED_WORLD_ACTIONS,
+} = {}) {
+  const publishedIds = new Set(published.map((gate) => gate.actionId));
+  for (const actionId of sharedWorld)
+    if (!publishedIds.has(actionId)) throw new Error(`shared_world_action_not_published:${actionId}`);
+  const judged = published.map((gate) => gate.actionId).filter((actionId) => !sharedWorld.includes(actionId));
+  if (judged.length === 0) throw new Error("action_gate_scope_empty");
+  return Object.freeze({ judged: Object.freeze(judged), ownedElsewhere: Object.freeze([...sharedWorld]) });
+}
 
 /**
  * The blocks this driver composes: the ONE existing entry, the code a block is named by when
@@ -292,6 +329,7 @@ export function parseCadenceArgs(argv = [], env = process.env) {
     cadence,
     blocks: selected,
     only: Object.freeze(only),
+    actionGateScope: resolveActionGateScope(),
     saveName,
     ...paths,
     scenario,
@@ -434,7 +472,12 @@ export function buildBlockInvocation({ block, target, request, runDir }) {
         join(runDir, "b2-action-gates"),
         "--window-mode",
         request.windowMode,
-        ...request.only.flatMap((actionId) => ["--only", actionId]),
+        // The operator's own list when they narrowed the pass - the batch's documented way to say
+        // "this red is known and intended" - otherwise the derived scope above.
+        ...(request.only.length > 0 ? request.only : request.actionGateScope.judged).flatMap((actionId) => [
+          "--only",
+          actionId,
+        ]),
       ]),
       env: Object.freeze({}),
     });
@@ -534,7 +577,7 @@ function countStates(rows) {
 }
 
 /** The frozen rollup a refused pass publishes: no block ran, and nothing is faked as passed. */
-function refusedRollup({ reasonCode, cadence, runId, runDir }) {
+function refusedRollup({ reasonCode, cadence, runId, runDir, actionGateScope }) {
   return Object.freeze({
     schema: CADENCE_SCHEMA,
     cadence,
@@ -542,6 +585,7 @@ function refusedRollup({ reasonCode, cadence, runId, runDir }) {
     reasonCode,
     runId,
     runDir,
+    actionGateScope,
     rows: Object.freeze([]),
     counts: Object.freeze({ total: 0, passed: 0, blocked: 0 }),
     failedBlocks: Object.freeze([]),
@@ -581,6 +625,7 @@ export async function runCadence({
         cadence: request.cadence,
         runId: request.runId,
         runDir,
+        actionGateScope: request.actionGateScope,
       }),
       exitCode: 2,
     };
@@ -644,6 +689,7 @@ export async function runCadence({
           : `cadence_block_not_passed:${first.block}${first.target === null ? "" : `:${first.target}`}`,
       runId: request.runId,
       runDir,
+      actionGateScope: request.actionGateScope,
       rows: Object.freeze(rows),
       counts: countStates(rows),
       failedBlocks,
