@@ -12,7 +12,7 @@
 export type OpeningVariantLabels = Readonly<{ openingVariantDefault: string; openingVariantAlternate: string }>;
 
 /** The Host's `Default` / `Alternate N` in player words; any other label as published. */
-export function openingVariantLabel(label: string, labels: OpeningVariantLabels): string {
+function openingVariantLabel(label: string, labels: OpeningVariantLabels): string {
   if (label === "Default") return labels.openingVariantDefault;
   const alternate = /^Alternate (\d+)$/u.exec(label);
   return alternate === null ? label : labels.openingVariantAlternate.replace("{{index}}", alternate[1]!);

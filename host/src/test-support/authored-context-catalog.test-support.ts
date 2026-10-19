@@ -54,7 +54,7 @@ export const AUTHORED_CONTEXT_REGISTRY_SLOT_KEY = "magic-context.pi.gamebuddy-au
 
 const AUTHORED_CONTEXT_REGISTRY_SLOT = Symbol.for(AUTHORED_CONTEXT_REGISTRY_SLOT_KEY);
 
-export type AuthoredContextMaterializationView = Readonly<{
+type AuthoredContextMaterializationView = Readonly<{
   renderedBlock: string;
   sources: readonly Readonly<{ kind: string }>[];
 }>;
@@ -71,7 +71,7 @@ export function readAuthoredContextRegistry(): AuthoredContextRegistry | undefin
 }
 
 /** Key order is load-bearing: the vendor compares refs with `JSON.stringify`. */
-export function authoredContextStableRef(source: AuthoredContextStableSource): GameBuddyAuthoredStableSourceRef {
+function authoredContextStableRef(source: AuthoredContextStableSource): GameBuddyAuthoredStableSourceRef {
   return Object.freeze({
     sourceId: source.sourceId,
     kind: source.kind,
@@ -81,7 +81,7 @@ export function authoredContextStableRef(source: AuthoredContextStableSource): G
   });
 }
 
-export function authoredContextVolatileRef(source: AuthoredContextVolatileSource): GameBuddyAuthoredVolatileSourceRef {
+function authoredContextVolatileRef(source: AuthoredContextVolatileSource): GameBuddyAuthoredVolatileSourceRef {
   return Object.freeze({
     sourceId: source.sourceId,
     kind: "lorebook_entry",
