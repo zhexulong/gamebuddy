@@ -1947,6 +1947,11 @@ test("an activation refused for a missing installation reads as the prerequisite
   await panel.getByRole("button", { name: "Enable companion play" }).click();
 
   const statusLine = panel.locator('[data-guide-step="1"] .game-status');
+  // The attempt's own in-progress line is already one `.game-status` in step 1, so waiting for the count
+  // alone measures the press rather than its answer: wait for the refusal's sentence to land, and for that
+  // line to be laid out, before anything is measured.
+  await expect(statusLine).toContainText("Companion play needs a Stardew Valley installation");
+  await expect(statusLine).toBeVisible();
   await expect(statusLine).toHaveCount(1);
   const measurement = await statusLine.evaluate((node) => {
     const box = node.getBoundingClientRect();
@@ -5184,7 +5189,7 @@ test("clicking another chat while a turn generates aborts that turn and switches
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   // The turn really is generating, and it has already produced text the abort must preserve.
   const chatSurface = page.getByTestId("chat-surface");
-  await expect(chatSurface.getByRole("button", { name: "Stop" })).toBeVisible();
+  await expect(chatSurface.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
   await expect(chatSurface.getByRole("region", { name: "Chat transcript" })).toContainText(producedText);
   await page.getByRole("button", { name: "Chats", exact: true }).click();
   const surface = page.getByTestId("chats-surface");
@@ -5217,7 +5222,7 @@ test("clicking another chat while a turn generates aborts that turn and switches
   await expect.poll(() => selectRequests).toBe(2);
   await expect(page.getByTestId("chats-surface")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(producedText);
-  await expect(chatSurface.getByRole("button", { name: "Stop" })).toHaveCount(0);
+  await expect(chatSurface.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
 });
 
 /**
