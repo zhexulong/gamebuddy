@@ -19,6 +19,13 @@ const DRIVER_OUTS = [
   "i-followup",
   "j-card-import",
   "k-chat-select",
+  "l-new-surfaces",
+  "m-opening-picker",
+  "n-message-edit",
+  "o-companion-picture",
+  "p-rewind-delete",
+  "q-companion-world-book",
+  "r-card-export",
 ];
 
 /* ---------- tiny JSON-block parser for the driver fact files ---------- */
@@ -481,6 +488,156 @@ function measurementsFor(L, driverTexts, run) {
     }
   }
   L.push("");
+  newItemsFor(L, driverTexts);
+}
+
+/**
+ * The surfaces this set exists for (brief items 1-6), read from the drivers' own per-item lines.
+ *
+ * Each driver writes one line per measured fact - a count, a geometry, a file's own structure or a
+ * quoted sentence read off the page - so this reader selects lines rather than rewriting them: the
+ * numbers in README.txt and REPORT.txt are the same numbers the driver measured, not a summary made
+ * a second time.
+ */
+function newItemsFor(L, driverTexts) {
+  const emit = (text, patterns) => {
+    if (text === null) return false;
+    let found = false;
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      if (patterns.some((pattern) => pattern.test(trimmed))) {
+        L.push(`  ${trimmed}`);
+        found = true;
+      }
+    }
+    return found;
+  };
+  const item = (title, key, patterns) => {
+    const text = driverTexts[key] ?? null;
+    L.push(title);
+    if (text === null) {
+      L.push(`  driver ${key} RAN WITH NO FACT FILE (named skip or crash above)`);
+      return;
+    }
+    if (!emit(text, patterns)) L.push(`  the ${key} driver recorded no line this reader looks for`);
+  };
+
+  item("ITEM 1 — the opening a new Chat starts on (driver m)", "m-opening-picker", [
+    /^picker present:/,
+    /^picker @400x800:/,
+    /^choosing option #/,
+    /^the click answers:/,
+    /^the created Chat's opening equals/,
+    /^the panel's card for the created Chat:/,
+    /^switching to the created Chat:/,
+    /^first row role=/,
+    /^chosen line:/,
+    /^rows discarded:/,
+    /^saving the one-opening set:/,
+    /^notice after saving:/,
+    /^chat rows before=/,
+    /^SKIPPED:/,
+  ]);
+  item("ITEM 3 — editing a message in place (driver n)", "n-message-edit", [
+    /^credential present/,
+    /^turn settled:/,
+    /^the row to edit carries:/,
+    /^controls in the player row's strip:/,
+    /^edit control count in that row:/,
+    /^the field starts on the words the row shows:/,
+    /^save is not offered while nothing has changed:/,
+    /^editor @400x800:/,
+    /^after typing, save is enabled:/,
+    /^the DOM carries the rewritten text in the same row:/,
+    /^rows before=/,
+    /^the Host's own row carries the rewritten text too:/,
+    /^SKIPPED:/,
+  ]);
+  item("ITEM 2 — her picture, and the monogram that stands in for it (driver o)", "o-companion-picture", [
+    /^app bar @/,
+    /^transcript rows=/,
+    /^every companion row addresses/,
+    /^roster rows=/,
+    /^served bytes /,
+    /^roster @400x800:/,
+    /^review for a \.json card:/,
+    /^json-card import:/,
+    /^SKIPPED:/,
+  ]);
+  item("ITEM 4 — the rewind and the delete (driver p)", "p-rewind-delete", [
+    /^credential present/,
+    /^exchanges before:/,
+    /^turn settled:/,
+    /^rows carrying a (rewind|delete) control:/,
+    /^deleting row index=/,
+    /^the armed confirmation is the row's only control/,
+    /^cancelling the arm/,
+    /^rows before=/,
+    /^the deleted handle is gone from the Host's own rows:/,
+    /^every other row is still there, in the same order:/,
+    /^durable rows after:/,
+    /^rewinding to row index=/,
+    /^the reply the rewind was taken on survives/,
+    /^(delete|rewind): /,
+    /^SKIPPED:/,
+  ]);
+  item("ITEM 5 — her own world book, edited (driver q)", "q-companion-world-book", [
+    /^the companion in play:/,
+    /^durable book: revision=/,
+    /^row \d+: keys /,
+    /^save offered:/,
+    /^notice:/,
+    /^durable revision /,
+    /^durable entry \d+:/,
+    /^the body kept the rewritten sentence:/,
+    /^the entry as the surface now renders it:/,
+    /^draft rows /,
+    /^the surface's own count line:/,
+    /^durable entries /,
+    /^durable titles:/,
+    /^cancelling the arm:/,
+    /^the row left the draft locally/,
+    /^the removed entry's title is gone/,
+    /^the second writer/,
+    /^the book on the server is now revision/,
+    /^the observed HTTP status of the refused save:/,
+    /^the sentence the surface shows:/,
+    /^the editor is STILL open/,
+    /^reopened and saved:/,
+    /^the recovered save's status:/,
+    /^SKIPPED:/,
+  ]);
+  item("ITEM 6 — the character card in both forms, and the PNG read back in (driver r)", "r-card-export", [
+    /^json control:/,
+    /^png control:/,
+    /^companions before the exports:/,
+    /^download the browser was handed:/,
+    /^the Host's answer:/,
+    /^the surface's own notice:/,
+    /^the exported JSON card /,
+    /^the exported PNG:/,
+    /^the card inside the PNG /,
+    /^the PNG's card and the JSON card describe the same companion:/,
+    /^staging the exported file:/,
+    /^the review of the exported card:/,
+    /^the import's own answer:/,
+    /^companions after the re-import:/,
+    /^rows the re-import added:/,
+    /^the picture the imported companion serves:/,
+    /^her picture survived the round trip:/,
+    /^SKIPPED:/,
+  ]);
+  const l = driverTexts["l-new-surfaces"] ?? null;
+  if (l !== null) {
+    L.push("ITEM 2b — the roster and transcript reading of the previous set (driver l)");
+    emit(l, [
+      /^rows=.+withImage=/,
+      /^every picture is a same-origin/,
+      /^player rows carry no image:/,
+      /^her picture decoded in the browser/,
+    ]);
+  }
 }
 
 const overlaySummary = (text) => {
@@ -647,6 +804,11 @@ function buildReport({ paths, run, launch, rootLayout, cleanupLogText }) {
       `  assertion outcome and the "operational/presentation stay empty on a healthy run" nuance: see README.txt ISOLATION section.`,
     );
   }
+  R.push("");
+  R.push("THE NUMBERS BEHIND EVERY COMPLAINT ON THE SURFACES THIS SET WAS FOR (items 1-6):");
+  const itemLines = [];
+  newItemsFor(itemLines, Object.fromEntries(DRIVER_OUTS.map((key) => [key, driver(paths, key)])));
+  R.push(...itemLines.map((line) => `  ${line}`));
   R.push("");
   R.push("WHAT I CANNOT TELL YOU:");
   R.push("  whether a truncated chats row ends in an ellipsis or a bare cut, whether the memory empty");

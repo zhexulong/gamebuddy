@@ -25,6 +25,19 @@ const DRIVERS = [
   // measures it rather than only with a screenshot nobody can read back: the companion's picture,
   // the read-only inspector, and the World Info library's authoring panel.
   { key: "l-new-surfaces", file: "l-new-surfaces.cjs", out: "l-new-surfaces.txt" },
+  // The surfaces the night's work landed after the previous set: the opening a new Chat starts on,
+  // the message editor in a player row's own strip, her picture (app bar, roster, transcript and the
+  // monogram a card without one gets), the rewind and the delete, her own world book's authoring
+  // editor, and the character card in both forms. The order is the run's own: switching conversations
+  // and creating Chats is what the opening driver does, so the drivers that read the OPEN conversation
+  // run after the editor has made sure one with a message of its own is mounted, and the picture
+  // driver runs once such a transcript exists (a player row is part of what it measures).
+  { key: "m-opening-picker", file: "m-opening-picker.cjs", out: "m-opening-picker.txt" },
+  { key: "n-message-edit", file: "n-message-edit.cjs", out: "n-message-edit.txt" },
+  { key: "o-companion-picture", file: "o-companion-picture.cjs", out: "o-companion-picture.txt" },
+  { key: "p-rewind-delete", file: "p-rewind-delete.cjs", out: "p-rewind-delete.txt" },
+  { key: "q-companion-world-book", file: "q-companion-world-book.cjs", out: "q-companion-world-book.txt" },
+  { key: "r-card-export", file: "r-card-export.cjs", out: "r-card-export.txt" },
 ];
 
 async function exists(path) {

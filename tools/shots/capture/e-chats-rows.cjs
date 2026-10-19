@@ -128,7 +128,17 @@ const forceLongPreview = () => {
   say(JSON.stringify(facts, null, 1));
 
   let landedInChat = null;
+  // One control, two jobs: with openings to choose from the create control opens the picker, and the
+  // Chat exists only once an opening is picked. This driver means "another conversation", which is
+  // the default opening - the same thing a companion with no choice gets - so the picker is answered
+  // here instead of being read as a create that did nothing (which left this loop unbounded).
+  let createAttempts = 0;
   while (facts.rowCount < 2) {
+    createAttempts += 1;
+    if (createAttempts > 5) {
+      say(`gave up after ${createAttempts - 1} create attempts without a second row on the list`);
+      break;
+    }
     const created = await page.evaluate(() => {
       const surface = document.querySelector('[data-testid="chats-surface"]');
       if (surface === null) return "no_chats_surface";
@@ -140,6 +150,11 @@ const forceLongPreview = () => {
     say("create another conversation:", created);
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await page.waitForTimeout(1500);
+      if ((await page.locator('[data-testid="opening-option"]').count()) > 0) {
+        await page.locator('[data-testid="opening-option"]').first().click();
+        say("the create control opened the opening picker; the default opening was chosen");
+        continue;
+      }
       // Creating a Chat now lands IN it: the shell selects the new conversation and moves
       // the region to the chat surface, so the list is not on screen any more. Recorded
       // here as the fact it is (this driver used to read the list straight after the

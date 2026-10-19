@@ -110,7 +110,38 @@ window.__shots = {
 };
 `;
 
-module.exports = { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot };
+module.exports = { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, readDurableTranscript };
+
+/**
+ * The Host's own projection of the mounted conversation, read through the product's own state route
+ * with the page's own session cookie (a read sends no CSRF header). The DOM is what the player sees;
+ * this is what the Host kept, and a driver reports the two apart because they can disagree - a
+ * message the transcript no longer renders still has an `order` here, which is what a delete leaves.
+ */
+async function readDurableTranscript(page) {
+  return await page.evaluate(async () => {
+    try {
+      const response = await fetch("/api/tavern/v1/state");
+      if (!response.ok) return { ok: false, status: response.status };
+      const body = await response.json();
+      const chat = body.chat ?? null;
+      return {
+        ok: true,
+        title: chat?.title ?? null,
+        companion: chat?.companion?.name ?? null,
+        transcript: (chat?.transcript ?? []).map((message) => ({
+          order: message.order,
+          role: message.role,
+          revision: message.revision,
+          handle: message.handle,
+          text: message.text,
+        })),
+      };
+    } catch (error) {
+      return { ok: false, failed: String(error).slice(0, 160) };
+    }
+  });
+}
 
 /**
  * A screenshot that does not throw the driver away.
@@ -143,6 +174,15 @@ async function shot(page, file, options = {}) {
  * `更多` disclosure, so the same entry is either a bar button or a row inside that panel.
  */
 async function activateSurface(page, label) {
+  // A drawer another driver left open covers `main` with its own backdrop, and that backdrop
+  // intercepts the bar's own controls (a surface switch is then a 30 s click timeout rather than a
+  // measurement). Escape is the drawer's own close gesture, so the bar entry is only clicked once
+  // nothing is covering it.
+  const backdrop = page.locator(".backdrop-overlay").first();
+  if ((await page.locator(".backdrop-overlay").count()) > 0 && (await backdrop.isVisible().catch(() => false))) {
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(500);
+  }
   const trigger = page.locator(".app-bar-more-trigger");
   if ((await trigger.count()) > 0 && (await trigger.isVisible())) {
     await trigger.click();
