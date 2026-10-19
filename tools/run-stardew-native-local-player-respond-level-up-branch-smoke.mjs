@@ -13,6 +13,10 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 import { connectNativeLocalClient } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { runRespondLevelUpBranchSmoke } from "./run-stardew-native-local-player-respond-level-up-smoke.mjs";
 
+// Re-exported because the runner/fixture contract asks every runner on disk for a runnable export (the same shape its
+// own gate calls), and this file is a runner: the proof lives next door, the entry point lives here.
+export { runRespondLevelUpBranchSmoke };
+
 const requested = process.env.GAMEBUDDY_LEVEL_UP_BRANCH ?? "";
 if (requested !== "a" && requested !== "b") {
   console.error(
