@@ -34,7 +34,7 @@ public sealed partial class ModEntry : Mod
     /// presents as a bare pipe timeout with no Mod line at all - observed live, and it cost hours - so each
     /// return reports once, naming itself. Once per distinct reason, so a per-tick condition cannot flood the log.
     /// </summary>
-    private readonly HashSet<string> blockedTickReasonsLogged = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> blockedTickReasonsLogged = new(StringComparer.Ordinal);
 
     /// <summary>Name the stage this tick is executing, so a tick that never returns can still be located.</summary>
     private void MarkTickPhase(string phase)
@@ -134,11 +134,24 @@ public sealed partial class ModEntry : Mod
             LogLevel.Trace);
     }
 
-    private void LogBlockedTickReasonOnce(string reason)    {
-        if (this.blockedTickReasonsLogged.Add(reason))
-        {
-            this.Monitor.Log($"GameBuddy fixture tick is not advancing: {reason}", LogLevel.Warn);
-        }
+    /// <summary>
+    /// Names the gate that is holding the fixture tick, at most once every two seconds per reason.
+    /// </summary>
+    /// <remarks>
+    /// It used to log each reason exactly ONCE. Measured 2026-10-19 (g77loop): the engine kept rendering at 60 fps - the
+    /// engine-loop counter advanced 300 frames every five seconds - while this lane's heartbeat stopped for 92 seconds and
+    /// nothing else was written. With once-per-reason, a gate that was reported earlier and then held again is invisible,
+    /// and "the Mod went quiet" cannot be told from "the Mod is blocked", which is exactly the distinction a stall needs.
+    /// The reason is still named; only the repeating is new.
+    /// </remarks>
+    private void LogBlockedTickReasonOnce(string reason)
+    {
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        bool first = !this.blockedTickReasonsLogged.TryGetValue(reason, out long last);
+        if (!first && now - last < 2_000L)
+            return;
+        this.blockedTickReasonsLogged[reason] = now;
+        this.Monitor.Log($"GameBuddy fixture tick is not advancing: {reason}", LogLevel.Warn);
     }
 
     /// <summary>
