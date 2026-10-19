@@ -444,6 +444,90 @@ test("defect 4: a published title is what the transcript heading shows", async (
   expect(titled, "a published title is what the transcript heading shows").toBe("Gate Chat");
 });
 
+// --- defect 4, the narrow window (owner ruling, 2026-10-19) ------------------
+
+/**
+ * The title stack's second layer on the window that has no room for it.
+ *
+ * At 400x800 the bar, the surface's own heading and the transcript's title band
+ * stacked three names above the first bubble, and the heading's 55 px plus the
+ * surface column's 8 px gap was the layer the bar already covers: the bar's entry
+ * for the conversation carries the same word, marks itself `aria-current="page"`,
+ * and keeps that name even on the widths where the bar is icon-only.
+ *
+ * The heading is still THERE, which is the half this test is really about: it is
+ * the node `SurfaceView` points `aria-labelledby` at, it is where a surface's
+ * mount focus goes, and the accessibility tree has to keep it. So the assertions
+ * are read from the accessibility tree (the region is found by its name) and from
+ * the focus the shell gives it - not from whether a rectangle happens to paint.
+ *
+ * The last assertion is the other side of the breakpoint: at 1440x900 nothing
+ * moves, so this is a narrow rule and not a heading the product lost.
+ */
+test("defect 4: the narrow window drops the heading's box and keeps the region's name", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 800 });
+  await mountShell(page, { root: composedRoot({ transcript: [], title: "Gate Chat" }) });
+
+  const narrow = await page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>(".surface-header")!;
+    const heading = document.querySelector<HTMLElement>(".surface-header h2")!;
+    const surface = document.querySelector<HTMLElement>('[data-testid="chat-surface"]')!;
+    const style = getComputedStyle(header);
+    return {
+      clipPath: style.clipPath,
+      position: style.position,
+      headerHeight: Math.round(header.getBoundingClientRect().height),
+      surfaceTop: Math.round(surface.getBoundingClientRect().top),
+      contentTop: Math.round(surface.querySelector(".surface-content")!.getBoundingClientRect().top),
+      headingText: (heading.textContent ?? "").trim(),
+      labelledBy: surface.getAttribute("aria-labelledby"),
+      headingFocused: document.activeElement === heading,
+    };
+  });
+  const namedRegions = await page.getByRole("region", { name: "聊天", exact: true }).count();
+  console.log(`[defect-4 narrow] ${JSON.stringify({ ...narrow, namedRegions })}`);
+
+  // It stopped being drawn the way this sheet retires anything it keeps: out of
+  // the visual flow, not out of the document.
+  expect(narrow.clipPath, "the heading is out of the visual flow").toBe("inset(50%)");
+  expect(narrow.headingText, "and it keeps the surface's own word").toBe("聊天");
+  // Which is what buys the height back: a clipped box in the flow would keep it.
+  expect(narrow.position, "the heading's box is out of the column's flow").toBe("absolute");
+  expect(
+    narrow.contentTop,
+    `the surface's content starts at the surface now (${narrow.contentTop} vs ${narrow.surfaceTop})`,
+  ).toBe(narrow.surfaceTop);
+  expect(narrow.headerHeight, "so its 55 px box is not part of the column").toBeGreaterThan(0);
+
+  // The half a11y depends on: the region is still the thing named 聊天, by the
+  // node the heading IS - not by a copy of the word somewhere else.
+  expect(narrow.labelledBy, "the region is still labelled by the heading's id").toBe("chat-surface-title");
+  expect(namedRegions, "and exactly one region answers to the surface's name").toBe(1);
+  expect(narrow.headingFocused, "the mount focus still lands on the heading").toBe(true);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const wide = await page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>(".surface-header")!;
+    const surface = document.querySelector<HTMLElement>('[data-testid="chat-surface"]')!;
+    const style = getComputedStyle(header);
+    return {
+      clipPath: style.clipPath,
+      position: style.position,
+      height: Math.round(header.getBoundingClientRect().height),
+      // The column's own `gap`, which is the second half of what the rule buys
+      // back: a clipped box left in the flow keeps its height AND its gap.
+      gap: Math.round(Number.parseFloat(getComputedStyle(surface).rowGap || "0")),
+      contentTop: Math.round(surface.querySelector(".surface-content")!.getBoundingClientRect().top),
+      headerTop: Math.round(header.getBoundingClientRect().top),
+    };
+  });
+  console.log(`[defect-4 wide] ${JSON.stringify(wide)}`);
+  expect(wide.clipPath, "a wide window still draws the heading").toBe("none");
+  expect(wide.position, "and keeps it in the column").toBe("static");
+  expect(wide.contentTop, "below its own box and the column's gap").toBe(wide.headerTop + wide.height + wide.gap);
+  expect(wide.gap, "and that gap is a real one").toBeGreaterThan(0);
+});
+
 // --- defect 5 ----------------------------------------------------------------
 
 /** The number of line boxes a control's own text occupies. */

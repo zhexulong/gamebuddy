@@ -5278,6 +5278,51 @@
     margin: 0;
   }
 
+  /* ==========================================================================
+   The surface's own heading steps aside on a narrow window (owner ruling, 2026-10-19)
+
+   At 400x800 the first screen stacked three titles above the first bubble: the
+   AppBar's own bar (0..56), this heading (56..111 - measured 55 px tall) plus the
+   surface column's 8 px `gap`, and then the transcript's title band. On a window
+   800 px tall that is the top sixth of it spent naming one conversation three
+   times.
+
+   The AppBar already names the surface it is showing: the bar's own entry
+   carries the same word, `aria-current="page"` marks it as the selected one, and
+   on the widths where the bar is icon-only the entry's `aria-label` still is that
+   word. So the narrow window stops drawing the heading.
+
+   It stops being DRAWN, not being there. The region's accessible name is
+   `aria-labelledby` -> this `h2` (`SurfaceView`), and the a11y gates read the
+   region by exactly that name: `getByRole("region", { name: "聊天" })` resolves
+   to one node at both widths, before and after this rule. `display: none` would
+   have taken the `h2` out of the accessibility tree and left the name to the
+   accname algorithm's "hidden but referenced" clause, and it would also have made
+   `SurfaceView`'s own `heading.focus()` a no-op on every narrow mount. The
+   sheet's own recipe for "still a thing, no longer drawn" is the one it already
+   uses for the card-import input and for the AppBar's retired status word: out of
+   the visual flow by `clip-path: inset(50%)`.
+
+   `position: absolute` is the half that buys the height back. A clipped but
+   in-flow header keeps its 55 px box, and the column's 8 px `gap` with it; out of
+   the flow it is a zero-cost box at the surface's own top-left - still rendered,
+   still focusable, still the node `aria-labelledby` names.
+
+   Measured, mounted, at 400x800: the surface's content starts at y=56 instead of
+   y=119, and the first bubble at y=142 instead of y=205 - the 63 px the heading
+   and the gap spent. At 1440x900 nothing moves: the heading is still drawn, still
+   in the column, and the content still starts one `gap` below its 55 px box.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+  @media (max-width: 480px) {
+    .surface-view > .surface-header {
+      position: absolute;
+      clip-path: inset(50%);
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .tavern-app-shell :is(button, summary):active:not(:disabled) {
       translate: none;
