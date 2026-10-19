@@ -1878,12 +1878,21 @@ export const BrowserEventV1Schema = Type.Union([
   }),
 ]);
 
+/**
+ * The browser-visible half of the closed `ProblemCode` union: the flat list a surface reads to
+ * name every refusal the Host can send. It is pinned to the union's own members just below, so a
+ * code the Host can send is always published.
+ */
 export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "unauthorized",
   "csrf_failed",
   "invalid_request",
   "unsupported_api_version",
   "profile_operation_unavailable",
+  "st_card_import_rejected",
+  "character_import_not_found",
+  "character_import_review_invalid",
+  "character_import_confirm_invalid",
   "selection_conflict",
   "draft_conflict",
   "idempotency_conflict",
@@ -1899,6 +1908,17 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "storage_unavailable",
   "state_reconciliation_required",
   "settings_revision_conflict",
+  "dialogue_busy",
+  "connection_not_found",
+  "connection_not_ready",
+  "connection_conflict",
+  "connection_limit_reached",
+  "companion_not_found",
+  "companion_conflict",
+  "persona_conflict",
+  "scenario_conflict",
+  "greeting_conflict",
+  "authored_content_invalid",
   "chat_opening_locked",
   "chat_opening_not_greeting",
   "chat_opening_variant_not_found",
@@ -1912,12 +1932,34 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_delete_opening_retained",
   "chat_delete_turn_active",
   "chat_delete_binding_unavailable",
-  "dialogue_busy",
-  "connection_not_found",
-  "connection_not_ready",
-  "connection_conflict",
-  "connection_limit_reached",
+  "companion_record_unreadable",
+  "character_voice_conflict",
+  "companion_world_book_conflict",
+  "companion_world_book_absent",
+  "companion_world_book_binding_partial",
+  "world_info_not_found",
+  "world_info_already_exists",
+  "world_info_revision_conflict",
+  "world_info_in_use",
+  "companion_card_too_large",
+  "companion_card_image_absent",
+  "companion_avatar_too_large",
+  "companion_avatar_malformed",
 ] as const);
+
+const unionProblemCodes: readonly string[] = ProblemCode.anyOf.map((literal) => literal.const);
+const publishedProblemCodes: readonly string[] = TAVERN_BROWSER_PROBLEM_CODES_V1;
+// The published list is a projection of the closed union, not a second authority: a code in
+// either list without the other publishes a vocabulary the Host and the client disagree about.
+// Deriving the list would hide a literal dropped from the union, because the list would drop
+// with it and every check against the list would still pass; pinning the two equal fails closed
+// here instead, before a consumer can serve a vocabulary that omits a code the Host can send.
+if (
+  unionProblemCodes.length !== publishedProblemCodes.length ||
+  unionProblemCodes.some((code) => !publishedProblemCodes.includes(code))
+) {
+  throw new Error("tavern_browser_problem_codes_drift");
+}
 
 const EmptyHeaders = strictObject({});
 const CsrfHeaders = strictObject({ "x-csrf-token": OpaqueHandle });

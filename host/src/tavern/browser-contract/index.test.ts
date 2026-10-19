@@ -14,6 +14,7 @@ import {
   TavernBrowserFixtureV1,
   TavernBrowserValidatorsV1,
   TavernCompanionLocaleV1Schema,
+  TavernProblemV1Schema,
   TavernVoicePersonaV1Schema,
 } from "./index.js";
 
@@ -230,34 +231,15 @@ test("problem codes and events are closed unions", () => {
     false,
   );
   assert.deepEqual(TAVERN_BROWSER_PROBLEM_CODES_V1.includes("invented_code" as never), false);
-  // The connection surface's problem codes are part of the same closed union,
-  // so the browser can rely on each one meaning exactly one thing.
-  for (const code of [
-    "dialogue_busy",
-    "connection_not_found",
-    "connection_not_ready",
-    "connection_conflict",
-    "connection_limit_reached",
-    // The rewind refusals are the same kind of closed vocabulary: each names one point the player
-    // asked for and nothing else, so the surface can say which one happened.
-    "chat_message_not_found",
-    "chat_message_revision_conflict",
-    "chat_rewind_opening_retained",
-    "chat_rewind_turn_active",
-    // And the edit's own three: the row is the greeting the Chat opened on, the row is neither the
-    // player's own words nor her reply, or a reply is being written from the very text the edit would
-    // replace.
-    "chat_edit_opening_retained",
-    "chat_edit_not_player_message",
-    "chat_edit_turn_active",
-    // The delete's own three, including the one that is not about the player's choice at all: a row
-    // whose Pi session entry the Host never recorded has no name to omit, and saying so is the honest
-    // answer instead of removing some other entry that happens to sit at the same position.
-    "chat_delete_opening_retained",
-    "chat_delete_turn_active",
-    "chat_delete_binding_unavailable",
-  ] as const) {
-    assert.equal(TAVERN_BROWSER_PROBLEM_CODES_V1.includes(code), true, code);
+  // Every code the closed union can carry is one member of the same vocabulary, so the browser
+  // can rely on each one meaning exactly one thing. The published list is pinned to the union
+  // where it is defined; deriving the set from the union here checks every code the surface can
+  // send, not a hand-picked few.
+  const problemCodes = TavernProblemV1Schema.properties.code.anyOf.map(
+    (member) => (member as { readonly const: string }).const,
+  );
+  for (const code of problemCodes) {
+    assert.equal(TAVERN_BROWSER_PROBLEM_CODES_V1.includes(code as never), true, code);
     assert.equal(
       TavernBrowserValidatorsV1.TavernProblemV1Schema.Check({
         type: `urn:gamebuddy:tavern:${code}`,
