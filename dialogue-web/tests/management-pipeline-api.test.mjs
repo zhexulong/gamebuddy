@@ -16,6 +16,7 @@ import {
   validateSetWorldInfoBindingCommand,
   validateSnapshot,
   validateStCardImportHistory,
+  validateCompanionAvatar,
   validateWorldInfoState,
   validateVoiceDevices,
   validateVoicePreference,
@@ -154,6 +155,32 @@ test("management Memory validators and client use exact read and CSRF-bound muta
   assert.equal(calls[1].init.method, "PUT");
   assert.deepEqual(calls[1].init.headers, { "Content-Type": "application/json", "x-csrf-token": HANDLE });
   assert.equal(calls[1].init.body, JSON.stringify(command));
+});
+
+test("management avatar upload is one base64 PUT on the roster companion's own route, and its reply is the digest", async () => {
+  // The reply's digest is the value the runtime asset face publishes as that URL's ETag,
+  // so the mirror accepts exactly that shape - a sha256 hex - and refuses anything else.
+  const avatar = { apiVersion: 1, handle: HANDLE, digest: "a".repeat(64) };
+  assert.deepEqual(validateCompanionAvatar(avatar), avatar);
+  assert.throws(() => validateCompanionAvatar({ ...avatar, digest: "A".repeat(64) }), TavernProtocolError);
+  assert.throws(() => validateCompanionAvatar({ ...avatar, digest: "a".repeat(63) }), TavernProtocolError);
+  assert.throws(() => validateCompanionAvatar({ ...avatar, extra: true }), TavernProtocolError);
+  assert.throws(() => validateCompanionAvatar({ apiVersion: 1, handle: BAD_HANDLE, digest: avatar.digest }), TavernProtocolError);
+
+  const calls = [];
+  const api = createManagementPipelineApi(async (path, init) => {
+    calls.push({ path, init });
+    return response(avatar);
+  });
+  assert.deepEqual(await api.uploadCompanionAvatar(HANDLE, "AAAA", HANDLE), avatar);
+  assert.equal(calls[0].path, `/api/tavern/v1/companions/${HANDLE}/avatar`);
+  assert.equal(calls[0].init.method, "PUT");
+  assert.deepEqual(calls[0].init.headers, { "Content-Type": "application/json", "x-csrf-token": HANDLE });
+  assert.equal(calls[0].init.body, JSON.stringify({ apiVersion: 1, avatarBase64: "AAAA" }));
+  // A non-canonical handle or an empty payload is refused before any request is made.
+  await assert.rejects(api.uploadCompanionAvatar(BAD_HANDLE, "AAAA", HANDLE), TavernProtocolError);
+  await assert.rejects(api.uploadCompanionAvatar(HANDLE, "", HANDLE), TavernProtocolError);
+  assert.equal(calls.length, 1);
 });
 
 test("management snapshot rejects Memory mutation capability without a successful read-backed projection", () => {

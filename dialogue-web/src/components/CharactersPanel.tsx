@@ -746,6 +746,7 @@ export function CharactersPanel({
               authored facts can be read at all. */}
           <CompanionInspectorDrawer
             api={api}
+            csrfToken={csrfToken}
             companion={inspected}
             locale={locale}
             onClose={() => setInspected(null)}

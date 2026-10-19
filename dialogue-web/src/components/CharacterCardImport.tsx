@@ -9,7 +9,7 @@ import {
   type StageStCardImportCommandV1,
 } from "../management-pipeline-api";
 import { characterFieldLabel, characterLabels, type CharacterLabels } from "./character-domain-labels";
-import { isPngCardFile } from "./png-character-card";
+import { canonicalBase64Of, isPngCardFile } from "./png-character-card";
 
 /** The JSON arm's own ceiling: the decoder's text input bound (StageStCardImportCommandV1). */
 const MAX_CARD_TEXT_LENGTH = 2_097_152;
@@ -115,21 +115,6 @@ function fieldNames(fields: readonly string[], labels: CharacterLabels): string 
   // it stays the entries kept, which is what its own label says.
   const names = fields.map((field) => characterFieldLabel(field, labels));
   return [...new Set(names)].join(labels.fieldSeparator);
-}
-
-/**
- * Base64 of the picked file's bytes, in the one spelling the Host's decoder
- * accepts: canonical padding, no whitespace, no line breaks.
- *
- * Chunked because `String.fromCharCode(...bytes)` on a 32 MiB picture overflows
- * the argument limit long before it exhausts anything else.
- */
-function base64Of(bytes: Uint8Array): string {
-  const CHUNK_BYTES = 0x8000;
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES)
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + CHUNK_BYTES));
-  return btoa(binary);
 }
 
 /**
@@ -266,7 +251,7 @@ export function CharacterCardImport({
     if (file.size > MAX_CARD_FILE_BYTES) return { ok: false, message: labels.importFailedTooLarge };
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (isPngCardFile(bytes))
-      return { ok: true, command: { apiVersion: 1, cardSource: "png", cardFileBase64: base64Of(bytes) } };
+      return { ok: true, command: { apiVersion: 1, cardSource: "png", cardFileBase64: canonicalBase64Of(bytes) } };
     const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes).replace(/^\uFEFF/u, "");
     if (text.trim().length === 0) return { ok: false, message: labels.importFailedText };
     if (text.length > MAX_CARD_TEXT_LENGTH) return { ok: false, message: labels.importFailedTooLarge };

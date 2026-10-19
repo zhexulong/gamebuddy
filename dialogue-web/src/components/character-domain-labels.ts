@@ -262,6 +262,24 @@ export type CharacterLabels = Readonly<{
   dispositionPreserved: string;
   dispositionDropped: string;
   dispositionRejected: string;
+
+  /**
+   * Her picture: the one thing on the inspector drawer that is a WRITE. It is not one of
+   * the records `companion.profile.read` projects - it is a file the asset face serves at
+   * her own URL - so the section states no fact it cannot see and offers the one control
+   * that can change it. Every way the Host can refuse is its own sentence: the picture is
+   * bigger than the Host keeps, the file is not a picture at all, the companion is gone,
+   * or her stored picture could not be read.
+   */
+  avatarTitle: string;
+  avatarHint: string;
+  avatarChoose: string;
+  avatarSaved: string;
+  avatarTooLarge: string;
+  avatarInvalid: string;
+  avatarNotFound: string;
+  avatarUnreadable: string;
+  avatarFailed: string;
 }>;
 
 const en: CharacterLabels = Object.freeze({
@@ -476,6 +494,17 @@ const en: CharacterLabels = Object.freeze({
   dispositionPreserved: "kept unchanged",
   dispositionDropped: "not used",
   dispositionRejected: "rejected",
+
+  avatarTitle: "Her picture",
+  avatarHint:
+    "A PNG image GameBuddy keeps for her and draws wherever it draws her — the roster, the chat and the app bar. Without one she is shown by her initial.",
+  avatarChoose: "Give her a picture",
+  avatarSaved: "She has this picture now.",
+  avatarTooLarge: "That picture is too large to keep (limit 32 MB).",
+  avatarInvalid: "That file is not a picture GameBuddy can keep. Choose a PNG image.",
+  avatarNotFound: "That companion is no longer in your library, so nothing was saved.",
+  avatarUnreadable: "Her picture could not be read, so nothing was saved.",
+  avatarFailed: "Her picture could not be saved.",
 });
 
 const zh: CharacterLabels = Object.freeze({
@@ -683,6 +712,17 @@ const zh: CharacterLabels = Object.freeze({
   dispositionPreserved: "原样保留",
   dispositionDropped: "未使用",
   dispositionRejected: "已拒绝",
+
+  avatarTitle: "她的画像",
+  avatarHint:
+    "GameBuddy 为她保存的 PNG 图片，会用在所有画她的地方——伙伴列表、对话和顶栏。没有图片时显示她名字的首字母。",
+  avatarChoose: "给她一张图片",
+  avatarSaved: "现在她已用上这张图片。",
+  avatarTooLarge: "这张图片太大，无法保存（上限 32 MB）。",
+  avatarInvalid: "该文件不是 GameBuddy 能保存的图片，请选择 PNG 图片。",
+  avatarNotFound: "这位伙伴已不在你的伙伴库中，因此没有保存。",
+  avatarUnreadable: "无法读取她的画像，这次没有保存。",
+  avatarFailed: "无法保存她的画像。",
 });
 
 export function characterLabels(locale: Locale): CharacterLabels {

@@ -1,9 +1,12 @@
 import { ChevronDown, UserRound } from "lucide-react";
-import { type ReactElement, type RefObject, useEffect, useState } from "react";
+import { type ReactElement, type RefObject, useEffect, useRef, useState } from "react";
 import type { Locale } from "../i18n";
 import type { CompanionProfileV1, ManagementPipelineApi } from "../management-pipeline-api";
+import { MAX_AVATAR_FILE_BYTES, problemTextWithCode, TavernProblemError } from "../management-pipeline-api";
+import { CompanionAvatar } from "./CompanionAvatar";
 import { ContextDrawer } from "./ContextDrawer";
 import { characterLabels, type CharacterLabels } from "./character-domain-labels";
+import { canonicalBase64Of } from "./png-character-card";
 
 /**
  * The read-only companion inspector (design/28 §2).
@@ -28,6 +31,13 @@ import { characterLabels, type CharacterLabels } from "./character-domain-labels
  *    chosen by the start-up configuration and the Host serves no activation
  *    operation, so this drawer contains no control that claims to switch, select
  *    or enable anything.
+ *
+ * Its one exception is her picture (`CompanionAvatarSection`): the drawer is the
+ * only per-companion surface that shows every companion, so it is where a player
+ * gives an authorless one a face. That control writes to the same file the
+ * runtime asset face serves at her own URL - it edits none of the records this
+ * drawer reads, and the roster's own read (`companion.list`) is untouched by an
+ * upload.
  */
 export type InspectedCompanion = Readonly<{ handle: string; name: string; isCurrent: boolean }>;
 
@@ -39,12 +49,15 @@ type CompanionProfileView =
 
 export function CompanionInspectorDrawer({
   api,
+  csrfToken,
   companion,
   locale,
   onClose,
   restoreFocusTo,
 }: {
   api: ManagementPipelineApi;
+  /** The broker's own CSRF fact; the picture upload is the one write here. */
+  csrfToken: string;
   /** The roster row that opened the drawer, or null when it is closed. */
   companion: InspectedCompanion | null;
   locale: Locale;
@@ -91,6 +104,7 @@ export function CompanionInspectorDrawer({
           ? labels.companionInspectorInPlay
           : labels.companionInspectorNotInPlay.replace("{{name}}", companion.name)}
       </p>
+      <CompanionAvatarSection api={api} csrfToken={csrfToken} companion={companion} labels={labels} />
       {view.kind === "loading" ? (
         <p className="loading-text">{labels.loading}</p>
       ) : view.kind === "unavailable" ? (
@@ -100,6 +114,133 @@ export function CompanionInspectorDrawer({
       )}
     </ContextDrawer>
   );
+}
+
+/**
+ * Her picture: the one write on this drawer, and the whole reason it is no longer
+ * read-only.
+ *
+ * The drawer shows every companion the roster listed, so this is where an imported or
+ * hand-made one stops being a monogram - the route behind the control resolves ANY
+ * listed companion, not only the one in play. Everything else here reads the records
+ * `companion.profile.read` projects; a picture is not one of those records (it is a file
+ * the runtime asset face serves at her own URL), so this section reads nothing and
+ * claims nothing it cannot see - the avatar ITSELF is what tells the player whether she
+ * has one, by drawing her picture or her initial.
+ *
+ * The `digest` an upload answers with is the reload key: the image is rebuilt under it
+ * and the browser revalidates the URL it already holds, so the new picture is on screen
+ * the moment the Host confirms it. Re-choosing the same file changes nothing, because
+ * the digest does not change.
+ */
+function CompanionAvatarSection({
+  api,
+  csrfToken,
+  companion,
+  labels,
+}: {
+  api: ManagementPipelineApi;
+  csrfToken: string;
+  companion: InspectedCompanion;
+  labels: CharacterLabels;
+}): ReactElement {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [digest, setDigest] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Readonly<{ ok: boolean; text: string }> | null>(null);
+
+  const choose = async (file: File): Promise<void> => {
+    setNotice(null);
+    // The picker's own bound, in the Host's own number: a picture over the ceiling is
+    // refused here, in her words, instead of after 45 MB have made the round trip to be
+    // refused on the other side.
+    if (file.size > MAX_AVATAR_FILE_BYTES) {
+      setNotice({ ok: false, text: labels.avatarTooLarge });
+      return;
+    }
+    setBusy(true);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const saved = await api.uploadCompanionAvatar(companion.handle, canonicalBase64Of(bytes), csrfToken);
+      setDigest(saved.digest);
+      setNotice({ ok: true, text: labels.avatarSaved });
+    } catch (error) {
+      setNotice({ ok: false, text: companionAvatarRefusal(labels, error) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section data-companion-inspector-avatar>
+      <h3>{labels.avatarTitle}</h3>
+      <p className="management-settings-hint">{labels.avatarHint}</p>
+      <div className="composer-actions">
+        <CompanionAvatar handle={companion.handle} name={companion.name} className="avatar-small" digest={digest} />
+        <button
+          type="button"
+          className="small-button"
+          data-companion-avatar-choose
+          disabled={busy}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {busy ? labels.saving : labels.avatarChoose}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png"
+          aria-label={labels.avatarChoose}
+          className="card-import-file-input"
+          disabled={busy}
+          // The trigger beside it is the visible control and the tab stop; this input is
+          // the browser's real picker behind it, out of the visual flow by the sheet's one
+          // clip-path recipe (the same class the card import's input uses - taking a
+          // native file input out of the flow is one recipe, not two).
+          tabIndex={-1}
+          data-companion-avatar-file
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            // Reset so choosing the same file again still fires `change`.
+            event.target.value = "";
+            if (file !== undefined) void choose(file);
+          }}
+        />
+      </div>
+      {notice !== null && (
+        <p role="status" data-companion-avatar-notice className={notice.ok ? "success-banner" : "error-banner"}>
+          {notice.text}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The player's sentence for one refused picture.
+ *
+ * Every way the Host refuses is a different fact about the file that was picked - it is
+ * bigger than the picture ceiling, it is not a PNG at all, the companion is gone, or her
+ * stored picture could not be read - and one "could not save" sentence would send the
+ * player looking for the wrong fault. A code this table does not know keeps the base
+ * sentence with the code appended, so an unexpected refusal is still named rather than
+ * swallowed.
+ */
+function companionAvatarRefusal(labels: CharacterLabels, error: unknown): string {
+  const code = error instanceof TavernProblemError ? error.code : null;
+  switch (code) {
+    case "companion_avatar_too_large":
+      return labels.avatarTooLarge;
+    case "companion_avatar_malformed":
+      return labels.avatarInvalid;
+    case "companion_not_found":
+      return labels.avatarNotFound;
+    case "companion_record_unreadable":
+    case "storage_unavailable":
+      return labels.avatarUnreadable;
+    default:
+      return problemTextWithCode(labels.avatarFailed, error);
+  }
 }
 
 /** The four authored groups, each labelled, each honest about absence. */

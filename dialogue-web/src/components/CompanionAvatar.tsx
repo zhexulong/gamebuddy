@@ -23,6 +23,7 @@ export function CompanionAvatar({
   handle,
   name,
   className,
+  digest,
 }: {
   /**
    * The companion's own opaque roster handle, or `null` for a row that has no
@@ -33,23 +34,34 @@ export function CompanionAvatar({
   name: string;
   /** The existing monogram's own size class, e.g. `avatar-small`. */
   className: string;
+  /**
+   * The digest of the picture the caller just stored, when it knows one - an upload
+   * answers with it. It is the reload key, and the reason a replaced picture appears at
+   * once: the image element is rebuilt under the new digest, the browser revalidates the
+   * URL it already holds (the face answers `no-cache`), and the bytes behind a changed
+   * digest replace the ones on screen. Passed by nothing else: a surface that merely
+   * draws her has no newer fact than the URL.
+   */
+  digest?: string;
 }): ReactElement {
-  // Tracked per handle rather than as a boolean: the same row renders another
-  // companion after a roster refresh or a Chat switch, and a picture that failed
-  // for one must not suppress the next one's.
-  const [failedHandle, setFailedHandle] = useState<string | null>(null);
+  // Tracked per handle AND per digest rather than as a boolean: the same row renders
+  // another companion after a roster refresh or a Chat switch, and a picture that failed
+  // for one must not suppress the next one's - nor a replacement of the same one's.
+  const key = handle === null ? null : `${handle}\u0000${digest ?? ""}`;
+  const [failedKey, setFailedKey] = useState<string | null>(null);
   const initial = (Array.from(name)[0] ?? "").toUpperCase();
   return (
     <div className={`avatar ${className}`} aria-hidden="true">
-      {handle === null || failedHandle === handle ? (
+      {key === null || failedKey === key ? (
         initial
       ) : (
         <img
+          key={key}
           className="avatar-image"
           src={`/assets/companions/${handle}/avatar.png`}
           alt=""
           decoding="async"
-          onError={() => setFailedHandle(handle)}
+          onError={() => setFailedKey(key)}
         />
       )}
     </div>

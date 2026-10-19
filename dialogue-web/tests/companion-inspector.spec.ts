@@ -8,8 +8,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
  * the in-play companion, and opening the inspector issues reads only). This file
  * holds the CONTENT: the projection `companion.profile.read` returns is shown group
  * by group, absence is stated in words rather than as an empty box, "present and
- * empty" is told apart from "made without one", and the drawer is a read - no input,
- * no textarea, no select, no control that edits anything.
+ * empty" is told apart from "made without one", and the drawer's only write is her
+ * picture - the four groups it shows are reads, with no editor of their own.
  *
  * The three facts each assertion is built on:
  *
@@ -270,7 +270,7 @@ test("a companion provisioned without them says so, and an empty book is not an 
   );
 });
 
-test("the inspector is a read: no field it shows has an editing surface", async ({ page }) => {
+test("the inspector shows four groups with no editor, and its one write is her picture", async ({ page }) => {
   await stubCharacters(
     page,
     [{ handle: otherHandle, name: "Mira", isCurrent: false }],
@@ -284,11 +284,19 @@ test("the inspector is a read: no field it shows has an editing surface", async 
   await openCharacters(page);
   const drawer = await openInspector(page, "Mira");
 
-  // Nothing that writes: no input, no textarea, no select, and no control whose words
-  // claim an edit or an activation. The drawer's only controls are the shell's close
-  // button and the disclosure summaries.
+  // Nothing that writes a RECORD: no text field, no textarea, no select, no control
+  // whose words claim an edit or an activation. The premise moved when her picture
+  // became settable here (Add-5) - so the file picker is expected, and it is excluded
+  // by `type` rather than by name: what this counts is every control that could carry
+  // authored text, and a file input carries a file.
   const controls = await drawer.evaluate((node) => ({
-    writable: node.querySelectorAll("input, textarea, select, [contenteditable=true]").length,
+    editableFields: node.querySelectorAll(
+      'input:not([type="file"]), textarea, select, [contenteditable="true"]',
+    ).length,
+    filePickers: [...node.querySelectorAll('input[type="file"]')].map((input) => ({
+      accept: input.getAttribute("accept"),
+      label: (input.getAttribute("aria-label") ?? "").trim(),
+    })),
     buttons: [...node.querySelectorAll("button")].map((button) =>
       (button.getAttribute("aria-label") ?? button.textContent ?? "").trim(),
     ),
@@ -296,11 +304,17 @@ test("the inspector is a read: no field it shows has an editing surface", async 
     placeholderLeaks: (node.textContent ?? "").includes("{{"),
   }));
   console.log(`[companion-inspector-content] ${JSON.stringify(controls)}`);
-  expect(controls.writable, "no field in the inspector can be edited").toBe(0);
+  expect(controls.editableFields, "no record the inspector shows can be edited").toBe(0);
   expect(controls.placeholderLeaks, "no placeholder reaches the player").toBe(false);
   expect(controls.buttons.filter((label) => /edit|save|delete|clear|remove|create|switch|activat|select|set as|enable/i.test(label))).toEqual([]);
   for (const label of controls.buttons) expect(label, "every control carries a readable name").toMatch(/\S/u);
   for (const summary of controls.summaries) expect(summary, "every disclosure is labelled").toMatch(/\S/u);
+
+  // The one exception, stated exactly: one hidden picker that takes a PNG and nothing
+  // else, named for the player, driven by the themed control beside it.
+  expect(controls.filePickers).toHaveLength(1);
+  expect(controls.filePickers[0]?.accept).toBe("image/png");
+  expect(controls.filePickers[0]?.label).toMatch(/\S/u);
 
   // The roster's own control on that row is the inspect one, and it says what it does.
   const rosterControl = page.getByTestId("characters-surface").locator("[data-companion-entry] [data-companion-inspect]").first();
