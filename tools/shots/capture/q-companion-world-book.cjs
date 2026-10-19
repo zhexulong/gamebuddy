@@ -196,7 +196,11 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
   say(`notice: ${JSON.stringify(afterEdit.notice?.text ?? null)}`);
   say(`durable revision ${durableBefore.revision} -> ${durableAfterEdit.revision}`);
   say(`durable entry ${target}: keys=${JSON.stringify(editedEntry?.keys)} constant=${editedEntry?.constant} chars=${editedEntry?.chars}`);
-  say(`the body kept the rewritten sentence: ${(editedEntry?.head ?? "").includes("这一句是玩家改的")}`);
+  // Read the WHOLE body back, not its first 40 characters: this driver appends a sentence to the end of a
+  // multi-line body, so a check against `head` could never pass - and the false negative it produced was
+  // read (by a four-reviewer pass) as "the world book body edit does not persist" when the write path is
+  // fine. `head` stays in the report for readability; the assertion reads what the write actually changed.
+  say(`the body kept the rewritten sentence: ${(editedEntry?.content ?? "").includes("这一句是玩家改的")}`);
   say(`the entry as the surface now renders it: ${JSON.stringify(afterEdit.entries[target])}`);
   await shot(page, "88-world-book-edited-1440x900.png");
 

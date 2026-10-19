@@ -179,7 +179,11 @@ const stagePicker = async (page, name, bytes) => {
     say(`the exported PNG: ${JSON.stringify({ isPng: exportedPng.isPng, byteLength: exportedPng.byteLength, ihdr: exportedPng.ihdr, chunks: exportedPng.chunks, charaBase64Chars: exportedPng.charaBase64Chars })}`);
     if (exportedPng.chara !== null) {
       try {
-        exportedCard = JSON.parse(Buffer.from(png.chara, "base64").toString("utf8"));
+        // The parsed chunk object is `exportedPng` — reading a bare `png` here is what made this driver
+        // report `ReferenceError: png is not defined` as if the PRODUCT's export were broken, and a
+        // four-reviewer pass read it that way. A driver that misreports costs more than one that fails
+        // loudly: it sends people to fix code that is already correct.
+        exportedCard = JSON.parse(Buffer.from(exportedPng.chara, "base64").toString("utf8"));
         say(`the card inside the PNG parses: spec=${JSON.stringify(exportedCard.spec)} name=${JSON.stringify(exportedCard.data?.name)} firstMesChars=${(exportedCard.data?.first_mes ?? "").length}`);
       } catch (error) {
         say(`the card inside the PNG does NOT parse: ${String(error).slice(0, 120)}`);
