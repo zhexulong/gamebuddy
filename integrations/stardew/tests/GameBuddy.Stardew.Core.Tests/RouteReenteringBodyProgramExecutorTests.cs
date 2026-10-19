@@ -185,7 +185,7 @@ public sealed class RouteReenteringBodyProgramExecutorTests
 
         terminal.Should().NotBeNull();
         terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Failed);
-        terminal.Facts.Should().BeNull("non-success terminals never carry facts or proofs");
+        terminal.Facts.Should().BeEmpty("non-success terminals carry no facts - and an empty set, not null, because the authority refuses null");
         terminal.ReceiptId.Should().BeNull();
     }
 
@@ -202,7 +202,7 @@ public sealed class RouteReenteringBodyProgramExecutorTests
 
         terminal.Should().NotBeNull();
         terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Failed);
-        terminal.Facts.Should().BeNull();
+        terminal.Facts.Should().BeEmpty();
     }
 
     [Fact]
@@ -371,7 +371,7 @@ public sealed class RouteReenteringBodyProgramExecutorTests
 
         terminal.Should().NotBeNull();
         terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Failed);
-        terminal.Facts.Should().BeNull();
+        terminal.Facts.Should().BeEmpty();
         handler.SeenDestination.Should().BeNull("the invalid selector must never reach the native dispatch");
     }
 

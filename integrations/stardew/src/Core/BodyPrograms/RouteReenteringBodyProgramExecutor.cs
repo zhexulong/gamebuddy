@@ -71,13 +71,19 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         ArgumentNullException.ThrowIfNull(grant);
         ArgumentNullException.ThrowIfNull(execution);
         if (grant.ExecutionBinding is null || !Equals(execution, grant.ExecutionBinding))
-            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, null, null, null, null);
+            // Empty facts, not null: the authority refuses a null fact set for a non-success outcome, so a fail-closed
+            // terminal that carried null was rejected as InvalidInput and the node ended unknown instead of Failed.
+            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
 
         if (!TryBuildExecutionRequest(grant, execution, out BridgeExecutionRequest? request, out _))
-            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, null, null, null, null);
+            // Empty facts, not null: the authority refuses a null fact set for a non-success outcome, so a fail-closed
+            // terminal that carried null was rejected as InvalidInput and the node ended unknown instead of Failed.
+            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
 
         if (!this.router.TryRoute(request!, this.ledger, execution.ExecutionId, out LocalExecutionReceipt receipt, out _))
-            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, null, null, null, null);
+            // Empty facts, not null: the authority refuses a null fact set for a non-success outcome, so a fail-closed
+            // terminal that carried null was rejected as InvalidInput and the node ended unknown instead of Failed.
+            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
 
         return ToTerminal(grant, execution, receipt);
     }
@@ -197,9 +203,15 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                     $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}");
             case ExecutionState.Failed:
             case ExecutionState.Rejected:
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, null, null, receipt.Evidence, null);
+                // The authority refuses this shape for a non-success outcome: `TryComplete` requires Facts to be a
+                // non-null (empty) set and ReceiptId/Evidence/PostconditionVerification to be absent, because a node
+                // that claims no effect must not present proof of one. Sending `null` facts WITH evidence made every
+                // Failed/Rejected node fail that gate as InvalidInput, and the controller then replaced it with an
+                // unknown settlement - which is how a one-frame animation cooldown (`player_not_actionable`)
+                // quarantined a whole save scope (measured 2026-10-19: node h2 of east_harvest, on disk).
+                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
             case ExecutionState.Cancelled:
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Cancelled, null, null, receipt.Evidence, null);
+                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null);
             default:
                 // Accepted / Running / MeaningfulProgress / Blocked / Invalidated /
                 // PartiallySucceeded — the native body has not reached a terminal
