@@ -1292,13 +1292,26 @@ function sampleGameThreads() {
  */
 function measureEnvironmentFacts() {
   if (environmentFactsCache !== null) return environmentFactsCache;
+  // The FULL PATH, not `powershell`: a child process can be started with a PATH that does not include it, and a lookup
+  // failure is indistinguishable from a missing adapter - which is how the bundle was refused twice tonight even after
+  // the measurement was added.
+  const powershell = join(
+    process.env.SystemRoot ?? "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
   const query = (command) => {
     try {
-      return execFileSync("powershell", ["-NoProfile", "-Command", command], {
+      return execFileSync(powershell, ["-NoProfile", "-Command", command], {
         encoding: "utf8",
         timeout: 10_000,
       }).trim();
-    } catch {
+    } catch (error) {
+      console.error(
+        `ENV_FACTS_QUERY_FAILED ${JSON.stringify({ command: command.slice(0, 60), error: String(error?.code ?? error).slice(0, 80) })}`,
+      );
       return "";
     }
   };
@@ -1306,6 +1319,10 @@ function measureEnvironmentFacts() {
   const width = query("(Get-CimInstance Win32_VideoController | Select-Object -First 1).CurrentHorizontalResolution");
   const height = query("(Get-CimInstance Win32_VideoController | Select-Object -First 1).CurrentVerticalResolution");
   const resolution = width !== "" && height !== "" ? `${width}x${height}` : "";
+  if (adapter === "" || resolution === "")
+    console.error(
+      `ENV_FACTS_EMPTY ${JSON.stringify({ adapter: adapter.slice(0, 40), resolution: resolution.slice(0, 20) })}`,
+    );
   environmentFactsCache = Object.freeze({
     adapter: adapter === "" ? null : adapter.slice(0, 200),
     resolution: resolution === "" ? null : resolution.slice(0, 40),
