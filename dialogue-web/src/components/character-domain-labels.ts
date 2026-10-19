@@ -284,7 +284,7 @@ const en: CharacterLabels = Object.freeze({
   importCreated: "Imported {{name}}.",
   importCreatedDetail:
     "She is archived safely in your local companion library; the companion in play is chosen by the start-up configuration, so she becomes the one in play only when GameBuddy later starts with her.",
-  importKept: "Kept {{count}} card fields.",
+  importKept: "Kept {{count}} card field entries.",
   importLorebookCount: "Carries {{count}} lorebook entries.",
   importPreserved: "Kept {{count}} fields unchanged.",
   importNotUsed: "Could not use: {{fields}}.",
@@ -299,7 +299,7 @@ const en: CharacterLabels = Object.freeze({
   importReviewHint:
     "Nothing has been imported yet. This is what the Host staged from the card - what it will keep and what it could not use - and the companion is created only when you confirm.",
   importReviewName: "The card names it {{name}}.",
-  importReviewWillKeep: "Will keep {{count}} card fields: {{fields}}.",
+  importReviewWillKeep: "Will keep {{count}} card field entries: {{fields}}.",
   importReviewConfirm: "Import this card",
   importReviewCancel: "Cancel",
   fieldName: "Name",
@@ -497,7 +497,7 @@ const zh: CharacterLabels = Object.freeze({
   importCreated: "已导入 {{name}}。",
   importCreatedDetail:
     "她已安全归档到本地伙伴库；在玩的伙伴由启动配置选定，所以只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。",
-  importKept: "已保留 {{count}} 个卡片字段。",
+  importKept: "已保留 {{count}} 个卡片字段条目。",
   importLorebookCount: "包含 {{count}} 条世界书词条。",
   importPreserved: "有 {{count}} 个字段原样保留。",
   importNotUsed: "无法使用：{{fields}}。",
@@ -512,7 +512,7 @@ const zh: CharacterLabels = Object.freeze({
   importReviewHint:
     "尚未导入任何内容。以下是 Host 从卡片中暂存的结果——将保留什么、无法使用什么；只有你确认后才会创建伙伴。",
   importReviewName: "卡片中的名称为 {{name}}。",
-  importReviewWillKeep: "将保留 {{count}} 个卡片字段：{{fields}}。",
+  importReviewWillKeep: "将保留 {{count}} 个卡片字段条目：{{fields}}。",
   importReviewConfirm: "导入此角色卡",
   importReviewCancel: "取消",
   fieldName: "名称",

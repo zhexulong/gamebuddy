@@ -77,7 +77,11 @@ test("the failure dump is built from the bridge's own facts and the trace's own 
   assert.match(SOURCE, /const repro = failed/);
   assert.match(SOURCE, /crossings: multidayOutcome\?\.crossings \?\? 0,/);
   // The manifest may only omit the window probes for the headless window mode, and it has to say so.
-  assert.match(SOURCE, /reason: process\.env\.GAMEBUDDY_GPU === undefined \? "headless_environment" : null,/);
+  assert.match(SOURCE, /reason: headlessWindowMode \? "headless_environment" : null,/);
+  // A non-headless run MEASURES the adapter and the display: leaving them null is what refused every foreground
+  // bundle (the contract accepts null facts only for a headless mode, with that reason).
+  assert.match(SOURCE, /function measureEnvironmentFacts\(\)/u);
+  assert.match(SOURCE, /const environmentFacts = headlessWindowMode/u);
 });
 
 test("the run's own narrative is judged and folded into the verdict", () => {

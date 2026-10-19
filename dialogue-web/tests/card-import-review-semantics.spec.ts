@@ -10,7 +10,7 @@ import { expect, test, type Page } from "@playwright/test";
  *  - the review and the result rendered their rows as `<div><dd>` inside a
  *    `<dl>` with no `<dt>` anywhere, which is not a description list at all: a
  *    `<dl>`'s child must be a `dt`/`dd` pair, and a row here is one sentence
- *    ("Will keep 5 card fields: Name, Persona, ..."), never a term and its
+ *    ("Will keep 5 card field entries: Name, Persona, ..."), never a term and its
  *    definition. The blocks are lists of sentences, so they are `<ul>`/`<li>`;
  *    the assertions below read the roles the browser maps, not a class name;
  *  - the same sentences printed the Host's own field identifiers
@@ -185,7 +185,7 @@ test("the import review is a list of player sentences, with human field names", 
   // sentence, the lorebook count and the carried directive.
   await expect(items).toHaveCount(5);
   await expect(items.nth(1), "the kept fields are named in the player's words").toHaveText(
-    "Will keep 5 card fields: Name, Persona, Performance directive, Example dialogue, Opening.",
+    "Will keep 5 card field entries: Name, Persona, Performance directive, Example dialogue, Opening.",
   );
   await expect(items.nth(2), "a refused card key is named in the player's words").toHaveText(
     "Could not use: Regular expressions, Alternate opening.",
@@ -214,7 +214,7 @@ test("the review names its fields in Chinese too, with no identifier in either c
   const items = review.getByRole("listitem");
   await expect(items).toHaveCount(5);
   await expect(items.nth(1), "the kept fields are named in the player's words").toHaveText(
-    "将保留 5 个卡片字段：名称、用户设定、演出指导、对话示例、开场白。",
+    "将保留 5 个卡片字段条目：名称、用户设定、演出指导、对话示例、开场白。",
   );
   await expect(items.nth(2), "a refused card key is named in the player's words").toHaveText(
     "无法使用：正则表达式、备用开场白。",

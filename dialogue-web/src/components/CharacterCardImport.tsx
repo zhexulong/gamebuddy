@@ -108,7 +108,13 @@ function reportRows(report: StagedReport, labels: CharacterLabels): ReactElement
 
 /** The player's words for a set of the Host's own field identifiers, one sentence. */
 function fieldNames(fields: readonly string[], labels: CharacterLabels): string {
-  return fields.map((field) => characterFieldLabel(field, labels)).join(labels.fieldSeparator);
+  // The list is the DISTINCT things the import keeps. One card routinely carries
+  // several fields the domain names the same way - seven `example_N` entries are
+  // seven `对话示例` - and printing the word once per entry told the player the
+  // list held seven different things when it held seven of one. The count beside
+  // it stays the entries kept, which is what its own label says.
+  const names = fields.map((field) => characterFieldLabel(field, labels));
+  return [...new Set(names)].join(labels.fieldSeparator);
 }
 
 /**

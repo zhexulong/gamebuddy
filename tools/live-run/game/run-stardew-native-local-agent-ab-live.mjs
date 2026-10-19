@@ -1274,6 +1274,33 @@ function sampleGameThreads() {
   }
 }
 
+/**
+ * The adapter name and the primary display size, for a run that is not headless.
+ *
+ * The evidence bundle requires these whenever the window mode is not hidden/background, and it is right to: a run with
+ * a window needs to say what it rendered on. Measured once per run, off the game thread.
+ */
+function measureEnvironmentFacts() {
+  const query = (command) => {
+    try {
+      return execFileSync("powershell", ["-NoProfile", "-Command", command], {
+        encoding: "utf8",
+        timeout: 10_000,
+      }).trim();
+    } catch {
+      return "";
+    }
+  };
+  const adapter = query("(Get-CimInstance Win32_VideoController | Select-Object -First 1).Name");
+  const width = query("(Get-CimInstance Win32_VideoController | Select-Object -First 1).CurrentHorizontalResolution");
+  const height = query("(Get-CimInstance Win32_VideoController | Select-Object -First 1).CurrentVerticalResolution");
+  const resolution = width !== "" && height !== "" ? `${width}x${height}` : "";
+  return Object.freeze({
+    adapter: adapter === "" ? null : adapter.slice(0, 200),
+    resolution: resolution === "" ? null : resolution.slice(0, 40),
+  });
+}
+
 function sampleGameProcess() {
   /**
    * Three different answers, three different values.
@@ -2972,6 +2999,10 @@ async function writeRunBundle({
         crossings: multidayOutcome?.crossings ?? 0,
       })
     : null;
+  // The window mode the RUNNER observes (the launcher exports it), and the facts a non-headless run must carry.
+  const observedWindowMode = process.env.GAMEBUDDY_WINDOW_MODE ?? "visible";
+  const headlessWindowMode = observedWindowMode === "hidden" || observedWindowMode === "background";
+  const environmentFacts = headlessWindowMode ? { adapter: null, resolution: null } : measureEnvironmentFacts();
   const bundle = {
     schemaVersion: 1,
     run: {
@@ -2986,13 +3017,14 @@ async function writeRunBundle({
       smapiVersion: process.env.GAMEBUDDY_SMAPI_VERSION ?? "unknown",
       gameVersion: "1.6.15",
       os: process.platform,
-      windowMode: process.env.GAMEBUDDY_WINDOW_MODE ?? "visible",
-      // The window probes are genuinely unavailable in a hidden/background run, and that is the ONLY
-      // legitimate reason to leave them null: the reason field has to say so.
-      gpu: process.env.GAMEBUDDY_GPU ?? null,
-      resolution: process.env.GAMEBUDDY_RESOLUTION ?? null,
+      windowMode: observedWindowMode,
+      // A hidden/background run may leave these null, and then the reason has to say so (that is the contract).
+      // Anything else is MEASURED: the harness can name the adapter and the display, and before this it simply did
+      // not - so every foreground run, which is what the fade/night path needs, had its evidence bundle refused.
+      gpu: process.env.GAMEBUDDY_GPU ?? (headlessWindowMode ? null : environmentFacts.adapter),
+      resolution: process.env.GAMEBUDDY_RESOLUTION ?? (headlessWindowMode ? null : environmentFacts.resolution),
       saveHash: snapshot?.saveHash ?? "unknown",
-      reason: process.env.GAMEBUDDY_GPU === undefined ? "headless_environment" : null,
+      reason: headlessWindowMode ? "headless_environment" : null,
     },
     verdict: {
       state: verdictState,

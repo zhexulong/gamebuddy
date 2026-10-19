@@ -2732,7 +2732,7 @@ test("choosing a character card file stages a review, and reports what the Host 
   const review = surface.locator("[data-card-import-review]");
   await expect(review).toBeVisible();
   await expect(review).toContainText("The card names it Nova.");
-  await expect(review).toContainText("Will keep 2 card fields: Name, Persona.");
+  await expect(review).toContainText("Will keep 2 card field entries: Name, Persona.");
   await expect(review).toContainText("Carries 2 lorebook entries.");
   await expect(review).toContainText("Could not use: Alternate opening.");
   await expect(surface.locator("[data-card-import-result=created]")).toHaveCount(0);
@@ -2752,7 +2752,7 @@ test("choosing a character card file stages a review, and reports what the Host 
 
   const created = surface.locator("[data-card-import-result=created]");
   await expect(created).toContainText("Imported Nova.");
-  await expect(created).toContainText("Kept 2 card fields.");
+  await expect(created).toContainText("Kept 2 card field entries.");
   await expect(created).toContainText("Could not use: Alternate opening.");
   await expect(review).toHaveCount(0);
 

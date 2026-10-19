@@ -4863,7 +4863,7 @@
      Both blocks were rendered through `.management-settings-details`, whose whole
      shape is a label/value pair: `space-between` rows and `dd { text-align: right }`
      for the value column. An import-report row is not a pair - it is one sentence
-     ("Will keep 6 card fields: name, description, ...", the success line, the
+     ("Will keep 6 card field entries: name, description, ...", the success line, the
      "could not use" line) - so at the narrow surface a wrapped sentence read
      ragged-LEFT: measured at 400x800, the keep sentence's two lines ended on one
      right edge (371, 371) and started on two (93, 66).
