@@ -39,6 +39,16 @@ import { createManagementPipelineApi, type WorldInfoSurfaceSource } from "./mana
 import { ChatsSurface } from "./ChatsSurface";
 import { MemorySurface } from "./MemorySurface";
 import { SettingsSurface } from "./SettingsSurface";
+import {
+  CHARACTERS_PANEL,
+  CHATS_PANEL,
+  CHAT_PANEL,
+  GAME_PANEL,
+  MEMORY_PANEL,
+  PANEL_PARAM,
+  SETTINGS_PANEL,
+  useSurfaceRoute,
+} from "../composed-surface-route";
 
 /**
  * The Host admits one provider invocation under a fixed 120 s ceiling
@@ -53,23 +63,6 @@ const POLL_INTERVAL_MS = 1_000;
 const POLL_BACKOFF_MS = [1_000, 2_000, 4_000, 5_000] as const;
 const MAX_POLL_ATTEMPTS = Math.ceil(HOST_TURN_ADMISSION_CEILING_MS / POLL_INTERVAL_MS) + 10;
 const TERMINAL_TURN_STATES = new Set(["completed", "cancelled", "failed"]);
-
-/**
- * The single contextual panel this profile can open (design/26 §4.2). The open
- * panel is part of the URL, so a refresh restores it and Browser Back closes it
- * before it leaves the chat (design/26 §7.2, design/104 §2).
- */
-const PANEL_PARAM = "panel";
-const CHAT_PANEL = "chat" as const;
-const GAME_PANEL = "game" as const;
-const CHATS_PANEL = "chats" as const;
-const CHARACTERS_PANEL = "characters" as const;
-const SETTINGS_PANEL = "settings" as const;
-const MEMORY_PANEL = "memory" as const;
-
-function readPanelFromUrl(): string | null {
-  return new URLSearchParams(window.location.hash.slice(1)).get(PANEL_PARAM);
-}
 
 function terminalTurn(turn: BrowserTurnV1 | null): boolean {
   return turn !== null && TERMINAL_TURN_STATES.has(turn.state);
@@ -149,9 +142,6 @@ export function ComposedReferenceGameApp() {
   const streamLiveRef = useRef(false);
   const streamFailedRef = useRef(false);
   const eventSourceRef = useRef<{ close(): void } | null>(null);
-  // The open contextual panel, as the URL states it. A refresh with
-  // `#…&panel=game` comes back with the drawer already open.
-  const [openPanel, setOpenPanel] = useState<string | null>(() => readPanelFromUrl());
   // Bumped after the Host commits a turn-level Chat switch. The mounted identity
   // is new, so the live event subscription must reconnect on the new conversation
   // instead of continuing the previous Chat's cursor.
@@ -162,10 +152,6 @@ export function ComposedReferenceGameApp() {
   // because the popout replaces no surface: it opens over the conversation and
   // closes back to it.
   const [modelPopoutOpen, setModelPopoutOpen] = useState(false);
-  // The surface occupying the main region. Chat is the default surface, not a
-  // privileged one: every surface takes the same region, and the URL names the
-  // selected one so Back returns to the previous surface.
-  const shownSurface = openPanel ?? CHAT_PANEL;
   const gameEntryRef = useRef<HTMLButtonElement>(null);
   const chatEntryRef = useRef<HTMLButtonElement>(null);
   const chatsEntryRef = useRef<HTMLButtonElement>(null);
@@ -206,65 +192,7 @@ export function ComposedReferenceGameApp() {
     applyDocumentLocale(localeRef.current);
   }, []);
 
-  // Browser Back moves between surfaces, because the selected surface is a
-  // history entry rather than hidden state (design/26 §7.2). Escape returns to
-  // the conversation from any other surface.
-  useEffect(() => {
-    const syncPanelWithHistory = (): void => setOpenPanel(readPanelFromUrl());
-    window.addEventListener("popstate", syncPanelWithHistory);
-    return () => window.removeEventListener("popstate", syncPanelWithHistory);
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
-      if (shownSurface === CHAT_PANEL) return;
-      // Stepping the history back removes the entry that selected this surface,
-      // so a later refresh cannot resurrect it; a surface restored from a URL
-      // this session never pushed returns to the conversation in place instead.
-      if (window.history.state?.gbPanel !== undefined) {
-        window.history.back();
-        return;
-      }
-      const url = new URL(window.location.href);
-      const params = new URLSearchParams(url.hash.slice(1));
-      params.delete(PANEL_PARAM);
-      url.hash = params.toString();
-      window.history.replaceState(null, "", url.toString());
-      setOpenPanel(null);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [shownSurface]);
-
-  // Returning to the conversation puts the player back where they type. A
-  // surface's own landing place is its heading (`SurfaceView`), which is right
-  // for a peer surface a keyboard user is stepping into; the conversation's
-  // landing place is the composer's field, and `Composer` owns that field, so the
-  // shell reaches it by the class the composer renders - the same handle the
-  // mounted gates use. Only a return moves focus; the first paint does not.
-  const previousSurfaceRef = useRef<string>(shownSurface);
-  useEffect(() => {
-    const returned = shownSurface === CHAT_PANEL && previousSurfaceRef.current !== CHAT_PANEL;
-    previousSurfaceRef.current = shownSurface;
-    if (returned) document.querySelector<HTMLTextAreaElement>(".composer-textarea")?.focus();
-  }, [shownSurface]);
-
-  // Selecting a surface is one history entry (design/104 §2). The entries are the
-  // shell's surface switcher, so all of them share this one behaviour.
-  const openPanelOf =
-    (panel: string, entryRef: React.RefObject<HTMLButtonElement | null>): (() => void) =>
-    (): void => {
-      void entryRef;
-      if (openPanel !== panel) {
-        const url = new URL(window.location.href);
-        const params = new URLSearchParams(url.hash.slice(1));
-        params.set(PANEL_PARAM, panel);
-        url.hash = params.toString();
-        window.history.pushState({ gbPanel: panel }, "", url.toString());
-      }
-      setOpenPanel(panel);
-    };
+  const { shownSurface, openPanelOf } = useSurfaceRoute();
 
   useEffect(() => {
     cancelledRef.current = false;
