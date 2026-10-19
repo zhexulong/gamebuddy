@@ -184,10 +184,14 @@ const mountPreamble = `
    * provider returned, both appended as children of the current leaf, exactly as the provider path
    * leaves the session.
    */
-  async function driveTurnWithSessionPair(fx, responseId, promptText, replyText) {
+  async function driveTurnWithSessionPair(fx, responseId, promptText, replyText, options) {
     return internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
       internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
         const sessionManager = scope.runtimeSession.sessionManager;
+        // The Host's own system prompt, appended the way a real mount appends it: once, as the
+        // session's own first message entry, ahead of the exchanges.
+        if (options?.systemPrompt !== undefined)
+          sessionManager.appendMessage({ role: "system", content: options.systemPrompt, timestamp: Date.now() });
         sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.now() });
         sessionManager.appendMessage({ role: "assistant", content: [{ type: "text", text: replyText }] });
         const times = [await nextTime(), await nextTime(), await nextTime(), await nextTime(), await nextTime()];
@@ -1369,6 +1373,123 @@ test(
     );
     const settledAfterRefusals = output.settledTexts as string[];
     assert.equal(settledAfterRefusals.length, 7);
+  },
+);
+
+/**
+ * The same edit through the real mounted coordinator, in the one session shape a real mount leaves:
+ * the Host's own system prompt is the branch's own first message entry, ahead of the exchanges. It is
+ * a message entry no durable transcript row names, so it must not shift the position an edit proves
+ * against; while it did, every edit refused as the runtime's own failure in the product run this
+ * fixture mirrors (its session file reads `system, user, assistant, ...`).
+ */
+test(
+  "an edit lands in the real mount's session shape, whose own head is the Host's system prompt",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const { readdir, readFile, stat } = await import("node:fs/promises");
+  const { join: joinPath } = await import("node:path");
+  const { buildSessionProjection } = await import(piUrl);
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  const systemPrompt = "You are the companion in this scene; speak only for yourself.";
+  const firstText = "Synthetic player request";
+  const secondText = "A second line the player keeps.";
+  const firstEdited = "Synthetic player request, corrected.";
+  const secondEdited = "A second line the player keeps, corrected.";
+  await service.submitAfterResponseCommit(commandFor(fx, {}), "syspromptaaaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  await driveTurnWithSessionPair(fx, "reply_01", firstText, "First synthetic reply.", { systemPrompt });
+  await service.submitAfterResponseCommit(commandFor(fx, { text: secondText, expectedDraftRevision: 1 }), "sysprompttwoaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 2);
+  await driveTurnWithSessionPair(fx, "reply_02", secondText, "Second synthetic reply.");
+
+  /** Everything the session file alone says the next mount would read, head first. */
+  const modelPairs = async () => {
+    const leaves = (await readdir(fx.root, { recursive: true })).filter((leaf) => leaf.endsWith(".jsonl"));
+    const files = await Promise.all(leaves.map(async (leaf) => ({ leaf, at: (await stat(joinPath(fx.root, leaf))).mtimeMs })));
+    files.sort((left, right) => right.at - left.at);
+    const entries = (await readFile(joinPath(fx.root, files[0].leaf), "utf8")).split("\\n").filter((line) => line.length > 0).map((line) => JSON.parse(line)).filter((entry) => entry.type !== "session");
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const leafId = entries.length === 0 ? null : entries[entries.length - 1].id;
+    return buildSessionProjection(entries, leafId, byId).messages.map((message) => [
+      message.role,
+      Array.isArray(message.content) ? message.content.filter((part) => part.type === "text").map((part) => part.text).join("") : String(message.content),
+    ]);
+  };
+  const handleOf = (id) => fx.lease.browserProjection.projectMessageHandle(id);
+  const beforeState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const modelBefore = await modelPairs();
+  const editedFirst = await run(async () => service.edit({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(beforeState.messages[1].messageId), expectedOrder: 1, text: firstEdited }));
+  const modelAfterFirst = await modelPairs();
+  const editedSecond = await run(async () => service.edit({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(beforeState.messages[3].messageId), expectedOrder: 3, text: secondEdited }));
+  const modelAfterSecond = await modelPairs();
+  const afterState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({
+    editedFirst, editedSecond, modelBefore, modelAfterFirst, modelAfterSecond, startCalls,
+    beforeTexts: beforeState.messages.map((message) => message.text),
+    afterTexts: afterState.messages.map((message) => message.text),
+  }));
+`);
+    assert.equal(output.startCalls, 2);
+    const systemHead: readonly (readonly [string, string])[] = [
+      ["system", "You are the companion in this scene; speak only for yourself."],
+    ];
+
+    // This test's premise, read from the session file alone: the Host's system prompt is the branch's
+    // own first message entry, ahead of the conversation.
+    assert.deepEqual(output.modelBefore, [
+      ...systemHead,
+      ["user", "Synthetic player request"],
+      ["assistant", "First synthetic reply."],
+      ["user", "A second line the player keeps."],
+      ["assistant", "Second synthetic reply."],
+    ]);
+
+    // The first player row, and then the second, each land on the entry that carries them.
+    const editedFirst = output.editedFirst as {
+      ok: boolean;
+      value?: { message: { text: string; order: number; role: string } };
+    };
+    assert.equal(editedFirst.ok, true, JSON.stringify(output.editedFirst));
+    assert.equal(editedFirst.value?.message.text, "Synthetic player request, corrected.");
+    assert.equal(editedFirst.value?.message.order, 1);
+    assert.equal(editedFirst.value?.message.role, "player");
+    assert.deepEqual(output.modelAfterFirst, [
+      ...systemHead,
+      ["user", "Synthetic player request, corrected."],
+      ["assistant", "First synthetic reply."],
+      ["user", "A second line the player keeps."],
+      ["assistant", "Second synthetic reply."],
+    ]);
+    const editedSecond = output.editedSecond as { ok: boolean; value?: { message: { text: string; order: number } } };
+    assert.equal(editedSecond.ok, true, JSON.stringify(output.editedSecond));
+    assert.equal(editedSecond.value?.message.text, "A second line the player keeps, corrected.");
+    assert.equal(editedSecond.value?.message.order, 3);
+    assert.deepEqual(output.modelAfterSecond, [
+      ...systemHead,
+      ["user", "Synthetic player request, corrected."],
+      ["assistant", "First synthetic reply."],
+      ["user", "A second line the player keeps, corrected."],
+      ["assistant", "Second synthetic reply."],
+    ]);
+
+    // The durable transcript: the same conversation, exactly the two named rows rewritten.
+    const before = output.beforeTexts as string[];
+    const after = output.afterTexts as string[];
+    assert.equal(after.length, before.length);
+    assert.equal(after[0], before[0]);
+    assert.deepEqual(after.slice(1), [
+      "Synthetic player request, corrected.",
+      "First synthetic reply.",
+      "A second line the player keeps, corrected.",
+      "Second synthetic reply.",
+    ]);
   },
 );
 

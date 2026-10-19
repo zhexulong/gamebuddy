@@ -28,6 +28,8 @@ const REGENERATED_REPLY = "Regenerated reply: the rain made me late.";
 const SECOND_REGENERATED_REPLY = "Second regeneration: the rain stopped and I walked over.";
 const EDITED_PROMPT_TEXT = "I waited at the bus stop until noon, then took the second bus.";
 const THIRD_PROMPT_TEXT = "I asked the driver where this one goes.";
+const EDITED_EARLIER_PROMPT_TEXT = "The early bus pulled out as I reached the stop.";
+const HOST_SYSTEM_PROMPT = "You are the companion in this scene; speak only for yourself.";
 
 type Fixture = Readonly<{
   root: string;
@@ -53,6 +55,14 @@ function appendPrompt(sessionManager: SessionManager, text: string): string {
     content: [{ type: "text", text }],
     timestamp: Date.now(),
   });
+}
+
+/**
+ * The Host's own system prompt, appended the way a real mounted session carries it: one message entry
+ * at the head of the branch, which no durable transcript row names.
+ */
+function appendSystemPrompt(sessionManager: SessionManager, text: string): string {
+  return sessionManager.appendMessage({ role: "system", content: text, timestamp: Date.now() });
 }
 
 function appendReply(sessionManager: SessionManager, text: string): string {
@@ -597,6 +607,81 @@ test("an entry the session does not carry refuses, and a revert is itself durabl
       [
         ["user", [{ type: "text", text: EDITED_PROMPT_TEXT }]],
         ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ],
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The session a real mount leaves, read off a recorded product run's own file: its FIRST message entry
+ * is the Host's system prompt, and only then do the exchanges follow (`system, user(P), assistant(A1),
+ * …`). The greeting is never prompted, so the transcript's own order is what a position means - but the
+ * system prompt is a message entry no transcript row names, and a position counted over every message
+ * entry therefore named the entry one place early: in the product every edit refused while the row's
+ * own entry sat one place later. A position is the transcript's, so only an entry that carries one of
+ * its rows occupies one.
+ */
+test("an edit proves its entry in a session whose head is the Host's own system prompt", async () => {
+  const fixture = await createSession("gamebuddy-transcript-edit-system-prompt-", []);
+  try {
+    appendSystemPrompt(fixture.sessionManager, HOST_SYSTEM_PROMPT);
+    appendPrompt(fixture.sessionManager, PROMPT_TEXT);
+    appendReply(fixture.sessionManager, FIRST_REPLY);
+    appendPrompt(fixture.sessionManager, EARLIER_PROMPT_TEXT);
+    appendReply(fixture.sessionManager, SECOND_REPLY);
+    fixture.session.refreshContext();
+    const projected = () =>
+      fixture.sessionManager
+        .buildSessionProjection()
+        .messages.map((message) => [message.role, "content" in message ? message.content : null]);
+    // The premise, read off the session itself: the branch's first message entry is the system prompt.
+    assert.equal(
+      fixture.sessionManager.getBranch().filter((entry) => entry.type === "message")[0]?.message?.role,
+      "system",
+    );
+
+    // The transcript's own positions - row 0 is the first player line, row 2 the second - each land on
+    // the entry that carries that row, with the system prompt left alone at the head.
+    const editedFirst = editPiTranscriptEntry(fixture.session, 0, drop("player", PROMPT_TEXT), EDITED_PROMPT_TEXT);
+    assert.equal(editedFirst.status, "edited", JSON.stringify(editedFirst));
+    const editedSecond = editPiTranscriptEntry(
+      fixture.session,
+      2,
+      drop("player", EARLIER_PROMPT_TEXT),
+      EDITED_EARLIER_PROMPT_TEXT,
+    );
+    assert.equal(editedSecond.status, "edited", JSON.stringify(editedSecond));
+    assert.deepEqual(projected(), [
+      ["system", HOST_SYSTEM_PROMPT],
+      ["user", [{ type: "text", text: EDITED_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: EDITED_EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+    ]);
+
+    // The proof keeps its force: a position the session cannot prove still refuses and mutates nothing.
+    const entriesBefore = fixture.sessionManager.getEntryCount();
+    const refused = editPiTranscriptEntry(fixture.session, 1, drop("player", PROMPT_TEXT), EDITED_PROMPT_TEXT);
+    assert.equal(refused.status, "refused");
+    if (refused.status === "refused") assert.equal(refused.reason, "edit_target_text_mismatch");
+    assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore);
+
+    // Durable: each replacement is an appended edit, so the file's own last entries carry the new
+    // words and a mount re-opening it reads them.
+    fixture.dispose();
+    const revivedManager = SessionManager.continueRecent(fixture.cwd, fixture.sessionDir);
+    assert.deepEqual(
+      revivedManager
+        .buildSessionProjection()
+        .messages.map((message) => [message.role, "content" in message ? message.content : null]),
+      [
+        ["system", HOST_SYSTEM_PROMPT],
+        ["user", [{ type: "text", text: EDITED_PROMPT_TEXT }]],
+        ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+        ["user", [{ type: "text", text: EDITED_EARLIER_PROMPT_TEXT }]],
+        ["assistant", [{ type: "text", text: SECOND_REPLY }]],
       ],
     );
   } finally {

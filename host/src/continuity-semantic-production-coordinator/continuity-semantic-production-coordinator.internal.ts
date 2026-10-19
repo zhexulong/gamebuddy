@@ -1246,6 +1246,28 @@ export async function selectMountedSwipeVariant(
 }
 
 /**
+ * A mounted-mutation refusal that names its own branch on stderr and throws the code the surface reads.
+ *
+ * The four mounted ingresses (swipe, rewind, edit, delete) share one guard shape, and the route's
+ * `problemFor` maps every code whose text contains "runtime" into the same opaque 503
+ * `runtime_unavailable`. So the branches that are a fact about the point the player named - a position
+ * the transcript no longer holds, a row that is not the player's own words - throw the durable store's
+ * own bounded code for that fact, which the route already maps to its own status and the client already
+ * has a sentence for; refusing with the ingress's generic code there told the player the runtime was
+ * gone about a message the player can see. A refusal that is genuinely about the runtime - no live
+ * mount, no exact runtime session - keeps the ingress's own code and stays that 503, and the branch
+ * line on stderr is its only distinguishing evidence on a Host.
+ *
+ * The branch name is a diagnostic for whoever reads the Host's stderr, the style the session-shape
+ * refusals below already use: the kit buffers the entry's stderr in the launch phase, so it is a hint
+ * for a host-level run rather than a capture channel.
+ */
+function refuseMountedMutation(branch: string, code: string): never {
+  process.stderr.write(`[mounted-mutation] ${branch} -> ${code}\n`);
+  throw new SemanticProductionCoordinatorError(code);
+}
+
+/**
  * The one authorized rewind ingress. A rewind reshapes the model's own session, and only a live
  * mounted lease holds the exact runtime session the mounted conversation owns, so a caller with a
  * store but no live mount cannot reshape a conversation. Like the swipe ingress it neither creates
@@ -1277,10 +1299,10 @@ export async function rewindMountedChatTranscript(
     !Number.isSafeInteger(input.expectedOrder) ||
     input.expectedOrder < 0
   )
-    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_rewind_unavailable");
+    throw refuseMountedMutation("rewind record-or-input", "semantic_chat_runtime_rewind_unavailable");
   const runtimeSession = record.providerRuntimeSession;
   if (runtimeSession === undefined)
-    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_rewind_unavailable");
+    throw refuseMountedMutation("rewind session-missing", "semantic_chat_runtime_rewind_unavailable");
   const store = record.store();
   const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
   const dropped: PiTranscriptMessage[] = state.messages
@@ -1334,15 +1356,17 @@ export async function editMountedChatMessage(
     !Number.isSafeInteger(input.expectedOrder) ||
     input.expectedOrder < 0
   )
-    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_edit_unavailable");
+    throw refuseMountedMutation("edit record-or-input", "semantic_chat_runtime_edit_unavailable");
   const runtimeSession = record.providerRuntimeSession;
   if (runtimeSession === undefined)
-    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_edit_unavailable");
+    throw refuseMountedMutation("edit session-missing", "semantic_chat_runtime_edit_unavailable");
   const store = record.store();
   const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
   const target = state.messages[input.expectedOrder];
-  if (target === undefined || target.messageId !== input.messageId || target.kind !== "player")
-    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_edit_unavailable");
+  if (target === undefined || target.messageId !== input.messageId)
+    throw refuseMountedMutation("edit target-mismatch", "chat_message_revision_conflict");
+  if (target.role !== "player" || target.kind !== "player")
+    throw refuseMountedMutation("edit target-not-player", "chat_edit_not_player_message");
   // The greeting is never prompted into the session, so the entry's own position is the number of
   // transcript rows before it that a prompt could carry.
   const entryIndex = state.messages
@@ -1408,15 +1432,15 @@ export async function deleteMountedChatMessage(
     !Number.isSafeInteger(input.expectedOrder) ||
     input.expectedOrder < 0
   )
-    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_delete_unavailable");
+    throw refuseMountedMutation("delete record-or-input", "semantic_chat_runtime_delete_unavailable");
   const runtimeSession = record.providerRuntimeSession;
   if (runtimeSession === undefined)
-    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_delete_unavailable");
+    throw refuseMountedMutation("delete session-missing", "semantic_chat_runtime_delete_unavailable");
   const store = record.store();
   const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
   const target = state.messages[input.expectedOrder];
   if (target === undefined || target.messageId !== input.messageId)
-    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_delete_unavailable");
+    throw refuseMountedMutation("delete target-mismatch", "chat_message_revision_conflict");
   const bound =
     typeof store.readTranscriptEntryBinding === "function"
       ? await store.readTranscriptEntryBinding(record.chatThreadId, input.messageId)
