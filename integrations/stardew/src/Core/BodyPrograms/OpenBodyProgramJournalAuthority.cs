@@ -444,7 +444,7 @@ public sealed class OpenBodyProgramJournalAuthority
     /// execution must equal that binding; any other tuple/state fails closed
     /// without mutating the journal.
     /// </summary>
-    public BodyProgramControllerResult<BodyProgramStatusSnapshot> TrySettleRecoveryRequired(HostAdmissionGrant grant, NodeExecutionBinding execution)
+    public BodyProgramControllerResult<BodyProgramStatusSnapshot> TrySettleRecoveryRequired(HostAdmissionGrant grant, NodeExecutionBinding execution, string? reasonCode = null)
     {
         if (!IsMutable) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.RecoveryRequired);
         if (grant is null || !BodyProgramValidation.IsIdentifier(grant.GrantId)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.GrantMismatch);
@@ -462,7 +462,7 @@ public sealed class OpenBodyProgramJournalAuthority
             || !Equals(node.ExecutionBinding, grant.ExecutionBinding) || !Equals(execution, grant.ExecutionBinding)
             || !ExactGrantIdentity(grant, program, node, descriptor))
             return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.GrantMismatch);
-        BodyProgramJournalNode settled = node with { State = BodyProgramNodeState.RecoveryRequired, GrantId = null, ExecutionBinding = node.ExecutionBinding, RecoveryDiagnostic = "recovery_required", ClaimOwnership = node.ClaimOwnership is null ? null : BodyProgramValidation.FreezeMap(node.ClaimOwnership.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)) };
+        BodyProgramJournalNode settled = node with { State = BodyProgramNodeState.RecoveryRequired, GrantId = null, ExecutionBinding = node.ExecutionBinding, RecoveryDiagnostic = reasonCode is { Length: >= 1 and <= 4096 } && !reasonCode.Any(char.IsControl) ? reasonCode : "recovery_required", ClaimOwnership = node.ClaimOwnership is null ? null : BodyProgramValidation.FreezeMap(node.ClaimOwnership.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)) };
         BodyProgramJournalProgram updated = ReplaceNode(program, settled) with { State = BodyProgramState.RecoveryRequired };
         if (!TryPersist(AppendEvent(ReplaceProgram(this.state, updated), program.Program.ProgramId, "node_settled", node.NodeId, node.NodeAttempt)))
             return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.PersistenceWriteFailed);

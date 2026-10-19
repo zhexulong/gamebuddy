@@ -449,7 +449,7 @@ public sealed class BodyProgramControllerPumpTests
         load.ReceiptId.Should().BeNull();
         load.Evidence.Should().BeNull();
         load.PostconditionVerification.Should().BeNull();
-        load.RecoveryDiagnostic.Should().Be("recovery_required");
+        load.RecoveryDiagnostic.Should().Be("terminal_rejected_by_authority");
         status.Nodes.Single(node => node.NodeId == "verify").State.Should().Be(BodyProgramNodeState.Pending);
 
         // The rejected Succeeded terminal contributed no facts, receipt, or
@@ -605,7 +605,7 @@ public sealed class BodyProgramControllerPumpTests
         load.ReceiptId.Should().BeNull();
         load.Evidence.Should().BeNull();
         load.PostconditionVerification.Should().BeNull();
-        load.RecoveryDiagnostic.Should().Be("recovery_required");
+        load.RecoveryDiagnostic.Should().Be("mid_run_revalidation_failed");
         executor.LoadVisits.Should().Be(1);
         executor.Runs.Should().ContainSingle();
         authority.Events("program", 0, 32).Events.Where(@event => @event.Kind == "node_completed" && @event.NodeId == "load").Should().BeEmpty();

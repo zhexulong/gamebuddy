@@ -220,7 +220,7 @@ public sealed class FarmhandBodyProgramController
         // authority-owned settlement seam durably transitions exactly the
         // still-Running bound node to RecoveryRequired without accepting
         // facts/proofs, creating a new attempt, or retrying.
-        if (!this.authority.TrySettleRecoveryRequired(boundGrant, execution).IsSuccess)
+        if (!this.authority.TrySettleRecoveryRequired(boundGrant, execution, "terminal_rejected_by_authority").IsSuccess)
         {
             // Persistence or lifecycle is unavailable (e.g. TryPersist failed,
             // leaving OpenStatus = PersistenceWriteFailed). The node is still
@@ -272,7 +272,7 @@ public sealed class FarmhandBodyProgramController
                 // The mid-run gate changed (deadline/policy/stop): settle the
                 // exact still-Running node through the authority-owned seam.
                 this.boundRunning.Remove(execution.ExecutionId);
-                this.authority.TrySettleRecoveryRequired(boundGrant, execution);
+                this.authority.TrySettleRecoveryRequired(boundGrant, execution, "mid_run_revalidation_failed");
                 if (!this.authority.IsLifecycleOpen) return;
                 continue;
             }
@@ -289,7 +289,7 @@ public sealed class FarmhandBodyProgramController
             if (terminal is null) continue;
             this.boundRunning.Remove(execution.ExecutionId);
             if (this.authority.TryComplete(boundGrant, terminal).IsSuccess) continue;
-            if (!this.authority.TrySettleRecoveryRequired(boundGrant, execution).IsSuccess)
+            if (!this.authority.TrySettleRecoveryRequired(boundGrant, execution, "terminal_rejected_by_authority").IsSuccess)
             {
                 // Settle unavailable (persistence/lifecycle): retain the tuple
                 // so a later tick retries instead of stranding the node.
