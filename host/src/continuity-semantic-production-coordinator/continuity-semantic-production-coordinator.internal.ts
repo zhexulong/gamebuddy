@@ -1251,12 +1251,13 @@ export async function selectMountedSwipeVariant(
  * The four mounted ingresses (swipe, rewind, edit, delete) share one guard shape, and the route's
  * `problemFor` maps every code whose text contains "runtime" into the same opaque 503
  * `runtime_unavailable`. So the branches that are a fact about the point the player named - a position
- * the transcript no longer holds, a row that is not the player's own words - throw the durable store's
- * own bounded code for that fact, which the route already maps to its own status and the client already
- * has a sentence for; refusing with the ingress's generic code there told the player the runtime was
- * gone about a message the player can see. A refusal that is genuinely about the runtime - no live
- * mount, no exact runtime session - keeps the ingress's own code and stays that 503, and the branch
- * line on stderr is its only distinguishing evidence on a Host.
+ * the transcript no longer holds, the greeting the Chat opened on, a row that is neither the player's
+ * own words nor her reply - throw the durable store's own bounded code for that fact, which the route
+ * already maps to its own status and the client already has a sentence for; refusing with the
+ * ingress's generic code there told the player the runtime was gone about a message the player can see.
+ * A refusal that is genuinely about the runtime - no live mount, no exact runtime session - keeps the
+ * ingress's own code and stays that 503, and the branch line on stderr is its only distinguishing
+ * evidence on a Host.
  *
  * The branch name is a diagnostic for whoever reads the Host's stderr, the style the session-shape
  * refusals below already use: the kit buffers the entry's stderr in the launch phase, so it is a hint
@@ -1323,9 +1324,10 @@ export async function rewindMountedChatTranscript(
 
 /**
  * The one authorized in-place edit ingress. An edit replaces what the model's own session carries for
- * one message, and only a live mounted lease holds the exact runtime session whose path the mounted
- * conversation owns; so a caller with a store but no live mount cannot reshape a conversation. Like
- * the swipe and rewind ingresses it neither creates nor selects a Chat and never prompts Pi.
+ * one message - the player's own line or her reply, the two messages the player may correct - and only a
+ * live mounted lease holds the exact runtime session whose path the mounted conversation owns; so a
+ * caller with a store but no live mount cannot reshape a conversation. Like the swipe and rewind
+ * ingresses it neither creates nor selects a Chat and never prompts Pi.
  *
  * The order is the whole point, and it is the rewind's: the durable read, the session's own
  * replacement and the durable row update share one synchronous critical section - there is no
@@ -1365,8 +1367,13 @@ export async function editMountedChatMessage(
   const target = state.messages[input.expectedOrder];
   if (target === undefined || target.messageId !== input.messageId)
     throw refuseMountedMutation("edit target-mismatch", "chat_message_revision_conflict");
-  if (target.role !== "player" || target.kind !== "player")
-    throw refuseMountedMutation("edit target-not-player", "chat_edit_not_player_message");
+  // The player's own line or her reply, and nothing else: the greeting the Chat opened on has its own
+  // editor, and a row that is neither of the two exchanges is not a message this operation edits.
+  if (target.kind === "opening") throw refuseMountedMutation("edit target-opening", "chat_edit_opening_retained");
+  const editable =
+    (target.role === "player" && target.kind === "player") ||
+    (target.role === "companion" && target.kind === "response");
+  if (!editable) throw refuseMountedMutation("edit target-not-editable", "chat_edit_not_player_message");
   // The greeting is never prompted into the session, so the entry's own position is the number of
   // transcript rows before it that a prompt could carry.
   const entryIndex = state.messages

@@ -129,10 +129,12 @@ const ProblemCode = Type.Union([
   Type.Literal("chat_message_revision_conflict"),
   Type.Literal("chat_rewind_opening_retained"),
   Type.Literal("chat_rewind_turn_active"),
-  // Editing one of the player's own messages in place (`chat.edit`) is the same shape of bounded
-  // vocabulary: the handle names a row the player did not write, or a reply is being written from
-  // the very text the edit would replace. Each is a fact the surface can state plainly, so no edit
-  // ever fails with "the conversation could not be changed" about a message the player can see.
+  // Editing one of the player's own messages, or her reply, in place (`chat.edit`) is the same shape of
+  // bounded vocabulary: the handle names the greeting the Chat opened on, which has its own editor, or a
+  // row that is neither the player's own words nor her reply; or a reply is being written from the very
+  // text the edit would replace. Each is a fact the surface can state plainly, so no edit ever fails with
+  // "the conversation could not be changed" about a message the player can see.
+  Type.Literal("chat_edit_opening_retained"),
   Type.Literal("chat_edit_not_player_message"),
   Type.Literal("chat_edit_turn_active"),
   // Deleting one message out of the middle of a conversation (`chat.delete`) has its own bounded
@@ -1640,10 +1642,14 @@ export const RewindChatResultV1Schema = strictObject({
   lastMessage: Type.Union([BrowserMessageV1Schema, Type.Null()]),
 });
 /**
- * Editing one of the player's own messages in place (`chat.edit`): the message carries different text
- * from now on - in the durable transcript the player reads AND in the model's own session, which is
- * the invariant the whole operation exists for. An edit that only changed the bubble would leave the
- * model answering words the player no longer says.
+ * Editing one message the player and the companion exchanged, in place (`chat.edit`): the message
+ * carries different text from now on - in the durable transcript the player reads AND in the model's own
+ * session, which is the invariant the whole operation exists for. An edit that only changed the bubble
+ * would leave the model answering words the player no longer says.
+ *
+ * The two editable messages are the player's own and the companion's reply; a reply's words are also the
+ * variant its row carries, and the Host rewrites both with the edit. The greeting the Chat opened on is
+ * not an exchange and has its own editor.
  *
  * `expectedOrder` is the transcript position the browser rendered that message at. The transcript is
  * what the position means, so a row that has moved - because a rewind landed between the read and the
@@ -1834,6 +1840,7 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
+  "chat_edit_opening_retained",
   "chat_edit_not_player_message",
   "chat_edit_turn_active",
   "chat_delete_opening_retained",

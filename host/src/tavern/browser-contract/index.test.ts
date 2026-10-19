@@ -227,8 +227,10 @@ test("problem codes and events are closed unions", () => {
     "chat_message_revision_conflict",
     "chat_rewind_opening_retained",
     "chat_rewind_turn_active",
-    // And the edit's own two: the row is not the player's own words, or a reply is being written
-    // from the very text the edit would replace.
+    // And the edit's own three: the row is the greeting the Chat opened on, the row is neither the
+    // player's own words nor her reply, or a reply is being written from the very text the edit would
+    // replace.
+    "chat_edit_opening_retained",
     "chat_edit_not_player_message",
     "chat_edit_turn_active",
     // The delete's own three, including the one that is not about the player's choice at all: a row
