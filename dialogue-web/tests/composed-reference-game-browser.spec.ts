@@ -5356,24 +5356,20 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
   await page.getByRole("button", { name: "Chats", exact: true }).click();
   const surface = page.getByTestId("chats-surface");
   await expect(surface).toBeVisible();
-  // Two controls, two names: the row's rename BUTTON carries the affordance ("Rename Chat") and
-  // the input it opens is the FIELD ("Chat title"). While both carried `labels.renameChat`, a
-  // surface-wide `getByLabel("Rename Chat")` matched the other row's button and this input at once
-  // and Playwright's strict mode failed the journey before it could fill anything. So name the
-  // control that is meant, and assert no second control answers to that name so a duplicate cannot
-  // come back silently.
+  // Every row carries the pencil now (`chat.rename` names its target by the row's own handle), and
+  // the two names stay apart: the buttons answer to "Rename Chat" and the field they open answers to
+  // "Chat title", so a surface-wide lookup for either name resolves to exactly what it means.
   const renameRow = surface.getByTestId("chat-item").nth(1);
+  await expect(surface.getByRole("button", { name: "Rename Chat" })).toHaveCount(2);
   await renameRow.getByRole("button", { name: "Rename Chat" }).click();
   const titleField = renameRow.getByLabel("Chat title");
   await expect(titleField).toBeVisible();
-  await expect(surface.getByLabel("Rename Chat")).toHaveCount(1);
   await expect(surface.getByLabel("Chat title")).toHaveCount(1);
   await titleField.fill(renamedTitle);
   await surface.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => titleWrites.length).toBe(1);
   expect(titleWrites[0]).toEqual({
     apiVersion: 1,
-    selectionGeneration: 1,
     chatHandle: targetHandle,
     expectedManagementRevision: 1,
     title: renamedTitle,
