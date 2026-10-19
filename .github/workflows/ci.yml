@@ -174,6 +174,28 @@ jobs:
       - run: pnpm check:dependency-risk
       - run: pnpm test:dependency-risk
       - run: git diff --exit-code -- third_party/sbom-node.json
+      # The Windows launcher's own suite runs HERE, not in a job of its own, because it needs
+      # this job's workspace: its fixture publishes a Host production generation through the
+      # canonical publisher (the Host closure, the dialogue-web browser build, artifact
+      # verification). Measured 2026-10-19: the fixture's default path shares that publish as one
+      # Lazy task, so a publisher failure is inherited by every fixture-backed case at once - the
+      # 2026-09-20 run of this suite reports 26 failures that are all the same
+      # `stardew-mod-package-contract.js` publisher error, and a lane part-way through an
+      # unrelated Host edit fails the same way. So the generation is built once here, as its own
+      # named step, and handed to the suite through the door the fixture documents
+      # (`GAMEBUDDY_DESKTOP_TEST_GENERATION_ROOT`), which the fixture validates before use.
+      #
+      # The order is the fixture's own: the tests project publishes the self-contained exact-child
+      # runtime fixture that the generation build takes as its runtime tree.
+      - run: dotnet build desktop/GameBuddy.Desktop.Tests -c Debug
+      - run: node host/scripts/build-desktop-launcher-test-generation.mjs "${{ runner.temp }}/desktop-launcher-generation" desktop/GameBuddy.Desktop.Tests/bin/Debug/net8.0-windows/Fixtures/ExactChildBootstrapFixture
+      # Bounded on the measured work: the whole suite runs 15.7 minutes on a warm developer machine
+      # (`测试总数: 306`), and every fixture-backed case spawns real launcher/guardian/Host children at
+      # 15-70 seconds each, so a hosted runner's slower disk is the variable this number covers.
+      - run: dotnet test desktop/GameBuddy.Desktop.Tests -c Debug --no-build
+        timeout-minutes: 45
+        env:
+          GAMEBUDDY_DESKTOP_TEST_GENERATION_ROOT: ${{ runner.temp }}/desktop-launcher-generation
 
   voice-gateway:
     runs-on: windows-latest
@@ -254,3 +276,28 @@ jobs:
       - run: pnpm test:stardew-native-local-runner-contract
       - run: pnpm test:stardew-native-local-runner-fixture-contract
 
+  # The Windows shell and the installer build here, and nowhere else: the host job covers
+  # the compiled Host suite and the Stardew jobs cover the mod, core and integration
+  # projects, so neither builds `desktop/`. Measured 2026-10-19: `GameBuddy.sln` did not hold
+  # the launcher, its tests or the installer, and no workflow built either project.
+  #
+  # Each step is a named door of the packaging lane. The launcher Release bundle is the entry
+  # `package-player-distribution.mjs` lays into the payload the player receives, and the
+  # installer refuses a Release build without that payload (GBPAY001) while a Debug build
+  # without it warns GBPAY002 and produces the uninstall-only artifact. Assembling a signed
+  # Release Setup.exe - the archive it needs plus the certificate - stays in the protected
+  # release lane's separately approved contract, not here.
+  #
+  # The launcher's own test suite deliberately does NOT run here: its fixture publishes a Host
+  # production generation through the canonical publisher, so it runs in the host job, which
+  # already has that workspace.
+  desktop-shell:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet build desktop/GameBuddy.Desktop/GameBuddy.Desktop.csproj -c Release
+      - run: dotnet build desktop/installer/GameBuddy.Setup -c Debug

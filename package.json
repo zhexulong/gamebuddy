@@ -20,6 +20,8 @@
     "audit:stardew-native-local-runner-contract": "node tools/audit-stardew-native-local-runner-contract.mjs",
     "audit:stardew-scene-kind-projection": "node tools/audit-stardew-scene-kind-projection.mjs",
     "build": "pnpm --dir vendor/pi-koe run build:all && pnpm --filter @gamebuddy/companion-host build && pnpm --filter @gamebuddy/dialogue-web build",
+    "build:desktop-launcher": "dotnet build desktop/GameBuddy.Desktop/GameBuddy.Desktop.csproj -c Release",
+    "build:player-distribution": "pnpm build:desktop-launcher && node host/scripts/package-player-distribution.mjs host/dist desktop/dist/payload.zip",
     "build:stardew": "dotnet build integrations/stardew/GameBuddy.Stardew.csproj -c Release",
     "build:voice-protocol": "pnpm --dir vendor/pi-koe run build:protocol",
     "check:architecture": "pnpm check:publint && pnpm report:clones && echo \"[110] knip/module-graph/import-boundary gated by live WIP; see design/110 Task 5\"",

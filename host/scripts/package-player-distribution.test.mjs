@@ -56,7 +56,7 @@ function recordingSpawn() {
   return { spawn, calls };
 }
 
-test("a published generation plus the launcher bundle seals one payload the installer's own archive step opens", async () => {
+test("a published generation plus the launcher bundle seals the payload GameBuddy.Setup embeds", async () => {
   const outputRoot = await publishFixture();
   const launcherBundleRoot = await launcherFixture();
   const scratchRoot = await mkdtemp(join(tmpdir(), "gamebuddy-package-scratch-"));
@@ -77,7 +77,8 @@ test("a published generation plus the launcher bundle seals one payload the inst
     });
     assert.equal(result.static.generation.verdict.ok, true);
     assert.equal(result.static.launcher.verdict.ok, true);
-    // The archive is produced by the installer's own command, from the payload root.
+    // The archive is this step's own, from the payload root. It is also the artifact the
+    // installer embeds, so nothing re-archives this tree afterwards.
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].args.slice(0, 3), ["-a", "-c", "-f"]);
     assert.deepEqual(calls[0].args.slice(3), [artifactPath, "-C", join(scratchRoot, "payload"), "."]);
@@ -118,7 +119,7 @@ test("a generation that names the build machine never reaches an archive", async
   }
 });
 
-test("the archive step is the installer's, and refuses a non-zip destination", () => {
+test("the archive step refuses a non-zip destination", () => {
   const invocation = archiveInvocation({ archivePath: "C:\\out\\payload.zip", payloadRoot: "C:\\payload" });
   assert.deepEqual(invocation.args, ["-a", "-c", "-f", "C:\\out\\payload.zip", "-C", "C:\\payload", "."]);
   assert.throws(() => archiveInvocation({ archivePath: "C:\\out\\payload.tar", payloadRoot: "C:\\payload" }), /archive_must_be_zip/);
