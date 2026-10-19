@@ -51,6 +51,8 @@ const pickerFacts = () => {
     optionCount: options.length,
     options: options.map((option) => ({
       name: (option.querySelector('[data-testid="opening-option-name"]')?.textContent ?? "").trim(),
+      // The stage direction the opening leads with: an option is a pair (the beat, then her line).
+      action: (option.querySelector(".opening-option-action")?.textContent ?? "").trim() || null,
       line: (option.querySelector('[data-testid="opening-option-line"]')?.textContent ?? "").trim(),
       box: (() => {
         const r = option.getBoundingClientRect();
@@ -79,12 +81,30 @@ const openingEditorFacts = () => {
   };
 };
 
+// The transcript read as the player sees it: a stage direction is its own `<em class="message-action">`
+// element and her spoken words are the plain text around it. They are read apart because a row that
+// opens on a beat carries that beat BEFORE the line she says.
 const transcript = () =>
-  [...document.querySelectorAll(".message-list > li.message")].map((row, index) => ({
-    index,
-    role: row.className.includes("player") ? "player" : "companion",
-    text: (row.querySelector(".message-bubble")?.innerText ?? "").trim(),
-  }));
+  [...document.querySelectorAll(".message-list > li.message")].map((row, index) => {
+    const bubble = row.querySelector(".message-bubble");
+    const beats =
+      bubble === null
+        ? []
+        : [...bubble.querySelectorAll("em.message-action")].map((beat) => (beat.textContent ?? "").trim());
+    const spoken = (() => {
+      if (bubble === null) return null;
+      const clone = bubble.cloneNode(true);
+      for (const beat of [...clone.querySelectorAll("em.message-action")]) beat.remove();
+      return (clone.textContent ?? "").trim();
+    })();
+    return {
+      index,
+      role: row.className.includes("player") ? "player" : "companion",
+      text: (bubble?.innerText ?? "").trim(),
+      beats,
+      spoken,
+    };
+  });
 
 // Playwright's `page.evaluate(fn, arg)` accepts exactly ONE argument: passing two throws
 // "Too many arguments. If you need to pass more than 1 argument to the function wrap them in an object".
@@ -160,8 +180,18 @@ const clickOption = (index) => {
     say("=== ITEM: the new Chat's first line (the transcript's own row 0) ===");
     say(JSON.stringify(rows.slice(0, 2), null, 1));
     say(`the surface the shell left us on: chat-surface=${await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null)}`);
-    say(`first row role=${rows[0]?.role} text starts with the chosen opening: ${(rows[0]?.text ?? "").startsWith(chosen.line)}`);
-    say(`chosen line: ${JSON.stringify(chosen.line)}`);
+    // The chosen opening is the one the Chat opened on, compared as rendered structure: the chooser's
+    // own option (its action line and its line) against the row's beat element and its spoken text.
+    const first = rows[0] ?? null;
+    const rowBeats = first?.beats ?? [];
+    const beatMatches =
+      chosen.action === null ? rowBeats.length === 0 : rowBeats.length === 1 && rowBeats[0] === chosen.action;
+    const spokenMatches = first !== null && first.spoken !== null && first.spoken.startsWith(chosen.line);
+    say(`first row role=${first?.role ?? null} (companion expected)`);
+    say(`chosen opening: beat=${JSON.stringify(chosen.action)} line=${JSON.stringify(chosen.line)}`);
+    say(`the row's own beat(s), as em.message-action: ${JSON.stringify(rowBeats)}`);
+    say(`the row's spoken text, its beat's element excluded: ${JSON.stringify(first?.spoken ?? null)}`);
+    say(`the opening the player chose is the one the Chat opened on: ${beatMatches && spokenMatches}`);
     await shot(page, "85-chosen-opening-chat-1440x900.png");
     await page.setViewportSize({ width: 400, height: 800 });
     await page.waitForTimeout(1200);
