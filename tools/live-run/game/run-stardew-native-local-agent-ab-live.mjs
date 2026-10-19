@@ -140,6 +140,11 @@ const LEGACY_SCENARIO_BY_LADDER = Object.freeze({
 });
 const SCENARIOS = Object.freeze(["morning_routine", "memory_covenant", "npc_social_and_presence", "multiday_routine"]);
 const LEGACY_LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? null;
+// Measured ONCE, at start: the bundle needs the adapter and the display, and asking PowerShell for them at the end of a
+// run kept returning nothing - the measurement was being taken while a frozen game was eating the machine, and a failed
+// query is indistinguishable from a missing adapter.
+const environmentFacts = measureEnvironmentFacts();
+
 const SCENARIO = (() => {
   const requested =
     process.env.GAMEBUDDY_AGENT_SCENARIO ?? (LEGACY_LADDER === null ? null : LEGACY_SCENARIO_BY_LADDER[LEGACY_LADDER]);
@@ -1280,7 +1285,10 @@ function sampleGameThreads() {
  * The evidence bundle requires these whenever the window mode is not hidden/background, and it is right to: a run with
  * a window needs to say what it rendered on. Measured once per run, off the game thread.
  */
+let environmentFactsCache = null;
+
 function measureEnvironmentFacts() {
+  if (environmentFactsCache !== null) return environmentFactsCache;
   const query = (command) => {
     try {
       return execFileSync("powershell", ["-NoProfile", "-Command", command], {
@@ -1295,10 +1303,11 @@ function measureEnvironmentFacts() {
   const width = query("(Get-CimInstance Win32_VideoController | Select-Object -First 1).CurrentHorizontalResolution");
   const height = query("(Get-CimInstance Win32_VideoController | Select-Object -First 1).CurrentVerticalResolution");
   const resolution = width !== "" && height !== "" ? `${width}x${height}` : "";
-  return Object.freeze({
+  environmentFactsCache = Object.freeze({
     adapter: adapter === "" ? null : adapter.slice(0, 200),
     resolution: resolution === "" ? null : resolution.slice(0, 40),
   });
+  return environmentFactsCache;
 }
 
 function sampleGameProcess() {
@@ -3002,7 +3011,6 @@ async function writeRunBundle({
   // The window mode the RUNNER observes (the launcher exports it), and the facts a non-headless run must carry.
   const observedWindowMode = process.env.GAMEBUDDY_WINDOW_MODE ?? "visible";
   const headlessWindowMode = observedWindowMode === "hidden" || observedWindowMode === "background";
-  const environmentFacts = headlessWindowMode ? { adapter: null, resolution: null } : measureEnvironmentFacts();
   const bundle = {
     schemaVersion: 1,
     run: {

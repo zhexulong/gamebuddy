@@ -81,7 +81,9 @@ test("the failure dump is built from the bridge's own facts and the trace's own 
   // A non-headless run MEASURES the adapter and the display: leaving them null is what refused every foreground
   // bundle (the contract accepts null facts only for a headless mode, with that reason).
   assert.match(SOURCE, /function measureEnvironmentFacts\(\)/u);
-  assert.match(SOURCE, /const environmentFacts = headlessWindowMode/u);
+  // Measured at START, not at the end: a query taken while a frozen game eats the machine returns nothing, and a
+  // failed query is indistinguishable from a missing adapter.
+  assert.match(SOURCE, /const environmentFacts = measureEnvironmentFacts\(\);/u);
 });
 
 test("the run's own narrative is judged and folded into the verdict", () => {
