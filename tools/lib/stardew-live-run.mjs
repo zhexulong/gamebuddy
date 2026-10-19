@@ -94,6 +94,16 @@ export async function launchStardewLiveRun({
   // Refuse BEFORE a game process exists. The runner checks this too, but a caller that reaches the runner has
   // already paid for a save load -- measured: a stale artifact refused the run and left the launched game behind.
   await assertLiveRunArtifactFresh();
+  // Exactly one GameBuddy, or the game quietly loads none. SMAPI refuses a mod it finds twice ("multiple copies of this
+  // mod installed") and then starts WITHOUT it, which surfaces as a 120 s pipe timeout rather than as the configuration
+  // error it is. Measured 2026-10-19: four consecutive runs died that way after the default mods path (the game own Mods
+  // directory) grew a second, older GameBuddy folder. The caller names the directory; this checks what is in it, before a
+  // game process exists to pay for it.
+  const gameBuddyFolders = readdirSync(modsPath, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^GameBuddy[.]/u.test(`${entry.name}.`))
+    .map((entry) => entry.name);
+  if (gameBuddyFolders.length !== 1)
+    throw new Error(`live_run_mods_path_needs_exactly_one_gamebuddy:${gameBuddyFolders.join("+") || "none"}`);
   const smapi = join(gamePath, "StardewModdingAPI.exe");
 
   const child = spawn(smapi, ["--mods-path", modsPath], {
