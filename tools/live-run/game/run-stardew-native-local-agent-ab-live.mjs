@@ -140,6 +140,11 @@ const LEGACY_SCENARIO_BY_LADDER = Object.freeze({
 });
 const SCENARIOS = Object.freeze(["morning_routine", "memory_covenant", "npc_social_and_presence", "multiday_routine"]);
 const LEGACY_LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? null;
+// The memo is declared BEFORE the call below: a `let` used by a function that runs earlier in module evaluation is a
+// temporal-dead-zone error, which is exactly what the first version of this did - the two runs it broke reported only
+// `Cannot access environmentFactsCache before initialization`.
+let environmentFactsCache = null;
+
 // Measured ONCE, at start: the bundle needs the adapter and the display, and asking PowerShell for them at the end of a
 // run kept returning nothing - the measurement was being taken while a frozen game was eating the machine, and a failed
 // query is indistinguishable from a missing adapter.
@@ -1285,8 +1290,6 @@ function sampleGameThreads() {
  * The evidence bundle requires these whenever the window mode is not hidden/background, and it is right to: a run with
  * a window needs to say what it rendered on. Measured once per run, off the game thread.
  */
-let environmentFactsCache = null;
-
 function measureEnvironmentFacts() {
   if (environmentFactsCache !== null) return environmentFactsCache;
   const query = (command) => {
