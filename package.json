@@ -159,6 +159,7 @@
     "test:stardew-admission-fork-delta": "node --test tools/audit-stardew-admission-fork-delta.test.mjs",
     "test:stardew-admission-hold-codes": "node --test tools/lib/stardew-admission-hold-codes.test.mjs",
     "test:stardew-attachment-telemetry": "powershell.exe -NoProfile -File tools/stardew-attachment-telemetry.test.ps1",
+    "test:stardew-automation-cadence": "node --test tools/run-stardew-automation-cadence.test.mjs",
     "test:stardew-branch-writeset": "node --test integrations/stardew/action-development/tests/stardew-branch-writeset.test.mjs",
     "test:stardew-clear-fish-pond-runner": "node --test tools/run-stardew-native-local-player-clear-fish-pond-smoke.test.mjs",
     "test:stardew-completion-evidence": "cd host && bun test src/stardew-completion-evidence-coverage.test.ts",
