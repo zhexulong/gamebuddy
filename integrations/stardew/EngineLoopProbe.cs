@@ -45,7 +45,20 @@ internal sealed class EngineLoopProbe
                 LogLevel.Warn);
             return;
         }
-        harmony.Patch(target, postfix: new HarmonyMethod(postfix));
+        try
+        {
+            harmony.Patch(target, postfix: new HarmonyMethod(postfix));
+            // Named, because "the counter stayed at zero" has two very different causes: the patch never took, or the
+            // engine's method is not the one being called. The first run of this probe wrote `frames=0` for its whole
+            // life and this line is what tells the two apart.
+            monitor.Log(
+                $"GameBuddy engine-loop probe installed on {target.DeclaringType?.FullName}.{target.Name} with {postfix.Name}.",
+                LogLevel.Info);
+        }
+        catch (Exception error)
+        {
+            monitor.Log($"GameBuddy engine-loop probe failed to patch: {error.GetType().Name}.", LogLevel.Warn);
+        }
     }
 
     /// <summary>Counts one engine frame. One increment and nothing else, on the game thread.</summary>
