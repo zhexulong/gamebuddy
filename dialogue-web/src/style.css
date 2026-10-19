@@ -5169,6 +5169,20 @@
     overflow-wrap: anywhere;
   }
 
+  /* The beat that opens an opening, when it opens on one: her own line is what
+   the option is a choice between, and the stage direction stays as one smaller
+   line above it so a long one cannot grow the option. */
+  .opening-option-action {
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-disabled);
+  }
+
   .opening-option-line {
     overflow: hidden;
     overflow-wrap: anywhere;
@@ -5178,6 +5192,15 @@
     font-size: 13px;
     line-height: 1.6;
     color: var(--text-secondary);
+  }
+
+  /* Both blocks are rendered Markdown, so the text lives in a paragraph inside
+   the wrapper: the wrapper keeps the clamp, and the paragraph's own margin is
+   reset the way the created Chat's card resets its own (`.chat-item-main`,
+   above). Without it the clamp measures a box taller than the lines it shows. */
+  .opening-option-action > :is(p, blockquote, pre, ul, ol, hr),
+  .opening-option-line > :is(p, blockquote, pre, ul, ol, hr) {
+    margin: 0;
   }
 
   @media (prefers-reduced-motion: reduce) {

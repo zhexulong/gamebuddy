@@ -130,13 +130,30 @@ function chatListRows(view: ChatListView): readonly ChatListEntry[] {
 }
 
 /**
- * The opening's first line: a chooser reads what the opening starts with, and the
- * first line is that sentence without the paragraph the player will read once the
- * Chat exists.
+ * What the chooser shows for one opening: the line the player chooses on, and the
+ * stage direction that precedes it when the opening opens on a beat.
+ *
+ * A real card's opening opens on `*…*` - a rainy roof, a hand on the kettle -
+ * before the companion says anything, and a chooser between openings reads the
+ * line SHE says: showing the leading beat shows the player the scenery instead of
+ * the character, and printing it raw showed her the asterisks. So the first
+ * non-beat line is the option's text, and a leading beat is kept beside it as the
+ * option's own action line. Both are rendered through `MarkdownMessage`, the same
+ * renderer the transcript uses, so `*…*` is the transcript's own
+ * `<em class="message-action">` and never literal stars.
  */
-function firstLineOf(text: string): string {
-  const end = text.indexOf("\n");
-  return (end === -1 ? text : text.slice(0, end)).trimEnd();
+function openingPreview(text: string): Readonly<{ action: string | null; spoken: string }> {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  const isBeat = (line: string): boolean => {
+    const normalized = line.replace(/＊/gu, "*");
+    return normalized.length > 2 && normalized.startsWith("*") && normalized.endsWith("*");
+  };
+  const first = lines[0] ?? "";
+  if (!isBeat(first)) return { action: null, spoken: first };
+  return { action: first, spoken: lines.find((line) => !isBeat(line)) ?? first };
 }
 
 /**
@@ -557,30 +574,37 @@ export function ChatsSurfacePanel({
         >
           <p className="management-settings-hint">{labels.openingPickerHint}</p>
           <div className="opening-options" role="list" data-testid="opening-picker-list">
-            {openings.map((variant, index) => (
+            {openings.map((variant, index) => {
               // An opening pins to its position in the set: it has no durable id on this wire, the
               // Host commits it by that very position, and two openings can share a label. The id is
               // minted once, when the set is read (`openingOptions`), so React keys by that identity
               // rather than by a loop index - the same discipline the editor rows follow.
-              <div key={variant.optionId} role="listitem">
-                <button
-                  type="button"
-                  className="opening-option"
-                  data-testid="opening-option"
-                  onClick={() => {
-                    setPickerOpen(false);
-                    createChat(index);
-                  }}
-                >
-                  <span className="opening-option-name" data-testid="opening-option-name">
-                    {openingVariantWords({ label: variant.label, index, count: openings.length }, labels)}
-                  </span>
-                  <span className="opening-option-line" data-testid="opening-option-line">
-                    {firstLineOf(variant.text)}
-                  </span>
-                </button>
-              </div>
-            ))}
+              const preview = openingPreview(variant.text);
+              return (
+                <div key={variant.optionId} role="listitem">
+                  <button
+                    type="button"
+                    className="opening-option"
+                    data-testid="opening-option"
+                    onClick={() => {
+                      setPickerOpen(false);
+                      createChat(index);
+                    }}
+                  >
+                    <span className="opening-option-name" data-testid="opening-option-name">
+                      {openingVariantWords({ label: variant.label, index, count: openings.length }, labels)}
+                    </span>
+                    {/* Her first spoken line, with the beat that precedes it kept as the
+                        option's own action line: the two are read in the order the
+                        transcript reads them. */}
+                    {preview.action !== null && (
+                      <MarkdownMessage className="opening-option-action" text={preview.action} />
+                    )}
+                    <MarkdownMessage className="opening-option-line" testId="opening-option-line" text={preview.spoken} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </ContextDrawer>
       )}

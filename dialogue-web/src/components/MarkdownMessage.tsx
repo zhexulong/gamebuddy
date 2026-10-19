@@ -100,11 +100,19 @@ function withTrailingHtml(html: string, trailingHtml: string): string {
 export function MarkdownMessage({
   text,
   className,
+  testId,
   trailingHtml = "",
   lang,
 }: {
   text: string;
   className?: string;
+  /**
+   * The wrapper's own test handle, for a surface whose rendered Markdown IS the
+   * element a journey measures (the openings chooser reads the option's line off
+   * this block). The parse and the wrapper stay together, so a caller that needs
+   * the handle cannot move the Markdown into a second element of its own.
+   */
+  testId?: string;
   /**
    * The message's own language, when the Host projected one: it lands on the
    * rendered text so assistive tech and `:lang()` styling read the text's
@@ -123,5 +131,5 @@ export function MarkdownMessage({
   // The parse is memoised per text so a streaming preview delta elsewhere in the
   // surface never re-parses (or re-sanitises) a settled message.
   const html = useMemo(() => withTrailingHtml(renderCompanionMarkdown(text), trailingHtml), [text, trailingHtml]);
-  return <div className={className} lang={lang} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className={className} data-testid={testId} lang={lang} dangerouslySetInnerHTML={{ __html: html }} />;
 }
