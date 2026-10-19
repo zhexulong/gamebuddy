@@ -100,6 +100,8 @@ export class CompanionEventPump {
   readonly #worldFacts = new Map<string, WorldFact>();
   readonly #inputs: PlayerInput[] = [];
   #retryBatch: PendingBatch | undefined;
+  /** Facts the bounds dropped instead of closing the bridge (see the full-queue branch of `enqueueFact`). */
+  #droppedFacts = 0;
   #delivering = false;
   // A clear can race an awaited sink delivery. Its generation revokes the
   // captured batch so a late rejection cannot resurrect stale facts.
@@ -147,11 +149,26 @@ export class CompanionEventPump {
           ? progressSemanticEventKey(fact)
           : fact.correlationId;
     if (!destination.has(key) && destination.size >= limit) {
-      throw new Error(
-        fact.kind === "execution_receipt" && isTerminalExecutionFact(fact)
-          ? "event_pump_terminal_overflow"
-          : "event_pump_event_overflow",
-      );
+      // FULL - and there are two different situations here that must not be answered the same way.
+      //
+      // A TERMINAL receipt is the authority for its execution: dropping it leaves a request that never settles, which is
+      // exactly the shape the pump's fail-closed policy exists to refuse. Every OTHER fact only describes state that a
+      // later fact describes again, so when the window is full the ARRIVAL is what can go - counted, never silent.
+      //
+      // Measured 2026-10-19 (`g97cross`): 870 facts in one run, 470 of them receipts, arriving while a turn was in
+      // flight (a turn here thinks for 60+ s). The window is what makes a long turn safe; closing the whole bridge on it
+      // is not what "bounded" has to mean, and it ended that run short of its night.
+      if (!isTerminalExecutionFact(fact)) {
+        this.#droppedFacts += 1;
+        return;
+      }
+      const evictable = [...destination.entries()].find(([, entry]) => !isTerminalExecutionFact(entry));
+      if (evictable === undefined)
+        throw new Error(
+          fact.kind === "execution_receipt" ? "event_pump_terminal_overflow" : "event_pump_event_overflow",
+        );
+      destination.delete(evictable[0]);
+      this.#droppedFacts += 1;
     }
     const previous = destination.get(key);
     if (previous === undefined || fact.revision >= previous.revision) destination.set(key, frozen);
@@ -162,6 +179,11 @@ export class CompanionEventPump {
       throw new Error(input.source === "voice_final" ? "empty_final_voice_input" : "empty_player_input");
     if (this.#inputs.length >= MAX_PENDING_INPUTS) throw new Error("event_pump_input_overflow");
     this.#inputs.push(Object.freeze({ ...input }));
+  }
+
+  /** How many facts the bounds have dropped instead of closing the bridge. Named, because every drop is a loss. */
+  public get droppedFacts(): number {
+    return this.#droppedFacts;
   }
 
   /** Dispose-time cancellation boundary; pending facts are never replayed into a closed runtime. */

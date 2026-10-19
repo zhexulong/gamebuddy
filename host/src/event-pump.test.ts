@@ -396,12 +396,45 @@ test("event pump classifies terminal receipt overflow separately from all nonter
     for (let index = 0; index < 128; index++) {
       pump.enqueueFact({ source: "stardew_mod", kind, correlationId: `${kind}_${index}`, revision: 1, payload });
     }
-    assert.throws(
-      () => pump.enqueueFact({ source: "stardew_mod", kind, correlationId: `${kind}_overflow`, revision: 1, payload }),
-      /event_pump_event_overflow/,
-      kind,
-    );
+    // AMENDED 2026-10-19: a NON-terminal fact that arrives at a full window is DROPPED AND COUNTED, not thrown. It only
+    // describes state a later fact describes again, so the arrival is the cheapest thing to lose - while closing the
+    // whole bridge over it is what ended a real run short of its night (`g97cross`: 870 facts in one run, 470 of them
+    // receipts, arriving while a turn was in flight). The window still bounds the queue; the failure just stopped being
+    // total.
+    pump.enqueueFact({ source: "stardew_mod", kind, correlationId: `${kind}_overflow`, revision: 1, payload });
+    assert.equal(pump.droppedFacts, 1, kind);
+    assert.equal(pump.pendingCount, 128, kind);
   }
+
+  // A TERMINAL receipt arriving at a full window still never closes the bridge over a NON-terminal entry: it evicts the
+  // oldest of those instead, and counts that. Terminals are the authority for their execution, so losing one would leave
+  // a request that never settles - the shape fail-closed exists for.
+  const mixedPump = new CompanionEventPump();
+  mixedPump.enqueueFact({
+    source: "stardew_mod",
+    kind: "semantic_event",
+    correlationId: "progress-filler",
+    revision: 1,
+    payload: { kind: "warped" },
+  });
+  for (let index = 0; index < 127; index++) {
+    mixedPump.enqueueFact({
+      source: "stardew_mod",
+      kind: "execution_receipt",
+      correlationId: `terminal_${index}`,
+      revision: 1,
+      payload: { state: "failed" },
+    });
+  }
+  mixedPump.enqueueFact({
+    source: "stardew_mod",
+    kind: "execution_receipt",
+    correlationId: "terminal_after_full",
+    revision: 1,
+    payload: { state: "failed" },
+  });
+  assert.equal(mixedPump.droppedFacts, 1);
+  assert.equal(mixedPump.pendingCount, 128);
 });
 
 test("event pump keeps a long run's PROGRESS observations from filling the pending window", () => {
