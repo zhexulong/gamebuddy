@@ -463,6 +463,13 @@ test("defect 4: a published title is what the transcript heading shows", async (
  *
  * The last assertion is the other side of the breakpoint: at 1440x900 nothing
  * moves, so this is a narrow rule and not a heading the product lost.
+ *
+ * The room it gives back is measured where the audit measured it. The shots' own
+ * `.surface-content` read `clientHeight` 682 at 400x800 while the heading was still
+ * drawn (`shots-final20`, b3c46a87) and 744 after the rule (`shots-final21`,
+ * 41dd9b7c); 1440x900 read 782 both times. The before-state is measured here rather
+ * than subtracted, because the heading's box lands on a half pixel: turning the two
+ * declarations off in this same mounted layout is the 682 itself.
  */
 test("defect 4: the narrow window drops the heading's box and keeps the region's name", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 800 });
@@ -472,13 +479,16 @@ test("defect 4: the narrow window drops the heading's box and keeps the region's
     const header = document.querySelector<HTMLElement>(".surface-header")!;
     const heading = document.querySelector<HTMLElement>(".surface-header h2")!;
     const surface = document.querySelector<HTMLElement>('[data-testid="chat-surface"]')!;
+    const content = surface.querySelector<HTMLElement>(".surface-content")!;
     const style = getComputedStyle(header);
     return {
       clipPath: style.clipPath,
       position: style.position,
       headerHeight: Math.round(header.getBoundingClientRect().height),
       surfaceTop: Math.round(surface.getBoundingClientRect().top),
-      contentTop: Math.round(surface.querySelector(".surface-content")!.getBoundingClientRect().top),
+      regionHeight: Math.round(surface.getBoundingClientRect().height),
+      contentTop: Math.round(content.getBoundingClientRect().top),
+      contentClientHeight: content.clientHeight,
       headingText: (heading.textContent ?? "").trim(),
       labelledBy: surface.getAttribute("aria-labelledby"),
       headingFocused: document.activeElement === heading,
@@ -499,6 +509,31 @@ test("defect 4: the narrow window drops the heading's box and keeps the region's
   ).toBe(narrow.surfaceTop);
   expect(narrow.headerHeight, "so its 55 px box is not part of the column").toBeGreaterThan(0);
 
+  // And the room it gives back, in the numbers the capture read: the scroll
+  // container now fills the region, where while the heading was drawn it was the
+  // region less the heading's box and the column's gap.
+  const narrowContentWhileDrawn = await page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>(".surface-header")!;
+    const content = document.querySelector<HTMLElement>('[data-testid="chat-surface"] .surface-content')!;
+    header.style.position = "static";
+    header.style.clipPath = "none";
+    const drawn = content.clientHeight;
+    header.style.position = "";
+    header.style.clipPath = "";
+    return drawn;
+  });
+  console.log(`[defect-4 narrow-drawn] contentClientHeight while the heading is in the column: ${narrowContentWhileDrawn}`);
+  expect(
+    narrow.contentClientHeight,
+    `the scroll container fills the surface at 400x800 (${narrow.contentClientHeight} of ${narrow.regionHeight})`,
+  ).toBe(narrow.regionHeight);
+  expect(narrow.contentClientHeight, "which is the capture's 744").toBe(744);
+  expect(narrowContentWhileDrawn, "and what the capture read before the rule is 682").toBe(682);
+  expect(
+    narrow.contentClientHeight - narrowContentWhileDrawn,
+    "the room the heading's box and the column's gap were spending",
+  ).toBe(62);
+
   // The half a11y depends on: the region is still the thing named 聊天, by the
   // node the heading IS - not by a copy of the word somewhere else.
   expect(narrow.labelledBy, "the region is still labelled by the heading's id").toBe("chat-surface-title");
@@ -509,6 +544,7 @@ test("defect 4: the narrow window drops the heading's box and keeps the region's
   const wide = await page.evaluate(() => {
     const header = document.querySelector<HTMLElement>(".surface-header")!;
     const surface = document.querySelector<HTMLElement>('[data-testid="chat-surface"]')!;
+    const content = surface.querySelector<HTMLElement>(".surface-content")!;
     const style = getComputedStyle(header);
     return {
       clipPath: style.clipPath,
@@ -517,15 +553,33 @@ test("defect 4: the narrow window drops the heading's box and keeps the region's
       // The column's own `gap`, which is the second half of what the rule buys
       // back: a clipped box left in the flow keeps its height AND its gap.
       gap: Math.round(Number.parseFloat(getComputedStyle(surface).rowGap || "0")),
-      contentTop: Math.round(surface.querySelector(".surface-content")!.getBoundingClientRect().top),
       headerTop: Math.round(header.getBoundingClientRect().top),
+      contentTop: Math.round(content.getBoundingClientRect().top),
+      contentClientHeight: content.clientHeight,
     };
   });
-  console.log(`[defect-4 wide] ${JSON.stringify(wide)}`);
+  const wideContentWhileDrawn = await page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>(".surface-header")!;
+    const content = document.querySelector<HTMLElement>('[data-testid="chat-surface"] .surface-content')!;
+    header.style.position = "static";
+    header.style.clipPath = "none";
+    const drawn = content.clientHeight;
+    header.style.position = "";
+    header.style.clipPath = "";
+    return drawn;
+  });
+  const wideNamedRegions = await page.getByRole("region", { name: "聊天", exact: true }).count();
+  console.log(`[defect-4 wide] ${JSON.stringify({ ...wide, namedRegions: wideNamedRegions, whileDrawn: wideContentWhileDrawn })}`);
   expect(wide.clipPath, "a wide window still draws the heading").toBe("none");
   expect(wide.position, "and keeps it in the column").toBe("static");
   expect(wide.contentTop, "below its own box and the column's gap").toBe(wide.headerTop + wide.height + wide.gap);
   expect(wide.gap, "and that gap is a real one").toBeGreaterThan(0);
+  expect(wideNamedRegions, "the region answers to the surface's name at the wide width too").toBe(1);
+  expect(wide.contentClientHeight, "the capture's unmoved 782 at 1440x900").toBe(782);
+  expect(
+    wideContentWhileDrawn,
+    "and the rule is above this breakpoint: the container reads the same with the heading's box put back",
+  ).toBe(wide.contentClientHeight);
 });
 
 // --- defect 5 ----------------------------------------------------------------
