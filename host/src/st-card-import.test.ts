@@ -135,19 +135,18 @@ test("candidateToIdentityProfile renders card macros deterministically (AIRP for
       description: "{{char}} keeps a small amethyst on the nightstand, a gift {{user}} gave her.",
       personality: "Adventurous and spirited.",
       first_mes: "{{char}} looks up as you enter.",
-      mes_example:
-        "{{user}}: Want to play?\n{{char}}: <BOT> always wins at Journey of the Prairie King.",
+      mes_example: "{{user}}: Want to play?\n{{char}}: <BOT> always wins at Journey of the Prairie King.",
     },
   });
 
   const profile = candidateToIdentityProfile(preview, 1, "en-US");
   // {{char}} → the card's own name (not "the player").
-  assert.equal(profile.persona?.core, "Macro Rae keeps a small amethyst on the nightstand, a gift the player gave her.");
-  // {{user}} and <BOT> (case-insensitive) resolve to their fixed names.
   assert.equal(
-    profile.examples?.[0]?.companion,
-    "Macro Rae always wins at Journey of the Prairie King.",
+    profile.persona?.core,
+    "Macro Rae keeps a small amethyst on the nightstand, a gift the player gave her.",
   );
+  // {{user}} and <BOT> (case-insensitive) resolve to their fixed names.
+  assert.equal(profile.examples?.[0]?.companion, "Macro Rae always wins at Journey of the Prairie King.");
   assert.equal(profile.persona?.interactionStyle, "Adventurous and spirited.");
   // Rendered prompt never leaks raw placeholders into the Tier 1 prefix.
   const prompt = buildChatCompanionSystemPrompt(profile);
@@ -657,10 +656,7 @@ function assertNoSilentImportLoss(
 ): void {
   for (const loss of report.losses) {
     assert.match(loss.field, LOSS_FIELD, `loss ${loss.reason} must name a bounded field`);
-    assert.ok(
-      Number.isSafeInteger(loss.count) && loss.count > 0,
-      `loss ${loss.reason} must carry a positive count`,
-    );
+    assert.ok(Number.isSafeInteger(loss.count) && loss.count > 0, `loss ${loss.reason} must carry a positive count`);
     assert.ok(
       Object.hasOwn(IMPORT_LOSS_FIXTURES, loss.reason),
       `loss ${loss.reason} has no fixture, so nothing can see it`,
@@ -680,7 +676,10 @@ test("rule: every declared import loss is produced by its own card and reported 
     // The real path, not the internal helpers: JSON text in, import result out.
     assertNoSilentImportLoss(report, [{ field: fixture.field, reason, count: fixture.count }]);
     // The preview carries the same ledger, so a review surface sees it too.
-    assert.deepEqual(previewStCard(JSON.parse(JSON.stringify({ spec: "chara_card_v3", data: fixture.data }))).losses, report.losses);
+    assert.deepEqual(
+      previewStCard(JSON.parse(JSON.stringify({ spec: "chara_card_v3", data: fixture.data }))).losses,
+      report.losses,
+    );
   }
 });
 
@@ -857,18 +856,19 @@ test("preview folds first_mes into a reviewed example row when mes_example is mi
     data: {
       name: "Anchor Rae",
       description: "Quiet, attentive.",
-      first_mes: "{{char}} glances up from the amethyst and smiles—\"you're back.\"",
+      first_mes: '{{char}} glances up from the amethyst and smiles—"you\'re back."',
     },
   });
   const profile = candidateToIdentityProfile(preview, 1);
   // The greeting is folded into one reviewable example, macro-rendered.
   assert.deepEqual(profile.examples, [
-    { user: "(starts the journey)", companion: "Anchor Rae glances up from the amethyst and smiles—\"you're back.\"" },
+    { user: "(starts the journey)", companion: 'Anchor Rae glances up from the amethyst and smiles—"you\'re back."' },
   ]);
   const prompt = buildChatCompanionSystemPrompt(profile);
   assert.match(prompt, /\[Dialogue Examples\]/);
   assert.match(prompt, /Anchor Rae glances up/);
-});test("an example block with a label outside the two ST speakers is reported, never silently dropped", () => {
+});
+test("an example block with a label outside the two ST speakers is reported, never silently dropped", () => {
   // The failure this catches: `mes_example` split into blocks, a block whose
   // labels were not `{{user}}/You/User` + `{{char}}/Character/Assistant` was
   // discarded with no report at all - and a card's form teaching (exactly what
@@ -936,7 +936,11 @@ test("a world-book entry's dropped trigger words and dropped entries are reporte
   assert.deepEqual(
     decodeStCard(
       JSON.stringify({
-        data: { name: "Book Losses", description: "calm", character_book: { entries: [{ comment: "U", content: "{{nope}}" }] } },
+        data: {
+          name: "Book Losses",
+          description: "calm",
+          character_book: { entries: [{ comment: "U", content: "{{nope}}" }] },
+        },
       }),
     ).losses,
     [{ field: "character_book.entries", reason: "unrenderable_worldbook_entry", count: 1 }],
@@ -945,7 +949,11 @@ test("a world-book entry's dropped trigger words and dropped entries are reporte
   assert.deepEqual(
     previewStCard({
       spec: "chara_card_v3",
-      data: { name: "Clean", description: "calm", character_book: { entries: [{ content: "kept", keys: ["\u519c\u573a"] }] } },
+      data: {
+        name: "Clean",
+        description: "calm",
+        character_book: { entries: [{ content: "kept", keys: ["\u519c\u573a"] }] },
+      },
     }).losses,
     [],
   );
@@ -968,7 +976,9 @@ test("preview surfaces softHints for unusually long persona fields (frontend not
   const plain = previewStCard({ spec: "chara_card_v3", data: { name: "Short", description: "brief" } });
   assert.deepEqual(plain.softHints, []);
   // The report path carries the same hints so the review UI can show them.
-  const report = decodeStCard(JSON.stringify({ spec: "chara_card_v3", data: { name: "Long Tail", description: "d".repeat(4_002) } }));
+  const report = decodeStCard(
+    JSON.stringify({ spec: "chara_card_v3", data: { name: "Long Tail", description: "d".repeat(4_002) } }),
+  );
   assert.equal(report.softHints[0]?.chars, 4_002);
 });
 // ---------------------------------------------------------------------------
@@ -1000,7 +1010,12 @@ test("decoder carries alternate_greetings beside the default opening for v2, v3 
       (entry) => entry.field === "alternate_greetings" && entry.classification === "accepted_typed",
     ),
   );
-  assert.equal(png.dispositions.some((entry) => entry.field === "alternate_greetings" && entry.classification === "dropped_unsupported"), false);
+  assert.equal(
+    png.dispositions.some(
+      (entry) => entry.field === "alternate_greetings" && entry.classification === "dropped_unsupported",
+    ),
+    false,
+  );
   // Fails if the decoder still treats alternate openings as an executable/prompt-control field.
 });
 
@@ -1009,7 +1024,10 @@ test("a card with no alternate_greetings decodes exactly as before, and an empty
   const absent = decodeStCard(JSON.stringify(base));
   // A card that never declared the field gains no key and no disposition row.
   assert.equal("alternateGreetings" in (absent.candidate?.profileCandidate ?? {}), false);
-  assert.equal(absent.dispositions.some((entry) => entry.field === "alternate_greetings"), false);
+  assert.equal(
+    absent.dispositions.some((entry) => entry.field === "alternate_greetings"),
+    false,
+  );
   // An explicit empty list is recognized as typed but still carries no variants,
   // so the candidate is byte-identical to the absent case.
   const empty = decodeStCard(
@@ -1021,11 +1039,14 @@ test("a card with no alternate_greetings decodes exactly as before, and an empty
     empty.dispositions.filter((entry) => entry.field !== "alternate_greetings"),
     absent.dispositions,
   );
-  assert.deepEqual(empty.dispositions.find((entry) => entry.field === "alternate_greetings"), {
-    field: "alternate_greetings",
-    classification: "accepted_typed",
-    reason: "bounded_inert_candidate",
-  });
+  assert.deepEqual(
+    empty.dispositions.find((entry) => entry.field === "alternate_greetings"),
+    {
+      field: "alternate_greetings",
+      classification: "accepted_typed",
+      reason: "bounded_inert_candidate",
+    },
+  );
   // Fails if an empty list starts emitting a variants field or a greeting record.
 });
 
@@ -1168,7 +1189,64 @@ test("the import result names system_prompt as carried, and refuses an over-long
     }),
   );
   assert.equal(tooLong.candidate?.systemPrompt, undefined);
-  assert.deepEqual(tooLong.losses, [
-    { field: "system_prompt", reason: "character_voice_too_long", count: 1 },
+  assert.deepEqual(tooLong.losses, [{ field: "system_prompt", reason: "character_voice_too_long", count: 1 }]);
+});
+
+test("a blank line inside an example reply keeps the reply whole and reports no loss", () => {
+  // The failure this catches: `mes_example` split on `\n{2,}`, so a reply that
+  // spans paragraphs became two fragments; the one without a `{{char}}:` prefix
+  // was counted as `unparsed_example_blocks` and its text silently dropped. The
+  // block boundary is a speaker turn, not any blank line.
+  const report = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "Rin",
+        description: "calm",
+        mes_example: "{{user}}: 今天先做什么？\n{{char}}: 先把西边的荒地清了。\n\n然后去镇上买种子。",
+      },
+    }),
+  );
+  assert.deepEqual(report.losses, []);
+  assert.deepEqual(report.candidate?.profileCandidate.examples, [
+    { user: "今天先做什么？", companion: "先把西边的荒地清了。\n\n然后去镇上买种子。" },
+  ]);
+});
+
+test("a blank line inside a <START>-delimited example reply keeps the reply whole too", () => {
+  const report = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "Rin",
+        description: "calm",
+        mes_example: "<START>\n{{user}}: 今天先做什么？\n{{char}}: 先把西边的荒地清了。\n\n然后去镇上买种子。",
+      },
+    }),
+  );
+  assert.deepEqual(report.losses, []);
+  assert.deepEqual(report.candidate?.profileCandidate.examples, [
+    { user: "今天先做什么？", companion: "先把西边的荒地清了。\n\n然后去镇上买种子。" },
+  ]);
+});
+
+test("without <START> the block boundary is the next speaker turn, so every turn survives", () => {
+  // The boundary is the USER label the decoder accepts: splitting on the
+  // companion's label instead would divide the very pair the decoder pairs up,
+  // so a clean two-turn card would report two unparsed blocks and no example.
+  const report = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "Rin",
+        description: "calm",
+        mes_example: "{{user}}: 一\n{{char}}: 甲\n{{user}}: 二\n{{char}}: 乙",
+      },
+    }),
+  );
+  assert.deepEqual(report.losses, []);
+  assert.deepEqual(report.candidate?.profileCandidate.examples, [
+    { user: "一", companion: "甲" },
+    { user: "二", companion: "乙" },
   ]);
 });

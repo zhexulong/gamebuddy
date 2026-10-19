@@ -96,7 +96,7 @@ export type GameStatePanelProps = Readonly<{
   integrationId: string;
   syncing: boolean;
   lifecycle: Readonly<{
-    activation: Readonly<{ available: boolean; active: boolean; failed: boolean; unavailable: boolean }>;
+    activation: Readonly<{ available: boolean; active: boolean; failed: boolean; notConfigured: boolean; unavailable: boolean }>;
     setup: Readonly<{ available: boolean; active: boolean; failed: boolean; notStaged: boolean }>;
     launch: Readonly<{ available: boolean; active: boolean; failed: boolean; notStaged: boolean }>;
   }>;
@@ -309,6 +309,11 @@ export function GameStatePanel({
                   {lifecycle.activation.failed && (
                     <p className="game-status" data-tone="danger" role="status">
                       {labels.gameActivationFailed}
+                    </p>
+                  )}
+                  {lifecycle.activation.notConfigured && (
+                    <p className="game-status" data-tone="info" role="status">
+                      {labels.gameActivationNotConfigured}
                     </p>
                   )}
                   {lifecycle.activation.unavailable && (

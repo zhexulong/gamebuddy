@@ -75,6 +75,7 @@ export function GameSurface({
   const gameActivationActiveRef = useRef(false);
   const [gameActivationActive, setGameActivationActive] = useState(false);
   const [gameActivationFailed, setGameActivationFailed] = useState(false);
+  const [gameActivationNotConfigured, setGameActivationNotConfigured] = useState(false);
   const [gameActivationUnavailable, setGameActivationUnavailable] = useState(false);
   const gameSetupActiveRef = useRef(false);
   const gameSetupKeyRef = useRef<string | undefined>(undefined);
@@ -208,6 +209,19 @@ export function GameSurface({
     error instanceof ComposedReferenceGameProblemError && error.code === "game_prerequisites_missing";
 
   /**
+   * The one activation refusal that is a prerequisite rather than a fault: the
+   * lifecycle reserves and stages its owned Player Host against the registered
+   * Stardew installation, so with no installation bound to this session the
+   * coordinator answers `state_unavailable` naming
+   * `stardew_bootstrap_registration_unavailable`. The player has not set the game
+   * up yet, and the installation panel on this same surface is where they do it - a
+   * state, not a failure, and it says so (the cabin handoff renders the same way).
+   */
+  const isInstallationNotConfiguredRefusal = (error: unknown): boolean =>
+    error instanceof ComposedReferenceGameProblemError &&
+    error.causeCode === "stardew_bootstrap_registration_unavailable";
+
+  /**
    * First-run lifecycle activation. The composed Game projection carries no
    * activation field of its own: the coordinator's `staged` state reaches the
    * browser only as the launch-readiness shape (`prerequisites` met, `instance`
@@ -224,6 +238,7 @@ export function GameSurface({
     gameActivationActiveRef.current = true;
     setGameActivationActive(true);
     setGameActivationFailed(false);
+    setGameActivationNotConfigured(false);
     setGameActivationUnavailable(false);
     try {
       await composedApi.activateLifecycle();
@@ -248,6 +263,7 @@ export function GameSurface({
       if (!staged) {
         if (error instanceof ComposedReferenceGameProblemError && error.code === "not_found")
           setGameActivationUnavailable(true);
+        else if (isInstallationNotConfiguredRefusal(error)) setGameActivationNotConfigured(true);
         else setGameActivationFailed(true);
       }
     } finally {
@@ -1011,6 +1027,7 @@ export function GameSurface({
             available: gameActivationAvailable,
             active: gameActivationActive,
             failed: gameActivationFailed,
+            notConfigured: gameActivationNotConfigured,
             unavailable: gameActivationUnavailable,
           },
           setup: {

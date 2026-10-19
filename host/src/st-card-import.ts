@@ -656,13 +656,28 @@ function extractCharacterBook(
     ...(scanDepth === undefined ? {} : { scanDepth }),
   });
 }
+/**
+ * How one example block is separated from the next.
+ *
+ * `<START>` is the spec's own explicit separator, so a card that wrote one is
+ * split on it alone. A card without `<START>` separates blocks with a new
+ * speaker turn; the decoder's own unit is one user+companion exchange, so the
+ * boundary is the next USER label (the labels this decoder accepts). It is
+ * deliberately NOT a blank line: an example reply may span paragraphs, and the
+ * old `\n{2,}` split cut such a reply in two and recorded its tail as an
+ * unparsed block. For the same reason it is not the companion's label either -
+ * splitting there would divide the very pair the decoder needs and lose every
+ * clean card.
+ */
+const EXAMPLE_BLOCK_SEPARATOR = /<START>/u;
+const EXAMPLE_TURN_BOUNDARY = /(?=(?:^|\n)\s*(?:\{\{user\}\}|You|User)\s*:)/iu;
+
 function parseExamples(
   value: string | undefined,
   losses: StCardImportLossLedger,
 ): readonly Readonly<{ user: string; companion: string }>[] {
   if (value === undefined) return [];
-  const blocks = value
-    .split(/(?:<START>|\n{2,})/u)
+  const blocks = (value.includes("<START>") ? value.split(EXAMPLE_BLOCK_SEPARATOR) : value.split(EXAMPLE_TURN_BOUNDARY))
     .map((part) => part.trim())
     .filter(Boolean);
   const parsed = blocks.flatMap((part) => {
