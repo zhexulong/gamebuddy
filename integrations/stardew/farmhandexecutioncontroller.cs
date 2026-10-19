@@ -56,6 +56,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private readonly BridgeScope? executionScope;
     private readonly Dictionary<string, FarmhandExecutionAdmission> durableAdmissionsByRequestId = new(StringComparer.Ordinal);
     private readonly HashSet<string> durabilityFailuresByRequestId = new(StringComparer.Ordinal);
+    // Requests whose admission found the actor TRANSIENTLY held, parked so the body can free inside the Mod
+    // instead of being refused back to the Agent for a model round-trip. Bounded by
+    // WorldModel.TransientRetryWindowMs; keyed by requestId, holding the request as the admission saw it.
+    private readonly Dictionary<string, HeldRequest> heldRequestsByRequestId = new(StringComparer.Ordinal);
+    // How long a held request waited, consumed by the first receipt its dispatch stores.
+    private readonly Dictionary<string, long> heldMsByRequestId = new(StringComparer.Ordinal);
+    private HeldRequestResolver? heldRequestResolver;
     private LocalMoveSpec? active;
     private LocalTravelSpec? activeTravel;
     private LocalPettingSpec? activePet;
@@ -593,6 +600,35 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
+    /// The internal reason code of a parked request's acceptance. It never reaches the Agent: the bridge
+    /// reads it as "the Mod is holding this request", answers nothing, and lets the tick pump answer when the
+    /// park resolves (with the dispatch's own receipt, or with the named refusal once the window passes).
+    /// </summary>
+    internal const string HeldRequestMarker = "held_awaiting_actionability";
+
+    /// <summary>
+    /// Answers one request the admission parked while the actor was Transiently held. <paramref name="refusal"/>
+    /// is null when the body is free and the request must be dispatched now through the normal path, and is
+    /// the named refusal when the bounded wait passed without the body freeing. Registered by the bridge,
+    /// which owns the request as received and produces its response; the admission owns only the wait.
+    /// </summary>
+    internal delegate void HeldRequestResolver(string requestId, LocalExecutionReceipt? refusal);
+
+    /// <summary>
+    /// One parked request: the action identity the request was dispatched with, the execution the admission
+    /// minted for it, the hold it was parked for, and when the bounded wait started.
+    /// </summary>
+    private sealed record HeldRequest(
+        string ActionId,
+        string ExecutionId,
+        LocalDispositionKind Hold,
+        string HoldCode,
+        string HoldEvidence,
+        long ParkedAtUnixMs);
+
+    internal void SetHeldRequestResolver(HeldRequestResolver? resolver) => this.heldRequestResolver = resolver;
+
+    /// <summary>
     /// The WIA §4.2 admission ruling, delegated to the single authority
     /// (<see cref="WorldModel.Classify"/>). This wrapper only narrows the kind set
     /// for the admission decision and preserves the pre-convergence
@@ -819,6 +855,26 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // same request.
             (string holdCode, string holdEvidence) =
                 WorldModel.DescribeCurrentBodyHold(admissionDisposition, admissionFacts, boundActor.CanMove);
+            // A Transient hold is the ONE hold that clears on its own inside a bounded window
+            // (WorldModel.TransientRetryWindowMs, the very number this evidence publishes as `retry_window_ms`
+            // and the number the body loop waits), so a request that meets one is PARKED here and dispatched
+            // the moment the body frees, instead of being paid for with a model round-trip whose median is
+            // 3.4 s and whose p90 is 25 s (measured 2026-10-19, run g99cross: four refusals in 62 dispatches,
+            // each on a follow-up that arrived 49-154 ms after the previous action settled, and each followed
+            // by the companion standing still). This is the gate that owns the refusal, so it is also the gate
+            // that decides to wait instead - and only while something can resolve the wait: with no bridge
+            // attached (a fixture, or the body-program re-entry) the same caller reads the same named refusal
+            // it always has. Every other hold - a menu, a cutscene, a faint, a day advance - does not clear
+            // inside any bounded window and keeps refusing right here, because parking an action behind one
+            // would be exactly the stale execution the revision rules exist to prevent.
+            if (disposition == LocalDispositionKind.Transient
+                && this.heldRequestResolver is not null
+                // A request that already owns a durable journal admission cannot be waited out: its exact
+                // tuple is recorded WITHOUT a receipt, so a later dispatch of it would be read as a
+                // lost-receipt recovery rather than a first dispatch. Those are the candidate actions, which
+                // carry no actionability gate of their own and so never arrive here.
+                && !this.durableAdmissionsByRequestId.ContainsKey(requestId))
+                return this.ParkHeldRequest(requestId, executionId, disposition, holdCode, holdEvidence);
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, holdCode, holdEvidence);
         }
 
@@ -844,6 +900,125 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return this.RejectBodyOwned(requestId, executionId);
 
         return null;
+    }
+
+    /// <summary>
+    /// Parks one request whose actor is Transiently held and answers it with the marker the bridge reads as
+    /// "still waiting", instead of starting the native effect: the wait is the Mod's, and the request is
+    /// dispatched through the path it arrived on the moment the body frees. The marker is returned rather than
+    /// stored or published, so the request's single published identity is the one its dispatch (or its
+    /// refusal) mints, and the Host never sees a transition for an action that has not started.
+    /// </summary>
+    private LocalExecutionReceipt ParkHeldRequest(
+        string requestId,
+        string executionId,
+        LocalDispositionKind hold,
+        string holdCode,
+        string holdEvidence)
+    {
+        string actionId = this.actionIdsByRequestId.TryGetValue(requestId, out string? boundAction) ? boundAction : requestId;
+        // The FIRST park owns the request's answer and its window: a caller that retries while the body is
+        // still held does not buy itself a fresh window.
+        if (!this.heldRequestsByRequestId.ContainsKey(requestId))
+            this.heldRequestsByRequestId[requestId] = new HeldRequest(
+                actionId,
+                executionId,
+                hold,
+                holdCode,
+                holdEvidence,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        return new LocalExecutionReceipt(executionId, requestId, ExecutionState.Accepted, HeldRequestMarker, this.revision, holdEvidence, ActionId: actionId);
+    }
+
+    /// <summary>
+    /// Re-attempts every parked request, once per game tick. The actor is re-read through the same authority
+    /// the admission reads, so the wait's two ends cannot disagree with the gate that parked the request: the
+    /// moment the actor is actionable the request goes back to the bridge, which dispatches it through the
+    /// path it arrived on - every revision, deadline, profile and ownership check runs again at THAT moment,
+    /// because this is a wait and not a replay. Past <see cref="WorldModel.TransientRetryWindowMs"/> the wait
+    /// ends in the same named refusal the admission would have returned on arrival.
+    /// </summary>
+    internal void PumpHeldRequests()
+    {
+        if (this.heldRequestResolver is null || this.heldRequestsByRequestId.Count == 0)
+            return;
+        foreach ((string requestId, HeldRequest held) in this.heldRequestsByRequestId.ToArray())
+        {
+            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            (LocalDispositionKind Kind, string HoldCode, string HoldEvidence)? hold = this.ReadCurrentHold();
+            if (hold is null)
+            {
+                this.heldRequestsByRequestId.Remove(requestId);
+                this.RecordHoldWait(requestId, nowMs - held.ParkedAtUnixMs);
+                this.heldRequestResolver(requestId, null);
+                continue;
+            }
+            if (nowMs - held.ParkedAtUnixMs <= WorldModel.TransientRetryWindowMs)
+                continue;
+            // The wait ended in a hold that is still in force. While it is the parked hold, the code and
+            // evidence are the pair the admission captured on arrival - byte for byte the refusal the Agent
+            // would have read then; a world that changed behind the wait is named as it is NOW, because
+            // pointing the Agent at a hold that has ended would give it the wrong countermeasure.
+            (string holdCode, string holdEvidence) = hold.Value.Kind == held.Hold
+                ? (held.HoldCode, held.HoldEvidence)
+                : (hold.Value.HoldCode, hold.Value.HoldEvidence);
+            this.heldRequestsByRequestId.Remove(requestId);
+            this.heldRequestResolver(requestId, this.RefuseHeldRequest(requestId, held, holdCode, holdEvidence));
+        }
+    }
+
+    /// <summary>
+    /// The named refusal for a request whose bounded wait passed without the actor becoming actionable. The
+    /// shape is the admission's own on arrival - <see cref="ExecutionState.Rejected"/> carrying the hold's
+    /// code and evidence - so an Agent that waited reads what it would have read had the hold been refused
+    /// immediately. The action identity travels on the receipt because no dispatch lineage exists to resolve
+    /// it from: the handler that would have bound it never ran.
+    /// </summary>
+    private LocalExecutionReceipt RefuseHeldRequest(string requestId, HeldRequest held, string holdCode, string holdEvidence)
+    {
+        LocalExecutionReceipt receipt = new(held.ExecutionId, requestId, ExecutionState.Rejected, holdCode, this.revision, holdEvidence, ActionId: held.ActionId);
+        this.Remember(receipt);
+        this.AddTrace(receipt);
+        return receipt;
+    }
+
+    /// <summary>
+    /// The hold the actor is under right now, or null when it is actionable. Read through the same authority
+    /// the admission reads, so the wait can never dispatch into a body the admission would have refused.
+    /// </summary>
+    private (LocalDispositionKind Kind, string HoldCode, string HoldEvidence)? ReadCurrentHold()
+    {
+        if (!this.TryGetBoundActor(out Farmer? boundActor, out _) || boundActor is null)
+            return null;
+        ActorWorldFacts facts = WorldModel.ReadFacts(boundActor);
+        ActorDisposition disposition = WorldModel.Classify(facts);
+        LocalDispositionKind projected = ProjectAdmissionDisposition(disposition, boundActor);
+        if (projected == LocalDispositionKind.Idle)
+            return null;
+        (string holdCode, string holdEvidence) = WorldModel.DescribeCurrentBodyHold(disposition, facts, boundActor.CanMove);
+        return (projected, holdCode, holdEvidence);
+    }
+
+    /// <summary>
+    /// Records how long a request waited for the actor to become actionable, so the first receipt its
+    /// dispatch stores carries <c>held_ms=&lt;n&gt;</c>: the trace then shows a hold rather than a mystery.
+    /// </summary>
+    internal void RecordHoldWait(string requestId, long heldMs) => this.heldMsByRequestId[requestId] = heldMs;
+
+    /// <summary>
+    /// Ends every parked wait at once, with the named refusal for the hold that is still in force. A
+    /// lifecycle boundary or a halt must never leave a request parked to dispatch later: the wait belongs to
+    /// the hold, and the world that held the body is the one that just ended.
+    /// </summary>
+    private void CloseHeldRequests()
+    {
+        foreach ((string requestId, HeldRequest held) in this.heldRequestsByRequestId.ToArray())
+        {
+            this.heldRequestsByRequestId.Remove(requestId);
+            if (this.heldRequestResolver is null)
+                continue;
+            this.heldRequestResolver(requestId, this.RefuseHeldRequest(requestId, held, held.HoldCode, held.HoldEvidence));
+        }
     }
 
     internal BridgeLocalObservation CreateLocalObservation(Farmer actor)
@@ -952,6 +1127,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     public void Halt(string reasonCode = "halted")
     {
+        this.CloseHeldRequests();
         this.controller.Halt();
         this.active = null;
         this.activeTravel = null;
@@ -1277,6 +1453,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // interaction and then observes the arrival the game's own cutscene
         // produces, so it is pumped here next to the cross-day advance.
         this.UpdateBusRide();
+        // The parked requests are re-attempted here, on the tick that owns the body: the moment the actor is
+        // actionable the request goes back to the bridge, which dispatches it through the path it arrived on.
+        this.PumpHeldRequests();
         if (this.activeNavigate is not null)
             this.LogNavigationDiagnostic("tick", $"destination={this.activeNavigate.CanonicalDestinationIdentity}");
         // Deferred Navigation approach commit. The body controller marks an
@@ -1713,6 +1892,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     public void InvalidateForLifecycle(string reasonCode)
     {
+        this.CloseHeldRequests();
         this.InvalidateWoodFenceResult();
         this.InvalidateCrabPotResult();
         this.InvalidateBaitCrabPotResult();
@@ -4642,6 +4822,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             this.revision = Math.Max(this.revision, publishedRevision + 1);
             published = receipt with { Revision = this.revision };
+            this.Remember(published);
+        }
+        // A request that waited out a transient body hold says so on the first receipt it PUBLISHES. This is
+        // the only place every receipt passes through on its way out, so the stored record, the fact the Host
+        // audits and the answer the wait resolves into all carry the identical bytes: a response that differed
+        // from its published fact by one annotation would be refused by the Host's receipt-order audit.
+        if (this.heldMsByRequestId.Remove(receipt.RequestId, out long heldMs))
+        {
+            published = published with
+            {
+                Evidence = string.IsNullOrEmpty(published.Evidence) ? $"held_ms={heldMs}" : $"{published.Evidence};held_ms={heldMs}",
+            };
             this.Remember(published);
         }
         this.publishedReceiptRevisionByExecutionId[receipt.ExecutionId] = published.Revision;

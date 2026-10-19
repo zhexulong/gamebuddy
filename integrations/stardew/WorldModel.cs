@@ -209,6 +209,13 @@ internal static class WorldModel
     public const int TransientRetryWindowMs = 2000;
 
     /// <summary>
+    /// The same window counted in game ticks, which is the unit the Body Program pump defers a node in:
+    /// Stardew's fixed update runs 60 times a second (the Mod's own navigation grace and default action
+    /// deadlines already count on that). One window in two units, never two numbers that mean the same thing.
+    /// </summary>
+    public const int TransientRetryWindowTicks = TransientRetryWindowMs * 60 / 1000;
+
+    /// <summary>
     /// The reason code for a body that is held, named. This is the ONE place the closed set of holding
     /// dispositions is mapped to wire codes: every gate reads it, so a gate cannot spell its own - which is
     /// how `player_not_actionable` came to mean "menu", "cutscene", "faint", "eating" and "tool swing"

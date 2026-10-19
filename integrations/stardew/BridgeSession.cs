@@ -63,6 +63,17 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
     private readonly Queue<string> cancelIdentityOrder = new();
     private long authenticatedGeneration = -1;
     private long presentationEpoch;
+    // Execution requests whose admission parked them because the actor was Transiently held: the Mod holds
+    // the request as received and answers it when the body frees (or with the named refusal once the
+    // window passes), instead of refusing it back to the Agent for a model round-trip.
+    private readonly Dictionary<string, HeldExecution> heldExecutions = new(StringComparer.Ordinal);
+    private readonly Queue<(long Generation, string Json)> heldExecutionResponses = new();
+
+    /// <summary>
+    /// One parked execution request: the envelope as it arrived (its correlation is what its answer must
+    /// carry) and the transport generation it arrived on.
+    /// </summary>
+    private sealed record HeldExecution(BridgeEnvelope<BridgeExecutionRequest> Envelope, long Generation);
 
     private readonly BridgeRuntimeAttestation runtimeAttestation;
     private LocalPipeBridge? pipeBridge;
@@ -111,6 +122,7 @@ string? bodyProgramUnavailableReason = null,
         this.navigationReferences = navigationReferences ?? new NavigationReferenceStore();
         this.sceneObservationProvider = sceneObservationProvider ?? (() => null);
         this.sceneObservationProjection = new SceneObservationProjection(this.sceneObservations);
+        this.executions.SetHeldRequestResolver(this.ResolveHeldRequest);
         this.executions.SetSceneTargetResolver(this.TryResolveSceneTarget);
         this.executions.SetNavigationRuntimeFactory(() => new NavigationRuntimeSnapshot(
             this.navigationReferences,
@@ -574,6 +586,16 @@ string? bodyProgramUnavailableReason = null,
         if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
         if (!this.capabilityPublicationProvider().CapabilitySet.AllowsExecutionAction(request.Action)) { reasonCode = "action_not_available"; return false; }
         if (!IsFreshExecutionRequest(request, out reasonCode)) return false;
+        // A request the Mod is already HOLDING has no answer yet: the newest arrival owns the live
+        // correlation (a caller that retried while the body was still held), and routing it again would mint
+        // a second execution for one request. Checked before the replay caches, because a held request has
+        // deliberately remembered none of them.
+        if (this.heldExecutions.TryGetValue(request.RequestId, out HeldExecution? held))
+        {
+            this.heldExecutions[request.RequestId] = held with { Envelope = envelope!, Generation = generation };
+            reasonCode = ExecutionManager.HeldRequestMarker;
+            return true;
+        }
         if (this.idempotency.TryGetValue(request.IdempotencyKey, out IdempotentExecution? existing))
         {
             if (existing.Fingerprint != fingerprint) { reasonCode = "idempotency_key_conflict"; return false; }
@@ -659,6 +681,18 @@ string? bodyProgramUnavailableReason = null,
             ForgetIdempotency(request.IdempotencyKey);
             return false;
         }
+        // The admission PARKED this request for a transient body hold: it returned without starting anything,
+        // so the Mod holds the request and answers it the moment the body frees. Nothing is remembered here:
+        // this is a wait, not a dispatch, and the idempotency binding must not answer a replay with a receipt
+        // that does not exist yet.
+        if (receipt.State == ExecutionState.Accepted
+            && string.Equals(receipt.ReasonCode, ExecutionManager.HeldRequestMarker, StringComparison.Ordinal))
+        {
+            this.heldExecutions[request.RequestId] = new HeldExecution(envelope!, generation);
+            ForgetIdempotency(request.IdempotencyKey);
+            reasonCode = ExecutionManager.HeldRequestMarker;
+            return true;
+        }
         string[] nativeNotices = NativeNoticeObserver.Delta(noticesBefore);
         if (nativeNotices.Length > 0)
         {
@@ -675,6 +709,66 @@ string? bodyProgramUnavailableReason = null,
         }
         if (!TryToBridgeReceipt(receipt, out BridgeReceipt bridgeReceipt)) { reasonCode = "receipt_lineage_unavailable"; return false; }
         response = Reply("execution_receipt", envelope.CorrelationId, bridgeReceipt); reasonCode = "accepted"; return true;
+    }
+
+    /// <summary>
+    /// Takes one response frame for a request the admission parked for a transient body hold, for the
+    /// transport to deliver. The response is the dispatch's own receipt, or the named refusal the bounded
+    /// wait ended in.
+    /// </summary>
+    internal bool TryDequeueHeldExecutionResponse(out long generation, out string json)
+    {
+        if (this.heldExecutionResponses.Count == 0)
+        {
+            generation = 0;
+            json = string.Empty;
+            return false;
+        }
+        (generation, json) = this.heldExecutionResponses.Dequeue();
+        return true;
+    }
+
+    /// <summary>
+    /// Answers one request the bridge parked: either it dispatches it now, or it answers it with the refusal
+    /// the bounded wait ended in. Called from the execution pump, on the game thread, once per parked request
+    /// per tick.
+    /// </summary>
+    private void ResolveHeldRequest(string requestId, LocalExecutionReceipt? refusal)
+    {
+        if (!this.heldExecutions.Remove(requestId, out HeldExecution? held))
+            return;
+        if (refusal is not null)
+        {
+            if (TryToBridgeReceipt(refusal, out BridgeReceipt refusalReceipt, refusal.ActionId))
+                this.EnqueueHeldExecutionResponse(held, Reply("execution_receipt", held.Envelope.CorrelationId, refusalReceipt));
+            return;
+        }
+        // The body is free: the request is dispatched through the path it arrived on, so the freshness,
+        // deadline, capability, routing and admission checks all run again at THIS moment. Nothing is
+        // replayed and nothing is relaxed - the action had not started.
+        if (!this.TryExecute(held.Generation, held.Envelope, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
+            || response is null)
+        {
+            this.EnqueueHeldExecutionResponse(held, this.CreateError(held.Envelope.CorrelationId, reasonCode));
+            return;
+        }
+        // The answer is the receipt the ledger STORED, which is the one its publish funnel already sent and
+        // the one a replay returns: the held_ms annotation can replace the handler's own copy, and a response
+        // that differed from the published fact would be refused by the Host's receipt-order audit.
+        if (this.executions.TryGetReceipt(requestId, out LocalExecutionReceipt stored)
+            && TryToBridgeReceipt(stored, out BridgeReceipt storedReceipt, held.Envelope.Payload.Action))
+        {
+            this.EnqueueHeldExecutionResponse(held, Reply("execution_receipt", held.Envelope.CorrelationId, storedReceipt));
+            return;
+        }
+        this.EnqueueHeldExecutionResponse(held, response);
+    }
+
+    /// <summary>Serializes one answer to a held request onto the transport's delivery queue.</summary>
+    private void EnqueueHeldExecutionResponse<T>(HeldExecution held, BridgeEnvelope<T> response)
+    {
+        if (BridgeProtocol.TrySerialize(response, out string json, out _))
+            this.heldExecutionResponses.Enqueue((held.Generation, json));
     }
 
     /// <summary>

@@ -1081,6 +1081,9 @@ public sealed partial class ModEntry : Mod
                 // (one frame after a harvest, measured 2026-10-19); a refused node cannot be retried, so the pump waits
                 // a tick instead of stopping the chain. Same trio the flat path treats as not-actionable.
                 CanDispatchNow = static () => Game1.player is { CanMove: true } && Game1.activeClickableMenu is null && !Game1.eventUp,
+                // One window, two waiters: the pump defers a node for exactly the number of ticks the flat
+                // admission holds a parked action for, so the two cannot drift apart.
+                MaxCadenceDeferrals = WorldModel.TransientRetryWindowTicks,
             };
             this.Monitor.Log("GameBuddy body program journal opened for this scope; program_submit/status/events routes are live.", LogLevel.Info);
         }
@@ -1295,6 +1298,7 @@ public sealed partial class ModEntry : Mod
             this.LogNativeLocalPipelineHeartbeat();
             this.LogStageOnce("executions_update", force: nativeLocalState.Executions?.IsBodyBusy == true);
             nativeLocalState.Executions?.Update();
+            this.DeliverHeldExecutionResponses(nativeLocalState);
             this.LogStageOnce("executions_update_done");
             // The Body Program successor pump must run on the native-local player
             // lane exactly like the formal lane: it auto-starts dependency-free
@@ -1352,6 +1356,7 @@ public sealed partial class ModEntry : Mod
         this.ObserveTerminalReceiptDeliveries(state);
         this.DrainLocalPipeBridge(state);
         state.Executions?.Update();
+        this.DeliverHeldExecutionResponses(state);
         // The Body Program successor pump is a pure game-thread continuation
         // owner: it auto-starts dependency-free sources and exact successors and
         // parks when no authenticated admission/native seams are wired, so it
@@ -1922,7 +1927,7 @@ public sealed partial class ModEntry : Mod
                     if (requestType == "observe_scene_request")
                         this.MonitorNativeChatIngress("scene_observe_response_missing");
                     if (requestType == "execution_request")
-                        this.MonitorNativeChatIngress("navigation_execution_response_missing");
+                        this.MonitorNativeChatIngress("navigation_execution_held_for_body");
                     continue;
                 }
 
@@ -1979,6 +1984,27 @@ public sealed partial class ModEntry : Mod
             {
                 this.Monitor.Log($"GameBuddy rejected local bridge request: {exception.GetType().Name}: {exception.Message}.", LogLevel.Warn);
             }
+        }
+    }
+
+    /// <summary>
+    /// Delivers the answer to every execution request the Mod held for a transient body hold. The execution
+    /// pump resolves them while it ticks, so this runs right after it: the answer is the dispatch's own
+    /// receipt, or the named refusal the bounded wait ended in, and it carries the correlation of the request
+    /// it answers rather than a fresh one.
+    /// </summary>
+    private void DeliverHeldExecutionResponses(ScreenEmbodimentState state)
+    {
+        if (state.BridgeSession is null || state.LocalPipeBridge is null)
+            return;
+        while (state.BridgeSession.TryDequeueHeldExecutionResponse(out long generation, out string json))
+        {
+            if (!state.LocalPipeBridge.TryEnqueueOutbound(generation, json, out PipeOutboundCompletion completion))
+            {
+                this.Monitor.Log("GameBuddy discarded a held execution response after connection closed or backpressure.", LogLevel.Warn);
+                continue;
+            }
+            this.TrackExecutionResponsePipeDelivery(state, generation, completion);
         }
     }
 
@@ -2247,8 +2273,12 @@ public sealed partial class ModEntry : Mod
             // timeout; the night's audit named this the one still-open instance of its dominant failure mode).
             return this.SerializeError(state, BridgeProtocol.TryReadCorrelationId(json), "invalid_envelope");
         }
-        return this.SerializeBridgeResponse<BridgeExecutionRequest, BridgeReceipt>(state, request,
-            (BridgeEnvelope<BridgeExecutionRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => state.BridgeSession!.TryExecute(generation, request, out response, out reason), out _);
+        string? answer = this.SerializeBridgeResponse<BridgeExecutionRequest, BridgeReceipt>(state, request,
+            (BridgeEnvelope<BridgeExecutionRequest> dispatch, out BridgeEnvelope<BridgeReceipt>? envelope, out string reason) => state.BridgeSession!.TryExecute(generation, dispatch, out envelope, out reason), out string dispatchReason);
+        // A request the Mod is HOLDING for a transient body hold has no answer yet and must not be refused:
+        // the execution pump answers it the moment the body frees, or with the named refusal once the window
+        // passes. Every other outcome - including every failure - answers here, exactly as it always has.
+        return dispatchReason == ExecutionManager.HeldRequestMarker ? null : answer;
     }
 
     private string? HandleCancel(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeCancelRequest, BridgeReceipt>(state,

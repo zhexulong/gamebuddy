@@ -79,14 +79,20 @@ public sealed class FarmhandBodyProgramController
     public Func<bool>? CanDispatchNow { get; init; }
 
     /// <summary>
-    /// How many passes one node ATTEMPT may be deferred for the world\u0027s sake.
+    /// How many passes one node ATTEMPT may be deferred for the world's sake.
     ///
-    /// Bounded on purpose: the cooldown this waits out is about a second of native animation, and an unbounded wait
-    /// would let a permanently non-actionable world hold a node forever - which is a strand, not a wait. Past this
-    /// many passes the node is dispatched anyway, and if the world really is busy the refusal is recorded as the
-    /// honest node failure it is (the terminal shape fix is what makes that survivable).
+    /// It is the SAME window the flat admission holds a parked action for: the Mod passes this in derived
+    /// from `WorldModel.TransientRetryWindowMs`, the one number it publishes to the Agent as
+    /// `retry_window_ms`, so a node waits exactly as long as an animation may hold the body instead of for a
+    /// second number that merely looks like the first. The default is this pump's own bound for a caller that
+    /// wires a cadence probe without a window.
+    ///
+    /// Bounded on purpose: an unbounded wait would let a permanently non-actionable world hold a node forever -
+    /// which is a strand, not a wait. Past this many passes the node is dispatched anyway, and if the world
+    /// really is busy the refusal is recorded as the honest node failure it is (the terminal shape fix is what
+    /// makes that survivable).
     /// </summary>
-    private const int MaxCadenceDeferrals = 90;
+    public int MaxCadenceDeferrals { get; init; } = 90;
 
     private readonly Dictionary<string, int> cadenceDeferrals = new(StringComparer.Ordinal);
 
@@ -191,7 +197,7 @@ public sealed class FarmhandBodyProgramController
             {
                 string deferralKey = $"{programId}\u001f{node.NodeId}\u001f{node.NodeAttempt}";
                 int deferred = this.cadenceDeferrals.TryGetValue(deferralKey, out int seen) ? seen : 0;
-                if (deferred < MaxCadenceDeferrals)
+                if (deferred < this.MaxCadenceDeferrals)
                 {
                     this.cadenceDeferrals[deferralKey] = deferred + 1;
                     return;
