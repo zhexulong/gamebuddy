@@ -231,11 +231,12 @@ export type PiTranscriptEditResult =
  *
  * TRANSITIONAL BINDING, the same one the other two halves document: no authority records which Pi
  * entry a durable `tavern_messages` row corresponds to, so the proof is positional. `entryIndex` is
- * the entry's position among the entries that carry a transcript row - the greeting is never prompted,
- * and a message entry no row names (the Host's own system prompt, which a real mount appends at the
- * head of the branch) carries no position either - and the entry there must carry the target's own
- * role AND its exact current text. A shape it cannot prove refuses, and the caller must then leave the
- * transcript unchanged.
+ * the entry's position among the entries that carry a transcript row - the mount's greeting anchor is
+ * one of them, because it carries row zero, which is why the coordinator counts it before calling
+ * here (`continuity-semantic-production-coordinator.internal.ts`) - while a message entry no row names
+ * (the Host's own system prompt) carries no position either - and the entry there must carry the
+ * target's own role AND its exact current text. A shape it cannot prove refuses, and the caller must
+ * then leave the transcript unchanged.
  *
  * What it does with that proof is the vendor's append-only edit of one entry: the target keeps its
  * place on the active path, the entries after it stay on it, and only its contribution changes. The

@@ -615,13 +615,14 @@ test("an entry the session does not carry refuses, and a revert is itself durabl
 });
 
 /**
- * The session a real mount leaves, read off a recorded product run's own file: its FIRST message entry
- * is the Host's system prompt, and only then do the exchanges follow (`system, user(P), assistant(A1),
- * …`). The greeting is never prompted, so the transcript's own order is what a position means - but the
- * system prompt is a message entry no transcript row names, and a position counted over every message
- * entry therefore named the entry one place early: in the product every edit refused while the row's
- * own entry sat one place later. A position is the transcript's, so only an entry that carries one of
- * its rows occupies one.
+ * The session a real mount leaves carries message entries no transcript row names. Read off a recorded
+ * product run's own file, its first message entry was the Host's system prompt and only then the
+ * exchanges followed (`system, user(P), assistant(A1), …`); the mount now writes the greeting anchor
+ * ahead of it (`pi-session-greeting-anchor.internal.ts`), so the system prompt sits after an entry a
+ * row does name. Either way the system prompt is a message entry no transcript row names, and a
+ * position counted over every message entry therefore named the entry one place early: in the product
+ * every edit refused while the row's own entry sat one place later. A position is the transcript's, so
+ * only an entry that carries one of its rows occupies one.
  */
 test("an edit proves its entry in a session whose head is the Host's own system prompt", async () => {
   const fixture = await createSession("gamebuddy-transcript-edit-system-prompt-", []);
