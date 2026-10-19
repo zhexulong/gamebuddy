@@ -712,6 +712,12 @@ export function fixtureActions(action) {
   // runner, so both are published; the scenario pins clock/season and seeds one shippable
   // object so the FIRST rollover raises that menu. Not a new action; it grants no capability.
   if (action === "multi_day") return ["advance_day", "dismiss_modal"];
+  // `respond_level_up` is a native-local action, NOT a farmhand one: its runner drives the
+  // single-player night rollover's own LevelUpMenu over `connectNativeLocalClient`, and it is
+  // registered in STARDEW_PUBLISHED_ACTION_GATES like every other gated action. So the fixture
+  // owns it - the same action set its runner declares in EXPECTED_ACTIONS.
+  if (action === "respond_level_up")
+    return ["advance_day", "respond_level_up", "move_to_tile", "observe_scene"];
   if (action === "advance_day") return ["advance_day"];
   throw new Error("invalid_native_local_fixture_action");
 }
@@ -778,6 +784,10 @@ export function fixtureScenario(actions, action) {
   // set contains advance_day, and the ordinary move-only world would arm a Given that
   // provisions nothing (no pinned clock, no shipment, no bed guarantee).
   if (action === "multi_day") return "native_multi_day_v1";
+  // `respond_level_up` MUST be keyed off the action here, before the `advance_day` fallback below:
+  // its action set contains advance_day, so that fallback would claim it and arm the ordinary
+  // move-only world - where no level-up can ever be pending, unlike the world this action needs.
+  if (action === "respond_level_up") return "native_respond_level_up_v1";
   // The lifecycle action owns its own route and preconditions; it needs no
   // fixture scenario beyond the ordinary move-only world.
   if (actions.includes("advance_day")) return "";
