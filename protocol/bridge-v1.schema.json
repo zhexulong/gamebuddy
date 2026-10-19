@@ -2934,6 +2934,23 @@
           },
           "maxItems": 8
         },
+        "pendingLevelUpChoices": {
+          "description": "The pending profession MILESTONES (levels 5 and 10), each with both candidates the engine's own rule offers, the engine's own titles and descriptions, and the level-5 constraint a level-10 pair depends on. Published so the companion can SEE the choice before `respond_level_up` writes one.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/levelUpChoice"
+          },
+          "maxItems": 8
+        },
+        "professions": {
+          "description": "The actor's own profession ids, the set a `respond_level_up` milestone branch writes and a fresh read confirms.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxItems": 16
+        },
         "museumRewardTargets": {
           "type": "array",
           "items": {
@@ -2954,6 +2971,66 @@
             "$ref": "#/$defs/colorTarget"
           },
           "maxItems": 32
+        }
+      }
+    },
+    "levelUpChoice": {
+      "description": "One pending profession milestone: the `(skill, level)` pair, the two candidate ids in the game's own card order (branch_a = left, branch_b = right) with the engine's own title and description, and the level-5 profession a level-10 pair continues from (omitted when the pair does not depend on an earlier choice).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "skill",
+        "level",
+        "leftId",
+        "leftTitle",
+        "leftDescription",
+        "rightId",
+        "rightTitle",
+        "rightDescription"
+      ],
+      "properties": {
+        "skill": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "level": {
+          "enum": [
+            5,
+            10
+          ]
+        },
+        "previousProfession": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "leftId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "leftTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "leftDescription": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "rightId": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rightTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "rightDescription": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
         }
       }
     },

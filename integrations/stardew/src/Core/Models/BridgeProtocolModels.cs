@@ -575,7 +575,18 @@ public sealed record BridgeSnapshot(
     // engine pushes one LevelUpMenu per entry in `player.newLevels` (Game1.cs:9130-9134), and until this field existed
     // the harness learned the pending pair by PARSING THE REFUSAL receipt of `dismiss_modal` - reading a fact out of a
     // failure. Defaulted and LAST for the same reason as its siblings above.
-    IReadOnlyList<string>? PendingLevelUps = null);
+    IReadOnlyList<string>? PendingLevelUps = null,
+    // The pending profession MILESTONES (level 5 and 10) the engine will offer: the `(skill, level)` pair and both
+    // candidate professions in the game's own card order, each carrying the engine's own title and description
+    // (`LevelUpMenu.getProfessionTitleFromNumber` / `getProfessionDescription`, public statics). The boundary card
+    // requires the companion to SEE the options before choosing - a profession is a permanent, synced save field, so
+    // a blind choice is worse than stopping. Derived from the engine's own rule (`LevelUpMenu.cs:421-437`), never
+    // from the menu's private `professionsToChoose`. Defaulted and LAST for the same reason as its siblings above.
+    IReadOnlyList<BridgeLevelUpChoice>? PendingLevelUpChoices = null,
+    // The actor's own profession ids. A fresh read of this set is how a caller sees that a profession branch landed
+    // on the chosen id and NOT on the other card, and the level-5 choice a level-10 pair continues from is a member
+    // of it. Defaulted and LAST for the same reason as its siblings above.
+    IReadOnlyList<int>? Professions = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,
@@ -761,6 +772,24 @@ public sealed record BridgeTailoringTarget(
 /// from live state: the opaque id discovery published, its tile and location, and the colour it
 /// currently carries. What the write changes is the colour, so the colour is what the caller reads.</summary>
 public sealed record BridgeColorTarget(string TargetId, string Location, int X, int Y, string Color);
+
+/// <summary>
+/// One PENDING profession milestone the engine will offer at the next night boundary, projected so the companion
+/// can see the choice before it writes it. `LeftId`/`RightId` are the two candidates in the game's own card order
+/// (`branch_a` addresses the left card, `branch_b` the right), each with the engine's own title and description.
+/// `PreviousProfession` is the level-5 profession a level-10 pair continues from - the constraint that decides
+/// which pair the engine offers - or null when the pair does not depend on an earlier choice.
+/// </summary>
+public sealed record BridgeLevelUpChoice(
+    int Skill,
+    int Level,
+    int? PreviousProfession,
+    int LeftId,
+    string LeftTitle,
+    string LeftDescription,
+    int RightId,
+    string RightTitle,
+    string RightDescription);
 
 public sealed record BridgeBuildingChestTarget(
     string TargetId,

@@ -1282,6 +1282,41 @@ export function isColorTargetFact(value: unknown): boolean {
   );
 }
 
+/**
+ * One pending profession milestone the companion may be asked to choose: the `(skill, level)` pair, the two
+ * candidate ids in the game's own card order (`branch_a` is the left card, `branch_b` the right) with the engine's
+ * own title and description, and the level-5 profession a level-10 pair continues from. `previousProfession` is
+ * ABSENT when the pair does not depend on an earlier choice - the Mod's serializer omits null members - so it is
+ * optional here while its VALUE, when present, is still bounded.
+ */
+export function isLevelUpChoiceFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, [
+      "skill",
+      "level",
+      "previousProfession",
+      "leftId",
+      "leftTitle",
+      "leftDescription",
+      "rightId",
+      "rightTitle",
+      "rightDescription",
+    ]) &&
+    isNonNegativeSafeInteger(value.skill) &&
+    value.skill <= 5 &&
+    isNonNegativeSafeInteger(value.level) &&
+    value.level <= 10 &&
+    (value.previousProfession === undefined || isNonNegativeSafeInteger(value.previousProfession)) &&
+    isNonNegativeSafeInteger(value.leftId) &&
+    isBoundedNonEmptyString(value.leftTitle, 128) &&
+    isBoundedNonEmptyString(value.leftDescription, 512) &&
+    isNonNegativeSafeInteger(value.rightId) &&
+    isBoundedNonEmptyString(value.rightTitle, 128) &&
+    isBoundedNonEmptyString(value.rightDescription, 512)
+  );
+}
+
 /** One sewing-machine target: the pair of backpack slots and the item ids they hold, the kind of act
  * (`recipe` or `dye`), the qualified id the act produces, and - for a dye target - the garment's
  * CURRENT colour and name. `garmentColour` is the fact `dye_clothing_with_item`'s postcondition

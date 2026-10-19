@@ -38,6 +38,7 @@ import {
   isInventoryItemFact,
   isItemTargetFact,
   isLanternSlotFact,
+  isLevelUpChoiceFact,
   isMachineTargetFact,
   isMailboxTargetFact,
   isMineElevatorFloorFact,
@@ -225,6 +226,29 @@ export type Snapshot = Readonly<{
    * the field, and an empty array means "nothing pending".
    */
   pendingLevelUps?: readonly string[];
+  /**
+   * The pending profession MILESTONES (levels 5 and 10) the next night boundary will offer, each with the two
+   * candidates the engine's own rule puts on the left and right cards, carrying the engine's own title and
+   * description, and the level-5 profession a level-10 pair continues from. Published because a profession branch
+   * is a permanent, synced save write: the companion has to SEE the options before `respond_level_up` writes one,
+   * and `branch_a` addresses `leftId` while `branch_b` addresses `rightId`. Older Mod snapshots may omit the field.
+   */
+  pendingLevelUpChoices?: readonly Readonly<{
+    skill: number;
+    level: number;
+    previousProfession?: number;
+    leftId: number;
+    leftTitle: string;
+    leftDescription: string;
+    rightId: number;
+    rightTitle: string;
+    rightDescription: string;
+  }>[];
+  /**
+   * The actor's own profession ids. A fresh read of this set is how a caller sees that a milestone branch landed on
+   * the chosen id and NOT on the other card. Older Mod snapshots may omit the field.
+   */
+  professions?: readonly number[];
   /** Older Mod snapshots may omit fields added after the initial bridge contract. */
   currentTool?: string | null;
   inventorySlots?: number;
@@ -1565,6 +1589,8 @@ const SNAPSHOT_KEYS = [
   "capabilities",
   "catalogRevision",
   "pendingLevelUps",
+  "pendingLevelUpChoices",
+  "professions",
   "enabledActionIds",
   "presentationLocale",
   "timeOfDay",
@@ -3260,6 +3286,12 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   // against the vocabulary the receipts already publish, so a malformed entry is a named snapshot refusal rather than a
   // fact the companion reads.
   { field: "pendingLevelUps", maxItems: 8, accepts: (entry) => typeof entry === "string" && /^\d+@\d+$/u.test(entry) },
+  // The pending profession milestones, each with both candidates and the level-5 constraint a level-10 pair depends
+  // on. Bounded at 8 like the pending pair it is derived from, and validated entry-by-entry so a malformed candidate
+  // is a NAMED snapshot refusal rather than a choice the companion reads.
+  { field: "pendingLevelUpChoices", maxItems: 8, accepts: isLevelUpChoiceFact, narrate: namedEntryReason },
+  // The actor's own profession ids, the set a milestone branch writes and a fresh read confirms.
+  { field: "professions", maxItems: 16, accepts: (entry) => isNonNegativeSafeInteger(entry) },
   { field: "museumRewardTargets", maxItems: 16, accepts: isMuseumRewardTargetFact },
   { field: "tailoringTargets", maxItems: 32, accepts: isTailoringTargetFact, narrate: namedEntryReason },
   { field: "colorTargets", maxItems: 32, accepts: isColorTargetFact, narrate: namedEntryReason },

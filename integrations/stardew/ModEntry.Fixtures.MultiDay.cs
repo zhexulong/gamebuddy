@@ -17,6 +17,14 @@ public sealed partial class ModEntry
     private static readonly string[] PinnedSkills = { "Farming", "Fishing", "Foraging", "Mining", "Combat" };
 
     /// <summary>
+    /// The skill the branch scenario leaves free to reach its level-5 MILESTONE: Combat (4), whose level-5
+    /// profession is NOT pre-chosen so both candidates are live choices.
+    /// </summary>
+    private const int MilestoneSkill = 4;
+    private const string MilestoneSkillName = "Combat";
+    private const int MilestoneLevel = 5;
+
+    /// <summary>
     /// The composed world must let the companion WALK between the places its day uses: home, the bin, and the field
     /// it works - all in one walkable component, or the day cannot be ended at all.
     ///
@@ -165,7 +173,7 @@ public sealed partial class ModEntry
     /// </list>
     /// </para>
     /// </summary>
-    private void InitializeNativeLocalMultiDayFixture(Farmer player, Farm farm)
+    private void InitializeNativeLocalMultiDayFixture(Farmer player, Farm farm, bool armProfessionMilestone = false)
     {
         // (1) Clock/season. Both writes are the same pre-attachment technique the
         // live-verified bush/fruit-tree fixtures already use; `currentSeason`'s
@@ -218,12 +226,17 @@ public sealed partial class ModEntry
         // than a player's pending choice.
         foreach (string skill in PinnedSkills)
         {
+            if (armProfessionMilestone && skill == MilestoneSkillName)
+                continue;
             if (!player.setSkillLevel(skill, 10))
                 throw new InvalidOperationException($"fixture_native_local_multi_day_skill_not_pinned:{skill}");
         }
-        // The guarantees below depend on five maxed skills, so the pin is ASSERTED rather than assumed.
+        if (armProfessionMilestone && !player.setSkillLevel(MilestoneSkillName, MilestoneLevel - 1))
+            throw new InvalidOperationException($"fixture_native_local_level_up_branch_skill_not_set:{MilestoneSkillName}");
+        // The guarantees below depend on the pinned skills, so the pin is ASSERTED rather than assumed. The branch
+        // Given is the ONE exception: its milestone skill is deliberately left below 10.
         if (player.farmingLevel.Value != 10 || player.fishingLevel.Value != 10 || player.foragingLevel.Value != 10
-            || player.miningLevel.Value != 10 || player.combatLevel.Value != 10)
+            || player.miningLevel.Value != 10 || (!armProfessionMilestone && player.combatLevel.Value != 10))
             throw new InvalidOperationException("fixture_native_local_multi_day_skills_not_maxed");
         player.newLevels.Clear();
         if (player.newLevels.Count != 0)
@@ -245,6 +258,13 @@ public sealed partial class ModEntry
         int professionSkill = 0;
         foreach (string skill in PinnedSkills)
         {
+            // The branch Given leaves the milestone skill's level-5 profession UNCHOSEN, which is exactly what makes
+            // its two candidates live choices.
+            if (armProfessionMilestone && skill == MilestoneSkillName)
+            {
+                professionSkill += 1;
+                continue;
+            }
             int levelFiveProfession = professionSkill * 6;
             int levelTenProfession = levelFiveProfession + 2;
             player.professions.Add(levelFiveProfession);

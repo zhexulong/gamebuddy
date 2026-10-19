@@ -202,6 +202,9 @@ public sealed class NativeLocalPlayerFixtureConfig
         // run needs both halves - days that pass and work worth doing in them - and neither existing
         // scenario has both, so they are composed here rather than duplicated.
         "native_multi_day_play_session_v1",
+        // The branch Given: the multi-day night precondition with ONE pending level-5 MILESTONE whose level-5
+        // profession is left unchosen, so `respond_level_up`'s two profession branches are both live choices.
+        "native_level_up_branch_v1",
 
     };
 

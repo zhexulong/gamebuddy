@@ -6,6 +6,7 @@ using GameBuddy.Stardew.Navigation;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.Menus;
 using StardewValley.Tools;
 using StardewValley.Characters;
 
@@ -2160,6 +2161,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             DailyQuestTargets: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? DiscoverDailyQuestTargets() : null,
             AcceptedDailyQuest: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? Game1.player.acceptedDailyQuest.Value : null,
             PendingLevelUps: DescribePendingLevelUps(player),
+            PendingLevelUpChoices: DescribePendingLevelUpChoices(player),
+            Professions: DescribeProfessions(player),
             SpecialOrderTargets: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverSpecialOrderTargets() : null,
             ActiveSpecialOrderKeys: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverActiveSpecialOrderKeys() : null,
             MuseumRewardTargets: advertisedCapabilities.Contains("claim_museum_reward", StringComparer.Ordinal) ? DiscoverMuseumRewardTargets(player) : null,
@@ -2183,6 +2186,67 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ? Array.Empty<string>()
             : player.newLevels.Take(8).Select(entry => $"{entry.X}@{entry.Y}").ToArray();
 
+    /// <summary>
+    /// The pending profession MILESTONES, each with the two candidates the engine's own rule offers, the engine's
+    /// own titles and descriptions, and the level-5 constraint a level-10 pair depends on.
+    ///
+    /// WHY the product publishes this: closing an ACTIVE `LevelUpMenu` grants its perk, and a profession branch
+    /// writes `Farmer.professions` - a permanent, synced save field - so a companion that resolved a milestone blind
+    /// would be writing a decision it could not see. The boundary card makes this projection a requirement rather
+    /// than a nicety: an action the companion cannot look at is worse than the stop it removes.
+    ///
+    /// The candidates are DERIVED from the engine's own rule (`LevelUpMenu.cs:421-437`) rather than read from the
+    /// menu's private `professionsToChoose`, and the titles/descriptions come from the engine's own public statics, so
+    /// the pair the companion reads and the pair `respond_level_up` writes cannot drift. Luck (skill 5) never branches.
+    /// </summary>
+    private static IReadOnlyList<BridgeLevelUpChoice> DescribePendingLevelUpChoices(Farmer player)
+    {
+        List<BridgeLevelUpChoice> choices = new();
+        foreach (Point entry in player.newLevels)
+        {
+            int skill = entry.X;
+            int level = entry.Y;
+            if (skill == 5 || (level != 5 && level != 10))
+                continue;
+
+            bool levelFiveBranchChosen = player.professions.Contains(skill * 6);
+            (int left, int right) = LevelUpProfessionPair(skill, level, levelFiveBranchChosen);
+
+            int? previousProfession = null;
+            if (level == 10)
+                previousProfession = levelFiveBranchChosen
+                    ? skill * 6
+                    : player.professions.Contains(skill * 6 + 1) ? skill * 6 + 1 : null;
+
+            choices.Add(new BridgeLevelUpChoice(
+                skill,
+                level,
+                previousProfession,
+                left,
+                LevelUpMenu.getProfessionTitleFromNumber(left),
+                string.Join("\n", LevelUpMenu.getProfessionDescription(left)),
+                right,
+                LevelUpMenu.getProfessionTitleFromNumber(right),
+                string.Join("\n", LevelUpMenu.getProfessionDescription(right))));
+        }
+
+        return choices.Count == 0 ? Array.Empty<BridgeLevelUpChoice>() : choices.Take(8).ToArray();
+    }
+
+    /// <summary>
+    /// The actor's own profession ids, bounded. Published so a caller can read the growth state a `respond_level_up`
+    /// milestone branch just changed from a fresh observation - the chosen id present and the other card absent -
+    /// and can see the level-5 choice a level-10 pair continues from.
+    /// </summary>
+    private static IReadOnlyList<int> DescribeProfessions(Farmer player)
+    {
+        List<int> ids = new();
+        foreach (int profession in player.professions)
+            ids.Add(profession);
+        ids.Sort();
+        return ids.Count == 0 ? Array.Empty<int>() : ids.Take(16).ToArray();
+    }
+
     private BridgeSnapshot CreateWorldNotReadyBridgeSnapshot(FarmhandCapabilityPublication capabilityPublication)
     {
         IReadOnlyList<string> advertisedCapabilities = capabilityPublication.CapabilitySet.AdvertisedCapabilityIds;
@@ -2205,7 +2269,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // admission rejects with world_not_ready, so no consumer plans from this.
         TimeOfDay: 0, DayOfMonth: 0, SeasonIndex: 0, Year: 0,
         Weather: "unknown",
-        PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, WorldObjectTargets: null, ActorDispositionKind: "idle", DailyQuestTargets: null, AcceptedDailyQuest: null, PendingLevelUps: null);
+        PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, WorldObjectTargets: null, ActorDispositionKind: "idle", DailyQuestTargets: null, AcceptedDailyQuest: null, PendingLevelUps: null, PendingLevelUpChoices: null, Professions: null);
     }
 
     private static StardewValley.Warp? ResolveDoorWarp(StardewValley.GameLocation location, Microsoft.Xna.Framework.Point point)

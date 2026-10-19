@@ -372,6 +372,22 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     }
 
     /// <summary>
+    /// The two profession ids the engine offers for a milestone <c>(skill, level)</c>, in the game's own card order:
+    /// level 5 is <c>skill*6 + 0/1</c>; level 10 continues the level-5 branch with <c>+2/+3</c> when it was
+    /// <c>skill*6</c>, otherwise <c>+4/+5</c> (<c>LevelUpMenu.cs:421-437</c>). <c>branch_a</c> addresses <c>Left</c>,
+    /// <c>branch_b</c> <c>Right</c>.
+    ///
+    /// ONE rule for both the action and the observation projection, so the pair <c>respond_level_up</c> writes is
+    /// always the pair the companion was shown.
+    /// </summary>
+    internal static (int Left, int Right) LevelUpProfessionPair(int skill, int level, bool levelFiveBranchChosen) =>
+        level == 5
+            ? (skill * 6, skill * 6 + 1)
+            : levelFiveBranchChosen
+                ? (skill * 6 + 2, skill * 6 + 3)
+                : (skill * 6 + 4, skill * 6 + 5);
+
+    /// <summary>
     /// Settles the pending level-up the actor is being shown: an ordinary level through the menu's own
     /// `okButtonClicked`, or one of the two profession branches the game offers at levels 5 and 10.
     ///
@@ -479,16 +495,15 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         if (isProfession)
         {
-            // The pair the game offers, from the engine's own rule (`LevelUpMenu.cs:421-437`): level 5 offers
-            // skill*6+0/1; level 10 continues from the level-5 choice - +2/3 when that was skill*6, otherwise +4/5.
-            int baseId = menuPair.Skill * 6;
-            (int Left, int Right) candidates = menuPair.Level == 5
-                ? (baseId, baseId + 1)
-                : actor.professions.Contains(baseId)
-                    ? (baseId + 2, baseId + 3)
-                    : (baseId + 4, baseId + 5);
-            chosenProfession = choice == "branch_a" ? candidates.Left : candidates.Right;
-            otherProfession = choice == "branch_a" ? candidates.Right : candidates.Left;
+            // The pair the game offers, from the engine's own rule (`LevelUpMenu.cs:421-437`), through the SAME helper
+            // the observation projection uses (`DescribePendingLevelUpChoices`), so the pair the companion is shown and
+            // the pair this action writes cannot drift. `branch_a` addresses the left card, `branch_b` the right.
+            (int left, int right) = LevelUpProfessionPair(
+                menuPair.Skill,
+                menuPair.Level,
+                actor.professions.Contains(menuPair.Skill * 6));
+            chosenProfession = choice == "branch_a" ? left : right;
+            otherProfession = choice == "branch_a" ? right : left;
         }
 
         try
