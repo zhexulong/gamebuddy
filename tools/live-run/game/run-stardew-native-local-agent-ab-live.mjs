@@ -2528,7 +2528,12 @@ try {
   // compartments) is NOT folded in: "there was nothing to judge" and "the narrative was bad" are different
   // findings, and only the second is a defect of this run.
   historianRubricOutcome = judgeRunHistorianRubric(runtimeRoot);
-  const historianRubricPassed = historianRubricOutcome.state !== "failed";
+  // `passed` is not the negation of `failed`: a run whose Historian wrote nothing leaves the obligation UNMEASURED,
+  // and a boolean cannot say that. Measured 2026-10-20 by two independent audits: 12 of 12 runs read `passed` while
+  // the rubric had measured nothing - the "gate passes while the behaviour is absent" shape. The three states stay
+  // distinct all the way into the bundle, and an unmeasured obligation is published by name rather than as an empty
+  // list.
+  const historianRubricPassed = historianRubricOutcome.state === "passed";
   // System-level diagnostics: aggregate every rejected action into a small set
   // of system findings (component attribution + count + sample), so each live
   // run yields a "system health report" instead of just pass/blocked. A finding
@@ -3115,7 +3120,14 @@ async function writeRunBundle({
         broken: Object.entries(result ?? {})
           .filter(([key, value]) => key.endsWith("Passed") && value === false)
           .map(([key]) => key),
-        unmeasured: [],
+        // Named, not an empty placeholder: which obligations nobody measured is the difference between a verified run
+        // and one that merely produced no red.
+        unmeasured:
+          historianRubricOutcome.state === "unmeasured" && historianRubricOutcome.obligations !== undefined
+            ? [...historianRubricOutcome.obligations]
+            : historianRubricOutcome.state === "unmeasured"
+              ? [historianRubricOutcome.reasonCode ?? "historian_rubric_unmeasured"]
+              : [],
       },
     },
     timeline: { path: "timeline.jsonl", records: factLog.length, sources: ["player", "smapi", "llm"] },

@@ -97,7 +97,16 @@ test("the run's own narrative is judged and folded into the verdict", () => {
   );
   assert.match(SOURCE, /function judgeRunHistorianRubric\(runtimeRoot\) \{/);
   assert.match(SOURCE, /historianRubricOutcome = judgeRunHistorianRubric\(runtimeRoot\);/);
-  assert.match(SOURCE, /const historianRubricPassed = historianRubricOutcome\.state !== "failed";/);
+  // AMENDED 2026-10-20 by two independent audits (12 of 12 runs read `passed` while the rubric had measured nothing):
+  // `passed` is not the negation of `failed`. An unmeasured obligation is its own state and must NOT be able to turn
+  // a run into a pass - that is the "gate passes while the behaviour is absent" shape.
+  assert.match(SOURCE, /const historianRubricPassed = historianRubricOutcome\.state === "passed";/);
+  assert.ok(!/historianRubricOutcome\.state !== "failed"/.test(SOURCE), "an unmeasured rubric must not read as a pass");
+  // And the bundle publishes which obligations nobody measured, instead of a hardcoded empty list.
+  assert.ok(
+    !/unmeasured: \[\],/.test(SOURCE),
+    "the unmeasured list must say what was unmeasured, not be empty by construction",
+  );
   // `unmeasured` is deliberately NOT red: "there was nothing to judge" and "the narrative was bad" differ.
   // Formatting-insensitive: what matters is that the no-narrative case is its own named state.
   assert.match(SOURCE, /state: "unmeasured",[\s\S]{0,60}?no_compartments_written/);
