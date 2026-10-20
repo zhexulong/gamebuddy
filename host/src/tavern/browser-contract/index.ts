@@ -136,12 +136,11 @@ const ProblemCode = Type.Union([
   Type.Literal("chat_message_revision_conflict"),
   Type.Literal("chat_rewind_opening_retained"),
   Type.Literal("chat_rewind_turn_active"),
-  // Editing one of the player's own messages, or her reply, in place (`chat.edit`) is the same shape of
-  // bounded vocabulary: the handle names the greeting the Chat opened on, which has its own editor, or a
-  // row that is neither the player's own words nor her reply; or a reply is being written from the very
-  // text the edit would replace. Each is a fact the surface can state plainly, so no edit ever fails with
-  // "the conversation could not be changed" about a message the player can see.
-  Type.Literal("chat_edit_opening_retained"),
+  // Editing one of the player's own messages, her reply, or the greeting the Chat opened on (`chat.edit`),
+  // in place, is the same shape of bounded vocabulary: the row is neither the player's own words, her
+  // reply, nor that opening; or a reply is being written from the very text the edit would replace. Each is
+  // a fact the surface can state plainly, so no edit ever fails with "the conversation could not be
+  // changed" about a message the player can see.
   Type.Literal("chat_edit_not_player_message"),
   Type.Literal("chat_edit_turn_active"),
   // Deleting one message out of the middle of a conversation (`chat.delete`) has its own bounded
@@ -1961,7 +1960,6 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
-  "chat_edit_opening_retained",
   "chat_edit_not_player_message",
   "chat_edit_turn_active",
   "chat_delete_opening_retained",
