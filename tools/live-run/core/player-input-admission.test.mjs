@@ -32,7 +32,7 @@ test("an accepted prompt submits exactly once and reports the wait", async () =>
     sleep: clock.sleep,
   });
 
-  assert.deepEqual(result, { accepted: true, attempts: 1, waitedMs: 120, refusals: [] });
+  assert.deepEqual(result, { accepted: true, attempts: 1, acceptMs: 120, pollSleepMs: 0, refusals: [] });
   assert.deepEqual(calls, [{ text: "harvest the strawberries", locale: "zh-CN" }]);
 });
 
@@ -52,12 +52,9 @@ test("a revoked admission is retried until the Host accepts", async () => {
 
   assert.equal(result.accepted, true);
   assert.equal(result.attempts, 3);
-  assert.deepEqual(result.refusals, [
-    "player_input_integration_unavailable",
-    "player_input_integration_unavailable",
-  ]);
+  assert.deepEqual(result.refusals, ["player_input_integration_unavailable", "player_input_integration_unavailable"]);
   // Two refusals each waited one poll interval.
-  assert.equal(result.waitedMs, 1000);
+  assert.equal(result.pollSleepMs, 1000);
 });
 
 test("a prompt refused for the whole window is reported as refused, never as a quiet success", async () => {
@@ -74,7 +71,7 @@ test("a prompt refused for the whole window is reported as refused, never as a q
 
   assert.equal(result.accepted, false);
   assert.equal(result.lastRefusal, "player_input_session_closed");
-  assert.equal(result.waitedMs, 1500);
+  assert.equal(result.pollSleepMs, 1500);
   // 0ms + 3 waits of 500ms: the loop stops at the deadline instead of spinning.
   assert.equal(result.attempts, 4);
 });
@@ -116,7 +113,10 @@ test("a thrown delivery failure propagates instead of being retried as a refusal
 
 test("missing arguments fail closed rather than submitting nothing", async () => {
   await assert.rejects(() => submitPlayerPrompt({ text: "hello" }), /player_input_accept_required/);
-  await assert.rejects(() => submitPlayerPrompt({ accept: async () => undefined, text: "   " }), /player_input_text_required/);
+  await assert.rejects(
+    () => submitPlayerPrompt({ accept: async () => undefined, text: "   " }),
+    /player_input_text_required/,
+  );
 });
 
 test("an unknown refusal shape without a reason code is still a refusal", async () => {

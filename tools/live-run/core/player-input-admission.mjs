@@ -32,11 +32,21 @@ function isRefusal(value) {
 /**
  * Submit one player prompt and wait until the Host accepts it.
  *
- * @returns `accepted` plus the observed admissions: how many attempts were made,
- *          how long the wait took, every refusal reason code in order, and the
- *          final one. A refused result is NOT an error - the caller decides
- *          whether to treat it as a blocked run (it must never be reported as a
- *          quiet successful turn).
+ * @returns `accepted` plus the observed admissions: how many attempts were made, how
+ *          long the ADMISSION took as two separate numbers, every refusal reason code
+ *          in order, and the final one. A refused result is NOT an error - the
+ *          caller decides whether to treat it as a blocked run (it must never be
+ *          reported as a quiet successful turn).
+ *
+ *          The two numbers exist because one of them was lying. `accept()` is the Host's
+ *          delivery call, and when a turn is already queued it flushes that whole turn
+ *          inside the call - 668 519 ms and 661 887 ms observed in two real runs, against
+ *          this helper's own 90 s timeout, which is only consulted after a refusal. A
+ *          single `waitedMs` reported that as "the player waited to be admitted", which
+ *          is not what it measured:
+ *            - `acceptMs` is time inside `accept()` - the Host's work, usually the turn;
+ *            - `pollSleepMs` is time sleeping between refusal retries - the only part this
+ *              helper chooses.
  */
 export async function submitPlayerPrompt({
   accept,
@@ -53,30 +63,39 @@ export async function submitPlayerPrompt({
   const startedAtMs = now();
   const refusals = [];
   let attempts = 0;
+  let acceptMs = 0;
+  let pollSleepMs = 0;
   for (;;) {
     attempts += 1;
     // A throw propagates: the message was admitted, delivery failed, and that is
     // a different fact from a refusal.
+    const acceptStartedAtMs = now();
     const disposition = await accept(text, locale);
+    acceptMs += now() - acceptStartedAtMs;
     if (!isRefusal(disposition)) {
       return Object.freeze({
         accepted: true,
         attempts,
-        waitedMs: now() - startedAtMs,
+        acceptMs,
+        pollSleepMs,
         refusals: Object.freeze([...refusals]),
       });
     }
     const reasonCode = typeof disposition.reasonCode === "string" ? disposition.reasonCode : "player_input_refused";
     refusals.push(reasonCode);
-    if (now() - startedAtMs >= timeoutMs) {
+    // The timeout is about the WAIT this helper controls, not about the Host's delivery time.
+    if (pollSleepMs >= timeoutMs) {
       return Object.freeze({
         accepted: false,
         attempts,
-        waitedMs: now() - startedAtMs,
+        acceptMs,
+        pollSleepMs,
         refusals: Object.freeze([...refusals]),
         lastRefusal: reasonCode,
       });
     }
+    const sleepStartedAtMs = now();
     await sleep(pollMs);
+    pollSleepMs += now() - sleepStartedAtMs;
   }
 }
