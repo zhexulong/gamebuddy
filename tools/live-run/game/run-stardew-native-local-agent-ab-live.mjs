@@ -67,6 +67,10 @@ import {
   withConsumedBindingExecution,
 } from "../../../host/dist-test/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
 import { createHostGameRuntimeMaterializer } from "../../../host/dist-test/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
+// The mounted action tool names: the only tool calls that reach `client.execute`. Read from the Host's own table
+// rather than derived from a `stardew_` prefix, because `stardew_observe` and `stardew_execution_status` are reads
+// that never dispatch an action and must not be counted as one.
+import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
 import { loadHostDeploymentManifest } from "../../../host/dist-test/deployment-manifest.js";
 import { resolveRuntimePaths } from "../../../host/dist-test/runtime-identity.js";
 import { bindWindowsStaleLockReclaimer } from "../../../host/dist-test/path-lock.js";
@@ -600,6 +604,123 @@ function findAgentSessionJsonl(root, identity) {
   // Session file names are UTC timestamps, so the last one lexicographically is the newest.
   candidates.sort((left, right) => left.file.localeCompare(right.file));
   return { path: candidates[candidates.length - 1].path, searched };
+}
+
+/**
+ * A per-tool-call duration only answers "why was this run slow" when it names WHO made the Agent wait.
+ *
+ * `actionTrace` timestamps the bridge call and nothing else, so it cannot see the other two owners of agent wall
+ * clock. An audit of a real run read its 533 s over 19 "long actions" as bridge latency, while the same audit
+ * named `delegate_game_task` - a nested agent - separately: the execute response had returned and the tool result
+ * landed 5-60 s later, which is not a shape the bridge can produce. Optimising the journal for a tail that belongs
+ * to a nested agent, or vice versa, is the cost of not separating them. These are three different owners with
+ * three different fixes, so every agent tool call is attributed here by name.
+ *
+ * The source is the runtime's own session record (the one `readAgentTurnOutcome` reads): a `toolCall` part in an
+ * assistant message carries the call's entry timestamp, the `toolResult` entry matched by `toolCallId` carries the
+ * arrival. A call that never got a result (session cut off mid-call) has no duration and is left out rather than
+ * given an invented one.
+ */
+const TOOL_TIMING_LONGEST_LIMIT = 10;
+const TOOL_TIMING_CATEGORIES = Object.freeze(["delegate_game_task", "program_tool", "action_dispatch"]);
+// The program tools the Host mounts: a submission or a status poll waits on the program path, not on a receipt.
+const PROGRAM_TOOL_NAMES = Object.freeze([
+  "stardew_submit_action_program",
+  "stardew_action_program_status",
+  "stardew_action_program_events",
+]);
+const ACTION_TOOL_NAMES = new Set(Object.values(STARDEW_ACTION_TOOL_NAMES));
+
+function toolTimingCategory(toolName) {
+  if (typeof toolName !== "string") return undefined;
+  if (toolName === "delegate_game_task") return "delegate_game_task";
+  if (PROGRAM_TOOL_NAMES.includes(toolName)) return "program_tool";
+  if (ACTION_TOOL_NAMES.has(toolName)) return "action_dispatch";
+  // Reads, scene inspection, presentation and every other tool: real calls, but not one of the three owners.
+  return undefined;
+}
+
+function emptyCategoryTiming() {
+  return Object.freeze({ calls: 0, sumMs: 0, medianMs: null, maxMs: null });
+}
+
+function summarizeCategoryTiming(durations) {
+  if (durations.length === 0) return emptyCategoryTiming();
+  const sorted = [...durations].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return Object.freeze({
+    calls: durations.length,
+    sumMs: durations.reduce((total, ms) => total + ms, 0),
+    medianMs: sorted.length % 2 === 1 ? sorted[middle] : Math.round((sorted[middle - 1] + sorted[middle]) / 2),
+    maxMs: durations.reduce((maximum, ms) => Math.max(maximum, ms), 0),
+  });
+}
+
+function readToolTiming(sessionJsonlPath) {
+  const unobserved = (reason) =>
+    Object.freeze({
+      observed: false,
+      reason,
+      byCategory: Object.freeze(
+        Object.fromEntries(TOOL_TIMING_CATEGORIES.map((category) => [category, emptyCategoryTiming()])),
+      ),
+      longest: Object.freeze([]),
+    });
+  if (typeof sessionJsonlPath !== "string" || sessionJsonlPath.length === 0) return unobserved("no_session_record");
+  let raw;
+  try {
+    raw = readFileSync(sessionJsonlPath, "utf8");
+  } catch {
+    return unobserved("session_not_readable");
+  }
+  const pending = new Map();
+  const durationsByCategory = new Map();
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry?.type !== "message") continue;
+    const atMs = Date.parse(entry.timestamp);
+    if (!Number.isFinite(atMs)) continue;
+    const message = entry.message;
+    if (message?.role === "assistant") {
+      for (const part of Array.isArray(message.content) ? message.content : []) {
+        if (part?.type !== "toolCall") continue;
+        pending.set(part.id, { category: toolTimingCategory(part.name), startedAtMs: atMs });
+      }
+      continue;
+    }
+    if (message?.role !== "toolResult") continue;
+    const call = pending.get(message.toolCallId);
+    if (call === undefined) continue;
+    pending.delete(message.toolCallId);
+    if (call.category === undefined) continue;
+    const durationMs = atMs - call.startedAtMs;
+    if (durationMs < 0) continue;
+    const durations = durationsByCategory.get(call.category) ?? [];
+    durations.push(durationMs);
+    durationsByCategory.set(call.category, durations);
+  }
+  const byCategory = {};
+  const longest = [];
+  for (const category of TOOL_TIMING_CATEGORIES) {
+    const durations = durationsByCategory.get(category) ?? [];
+    byCategory[category] = summarizeCategoryTiming(durations);
+    for (const ms of durations) longest.push({ category, ms });
+  }
+  // Bounded on purpose: a run with hundreds of calls must not turn its result into a call log. The head of the list
+  // is the whole question (which owner the tail belongs to); the aggregate carries everything else.
+  longest.sort((left, right) => right.ms - left.ms);
+  return Object.freeze({
+    observed: true,
+    reason: null,
+    byCategory: Object.freeze(byCategory),
+    longest: Object.freeze(longest.slice(0, TOOL_TIMING_LONGEST_LIMIT)),
+  });
 }
 
 /**
@@ -2168,6 +2289,9 @@ stallSampler.unref?.();
 // The run's own narrative judgement, made once before the verdict and published in the bundle. Declared out here so
 // the failure path can report it too (the catch may run before the verdict block).
 let historianRubricOutcome = null;
+// The session record the tool-call timing is read from, remembered out here so the failure path can attribute the
+// same wall clock: a run that crashed mid-turn is exactly one whose time needs an owner.
+let sessionRecordPath;
 try {
   runtime = await binding.executeWithBinding((bindingToken) =>
     withConsumedBindingExecution(bindingToken, (execution) => {
@@ -2429,6 +2553,8 @@ try {
     sessionSearch.path === undefined
       ? Object.freeze({ observed: false, reason: "no_session_record", searched: Object.freeze(sessionSearch.searched) })
       : readAgentTurnOutcome(sessionSearch.path);
+  sessionRecordPath = sessionSearch.path;
+  const toolTiming = readToolTiming(sessionRecordPath);
   const turnFailureReason = agentTurnFailureReason(agentTurnOutcome);
   const unsettledSessionTurns = sessionTurns
     .filter((entry) => entry.turn?.settled !== true)
@@ -2684,6 +2810,9 @@ try {
     // work, the agent deciding, and the dispatch-to-dispatch total. Published for EVERY scenario, because "the
     // companion feels laggy" is a question about all of them.
     actionCadence: summarizeActionCadence(actionTrace),
+    // Per-tool-call wall clock attributed by OWNER: `delegate_game_task` (a nested agent), a program tool, or an
+    // action dispatch. A run's "long actions" cannot be assigned to the component that should fix them without it.
+    toolTiming,
     historianRubric: Object.freeze({
       state: historianRubricOutcome?.state ?? "unmeasured",
       reasonCode: historianRubricOutcome?.reasonCode ?? null,
@@ -2797,6 +2926,7 @@ try {
     legacyLadder: LEGACY_LADDER,
     error: String(error instanceof Error ? error.message : error),
     presentation: summarizePresentationEvidence(),
+    toolTiming: readToolTiming(sessionRecordPath),
     tillReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "soil_tilled") ?? null,
     plantReceipt:
       factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "seed_planted") ?? null,

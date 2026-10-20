@@ -252,3 +252,58 @@ test("both result paths carry the run window, so the tail is measurable even whe
     assert.match(SOURCE, /accepted: submit\?\.code === "accepted"/);
   });
 });
+
+test("a tool call's duration names its owner: nested agent, program tool, or action dispatch", () => {
+  // A run's wall clock was split into segments and its 533 s of "long actions" (the execute response had returned
+  // and the tool result landed 5-60 s later, over 19 dispatches) was read as bridge latency - while the same audit
+  // named `delegate_game_task`, a nested agent, separately. `actionTrace` cannot separate them: it only stamps the
+  // bridge call. The fix is attribution by name, so these are the assertions that keep it honest.
+  //
+  // 1. Exactly three owners, spelled once.
+  assert.match(
+    SOURCE,
+    /const TOOL_TIMING_CATEGORIES = Object\.freeze\(\["delegate_game_task", "program_tool", "action_dispatch"\]\);/,
+  );
+  assert.match(SOURCE, /if \(toolName === "delegate_game_task"\) return "delegate_game_task";/);
+  assert.match(SOURCE, /if \(PROGRAM_TOOL_NAMES\.includes\(toolName\)\) return "program_tool";/);
+  // The program tools are named from the mounted vocabulary: a renamed tool would otherwise land in NO category and
+  // silently disappear from the breakdown.
+  assert.match(
+    SOURCE,
+    /"stardew_submit_action_program",\n\s+"stardew_action_program_status",\n\s+"stardew_action_program_events",/,
+  );
+  // An action dispatch is decided by the Host's own tool-name table, not by a `stardew_` prefix: `stardew_observe`
+  // and `stardew_execution_status` never dispatch, and counting them as dispatch latency would rebuild the same
+  // misattribution one layer down.
+  assert.match(
+    SOURCE,
+    /import \{ STARDEW_ACTION_TOOL_NAMES \} from "\.\.\/\.\.\/\.\.\/host\/dist-test\/action-registry\.js";/,
+  );
+  assert.match(SOURCE, /const ACTION_TOOL_NAMES = new Set\(Object\.values\(STARDEW_ACTION_TOOL_NAMES\)\);/);
+  // 2. The aggregate is built from that vocabulary, so a category cannot be dropped or invented.
+  assert.match(
+    SOURCE,
+    /for \(const category of TOOL_TIMING_CATEGORIES\) \{\n\s+const durations = durationsByCategory\.get\(category\) \?\? \[\];/,
+  );
+  assert.match(SOURCE, /byCategory\[category\] = summarizeCategoryTiming\(durations\);/);
+  // 3. Published on the result, and on the failure path too: the run that crashed mid-turn is the one whose time
+  // most needs an owner.
+  const resultBlock = SOURCE.slice(SOURCE.indexOf("const result = {"), SOURCE.indexOf("const partialResult = {"));
+  assert.match(resultBlock, /^    toolTiming,$/m);
+  assert.match(SOURCE, /toolTiming: readToolTiming\(sessionRecordPath\),/);
+  assert.match(SOURCE, /sessionRecordPath = sessionSearch\.path;/);
+  // 4. Bounded. The long list is the head of a sorted list, never the whole thing.
+  assert.match(SOURCE, /const TOOL_TIMING_LONGEST_LIMIT = 10;/);
+  assert.match(SOURCE, /longest\.sort\(\(left, right\) => right\.ms - left\.ms\);/);
+  assert.match(SOURCE, /longest: Object\.freeze\(longest\.slice\(0, TOOL_TIMING_LONGEST_LIMIT\)\)/);
+  assert.equal(
+    (SOURCE.match(/\.slice\(0, TOOL_TIMING_LONGEST_LIMIT\)/gu) ?? []).length,
+    1,
+    "one cap, applied where the list is published",
+  );
+  // An unreadable record is its own answer, so an empty aggregate can never be read as a measured zero.
+  assert.match(SOURCE, /return unobserved\("no_session_record"\);/);
+  assert.match(SOURCE, /return unobserved\("session_not_readable"\);/);
+  // A call with no result yet (session cut off mid-call) carries no duration: it is left out, not given one.
+  assert.match(SOURCE, /if \(call === undefined\) continue;/);
+});
