@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { type CompanionArrivalHistory, companionArrivalFact } from "./companion-arrival-fact.js";
 import type { CompanionInterruption, StopAdmission } from "./companion-interruption.js";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
 import type { CompanionLoop, NativeGameCompanionContent, NativeGameContentPresenter } from "./companion-loop.js";
@@ -304,6 +305,13 @@ export class CompanionHostService {
   #retryDelayMs = 50;
   #closed = false;
   #integrationAdmissionOpen = true;
+  /** Set by the one call that completes attach: only an attached session may greet on arrival. */
+  #attached = false;
+  /**
+   * The live half of the arrival's once-only rule; the durable half is the Game session's own
+   * transcript (see `companion-arrival-fact.ts`).
+   */
+  #arrivalSaid = false;
   #stopVoice: ((reasonCode: string) => Promise<unknown>) | undefined;
   #presentStopSystemNotice: ((notice: StopSystemNotice, noticeId: string) => Promise<void>) | undefined;
   #activePiBatch: Readonly<{ sourceEventId: string; batchId: string }> | undefined;
@@ -327,6 +335,7 @@ export class CompanionHostService {
     private readonly turnTracker = new GameTurnLineageTracker(),
     private readonly bindIntegrationReceipt?: (receipt: ExecutionReceipt) => void,
     private readonly liveSourceEvidence?: CompanionLiveSourceEvidenceSink,
+    private readonly arrivalHistory?: CompanionArrivalHistory,
   ) {
     this.#unsubscribe = events.onFact((fact) => this.acceptIntegrationFact(fact));
     this.#unsubscribeConnection = events.onLifecycle((event) => this.acceptLifecycleEvent(event));
@@ -405,7 +414,11 @@ export class CompanionHostService {
   }
 
   /** Internal callers without authenticated ingress receive a fresh Host event id. */
-  public async acceptPlayerText(text: string, locale = "zh-CN", timestampMs = Date.now()): Promise<PlayerInputDisposition> {
+  public async acceptPlayerText(
+    text: string,
+    locale = "zh-CN",
+    timestampMs = Date.now(),
+  ): Promise<PlayerInputDisposition> {
     return await this.acceptPlayerInput({ sourceEventId: randomUUID(), text, locale, timestampMs });
   }
 
@@ -665,8 +678,14 @@ export class CompanionHostService {
     }
   }
 
-  /** Initial launch facts were already adapter-validated before runtime mount. */
+  /**
+   * Initial launch facts were already adapter-validated before runtime mount.
+   *
+   * This call is the attach boundary - `activateIngress` makes it exactly once, after the semantic
+   * enter receipt commits - so it is also where the companion may first say that she has arrived.
+   */
   public acceptInitialFacts(facts: readonly WorldFact[]): void {
+    this.#attached = true;
     for (const fact of facts) this.acceptIntegrationFact(fact);
   }
 
@@ -743,6 +762,10 @@ export class CompanionHostService {
     // local transport transition and have it confused with Host lifecycle.
     if (fact.source === "host_local_transport") throw new Error("adapter_transport_source_reserved");
     try {
+      // The attach's own snapshot is the world clock's first live reading for this session, so the
+      // arrival fact is minted here - before the snapshot itself, which the pump holds as latest state
+      // and never turns into a turn on its own.
+      if (this.#attached && fact.kind === "snapshot") this.#sayArrivalOnce(fact.payload);
       this.loop.pump.enqueueFact(fact);
     } catch (error) {
       if (!isEventPumpOverflow(error)) throw error;
@@ -750,6 +773,25 @@ export class CompanionHostService {
       return;
     }
     void this.flushSoon().catch(() => undefined);
+  }
+
+  /**
+   * Says "the companion has just arrived, and the world clock has ticked" at most once per Game
+   * session. `companion-arrival-fact.ts` owns the fact and the why; this owns the two once-only
+   * decisions and the delivery, which is the same pump every other fact uses.
+   */
+  #sayArrivalOnce(snapshot: Readonly<Record<string, unknown>>): void {
+    if (this.#arrivalSaid) return;
+    if (this.arrivalHistory?.alreadySaid() === true) {
+      this.#arrivalSaid = true;
+      return;
+    }
+    const arrival = companionArrivalFact(snapshot);
+    // No usable clock yet: attach alone says nothing, and the once-only switch stays unmade so the
+    // first real reading may still speak.
+    if (arrival === undefined) return;
+    this.#arrivalSaid = true;
+    this.loop.pump.enqueueFact(arrival);
   }
 
   #publishStopObservationIfExact(stopId: string): void {

@@ -11,6 +11,7 @@ import { HostNodeAdmissionService, type HostNodeAdmissionResult } from "../actio
 import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integration-launcher-body-program.internal.js";
 import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
+import { companionArrivalAlreadySaid } from "../companion-arrival-fact.js";
 import type { CompanionInterruption } from "../companion-interruption.js";
 import { CompanionLoop, type CompanionTurnVolatileContext } from "../companion-loop.js";
 import {
@@ -585,6 +586,11 @@ export function createHostGameRuntimeMaterializer(
           constructed.turnTracker,
           runtime.bindIntegrationReceipt,
           liveSourceAttester,
+          // The durable half of "she greets once": this Game session's own Pi transcript already holds
+          // the batch that carried the arrival fact if a previous mount delivered it.
+          Object.freeze({
+            alreadySaid: () => companionArrivalAlreadySaid(runtime.sessionManager),
+          }),
         );
         const operationalGateEvidence =
           options.gameOperationalGateNonceSha256 === undefined
@@ -830,6 +836,7 @@ async function createMaterializedGameRuntime(
   const assembledProfile = context.profile;
   const assembledWorldBook = context.worldBook;
   const assembledScenario = context.scenario;
+  const assembledWorldInfo = context.worldInfo;
   const turnTracker = new GameTurnLineageTracker();
   const presentationLocale = companionLocale;
   const hostBindingFactory = (handle: Readonly<{ interruption: CompanionInterruption }>) => {
@@ -890,7 +897,7 @@ async function createMaterializedGameRuntime(
   // them reach this surface at all. Without the retained capability the published
   // volatile candidates would sit in the registry with no one to select them.
   const authoredContext =
-    assembledWorldBook === undefined && assembledScenario === undefined
+    assembledWorldBook === undefined && assembledScenario === undefined && assembledWorldInfo === undefined
       ? undefined
       : await (async (): Promise<
           import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability
@@ -914,6 +921,7 @@ async function createMaterializedGameRuntime(
               char: runtime.profile.identity.name,
             },
             assembledScenario,
+            assembledWorldInfo,
           );
           const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/tavern");
           try {

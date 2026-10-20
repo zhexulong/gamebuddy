@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { join, resolve, sep } from "node:path";
-import { atomicWriteFile, verifySafePathBoundary, withPathLock } from "../../path-lock.js";
+import { mkdir } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
+import { atomicWriteFile, removeSafeFile, verifySafePathBoundary, withPathLock } from "../../path-lock.js";
 import { readStrictJsonFile, STRICT_JSON_READER_MAX_BUDGET_BYTES } from "../../strict-json-reader.js";
 import { canonicalHash, canonicalJson } from "../artifact-store.js";
 import {
@@ -32,6 +33,11 @@ export type PublicWorldInfoProjection = Readonly<{
 }>;
 export type CreateWorldInfoRequest = Omit<PublicWorldInfoProjection, "revision">;
 export type UpdateWorldInfoRequest = CreateWorldInfoRequest & Readonly<{ expectedRevision: number }>;
+/**
+ * One continuity's activated library item, named the way the library names an
+ * item: by its public title and the exact revision the activation pins.
+ */
+export type WorldInfoActivation = Readonly<{ publicTitle: string; revision: number }>;
 export type WorldInfoManagementRepository = Readonly<{
   create(request: CreateWorldInfoRequest | unknown): Promise<PublicWorldInfoProjection>;
   import?(rawLorebook: unknown, options?: TavernLorebookImportOptions): Promise<PublicWorldInfoProjection>;
@@ -48,6 +54,29 @@ export type WorldInfoManagementRepository = Readonly<{
    */
   delete(publicTitle: string): Promise<void>;
   history(publicTitle: string): Promise<readonly PublicWorldInfoProjection[]>;
+  /**
+   * The continuity's activated library item, resolved at the exact revision the
+   * activation pins, or `undefined` when nothing is activated for it.
+   *
+   * The library itself is global; this record is the missing fact that says
+   * WHICH of its items is in use for one continuity. It is thread-free on
+   * purpose: the Game surface has no Chat thread, so a per-thread binding alone
+   * can never reach it. A record that no longer resolves to its pinned revision
+   * (the revision file's bytes changed, or the item left the catalog) refuses
+   * with `continuity_world_info_activation_drift` instead of serving something
+   * else.
+   */
+  activation(identityKey: string): Promise<PublicWorldInfoProjection | undefined>;
+  /**
+   * Activates one exact library revision for one continuity, or clears the
+   * activation with `null`. The pin is written under the catalog's own lock and
+   * only after the exact revision reads back, so an activation can never name a
+   * revision the library does not hold.
+   */
+  setActivation(
+    identityKey: string,
+    activation: WorldInfoActivation | null,
+  ): Promise<PublicWorldInfoProjection | undefined>;
   validateCreateRequest(value: unknown): asserts value is CreateWorldInfoRequest;
 }>;
 
@@ -73,6 +102,17 @@ type RevisionEnvelope = Readonly<{
   artifact: ManagedArtifact;
 }>;
 /**
+ * The durable activation record. It pins the storage handle rather than the
+ * public title: an item can be renamed while the artifact a continuity
+ * activated is exactly the one it pinned.
+ */
+type ActivationRecord = Readonly<{
+  schemaVersion: 1;
+  identityKey: string;
+  handle: string;
+  revision: number;
+}>;
+/**
  * Separate managed public World Info domain. It stores each revision as an
  * immutable snapshot and keeps storage handles strictly internal.
  */
@@ -83,6 +123,7 @@ export function createWorldInfoManagementRepository(runtimeRoot: string): WorldI
   const makePersistentHandle = randomUUID;
   const directory = join(root, "world-info-management");
   const catalogPath = join(directory, "catalog.json");
+  const activationsDirectory = join(directory, "activations");
 
   return Object.freeze({
     async create(request) {
@@ -183,6 +224,53 @@ export function createWorldInfoManagementRepository(runtimeRoot: string): WorldI
         ),
       );
       return Object.freeze(history);
+    },
+    async activation(identityKey) {
+      validateIdentityKey(identityKey);
+      const record = await readActivation(root, activationsDirectory, identityKey);
+      if (record === undefined) return undefined;
+      // The catalog's own handle is what makes the pin exact: a title that was
+      // deleted and re-created names a different artifact, and one that was
+      // renamed still resolves. Anything the pin no longer reaches is drift.
+      const catalog = await readCatalog(root, catalogPath);
+      if (!catalog.artifacts.some((item) => item.handle === record.handle))
+        throw new Error("continuity_world_info_activation_drift");
+      try {
+        return project(await readRevision(root, directory, record.handle, record.revision));
+      } catch {
+        throw new Error("continuity_world_info_activation_drift");
+      }
+    },
+    async setActivation(identityKey, activation) {
+      validateIdentityKey(identityKey);
+      if (activation !== null) {
+        validateTitle(activation.publicTitle);
+        if (!revision(activation.revision)) throw new Error("invalid_world_info_request");
+      }
+      const path = activationPath(activationsDirectory, identityKey);
+      return withCatalog(root, catalogPath, async (catalog) => {
+        let record: ActivationRecord | undefined;
+        let projection: PublicWorldInfoProjection | undefined;
+        if (activation !== null) {
+          const item = catalog.artifacts.find((candidate) => candidate.publicTitle === activation.publicTitle);
+          if (item === undefined) throw new Error("world_info_not_found");
+          // The exact revision is read back before it is pinned, so an
+          // activation never names a revision the library does not hold.
+          projection = project(await readRevision(root, directory, item.handle, activation.revision));
+          record = Object.freeze({
+            schemaVersion: 1 as const,
+            identityKey,
+            handle: item.handle,
+            revision: activation.revision,
+          });
+        }
+        if (record === undefined) await removeSafeFile(path, root);
+        else {
+          await mkdir(dirname(path), { recursive: true });
+          await atomicWrite(path, canonicalJson(record), root);
+        }
+        return projection;
+      });
     },
     validateCreateRequest,
   });
@@ -304,6 +392,46 @@ function revisionPath(root: string, directory: string, handle: string, revisionN
   const path = resolve(directory, "revisions", handle, `${revisionNumber}.json`);
   if (!path.startsWith(`${root}${sep}`)) throw new Error("invalid_world_info_artifact");
   return path;
+}
+function activationPath(activationsDirectory: string, identityKey: string): string {
+  return join(activationsDirectory, `${identityKey}.json`);
+}
+async function readActivation(
+  root: string,
+  activationsDirectory: string,
+  identityKey: string,
+): Promise<ActivationRecord | undefined> {
+  const path = activationPath(activationsDirectory, identityKey);
+  try {
+    await verifySafePathBoundary(path, root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new Error("invalid_continuity_world_info_activation");
+  }
+  let value: unknown;
+  try {
+    value = await readStrictJsonFile(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new Error("invalid_continuity_world_info_activation");
+  }
+  // The record must name the continuity it was found under: a copied or
+  // hand-edited file never becomes another continuity's activation.
+  if (
+    !record(value) ||
+    !only(value, ["schemaVersion", "identityKey", "handle", "revision"]) ||
+    value.schemaVersion !== 1 ||
+    value.identityKey !== identityKey ||
+    !uuid(value.handle) ||
+    !revision(value.revision)
+  )
+    throw new Error("invalid_continuity_world_info_activation");
+  return Object.freeze({ schemaVersion: 1, identityKey, handle: value.handle, revision: value.revision });
+}
+function validateIdentityKey(value: string): void {
+  // `identityKey()` is a sha256 hex digest (runtime-identity.ts); anything else
+  // is not a continuity this store can hold an activation for.
+  if (!/^[0-9a-f]{64}$/.test(value)) throw new Error("invalid_world_info_request");
 }
 async function atomicWrite(path: string, content: string, containmentRoot: string): Promise<void> {
   await atomicWriteFile(path, content, containmentRoot);

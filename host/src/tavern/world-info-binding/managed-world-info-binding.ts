@@ -6,7 +6,7 @@ import type {
 } from "../world-info-management/world-info-management.js";
 
 /** Exact immutable managed source delivered to Tavern stable materialization. */
-type ManagedWorldInfoSource = Readonly<{
+export type ManagedWorldInfoSource = Readonly<{
   binding: TavernStableManagedWorldInfoBinding;
   content: string;
 }>;
@@ -18,6 +18,17 @@ type ManagedWorldInfoSource = Readonly<{
 export type ManagedWorldInfoBindingResolver = Readonly<{
   bindExact(publicTitle: string, revision: number): Promise<TavernStableManagedWorldInfoBinding>;
   resolve(binding: TavernStableManagedWorldInfoBinding): Promise<ManagedWorldInfoSource>;
+  /**
+   * The continuity's activated library item, resolved at the revision its
+   * activation pins. This is the one reader both surfaces share: the Chat
+   * runtime construction uses it for a conversation that carries no binding of
+   * its own, and the Game materializer uses it because a Game session has no
+   * Chat thread to bind through. `undefined` means nothing is activated; a
+   * pinned revision that no longer verifies refuses with
+   * `continuity_world_info_activation_drift` rather than resolving something
+   * else.
+   */
+  activated(identityKey: string): Promise<ManagedWorldInfoSource | undefined>;
 }>;
 
 /**
@@ -49,6 +60,12 @@ export function createManagedWorldInfoBindingResolver(
       const resolved = bindingFor(projection);
       if (resolved.canonicalHash !== binding.canonicalHash) throw new Error("managed_world_info_binding_mismatch");
       return Object.freeze({ binding: resolved, content: contentFor(projection) });
+    },
+    async activated(identityKey: string): Promise<ManagedWorldInfoSource | undefined> {
+      const projection = await repository.activation(identityKey);
+      return projection === undefined
+        ? undefined
+        : Object.freeze({ binding: bindingFor(projection), content: contentFor(projection) });
     },
   });
 }

@@ -57,7 +57,7 @@ export type TavernCompanionWorldBookSource = Readonly<{
   keywordEntries?: readonly Readonly<{ entryId: string; title: string; content: string; keys?: readonly string[] }>[];
 }>;
 /** Managed World Info is source-aware and uses exact repository revision content. */
-type TavernManagedWorldInfoSource = Readonly<{
+export type TavernManagedWorldInfoSource = Readonly<{
   binding: TavernStableManagedWorldInfoBinding;
   content: string;
 }>;
@@ -531,6 +531,7 @@ export function buildGameSurfaceAuthoredCatalog(
   worldBook: WorldBookBinding | undefined,
   macros: Readonly<{ char: string | null }> = { char: null },
   scenario?: GameSurfaceScenarioSource,
+  activatedWorldInfo?: TavernManagedWorldInfoSource,
 ): TavernAuthoredContextCatalog {
   if (binding.surface !== "game") throw new Error("game_authored_context_surface_mismatch");
   const sources: Array<TavernAuthoredContextCatalog["stableSources"][number]> = [];
@@ -607,6 +608,23 @@ export function buildGameSurfaceAuthoredCatalog(
         String(sources.length + volatileSources.length + 1).padStart(4, "0"),
       ),
     );
+  // The continuity's activated library item is the same layer 2 the Chat surface
+  // materializes, read from the one activation record instead of a Chat thread: a Game
+  // session has no thread to bind through. It is added AFTER the book, its candidates and
+  // the scenario so those keep their exact bytes and total order keys, and its own keys
+  // continue the one increasing sequence. Its keyword-gated entries join the same per-turn
+  // candidate list, so the Game scope invents no second selection rule.
+  if (activatedWorldInfo !== undefined) {
+    const managed = stableWorldInfoSource(
+      activatedWorldInfo,
+      String(sources.length + volatileSources.length + 1).padStart(4, "0"),
+    );
+    sources.push(managed);
+    volatileSources = Object.freeze([
+      ...volatileSources,
+      ...deriveVolatileWorldInfoSources(activatedWorldInfo, managed.sourceId, sources.length + volatileSources.length),
+    ]);
+  }
   const budgetTokens = sources.reduce((total, item) => total + item.budgetTokens, 0);
   if (budgetTokens > TAVERN_STABLE_CONTEXT_MAX_TOKENS) throw new Error("game_stable_context_oversize");
   // Rendering upstream is not enough discipline for this invariant: a hand-placed

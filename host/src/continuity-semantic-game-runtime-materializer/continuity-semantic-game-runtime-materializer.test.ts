@@ -854,7 +854,13 @@ test("Game materializer assembles canonical Game context through the tested asse
   // card carries only a scenario (no character book) still publishes it.
   assert.match(materializerSource, /assembledWorldBook === undefined && assembledScenario === undefined/);
   assert.match(materializerSource, /buildGameSurfaceAuthoredCatalog\(/);
-  assert.match(materializerSource, /assembledScenario,\s*\)/);
+  // Both resolved layers reach the catalog call. The pin names the call and the arguments it carries,
+  // not the call's tail formatting: the previous form pinned `assembledScenario,` immediately before the
+  // closing parenthesis, so adding a layer to the call broke the assertion while the seam was correct.
+  assert.match(
+    materializerSource,
+    /buildGameSurfaceAuthoredCatalog\([\s\S]*?assembledScenario,[\s\S]*?assembledWorldInfo,/,
+  );
   // The seam reads the same identity-profile/world-book files the Chat surface
   // consumes, and never writes (the runtime core owns default creation).
   assert.match(assemblySource, /resolveRuntimePaths\(input\.identity, input\.runtimeRoot\)/);

@@ -52,6 +52,15 @@ function repository(history: readonly PublicWorldInfoProjection[]): WorldInfoMan
     async history() {
       return Object.freeze(history);
     },
+    // This fixture carries no continuity activation: the history-integrity rules it exercises are about a
+    // thread's own binding, and "nothing is activated" is the honest default for a repository the activation
+    // path never touches here.
+    async activation() {
+      return undefined;
+    },
+    async setActivation() {
+      throw new Error("not_used");
+    },
     validateCreateRequest() {
       throw new Error("not_used");
     },

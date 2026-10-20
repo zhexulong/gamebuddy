@@ -1,11 +1,13 @@
 import { join } from "node:path";
 import { readIdentityProfile, type IdentityProfile } from "../identity-profile.js";
-import { resolveRuntimePaths, type RuntimePaths } from "../runtime-identity.js";
+import { identityKey, resolveRuntimePaths, type RuntimePaths } from "../runtime-identity.js";
 import type { GameCompanionIdentity } from "../runtime-core.internal.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
-import type { GameSurfaceScenarioSource } from "../tavern/catalog-service.js";
+import type { GameSurfaceScenarioSource, TavernManagedWorldInfoSource } from "../tavern/catalog-service.js";
 import { resolveCompanionOwnScenario } from "../tavern/library-service.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
+import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
+import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
 import { readWorldBook, worldBookMetadata, type WorldBookBinding } from "../worldbook.js";
 
 /**
@@ -27,6 +29,9 @@ import { readWorldBook, worldBookMetadata, type WorldBookBinding } from "../worl
  *   - the scenario is the companion's own durable record, read through the same
  *     `resolveCompanionOwnScenario` a new Chat binds, so the pair's authored
  *     premise reaches the Game as the Tier 2 stable background Chat compiles;
+ *   - the continuity's activated World Info item is read from the one activation
+ *     record the Chat runtime construction reads too, so the Game surface uses
+ *     the same managed layer without needing a Chat thread to bind through;
  *   - a missing or invalid source yields `undefined` (the runtime core then owns
  *     creating the default profile and an empty world book, and the Game tier
  *     simply carries no scenario);
@@ -36,6 +41,7 @@ export type GameRuntimeContextSource = Readonly<{
   profile?: IdentityProfile;
   worldBook?: WorldBookBinding;
   scenario?: GameSurfaceScenarioSource;
+  worldInfo?: TavernManagedWorldInfoSource;
 }>;
 
 export async function assembleGameRuntimeContext(
@@ -52,10 +58,12 @@ export async function assembleGameRuntimeContext(
   const profile = input.identityProfile ?? (await readCanonicalProfile(runtimePaths.identityProfilePath));
   const worldBook = input.worldBook ?? (await readCanonicalWorldBook(runtimePaths.runtimeCwd));
   const scenario = await readCompanionOwnScenario(runtimePaths, input.identity, input.runtimeRoot);
+  const worldInfo = await readActivatedWorldInfo(input.runtimeRoot, input.identity);
   return Object.freeze({
     ...(profile === undefined ? {} : { profile }),
     ...(worldBook === undefined ? {} : { worldBook }),
     ...(scenario === undefined ? {} : { scenario }),
+    ...(worldInfo === undefined ? {} : { worldInfo }),
   });
 }
 
@@ -74,6 +82,31 @@ async function readCanonicalWorldBook(runtimeCwd: string): Promise<WorldBookBind
     return Object.freeze({ metadata: worldBookMetadata(book), book });
   } catch {
     // Absent or invalid: an empty world book is the honest default.
+    return undefined;
+  }
+}
+
+/**
+ * The continuity's activated World Info item, resolved at the revision the activation
+ * pins, as the same layer 2 the Chat surface materializes.
+ *
+ * A drifted pin (the revision file's bytes no longer verify, or the item left the
+ * library) is named on stderr and yields no layer: the Game refuses that LAYER, not
+ * the session. A live game is the player's world; a library artifact that stopped
+ * matching what was activated must not take it down, and must not be replaced
+ * silently by something else either.
+ */
+async function readActivatedWorldInfo(
+  runtimeRoot: string,
+  identity: GameCompanionIdentity,
+): Promise<TavernManagedWorldInfoSource | undefined> {
+  const resolver = createManagedWorldInfoBindingResolver(createWorldInfoManagementRepository(runtimeRoot));
+  try {
+    return await resolver.activated(identityKey(identity));
+  } catch (error) {
+    process.stderr.write(
+      `[world-info] the continuity activation was not materialized: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
     return undefined;
   }
 }

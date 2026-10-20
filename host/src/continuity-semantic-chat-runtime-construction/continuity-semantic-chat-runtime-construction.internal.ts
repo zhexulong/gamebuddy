@@ -156,19 +156,33 @@ async function buildExactChatRuntimeConstruction(
         throw new Error("chat_runtime_exact_content_unavailable");
       // Layer 1 (the companion's own book) is part of who she is and is always applied;
       // only layer 2, the attached managed item, has a desired/applied pair to reconcile.
+      // The thread's own binding overrides the continuity activation; with none, the
+      // continuity activation applies - the same fact the Game materializes, which is why
+      // that record is continuity-scoped instead of living on a Chat thread.
       const companionBinding = freshState.thread.companionWorldBookBinding;
       const desiredManaged = freshState.thread.managedWorldInfoBinding;
       const effectiveManaged =
         mode === "desired" || sameWorldInfoBinding(desiredManaged, freshState.thread.appliedManagedWorldInfoBinding)
           ? desiredManaged
           : freshState.thread.appliedManagedWorldInfoBinding;
+      // A pending binding is still the thread's own binding: the activation applies only to
+      // a conversation that carries no managed state at all, so this fallback never stands
+      // in for an unapplied change the mounted prefix is deliberately refusing.
+      const activatedManaged =
+        desiredManaged !== undefined || freshState.thread.appliedManagedWorldInfoBinding !== undefined
+          ? undefined
+          : await managedWorldInfoResolver.activated(identityKey(identity));
+      const managedWorldInfo =
+        effectiveManaged === undefined ? activatedManaged : await managedWorldInfoResolver.resolve(effectiveManaged);
+      const managedBinding = effectiveManaged ?? activatedManaged?.binding;
       const materializationThread =
         sameWorldInfoBinding(effectiveManaged, desiredManaged) &&
-        sameWorldInfoBinding(effectiveManaged, freshState.thread.appliedManagedWorldInfoBinding)
+        sameWorldInfoBinding(effectiveManaged, freshState.thread.appliedManagedWorldInfoBinding) &&
+        activatedManaged === undefined
           ? freshState.thread
           : Object.freeze({
               ...freshState.thread,
-              ...(effectiveManaged === undefined ? {} : { managedWorldInfoBinding: effectiveManaged }),
+              ...(managedBinding === undefined ? {} : { managedWorldInfoBinding: managedBinding }),
             });
       const macros = macroTable({ char: freshProfile.identity.name, locale: presentationLocale });
       return await materializeTavernAuthoredStableCatalog(
@@ -191,9 +205,7 @@ async function buildExactChatRuntimeConstruction(
           ...(companionBinding === undefined
             ? {}
             : { companionWorldBook: await resolveBoundWorldBookSource(companionBinding, paths.runtimeCwd, macros) }),
-          ...(effectiveManaged === undefined
-            ? {}
-            : { managedWorldInfo: await managedWorldInfoResolver.resolve(effectiveManaged) }),
+          ...(managedWorldInfo === undefined ? {} : { managedWorldInfo }),
         }),
       );
     } catch {
