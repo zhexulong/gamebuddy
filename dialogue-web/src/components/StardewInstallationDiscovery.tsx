@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type {
+  StardewInstallationCandidateV1,
   StardewInstallationDiscoveryV1,
   ComposedReferenceGameBrowserApi,
 } from "../composed-reference-game-browser-api";
@@ -29,8 +30,8 @@ type Props = {
  *
  * The read behind this panel is a *scan* rather than a projection: the Host runs
  * the discovery provider on `discovery_read`, so every mount starts one, and a
- * scan on a cold machine is the slowest thing the surface does. Two rules follow
- * from that, and both are the panel's own:
+ * scan on a cold machine is the slowest thing the surface does. The panel's own
+ * rules follow from that:
  *
  *  - **One sentence per moment.** The panel's status line is exactly one of the
  *    typed states, so the surface never reads "still searching" and "nothing
@@ -46,7 +47,26 @@ type Props = {
  *    is not, and abandoning it retires the read it interrupts - otherwise a slow
  *    or stuck scan leaves the surface asserting a search the player cannot stop,
  *    and a late answer can contradict the cancel they already made.
+ *  - **A player who cannot confirm is still not stuck.** The folder picker reaches
+ *    the same admission as a candidate does, so it is offered in every state rather
+ *    than only the retryable ones. A candidate this panel will not confirm is what
+ *    used to leave a player with a found installation and no way to accept it.
  */
+
+/**
+ * Which candidates the panel offers to confirm.
+ *
+ * The wire vocabulary is `candidate | invalid | admission_required`
+ * (`host/src/game-browser-contract/index.ts`, `GameCandidateV1Schema`). The Host's
+ * discovery session stamps every installation it found `admission_required`
+ * (`windows-stardew-installation-discovery/internal.ts`, `StardewDiscoverySession.issue`):
+ * the candidate awaits exactly the admission this panel's confirm performs, so
+ * `admission_required` IS the confirmable status - reading the literal `"candidate"`
+ * as the confirmable one refused every candidate a real machine reports. Only
+ * `invalid` names one the Host has already rejected.
+ */
+const isConfirmableCandidate = (status: StardewInstallationCandidateV1["status"]): boolean =>
+  status === "candidate" || status === "admission_required";
 export function StardewInstallationDiscovery({ api, labels }: Props) {
   const [state, setState] = useState<InstallationDiscoveryState>("loading");
   const [discovery, setDiscovery] = useState<StardewInstallationDiscoveryV1 | null>(null);
@@ -145,12 +165,6 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
   // A confirmation is a Host operation with no cancel of its own, so it is the
   // one state in which abandoning the panel is not offered.
   const cancelDisabled = state === "confirming";
-  const retryable =
-    state === "no-candidates" ||
-    state === "source-unavailable" ||
-    state === "result-unavailable" ||
-    state === "error" ||
-    state === "expired";
   return (
     <section
       className="game-installation-panel"
@@ -177,7 +191,7 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
               <button
                 type="button"
                 className="game-action"
-                disabled={disabled || status !== "candidate"}
+                disabled={disabled || !isConfirmableCandidate(status)}
                 onClick={() => {
                   setSelectedCandidateId(candidateId);
                   void action("confirm", candidateId);
@@ -195,11 +209,9 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
         </p>
       )}
       <div className="game-actions">
-        {retryable && (
-          <button type="button" className="game-action" disabled={disabled} onClick={() => void action("picker")}>
-            {labels.gameInstallationChooseFolder}
-          </button>
-        )}
+        <button type="button" className="game-action" disabled={disabled} onClick={() => void action("picker")}>
+          {labels.gameInstallationChooseFolder}
+        </button>
         <button type="button" className="game-action" disabled={disabled} onClick={() => void action("retry")}>
           {labels.gameInstallationFindAgain}
         </button>
