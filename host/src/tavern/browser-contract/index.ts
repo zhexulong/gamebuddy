@@ -130,8 +130,8 @@ const ProblemCode = Type.Union([
   // Rewinding the conversation to an earlier message (`chat.rewind`) is one mutation over two
   // authorities - the visible transcript and the model's own session - so every way it can be
   // refused is its own bounded fact about the point the player named: a handle this Chat does not
-  // carry, a view of the transcript that has already moved, the greeting the Chat opened on, or a
-  // reply that is still being written.
+  // carry, a view of the transcript that has already moved, the greeting the Chat opened on as the
+  // target, or a reply that is still being written.
   Type.Literal("chat_message_not_found"),
   Type.Literal("chat_message_revision_conflict"),
   Type.Literal("chat_rewind_opening_retained"),
@@ -1733,10 +1733,12 @@ export const RegenerateMessageCommandV1Schema = strictObject({
   messageHandle: OpaqueHandle,
 });
 /**
- * Rewinding a conversation (`chat.rewind`): the named message and every message after it stop
- * being part of the conversation - in the transcript the player reads AND in the model's own
- * session, which is the invariant the whole operation exists for. A rewind that only hid rows in
- * the projection would leave the model reading text the player can no longer see.
+ * Rewinding a conversation (`chat.rewind`): the named message is KEPT and every message after it
+ * stops being part of the conversation - in the transcript the player reads AND in the model's own
+ * session, which is the invariant the whole operation exists for. That is the shape both references
+ * have: SillyTavern truncates after the point and Pi moves the session leaf to that entry, so the
+ * player can regenerate what followed, or answer their own kept line again. A rewind that only hid
+ * rows in the projection would leave the model reading text the player can no longer see.
  *
  * `expectedOrder` is the transcript position the browser rendered that message at. The transcript
  * is what the position means, so a message that has moved - because a turn landed between the read
