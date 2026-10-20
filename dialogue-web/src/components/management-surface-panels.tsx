@@ -270,6 +270,10 @@ export function ChatsSurfacePanel({
     readonly Readonly<{ label: string | null; text: string; optionId: string }>[] | null
   >(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // One opening at a time: the chooser is a list of choices, and a player who asks to read one
+  // is deciding about that one - collapsing the previous keeps the list scannable and the
+  // state trivial (a single id rather than a set that grows as the player explores).
+  const [expandedOpening, setExpandedOpening] = useState<string | null>(null);
   /** The control that opens the picker; focus returns here when it closes. */
   const newChatRef = useRef<HTMLButtonElement>(null);
   // The Chat whose switch is in flight. Switching another Chat is a focus transfer, so this is
@@ -612,6 +616,26 @@ export function ChatsSurfacePanel({
                       text={preview.spoken}
                     />
                   </button>
+                  {/* The card is one control, and its text is exactly what the choice turns on:
+                      one line of beat and two of speech. A real opening runs past that - the
+                      companion's own third opening is a paragraph - and a player choosing a
+                      scene they will live in should be able to read it first. The reveal is a
+                      SIBLING of the card, not a child: the card is itself a button, and a
+                      button inside a button is not a control tree any browser will honour. */}
+                  <button
+                    type="button"
+                    className="opening-option-expand small-button"
+                    data-testid="opening-option-expand"
+                    aria-expanded={expandedOpening === variant.optionId}
+                    onClick={() => setExpandedOpening(expandedOpening === variant.optionId ? null : variant.optionId)}
+                  >
+                    {expandedOpening === variant.optionId ? labels.openingCollapse : labels.openingExpand}
+                  </button>
+                  {expandedOpening === variant.optionId && (
+                    <div className="opening-option-full" data-testid="opening-option-full">
+                      <MarkdownMessage text={variant.text} />
+                    </div>
+                  )}
                 </div>
               );
             })}

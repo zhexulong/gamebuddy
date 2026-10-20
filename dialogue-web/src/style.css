@@ -5251,6 +5251,16 @@
     gap: var(--space-2);
   }
 
+  /* A list item holds a card plus its own reveal, and the reveal can be wider than the card's
+   text (a paragraph of prose). `min-width: 0` stops that child from setting the column's own
+   minimum width - which is what let the drawer measure 400.00003 px inside a 400 px viewport
+   (the mounted geometry test caught it) - and the column stretches its children instead. */
+  .opening-options > * {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
   .opening-option {
     display: flex;
     flex-direction: column;
@@ -5310,6 +5320,39 @@
   .opening-option-action > :is(p, blockquote, pre, ul, ol, hr),
   .opening-option-line > :is(p, blockquote, pre, ul, ol, hr) {
     margin: 0;
+  }
+
+  /* The whole opening, when the player asks for it. The card is measured at about 112 px -
+   one line of beat and two of speech - which is what the choice turns on, but a real opening
+   runs to a paragraph and picking one blind is picking the scene you will live in blind. The
+   reveal sits under its own card, takes the drawer's measure rather than the card's edge, and
+   reads like the transcript's prose, so reading it is the same act as reading her. */
+  .opening-option-expand {
+    align-self: flex-start;
+    max-width: 100%;
+    margin-top: var(--space-1);
+  }
+
+  .opening-option-full {
+    max-width: var(--management-form-measure);
+    min-width: 0;
+    margin-top: var(--space-2);
+    padding: var(--space-3);
+    background-color: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
+
+  .opening-option-full > :is(p, blockquote, pre, ul, ol, hr) {
+    margin: 0 0 var(--space-2);
+  }
+
+  .opening-option-full > :last-child {
+    margin-bottom: 0;
   }
 
   /* ==========================================================================

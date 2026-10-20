@@ -100,6 +100,8 @@ const en = {
   // opening bubble's own switcher uses (`opening-variant-labels.ts`).
   openingPickerTitle: "Choose an opening",
   openingPickerHint: "This Chat begins with the opening you pick.",
+  openingExpand: "Read it all",
+  openingCollapse: "Show less",
   // A created Chat whose chosen opening could not be committed: the Chat exists and
   // is durable, so the one fact to state is which opening it does start on.
   chatCreatedWithDefaultOpening:
@@ -745,6 +747,8 @@ const zh: Messages = {
   newChat: "新建会话",
   openingPickerTitle: "选择开场白",
   openingPickerHint: "会话将以您选择的开场白开始。",
+  openingExpand: "展开全文",
+  openingCollapse: "收起",
   chatCreatedWithDefaultOpening: "会话已创建，但无法以您选择的开场白开始，将使用默认开场白。",
   exportChat: "导出聊天",
   renameChat: "重命名会话",

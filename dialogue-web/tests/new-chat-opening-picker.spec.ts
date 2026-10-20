@@ -394,3 +394,61 @@ test("the chooser's geometry at 1440x900 and 400x800", async ({ page }) => {
     await expect(picker).toHaveCount(0);
   }
 });
+
+test("the player can read a whole opening before choosing it", async ({ page }) => {
+  await mountHost(page, {});
+  await boot(page);
+  await openChats(page);
+
+  await page.getByTestId("new-chat").click();
+  const picker = page.getByTestId("opening-picker");
+  await expect(picker).toBeVisible();
+
+  // The card is one line of beat and two of speech: the reading a choice turns on, and not the
+  // whole opening. The third one continues past what the card shows - "You are not alone in the
+  // house." is below the clamp - so a player choosing that scene could not previously read it.
+  const card = picker.getByTestId("opening-option").nth(2);
+  await expect(card).not.toContainText("You are not alone in the house.");
+
+  const reveal = picker.getByTestId("opening-option-expand").nth(2);
+  await expect(reveal).toHaveAttribute("aria-expanded", "false");
+  await reveal.click();
+
+  const full = picker.getByTestId("opening-option-full");
+  await expect(full).toHaveCount(1);
+  await expect(full).toContainText("You are not alone in the house.");
+  await expect(reveal).toHaveAttribute("aria-expanded", "true");
+  // The reveal is a sibling of the card, so the card itself is untouched: the player can still
+  // choose it with the same control, and picking it uses the whole opening.
+  await expect(picker.getByTestId("opening-option")).toHaveCount(3);
+
+  // One at a time: opening another collapses this one, so the list stays scannable.
+  await picker.getByTestId("opening-option-expand").nth(0).click();
+  await expect(picker.getByTestId("opening-option-full")).toHaveCount(1);
+  await expect(picker.getByTestId("opening-option-expand").nth(2)).toHaveAttribute("aria-expanded", "false");
+
+  // The expanded drawer still sits inside the region it opens over, at the narrow width too.
+  // The reveal toggles, so the state is forced from the attribute rather than assumed: clicking
+  // it again would collapse what this loop is about to measure.
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 400, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const third = picker.getByTestId("opening-option-expand").nth(2);
+    if ((await third.getAttribute("aria-expanded")) !== "true") await third.click();
+    await expect(picker.getByTestId("opening-option-full")).toHaveCount(1);
+    const box = await picker.boundingBox();
+    expect(box).not.toBeNull();
+    expect(Math.round(box!.width)).toBeLessThanOrEqual(viewport.width);
+    expect(Math.round(box!.height)).toBeLessThanOrEqual(viewport.height);
+    const fullBox = await picker.getByTestId("opening-option-full").boundingBox();
+    expect(fullBox).not.toBeNull();
+    expect(Math.round(fullBox!.width)).toBeLessThanOrEqual(viewport.width);
+  }
+
+  // And choosing it still creates the Chat on that opening.
+  const picked = picker.getByTestId("opening-option").nth(2);
+  await picked.click();
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("You are not alone in the house.");
+});
