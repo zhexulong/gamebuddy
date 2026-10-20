@@ -271,10 +271,22 @@ test("the Chat drawer's chat profile and the Settings chat editor show each othe
     "Saved. It applies the next time that surface's runtime starts.",
   );
 
-  // The drawer's backdrop covers the shell, so it closes first. The close button
-  // is used rather than Escape: the Save button is disabled while saving, which
-  // drops focus to <body>, so Escape would have no drawer to reach - a real
-  // affordance question, but not the freshness this journey measures.
+  // The drawer's backdrop covers the shell, so the AppBar cannot switch surfaces
+  // while it is open - which is what keeps the Chat entry and the Settings entry
+  // from ever being mounted at the same time (the freshness this file measures).
+  // Measured, not assumed: a trial click asserts the entry is not reachable.
+  let appBarReachable = true;
+  try {
+    await page.getByRole("button", { name: "Settings", exact: true }).click({ trial: true, timeout: 1_500 });
+  } catch {
+    appBarReachable = false;
+  }
+  expect(appBarReachable, "the drawer backdrop must intercept the AppBar entry while it is open").toBe(false);
+
+  // It closes through its own affordance. The close button is used rather than
+  // Escape: the Save button is disabled while saving, which drops focus to <body>,
+  // so Escape would have no drawer to reach - a real affordance question, but not
+  // the freshness this journey measures.
   await page.getByTestId("chat-model-drawer").getByRole("button", { name: "Close" }).click();
   await expect(page.getByTestId("chat-model-drawer")).toHaveCount(0);
 
