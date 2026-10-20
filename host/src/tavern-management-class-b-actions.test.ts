@@ -455,7 +455,7 @@ test(
       ),
     });
     const connectionProbe: TavernConnectionProbe = async () =>
-      Object.freeze({ outcome: "ready" as const, failure: null });
+      Object.freeze({ outcome: "ready" as const, modelIds: Object.freeze(["deepseek-v4-flash", "deepseek-v4-pro"]) });
 
     const turn = runningTurnFacade();
     const connection = createTavernConnectionService({ agentDir: root, probe: connectionProbe });

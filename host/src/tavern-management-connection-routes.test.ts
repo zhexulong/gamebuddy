@@ -9,7 +9,7 @@ import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
-import { composeTavernProfile } from "./tavern/browser-contract/index.js";
+import { composeTavernProfile, TAVERN_MODEL_LISTING_LIMIT } from "./tavern/browser-contract/index.js";
 import { createTavernConnectionService, type TavernConnectionService } from "./tavern/connection-service.js";
 import type { TavernConnectionProbe } from "./tavern/connection-probe.js";
 import { connectionAuthPath, connectionDocumentPath } from "./tavern/connection-store.js";
@@ -699,10 +699,147 @@ test("probe failures are reported as closed categories with no provider text", a
       assert.equal(probeBody.failure, failure, `status ${status} body ${body}`);
       assert.equal(probeBody.state.connections[0]!.readiness, "failed");
       assert.equal(probeBody.state.connections[0]!.failure, failure);
-      // The raw provider text never becomes a player notice or a record.
-      assert.doesNotMatch(probe.raw, /sk-live-abc|10\.0\.0\.5|exploded|not json|some-other-model/);
+      // The raw provider text never becomes a player notice or a record. `some-other-model` is
+      // deliberately NOT in this list: it is the id the endpoint's own listing served, and the
+      // endpoint's ids are the one thing the probe publishes (they are the authority on what it
+      // offers, and `not_found` is the failure a player needs them for). Every string the endpoint
+      // wrote as an ERROR still never crosses.
+      assert.doesNotMatch(probe.raw, /sk-live-abc|10\.0\.0\.5|exploded|not json/);
     });
   }
+});
+
+/**
+ * The listing the probe already read is now published: the endpoint's OWN model ids, because they
+ * are the only authority on what it serves. It is sanitised (an id the product would refuse as a
+ * model id is dropped) and it survives a `not_found`, which is exactly the failure a player needs
+ * it for - the endpoint answered, and these are the models it offers.
+ */
+test("the probe publishes the endpoint's own model listing, sanitised, and keeps it when the selected model is absent", async () => {
+  await withHandler(
+    {
+      probe: stubEndpoint(() => ({
+        status: 200,
+        body: listModels("qwen2.5-coder:7b", "llama-3.1-8b", "with space", "ok/model"),
+      })),
+    },
+    async (_root, request, bootstrap) => {
+      await bootstrap();
+      const created = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+          apiKey: "sk-synthetic-hatch-key",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          apiShape: "openai-completions",
+          modelId: "qwen2.5-coder:7b",
+        },
+      );
+      assert.equal(created.status, 200);
+      const revision = (created.body as { revision: number }).revision;
+      const connectionId = (created.body as { connections: readonly { connectionId: string; modelIds: unknown }[] })
+        .connections[0]!.connectionId;
+      // Nothing has been probed yet, so the record carries no listing at all - not an empty list
+      // that would read as "this endpoint serves no models".
+      assert.equal((created.body as { connections: readonly { modelIds: unknown }[] }).connections[0]!.modelIds, null);
+
+      const probed = await request(
+        "POST",
+        `/api/tavern/v1/settings/connections/${connectionId}/test`,
+        {},
+        { apiVersion: 1, expectedRevision: revision },
+      );
+      assert.equal(probed.status, 200);
+      const body = probed.body as {
+        outcome: string;
+        state: { connections: readonly { modelIds: readonly string[] }[] };
+      };
+      assert.equal(body.outcome, "ready");
+      // The endpoint's own order, and only the ids this product would accept as a model id.
+      assert.deepEqual(body.state.connections[0]!.modelIds, ["qwen2.5-coder:7b", "llama-3.1-8b", "ok/model"]);
+      // The endpoint's own spelling of the id it dropped never crosses back.
+      assert.doesNotMatch(probed.raw, /with space/);
+
+      // A model the endpoint does not offer is still `not_found` - the product's guarantee - and
+      // the player can see what IS offered, which is the whole point of publishing it.
+      const other = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+          apiKey: "sk-synthetic-hatch-key",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          apiShape: "openai-completions",
+          modelId: "invented-model",
+        },
+      );
+      const otherBody = other.body as { revision: number; connections: readonly { connectionId: string }[] };
+      const missing = await request(
+        "POST",
+        `/api/tavern/v1/settings/connections/${otherBody.connections[1]!.connectionId}/test`,
+        {},
+        { apiVersion: 1, expectedRevision: otherBody.revision },
+      );
+      const missingBody = missing.body as {
+        outcome: string;
+        failure: string;
+        state: { connections: readonly { modelIds: readonly string[] }[] };
+      };
+      assert.equal(missingBody.outcome, "failed");
+      assert.equal(missingBody.failure, "not_found");
+      assert.deepEqual(missingBody.state.connections[1]!.modelIds, ["qwen2.5-coder:7b", "llama-3.1-8b", "ok/model"]);
+    },
+  );
+});
+
+/**
+ * The published listing is CUT at the contract's ceiling, and the cut never decides the probe: a
+ * model the endpoint does offer past the cut is still `ready`, because verification reads the whole
+ * listing while only the projection is bounded. The ceiling itself is a published listing.
+ */
+test("the published listing is cut at the contract's ceiling without weakening the probe's verification", async () => {
+  const beyondTheCut = "model-63";
+  const whole = Array.from({ length: 64 }, (_unused, index) => `model-${index}`);
+  await withHandler(
+    { probe: stubEndpoint(() => ({ status: 200, body: listModels(...whole) })) },
+    async (_root, request, bootstrap) => {
+      await bootstrap();
+      const created = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+          apiKey: "sk-synthetic-hatch-key",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          apiShape: "openai-completions",
+          modelId: beyondTheCut,
+        },
+      );
+      const body = created.body as { revision: number; connections: readonly { connectionId: string }[] };
+      const probed = await request(
+        "POST",
+        `/api/tavern/v1/settings/connections/${body.connections[0]!.connectionId}/test`,
+        {},
+        { apiVersion: 1, expectedRevision: body.revision },
+      );
+      const probedBody = probed.body as {
+        outcome: string;
+        state: { connections: readonly { modelIds: readonly string[] }[] };
+      };
+      assert.equal(probedBody.outcome, "ready", "the selected model is offered, just past the published cut");
+      const published = probedBody.state.connections[0]!.modelIds;
+      assert.equal(published.length, TAVERN_MODEL_LISTING_LIMIT);
+      assert.deepEqual(published, whole.slice(0, TAVERN_MODEL_LISTING_LIMIT));
+      assert.equal(published.includes(beyondTheCut), false);
+    },
+  );
 });
 
 test("a transport failure is classified as unreachable, and a hang as timeout", async () => {

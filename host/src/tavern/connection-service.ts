@@ -79,7 +79,9 @@ export function createTavernConnectionService(options: TavernConnectionServiceOp
       apiVersion: TAVERN_BROWSER_API_VERSION,
       revision: document.revision,
       active: active === null ? null : projectActiveRecord(active),
-      connections: document.connections.map((entry) => projectRecord(entry, entry.connectionId === document.activeConnectionId)),
+      connections: document.connections.map((entry) =>
+        projectRecord(entry, entry.connectionId === document.activeConnectionId),
+      ),
       providers: projectProviders(),
     } satisfies TavernConnectionStateV1;
     if (!TavernBrowserValidatorsV1.TavernConnectionStateV1Schema.Check(state))
@@ -177,8 +179,7 @@ export function createTavernConnectionService(options: TavernConnectionServiceOp
  * it to one problem code.
  */
 function mapStoreError(error: unknown): Error {
-  if (error instanceof TavernConnectionInputError || error instanceof TavernConnectionRevisionConflict)
-    return error;
+  if (error instanceof TavernConnectionInputError || error instanceof TavernConnectionRevisionConflict) return error;
   const message = error instanceof Error ? error.message : "";
   if (message === "invalid_tavern_connection_store" || message === "invalid_tavern_auth_store")
     return new Error("tavern_connection_storage_unavailable");
@@ -192,19 +193,16 @@ async function probeRecord(
   record: TavernConnectionRecord,
 ): Promise<TavernConnectionProbeResult> {
   const provider = catalogProvider(record.providerId);
-  if (provider === null) return Object.freeze({ outcome: "failed", failure: "not_configured" });
+  if (provider === null) return Object.freeze({ outcome: "failed", failure: "not_configured", modelIds: null });
   // The environment connection is the one provider whose credential this
   // surface never stores; its key is read from the operator environment only.
   const apiKey = await store.credentialFor(record);
   const baseUrl = record.baseUrl ?? provider.baseUrl;
-  if (baseUrl === null) return Object.freeze({ outcome: "failed", failure: "invalid_endpoint" });
+  if (baseUrl === null) return Object.freeze({ outcome: "failed", failure: "invalid_endpoint", modelIds: null });
   return await probe({ provider, baseUrl, apiKey, modelId: record.modelId });
 }
 
-function projectRecord(
-  record: TavernConnectionRecord,
-  active: boolean,
-): TavernConnectionV1 {
+function projectRecord(record: TavernConnectionRecord, active: boolean): TavernConnectionV1 {
   const provider = catalogProvider(record.providerId);
   if (provider === null) throw new Error("tavern_connection_projection_invalid");
   const model = catalogModel(provider, record.modelId);
@@ -222,6 +220,9 @@ function projectRecord(
     // The levels this record's model accepts: a catalog model declares its own, and a
     // player-supplied endpoint gets the vocabulary the embedded runtime accepts.
     allowedThinkingLevels: [...(model?.allowedThinkingLevels ?? COMPANION_THINKING_LEVELS)],
+    // What the endpoint itself listed at the last probe (bounded, sanitised), so the model
+    // control offers the models the endpoint actually serves rather than only ours.
+    modelIds: record.modelIds === null ? null : [...record.modelIds],
     // Non-null only for the escape hatch, whose URL the player typed.
     baseUrl: record.baseUrl,
     failure: record.failure,

@@ -4,6 +4,7 @@ import { atomicWriteFile, withPathLock } from "../path-lock.js";
 import { readStrictJsonFile } from "../strict-json-reader.js";
 import type { CompanionThinkingLevel } from "../runtime-identity.js";
 import { COMPANION_THINKING_LEVELS, PLAYER_MODEL_ID_PATTERN } from "../runtime-identity.js";
+import { TAVERN_MODEL_LISTING_LIMIT } from "./browser-contract/index.js";
 import {
   acceptsPlayerModel,
   catalogModel,
@@ -50,9 +51,16 @@ export type TavernConnectionProbeFailure =
   | "timeout"
   | "invalid_response";
 
+/**
+ * The endpoint's own model listing, as the last probe published it: bounded and sanitised by the
+ * probe, null when that probe read none. It is a player-readable fact about the endpoint, never a
+ * claim that any of these models will answer.
+ */
+export type TavernConnectionProbeModelIds = readonly string[] | null;
+
 export type TavernConnectionProbeResult =
-  | Readonly<{ outcome: "ready" }>
-  | Readonly<{ outcome: "failed"; failure: TavernConnectionProbeFailure }>;
+  | Readonly<{ outcome: "ready"; modelIds: readonly string[] }>
+  | Readonly<{ outcome: "failed"; failure: TavernConnectionProbeFailure; modelIds: TavernConnectionProbeModelIds }>;
 
 export type TavernConnectionRecord = Readonly<{
   /** Opaque write handle; never rendered as ordinary UI text. */
@@ -66,6 +74,8 @@ export type TavernConnectionRecord = Readonly<{
   thinkingLevel: CompanionThinkingLevel;
   readiness: TavernConnectionReadiness;
   failure: TavernConnectionProbeFailure | null;
+  /** The endpoint's own model listing from the last probe, or null when it read none. */
+  modelIds: TavernConnectionProbeModelIds;
   lastCheckedAtMs: number | null;
 }>;
 
@@ -190,7 +200,8 @@ export class TavernConnectionStore {
     const modelId = this.resolveModelId(provider, input.modelId);
     const apiKey = this.resolveApiKey(provider, input.apiKey);
     return await this.mutate((current) => {
-      if (current.connections.length >= MAX_CONNECTIONS) throw new TavernConnectionInputError("connection_limit_reached");
+      if (current.connections.length >= MAX_CONNECTIONS)
+        throw new TavernConnectionInputError("connection_limit_reached");
       const connectionId = randomBytes(32).toString("base64url");
       const record: TavernConnectionRecord = Object.freeze({
         connectionId,
@@ -204,6 +215,7 @@ export class TavernConnectionStore {
           "high",
         readiness: "configured",
         failure: null,
+        modelIds: null,
         lastCheckedAtMs: null,
       });
       return {
@@ -223,7 +235,11 @@ export class TavernConnectionStore {
     });
   }
 
-  /** Records one probe outcome for an existing connection. */
+  /**
+   * Records one probe outcome for an existing connection, together with the listing that probe
+   * published. One rule, no merging: the record's `modelIds` is what the LAST probe read, so a
+   * probe that read none leaves null rather than a stale list the player would read as current.
+   */
   async recordProbe(connectionId: string, result: TavernConnectionProbeResult): Promise<TavernConnectionDocument> {
     return await this.mutate((current) => {
       const record = requireConnection(current, connectionId);
@@ -231,6 +247,7 @@ export class TavernConnectionStore {
         ...record,
         readiness: result.outcome === "ready" ? "ready" : "failed",
         failure: result.outcome === "ready" ? null : result.failure,
+        modelIds: result.modelIds,
         lastCheckedAtMs: Date.now(),
       });
       return { document: replaceConnection(current, next) };
@@ -244,78 +261,69 @@ export class TavernConnectionStore {
     modelId: string,
     thinkingLevel: CompanionThinkingLevel,
   ): Promise<TavernConnectionDocument> {
-    return await this.mutate(
-      (current) => {
-        const record = requireConnection(current, connectionId);
-        const provider = catalogProvider(record.providerId);
-        if (provider === null) throw new TavernConnectionInputError("provider_unknown");
-        const model = catalogModel(provider, modelId);
-        if (model === null) {
-          if (!acceptsPlayerModel(provider) || !PLAYER_MODEL_ID_PATTERN.test(modelId))
-            throw new TavernConnectionInputError("model_not_allowed");
-          if (!PLAYER_MODEL_THINKING_LEVELS.includes(thinkingLevel))
-            throw new TavernConnectionInputError("thinking_level_not_allowed");
-          return {
-            document: replaceConnection(
-              current,
-              Object.freeze({ ...record, modelId, thinkingLevel, readiness: "configured", failure: null }),
-            ),
-          };
-        }
-        if (!isAllowedThinkingLevel(model, thinkingLevel))
+    return await this.mutate((current) => {
+      const record = requireConnection(current, connectionId);
+      const provider = catalogProvider(record.providerId);
+      if (provider === null) throw new TavernConnectionInputError("provider_unknown");
+      const model = catalogModel(provider, modelId);
+      if (model === null) {
+        if (!acceptsPlayerModel(provider) || !PLAYER_MODEL_ID_PATTERN.test(modelId))
+          throw new TavernConnectionInputError("model_not_allowed");
+        if (!PLAYER_MODEL_THINKING_LEVELS.includes(thinkingLevel))
           throw new TavernConnectionInputError("thinking_level_not_allowed");
-        // The previous probe proved the previous model answered; a different
-        // model may not answer at all, so readiness is withdrawn until the new
-        // selection is probed.
-        const changed = record.modelId !== modelId || record.thinkingLevel !== thinkingLevel;
         return {
           document: replaceConnection(
             current,
-            Object.freeze({
-              ...record,
-              modelId,
-              thinkingLevel,
-              ...(changed ? { readiness: "configured" as const, failure: null } : {}),
-            }),
+            Object.freeze({ ...record, modelId, thinkingLevel, readiness: "configured", failure: null }),
           ),
         };
-      },
-      expectedRevision,
-    );
+      }
+      if (!isAllowedThinkingLevel(model, thinkingLevel))
+        throw new TavernConnectionInputError("thinking_level_not_allowed");
+      // The previous probe proved the previous model answered; a different
+      // model may not answer at all, so readiness is withdrawn until the new
+      // selection is probed.
+      const changed = record.modelId !== modelId || record.thinkingLevel !== thinkingLevel;
+      return {
+        document: replaceConnection(
+          current,
+          Object.freeze({
+            ...record,
+            modelId,
+            thinkingLevel,
+            ...(changed ? { readiness: "configured" as const, failure: null } : {}),
+          }),
+        ),
+      };
+    }, expectedRevision);
   }
 
   async activate(connectionId: string, expectedRevision: number): Promise<TavernConnectionDocument> {
-    return await this.mutate(
-      (current) => {
-        const record = requireConnection(current, connectionId);
-        if (record.readiness !== "ready") throw new TavernConnectionInputError("not_ready");
-        return { document: { ...current, activeConnectionId: connectionId } };
-      },
-      expectedRevision,
-    );
+    return await this.mutate((current) => {
+      const record = requireConnection(current, connectionId);
+      if (record.readiness !== "ready") throw new TavernConnectionInputError("not_ready");
+      return { document: { ...current, activeConnectionId: connectionId } };
+    }, expectedRevision);
   }
 
   /** Removes an inactive record together with its stored credential. */
   async remove(connectionId: string, expectedRevision: number): Promise<TavernConnectionDocument> {
-    return await this.mutate(
-      (current) => {
-        const record = requireConnection(current, connectionId);
-        if (current.activeConnectionId === connectionId)
-          throw new TavernConnectionInputError("active_connection_cannot_be_removed");
-        const provider = catalogProvider(record.providerId);
-        const connections = current.connections.filter((entry) => entry.connectionId !== connectionId);
-        return {
-          document: { ...current, connections },
-          ...(provider === null || provider.environmentVariable !== null
-            ? {}
-            : {
-                removeCredential: provider.piProviderId,
-                removeConnectionKey: connectionId,
-              }),
-        };
-      },
-      expectedRevision,
-    );
+    return await this.mutate((current) => {
+      const record = requireConnection(current, connectionId);
+      if (current.activeConnectionId === connectionId)
+        throw new TavernConnectionInputError("active_connection_cannot_be_removed");
+      const provider = catalogProvider(record.providerId);
+      const connections = current.connections.filter((entry) => entry.connectionId !== connectionId);
+      return {
+        document: { ...current, connections },
+        ...(provider === null || provider.environmentVariable !== null
+          ? {}
+          : {
+              removeCredential: provider.piProviderId,
+              removeConnectionKey: connectionId,
+            }),
+      };
+    }, expectedRevision);
   }
 
   /** The one active record, or null while no player connection is selected. */
@@ -373,7 +381,8 @@ export class TavernConnectionStore {
 
   private resolveModelId(provider: TavernCatalogProvider, value: string | null): string {
     if (acceptsPlayerModel(provider)) {
-      if (value === null || !PLAYER_MODEL_ID_PATTERN.test(value)) throw new TavernConnectionInputError("invalid_model_id");
+      if (value === null || !PLAYER_MODEL_ID_PATTERN.test(value))
+        throw new TavernConnectionInputError("invalid_model_id");
       return value;
     }
     if (value !== null && catalogModel(provider, value) === null)
@@ -395,7 +404,8 @@ export class TavernConnectionStore {
     }
     if (value === null) throw new TavernConnectionInputError("api_key_required");
     const trimmed = value.trim();
-    if (trimmed.length === 0 || trimmed.length > MAX_API_KEY_LENGTH) throw new TavernConnectionInputError("api_key_required");
+    if (trimmed.length === 0 || trimmed.length > MAX_API_KEY_LENGTH)
+      throw new TavernConnectionInputError("api_key_required");
     if (hasUnpairedUtf16Surrogate(trimmed)) throw new TavernConnectionInputError("api_key_required");
     return trimmed;
   }
@@ -456,7 +466,8 @@ export class TavernConnectionStore {
   private async loadConnectionKeys(): Promise<Record<string, unknown>> {
     try {
       const value = await readStrictJsonFile(connectionKeysPath(this.agentDir));
-      if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("invalid_tavern_connection_keys");
+      if (typeof value !== "object" || value === null || Array.isArray(value))
+        throw new Error("invalid_tavern_connection_keys");
       return value as Record<string, unknown>;
     } catch (error) {
       if (isNotFound(error)) return {};
@@ -467,7 +478,8 @@ export class TavernConnectionStore {
   private async loadCredentials(): Promise<Record<string, unknown>> {
     try {
       const value = await readStrictJsonFile(connectionAuthPath(this.agentDir));
-      if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("invalid_tavern_auth_store");
+      if (typeof value !== "object" || value === null || Array.isArray(value))
+        throw new Error("invalid_tavern_auth_store");
       // The file is Pi's; entries this surface does not own are preserved verbatim.
       return value as Record<string, unknown>;
     } catch (error) {
@@ -532,6 +544,7 @@ function serialize(document: TavernConnectionDocument): string {
       thinkingLevel: entry.thinkingLevel,
       readiness: entry.readiness,
       failure: entry.failure,
+      modelIds: entry.modelIds,
       lastCheckedAtMs: entry.lastCheckedAtMs,
     })),
   });
@@ -586,6 +599,7 @@ function validateRecord(value: unknown): TavernConnectionRecord {
     typeof value.readiness !== "string" ||
     !READINESS.has(value.readiness) ||
     (value.failure !== null && (typeof value.failure !== "string" || !PROBE_FAILURES.has(value.failure))) ||
+    !isPublishedModelIds(value.modelIds) ||
     !isTimestampOrNull(value.lastCheckedAtMs) ||
     !hasExactKeys(value, [
       "connectionId",
@@ -596,6 +610,7 @@ function validateRecord(value: unknown): TavernConnectionRecord {
       "thinkingLevel",
       "readiness",
       "failure",
+      "modelIds",
       "lastCheckedAtMs",
     ])
   )
@@ -631,8 +646,22 @@ function validateRecord(value: unknown): TavernConnectionRecord {
     thinkingLevel: recordValue.thinkingLevel,
     readiness: recordValue.readiness,
     failure: recordValue.failure,
+    modelIds: recordValue.modelIds === null ? null : Object.freeze([...recordValue.modelIds]),
     lastCheckedAtMs: recordValue.lastCheckedAtMs,
   });
+}
+
+/**
+ * The published listing as it is durable: absent, or ids this product would accept as a model id,
+ * bounded by the same ceiling the wire publishes them under.
+ */
+function isPublishedModelIds(value: unknown): value is TavernConnectionProbeModelIds {
+  if (value === null) return true;
+  return (
+    Array.isArray(value) &&
+    value.length <= TAVERN_MODEL_LISTING_LIMIT &&
+    value.every((id) => typeof id === "string" && PLAYER_MODEL_ID_PATTERN.test(id))
+  );
 }
 
 function isConnectionId(value: unknown): value is string {

@@ -2484,6 +2484,7 @@ test("the product Settings surface creates, tests and activates a connection who
     modelLabel: recordModelId,
     thinkingLevel: recordThinkingLevel,
     allowedThinkingLevels: ["low", "high"],
+    modelIds: null,
     baseUrl,
     failure: null,
     lastCheckedAtMs: null,

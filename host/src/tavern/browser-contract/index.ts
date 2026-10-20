@@ -20,6 +20,13 @@ const OPAQUE_HANDLE_PATTERN = "^[A-Za-z0-9_-]{22,128}$";
 // a general bounded string, never a closed union and never a catalog membership
 // test. The recommended catalog is guidance only.
 const MODEL_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._:/\\-]{0,127}$";
+/**
+ * The model id ceiling this contract uses wherever a model id appears. The pattern above already
+ * enforces it (`{0,127}` after one leading character), and it is the same ceiling
+ * `PLAYER_MODEL_ID_PATTERN` in `host/src/runtime-identity.ts` enforces, so a listing id that the
+ * product would refuse as a model id can never reach the wire.
+ */
+const MODEL_ID_MAX_LENGTH = 128;
 const THINKING_LEVEL_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,31}$";
 const IDEMPOTENCY_KEY_PATTERN = "^[A-Za-z0-9_-]{22}$";
 
@@ -585,11 +592,25 @@ export const TavernConnectionModelV1Schema = strictObject({
   allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 7 }),
   defaultThinkingLevel: TavernConnectionThinkingLevelV1Schema,
 });
+/**
+ * Ceiling on how many model ids one endpoint's own `/models` listing may contribute to a
+ * connection projection. It is the ceiling `allowedPlayerModels` below already publishes for the
+ * models one provider may be offered - the endpoint's own listing is offered the same way, so it
+ * is bounded the same way - and it lives here once so the probe's cut and the wire's `maxItems`
+ * cannot disagree. The probe verifies a selected model against the endpoint's WHOLE listing; only
+ * this published projection is cut.
+ */
+export const TAVERN_MODEL_LISTING_LIMIT = 32;
+/**
+ * One model id the endpoint itself listed. The bound and the charset are the model id ceiling this
+ * contract already enforces, so the listing cannot publish an id this product would refuse.
+ */
+const ListedModelId = Type.String({ minLength: 1, maxLength: MODEL_ID_MAX_LENGTH, pattern: MODEL_ID_PATTERN });
 export const TavernConnectionProviderV1Schema = strictObject({
   providerId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
   label: Type.String({ minLength: 1, maxLength: 128 }),
   setupFields: Type.Array(TavernConnectionSetupFieldV1Schema, { maxItems: 4 }),
-  allowedPlayerModels: Type.Array(TavernConnectionModelV1Schema, { maxItems: 32 }),
+  allowedPlayerModels: Type.Array(TavernConnectionModelV1Schema, { maxItems: TAVERN_MODEL_LISTING_LIMIT }),
   /** True only for the one OpenAI-compatible escape hatch (design/28 §1). */
   escapeHatch: Type.Boolean(),
   /** True when this provider is served by an operator environment credential. */
@@ -632,6 +653,12 @@ export const TavernConnectionV1Schema = strictObject({
   // What this record's model accepts. The panel offers exactly these, because the
   // Host refuses a level the model does not advertise.
   allowedThinkingLevels: Type.Array(TavernConnectionThinkingLevelV1Schema, { maxItems: 7 }),
+  /**
+   * The endpoint's own model listing as of this record's last probe, or null when that probe read
+   * none. It is what the endpoint served at that moment (bounded by `TAVERN_MODEL_LISTING_LIMIT`
+   * and sanitised to ids this product accepts), never a claim about which of them will answer.
+   */
+  modelIds: Type.Union([Type.Array(ListedModelId, { maxItems: TAVERN_MODEL_LISTING_LIMIT }), Type.Null()]),
   baseUrl: Type.Union([Type.String({ minLength: 1, maxLength: 512 }), Type.Null()]),
   failure: ConnectionFailure,
   lastCheckedAtMs: Type.Union([Revision, Type.Null()]),

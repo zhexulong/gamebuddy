@@ -825,6 +825,11 @@ export type TavernConnectionV1 = Readonly<{
   thinkingLevel: TavernConnectionThinkingLevelV1;
   /** What this record's model accepts; the panel offers exactly these. */
   allowedThinkingLevels: readonly TavernConnectionThinkingLevelV1[];
+  /**
+   * The endpoint's own model listing as of this record's last probe, or null when that probe read
+   * none. It is what the endpoint served at that moment, never a claim about which of them answers.
+   */
+  modelIds: readonly string[] | null;
   baseUrl: string | null;
   failure: TavernConnectionFailureV1 | null;
   lastCheckedAtMs: number | null;
@@ -1294,6 +1299,7 @@ const CONNECTION_ROW_KEYS = [
   "modelLabel",
   "thinkingLevel",
   "allowedThinkingLevels",
+  "modelIds",
   "baseUrl",
   "failure",
   "lastCheckedAtMs",
@@ -1319,6 +1325,10 @@ const CONNECTION_PROVIDER_KEYS = [
   "environmentManaged",
 ] as const;
 const CONNECTION_MODEL_KEYS = ["modelId", "modelLabel", "allowedThinkingLevels", "defaultThinkingLevel"] as const;
+// The Host's own ceiling on one endpoint's published listing (`TAVERN_MODEL_LISTING_LIMIT` in
+// host/src/tavern/browser-contract/index.ts); kept as a literal because this module is deliberately
+// dependency-free, and pinned to the Host's value by the mirror test.
+const CONNECTION_MODEL_LISTING_LIMIT = 32;
 const CONNECTION_PROBE_KEYS = ["apiVersion", "connectionId", "outcome", "failure", "state"] as const;
 const CONNECTION_SETUP_FIELDS = ["apiKey", "apiShape", "baseUrl", "modelId"] as const;
 // The thinking levels the embedded runtime accepts, mirroring pi's own
@@ -2536,6 +2546,12 @@ function isConnectionRow(value: unknown): value is TavernConnectionV1 {
     value.allowedThinkingLevels.length <= 7 &&
     value.allowedThinkingLevels.every((level) => isOneOf(level, CONNECTION_THINKING_LEVELS)) &&
     value.allowedThinkingLevels.includes(value.thinkingLevel as string) &&
+    (value.modelIds === null ||
+      (Array.isArray(value.modelIds) &&
+        value.modelIds.length <= CONNECTION_MODEL_LISTING_LIMIT &&
+        value.modelIds.every(
+          (id) => typeof id === "string" && id.length <= 128 && MODEL_PROFILE_MODEL_ID_PATTERN.test(id),
+        ))) &&
     // The player's own endpoint — the one endpoint fact they read back.
     (value.baseUrl === null || isLengthBoundedString(value.baseUrl, 1, 512)) &&
     isConnectionFailure(value.failure) &&

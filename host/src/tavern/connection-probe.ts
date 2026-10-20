@@ -1,3 +1,5 @@
+import { PLAYER_MODEL_ID_PATTERN } from "../runtime-identity.js";
+import { TAVERN_MODEL_LISTING_LIMIT } from "./browser-contract/index.js";
 import type { TavernCatalogProvider } from "./provider-catalog.js";
 import type { TavernConnectionProbeFailure, TavernConnectionProbeResult } from "./connection-store.js";
 
@@ -6,10 +8,17 @@ import type { TavernConnectionProbeFailure, TavernConnectionProbeResult } from "
  *
  * The probe is the only place a submitted credential is used, and it is used
  * exactly once: it calls the OpenAI-compatible `/models` listing of the exact
- * endpoint the record resolves to, with the record's own credential. Nothing
- * derived from the response crosses this boundary except one closed
- * audit-safe outcome — no status line, header, body, endpoint echo or raw
- * provider error can become a player notice or an evidence record.
+ * endpoint the record resolves to, with the record's own credential.
+ *
+ * Two things and no more cross this boundary. One is the closed, audit-safe
+ * outcome; no status line, header, body text, endpoint echo or raw provider
+ * error can become a player notice or an evidence record. The other is the
+ * endpoint's OWN model ids, because they are the only authority on which models
+ * that endpoint serves: they are bounded (`TAVERN_MODEL_LISTING_LIMIT`) and kept
+ * only when they match `PLAYER_MODEL_ID_PATTERN`, so the projection publishes
+ * exactly the ids this product would accept as a model id and nothing an
+ * endpoint chose to put in its body. Verification uses the WHOLE listing; only
+ * the published array is cut.
  */
 
 const PROBE_TIMEOUT_MS = 10_000;
@@ -48,10 +57,14 @@ export async function probeTavernConnection(
     if (response.status === 404) return failed("not_found");
     if (response.status < 200 || response.status >= 300) return failed("invalid_response");
     if (listing === undefined) return failed("invalid_response");
+    // A 2xx listing is worth publishing even when this probe fails on content:
+    // `not_found` is exactly the case where the player needs to see what the
+    // endpoint does serve.
+    const modelIds = publishModelIds(listing);
     // `ready` claims the exact selected model answers at this endpoint. A
     // listing that does not offer it would make that claim false, so a missing
     // model fails with the same closed vocabulary as an unreachable endpoint.
-    return listing.has(input.modelId) ? Object.freeze({ outcome: "ready" }) : failed("not_found");
+    return listing.has(input.modelId) ? Object.freeze({ outcome: "ready", modelIds }) : failed("not_found", modelIds);
   } catch (error) {
     if (isAbort(error)) return failed("timeout");
     return failed("unreachable");
@@ -60,8 +73,26 @@ export async function probeTavernConnection(
   }
 }
 
-function failed(failure: TavernConnectionProbeFailure): TavernConnectionProbeResult {
-  return Object.freeze({ outcome: "failed", failure });
+function failed(
+  failure: TavernConnectionProbeFailure,
+  modelIds: readonly string[] | null = null,
+): TavernConnectionProbeResult {
+  return Object.freeze({ outcome: "failed", failure, modelIds });
+}
+
+/**
+ * The bounded, sanitised projection of one listing: ids this product would itself
+ * accept as a model id, in the order the endpoint listed them, cut to
+ * `TAVERN_MODEL_LISTING_LIMIT`. Everything else the body carried never leaves here.
+ */
+function publishModelIds(listing: ReadonlySet<string>): readonly string[] {
+  const published: string[] = [];
+  for (const id of listing) {
+    if (!PLAYER_MODEL_ID_PATTERN.test(id)) continue;
+    published.push(id);
+    if (published.length === TAVERN_MODEL_LISTING_LIMIT) break;
+  }
+  return Object.freeze(published);
 }
 
 async function readBoundedBody(response: Response): Promise<string | undefined> {
@@ -85,10 +116,13 @@ function parseModelIds(body: string): Set<string> | undefined {
   } catch {
     return undefined;
   }
-  const object = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-    ? (parsed as Record<string, unknown>)
-    : undefined;
-  const container = Array.isArray(parsed) ? parsed : (["data", "models"] as const).map((key) => object?.[key]).find(Array.isArray);
+  const object =
+    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  const container = Array.isArray(parsed)
+    ? parsed
+    : (["data", "models"] as const).map((key) => object?.[key]).find(Array.isArray);
   if (!Array.isArray(container)) return undefined;
   const ids = new Set<string>();
   for (const entry of container) {

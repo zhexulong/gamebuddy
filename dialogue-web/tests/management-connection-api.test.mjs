@@ -35,6 +35,9 @@ function connectionState(overrides = {}) {
     modelLabel: "qwen2.5-coder:7b",
     thinkingLevel: "high",
     allowedThinkingLevels: ["low", "high", "max"],
+    // The endpoint's own listing as of the last probe; `null` here because this record has not
+    // been probed. The bound and the charset it accepts are held by the mirror test.
+    modelIds: null,
     baseUrl: "http://127.0.0.1:11434/v1",
     failure: null,
     lastCheckedAtMs: null,

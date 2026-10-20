@@ -15,6 +15,7 @@ import {
   TavernConnectionRevisionConflict,
   TavernConnectionStore,
 } from "./connection-store.js";
+import { TAVERN_MODEL_LISTING_LIMIT } from "./browser-contract/index.js";
 import { TAVERN_ESCAPE_HATCH_PROVIDER_ID } from "./provider-catalog.js";
 
 // The store takes a durable path lock, so the tests need the same test-only
@@ -78,10 +79,12 @@ test("a catalog connection stores only the opaque handle and writes its key to t
     // The record document never carries the secret.
     const persisted = await readFile(connectionDocumentPath(root), "utf8");
     assert.doesNotMatch(persisted, /sk-synthetic-credential/);
-    assert.deepEqual(
-      Object.keys(JSON.parse(persisted)).sort(),
-      ["activeConnectionId", "connections", "revision", "schemaVersion"],
-    );
+    assert.deepEqual(Object.keys(JSON.parse(persisted)).sort(), [
+      "activeConnectionId",
+      "connections",
+      "revision",
+      "schemaVersion",
+    ]);
     assert.equal(await store.credentialFor(connection), "sk-synthetic-credential");
   });
 });
@@ -146,11 +149,23 @@ test("same-provider escape-hatch connections keep their own credential, not the 
 test("catalog providers reject a player-supplied endpoint, and the escape hatch requires one", async () => {
   await withRoot(async (_root, store) => {
     await assert.rejects(
-      store.create({ providerId: "openai", apiKey: "k", baseUrl: "http://127.0.0.1:9/v1", apiShape: null, modelId: null }),
+      store.create({
+        providerId: "openai",
+        apiKey: "k",
+        baseUrl: "http://127.0.0.1:9/v1",
+        apiShape: null,
+        modelId: null,
+      }),
       (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "base_url_not_accepted",
     );
     await assert.rejects(
-      store.create({ providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID, apiKey: "k", baseUrl: null, apiShape: "openai-completions", modelId: "m" }),
+      store.create({
+        providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+        apiKey: "k",
+        baseUrl: null,
+        apiShape: "openai-completions",
+        modelId: "m",
+      }),
       (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "base_url_required",
     );
     for (const baseUrl of [
@@ -160,7 +175,13 @@ test("catalog providers reject a player-supplied endpoint, and the escape hatch 
       "not-a-url",
     ])
       await assert.rejects(
-        store.create({ providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID, apiKey: "k", baseUrl, apiShape: "openai-completions", modelId: "m" }),
+        store.create({
+          providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+          apiKey: "k",
+          baseUrl,
+          apiShape: "openai-completions",
+          modelId: "m",
+        }),
         (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "invalid_base_url",
         `expected ${baseUrl} to be rejected`,
       );
@@ -173,7 +194,13 @@ test("the environment connection never accepts, stores or reads back a credentia
       store.create({ providerId: "cpa-oai", apiKey: "sk-operator", baseUrl: null, apiShape: null, modelId: null }),
       (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "api_key_not_accepted",
     );
-    const document = await store.create({ providerId: "cpa-oai", apiKey: null, baseUrl: null, apiShape: null, modelId: null });
+    const document = await store.create({
+      providerId: "cpa-oai",
+      apiKey: null,
+      baseUrl: null,
+      apiShape: null,
+      modelId: null,
+    });
     const connection = document.connections[0]!;
     assert.equal(connection.modelId, "deepseek-v4-flash");
     await assert.rejects(readFile(connectionAuthPath(root), "utf8"), /ENOENT/);
@@ -192,13 +219,23 @@ test("the environment connection never accepts, stores or reads back a credentia
 
 test("probe outcomes are recorded as a closed vocabulary and gate activation", async () => {
   await withRoot(async (_root, store) => {
-    const created = await store.create({ providerId: "deepseek", apiKey: "k", baseUrl: null, apiShape: null, modelId: null });
+    const created = await store.create({
+      providerId: "deepseek",
+      apiKey: "k",
+      baseUrl: null,
+      apiShape: null,
+      modelId: null,
+    });
     const connectionId = created.connections[0]!.connectionId;
     await assert.rejects(
       store.activate(connectionId, created.revision),
       (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "not_ready",
     );
-    const failed = await store.recordProbe(connectionId, { outcome: "failed", failure: "unauthorized" });
+    const failed = await store.recordProbe(connectionId, {
+      outcome: "failed",
+      failure: "unauthorized",
+      modelIds: null,
+    });
     assert.equal(failed.connections[0]!.readiness, "failed");
     assert.equal(failed.connections[0]!.failure, "unauthorized");
     assert.ok(typeof failed.connections[0]!.lastCheckedAtMs === "number");
@@ -206,7 +243,7 @@ test("probe outcomes are recorded as a closed vocabulary and gate activation", a
       store.activate(connectionId, failed.revision),
       (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "not_ready",
     );
-    const ready = await store.recordProbe(connectionId, { outcome: "ready" });
+    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-flash"] });
     assert.equal(ready.connections[0]!.readiness, "ready");
     assert.equal(ready.connections[0]!.failure, null);
     const active = await store.activate(connectionId, ready.revision);
@@ -215,11 +252,73 @@ test("probe outcomes are recorded as a closed vocabulary and gate activation", a
   });
 });
 
+/**
+ * The listing the probe publishes is durable and bounded by the same ceiling the wire publishes it
+ * under. The boundary is the point: the ceiling itself is a readable document, one more is not, and
+ * an id this product would refuse as a model id is a corrupted record rather than something the
+ * browser is handed.
+ */
+test("the endpoint's own model listing is durable, bounded and sanitised, and a corrupt one fails closed", async () => {
+  const root = await mkdtemp(join(canonicalTemporaryRoot, "gamebuddy-connection-store-"));
+  try {
+    const store = new TavernConnectionStore(root);
+    const created = await store.create({
+      providerId: "deepseek",
+      apiKey: "k",
+      baseUrl: null,
+      apiShape: null,
+      modelId: null,
+    });
+    const connectionId = created.connections[0]!.connectionId;
+    const listed = ["deepseek-v4-flash", "deepseek-v4-pro"];
+    const probed = await store.recordProbe(connectionId, { outcome: "ready", modelIds: listed });
+    assert.deepEqual(probed.connections[0]!.modelIds, listed);
+    // Durable: another reader of the same root sees exactly the list the probe published.
+    assert.deepEqual((await new TavernConnectionStore(root).read()).connections[0]!.modelIds, listed);
+
+    const writeDocument = async (modelIds: unknown) =>
+      await writeFile(
+        connectionDocumentPath(root),
+        JSON.stringify({
+          schemaVersion: 1,
+          revision: 2,
+          activeConnectionId: null,
+          connections: [{ ...persistedConnection(connectionId), modelIds }],
+        }),
+        "utf8",
+      );
+    // The ceiling itself is a readable listing; one past it is not.
+    await writeDocument(Array.from({ length: TAVERN_MODEL_LISTING_LIMIT }, (_unused, index) => `m-${index}`));
+    assert.equal((await store.read()).connections[0]!.modelIds!.length, TAVERN_MODEL_LISTING_LIMIT);
+    for (const corrupt of [
+      Array.from({ length: TAVERN_MODEL_LISTING_LIMIT + 1 }, (_unused, index) => `m-${index}`),
+      ["with space"],
+      [""],
+      [42],
+      "not-an-array",
+      7,
+    ])
+      await assert.rejects(
+        writeDocument(corrupt).then(() => store.read()),
+        /invalid_tavern_connection_store/,
+        `expected ${JSON.stringify(corrupt)} to fail closed`,
+      );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("changing the selected model withdraws readiness until it is probed again", async () => {
   await withRoot(async (_root, store) => {
-    const created = await store.create({ providerId: "deepseek", apiKey: "k", baseUrl: null, apiShape: null, modelId: null });
+    const created = await store.create({
+      providerId: "deepseek",
+      apiKey: "k",
+      baseUrl: null,
+      apiShape: null,
+      modelId: null,
+    });
     const connectionId = created.connections[0]!.connectionId;
-    const ready = await store.recordProbe(connectionId, { outcome: "ready" });
+    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-flash"] });
     const changed = await store.selectModel(connectionId, ready.revision, "deepseek-v4-pro", "max");
     assert.equal(changed.connections[0]!.modelId, "deepseek-v4-pro");
     assert.equal(changed.connections[0]!.thinkingLevel, "max");
@@ -241,9 +340,15 @@ test("changing the selected model withdraws readiness until it is probed again",
 
 test("a stale expectedRevision is a durable conflict, never a silent overwrite", async () => {
   await withRoot(async (_root, store) => {
-    const created = await store.create({ providerId: "deepseek", apiKey: "k", baseUrl: null, apiShape: null, modelId: null });
+    const created = await store.create({
+      providerId: "deepseek",
+      apiKey: "k",
+      baseUrl: null,
+      apiShape: null,
+      modelId: null,
+    });
     const connectionId = created.connections[0]!.connectionId;
-    const ready = await store.recordProbe(connectionId, { outcome: "ready" });
+    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-flash"] });
     await store.activate(connectionId, ready.revision);
     await assert.rejects(
       store.activate(connectionId, ready.revision),
@@ -259,7 +364,13 @@ test("removing a connection drops its stored credential and keeps unrelated prov
       JSON.stringify({ anthropic: { type: "api_key", key: "sk-unrelated" } }),
       "utf8",
     );
-    const created = await store.create({ providerId: "deepseek", apiKey: "k", baseUrl: null, apiShape: null, modelId: null });
+    const created = await store.create({
+      providerId: "deepseek",
+      apiKey: "k",
+      baseUrl: null,
+      apiShape: null,
+      modelId: null,
+    });
     const connectionId = created.connections[0]!.connectionId;
     const removed = await store.remove(connectionId, created.revision);
     assert.deepEqual(removed.connections, []);
@@ -271,9 +382,15 @@ test("removing a connection drops its stored credential and keeps unrelated prov
 
 test("the active connection cannot be removed", async () => {
   await withRoot(async (_root, store) => {
-    const created = await store.create({ providerId: "deepseek", apiKey: "k", baseUrl: null, apiShape: null, modelId: null });
+    const created = await store.create({
+      providerId: "deepseek",
+      apiKey: "k",
+      baseUrl: null,
+      apiShape: null,
+      modelId: null,
+    });
     const connectionId = created.connections[0]!.connectionId;
-    const ready = await store.recordProbe(connectionId, { outcome: "ready" });
+    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-flash"] });
     const active = await store.activate(connectionId, ready.revision);
     await assert.rejects(
       store.remove(connectionId, active.revision),
@@ -292,7 +409,13 @@ test("a corrupted connection document fails closed instead of reading as empty",
   const root = await mkdtemp(join(canonicalTemporaryRoot, "gamebuddy-connection-store-"));
   try {
     const store = new TavernConnectionStore(root);
-    const created = await store.create({ providerId: "deepseek", apiKey: "k", baseUrl: null, apiShape: null, modelId: null });
+    const created = await store.create({
+      providerId: "deepseek",
+      apiKey: "k",
+      baseUrl: null,
+      apiShape: null,
+      modelId: null,
+    });
     const connectionId = created.connections[0]!.connectionId;
 
     // A dangling active selection must not silently become "no active connection".
@@ -425,6 +548,7 @@ test("a durable escape-hatch record keeps its query-string endpoint and API shap
       thinkingLevel: "high",
       readiness: "configured",
       failure: null,
+      modelIds: null,
       lastCheckedAtMs: null,
     };
     const writeDocument = async (record: unknown) =>
@@ -471,6 +595,7 @@ function persistedConnection(connectionId: string) {
     thinkingLevel: "high",
     readiness: "configured",
     failure: null,
+    modelIds: null,
     lastCheckedAtMs: null,
   };
 }

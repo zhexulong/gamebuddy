@@ -468,6 +468,71 @@ test("the client mirror's API shape and thinking level lists are the Host contra
   );
 });
 
+/**
+ * One connection row, as the Host projects it. `modelIds` is the endpoint's own listing from the
+ * last probe: the mirror must accept what the contract declares and hold the same bound, or a real
+ * 40-model endpoint read becomes an opaque protocol error in the panel.
+ */
+function connectionRow(overrides = {}) {
+  return {
+    connectionId: HANDLE,
+    label: "DeepSeek \u00b7 deepseek-v4-flash",
+    providerId: "deepseek",
+    providerLabel: "DeepSeek",
+    configured: true,
+    readiness: "configured",
+    active: false,
+    modelId: "deepseek-v4-flash",
+    modelLabel: "DeepSeek V4 Flash",
+    thinkingLevel: "high",
+    allowedThinkingLevels: ["low", "high", "max"],
+    modelIds: null,
+    baseUrl: null,
+    failure: null,
+    lastCheckedAtMs: null,
+    ...overrides,
+  };
+}
+
+function connectionState(overrides = {}) {
+  return { apiVersion: 1, revision: 1, active: null, connections: [connectionRow()], providers: [], ...overrides };
+}
+
+test("the client mirror accepts the endpoint's own listing under the Host contract's own bound", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { TAVERN_MODEL_LISTING_LIMIT, TavernBrowserContractV1 } = await import(
+    "../../host/src/tavern/browser-contract/index.ts"
+  );
+  const { validateConnectionState } = await import("../src/management-pipeline-api.ts");
+  const listing = (count) => Array.from({ length: count }, (_unused, index) => `model-${index}`);
+
+  // The bound is read from one place: the contract's declared ceiling for the published array.
+  const declared = TavernBrowserContractV1.schemas.TavernConnectionV1Schema.properties.modelIds.anyOf;
+  assert.ok(Array.isArray(declared), "the contract's row no longer declares a bounded listing");
+  assert.equal(declared[0].maxItems, TAVERN_MODEL_LISTING_LIMIT, "the contract's listing bound moved");
+  const mirror = await readFile(new URL("../src/management-pipeline-api.ts", import.meta.url), "utf8");
+  const literal = /const CONNECTION_MODEL_LISTING_LIMIT = (\d+);/u.exec(mirror);
+  assert.notEqual(literal, null, "the mirror no longer declares CONNECTION_MODEL_LISTING_LIMIT");
+  assert.equal(Number(literal[1]), TAVERN_MODEL_LISTING_LIMIT, "the mirror's listing bound drifted from the contract's");
+
+  // No probe yet, the endpoint's whole listing, and the ceiling itself are all readable states.
+  assert.doesNotThrow(() => validateConnectionState(connectionState()));
+  assert.doesNotThrow(() =>
+    validateConnectionState(connectionState({ connections: [connectionRow({ modelIds: ["qwen2.5-coder:7b"] })] }))
+  );
+  assert.doesNotThrow(() =>
+    validateConnectionState(
+      connectionState({ connections: [connectionRow({ modelIds: listing(TAVERN_MODEL_LISTING_LIMIT) })] })
+    )
+  );
+  // One past the ceiling, an id the product would refuse as a model id, and a non-list are not.
+  for (const modelIds of [listing(TAVERN_MODEL_LISTING_LIMIT + 1), ["with space"], [""], [7], "not-a-list"])
+    assert.throws(
+      () => validateConnectionState(connectionState({ connections: [connectionRow({ modelIds })] })),
+      `expected ${JSON.stringify(modelIds)} to be refused`
+    );
+});
+
 function modelProfiles(overrides = {}) {
   return {
     apiVersion: 1,
