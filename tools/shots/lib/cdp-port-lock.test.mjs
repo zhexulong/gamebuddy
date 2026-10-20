@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { test } from "node:test";
 import { acquireCdpPortLock, cdpPortLockDir, describeOwner } from "./cdp-port-lock.mjs";
 
@@ -30,6 +30,12 @@ const staleLock = (port, pid) => {
   writeFileSync(`${cdpPortLockDir(port)}/owner.json`, `${JSON.stringify({ pid, startedAtMs: Date.now() })}\n`, "utf8");
 };
 
+// The stale-lock cases exist to make the lock refuse, and the lock cannot clean up one it never claimed - so the
+// test does. Without this, every run of the suite leaves a `cdp-*.lock` directory in the kit's `.tmp`.
+const forgetStaleLock = (port) => {
+  rmSync(cdpPortLockDir(port), { recursive: true, force: true });
+};
+
 test("a browser answering the port that no run holds fails closed and names it", async () => {
   const browser = await fakeBrowser(ports.foreign);
   try {
@@ -49,6 +55,7 @@ test("a dead holder whose browser is still on the port fails closed instead of j
     await assert.rejects(() => acquireCdpPortLock({ port: ports.dead, waitMs: 500 }), /cdp_port_held_by_dead_holder/);
   } finally {
     browser.close();
+    forgetStaleLock(ports.dead);
   }
 });
 
