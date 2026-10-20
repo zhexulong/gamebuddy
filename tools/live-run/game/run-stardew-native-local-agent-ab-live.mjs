@@ -961,6 +961,9 @@ async function runAgentTurn(text, tools) {
           seconds: i,
           programStatus: status,
           agentProgramId,
+          // Submissions and what became of them. `accepted: 0` is the interesting case: the companion chose the batching
+          // path and nothing went through it.
+          programSubmissions: Object.freeze([...programSubmissions]),
           revision: client.state.snapshot?.revision,
         }),
       );
@@ -1924,11 +1927,24 @@ client.execute = async (request) => {
 // over this connection; the Agent chooses the id autonomously, so a fixed
 // programId probe can never observe it.
 let agentProgramId = null;
+// Every submission, kept as its own record: `agentProgramId` alone says a program EXISTS, not that anything ran
+// through it. Measured 2026-10-20 by an audit of the Pi session logs: one run submitted ten programs and executed
+// zero actions through them while still making 883 individual tool calls - and the run's own result could not say
+// so, because a submission left no trace in it. A path that ships and does nothing is worse than an absent one.
+const programSubmissions = [];
 const originalProgramSubmit = client.programSubmit.bind(client);
 client.programSubmit = async (program) => {
   if (program?.programId !== undefined) agentProgramId = program.programId;
   const submit = await originalProgramSubmit(program);
   if (submit?.snapshot?.programId !== undefined) agentProgramId = submit.snapshot.programId;
+  programSubmissions.push(
+    Object.freeze({
+      programId: program?.programId ?? null,
+      code: submit?.code ?? null,
+      // `accepted` means the Mod took it; nothing here claims a node ran.
+      accepted: submit?.code === "accepted",
+    }),
+  );
   console.error("AGENT_PROGRAM_SUBMIT", JSON.stringify({ programId: agentProgramId, code: submit?.code }));
   return submit;
 };

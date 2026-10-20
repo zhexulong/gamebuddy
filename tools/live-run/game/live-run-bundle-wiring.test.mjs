@@ -241,4 +241,14 @@ test("both result paths carry the run window, so the tail is measurable even whe
     assert.match(block, /endedAtMs: Date\.now\(\),/u, `${marker} must carry the end`);
   }
   assert.match(SOURCE, /runStartedAtMs: Date\.now\(\)/u, "the phase clock is the start the results publish");
+  test("every program submission is recorded, because a shipped path that runs nothing must be visible", () => {
+    // Measured 2026-10-20 by an audit of the Pi session logs: one run submitted ten programs, executed zero actions
+    // through them, and its result said nothing about it - `agentProgramId` only ever proves a program EXISTS. The
+    // falsifier is the shape: a submissions array beside it, with the code and whether the Mod accepted each one.
+    assert.match(SOURCE, /const programSubmissions = \[\];/);
+    assert.match(SOURCE, /programSubmissions\.push\(/);
+    assert.match(SOURCE, /programSubmissions: Object\.freeze\(\[\.\.\.programSubmissions\]\)/);
+    // Recording must not be able to claim an execution nobody observed.
+    assert.match(SOURCE, /accepted: submit\?\.code === "accepted"/);
+  });
 });
