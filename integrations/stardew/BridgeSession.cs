@@ -758,6 +758,17 @@ string? bodyProgramUnavailableReason = null,
         if (!this.TryExecute(held.Generation, rebased, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
             || response is null)
         {
+            // The body went back to being held between this park resolving and the dispatch, so the admission parked it
+            // AGAIN and answered with the marker. That is not a failure to report: the request is still being waited on,
+            // and this bridge keeps owning it until a later tick dispatches it - or until the bounded window passes,
+            // which answers the SAME named refusal the caller would have seen without a park at all. Measured 2026-10-20
+            // (the hold gate): answering the marker here surfaced to the Host as
+            // `bridge_rejected:held_awaiting_actionability`.
+            if (string.Equals(reasonCode, ExecutionManager.HeldRequestMarker, StringComparison.Ordinal))
+            {
+                this.heldExecutions[requestId] = held;
+                return;
+            }
             this.EnqueueHeldExecutionResponse(held, this.CreateError(held.Envelope.CorrelationId, reasonCode));
             return;
         }
