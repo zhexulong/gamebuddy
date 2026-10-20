@@ -780,9 +780,24 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private static string OwnerToken(string? value) => string.IsNullOrEmpty(value) ? "unknown" : value;
 
     /// <summary>Mints the named body-exclusivity refusal through the single owner describer.</summary>
+    ///
+    /// One ownership is parked instead of refused: an in-flight local move. It is the only body-ownership that clears on
+    /// its own inside the bounded window - the owner table itself declares it interruptible (<see cref="LocalMoveOwner" />)
+    /// - so a follow-up that arrives while the current move finishes waits the way a Transient animation hold does,
+    /// rather than being paid for with a model round-trip whose median is 3.4 s and whose p90 is 25 s. Measured
+    /// 2026-10-19 by the hold-absorption gate: a follow-up sent 400 ms into an in-flight move came back
+    /// `body_owned_by_movement`. Every other holder - a mount, a bus ride, an owned overnight, a day advance, the body
+    /// program - does not clear inside the window and keeps the same named refusal it always had.
+    /// </summary>
     private LocalExecutionReceipt RejectBodyOwned(string requestId, string executionId)
     {
         BodyOwner owner = this.DescribeBodyOwner();
+        if (owner.ReasonCode == BodyOwnedByMovement
+            && this.heldRequestResolver is not null
+            // A durable admission is never waited out: its tuple is journalled WITHOUT a receipt, so re-dispatching it
+            // later would read as a lost-receipt recovery rather than a first dispatch.
+            && !this.durableAdmissionsByRequestId.ContainsKey(requestId))
+            return this.ParkHeldRequest(requestId, executionId, LocalDispositionKind.Transient, owner.ReasonCode, owner.Evidence);
         return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, owner.ReasonCode, owner.Evidence);
     }
 

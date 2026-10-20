@@ -746,7 +746,16 @@ string? bodyProgramUnavailableReason = null,
         // The body is free: the request is dispatched through the path it arrived on, so the freshness,
         // deadline, capability, routing and admission checks all run again at THIS moment. Nothing is
         // replayed and nothing is relaxed - the action had not started.
-        if (!this.TryExecute(held.Generation, held.Envelope, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
+        //
+        // Its freshness basis is re-based to the world as it is NOW. The action never started, so waiting is not a
+        // replay - and the alternative is exactly what the hold gate's first live run showed: a parked follow-up came
+        // back `stale_snapshot` because the revision it carried had moved on while it waited (measured 2026-10-20, 475 ms
+        // in flight). The checks still run at this moment; they run against the revision the world has.
+        BridgeEnvelope<BridgeExecutionRequest> rebased = held.Envelope with
+        {
+            Payload = held.Envelope.Payload with { ExpectedRevision = this.executions.Revision },
+        };
+        if (!this.TryExecute(held.Generation, rebased, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
             || response is null)
         {
             this.EnqueueHeldExecutionResponse(held, this.CreateError(held.Envelope.CorrelationId, reasonCode));
