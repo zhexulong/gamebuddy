@@ -270,6 +270,17 @@ const forceLongPreview = () => {
   return forced;
 };
 
+/** The same snapshot with the per-mount opaque handles removed, for comparisons across a re-mount. */
+function withoutHandles(snapshot) {
+  return {
+    durable: {
+      ...snapshot.durable,
+      transcript: (snapshot.durable?.transcript ?? []).map(({ handle: _handle, ...rest }) => rest),
+    },
+    dom: (snapshot.dom ?? []).map(({ handle: _handle, ...rest }) => rest),
+  };
+}
+
 /** What actually differs between two mounted snapshots, in one line - or "identical". */
 function snapshotDifference(before, after) {
   const parts = [];
@@ -529,12 +540,16 @@ function snapshotDifference(before, after) {
     }
     const snapshotAfterBack = await mountedSnapshot(page);
     assertClaim("the row this driver started on is the mounted one again", backSelected);
+    // **Content**, not bytes: selecting a row is a re-mount, and a message handle is minted by the mount's own
+    // projection (`lease.browserProjection.projectMessageHandle`, `chat-pipeline-service.ts:496`) - so the same
+    // message carries a different handle after every re-mount, by design. The first run of this claim failed on
+    // exactly that (`transcript[0] handle: "LWIK-Fgn…" -> "0qd00-YR…"`) and on nothing else, which is what says
+    // the content is what this claim is about. The archive below runs without a re-mount, so it keeps the
+    // byte-for-byte form.
     assertClaim(
-      "the mount is the Chat this driver started on, byte-identical to the snapshot taken before the rename",
-      JSON.stringify(snapshotAfterBack) === JSON.stringify(snapshotBefore),
-      // Name the difference, not the two whole snapshots: a claim that only says "false" leaves the next
-      // reader re-deriving what moved, and the first failure of this claim in the real run could not be read.
-      snapshotDifference(snapshotBefore, snapshotAfterBack),
+      "the mount is the same Chat with the same content after coming back to it (handles are per-mount)",
+      JSON.stringify(withoutHandles(snapshotAfterBack)) === JSON.stringify(withoutHandles(snapshotBefore)),
+      snapshotDifference(withoutHandles(snapshotBefore), withoutHandles(snapshotAfterBack)),
     );
 
     // === ITEM: archive the spare, from the list, while the mount is the row this driver started on ===
