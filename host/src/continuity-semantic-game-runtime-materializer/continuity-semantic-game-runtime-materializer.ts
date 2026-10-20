@@ -829,6 +829,7 @@ async function createMaterializedGameRuntime(
   });
   const assembledProfile = context.profile;
   const assembledWorldBook = context.worldBook;
+  const assembledScenario = context.scenario;
   const turnTracker = new GameTurnLineageTracker();
   const presentationLocale = companionLocale;
   const hostBindingFactory = (handle: Readonly<{ interruption: CompanionInterruption }>) => {
@@ -876,9 +877,10 @@ async function createMaterializedGameRuntime(
   );
   // The Game surface carries the same reviewed companion the Chat surface
   // does. Its reviewed always-on WorldBook is a Tier 2 m[0] stable source
-  // (typed `lorebook_constant`), not a system-prompt blob and not a lookup the
-  // model must remember: it shares the prefix cache with the rest of m[0].
-  // Publication is process-local and keyed by the exact Pi session; the
+  // (typed `lorebook_constant`), and the companion's own scenario rides the
+  // same tier (typed `scenario`): neither is a system-prompt blob or a lookup
+  // the model must remember, and both share the prefix cache with the rest of
+  // m[0]. Publication is process-local and keyed by the exact Pi session; the
   // returned clear is registered with the runtime disposal so a closed Game
   // session leaves no authored materialization behind.
   //
@@ -888,7 +890,7 @@ async function createMaterializedGameRuntime(
   // them reach this surface at all. Without the retained capability the published
   // volatile candidates would sit in the registry with no one to select them.
   const authoredContext =
-    assembledWorldBook === undefined
+    assembledWorldBook === undefined && assembledScenario === undefined
       ? undefined
       : await (async (): Promise<
           import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability
@@ -905,9 +907,14 @@ async function createMaterializedGameRuntime(
               canonicalHash: profileMetadata.canonicalHash,
             }),
           });
-          const catalog = buildGameSurfaceAuthoredCatalog(scope, assembledWorldBook, {
-            char: runtime.profile.identity.name,
-          });
+          const catalog = buildGameSurfaceAuthoredCatalog(
+            scope,
+            assembledWorldBook,
+            {
+              char: runtime.profile.identity.name,
+            },
+            assembledScenario,
+          );
           const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/tavern");
           try {
             return publishGameBuddyAuthoredStableCatalog(catalog.scope, catalog);

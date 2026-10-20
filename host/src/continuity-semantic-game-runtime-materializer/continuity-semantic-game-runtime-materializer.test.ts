@@ -847,8 +847,14 @@ test("Game materializer assembles canonical Game context through the tested asse
   assert.match(materializerSource, /const context = await assembleGameRuntimeContext\(\{/);
   assert.match(materializerSource, /const assembledProfile = context\.profile/);
   assert.match(materializerSource, /const assembledWorldBook = context\.worldBook/);
+  assert.match(materializerSource, /const assembledScenario = context\.scenario/);
   assert.match(materializerSource, /initialProfile: assembledProfile/);
   assert.match(materializerSource, /worldBook: assembledWorldBook/);
+  // The scenario reaches the Game catalog alongside the book: a companion whose
+  // card carries only a scenario (no character book) still publishes it.
+  assert.match(materializerSource, /assembledWorldBook === undefined && assembledScenario === undefined/);
+  assert.match(materializerSource, /buildGameSurfaceAuthoredCatalog\(/);
+  assert.match(materializerSource, /assembledScenario,\s*\)/);
   // The seam reads the same identity-profile/world-book files the Chat surface
   // consumes, and never writes (the runtime core owns default creation).
   assert.match(assemblySource, /resolveRuntimePaths\(input\.identity, input\.runtimeRoot\)/);
@@ -858,9 +864,13 @@ test("Game materializer assembles canonical Game context through the tested asse
   assert.match(assemblySource, /input\.worldBook \?\?/);
   assert.doesNotMatch(assemblySource, /writeIdentityProfile\(/);
   assert.doesNotMatch(assemblySource, /readOrCreateIdentityProfile\(/);
-  // No scenario source is ever consulted: tavern fiction cannot reach Game.
-  // (The word may appear in prose; no scenario artifact is read.)
-  assert.doesNotMatch(assemblySource, /scenario\.json|readScenario|ScenarioBinding/);
+  // The scenario IS read, but only as the companion's own durable record through
+  // the same resolver a new Chat binds - never a stray file beside the profile,
+  // never a Chat thread-scoped catalog.
+  assert.match(assemblySource, /resolveCompanionOwnScenario\(/);
+  assert.match(assemblySource, /new TavernArtifactStore\(runtimeRoot\)/);
+  assert.match(assemblySource, /resolveTavernPaths\(runtimePaths, identity\)/);
+  assert.doesNotMatch(assemblySource, /scenario\.json|materializeTavernAuthoredContextCatalog/);
 });
 
 test("Game materializer source mints origin-free receipts and exposes only close teardown", async () => {
