@@ -5396,17 +5396,20 @@
 
    Measured, mounted, at 400x800: the surface's content starts at y=56 instead of
    y=119, and the first bubble at y=142 instead of y=205 - the 63 px the heading
-   and the gap spent. At 1440x900 nothing moves: the heading is still drawn, still
-   in the column, and the content still starts one `gap` below its 55 px box.
+   and the gap spent.
+
+   WIDE WINDOWS TOO (owner ruling, 2026-10-20): the AppBar's own tab already says
+   which surface you are on, so the band under it was measured as noise at 1440x900
+   as well - a 54 px box plus the column's 8 px gap above the first bubble. The rule
+   therefore is not inside a breakpoint any more, and the same 62 px comes back at
+   1440 (the scroll container reads 844 where it read 782).
 
    Appended block; the rules above are untouched.
    ========================================================================== */
 
-  @media (max-width: 480px) {
-    .surface-view > .surface-header {
-      position: absolute;
-      clip-path: inset(50%);
-    }
+  .surface-view > .surface-header {
+    position: absolute;
+    clip-path: inset(50%);
   }
 
   /* ==========================================================================

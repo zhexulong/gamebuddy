@@ -545,6 +545,7 @@ test("defect 4: the narrow window drops the heading's box and keeps the region's
     const header = document.querySelector<HTMLElement>(".surface-header")!;
     const surface = document.querySelector<HTMLElement>('[data-testid="chat-surface"]')!;
     const content = surface.querySelector<HTMLElement>(".surface-content")!;
+    const surfaceTop = Math.round(surface.getBoundingClientRect().top);
     const style = getComputedStyle(header);
     return {
       clipPath: style.clipPath,
@@ -556,6 +557,7 @@ test("defect 4: the narrow window drops the heading's box and keeps the region's
       headerTop: Math.round(header.getBoundingClientRect().top),
       contentTop: Math.round(content.getBoundingClientRect().top),
       contentClientHeight: content.clientHeight,
+      surfaceTop,
     };
   });
   const wideContentWhileDrawn = await page.evaluate(() => {
@@ -570,16 +572,24 @@ test("defect 4: the narrow window drops the heading's box and keeps the region's
   });
   const wideNamedRegions = await page.getByRole("region", { name: "聊天", exact: true }).count();
   console.log(`[defect-4 wide] ${JSON.stringify({ ...wide, namedRegions: wideNamedRegions, whileDrawn: wideContentWhileDrawn })}`);
-  expect(wide.clipPath, "a wide window still draws the heading").toBe("none");
-  expect(wide.position, "and keeps it in the column").toBe("static");
-  expect(wide.contentTop, "below its own box and the column's gap").toBe(wide.headerTop + wide.height + wide.gap);
-  expect(wide.gap, "and that gap is a real one").toBeGreaterThan(0);
+  // The ruling changed on 2026-10-20: the band is noise at every width, not only below 480 px.
+  // What this block asserted before - `clip-path: none`, `position: static`, content 782 - was the
+  // superseded premise, so it is corrected rather than deleted, and the floor it protects (the
+  // region's name, and the height the band was spending) stays measured from both sides.
+  expect(wide.clipPath, "a wide window no longer draws the band either").toBe("inset(50%)");
+  expect(wide.position, "so its box leaves the column").toBe("absolute");
+  expect(wide.gap, "the column keeps its own gap for other blocks").toBeGreaterThan(0);
   expect(wideNamedRegions, "the region answers to the surface's name at the wide width too").toBe(1);
-  expect(wide.contentClientHeight, "the capture's unmoved 782 at 1440x900").toBe(782);
   expect(
-    wideContentWhileDrawn,
-    "and the rule is above this breakpoint: the container reads the same with the heading's box put back",
-  ).toBe(wide.contentClientHeight);
+    wide.contentTop,
+    `the surface's content starts at the surface at 1440x900 too (${wide.contentTop} vs ${wide.surfaceTop})`,
+  ).toBe(wide.surfaceTop);
+  expect(wide.contentClientHeight, "the room the band and the gap were spending comes back").toBe(844);
+  expect(wideContentWhileDrawn, "and with the band put back in the column it reads 782").toBe(782);
+  expect(
+    wide.contentClientHeight - wideContentWhileDrawn,
+    "the band's 54 px box plus the column's 8 px gap",
+  ).toBe(62);
 });
 
 // --- defect 5 ----------------------------------------------------------------
