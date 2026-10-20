@@ -145,6 +145,29 @@ function rulesChecks() {
     at(stalled),
   );
 
+  // The distinction this gate exists to make: an UPPER BOUND versus an attribution. A run whose longest stretch is
+  // bounded by the run window says nothing about what the player waited through; a run whose stretch sits between two
+  // observable events names the segment, and only that number is worth optimising.
+  const bounded = analyzeSilence({
+    startedAtMs: 0,
+    endedAtMs: 90_000,
+    actions: [{ dispatchedAtMs: 5_000, settledAtMs: 5_100 }],
+  });
+  check("a_run_bounded_by_its_window_is_an_upper_bound", bounded.cause === "run_end", at(bounded));
+  const attributable = analyzeSilence({
+    startedAtMs: 0,
+    endedAtMs: 90_000,
+    actions: [
+      { dispatchedAtMs: 5_000, settledAtMs: 5_100 },
+      { dispatchedAtMs: 60_000, settledAtMs: 60_100 },
+    ],
+  });
+  check(
+    "attributable_run_names_its_segment",
+    attributable.cause === "model_wait" && attributable.longestSilentMs === 54_900,
+    at(attributable),
+  );
+
   const unmeasurable = analyzeSilence({ presentedText: [{ atMs: 5_000 }] });
   check(
     "an_unmeasurable_run_answers_null_not_zero",
