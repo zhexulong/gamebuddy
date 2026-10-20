@@ -728,6 +728,9 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // key of its own because the fixture selects its world by action - and EXPERIMENTAL because the branch is a proof of
   // the published action, not a second published action.
   respond_level_up_branch: "run-stardew-native-local-player-respond-level-up-branch-smoke.mjs",
+  // The transient body hold, live: it starts the till-soil contract and sends a follow-up while that action is in
+  // flight - the shape that used to be refused to the agent instead of being absorbed and recorded as `held_ms`.
+  hold_absorption: "run-stardew-native-local-player-hold-absorption-smoke.mjs",
   // WIA world-interruption live proofs (world-interruption-arbitration.md
   // §4.1 ② / §4.3): drive the SAME published move_to_tile action over fixtures
   // that stage a world-change mid-move, measuring that the running body loop

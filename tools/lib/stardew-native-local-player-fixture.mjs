@@ -406,6 +406,8 @@ export function fixtureActions(action) {
   // independently typed production actions.
   if (action === "clear_debris") return ["move_to_tile", "travel", "equip_tool", "clear_debris"];
   if (action === "enter_exit") return ["move_to_tile", "enter_exit"];
+  // The hold-absorption gate drives the till-soil contract and a follow-up at the same tile, so it runs in that world.
+  if (action === "hold_absorption") return ["move_to_tile", "travel", "equip_tool", "till_soil"];
   if (action === "till_soil") return ["move_to_tile", "travel", "equip_tool", "till_soil"];
   // Lane G tool-recovery chain: the same till_soil fixture (Hoe in inventory,
   // default non-Hoe current tool) drives breakpoint rejected -> equip recovery
@@ -727,6 +729,7 @@ export function fixtureScenario(actions, action) {
   // FIRST, because it is action-exact and must not be shadowed: an earlier rule keyed off the ACTION SET (these
   // actions include `advance_day` and `observe_scene`) claimed this key and armed the ordinary world, which is why the
   // milestone gate kept reporting `milestone_not_projected:0` - the fixture never armed the branch Given at all.
+  if (action === "hold_absorption") return "native_till_soil_v1";
   if (action === "respond_level_up_branch") return "native_level_up_branch_v1";
 
   // The requested harness action can select a distinct scenario for the SAME
