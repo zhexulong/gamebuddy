@@ -1290,24 +1290,50 @@ let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
  * fallback - while the process stayed alive, which points at the managed side as a whole rather than one blocked
  * thread. A thread-state census taken during the stall separates the remaining cases: every thread parked on one
  * lock (a managed deadlock), threads waiting on I/O, or a suspended runtime.
+ *
+ * Four different answers, four different values, each naming the pid it asked about: `no_game_process` (nothing to
+ * census), `pid=<id>;process_without_threads`, `pid=<id>;threads=<n>;<groups>`, and `probe_unavailable:<why>` (the
+ * query itself failing, which is NOT evidence about the world). They used to be ONE value, `unavailable` - and a
+ * real artifact shows why that was unreadable: the same tick reported `game_cpu_s=539` from the process probe beside
+ * it while the census said `unavailable`, so the reader could not tell a dead process from a threadless one from a
+ * broken query (2026-10-19, multiday_routine).
  */
 function sampleGameThreads() {
-  try {
-    const rows = execFileSync(
+  const query = () =>
+    execFileSync(
       "powershell",
       [
         "-NoProfile",
         "-Command",
         "$p = Get-Process -Name StardewModdingAPI,Stardew* -ErrorAction SilentlyContinue | Select-Object -First 1; " +
-          'if ($p) { $p.Threads | Group-Object ThreadState,WaitReason | ForEach-Object { "$($_.Count)x$($_.Name)" } } ',
+          'if ($null -ne $p) { [pscustomobject]@{ "pid" = $p.Id; "threadCount" = $p.Threads.Count; "census" = ' +
+          '(($p.Threads | Group-Object ThreadState,WaitReason | ForEach-Object { "$($_.Count)x$($_.Name)" }) -join "|") } ' +
+          "| ConvertTo-Json -Compress }",
       ],
       { encoding: "utf8", timeout: 8_000 },
     );
-    const text = rows.trim().replace(/\s+/gu, " ").slice(0, 400);
-    return text === "" ? "unavailable" : text;
-  } catch {
-    return "unavailable";
+  let rows;
+  try {
+    rows = query();
+  } catch (error) {
+    return `probe_unavailable:${String(error?.message ?? error)
+      .replace(/\s+/gu, " ")
+      .slice(0, 120)}`;
   }
+  const text = rows.trim();
+  // An empty answer is Get-Process finding nothing, which is the only reading here that says the game is not running.
+  if (text === "") return "no_game_process";
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return `probe_unavailable:unparseable_output:${text.slice(0, 120)}`;
+  }
+  const pid = Number.isInteger(parsed?.pid) ? String(parsed.pid) : "unknown";
+  const census = typeof parsed?.census === "string" ? parsed.census.trim().replace(/\s+/gu, " ") : "";
+  if (census === "") return `pid=${pid};process_without_threads`;
+  const threadCount = Number.isInteger(parsed?.threadCount) ? String(parsed.threadCount) : "unknown";
+  return `pid=${pid};threads=${threadCount};${census.slice(0, 400)}`;
 }
 
 /**

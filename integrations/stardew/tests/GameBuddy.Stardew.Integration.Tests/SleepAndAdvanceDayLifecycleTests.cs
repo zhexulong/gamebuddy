@@ -223,6 +223,65 @@ public sealed class SleepAndAdvanceDayLifecycleTests
     }
 
     [Fact]
+    public void TheArchivedPassOutLineNamesTheThreeFactsThatProducedIt()
+    {
+        // The `yielded_to_native_pass_out` trace carries these three booleans and is
+        // in memory only; the line that survives in the SMAPI log was one generic
+        // sentence, so an archived night could not name the 2:00 AM pass-out.
+        string line = SleepAndAdvanceDayLifecycle.FormatPassOutYieldLog(
+            passedOut: true,
+            spritePassingOut: false,
+            nonCancelableBarrier: false);
+
+        line.Should().Contain("passedOut=True");
+        line.Should().Contain("spritePassingOut=False");
+        line.Should().Contain("nonCancelableBarrier=False");
+        // The phase the live runner greps the Mod log for must survive in it.
+        line.Should().Contain("sleep lifecycle");
+
+        // The two cases where `passedOut` has NOT flipped yet (the faint animation,
+        // and the shared-world barrier) must read differently from the flip itself.
+        SleepAndAdvanceDayLifecycle.FormatPassOutYieldLog(
+                passedOut: false,
+                spritePassingOut: true,
+                nonCancelableBarrier: false)
+            .Should().Contain("passedOut=False;spritePassingOut=True;");
+        SleepAndAdvanceDayLifecycle.FormatPassOutYieldLog(
+                passedOut: false,
+                spritePassingOut: false,
+                nonCancelableBarrier: true)
+            .Should().Contain("spritePassingOut=False;nonCancelableBarrier=True");
+    }
+
+    [Fact]
+    public void TheYieldLogsThatFormattedLineInsteadOfAGenericSentence()
+    {
+        // Pinning the formatter alone would pass even if the log call went back to a
+        // second, generic sentence written beside it, so the call site is pinned too.
+        string source = LifecycleSource();
+        int method = source.IndexOf("private bool YieldToNativePassOut()", StringComparison.Ordinal);
+        method.Should().BeGreaterThan(0, "the pass-out yield is the thing that writes the archived line");
+        int next = source.IndexOf("internal static string FormatPassOutYieldLog", method, StringComparison.Ordinal);
+        next.Should().BeGreaterThan(method);
+        string body = source[method..next];
+
+        body.Should().Contain("monitor.Log(");
+        body.Should().Contain(
+            "FormatPassOutYieldLog(passedOut, spritePassingOut, nonCancelableBarrier)",
+            "the archived line must be the one formatted from the three observed facts");
+    }
+
+    private static string LifecycleSource()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "AGENTS.md")))
+            directory = directory.Parent;
+        if (directory is null)
+            throw new InvalidOperationException("repository root not found");
+        return File.ReadAllText(Path.Combine(directory.FullName, "integrations/stardew/SleepAndAdvanceDayLifecycle.cs"));
+    }
+
+    [Fact]
     public void ValidConfig_AcceptsAMultiplayerMinimumOfTwoFarmers()
     {
         // A co-op night must not be advanced alone, so the driver declares 2.

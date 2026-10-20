@@ -462,12 +462,28 @@ internal sealed class SleepAndAdvanceDayLifecycle
         this.trace.Add(
             $"yielded_to_native_pass_out;passedOut={passedOut};spritePassingOut={spritePassingOut};"
                 + $"nonCancelableBarrier={nonCancelableBarrier};day_before={this.dayBefore}");
+        // The trace is in memory; this line is what survives in the SMAPI log, so it has to carry the same three
+        // facts - otherwise an archived night cannot say whether the 2:00 AM pass-out owned the actor or the
+        // animation had merely started.
         this.monitor.Log(
-            "GameBuddy sleep lifecycle yielded to the native pass-out path; the lifecycle will only observe from here.",
+            FormatPassOutYieldLog(passedOut, spritePassingOut, nonCancelableBarrier),
             LogLevel.Info);
         this.phase = Phase.AwaitingPassOutPipeline;
         return true;
     }
+
+    /// <summary>
+    /// The archived wording of a pass-out yield, naming the three native facts that produced it.
+    ///
+    /// <c>yielded_to_native_pass_out</c> in <c>trace</c> carries the same names, but a trace never reaches the
+    /// archived artifacts: only this line does. It used to be one generic sentence, so a reader of the run's SMAPI
+    /// log could not tell the automatic 2:00 AM pass-out from any other yield. Built by a pure function rather than
+    /// inline so the archived text itself is pinned without a live game.
+    /// </summary>
+    internal static string FormatPassOutYieldLog(bool passedOut, bool spritePassingOut, bool nonCancelableBarrier)
+        => "GameBuddy sleep lifecycle yielded to the native pass-out path "
+            + $"(passedOut={passedOut};spritePassingOut={spritePassingOut};nonCancelableBarrier={nonCancelableBarrier}); "
+            + "the lifecycle will only observe from here.";
 
     /// <summary>
     /// The pass-out hazard predicate, separated from the live game so it can be

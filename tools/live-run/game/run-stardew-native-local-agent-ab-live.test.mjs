@@ -872,6 +872,40 @@ test("a stalled Mod heartbeat is named while it is happening, not six minutes la
   assert.match(RUNNER_SOURCE, /Unreadable is not stalled/u);
 });
 
+test("the thread census names which answer it got, and the pid it asked about", () => {
+  // Measured on 2026-10-19 (multiday_routine), in that run's own result.json: one stall line carried `game_cpu_s=539`
+  // - the process probe beside it had just found the LIVE game - and `game_threads=unavailable` next to it. Three
+  // different answers produced that one word (no process, a process with no threads, the query itself failing), so
+  // the artifact could not say which, and the reading that mattered - a live game the census could not read - was
+  // spelled exactly like a dead one. The real function is driven here against each answer.
+  let probe = () => "";
+  // The array form is the one that injects globals: the runner's module never loads here, so the probe it calls is
+  // supplied by the test.
+  const [sampleGameThreads] = extractRunnerFunction(RUNNER_SOURCE, ["sampleGameThreads"], {
+    execFileSync: (...args) => probe(...args),
+  });
+  assert.equal(sampleGameThreads(), "no_game_process", "a missing process is named, not folded into `unavailable`");
+  probe = () =>
+    JSON.stringify({
+      pid: 3124,
+      threadCount: 9,
+      census: "6xRunning,None|2xWait,UserRequest|1xWait,Unknown",
+    });
+  assert.equal(sampleGameThreads(), "pid=3124;threads=9;6xRunning,None|2xWait,UserRequest|1xWait,Unknown");
+  // A process that exists but has no threads is its own answer: it is NOT a dead game and NOT a failed query.
+  probe = () => JSON.stringify({ pid: 3124, threadCount: 0, census: "" });
+  assert.equal(sampleGameThreads(), "pid=3124;process_without_threads");
+  // A failing query says so, with the reason, because it is no evidence about the world at all.
+  probe = () => {
+    throw new Error("spawn powershell ENOENT");
+  };
+  assert.match(sampleGameThreads(), /^probe_unavailable:spawn powershell ENOENT/u);
+  probe = () => "no such process";
+  assert.match(sampleGameThreads(), /^probe_unavailable:unparseable_output:no such process/u);
+  // The runner still PUBLISHES the census in the stall line, so the four answers reach the artifact.
+  assert.match(RUNNER_SOURCE, /:game_threads=\$\{threads\}/u);
+});
+
 test("a night's terminal is read from the receipt the fact log actually holds", () => {
   // The recorded shape, verbatim from a real run's timeline.jsonl: the entry flattens the receipt's identity
   // (`reasonCode`/`requestId`/`executionId`/`evidence`) and keeps the RECEIPT ITSELF under `worldFactPayload`,
