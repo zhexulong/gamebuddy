@@ -17,26 +17,31 @@ import { runRespondLevelUpBranchSmoke } from "./run-stardew-native-local-player-
 // own gate calls), and this file is a runner: the proof lives next door, the entry point lives here.
 export { runRespondLevelUpBranchSmoke };
 
-const requested = process.env.GAMEBUDDY_LEVEL_UP_BRANCH ?? "";
-if (requested !== "a" && requested !== "b") {
-  console.error(
-    JSON.stringify({
-      scenario: "native_level_up_branch_v1",
-      state: "blocked",
-      reasonCode: `branch_not_selected:${requested === "" ? "unset" : requested}`,
-    }),
-  );
-  process.exitCode = 2;
-} else {
-  const config = await readNativeClientConfig();
-  const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
-  try {
-    const result = await runRespondLevelUpBranchSmoke(session.client, session.receipts, config, {
-      choice: requested === "a" ? "branch_a" : "branch_b",
-    });
-    console.log(JSON.stringify(result));
-    if (result.state !== "passed") process.exitCode = 2;
-  } finally {
-    session.close();
+// Gated so an IMPORT starts nothing: the runner/fixture contract imports every runner on disk, and a module that ran on
+// import would open a game session from inside a test. The driver also wants a recognisable entry point, and it is right
+// to refuse a runner that has none - "it would exit 0 while running nothing" is worse than failing.
+if (import.meta.main) {
+  const requested = process.env.GAMEBUDDY_LEVEL_UP_BRANCH ?? "";
+  if (requested !== "a" && requested !== "b") {
+    console.error(
+      JSON.stringify({
+        scenario: "native_level_up_branch_v1",
+        state: "blocked",
+        reasonCode: `branch_not_selected:${requested === "" ? "unset" : requested}`,
+      }),
+    );
+    process.exitCode = 2;
+  } else {
+    const config = await readNativeClientConfig();
+    const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
+    try {
+      const result = await runRespondLevelUpBranchSmoke(session.client, session.receipts, config, {
+        choice: requested === "a" ? "branch_a" : "branch_b",
+      });
+      console.log(JSON.stringify(result));
+      if (result.state !== "passed") process.exitCode = 2;
+    } finally {
+      session.close();
+    }
   }
 }
