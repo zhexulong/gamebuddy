@@ -9,9 +9,11 @@
  * structuring"; "end each response with a question" as the classic turnover
  * device).
  *
- * Three hard signals plus one recorded soft signal:
+ * Four hard signals plus one recorded soft signal:
  *   - summary_too_long   : more than 120 characters after trimming
  *   - step_checklist     : a "first…then/and…" step-recital pattern
+ *   - self_tag_leak      : Magic Context's `§N§` prompt self-tag, which the model
+ *                          mimics into its reply and the player must never see
  *   - unobserved_event   : asserts a specific thing the world did in response
  *                          (e.g. an NPC rejoiced, reacted, or said something)
  *                          when the receipts carry no such event. A trace shows
@@ -56,6 +58,16 @@ export function assessCompanionInteraction(text, observedEvents = []) {
   const machineTokens = trimmed.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? [];
   const constants = trimmed.match(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g) ?? [];
   if (machineTokens.length > 0 || constants.length > 0) reasons.push("machine_token_leak");
+  // Magic Context puts a `§N§` self-tag on the prompt (its own instructions tell
+  // the model to prefix every reply with one), and the model sometimes mimics it
+  // into its output - a real Game run presented "§43§ 已经进屋了，被窝那边我去占着。"
+  // to the player. It is internal prompt notation, never companion speech, and it
+  // carries no `_`, so `machine_token_leak` above cannot see it. Named on its own
+  // so a presentation that still carries the marker is a named failure, never a
+  // silent pass. The Chat row is scrubbed where it is persisted; this is the
+  // check that the Game bubble is too.
+  const selfTag = /§\d+§/.test(trimmed);
+  if (selfTag) reasons.push("self_tag_leak");
   // Asserting a specific in-world reaction that never happened. `observedEvents`
   // carries the event kinds the receipts actually prove (e.g. "npc_dialogue");
   // a narration of a concrete reaction without that evidence is fabrication.
@@ -105,6 +117,7 @@ export function assessCompanionInteraction(text, observedEvents = []) {
       ...metrics,
       hasPlayerAddress,
       claimedNpcReaction: claimsNpcReaction,
+      selfTag,
       machineTokens: Object.freeze([...machineTokens, ...constants]),
     }),
   });

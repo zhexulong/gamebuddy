@@ -34,6 +34,25 @@ export function createFarmhandPresentationEpochAdmission(
   });
 }
 
+/** One Magic Context `§N§` self-tag, with the space the model put after it. */
+const MAGIC_CONTEXT_SELF_TAG = /§\d+§\s*/g;
+
+/**
+ * Strip Magic Context's `§N§` self-tag from companion text before the player sees it.
+ *
+ * Magic Context's own instructions tell the model to prefix every reply with a `§N§`
+ * tag, and LLMs frequently mimic it into a fresh response - a real Game run presented
+ * "§43§ 已经进屋了，被窝那边我去占着。" verbatim to the player. The tag is internal
+ * prompt notation, never companion speech. The Chat row is scrubbed where it is
+ * persisted, but the Game bubble is a live projection that does not pass through that
+ * path, so this is the last Host boundary before the text lands in the bubble and the
+ * one place it is removed. It is never stripped from what the model receives: there
+ * it is Magic Context's own prompt marker and removing it changes the prompt contract.
+ */
+export function stripMagicContextSelfTag(text: string): string {
+  return text.replace(MAGIC_CONTEXT_SELF_TAG, "").trim();
+}
+
 /**
  * Narrow direct Host presentation port. It has no arbitrary transport method,
  * no action authority, and reasserts both Host admissions immediately before
@@ -77,10 +96,15 @@ export function createFarmhandCompanionPresentationPort(
       // checks its own current revision and presentation epoch on its game thread.
       admission.assertHostCurrent(admission.hostBinding);
       epoch.assertCurrent(epoch.binding);
+      // The last Host boundary before the text becomes player-visible: the Game
+      // bubble is a live projection, so the Magic Context `§N§` self-tag the model
+      // mimicked into its reply is removed here, once, for both the bubble and the
+      // companion-language hook.
+      const text = stripMagicContextSelfTag(expression.text);
       await bridge.presentCompanionText({
         expressionId: expression.expressionId,
         sourceEventId: expression.sourceEventId,
-        text: expression.text,
+        text,
         locale: expression.locale,
         expectedRevision: snapshot.revision,
         presentationEpoch: epoch.epoch,
@@ -89,7 +113,7 @@ export function createFarmhandCompanionPresentationPort(
       // throwing listener must never fail a presentation that already landed.
       if (onTextPresented !== undefined) {
         try {
-          onTextPresented(expression.text, expression.locale);
+          onTextPresented(text, expression.locale);
         } catch {
           // Presentation already committed; keep the voice lane optional.
         }

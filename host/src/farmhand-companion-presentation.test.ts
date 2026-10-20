@@ -6,6 +6,7 @@ import {
   createFarmhandCompanionPresentationPort,
   createFarmhandPresentationEpochAdmission,
   createFarmhandSystemNoticePresenter,
+  stripMagicContextSelfTag,
 } from "./farmhand-companion-presentation.js";
 import { resolveStopSystemNotice } from "./system-notices.js";
 
@@ -98,6 +99,62 @@ test("Farmhand system notice presenter binds fixed copy without relying on a cac
     text: "Generation stopped.",
     locale: "zh-TW",
   });
+});
+
+test("Farmhand presentation port strips Magic Context's §N§ self-tag before the player sees it", async () => {
+  const interruption = createCompanionInterruption();
+  const epoch = createFarmhandPresentationEpochAdmission(interruption);
+  const writes: Record<string, unknown>[] = [];
+  const presented: string[] = [];
+  const bridge = {
+    state: { snapshot: { revision: 3 } },
+    async presentCompanionText(request: Record<string, unknown>) {
+      writes.push(request);
+    },
+  };
+  const port = createFarmhandCompanionPresentationPort(bridge as never, epoch, (text) => {
+    presented.push(text);
+  });
+  // A real Game run presented this verbatim: the model mimicked the `§N§` self-tag
+  // Magic Context puts on the prompt. It is prompt notation, never companion
+  // speech, and the bubble is the last Host boundary before the player sees it.
+  await port.present(
+    {
+      surface: "game",
+      expressionId: "expression_selftag",
+      sessionId: "session_selftag",
+      sourceEventId: "source_selftag",
+      text: "§43§ 已经进屋了，被窝那边我去占着。",
+      locale: "zh-CN",
+    },
+    hostAdmission(),
+  );
+  assert.equal(writes[0]?.text, "已经进屋了，被窝那边我去占着。");
+  // The companion-language hook sees the same clean text the bubble does.
+  assert.deepEqual(presented, ["已经进屋了，被窝那边我去占着。"]);
+  // Ordinary text with no marker is passed through byte for byte.
+  await port.present(
+    {
+      surface: "game",
+      expressionId: "expression_clean",
+      sessionId: "session_clean",
+      sourceEventId: "source_clean",
+      text: "我在这里。",
+      locale: "zh-CN",
+    },
+    hostAdmission(),
+  );
+  assert.equal(writes[1]?.text, "我在这里。");
+});
+
+test("stripMagicContextSelfTag removes every §N§ marker and leaves clean text untouched", () => {
+  // A leading tag the model mimicked (the real form), a tag mid-text where the
+  // delta lane joined two pieces, and several markers in one piece.
+  assert.equal(stripMagicContextSelfTag("§43§ 已经进屋了。"), "已经进屋了。");
+  assert.equal(stripMagicContextSelfTag("利索。§43§ 已经进屋了。"), "利索。已经进屋了。");
+  assert.equal(stripMagicContextSelfTag("§1§ 早。§2§ 晚安。"), "早。晚安。");
+  // No marker: returned byte for byte, so ordinary prose is never re-written here.
+  assert.equal(stripMagicContextSelfTag("我在这里。"), "我在这里。");
 });
 
 test("Farmhand presentation port rejects a Chat-shaped expression that omits the source event", async () => {

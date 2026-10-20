@@ -12,7 +12,7 @@
  *     Game-surface conduct at `:383-390`);
  *   * two hard-signal sets — `tools/lib/companion-interaction-gate.mjs`
  *     (`summary_too_long` / `step_checklist` / `machine_token_leak` /
- *     `unobserved_event`) and `tools/lib/stardew-companion-presence-projection.mjs`
+ *     `self_tag_leak` / `unobserved_event`) and `tools/lib/stardew-companion-presence-projection.mjs`
  *     (`claimsMade` / `claimsVisible` / `claimsReceipted` plus
  *     `claim_not_visible` / `claim_unreceipted`);
  *   * the dimension names in
@@ -81,6 +81,13 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
       "Spoken text never reads machine identifiers aloud (wire action ids, reason codes, evidence keys, enum values).",
     provenance: "identity-profile.ts:387 (Game conduct: never in the game's internal language)",
     source: "companion-interaction-gate.mjs:machine_token_leak",
+  }),
+  Object.freeze({
+    id: "no_self_tag_leak",
+    class: "Invariant",
+    statement: "Spoken text never carries Magic Context's `§N§` prompt self-tag the model mimics into its reply.",
+    provenance: 'measured 2026-10-20: a Game run presented "§43§ 已经进屋了，被窝那边我去占着。" to the player',
+    source: "companion-interaction-gate.mjs:self_tag_leak",
   }),
   Object.freeze({
     id: "no_step_recital",
@@ -569,6 +576,8 @@ function reasonToObligation(reason) {
   switch (reason) {
     case "machine_token_leak":
       return "no_machine_token_leak";
+    case "self_tag_leak":
+      return "no_self_tag_leak";
     case "step_checklist":
       return "no_step_recital";
     case "unobserved_event":

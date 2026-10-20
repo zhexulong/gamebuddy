@@ -16,7 +16,9 @@ test("accepts a short emotion-first exclamation without addressing the player", 
 });
 
 test("rejects a step-by-step recital", () => {
-  const result = assessCompanionInteraction("（轻声）我在屋外找了块空地，先翻松泥土，把一颗花椰菜种子种进土里，又拎着浇水壶给它浇了水，现在等它慢慢长大。");
+  const result = assessCompanionInteraction(
+    "（轻声）我在屋外找了块空地，先翻松泥土，把一颗花椰菜种子种进土里，又拎着浇水壶给它浇了水，现在等它慢慢长大。",
+  );
   assert.equal(result.passed, false);
   assert.deepEqual(result.reasons, ["step_checklist"]);
 });
@@ -30,7 +32,8 @@ test("rejects a long broadcast-style summary even without a checklist", () => {
 });
 
 test("rejects the exact recital pattern observed in the live run", () => {
-  const observed = "都弄妥当啦——我在屋外找了块向阳的空地，先翻松泥土，把一颗花椰菜种子种进土里，又拎着浇水壶给它浇了水；现在乔迪的花椰菜就安安稳稳躺在湿润的土里等着慢慢长大，等它成熟我第一时间摘下来给她送去。";
+  const observed =
+    "都弄妥当啦——我在屋外找了块向阳的空地，先翻松泥土，把一颗花椰菜种子种进土里，又拎着浇水壶给它浇了水；现在乔迪的花椰菜就安安稳稳躺在湿润的土里等着慢慢长大，等它成熟我第一时间摘下来给她送去。";
   const result = assessCompanionInteraction(observed);
   assert.equal(result.passed, false);
   assert.ok(result.reasons.includes("step_checklist"));
@@ -69,6 +72,24 @@ test("rejects reading the receipt's wire format out loud to the player", () => {
   const constant = assessCompanionInteraction("状态是 GIFT_RECORDED，不是 QUEST_COMPLETED。", []);
   assert.equal(constant.passed, false);
   assert.ok(constant.reasons.includes("machine_token_leak"));
+});
+
+test("rejects Magic Context's §N§ prompt self-tag leaking into player speech", () => {
+  // The model mimics the `§N§` self-tag Magic Context puts on the prompt (its own
+  // instructions tell it to prefix every reply with one). A real Game run presented
+  // it verbatim: "§43§ 已经进屋了，被窝那边我去占着。". The marker carries no `_`, so
+  // machine_token_leak cannot see it; it needs its own named failure. The persistence
+  // path already scrubs the Chat row, so this is the check that a presentation still
+  // carrying it is a named failure rather than a silent pass.
+  const leaked = "§43§ 已经进屋了，被窝那边我去占着。";
+  const result = assessCompanionInteraction(leaked, []);
+  assert.equal(result.passed, false);
+  assert.ok(result.reasons.includes("self_tag_leak"));
+  assert.equal(result.metrics.selfTag, true);
+  // Ordinary prose never carries the marker, so a clean line stays clean.
+  const clean = assessCompanionInteraction("（轻声）已经进屋了，被窝那边我去占着。", []);
+  assert.equal(clean.passed, true);
+  assert.equal(clean.metrics.selfTag, false);
 });
 
 test("does not flag a player-directed line that mentions no NPC reaction", () => {
