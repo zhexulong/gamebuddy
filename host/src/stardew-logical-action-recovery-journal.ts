@@ -45,7 +45,9 @@ type AdmissionRecordWriter = (record: HostNodeAdmissionRecord) => Promise<void>;
 
 /** Test-only writer with distinct return types for the two journal owners. */
 export type StardewLogicalActionRecoveryJournalWriter = {
-  (record: StardewLogicalActionRecoveryRecord): StardewLogicalActionRecoveryRecord | Promise<StardewLogicalActionRecoveryRecord>;
+  (
+    record: StardewLogicalActionRecoveryRecord,
+  ): StardewLogicalActionRecoveryRecord | Promise<StardewLogicalActionRecoveryRecord>;
   (record: HostNodeAdmissionRecord): void | Promise<void>;
 };
 
@@ -88,6 +90,16 @@ type Document = Readonly<{
 type NormalizedOpenOptions = StardewLogicalActionRecoveryJournalOpenOptions;
 
 const FILE_NAME = "stardew-logical-action-recovery-journal.json";
+
+let documentValidationCount = 0;
+
+/**
+ * How many documents this process fully validated. The warm-cache falsifier asserts that a
+ * write over bytes this process wrote adds none, and that foreign bytes add one.
+ */
+export function recoveryJournalValidationCount(): number {
+  return documentValidationCount;
+}
 const DEFAULT_MAX_RECORDS = 256;
 const DEFAULT_MAX_BYTES = 1024 * 1024;
 const MAX_JSON_DEPTH = 32;
@@ -132,7 +144,10 @@ function makeRoom(
     if (current.records.length <= maxRecords && Buffer.byteLength(encoded, "utf8") <= maxBytes) return current;
     const victim = current.records.findIndex((record) => owesNothing(record));
     if (victim < 0) return current;
-    current = makeDocumentFrom(current, current.records.filter((_, index) => index !== victim));
+    current = makeDocumentFrom(
+      current,
+      current.records.filter((_, index) => index !== victim),
+    );
   }
 }
 
@@ -159,25 +174,43 @@ export class StardewLogicalActionRecoveryJournal {
   }
 
   /** Open the durable, bounded Host-owned journal. */
-  public static async open(options: StardewLogicalActionRecoveryJournalOpenOptions): Promise<StardewLogicalActionRecoveryJournal> {
+  public static async open(
+    options: StardewLogicalActionRecoveryJournalOpenOptions,
+  ): Promise<StardewLogicalActionRecoveryJournal> {
     const normalized = normalizeOpenOptions(options);
     const maxRecords = normalized.maxRecords ?? DEFAULT_MAX_RECORDS;
     const maxBytes = normalized.maxBytes ?? DEFAULT_MAX_BYTES;
     assertBudget(maxRecords, maxBytes);
     const path = resolve(normalized.directory, FILE_NAME);
     let document: Document;
+    // The bytes this process last wrote successfully, with the document they validated to.
+    // Every write still takes the lock and still reads the file: crash recovery and foreign
+    // writers must not be served from memory. A foreign write changes the bytes, so it can
+    // never match this entry; only a successful write of our own bytes warms it.
+    let validated: { source: string; document: Document } | undefined;
+
+    const readCurrentDocument = async (): Promise<Document> => {
+      const parsed = await readStrictJsonFile(path, maxBytes);
+      if (validated !== undefined && JSON.stringify(parsed) === validated.source) return validated.document;
+      return validateDocument(parsed, normalized, maxRecords);
+    };
+
+    const writeDocument = async (next: Document, encoded: string): Promise<void> => {
+      await atomicWriteFile(path, encoded, normalized.directory);
+      validated = { source: encoded, document: next };
+    };
 
     await withPathLock(
       path,
       async () => {
         try {
-          document = validateDocument(await readStrictJsonFile(path, maxBytes), normalized, maxRecords);
+          document = await readCurrentDocument();
         } catch (error) {
           if (!isNodeError(error) || error.code !== "ENOENT") throw error;
           document = makeDocument(normalized);
           const encoded = JSON.stringify(document);
           if (Buffer.byteLength(encoded, "utf8") > maxBytes) throw new Error("recovery_journal_budget_exceeded");
-          await atomicWriteFile(path, encoded, normalized.directory);
+          await writeDocument(document, encoded);
         }
       },
       { containmentRoot: normalized.directory },
@@ -193,7 +226,7 @@ export class StardewLogicalActionRecoveryJournal {
       await withPathLock(
         path,
         async () => {
-          const current = validateDocument(await readStrictJsonFile(path, maxBytes), normalized, maxRecords);
+          const current = await readCurrentDocument();
           const admissionRecords = [...(current.admissionRecords ?? [])];
           if (admissionRecords.some((item) => admissionKey(item.challenge) === admissionKey(record.challenge)))
             throw new Error("duplicate_node_admission_record");
@@ -204,18 +237,20 @@ export class StardewLogicalActionRecoveryJournal {
           const next = makeRoom(makeDocument(normalized, current.records, admissionRecords), maxRecords, maxBytes);
           const encoded = JSON.stringify(next);
           if (Buffer.byteLength(encoded, "utf8") > maxBytes) throw new Error("recovery_journal_budget_exceeded");
-          await atomicWriteFile(path, encoded, normalized.directory);
+          await writeDocument(next, encoded);
         },
         { containmentRoot: normalized.directory },
       );
     };
-    journal.#writeRecovery = async (record): Promise<{ saved: StardewLogicalActionRecoveryRecord; evicted: readonly string[] }> => {
+    journal.#writeRecovery = async (
+      record,
+    ): Promise<{ saved: StardewLogicalActionRecoveryRecord; evicted: readonly string[] }> => {
       let durableRecord: StardewLogicalActionRecoveryRecord | undefined;
       let evicted: readonly string[] = [];
       await withPathLock(
         path,
         async () => {
-          const current = validateDocument(await readStrictJsonFile(path, maxBytes), normalized, maxRecords);
+          const current = await readCurrentDocument();
           const records = [...current.records];
           const index = records.findIndex((item) => item.logicalActionId === record.logicalActionId);
           if (index < 0) {
@@ -238,7 +273,11 @@ export class StardewLogicalActionRecoveryJournal {
               durableRecord = record;
             }
           }
-          const next = makeRoom(makeDocument(normalized, records, current.admissionRecords ?? []), maxRecords, maxBytes);
+          const next = makeRoom(
+            makeDocument(normalized, records, current.admissionRecords ?? []),
+            maxRecords,
+            maxBytes,
+          );
           const encoded = JSON.stringify(next);
           if (next.records.length > maxRecords || Buffer.byteLength(encoded, "utf8") > maxBytes) {
             throw new Error("recovery_journal_budget_exceeded");
@@ -247,7 +286,7 @@ export class StardewLogicalActionRecoveryJournal {
           // holds, so memory and disk cannot disagree about what the journal contains.
           const kept = new Set(next.records.map((item) => item.logicalActionId));
           evicted = records.filter((item) => !kept.has(item.logicalActionId)).map((item) => item.logicalActionId);
-          await atomicWriteFile(path, encoded, normalized.directory);
+          await writeDocument(next, encoded);
         },
         { containmentRoot: normalized.directory },
       );
@@ -266,7 +305,9 @@ export class StardewLogicalActionRecoveryJournal {
     return this.#nextDispatchOrdinal++;
   }
 
-  public prepare(record: Omit<StardewLogicalActionRecoveryRecord, "state">): Promise<StardewLogicalActionRecoveryRecord> {
+  public prepare(
+    record: Omit<StardewLogicalActionRecoveryRecord, "state">,
+  ): Promise<StardewLogicalActionRecoveryRecord> {
     assertRecord({ ...record, state: "prepared" });
     const prepared = freezeRecord({ ...record, state: "prepared" });
     return this.#enqueue(async () => {
@@ -330,7 +371,8 @@ export class StardewLogicalActionRecoveryJournal {
   public recoverableRecords(): readonly StardewLogicalActionRecoveryRecord[] {
     return Object.freeze(
       [...this.#records.values()].filter(
-        (record) => record.state === "prepared" || record.state === "sent_unknown" || record.state === "recovery_pending",
+        (record) =>
+          record.state === "prepared" || record.state === "sent_unknown" || record.state === "recovery_pending",
       ),
     );
   }
@@ -411,8 +453,7 @@ export class StardewLogicalActionRecoveryJournal {
       if (record === undefined) continue;
       this.#records.delete(id);
       if (this.#requestIds.get(record.requestId) === id) this.#requestIds.delete(record.requestId);
-      if (this.#idempotencyKeys.get(record.idempotencyKey) === id)
-        this.#idempotencyKeys.delete(record.idempotencyKey);
+      if (this.#idempotencyKeys.get(record.idempotencyKey) === id) this.#idempotencyKeys.delete(record.idempotencyKey);
       if (this.#dispatchOrdinals.get(record.dispatchOrdinal) === id)
         this.#dispatchOrdinals.delete(record.dispatchOrdinal);
     }
@@ -505,15 +546,21 @@ function makeDocumentFrom(
 }
 
 function validateDocument(value: unknown, options: NormalizedOpenOptions, maxRecords: number): Document {
+  documentValidationCount += 1;
   if (
     !isRecord(value) ||
     value.schemaVersion !== 1 ||
-     !Array.isArray(value.records) ||
-     (value.admissionRecords !== undefined && !Array.isArray(value.admissionRecords)) ||
-     value.records.length > maxRecords ||
+    !Array.isArray(value.records) ||
+    (value.admissionRecords !== undefined && !Array.isArray(value.admissionRecords)) ||
+    value.records.length > maxRecords ||
     !isOptionalJsonRecord(value.scope) ||
     !sameOptional(value.scope, options.scope) ||
-     !exactKeys(value, ["schemaVersion", "records", ...(options.scope === undefined ? [] : ["scope"]), ...(value.admissionRecords === undefined ? [] : ["admissionRecords"])])
+    !exactKeys(value, [
+      "schemaVersion",
+      "records",
+      ...(options.scope === undefined ? [] : ["scope"]),
+      ...(value.admissionRecords === undefined ? [] : ["admissionRecords"]),
+    ])
   ) {
     throw new Error("invalid_recovery_journal_document");
   }
@@ -744,15 +791,29 @@ function isHostNodeAdmissionRecord(value: unknown): value is HostNodeAdmissionRe
 }
 
 function assertAdmissionRecord(record: HostNodeAdmissionRecord): void {
-  if (!isRecord(record) || !exactKeys(record, ["challenge", "state", ...(record.grant === undefined ? [] : ["grant"]), ...(record.rejectionCode === undefined ? [] : ["rejectionCode"])]))
+  if (
+    !isRecord(record) ||
+    !exactKeys(record, [
+      "challenge",
+      "state",
+      ...(record.grant === undefined ? [] : ["grant"]),
+      ...(record.rejectionCode === undefined ? [] : ["rejectionCode"]),
+    ])
+  )
     throw new Error("invalid_recovery_journal_record");
   assertNodeAdmissionChallenge(record.challenge);
   if (!HOST_NODE_ADMISSION_STATES.includes(record.state)) throw new Error("invalid_recovery_journal_record");
   if (record.state === "grant_issued") {
-    if (record.grant === undefined || record.rejectionCode !== undefined) throw new Error("invalid_recovery_journal_record");
+    if (record.grant === undefined || record.rejectionCode !== undefined)
+      throw new Error("invalid_recovery_journal_record");
     assertHostAdmissionGrant(record.grant);
-    if (!sameAdmissionChallenge(grantChallenge(record.grant), record.challenge)) throw new Error("invalid_recovery_journal_record");
-  } else if (record.grant !== undefined || (record.state === "admission_rejected" && !validText(record.rejectionCode ?? "")) || (record.state !== "admission_rejected" && record.rejectionCode !== undefined)) {
+    if (!sameAdmissionChallenge(grantChallenge(record.grant), record.challenge))
+      throw new Error("invalid_recovery_journal_record");
+  } else if (
+    record.grant !== undefined ||
+    (record.state === "admission_rejected" && !validText(record.rejectionCode ?? "")) ||
+    (record.state !== "admission_rejected" && record.rejectionCode !== undefined)
+  ) {
     throw new Error("invalid_recovery_journal_record");
   }
 }
@@ -779,12 +840,7 @@ function grantChallenge(grant: BodyNodeAdmissionGrant): BodyNodeAdmissionChallen
 function admissionKey(challenge: BodyNodeAdmissionChallenge): string {
   // JSON encodes each string independently, so permitted NULs cannot shift a
   // delimiter boundary or make distinct controller-named tuples collide.
-  return JSON.stringify([
-    challenge.programId,
-    challenge.nodeId,
-    challenge.nodeAttempt,
-    challenge.admissionAttempt,
-  ]);
+  return JSON.stringify([challenge.programId, challenge.nodeId, challenge.nodeAttempt, challenge.admissionAttempt]);
 }
 function sameAdmissionChallenge(left: BodyNodeAdmissionChallenge, right: BodyNodeAdmissionChallenge): boolean {
   return sameOptional(left, right);

@@ -10,13 +10,36 @@ import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 import {
   StardewLogicalActionRecoveryJournal,
+  recoveryJournalValidationCount,
   type HostNodeAdmissionRecord,
 } from "./stardew-logical-action-recovery-journal.js";
+import { readStrictJsonFile } from "./strict-json-reader.js";
 import { HostNodeAdmissionService } from "./action-execution-coordinator.internal.js";
 import { validateBodyNodeAdmissionPayload, type BodyNodeAdmissionChallenge } from "./protocol.js";
 
 type R = Parameters<StardewLogicalActionRecoveryJournal["prepare"]>[0];
-const record = (id = "logical-1"): R => ({ logicalActionId: id, dispatchOrdinal: 1, ownerId: "owner", epoch: 2, requestId: `request-${id}`, idempotencyKey: `key-${id}`, actionId: "move_to_tile", canonicalArgs: { x: 1, y: 2 }, canonicalRequest: { requestId: `request-${id}`, idempotencyKey: `key-${id}`, action: "move_to_tile", args: { x: 1, y: 2 }, expectedRevision: 3, deadlineMs: 9999 }, expectedRevision: 3, deadlineMs: 9999, scope: { save: "s" }, bindingIdentity: { binding: "b" } });
+const record = (id = "logical-1"): R => ({
+  logicalActionId: id,
+  dispatchOrdinal: 1,
+  ownerId: "owner",
+  epoch: 2,
+  requestId: `request-${id}`,
+  idempotencyKey: `key-${id}`,
+  actionId: "move_to_tile",
+  canonicalArgs: { x: 1, y: 2 },
+  canonicalRequest: {
+    requestId: `request-${id}`,
+    idempotencyKey: `key-${id}`,
+    action: "move_to_tile",
+    args: { x: 1, y: 2 },
+    expectedRevision: 3,
+    deadlineMs: 9999,
+  },
+  expectedRevision: 3,
+  deadlineMs: 9999,
+  scope: { save: "s" },
+  bindingIdentity: { binding: "b" },
+});
 const admissionRecord = (id: string, ownerId: string, epoch: number, binding: string, dispatchOrdinal: number): R => ({
   ...record(id),
   ownerId,
@@ -26,11 +49,18 @@ const admissionRecord = (id: string, ownerId: string, epoch: number, binding: st
 });
 const options = (directory: string) => ({ directory, scope: { save: "s" } });
 const nodeChallenge = (overrides: Partial<BodyNodeAdmissionChallenge> = {}): BodyNodeAdmissionChallenge => ({
-  programId: "program_01", nodeId: "node_01", nodeAttempt: 1, admissionAttempt: 1,
-  stopEpoch: 1, catalogRevision: 11, policyIdentity: { value: "mod-policy_01", capabilityRevision: 7 },
+  programId: "program_01",
+  nodeId: "node_01",
+  nodeAttempt: 1,
+  admissionAttempt: 1,
+  stopEpoch: 1,
+  catalogRevision: 11,
+  policyIdentity: { value: "mod-policy_01", capabilityRevision: 7 },
   actionId: "move_to_tile",
   canonicalBoundArgs: { x: { type: "integer", canonicalValue: "1" }, y: { type: "integer", canonicalValue: "2" } },
-  derivedResourceClaims: { actor: "embodied_actor" }, deadlineMs: 9_999, ...overrides,
+  derivedResourceClaims: { actor: "embodied_actor" },
+  deadlineMs: 9_999,
+  ...overrides,
 });
 const nodeAdmissionRecord = (
   challenge: BodyNodeAdmissionChallenge = nodeChallenge(),
@@ -38,11 +68,13 @@ const nodeAdmissionRecord = (
 ): HostNodeAdmissionRecord => ({
   challenge,
   state: "grant_issued",
-    grant: {
-      ...challenge,
-      grantId, attachmentGeneration: "attachment_01", policyRevision: "host-policy_01",
-      executionBinding: null,
-    },
+  grant: {
+    ...challenge,
+    grantId,
+    attachmentGeneration: "attachment_01",
+    policyRevision: "host-policy_01",
+    executionBinding: null,
+  },
 });
 async function root() {
   const parent = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
@@ -52,7 +84,17 @@ async function root() {
 
 test("prepare is durable before return and reopens exact pending material", async () => {
   const dir = await root();
-  try { const j = await StardewLogicalActionRecoveryJournal.open(options(dir)); const saved = await j.prepare(record()); assert.deepEqual(saved, j.record("logical-1")); await j.close(); const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir)); assert.deepEqual(reopened.record("logical-1"), saved); assert.equal(reopened.recoverableRecords().length, 1); } finally { await rm(dir, { recursive: true, force: true }); }
+  try {
+    const j = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    const saved = await j.prepare(record());
+    assert.deepEqual(saved, j.record("logical-1"));
+    await j.close();
+    const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    assert.deepEqual(reopened.record("logical-1"), saved);
+    assert.equal(reopened.recoverableRecords().length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("stable scope reopens across Host lifecycles while retaining historical owners and epochs", async () => {
@@ -76,7 +118,17 @@ test("stable scope reopens across Host lifecycles while retaining historical own
 
 test("transitions survive reopen", async () => {
   const dir = await root();
-  try { const j = await StardewLogicalActionRecoveryJournal.open(options(dir)); await j.prepare(record()); await j.markSentUnknown("logical-1"); await j.markRecoveryPending("logical-1"); await j.close(); const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir)); assert.equal(reopened.record("logical-1")?.state, "recovery_pending"); } finally { await rm(dir, { recursive: true, force: true }); }
+  try {
+    const j = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    await j.prepare(record());
+    await j.markSentUnknown("logical-1");
+    await j.markRecoveryPending("logical-1");
+    await j.close();
+    const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    assert.equal(reopened.record("logical-1")?.state, "recovery_pending");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("historical binding identities coexist and remain immutable across transitions", async () => {
@@ -103,13 +155,33 @@ test("malformed, duplicate, schema and scope data fail closed", async () => {
   const dir = await root();
   try {
     const path = join(dir, "stardew-logical-action-recovery-journal.json");
-    await writeFile(path, "{\"schemaVersion\":99}"); await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)));
-    await writeFile(path, "not-json"); await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)));
-    await writeFile(path, JSON.stringify({ schemaVersion: 1, ownerId: "owner", epoch: 2, scope: { save: "s" }, records: [] }));
-    await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)), /invalid_recovery_journal_document/);
-    await writeFile(path, JSON.stringify({ schemaVersion: 1, scope: { save: "s" }, records: [{ ...record(), canonicalArgs: { x: 9, y: 2 } }] }));
-    await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)), /invalid_recovery_journal_record/);
-  } finally { await rm(dir, { recursive: true, force: true }); }
+    await writeFile(path, '{"schemaVersion":99}');
+    await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)));
+    await writeFile(path, "not-json");
+    await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)));
+    await writeFile(
+      path,
+      JSON.stringify({ schemaVersion: 1, ownerId: "owner", epoch: 2, scope: { save: "s" }, records: [] }),
+    );
+    await assert.rejects(
+      () => StardewLogicalActionRecoveryJournal.open(options(dir)),
+      /invalid_recovery_journal_document/,
+    );
+    await writeFile(
+      path,
+      JSON.stringify({
+        schemaVersion: 1,
+        scope: { save: "s" },
+        records: [{ ...record(), canonicalArgs: { x: 9, y: 2 } }],
+      }),
+    );
+    await assert.rejects(
+      () => StardewLogicalActionRecoveryJournal.open(options(dir)),
+      /invalid_recovery_journal_record/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("admission payload validation is independent of envelope scope", async () => {
@@ -124,20 +196,24 @@ test("admission payload validation is independent of envelope scope", async () =
 
 test("JSON-owned __proto__ admission map keys fail validation before journal canonicalization", async () => {
   const challenges: BodyNodeAdmissionChallenge[] = [
-    JSON.parse(JSON.stringify({
-      ...nodeChallenge(),
-      canonicalBoundArgs: Object.fromEntries([
-        ["__proto__", { type: "string", canonicalValue: "identity-loss" }],
-        ["x", { type: "integer", canonicalValue: "1" }],
-      ]),
-    })),
-    JSON.parse(JSON.stringify({
-      ...nodeChallenge(),
-      derivedResourceClaims: Object.fromEntries([
-        ["__proto__", "forged_claim"],
-        ["actor", "embodied_actor"],
-      ]),
-    })),
+    JSON.parse(
+      JSON.stringify({
+        ...nodeChallenge(),
+        canonicalBoundArgs: Object.fromEntries([
+          ["__proto__", { type: "string", canonicalValue: "identity-loss" }],
+          ["x", { type: "integer", canonicalValue: "1" }],
+        ]),
+      }),
+    ),
+    JSON.parse(
+      JSON.stringify({
+        ...nodeChallenge(),
+        derivedResourceClaims: Object.fromEntries([
+          ["__proto__", "forged_claim"],
+          ["actor", "embodied_actor"],
+        ]),
+      }),
+    ),
   ];
 
   for (const challenge of challenges) {
@@ -159,13 +235,15 @@ test("JSON-owned __proto__ admission map keys fail validation before journal can
 
 test("admissionRecord rejects a JSON-owned __proto__ challenge before replay lookup", async () => {
   const validChallenge = nodeChallenge();
-  const maliciousChallenge: BodyNodeAdmissionChallenge = JSON.parse(JSON.stringify({
-    ...validChallenge,
-    canonicalBoundArgs: Object.fromEntries([
-      ...Object.entries(validChallenge.canonicalBoundArgs),
-      ["__proto__", { type: "string", canonicalValue: "identity-loss" }],
-    ]),
-  }));
+  const maliciousChallenge: BodyNodeAdmissionChallenge = JSON.parse(
+    JSON.stringify({
+      ...validChallenge,
+      canonicalBoundArgs: Object.fromEntries([
+        ...Object.entries(validChallenge.canonicalBoundArgs),
+        ["__proto__", { type: "string", canonicalValue: "identity-loss" }],
+      ]),
+    }),
+  );
   assert.equal(Object.hasOwn(maliciousChallenge.canonicalBoundArgs, "__proto__"), true);
   assert.notEqual(validateBodyNodeAdmissionPayload(maliciousChallenge), null);
 
@@ -222,7 +300,11 @@ test("rejected admission persists and reopens as a terminal transport decision",
   const dir = await root();
   try {
     const journal = await StardewLogicalActionRecoveryJournal.open(options(dir));
-    const rejected = await journal.recordAdmission({ challenge: nodeChallenge(), state: "admission_rejected", rejectionCode: "policy_denied" });
+    const rejected = await journal.recordAdmission({
+      challenge: nodeChallenge(),
+      state: "admission_rejected",
+      rejectionCode: "policy_denied",
+    });
     await journal.close();
     const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
     assert.deepEqual(reopened.admissionRecord(nodeChallenge()), rejected);
@@ -235,28 +317,34 @@ test("rejected admission persists and reopens as a terminal transport decision",
 
 test("node admission persists the exact opaque Mod policy identity and rejects a mismatched grant", async () => {
   const dir = await root();
-   try {
-     const path = join(dir, "stardew-logical-action-recovery-journal.json");
-     const journal = await StardewLogicalActionRecoveryJournal.open(options(dir));
-      const admission = await journal.recordAdmission(nodeAdmissionRecord());
-     assert.deepEqual(admission.grant?.policyIdentity, { value: "mod-policy_01", capabilityRevision: 7 });
-     assert.equal(admission.grant?.catalogRevision, 11);
-     assert.notEqual(admission.grant?.catalogRevision, admission.grant?.policyIdentity.capabilityRevision);
-     const persisted = JSON.parse(await readFile(path, "utf8")) as { scope: Record<string, unknown>; admissionRecords: Array<{ challenge: Record<string, unknown> }> };
-     assert.deepEqual(persisted.scope, { save: "s" });
-     assert.equal(Object.hasOwn(persisted.admissionRecords[0]!.challenge, "scopeIdentity"), false);
-     await journal.close();
+  try {
+    const path = join(dir, "stardew-logical-action-recovery-journal.json");
+    const journal = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    const admission = await journal.recordAdmission(nodeAdmissionRecord());
+    assert.deepEqual(admission.grant?.policyIdentity, { value: "mod-policy_01", capabilityRevision: 7 });
+    assert.equal(admission.grant?.catalogRevision, 11);
+    assert.notEqual(admission.grant?.catalogRevision, admission.grant?.policyIdentity.capabilityRevision);
+    const persisted = JSON.parse(await readFile(path, "utf8")) as {
+      scope: Record<string, unknown>;
+      admissionRecords: Array<{ challenge: Record<string, unknown> }>;
+    };
+    assert.deepEqual(persisted.scope, { save: "s" });
+    assert.equal(Object.hasOwn(persisted.admissionRecords[0]!.challenge, "scopeIdentity"), false);
+    await journal.close();
 
-     const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
     assert.deepEqual(reopened.admissionRecord(nodeChallenge()), admission);
     await reopened.close();
 
-     const document = JSON.parse(await readFile(path, "utf8")) as {
-       admissionRecords: Array<{ grant?: { policyIdentity: Record<string, unknown> } }>;
-     };
-     document.admissionRecords[0]!.grant!.policyIdentity = { value: "substituted", capabilityRevision: 7 };
+    const document = JSON.parse(await readFile(path, "utf8")) as {
+      admissionRecords: Array<{ grant?: { policyIdentity: Record<string, unknown> } }>;
+    };
+    document.admissionRecords[0]!.grant!.policyIdentity = { value: "substituted", capabilityRevision: 7 };
     await writeFile(path, JSON.stringify(document));
-    await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)), /invalid_recovery_journal_record/);
+    await assert.rejects(
+      () => StardewLogicalActionRecoveryJournal.open(options(dir)),
+      /invalid_recovery_journal_record/,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -271,19 +359,32 @@ test("persisted legacy admission payload shape is rejected without migration", a
         schemaVersion: 1,
         scope: { save: "s" },
         records: [],
-        admissionRecords: [{
-          challenge: {
-            programId: "program_01", nodeId: "node_01", nodeAttempt: 1, admissionAttempt: 1,
-             stopEpoch: 1, scopeIdentity: { save: "s" }, policyIdentity: { identity: "legacy" },
-             catalogRevision: "catalog_01", actionIdentity: "move_to_tile", canonicalBoundArgs: { x: 1 },
-             derivedResourceClaims: [{ resource: "actor" }], deadlineMs: 9_999,
+        admissionRecords: [
+          {
+            challenge: {
+              programId: "program_01",
+              nodeId: "node_01",
+              nodeAttempt: 1,
+              admissionAttempt: 1,
+              stopEpoch: 1,
+              scopeIdentity: { save: "s" },
+              policyIdentity: { identity: "legacy" },
+              catalogRevision: "catalog_01",
+              actionIdentity: "move_to_tile",
+              canonicalBoundArgs: { x: 1 },
+              derivedResourceClaims: [{ resource: "actor" }],
+              deadlineMs: 9_999,
+            },
+            state: "admission_rejected",
+            rejectionCode: "policy_denied",
           },
-          state: "admission_rejected",
-          rejectionCode: "policy_denied",
-        }],
+        ],
       }),
     );
-    await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)), /invalid_recovery_journal_document|invalid_recovery_journal_record/);
+    await assert.rejects(
+      () => StardewLogicalActionRecoveryJournal.open(options(dir)),
+      /invalid_recovery_journal_document|invalid_recovery_journal_record/,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -293,15 +394,29 @@ test("duplicate logical action and request IDs are rejected", async () => {
   const j = new StardewLogicalActionRecoveryJournal();
   await j.prepare(record("logical-1"));
   await assert.rejects(() => j.prepare(record("logical-1")), /duplicate_recovery_journal_record/);
-  await assert.rejects(() => j.prepare({ ...record("logical-2"), requestId: "request-logical-1", canonicalRequest: { ...record("logical-2").canonicalRequest, requestId: "request-logical-1" } }), /duplicate_recovery_journal_record/);
+  await assert.rejects(
+    () =>
+      j.prepare({
+        ...record("logical-2"),
+        requestId: "request-logical-1",
+        canonicalRequest: { ...record("logical-2").canonicalRequest, requestId: "request-logical-1" },
+      }),
+    /duplicate_recovery_journal_record/,
+  );
 });
 
 test("open rejects a changed stable scope", async () => {
   const dir = await root();
   try {
-    const j = await StardewLogicalActionRecoveryJournal.open(options(dir)); await j.prepare(record());
-    await assert.rejects(() => StardewLogicalActionRecoveryJournal.open({ ...options(dir), scope: { save: "other" } }), /invalid_recovery_journal_document/);
-  } finally { await rm(dir, { recursive: true, force: true }); }
+    const j = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    await j.prepare(record());
+    await assert.rejects(
+      () => StardewLogicalActionRecoveryJournal.open({ ...options(dir), scope: { save: "other" } }),
+      /invalid_recovery_journal_document/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("unscoped journal reopens only without a stable scope", async () => {
@@ -312,7 +427,9 @@ test("unscoped journal reopens only without a stable scope", async () => {
     const prepared = await unscoped.prepare(unscopedRecord);
     await unscoped.close();
 
-    const document = JSON.parse(await readFile(join(dir, "stardew-logical-action-recovery-journal.json"), "utf8")) as Record<string, unknown>;
+    const document = JSON.parse(
+      await readFile(join(dir, "stardew-logical-action-recovery-journal.json"), "utf8"),
+    ) as Record<string, unknown>;
     assert.equal(Object.hasOwn(document, "scope"), false);
     const reopened = await StardewLogicalActionRecoveryJournal.open({ directory: dir });
     assert.deepEqual(reopened.record(prepared.logicalActionId), prepared);
@@ -330,38 +447,67 @@ test("two open instances merge durable mutations without lost updates", async ()
   try {
     const first = await StardewLogicalActionRecoveryJournal.open(options(dir));
     const second = await StardewLogicalActionRecoveryJournal.open(options(dir));
-    await Promise.all([first.prepare(record("logical-1")), second.prepare({ ...record("logical-2"), dispatchOrdinal: 2 })]);
+    await Promise.all([
+      first.prepare(record("logical-1")),
+      second.prepare({ ...record("logical-2"), dispatchOrdinal: 2 }),
+    ]);
     const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
-    assert.deepEqual(reopened.records().map((r) => r.logicalActionId).sort(), ["logical-1", "logical-2"]);
-  } finally { await rm(dir, { recursive: true, force: true }); }
+    assert.deepEqual(
+      reopened
+        .records()
+        .map((r) => r.logicalActionId)
+        .sort(),
+      ["logical-1", "logical-2"],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("close prevents mutation", async () => {
-  const j = new StardewLogicalActionRecoveryJournal(); await j.close();
+  const j = new StardewLogicalActionRecoveryJournal();
+  await j.close();
   await assert.rejects(() => j.prepare(record()), /recovery_journal_closed/);
   await assert.rejects(() => j.markSentUnknown("logical-1"), /recovery_journal_closed/);
 });
 
 test("writer failure does not create a durable recoverable entry", async () => {
   const dir = await root();
-  try { const j = new StardewLogicalActionRecoveryJournal({ write: async () => { throw new Error("disk"); } }); await assert.rejects(() => j.prepare(record())); assert.equal(j.records().length, 0); } finally { await rm(dir, { recursive: true, force: true }); }
+  try {
+    const j = new StardewLogicalActionRecoveryJournal({
+      write: async () => {
+        throw new Error("disk");
+      },
+    });
+    await assert.rejects(() => j.prepare(record()));
+    assert.equal(j.records().length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("journal document contains no receipt fields", async () => {
   const dir = await root();
-  try { const j = await StardewLogicalActionRecoveryJournal.open(options(dir)); await j.prepare(record()); const text = await readFile(join(dir, "stardew-logical-action-recovery-journal.json"), "utf8"); for (const field of ["receipt", "executionId", "body"]) assert.equal(text.includes(field), false); } finally { await rm(dir, { recursive: true, force: true }); }
+  try {
+    const j = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    await j.prepare(record());
+    const text = await readFile(join(dir, "stardew-logical-action-recovery-journal.json"), "utf8");
+    for (const field of ["receipt", "executionId", "body"]) assert.equal(text.includes(field), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
-
 
 test("duplicate idempotency keys and dispatch ordinals are rejected", async () => {
   const j = new StardewLogicalActionRecoveryJournal();
   await j.prepare(record("logical-1"));
   await assert.rejects(
-    () => j.prepare({
-      ...record("logical-2"),
-      idempotencyKey: "key-logical-1",
-      canonicalRequest: { ...record("logical-2").canonicalRequest, idempotencyKey: "key-logical-1" },
-    }),
+    () =>
+      j.prepare({
+        ...record("logical-2"),
+        idempotencyKey: "key-logical-1",
+        canonicalRequest: { ...record("logical-2").canonicalRequest, idempotencyKey: "key-logical-1" },
+      }),
     /duplicate_recovery_journal_record/,
   );
   await assert.rejects(() => j.prepare({ ...record("logical-2") }), /duplicate_recovery_journal_record/);
@@ -389,33 +535,35 @@ test("structurally valid opaque action args survive reopen without a Host action
     const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
     assert.deepEqual(reopened.record(opaque.logicalActionId), prepared);
     assert.throws(
-      () => reopened.prepare({
-        ...opaque,
-        logicalActionId: "logical-unknown-request-field",
-        requestId: "request-unknown-request-field",
-        idempotencyKey: "key-unknown-request-field",
-        canonicalRequest: {
-          ...canonicalRequest,
+      () =>
+        reopened.prepare({
+          ...opaque,
+          logicalActionId: "logical-unknown-request-field",
           requestId: "request-unknown-request-field",
           idempotencyKey: "key-unknown-request-field",
-          extra: true,
-        },
-      } as R),
+          canonicalRequest: {
+            ...canonicalRequest,
+            requestId: "request-unknown-request-field",
+            idempotencyKey: "key-unknown-request-field",
+            extra: true,
+          },
+        } as R),
       /invalid_recovery_journal_record/,
     );
     assert.throws(
-      () => reopened.prepare({
-        ...opaque,
-        logicalActionId: "logical-non-object-args",
-        requestId: "request-non-object-args",
-        idempotencyKey: "key-non-object-args",
-        canonicalRequest: {
-          ...canonicalRequest,
+      () =>
+        reopened.prepare({
+          ...opaque,
+          logicalActionId: "logical-non-object-args",
           requestId: "request-non-object-args",
           idempotencyKey: "key-non-object-args",
-          args: [],
-        },
-      } as unknown as R),
+          canonicalRequest: {
+            ...canonicalRequest,
+            requestId: "request-non-object-args",
+            idempotencyKey: "key-non-object-args",
+            args: [],
+          },
+        } as unknown as R),
       /invalid_recovery_journal_record/,
     );
   } finally {
@@ -441,7 +589,10 @@ test("unknown nested request fields and mismatched canonical args fail closed", 
         ],
       }),
     );
-    await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)), /invalid_recovery_journal_record/);
+    await assert.rejects(
+      () => StardewLogicalActionRecoveryJournal.open(options(dir)),
+      /invalid_recovery_journal_record/,
+    );
 
     await writeFile(
       path,
@@ -451,7 +602,10 @@ test("unknown nested request fields and mismatched canonical args fail closed", 
         records: [{ ...base, canonicalArgs: { x: 999, y: 2 } }],
       }),
     );
-    await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)), /invalid_recovery_journal_record/);
+    await assert.rejects(
+      () => StardewLogicalActionRecoveryJournal.open(options(dir)),
+      /invalid_recovery_journal_record/,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -493,7 +647,12 @@ test("initial document budget is enforced", async () => {
   const dir = await root();
   try {
     await assert.rejects(
-      () => StardewLogicalActionRecoveryJournal.open({ ...options(dir), maxBytes: 1024, scope: { save: "x".repeat(2000) } }),
+      () =>
+        StardewLogicalActionRecoveryJournal.open({
+          ...options(dir),
+          maxBytes: 1024,
+          scope: { save: "x".repeat(2000) },
+        }),
       /recovery_journal_budget_exceeded/,
     );
   } finally {
@@ -531,8 +690,14 @@ test("a full journal evicts settled history instead of wedging every later actio
     // Memory and disk must agree: a reopen sees exactly the same records.
     const reopened = await StardewLogicalActionRecoveryJournal.open(limits);
     assert.deepEqual(
-      reopened.records().map((item) => `${item.logicalActionId}:${item.state}`).sort(),
-      journal.records().map((item) => `${item.logicalActionId}:${item.state}`).sort(),
+      reopened
+        .records()
+        .map((item) => `${item.logicalActionId}:${item.state}`)
+        .sort(),
+      journal
+        .records()
+        .map((item) => `${item.logicalActionId}:${item.state}`)
+        .sort(),
     );
     assert.equal(reopened.record("fresh")?.state, "prepared");
     const encoded = JSON.parse(await readFile(join(dir, "stardew-logical-action-recovery-journal.json"), "utf8")) as {
@@ -579,8 +744,97 @@ test("records that still owe recovery are never evicted, and their refusal stays
   }
 });
 
+test("a document this path wrote is valid to a fresh reader", async () => {
+  const dir = await root();
+  try {
+    const journal = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    await journal.prepare(record());
+    const durable = await journal.markSentUnknown("logical-1");
+    await journal.close();
 
-type LockRequest = Readonly<{ operation: "reclaim_stale_lock" | "release_owned_lock"; token?: string; root: string; segments: readonly string[] }>;
+    // Crash recovery reads the bytes, not this process: whatever landed on disk must stand on
+    // its own for the strict reader and for the next Host lifecycle.
+    const path = join(dir, "stardew-logical-action-recovery-journal.json");
+    const source = await readFile(path, "utf8");
+    assert.deepEqual(await readStrictJsonFile(path), JSON.parse(source));
+    const freshReader = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    assert.deepEqual(freshReader.record("logical-1"), durable);
+    await freshReader.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("an illegal state transition is refused with invalid_recovery_journal_transition", async () => {
+  const dir = await root();
+  try {
+    const journal = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    await journal.prepare(record());
+    await journal.markSentUnknown("logical-1");
+    await journal.markTerminalSettled("logical-1");
+    await assert.rejects(() => journal.markRecoveryPending("logical-1"), /invalid_recovery_journal_transition/);
+    const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    assert.equal(reopened.record("logical-1")?.state, "terminal_settled");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a write that cannot fit the byte budget is refused", async () => {
+  const dir = await root();
+  try {
+    const journal = await StardewLogicalActionRecoveryJournal.open({ ...options(dir), maxBytes: 1024 });
+    await assert.rejects(
+      () => journal.prepare({ ...record(), bindingIdentity: { padding: "x".repeat(2048) } }),
+      /recovery_journal_budget_exceeded/,
+    );
+    assert.equal(journal.record("logical-1"), null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a warm journal does not re-validate its own bytes, and validates foreign bytes again", async () => {
+  const dir = await root();
+  try {
+    const path = join(dir, "stardew-logical-action-recovery-journal.json");
+    const journal = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    await journal.prepare(record("logical-1"));
+
+    const warm = recoveryJournalValidationCount();
+    await journal.markSentUnknown("logical-1");
+    assert.equal(recoveryJournalValidationCount(), warm, "a write over this process's own bytes must not re-validate");
+
+    // A foreign writer changes the bytes, so they can never be taken for ours: the next write
+    // validates them again and keeps what that writer put there.
+    const document = JSON.parse(await readFile(path, "utf8")) as { records: Array<Record<string, unknown>> };
+    document.records.push({ ...record("logical-foreign"), dispatchOrdinal: 2, state: "prepared" });
+    await writeFile(path, JSON.stringify(document));
+    const afterForeignWrite = recoveryJournalValidationCount();
+    await journal.markRecoveryPending("logical-1");
+    assert.equal(recoveryJournalValidationCount(), afterForeignWrite + 1, "foreign bytes must be validated again");
+
+    const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    assert.equal(reopened.record("logical-1")?.state, "recovery_pending");
+    assert.equal(reopened.record("logical-foreign")?.state, "prepared", "the write read the file, not memory");
+    await reopened.close();
+
+    // Foreign bytes that are no longer valid are still refused rather than served from the cache.
+    const tampered = JSON.parse(await readFile(path, "utf8")) as { records: Array<Record<string, unknown>> };
+    tampered.records.find((item) => item.logicalActionId === "logical-1")!.bindingIdentity = { binding: "tampered" };
+    await writeFile(path, JSON.stringify(tampered));
+    await assert.rejects(() => journal.markTerminalSettled("logical-1"), /invalid_recovery_journal_record/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+type LockRequest = Readonly<{
+  operation: "reclaim_stale_lock" | "release_owned_lock";
+  token?: string;
+  root: string;
+  segments: readonly string[];
+}>;
 function testLockChild(): ChildProcess {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
