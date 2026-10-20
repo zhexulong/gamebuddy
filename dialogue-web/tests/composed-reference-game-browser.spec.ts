@@ -2623,6 +2623,11 @@ test("the product Settings surface creates, tests and activates a connection who
     csrf: csrfToken,
   });
   await expect(panel.locator("[data-connection-row]")).toContainText("Ready");
+  // The test result is legible where the endpoint and model fields are, and it says how many
+  // models the endpoint offered and whether the one this record names is among them.
+  await expect(panel.locator("[data-connection-row] [data-connection-model-count]")).toHaveText(
+    "3 models offered; the one you picked is among them.",
+  );
   // The row now offers the endpoint's own listing, so the player can pick one of those instead.
   const rowModel = panel.locator(`#connection-model-${connectionId}`);
   await expect(rowModel).toBeVisible();
@@ -2663,6 +2668,9 @@ test("the product Settings surface creates, tests and activates a connection who
  * away. Here the endpoint serves three models, the form offers them beside the two
  * curated ids it marks as suggestions, a typed id that is not among them never
  * becomes ready, and picking one that is turns the same record ready.
+ *
+ * Measured at both widths: the endpoint-listing select's box and the test-result note's
+ * box, and that neither the surface nor the document overflows.
  */
 test("the endpoint's own listing is what the form offers, and a typed id it does not serve never becomes ready", async ({ page }) => {
   const connectionId = "L".repeat(42) + "A";
@@ -2803,11 +2811,19 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
     path: "/api/tavern/v1/settings/connections",
     body: { apiVersion: 1, providerId: "openai", apiKey, modelId: invented },
   });
-  // Not probed yet: no listing is claimed, so the record offers no listing select.
+  // Not probed yet: no listing is claimed, so there is neither a listing select nor a count.
+  await expect(panel.locator("[data-connection-model-count]")).toHaveCount(0);
   await expect(panel.locator(`#connection-model-${connectionId}`)).toHaveCount(0);
 
   await panel.getByRole("button", { name: "Test connection" }).click();
   await expect.poll(() => writes.length).toBe(2);
+  // The closed outcome, named at the field it is about, and the listing it was decided against.
+  await expect(panel.locator("[data-connection-failure]")).toHaveText(
+    "The endpoint did not offer the selected model.",
+  );
+  await expect(panel.locator("[data-connection-model-count]")).toHaveText(
+    `${listed.length} models offered, but not the one you picked.`,
+  );
   // The record is not ready, so it cannot be activated - the invariant the probe protects.
   await expect(panel.getByRole("button", { name: "Save and activate" })).toBeDisabled();
 
@@ -2825,18 +2841,60 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
     body: { apiVersion: 1, expectedRevision: 1, modelId: "gpt-4o-mini", thinkingLevel: "high" },
   });
 
-  // Tested again, the model the endpoint lists is ready...
+  // Tested again, the model the endpoint lists is ready, and the result says so where it stands.
   await panel.getByRole("button", { name: "Test connection" }).click();
   await expect.poll(() => writes.length).toBe(4);
   await expect(panel.locator("[data-connection-failure]")).toHaveCount(0);
+  await expect(panel.locator("[data-connection-model-count]")).toHaveText(
+    `${listed.length} models offered; the one you picked is among them.`,
+  );
   await expect(panel.getByRole("button", { name: "Save and activate" })).toBeEnabled();
 
-  // The listing select is reachable at the narrow width too, where the row wraps.
+  /** The two boxes the owner asked to be measured, plus both overflow checks. */
+  const measure = async (viewport: string) =>
+    await page.evaluate(
+      ({ connectionId, viewport }) => {
+        const surface = document.querySelector<HTMLElement>('[data-testid="settings-surface"]');
+        const box = (node: Element | null) => {
+          if (node === null) return null;
+          const box = node.getBoundingClientRect();
+          return {
+            top: Math.round(box.top),
+            left: Math.round(box.left),
+            width: Math.round(box.width),
+            height: Math.round(box.height),
+            right: Math.round(box.right),
+          };
+        };
+        return {
+          viewport,
+          select: box(surface?.querySelector(`#connection-model-${connectionId}`) ?? null),
+          note: box(surface?.querySelector("[data-connection-model-count]") ?? null),
+          surface: box(surface),
+          documentOverflows: document.documentElement.scrollWidth > window.innerWidth,
+          surfaceOverflows: surface === null ? null : surface.scrollWidth > surface.clientWidth + 1,
+        };
+      },
+      { connectionId, viewport },
+    );
+  const atWide = await measure("1440x900");
+  console.log(`[model-listing @1440x900] ${JSON.stringify(atWide)}`);
   await page.setViewportSize({ width: 400, height: 800 });
-  const narrowSelect = await panel.locator(`#connection-model-${connectionId}`).boundingBox();
-  console.log(`[model-listing @400x800] ${JSON.stringify(narrowSelect)}`);
-  expect(narrowSelect, "the listing select is rendered at 400x800").not.toBeNull();
-  expect(narrowSelect!.width, "the listing select keeps a usable width at 400x800").toBeGreaterThan(80);
+  await expect(panel.locator(`#connection-model-${connectionId}`)).toBeVisible();
+  const atNarrow = await measure("400x800");
+  console.log(`[model-listing @400x800] ${JSON.stringify(atNarrow)}`);
+
+  for (const measured of [atWide, atNarrow]) {
+    expect(measured.select, `the listing select is rendered at ${measured.viewport}`).not.toBeNull();
+    expect(measured.note, `the test-result note is rendered at ${measured.viewport}`).not.toBeNull();
+    expect(measured.select!.width, `the listing select keeps a usable width at ${measured.viewport}`).toBeGreaterThan(80);
+    expect(measured.note!.width, `the note has a width at ${measured.viewport}`).toBeGreaterThan(0);
+    expect(measured.note!.right, `the note stays inside the surface at ${measured.viewport}`).toBeLessThanOrEqual(
+      measured.surface!.right + 1,
+    );
+    expect(measured.documentOverflows, `the document does not overflow at ${measured.viewport}`).toBe(false);
+    expect(measured.surfaceOverflows, `the settings surface does not overflow at ${measured.viewport}`).toBe(false);
+  }
 });
 
 

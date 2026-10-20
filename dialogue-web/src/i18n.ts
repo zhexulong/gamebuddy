@@ -271,6 +271,10 @@ const en = {
   connectionModelSuggestionsHint:
     "Entries marked as suggestions come from GameBuddy's own catalogue. Your endpoint may serve others: type any model id it serves, and testing the connection is what proves it does.",
   connectionModelsServed: "models served by this endpoint",
+  connectionModelOffered: "Models offered",
+  connectionModelsOfferedAmong: "models offered; the one you picked is among them.",
+  connectionModelsOfferedNotAmong: "models offered, but not the one you picked.",
+  connectionTestResult: "Test result",
   connectionThinkingLevel: "Thinking level",
   connectionReadiness: "Readiness",
   connectionReadinessUnconfigured: "Not configured",
@@ -882,6 +886,10 @@ const zh: Messages = {
   connectionModelSuggestionsHint:
     "标记为建议的条目来自 GameBuddy 自带的推荐。你的端点可能还提供其他模型：直接输入它提供的任意模型 ID，测试连接即可确认。",
   connectionModelsServed: "个模型由该端点提供",
+  connectionModelOffered: "可用模型",
+  connectionModelsOfferedAmong: "个模型可选，你选的模型在其中。",
+  connectionModelsOfferedNotAmong: "个模型可选，但没有你选的那个。",
+  connectionTestResult: "测试结果",
   connectionThinkingLevel: "思考强度",
   connectionReadiness: "状态",
   connectionReadinessUnconfigured: "未配置",

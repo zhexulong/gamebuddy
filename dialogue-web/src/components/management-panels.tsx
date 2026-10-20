@@ -699,10 +699,33 @@ export function ConnectionRow({
           <dt>{labels.connectionReadiness}</dt>
           <dd>{connectionReadinessText(connection.readiness, labels)}</dd>
         </div>
+        {/*
+         * The test result, named where the endpoint and model fields it is about are. The
+         * sentence is one closed probe category (`unauthorized`, `not_found`, `invalid_response`,
+         * `not_configured`, `unreachable`, `timeout`, `invalid_endpoint`) and never provider text,
+         * because provider text never leaves the Host in the first place.
+         */}
         {failure !== null && (
           <div>
-            <dt>—</dt>
+            <dt>{labels.connectionTestResult}</dt>
             <dd data-connection-failure>{failure}</dd>
+          </div>
+        )}
+        {/*
+         * How many models the endpoint said it serves, and whether the one this record names is
+         * among them - read from the listing itself, not from the readiness flag, so it stays true
+         * on the `not_found` this fact is most useful for.
+         */}
+        {connection.modelIds !== null && (
+          <div>
+            <dt>{labels.connectionModelOffered}</dt>
+            <dd data-connection-model-count>
+              {`${connection.modelIds.length} ${
+                connection.modelIds.includes(connection.modelId)
+                  ? labels.connectionModelsOfferedAmong
+                  : labels.connectionModelsOfferedNotAmong
+              }`}
+            </dd>
           </div>
         )}
       </dl>
