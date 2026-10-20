@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { DECLARED, findDuplicatedAuthorities, formatFinding } from "./duplicated-authority.mjs";
+import { DECLARED, GATE_PATHS, findDuplicatedAuthorities, formatFinding } from "./duplicated-authority.mjs";
 
 const roots = [];
+
+/** The repository the declaration was read from, so an exemption can be checked against a real file. */
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** A throwaway repo tree whose every file is written explicitly. */
 function makeRepo(files) {
@@ -30,7 +34,7 @@ const SYNTHETIC = [
     description: "test value",
     ownerPath: "src/owner.mjs",
     valuePattern: "sentinel-value",
-    allowedOtherPaths: ["src/reader.mjs"],
+    allowedOtherPaths: [{ path: "src/reader.mjs", reason: "the synthetic reader this test declares" }],
   },
 ];
 
@@ -129,6 +133,39 @@ test("the published-action-id-list rule catches a hand-written id list, not a si
   );
   assert.equal(findings.length, 1);
 });
+
+/**
+ * Every declared exemption that points at a real file other than the gate's own
+ * two. One falsifier per exemption: the occurrence it waives must still be in
+ * that file (a stale exemption fails), and that very text one directory over
+ * must still be reported (an exemption that widened into a rule repeal fails).
+ */
+for (const { rule: declared, exemption } of DECLARED.flatMap((entry) =>
+  (entry.allowedOtherPaths ?? [])
+    .filter((candidate) => !GATE_PATHS.includes(candidate.path))
+    .map((candidate) => ({ rule: entry, exemption: candidate })),
+)) {
+  test(`an exemption is earned and scoped: ${declared.id}:${exemption.path}`, () => {
+    const absolute = join(repoRoot, exemption.path);
+    assert.ok(existsSync(absolute), `${exemption.path} is gone, so the exemption no longer earns its place`);
+    const occurrence = [...readFileSync(absolute, "utf8").matchAll(new RegExp(declared.valuePattern, "gu"))][0]?.[0];
+    assert.ok(
+      occurrence !== undefined,
+      `${exemption.path} no longer holds ${declared.id}, so the exemption no longer earns its place`,
+    );
+    assert.equal(exemption.reason.trim(), exemption.reason, `${exemption.path} needs a trimmed one-line reason`);
+    assert.ok(
+      exemption.reason.length > 0 && !exemption.reason.includes("\n"),
+      `${exemption.path} needs a one-line reason saying why the repeat is legitimate`,
+    );
+    const decoy = join(dirname(exemption.path), "unexempted-decoy.mjs");
+    const root = makeRepo({ [exemption.path]: `${occurrence}\n`, [decoy]: `${occurrence}\n` });
+    assert.deepEqual(
+      findDuplicatedAuthorities(root, [declared]).map((finding) => finding.path),
+      [decoy.split(sep).join("/")],
+    );
+  });
+}
 
 test("formatFinding prints the gate's one-line finding", () => {
   assert.equal(

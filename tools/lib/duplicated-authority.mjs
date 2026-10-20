@@ -11,12 +11,14 @@
  *   - a marker's meaning was owned by two components that disagreed.
  *
  * `DECLARED` names, per authority, the owner file, a pattern that finds the
- * literal value, and any other paths where the literal is legitimately allowed.
+ * literal value, and any other path where the literal is legitimately allowed,
+ * each carrying the one-line reason that occurrence is not a second owner.
  * `findDuplicatedAuthorities` reports every other hand-authored occurrence.
  *
  * The declaration itself is a hand-written, verified fact (see each `description`
- * for the owner it was read from). It is intentionally exempt from its own rules:
- * a gate has to spell the values it looks for.
+ * for the owner it was read from, and `duplicated-authority.test.mjs` for the
+ * falsifier that fails once an exemption stops being earned). It is intentionally
+ * exempt from its own rules: a gate has to spell the values it looks for.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -75,6 +77,15 @@ const TOKEN_CHARACTER = /[A-Za-z0-9_$-]/u;
 /** The gate's own declaration and its fixtures spell the values on purpose, so both are exempt. */
 const SELF = "tools/lib/duplicated-authority.mjs";
 const SELF_TESTS = "tools/lib/duplicated-authority.test.mjs";
+
+/** Both spell the declared values on purpose, so the exemption falsifiers do not apply to them. */
+export const GATE_PATHS = Object.freeze([SELF, SELF_TESTS]);
+
+const SELF_EXEMPTION = Object.freeze({ path: SELF, reason: "the gate has to spell the value it looks for" });
+const SELF_TESTS_EXEMPTION = Object.freeze({
+  path: SELF_TESTS,
+  reason: "the gate's falsifiers spell the value to prove the rule can fail",
+});
 
 /**
  * Every action id the Mod's `FarmhandActionCatalog.Registrations` declares
@@ -204,10 +215,14 @@ export const DECLARED = Object.freeze([
     ownerPath: "integrations/stardew/config.example.json",
     valuePattern: "gamebuddy-stardew",
     allowedOtherPaths: Object.freeze([
-      "integrations/stardew/ModConfig.cs",
-      "tools/lib/stardew-bridge-pipe.mjs",
-      SELF,
-      SELF_TESTS,
+      {
+        path: "integrations/stardew/ModConfig.cs",
+        reason:
+          "the Mod's config schema default; a config that omits PipeName makes the launcher refuse " +
+          "(bridge_pipe_name_invalid) instead of listening on this guess",
+      },
+      SELF_EXEMPTION,
+      SELF_TESTS_EXEMPTION,
     ]),
   }),
   Object.freeze({
@@ -218,7 +233,22 @@ export const DECLARED = Object.freeze([
       "told (`retry_window_ms`) drift from the wait the body loop actually performs.",
     ownerPath: "integrations/stardew/WorldModel.cs",
     valuePattern: TRANSIENT_RETRY_WINDOW_PATTERN,
-    allowedOtherPaths: Object.freeze([SELF, SELF_TESTS]),
+    allowedOtherPaths: Object.freeze([
+      {
+        path: "host/src/stardew-action-remedy.test.ts",
+        reason: "a Host test asserting the published retry_window_ms has to name the number it expects",
+      },
+      {
+        path: "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/BodyHoldAttributionTests.cs",
+        reason: "an integration test asserting the window the Mod publishes, and the owner constant itself",
+      },
+      {
+        path: "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/WorldInterruptionTests.cs",
+        reason: "an integration test asserting the published config value has to name it",
+      },
+      SELF_EXEMPTION,
+      SELF_TESTS_EXEMPTION,
+    ]),
   }),
   Object.freeze({
     id: "published-action-id-list",
@@ -230,7 +260,39 @@ export const DECLARED = Object.freeze([
       "names actions, it does not re-declare the list.",
     ownerPath: "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
     valuePattern: ACTION_ID_LIST_PATTERN,
-    allowedOtherPaths: Object.freeze([SELF, SELF_TESTS]),
+    allowedOtherPaths: Object.freeze([
+      {
+        path: "host/src/protocol.ts",
+        reason:
+          "validateExecutionRequest groups five actions that share one {x,y,expectedTargetId} shape, the same " +
+          "membership its neighbouring value.action comparisons already state: a Host argument check, not a copy " +
+          "of the published surface",
+      },
+      {
+        path: "integrations/stardew/action-development/tests/stardew-action-seam-terminals-audit.test.mjs",
+        reason: "the audit test asserts the suspect seam ids it derives, so it has to name the set it expects",
+      },
+      {
+        path: "tools/lib/stardew-native-local-player-fixture.mjs",
+        reason:
+          "each lane's Given set names the production actions that lane drives: authored intent, not a copy of " +
+          "the published surface",
+      },
+      {
+        path: "tools/run-stardew-native-local-player-stamina-recovery-chain-smoke.mjs",
+        reason: "a harness asserting the actions its chain drove has to name them",
+      },
+      {
+        path: "tools/run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs",
+        reason: "a harness asserting the actions its chain drove has to name them",
+      },
+      {
+        path: "tools/stardew-action-gate-descriptors.test.mjs",
+        reason: "a test asserting which gate descriptors expect no fixture scenario has to name the ids it derives",
+      },
+      SELF_EXEMPTION,
+      SELF_TESTS_EXEMPTION,
+    ]),
   }),
 ]);
 
@@ -338,7 +400,7 @@ export function findDuplicatedAuthorities(repoRoot, declared = DECLARED) {
   const files = listSourceFiles(repoRoot);
   for (const entry of declared) {
     const owner = toPosix(entry.ownerPath);
-    const allowed = new Set([owner, ...(entry.allowedOtherPaths ?? []).map(toPosix)]);
+    const allowed = new Set([owner, ...(entry.allowedOtherPaths ?? []).map((exemption) => toPosix(exemption.path))]);
     const pattern = new RegExp(entry.valuePattern, "gu");
     for (const file of files) {
       const path = toPosix(relative(repoRoot, file));
