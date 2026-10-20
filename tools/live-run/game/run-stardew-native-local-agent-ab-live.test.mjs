@@ -7,6 +7,9 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { resolveLiveRunRoot } from "../core/capture.mjs";
+import { validateEvidenceBundle } from "../../lib/evidence-bundle.mjs";
+import { classifyNight } from "../../lib/multiday-baseline.mjs";
+import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
 
@@ -867,4 +870,121 @@ test("a stalled Mod heartbeat is named while it is happening, not six minutes la
   );
   // An unreadable log is not a stall: no evidence must not become a verdict.
   assert.match(RUNNER_SOURCE, /Unreadable is not stalled/u);
+});
+
+test("a night's terminal is read from the receipt the fact log actually holds", () => {
+  // The recorded shape, verbatim from a real run's timeline.jsonl: the entry flattens the receipt's identity
+  // (`reasonCode`/`requestId`/`executionId`/`evidence`) and keeps the RECEIPT ITSELF under `worldFactPayload`,
+  // where its terminal `state` lives. The readers used to look for `fact.state`, which the projection never
+  // writes, so every multi-day night was recorded as `night_terminal_missing` however the Mod's own receipt
+  // read. This exercises the runner's real reader against that real shape.
+  const [, terminalReceiptFor] = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "terminalReceiptFor"], {
+    TERMINAL_STATES,
+  });
+  const ADVANCE_EVIDENCE =
+    "state=passed;reason=day_advanced;topology=single_player;entered_via=native_sleep_prompt;" +
+    "saving_observed=true;saved_observed=true;day_started_observed=true;" +
+    "day_before=5;days_before=5;day_after=6;days_after=6";
+  const advanceReceipt = {
+    executionId: "e-advance",
+    requestId: "r-advance",
+    actionId: "advance_day",
+    state: "succeeded",
+    reasonCode: "day_advanced",
+    revision: 12,
+    evidence: { detail: ADVANCE_EVIDENCE },
+  };
+  const recorded = {
+    type: "execution_receipt",
+    reasonCode: advanceReceipt.reasonCode,
+    requestId: advanceReceipt.requestId,
+    executionId: advanceReceipt.executionId,
+    evidence: advanceReceipt.evidence,
+    worldFactPayload: advanceReceipt,
+  };
+  // A night whose data carries the receipt shape crosses: the totals advance AND the world's calendar agrees.
+  const crossed = classifyNight({
+    terminal: terminalReceiptFor([recorded], recorded.requestId),
+    after: { dayOfMonth: 7, seasonIndex: 0 },
+  });
+  assert.equal(crossed.advanced, true, `expected a crossed night, got ${String(crossed.reasonCode)}`);
+  assert.equal(crossed.dayAfter, 6);
+  // A night with NO receipt is named missing, which is the half that keeps the reader from being a constant.
+  const missing = classifyNight({
+    terminal: terminalReceiptFor([{ type: "semantic_event", requestId: recorded.requestId }], recorded.requestId),
+    after: { dayOfMonth: 7, seasonIndex: 0 },
+  });
+  assert.equal(missing.advanced, false);
+  assert.equal(missing.reasonCode, "night_terminal_missing");
+  // A receipt that is still IN FLIGHT is not a terminal, and a request that never produced one stays
+  // undefined rather than being fabricated.
+  const accepted = {
+    ...recorded,
+    worldFactPayload: { ...advanceReceipt, state: "accepted", reasonCode: "accepted" },
+  };
+  assert.equal(terminalReceiptFor([accepted], accepted.requestId), undefined);
+  assert.equal(terminalReceiptFor([{ ...recorded, worldFactPayload: null }], recorded.requestId), undefined);
+});
+
+test("the run bundle publishes the crossing record, and one it cannot judge cannot refuse the manifest", () => {
+  // The gate reads `bundle.multiday`, and the bundle used to drop the runner's own crossing record, so
+  // `run_reports_a_crossing` failed on every run whatever the nights did. It is forwarded now - but only a
+  // record the bundle contract can judge (a non-empty crossings count its `dayRecords` agree with), because
+  // `writeEvidenceBundle` REFUSES a manifest whose crossings disagree with its records, and a metadata gap
+  // must not destroy the run's evidence along with it.
+  const bundleCrossingRecord = extractRunnerFunction(RUNNER_SOURCE, "bundleCrossingRecord");
+  const record = {
+    crossings: 1,
+    requestedCrossings: 1,
+    completed: true,
+    assessment: { state: "passed", ok: true },
+    dayRecords: [{ day: 1 }],
+  };
+  assert.equal(bundleCrossingRecord(record), record, "a judgeable record is published");
+  assert.equal(bundleCrossingRecord({ ...record, crossings: 0, dayRecords: [] }), null, "0 crossings is not a record");
+  assert.equal(bundleCrossingRecord({ ...record, crossings: 2 }), null, "a count its records contradict is not one");
+  assert.equal(bundleCrossingRecord(null), null);
+  const base = {
+    schemaVersion: 1,
+    run: {
+      id: "run-1",
+      scenario: "multiday_routine",
+      startedAtMs: 1,
+      durationMs: 2,
+      gitSha: "abc",
+      runtimeRoot: "D:\\root",
+    },
+    env: {
+      smapiVersion: "4.5.2",
+      gameVersion: "1.6.15",
+      os: "windows",
+      windowMode: "foreground",
+      gpu: "adapter",
+      resolution: "1920x1080",
+      saveHash: "abcd",
+      reason: null,
+    },
+    verdict: { state: "blocked", reasonCode: "multiday_routine_blocked", rubric: { broken: [], unmeasured: [] } },
+    timeline: { path: "timeline.jsonl", records: 0, sources: ["player", "smapi", "llm"] },
+    actionTrace: { path: "actionTrace.jsonl", records: 0 },
+    keyFrames: { status: "skipped", reason: "headless_environment", dir: null },
+    reclamation: { state: "unobserved", exitReason: null, steps: [], reflection: "skipped" },
+    voice: { state: "disabled", playback: "disabled", reasonCode: "voice_not_requested" },
+    failure: null,
+    repro: { command: null, expectedWallClockMs: null },
+  };
+  const codesFor = (bundle) => validateEvidenceBundle(bundle).violations.map((entry) => entry.code);
+  assert.deepEqual(codesFor({ ...base, multiday: bundleCrossingRecord(record) }), [], "a judged record is writable");
+  assert.ok(
+    codesFor({
+      ...base,
+      multiday: { crossings: 0, assessment: { state: "blocked", ok: false }, dayRecords: [] },
+    }).includes("multiday_crossings_invalid"),
+    "the raw 0-crossing record would refuse the whole manifest",
+  );
+  assert.deepEqual(
+    codesFor({ ...base, multiday: bundleCrossingRecord({ crossings: 0, dayRecords: [] }) }),
+    [],
+    "the guarded record leaves the manifest writable",
+  );
 });

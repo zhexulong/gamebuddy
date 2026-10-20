@@ -810,6 +810,31 @@ client.onFact((fact) => {
   }
 });
 
+/**
+ * The receipt a recorded bridge fact carries, read from where the fact log actually puts it.
+ *
+ * The recorder above projects an `execution_receipt` fact as `{ type, reasonCode, requestId, executionId,
+ * evidence, ..., worldFactPayload }`: the receipt's identity is flattened onto the entry, but the receipt
+ * ITSELF is kept whole under `worldFactPayload`, so its terminal `state` lives THERE and never on the entry.
+ * Reading `fact.state` therefore finds nothing - which recorded a textbook `succeeded/day_advanced` night as
+ * `night_terminal_missing` on every multi-day run, and kept every `fact.state === "succeeded"` comparison
+ * false. This is the one place a recorded receipt is read, so every caller sees the same shape.
+ */
+function recordedReceipt(fact) {
+  if (fact?.type !== "execution_receipt") return null;
+  const receipt = fact.worldFactPayload;
+  return receipt !== null && typeof receipt === "object" ? receipt : null;
+}
+
+/** The first TERMINAL receipt a recorded fact log holds for one request, or undefined when none has arrived. */
+function terminalReceiptFor(facts, requestId) {
+  for (const fact of facts ?? []) {
+    const receipt = fact?.requestId === requestId ? recordedReceipt(fact) : null;
+    if (receipt !== null && TERMINAL_STATES.has(receipt.state)) return receipt;
+  }
+  return undefined;
+}
+
 // Actions that MOVE the actor, LOOK at the world, or change only the actor's own gear.
 // A play session that did nothing but these has not played: run H attempted 14 actions,
 // got 14 refusals and one successful walk, harvested nothing, and still reported `passed`
@@ -1428,13 +1453,15 @@ function accomplishedSince(startIndex) {
       continue;
     const expected = STARDEW_PUBLISHED_ACTION_GATES.find((gate) => gate.actionId === entry.action)?.terminalReasonCode;
     if (expected === undefined) continue;
-    const terminal = factLog.find(
-      (fact) =>
-        fact.type === "execution_receipt" &&
+    const terminal = factLog.find((fact) => {
+      const receipt = recordedReceipt(fact);
+      return (
+        receipt !== null &&
         fact.requestId === entry.requestId &&
-        fact.reasonCode === expected &&
-        (fact.state === "succeeded" || fact.state === "partially_succeeded"),
-    );
+        receipt.reasonCode === expected &&
+        (receipt.state === "succeeded" || receipt.state === "partially_succeeded")
+      );
+    });
     if (terminal !== undefined) accomplished.add(entry.action);
   }
   return [...accomplished].sort();
@@ -1562,12 +1589,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       }
       const deadline = Date.now() + MULTIDAY_DISMISS_TIMEOUT_MS;
       for (;;) {
-        const terminal = factLog.find(
-          (fact) =>
-            fact.type === "execution_receipt" &&
-            fact.requestId === accepted?.requestId &&
-            TERMINAL_STATES.has(fact.state),
-        );
+        const terminal = terminalReceiptFor(factLog, accepted?.requestId);
         if (terminal !== undefined) {
           return Object.freeze({
             receipt: terminal,
@@ -1634,12 +1656,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
         }
         const deadline = Date.now() + MULTIDAY_DISMISS_TIMEOUT_MS;
         for (;;) {
-          const terminal = factLog.find(
-            (fact) =>
-              fact.type === "execution_receipt" &&
-              fact.requestId === accepted?.requestId &&
-              TERMINAL_STATES.has(fact.state),
-          );
+          const terminal = terminalReceiptFor(factLog, accepted?.requestId);
           if (terminal !== undefined) {
             return terminal.state === "succeeded" && terminal.reasonCode === "modal_dismissed"
               ? Object.freeze({ receipt: terminal, reasonCode: null })
@@ -1670,15 +1687,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   });
   // The night's own terminal: the receipt of the `advance_day` the COMPANION dispatched during this window.
   const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
-  const terminal =
-    dispatched === undefined
-      ? null
-      : (factLog.find(
-          (fact) =>
-            fact.type === "execution_receipt" &&
-            fact.requestId === dispatched.requestId &&
-            TERMINAL_STATES.has(fact.state),
-        ) ?? null);
+  const terminal = dispatched === undefined ? null : (terminalReceiptFor(factLog, dispatched.requestId) ?? null);
   if (dispatched === undefined) {
     return Object.freeze({
       terminal: null,
@@ -2991,6 +3000,22 @@ function judgeRunHistorianRubric(runtimeRoot) {
   }
 }
 
+/**
+ * The crossing record to publish in the run's evidence bundle, or null when there is none to publish.
+ *
+ * The bundle contract judges a crossing record by its own `crossings` count, so only a count that record can
+ * describe is forwarded: a non-empty count its `dayRecords` agree with. A record that fails that test is left
+ * out rather than let into the manifest, because `writeEvidenceBundle` REFUSES a bundle whose crossings
+ * disagree with its records - and a metadata gap must not destroy the run's evidence along with it.
+ */
+function bundleCrossingRecord(outcome) {
+  if (outcome === null || outcome === undefined) return null;
+  const { crossings, dayRecords } = outcome;
+  if (!Number.isInteger(crossings) || crossings < 1) return null;
+  if (!Array.isArray(dayRecords) || dayRecords.length !== crossings) return null;
+  return outcome;
+}
+
 async function writeRunBundle({
   capture,
   result,
@@ -3108,6 +3133,7 @@ async function writeRunBundle({
     },
     failure,
     repro,
+    multiday: bundleCrossingRecord(multidayOutcome),
   };
   // The timeline record COUNT is the fact log's length, so the on-disk file must match it (the validator
   // cross-checks the file against the manifest).
