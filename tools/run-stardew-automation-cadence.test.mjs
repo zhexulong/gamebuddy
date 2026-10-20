@@ -19,8 +19,10 @@ import {
   CADENCE_BLOCKS,
   CADENCE_SCHEMA,
   classifyBlock,
+  isMachineCannotHostReason,
   LADDER_SCENARIOS,
   lastJsonRecord,
+  MACHINE_CANNOT_HOST_REASONS,
   missingBlockEntries,
   parseCadenceArgs,
   planCadence,
@@ -80,7 +82,7 @@ function passingBlock(block, target) {
 }
 
 test("the cadence schema, the block table and the cadence map are the driver's own published contract", () => {
-  assert.equal(CADENCE_SCHEMA, "gamebuddy-stardew-automation-cadence/v1");
+  assert.equal(CADENCE_SCHEMA, "gamebuddy-stardew-automation-cadence/v2");
   assert.equal(ACTION_GATE_BATCH_SCHEMA, "gamebuddy-stardew-action-gate-batch/v1");
   assert.deepEqual(Object.keys(BLOCK_ENTRIES), ["b2_action_gates", "b3_companion_session", "b4_shared_world"]);
   assert.deepEqual(CADENCE_BLOCKS, {
@@ -526,6 +528,7 @@ test("a block whose entry is not wired refuses the pass before anything runs", a
   assert.equal(rollup.reasonCode, "cadence_block_entry_missing:b2_action_gates");
   assert.deepEqual(rollup.rows, []);
   assert.deepEqual(rollup.counts, { total: 0, passed: 0, blocked: 0 });
+  assert.deepEqual(rollup.unavailableBlocks, []);
   // A refused pass publishes the SAME rollup shape, scope included: a reader never has to tell a
   // refusal's shape from a pass's.
   assert.deepEqual(rollup.actionGateScope.ownedElsewhere, Object.keys(MULTIPLAYER_GATE_ACTIONS));
@@ -625,6 +628,8 @@ test("a block that reports not-passed makes the pass red and is named by the blo
   assert.deepEqual(rollup.failedBlocks, [
     { block: "b2_action_gates", target: null, reasonCode: "gate_not_passed:harvest_crop" },
   ]);
+  // A product refusal is NOT a host refusal: the run verdict stays `blocked`.
+  assert.deepEqual(rollup.unavailableBlocks, []);
   assert.deepEqual(
     rollup.rows.map((row) => [row.state, row.reasonCode, row.blockReasonCode]),
     [
@@ -719,4 +724,110 @@ test("a release pass runs every ladder scenario and both shared-world actions", 
   assert.deepEqual(rollup.actionGateScope.ownedElsewhere, Object.keys(MULTIPLAYER_GATE_ACTIONS));
   // A release pass runs a block that judges each side of the split, so it leaves nothing unjudged.
   assert.deepEqual(rollup.actionGateScope.notInThisCadence, []);
+});
+
+test("the codes that mean this machine cannot host a block are named once, each with its source file", () => {
+  // The set is the composed blocks' OWN published codes, and each names the file that throws it: the
+  // literal is there, so the set cannot go stale behind a rename.
+  assert.deepEqual(
+    MACHINE_CANNOT_HOST_REASONS.map((entry) => entry.reasonCode),
+    ["game_path_missing_smapi", "multiplayer_gate_smapi_missing", "multiplayer_gate_release_missing"],
+  );
+  for (const entry of MACHINE_CANNOT_HOST_REASONS) {
+    assert.equal(isMachineCannotHostReason(entry.reasonCode), true, `${entry.reasonCode} must be a host code`);
+    const source = readFileSync(new URL(`../${entry.source}`, import.meta.url), "utf8");
+    assert.match(
+      source,
+      new RegExp(`\\b${entry.reasonCode}\\b`, "u"),
+      `${entry.source} must still carry ${entry.reasonCode}`,
+    );
+  }
+  // A product refusal, a harness timeout and a missing verdict are NOT host facts - and null is not one.
+  for (const code of [
+    "gate_not_passed:harvest_crop",
+    "gate_result_not_passed",
+    "cadence_block_timeout",
+    "cadence_block_verdict_missing",
+    "cadence_block_exit:2",
+    null,
+  ])
+    assert.equal(isMachineCannotHostReason(code), false, `${code} must not be read as a host fact`);
+});
+
+test("a machine that cannot host a block reads unavailable, and the block's own code names why", async () => {
+  const { args, env } = cadenceRequest({
+    runDir: mkdtempSync(join(tmpdir(), "cadence-unavailable-")),
+    blocks: ["b2_action_gates", "b3_companion_session"],
+    scenario: "morning_routine",
+  });
+  const { rollup, exitCode } = await runCadence({
+    argv: args,
+    env,
+    runBlock: async ({ block }) =>
+      block === "b2_action_gates"
+        ? // The batch's own refusal, exactly as its CLI publishes it when <game-path>\StardewModdingAPI.exe is absent.
+          {
+            exitCode: 1,
+            timedOut: false,
+            stdout: `${JSON.stringify({ schema: ACTION_GATE_BATCH_SCHEMA, state: "blocked", reasonCode: "game_path_missing_smapi" })}\n`,
+            stderr: "",
+          }
+        : // The ladder died before it wrote a result: a missing verdict, NOT a host code.
+          { exitCode: 1, timedOut: false, stdout: "", stderr: "no native-local binding\n" },
+  });
+
+  // The run verdict is the distinct one, and it names the block this machine cannot host.
+  assert.equal(rollup.schema, CADENCE_SCHEMA);
+  assert.equal(rollup.state, "unavailable");
+  assert.notEqual(rollup.state, "blocked");
+  assert.equal(rollup.reasonCode, "cadence_block_unavailable:b2_action_gates");
+  assert.deepEqual(rollup.unavailableBlocks, [
+    { block: "b2_action_gates", target: null, reasonCode: "game_path_missing_smapi" },
+  ]);
+  // Both failures survive: the host refusal and the generic missing verdict are not conflated.
+  assert.deepEqual(rollup.failedBlocks, [
+    { block: "b2_action_gates", target: null, reasonCode: "game_path_missing_smapi" },
+    { block: "b3_companion_session", target: "morning_routine", reasonCode: "cadence_block_verdict_missing" },
+  ]);
+  // A row is still its block's own failure; only the RUN verdict is the new word.
+  assert.deepEqual(
+    rollup.rows.map((row) => [row.state, row.reasonCode]),
+    [
+      ["blocked", "game_path_missing_smapi"],
+      ["blocked", "cadence_block_verdict_missing"],
+    ],
+  );
+  assert.deepEqual(rollup.counts, { total: 2, passed: 0, blocked: 2 });
+  // It is STILL not a pass, whatever the state word.
+  assert.equal(exitCode, 2);
+});
+
+test("a shared-world host refusal names the B4 block too", async () => {
+  const { args, env } = cadenceRequest({
+    runDir: mkdtempSync(join(tmpdir(), "cadence-unavailable-b4-")),
+    cadence: "release",
+    blocks: ["b4_shared_world"],
+    extra: ["--expected-farmhand-id", FARMHAND_ID],
+  });
+  const { rollup, exitCode } = await runCadence({
+    argv: args,
+    env,
+    runBlock: async () => ({
+      exitCode: 1,
+      timedOut: false,
+      stdout: '{"state":"blocked","reasonCode":"multiplayer_gate_smapi_missing"}\n',
+      stderr: "",
+    }),
+  });
+  assert.equal(rollup.state, "unavailable");
+  assert.equal(rollup.reasonCode, "cadence_block_unavailable:b4_shared_world:send_multiplayer_chat");
+  assert.deepEqual(
+    rollup.unavailableBlocks,
+    Object.keys(MULTIPLAYER_GATE_ACTIONS).map((action) => ({
+      block: "b4_shared_world",
+      target: action,
+      reasonCode: "multiplayer_gate_smapi_missing",
+    })),
+  );
+  assert.equal(exitCode, 2);
 });

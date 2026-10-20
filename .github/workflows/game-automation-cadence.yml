@@ -15,18 +15,22 @@
 # Valley install and probably no SMAPI. It therefore CANNOT run the live cadence, and the run
 # below is expected to finish RED. That red is the honest result, not a failure of the runner:
 #
-#   * The cadence has NO distinct "unavailable" state. It publishes `passed` or `blocked`, and a
-#     blocked row carries the blocking block's OWN reason code. On a game-less runner the first
-#     named blocker is B2's `game_path_missing_smapi` (the batch refuses before launching anything
-#     when `<game-path>\StardewModdingAPI.exe` is absent); B3 then reports
-#     `cadence_block_verdict_missing` (the ladder died before publishing where its result is).
-#     So the machine-has-no-game fact arrives as a NAMED code, in the rollup and in the log.
-#   * The cadence cannot distinguish "this machine has no game" from "the product failed" — both
-#     are `blocked`. Per the brief this workflow does NOT invent a game-presence precheck: it runs
-#     the cadence and lets the cadence's own named blocker stand. There is no step here that turns
-#     "no game" into a green pass, and there is none that turns it into a skip.
+#   * The cadence publishes `passed`, `blocked`, and - since the host verdict that follows - `unavailable`
+#     for a machine that cannot host the blocks. On a game-less runner the machine-cannot-host fact
+#     is B2's own `game_path_missing_smapi` (the batch refuses before launching anything when
+#     `<game-path>\StardewModdingAPI.exe` is absent), so the rollup state is `unavailable` and its
+#     `reasonCode` names the block (`cadence_block_unavailable:b2_action_gates`), with the block's own
+#     code in `unavailableBlocks`. B3 then reports `cadence_block_verdict_missing` (the ladder died
+#     before publishing where its result is), a missing verdict rather than a host fact.
+#   * That is how the cadence DISTINGUISHES "this machine has no game" (`unavailable`) from "the
+#     product failed" (`blocked`): the host codes are the composed blocks' own named refusals
+#     (`MACHINE_CANNOT_HOST_REASONS` in `tools/run-stardew-automation-cadence.mjs`), and every other
+#     refusal still reads `blocked`. Per the brief this workflow does NOT invent a game-presence
+#     precheck: it runs the cadence and lets the cadence's own named blocker stand. There is no step
+#     here that turns "no game" into a green pass, and none that turns it into a skip.
 #   * A green run of this job would prove nothing, so the run step is NOT `continue-on-error`: a
-#     blocked cadence exits non-zero and the job goes red. Read the reason code, not the colour.
+#     blocked OR unavailable cadence exits non-zero and the job goes red. Read the reason code, not
+#     the colour.
 #   * The artifact upload is `if: always()`, so a red run still keeps the cadence's rollup (its
 #     stdout JSON) and the per-block logs, which is where the named blocker actually lives.
 #
@@ -124,7 +128,15 @@ jobs:
           )
           if ($env:GB_FARMHAND_ID) { $cadenceArgs += @("--expected-farmhand-id", $env:GB_FARMHAND_ID) }
           node @cadenceArgs 2>&1 | Tee-Object -FilePath (Join-Path $runDir "cadence.log")
-          exit $LASTEXITCODE
+          $code = $LASTEXITCODE
+          # Print the verdict as one plain line: `passed`, `blocked`, or the `unavailable` a host-less
+          # runner gets (read the reason, not the colour).
+          $rollup = Get-Content (Join-Path $runDir "cadence.log") | Where-Object { $_.StartsWith("{") } | Select-Object -Last 1
+          if ($rollup) {
+            $verdict = $rollup | ConvertFrom-Json
+            Write-Host "cadence verdict: state=$($verdict.state) reasonCode=$($verdict.reasonCode)"
+          }
+          exit $code
 
       - name: Upload the cadence rollup (always, so a named blocker survives)
         if: always()

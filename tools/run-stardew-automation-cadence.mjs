@@ -66,6 +66,11 @@
  * exit code is non-zero. A timeout is a HARNESS failure: the block is killed by its own pid tree,
  * which means its pinned teardown never ran, so the fixture transaction is left for the operator
  * and the run directory keeps the block's output.
+ *
+ * A MACHINE THAT CANNOT HOST A BLOCK reads `unavailable`, not the same `blocked` a product failure
+ * gets. The blocks that refuse before they launch (no game/SMAPI, no built Release bundle) publish
+ * their own codes; `MACHINE_CANNOT_HOST_REASONS` names that set once, and the rollup splits the
+ * failure class out and names the block. It is still never a pass: the exit code stays non-zero.
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -86,10 +91,29 @@ const DEFAULT_RELEASE_DIR = join(REPOSITORY_ROOT, "integrations", "stardew", "bi
 /** The B2 block's own observed save-slot contract; its launcher refuses the same shape. */
 const SAVE_SLOT = /^GameBuddyFixture[A-Za-z0-9]{0,64}_[0-9]{1,32}$/u;
 
-/** This driver's own verdict contract. */
-export const CADENCE_SCHEMA = "gamebuddy-stardew-automation-cadence/v1";
+/** This driver's own verdict contract. `v2` adds the `unavailable` verdict for a host-less machine. */
+export const CADENCE_SCHEMA = "gamebuddy-stardew-automation-cadence/v2";
 /** The B2 block's own published rollup schema: the row reads only that record. */
 export const ACTION_GATE_BATCH_SCHEMA = "gamebuddy-stardew-action-gate-batch/v1";
+
+/**
+ * The block codes that mean "this machine cannot host the block".
+ *
+ * Each is a composed block's OWN published `reasonCode` - the code its entry throws BEFORE it runs
+ * anything because a host prerequisite is missing - with the file that throws it. The prerequisites
+ * are the game's SMAPI launcher and the built Release bundle; a code naming a product refusal or a
+ * harness failure is deliberately not here. A row is matched by `blockReasonCode` (what the block
+ * itself published), so "no game here" stops reading as the same `blocked` a product failure gets.
+ *
+ * B3 publishes no such code: on a host-less machine `launch-ladder-live.mjs` dies before it writes
+ * a result, so its row carries this cadence's own `cadence_block_verdict_missing`, which is a
+ * missing verdict and never a host fact.
+ */
+export const MACHINE_CANNOT_HOST_REASONS = Object.freeze([
+  Object.freeze({ reasonCode: "game_path_missing_smapi", source: "tools/run-stardew-action-gates-batch.mjs" }),
+  Object.freeze({ reasonCode: "multiplayer_gate_smapi_missing", source: "tools/run-stardew-multiplayer-gate.mjs" }),
+  Object.freeze({ reasonCode: "multiplayer_gate_release_missing", source: "tools/run-stardew-multiplayer-gate.mjs" }),
+]);
 
 /**
  * The four ladder scenarios, for the release cadence.
@@ -316,6 +340,11 @@ export function classifyBlock({ failureCode, timedOut, exitCode, verdict }) {
       blockReasonCode: verdict.reasonCode,
     });
   return Object.freeze({ state: "passed", reasonCode: "cadence_block_passed", blockReasonCode: verdict.reasonCode });
+}
+
+/** Whether a block's OWN published reason code means this machine cannot host the block. */
+export function isMachineCannotHostReason(reasonCode) {
+  return MACHINE_CANNOT_HOST_REASONS.some((entry) => entry.reasonCode === reasonCode);
 }
 
 /**
@@ -606,6 +635,7 @@ function refusedRollup({ reasonCode, cadence, runId, runDir, actionGateScope }) 
     rows: Object.freeze([]),
     counts: Object.freeze({ total: 0, passed: 0, blocked: 0 }),
     failedBlocks: Object.freeze([]),
+    unavailableBlocks: Object.freeze([]),
     blocksNotInCadence: BLOCKS_NOT_IN_CADENCE,
   });
 }
@@ -702,24 +732,43 @@ export async function runCadence({
       .filter((row) => row.state !== "passed")
       .map((row) => Object.freeze({ block: row.block, target: row.target, reasonCode: row.reasonCode })),
   );
+  // The host-refused subset of the failures: rows whose OWN block code says this machine cannot host
+  // the block. A row is still `blocked` (it did not pass); what this splits out is the RUN's verdict,
+  // so "no game here" and "the product failed" no longer read the same `blocked`.
+  const unavailableBlocks = Object.freeze(
+    rows
+      .filter((row) => row.state !== "passed" && isMachineCannotHostReason(row.blockReasonCode))
+      .map((row) => Object.freeze({ block: row.block, target: row.target, reasonCode: row.blockReasonCode })),
+  );
   const first = failedBlocks[0];
+  const firstUnavailable = unavailableBlocks[0];
+  if (firstUnavailable !== undefined)
+    log(
+      `[stardew-automation-cadence] unavailable: this runner cannot host ${firstUnavailable.block}${
+        firstUnavailable.target === null ? "" : `:${firstUnavailable.target}`
+      } (${firstUnavailable.reasonCode})`,
+    );
   return {
     rollup: Object.freeze({
       schema: CADENCE_SCHEMA,
       cadence: request.cadence,
-      state: failedBlocks.length === 0 ? "passed" : "blocked",
+      state: unavailableBlocks.length > 0 ? "unavailable" : failedBlocks.length === 0 ? "passed" : "blocked",
       reasonCode:
-        first === undefined
-          ? "cadence_passed"
-          : `cadence_block_not_passed:${first.block}${first.target === null ? "" : `:${first.target}`}`,
+        firstUnavailable !== undefined
+          ? `cadence_block_unavailable:${firstUnavailable.block}${firstUnavailable.target === null ? "" : `:${firstUnavailable.target}`}`
+          : first === undefined
+            ? "cadence_passed"
+            : `cadence_block_not_passed:${first.block}${first.target === null ? "" : `:${first.target}`}`,
       runId: request.runId,
       runDir,
       actionGateScope,
       rows: Object.freeze(rows),
       counts: countStates(rows),
       failedBlocks,
+      unavailableBlocks,
       blocksNotInCadence: BLOCKS_NOT_IN_CADENCE,
     }),
+    // A run that could not be hosted is still not a pass: the exit code is non-zero either way.
     exitCode: failedBlocks.length === 0 ? 0 : 2,
   };
 }
