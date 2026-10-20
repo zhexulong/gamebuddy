@@ -39,7 +39,12 @@ export async function runHoldAbsorptionSmoke(
   try {
     // The first action runs unchained: its own contract does the setup (hoe, farm, adjacent soil) and then tills, and the
     // gate needs to be sending the follow-up WHILE that is happening.
-    const first = runTillSoilSmoke(client, receipts, config);
+    // Handled from the moment it starts: this promise is awaited much later, and an unhandled rejection in between
+    // would exit Node before the gate could report anything (measured 2026-10-20: no JSON at all).
+    const first = runTillSoilSmoke(client, receipts, config).catch((error) => ({
+      state: "blocked",
+      reasonCode: `first_contract_failed:${String(error instanceof Error ? error.message : error)}`,
+    }));
     await delay(inFlightDelayMs);
     const snapshot = await observeFresh(client);
     if (snapshot.actionable !== true && snapshot.activeExecution == null)
@@ -50,9 +55,13 @@ export async function runHoldAbsorptionSmoke(
       activeExecution: summarizeReceipt(snapshot.activeExecution ?? {}),
     });
 
+    // An action that is legal wherever the actor stands: the till-soil contract has already equipped the hoe, so this
+    // is idempotent, and it goes through the same admission gate - which is the thing being measured. Targeting a tile
+    // would measure geometry instead (the first version asked for soil at the actor's own tile and got
+    // `target_out_of_range` once the hold had already worked).
     const followUp = await executeFresh(client, {
-      action: "till_soil",
-      args: { x: snapshot.tile?.x ?? 0, y: snapshot.tile?.y ?? 0 },
+      action: "equip_tool",
+      args: { tool: "hoe" },
       snapshot,
       requestId: `hold_absorption_follow_up_${String(Date.now())}`,
       idempotencyKey: `hold_absorption_follow_up_${String(Date.now())}_idem`,
@@ -64,7 +73,9 @@ export async function runHoldAbsorptionSmoke(
     const settled =
       followUp.state === "accepted" ? await waitForTerminal(receipts, followUp, terminalTimeoutMs) : followUp;
     trace.push({ step: "follow_up_settled", receipt: summarizeReceipt(settled) });
-    const evidence = String(settled.evidence ?? "");
+    // `String(object)` yields "[object Object]", which is how this gate first reported `held_ms_missing` for a receipt
+    // that had in fact succeeded: the evidence arrives as a string OR as an object, and both shapes have to be read.
+    const evidence = typeof settled.evidence === "string" ? settled.evidence : JSON.stringify(settled.evidence ?? "");
     if (!/held_ms=\d+/u.test(evidence)) throw new Error(`held_ms_missing:${evidence.slice(0, 160)}`);
     const firstOutcome = await first;
     trace.push({ step: "first_contract", state: firstOutcome.state, reasonCode: firstOutcome.reasonCode });
