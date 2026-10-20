@@ -11,8 +11,8 @@
  *
  *   1. `checkLiveRunPreflight`      - `preflightLiveRun` passes a GOOD synthetic tree and fails with the
  *                                     RIGHT code on each BAD tree it must catch.
- *   2. `checkScenarioAcceptance`    - every harness action's `fixtureScenario(fixtureActions(id), id)` is
- *                                     a scenario name the Mod's own fixture switch accepts.
+ *   2. `checkScenarioAcceptance`    - every harness action's world is a scenario name the Mod's own
+ *                                     fixture switch accepts, read from every `ModEntry.Fixtures*.cs`.
  *   3. `checkRunnerResolution`      - every action's resolved runner exists and carries `import.meta.main`.
  *   4. `checkExperimentalRunners`   - every `STARDEW_EXPERIMENTAL_ACTION_RUNNERS` runner exists on disk.
  *   5. `checkGateFalsifiers`        - every `tools/check-*.mjs` gate either prints a falsifier in its rules/
@@ -21,7 +21,7 @@
  * Check 5's classification was found by RUNNING each gate, not guessed: a gate "prints a falsifier in its
  * rules/self mode" when its default (no-argument, offline) run emits a self-verification report - a JSON
  * object carrying a per-check/per-rule outcome list (`checks`) or an explicit offline `mode` - rather than
- * only inspecting the live tree. On 2026-10-20 exactly seven gates did; the other 41 run offline checks whose
+ * only inspecting the live tree. On 2026-10-20 exactly seven gates did; the rest run offline checks whose
  * falsifier lives in their own `check-*.test.mjs` (or in a run they consume), and are named below with why.
  */
 import {
@@ -39,7 +39,10 @@ import { join } from "node:path";
 import { preflightLiveRun } from "./live-run-preflight.mjs";
 import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
 import { resolveStardewActionGateRunner } from "../resolve-stardew-action-gate-runner.mjs";
-import { STARDEW_EXPERIMENTAL_ACTION_RUNNERS } from "../stardew-action-gate-descriptors.mjs";
+import {
+  STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
+  STARDEW_PUBLISHED_ACTION_GATES,
+} from "../stardew-action-gate-descriptors.mjs";
 
 const finding = (code, detail) => ({ code, detail });
 
@@ -53,18 +56,35 @@ export const HARNESS_ACTIONS = Object.freeze([
 ]);
 
 /** A scenario name the Mod's fixture code names literally, e.g. `native_till_soil_v1`. */
-const NATIVE_SCENARIO = /"(native_[a-z0-9_]+_v\d+)"/gu;
+const NATIVE_SCENARIO = /"(native_[a-z0-9_]+_v\d+)"/u;
 
 /**
- * Every `native_*_vN` string the Mod's fixture switch names in `ModEntry.Fixtures.cs`.
+ * Every `native_*_vN` string the Mod's fixture code names, as `name -> <file>:<line>`.
  *
- * The file holds one `FixtureScenario is not (...)` allowlist and the `FixtureScenario == "..."` dispatch
- * blocks that build each world; a scenario missing from the allowlist is refused before it can arm, which
- * is the silent failure this check exists to catch.
+ * `ModEntry` is a partial class, so the fixture switch is spread over all `ModEntry.Fixtures*.cs` files: one
+ * `FixtureScenario is not (...)` pre-attachment allowlist plus the `FixtureScenario == "..."` / `is "..."`
+ * dispatch blocks that build each world. A scenario named by neither is refused before it can arm, which is the
+ * silent failure this check exists to catch. Composed names are not a thing here: the switch compares literals.
  */
-export function scenariosAcceptedByMod(modEntrySource) {
-  return new Set([...modEntrySource.matchAll(NATIVE_SCENARIO)].map((match) => match[1]));
+export function scenariosAcceptedByMod(modSources) {
+  const accepted = new Map();
+  for (const { file, source } of modSources) {
+    source.split("\n").forEach((line, index) => {
+      for (const match of line.matchAll(new RegExp(NATIVE_SCENARIO.source, "gu"))) {
+        if (!accepted.has(match[1])) accepted.set(match[1], `${file}:${index + 1}`);
+      }
+    });
+  }
+  return accepted;
 }
+
+/** The world each published gate arms, keyed by action id: the run plan's own record of its fixture scenario. */
+export const PUBLISHED_FIXTURE_SCENARIOS = new Map(
+  STARDEW_PUBLISHED_ACTION_GATES.filter((gate) => gate.fixtureScenario !== null).map((gate) => [
+    gate.actionId,
+    gate.fixtureScenario,
+  ]),
+);
 
 // ---------------------------------------------------------------------------------------------------
 // Check 1: the run preflight catches each failure on a synthetic tree, and passes a good one.
@@ -158,30 +178,51 @@ export function checkLiveRunPreflight({ preflight = preflightLiveRun, baseDir } 
 // Check 2: the scenario every harness action maps to is one the Mod's fixture switch accepts.
 // ---------------------------------------------------------------------------------------------------
 
+/**
+ * Require every harness action's world to be one the Mod's fixture switch accepts.
+ *
+ * Two authored records can name that world, and the check reads both:
+ *
+ *   - the fixture derive path, `fixtureScenario(fixtureActions(id), id)` - what
+ *     `prepare-stardew-native-local-player-fixture.mjs` writes into the Mod config for that fixture key;
+ *   - the published action's run-plan record, `STARDEW_PUBLISHED_ACTION_GATES[].fixtureScenario` - the world a
+ *     gate is launched against (`launch-ladder-live.mjs --action play_session_multi_day` for `multiday_routine`,
+ *     whose required scenario is `native_multi_day_play_session_v1`).
+ *
+ * The derive path is the primary record, so a name it produces that the switch does not accept is a finding UNLESS
+ * the published run plan names a different, accepted world: where both records exist and disagree, the plan is what
+ * arms the gate. Where the plan is silent (an experimental key), only the derive path can save the action.
+ */
 export function checkScenarioAcceptance({
-  modEntrySource,
+  modSources,
   fixture = { actions: fixtureActions, scenario: fixtureScenario },
+  publishedScenarios = PUBLISHED_FIXTURE_SCENARIOS,
   actionIds = HARNESS_ACTIONS,
 } = {}) {
-  const accepted = scenariosAcceptedByMod(modEntrySource);
+  const accepted = scenariosAcceptedByMod(modSources);
   const findings = [];
   for (const actionId of actionIds) {
-    let scenario;
+    let armed;
     try {
-      scenario = fixture.scenario(fixture.actions(actionId), actionId);
+      armed = fixture.scenario(fixture.actions(actionId), actionId);
     } catch (error) {
       findings.push(finding("scenario_unresolved", `${actionId}: ${String(error?.message ?? error)}`));
       continue;
     }
-    if (typeof scenario !== "string" || scenario.length === 0) {
+    if (typeof armed !== "string" || armed.length === 0) {
       findings.push(finding("scenario_unresolved", `${actionId}: empty scenario`));
       continue;
     }
-    if (!accepted.has(scenario)) {
-      findings.push(
-        finding("scenario_not_accepted_by_mod", `${actionId} -> ${scenario}: absent from ModEntry.Fixtures.cs`),
-      );
-    }
+    if (accepted.has(armed)) continue;
+    const planned = publishedScenarios.get(actionId) ?? null;
+    if (planned !== null && accepted.has(planned)) continue;
+    findings.push(
+      finding(
+        "scenario_not_accepted_by_mod",
+        `${actionId}: the fixture derive path names ${armed} and the run plan records ${String(planned)}; neither is ` +
+          `among the ${String(accepted.size)} scenarios named under integrations/stardew/ModEntry.Fixtures*.cs`,
+      ),
+    );
   }
   return findings;
 }
@@ -368,12 +409,23 @@ export const CONFORMANCE_CHECKS = Object.freeze([
   "gate_falsifiers",
 ]);
 
+/** The `ModEntry.Fixtures*.cs` partials, each with its repo-relative path, so a finding can cite file+line. */
+export function readModFixtureSources(repoRoot) {
+  const modDir = join(repoRoot, "integrations", "stardew");
+  return readdirSync(modDir)
+    .filter((name) => /^ModEntry\.Fixtures.*\.cs$/u.test(name))
+    .sort()
+    .map((name) => ({ file: `integrations/stardew/${name}`, source: readFileSync(join(modDir, name), "utf8") }));
+}
+
 /** Run the five checks against a real checkout and return `{ id, findings }` for each. */
 export function runHarnessConformance({ toolsDir, repoRoot }) {
-  const modEntrySource = readFileSync(join(repoRoot, "integrations", "stardew", "ModEntry.Fixtures.cs"), "utf8");
   return [
     { id: "preflight_synthetic_trees", findings: checkLiveRunPreflight({}) },
-    { id: "scenario_mod_acceptance", findings: checkScenarioAcceptance({ modEntrySource }) },
+    {
+      id: "scenario_mod_acceptance",
+      findings: checkScenarioAcceptance({ modSources: readModFixtureSources(repoRoot) }),
+    },
     { id: "runner_resolution", findings: checkRunnerResolution({ toolsDir }) },
     { id: "experimental_runner_inventory", findings: checkExperimentalRunners({ toolsDir }) },
     { id: "gate_falsifiers", findings: checkGateFalsifiers({ gateNames: harnessGateNames(toolsDir), toolsDir }) },
