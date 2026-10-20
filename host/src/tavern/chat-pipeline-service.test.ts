@@ -1087,17 +1087,24 @@ test(
  * The rewind's real-root proof, and the one that decides the Pi-side mechanism.
  *
  * Two turns are driven through the real production coordinator mount, each with Pi's own half of a
- * prompt appended to the mounted session - the shape the provider path leaves - and then the
- * transcript is rewound to the second player line. The model's context is read the way the NEXT
- * mount would read it: straight out of the session JSONL, projected with the vendor's own renderer
- * and the leaf `SessionManager._buildIndex` would land on (the file's last entry). That is the
- * assertion a bare leaf move fails - measured: after a bare leaf move the live session carries the
- * shortened conversation, but the file's last entry is still the dropped reply, so a re-opened
- * session carries the whole tail again - which is why the rewind pins the cut with an appended edit
- * on the kept entry instead.
+ * prompt appended to the mounted session - the shape the provider path leaves - and the cut is then made
+ * TWICE, once at a PLAYER row and once at the COMPANION reply. Both keep the message the player named
+ * and drop everything after it, which is the shape Pi's leaf move and SillyTavern's truncation have; a
+ * third turn is then driven, so the next mount's context is proved to be exactly the kept prefix plus
+ * that turn.
+ *
+ * The model's context is read the way the NEXT mount would read it: straight out of the session JSONL,
+ * projected with the vendor's own renderer and the leaf `SessionManager._buildIndex` would land on (the
+ * file's last entry). That is the assertion a bare leaf move fails - measured: after a bare leaf move
+ * the live session carries the shortened conversation, but the file's last entry is still the dropped
+ * reply, so a re-opened session carries the whole tail again - which is why the rewind pins the cut with
+ * the vendor's own append-only context edit ON the kept entry. The marker is quoted here as the file
+ * writes it: `{type: "context_edit", targetId: <kept entry>, parentId: <that same entry>,
+ * replacement: {content: <the kept entry's own content>}}`, written after the leaf was moved to it, so
+ * it is the entry a re-open lands on.
  */
 test(
-  "a rewind leaves the dropped turns out of the durable transcript and out of the session a mount re-reads",
+  "a rewind keeps the message the player named, drops the rows after it, and the session a mount re-reads ends there",
   { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
   async () => {
     const output = await mounted(`
@@ -1109,6 +1116,7 @@ test(
   const service = serviceFor(fx, async () => { startCalls += 1; });
   const firstText = "Synthetic player request";
   const secondText = "A second line the player takes back.";
+  const thirdText = "A third line after the cut.";
   const first = await service.submitAfterResponseCommit(commandFor(fx, {}), "rewindoneaaaaaaaaaaaaa", async () => undefined);
   await waitFor(() => startCalls === 1);
   await driveTurnWithSessionPair(fx, "reply_01", firstText, "First synthetic reply.");
@@ -1116,43 +1124,74 @@ test(
   await waitFor(() => startCalls === 2);
   await driveTurnWithSessionPair(fx, "reply_02", secondText, "Second synthetic reply.");
 
-  /** What the next mount would send the model, read from the session file alone. */
-  const modelTexts = async () => {
+  /**
+   * What the session file alone says: its projected active path, the file's OWN last entry as written,
+   * and the message entry one row's words are carried by.
+   */
+  const sessionFile = async () => {
     const leaves = (await readdir(fx.root, { recursive: true })).filter((leaf) => leaf.endsWith(".jsonl"));
     const files = await Promise.all(leaves.map(async (leaf) => ({ leaf, at: (await stat(joinPath(fx.root, leaf))).mtimeMs })));
     files.sort((left, right) => right.at - left.at);
     const entries = (await readFile(joinPath(fx.root, files[0].leaf), "utf8")).split("\\n").filter((line) => line.length > 0).map((line) => JSON.parse(line)).filter((entry) => entry.type !== "session");
     const byId = new Map(entries.map((entry) => [entry.id, entry]));
     const leafId = entries.length === 0 ? null : entries[entries.length - 1].id;
-    return buildSessionProjection(entries, leafId, byId).messages.map((message) =>
+    const projected = buildSessionProjection(entries, leafId, byId).messages.map((message) =>
       Array.isArray(message.content)
         ? message.content.filter((part) => part.type === "text").map((part) => part.text).join("")
         : String(message.content),
     );
+    const last = entries[entries.length - 1];
+    const marker = last === undefined ? null : Object.freeze({ type: last.type, parentId: last.parentId, targetId: last.targetId, replacement: last.replacement === undefined ? null : last.replacement });
+    const needle = (words) => JSON.stringify(words).slice(1, -1);
+    const carrierOf = (words) => {
+      const entry = entries.find((candidate) => candidate.type === "message" && JSON.stringify(candidate.message ?? null).includes(needle(words)));
+      return entry === undefined ? null : Object.freeze({ id: entry.id, type: entry.type });
+    };
+    return Object.freeze({ projected, marker, carrierOf });
   };
 
   const handleOf = (id) => fx.lease.browserProjection.projectMessageHandle(id);
   const beforeState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
-  const modelBefore = await modelTexts();
-  const rewound = await run(async () => service.rewind({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(beforeState.messages[3].messageId), expectedOrder: 3 }));
-  const afterState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
-  const modelAfter = await modelTexts();
+  const before = await sessionFile();
+  // A PLAYER row: the utterance is kept and her reply - and everything after it - goes, which is the
+  // shape that lets the player answer their own line again. The turn whose committed bubble the cut
+  // removed cannot outlive the row, so its bookkeeping goes with it.
+  const rewoundPlayer = await run(async () => service.rewind({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(beforeState.messages[3].messageId), expectedOrder: 3 }));
+  const afterPlayerState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const afterPlayer = await sessionFile();
+  // A COMPANION reply: the reply is kept and what followed it is truncated, so the player then
+  // regenerates it or types the next line.
+  const rewoundReply = await run(async () => service.rewind({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(beforeState.messages[2].messageId), expectedOrder: 2 }));
+  const afterReplyState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const afterReply = await sessionFile();
+  // The following turn, from the conversation the cut left: its own context is the proof that the two
+  // dropped rows are not merely hidden but gone from the model's own path.
+  const third = await service.submitAfterResponseCommit(commandFor(fx, { text: thirdText, expectedDraftRevision: 2 }), "rewindthreeaaaaaaaaaaa", async () => undefined);
+  await waitFor(() => startCalls === 3);
+  await driveTurnWithSessionPair(fx, "reply_03", thirdText, "Third synthetic reply.");
+  const afterNextTurn = await sessionFile();
   const refusal = async (messageHandle, expectedOrder, selectionGeneration) =>
     await run(async () => service.rewind({ apiVersion: 1, selectionGeneration: selectionGeneration ?? fx.generation, messageHandle, expectedOrder }));
-  const refusedUnknown = await refusal("A".repeat(43), 3);
-  const refusedOrder = await refusal(handleOf(afterState.messages[1].messageId), 4);
-  const refusedOpening = await refusal(handleOf(afterState.messages[0].messageId), 0);
-  const refusedGeneration = await refusal(handleOf(afterState.messages[1].messageId), 1, fx.generation + 1);
-  const modelAfterRefusals = await modelTexts();
+  const refusedUnknown = await refusal("A".repeat(43), 2);
+  const refusedOrder = await refusal(handleOf(afterReplyState.messages[1].messageId), 4);
+  const refusedOpening = await refusal(handleOf(afterReplyState.messages[0].messageId), 0);
+  const refusedGeneration = await refusal(handleOf(afterReplyState.messages[1].messageId), 1, fx.generation + 1);
+  const afterRefusals = await sessionFile();
   const settled = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
   await service.close();
   await fx.lease.close();
   await fx.authority.close();
   process.stdout.write(JSON.stringify({
-    first, second, rewound, modelBefore, modelAfter, modelAfterRefusals,
+    first, second, third, rewoundPlayer, rewoundReply,
+    modelBefore: before.projected, modelAfterPlayer: afterPlayer.projected, modelAfterReply: afterReply.projected,
+    modelAfterNextTurn: afterNextTurn.projected, modelAfterRefusals: afterRefusals.projected,
+    keptEntryAfterPlayer: afterPlayer.carrierOf(secondText), markerAfterPlayer: afterPlayer.marker,
+    keptEntryAfterReply: afterReply.carrierOf("First synthetic reply."), markerAfterReply: afterReply.marker,
     refusedUnknown, refusedOrder, refusedOpening, refusedGeneration,
-    afterTexts: afterState.messages.map((message) => message.text),
-    afterKinds: afterState.messages.map((message) => message.kind),
+    afterPlayerTexts: afterPlayerState.messages.map((message) => message.text),
+    afterPlayerKinds: afterPlayerState.messages.map((message) => message.kind),
+    afterReplyTexts: afterReplyState.messages.map((message) => message.text),
+    afterReplyKinds: afterReplyState.messages.map((message) => message.kind),
     opening: beforeState.messages[0].text,
     settledTexts: settled.messages.map((message) => message.text),
     settledLedgerStatus: settled.turnLedger === null ? null : settled.turnLedger.status,
@@ -1161,30 +1200,50 @@ test(
     startCalls,
   }));
 `);
-    assert.equal(output.startCalls, 2);
+    assert.equal(output.startCalls, 3);
     assert.equal(output.openingKind, "opening");
 
-    // The rewind's own answer: the row that now ends the transcript, projected from the read-back.
-    const rewound = output.rewound as {
+    // The rewind's own answer, in both directions: the row that now ends the transcript, projected from
+    // the read-back, is the row the player named - never the row after it.
+    const playerCut = output.rewoundPlayer as {
       ok: boolean;
       value?: { apiVersion: number; lastMessage: { text: string; order: number } };
     };
-    assert.equal(rewound.ok, true, JSON.stringify(output.rewound));
-    assert.equal(rewound.value?.apiVersion, 1);
-    assert.equal(rewound.value?.lastMessage.text, "First synthetic reply.");
-    assert.equal(rewound.value?.lastMessage.order, 2);
+    assert.equal(playerCut.ok, true, JSON.stringify(output.rewoundPlayer));
+    assert.equal(playerCut.value?.apiVersion, 1);
+    assert.equal(playerCut.value?.lastMessage.text, "A second line the player takes back.");
+    assert.equal(playerCut.value?.lastMessage.order, 3);
+    const replyCut = output.rewoundReply as typeof playerCut;
+    assert.equal(replyCut.ok, true, JSON.stringify(output.rewoundReply));
+    assert.equal(replyCut.value?.apiVersion, 1);
+    assert.equal(replyCut.value?.lastMessage.text, "First synthetic reply.");
+    assert.equal(replyCut.value?.lastMessage.order, 2);
 
-    // The durable transcript the player reads: two turns in, one kept.
-    assert.deepEqual(output.afterKinds, ["opening", "player", "response"]);
-    assert.equal((output.afterTexts as string[])[1], "Synthetic player request");
-    assert.equal((output.afterTexts as string[])[2], "First synthetic reply.");
-    assert.equal((output.afterTexts as string[]).includes("A second line the player takes back."), false);
-    assert.deepEqual(output.settledTexts, output.afterTexts);
+    // The durable transcript the player reads. After the player-row cut: the kept utterance, with her
+    // second reply - and the turn it was the committed bubble of - gone. After the reply-row cut: the
+    // kept reply and the player line before it.
+    assert.deepEqual(output.afterPlayerKinds, ["opening", "player", "response", "player"]);
+    assert.deepEqual(output.afterPlayerTexts, [
+      output.opening,
+      "Synthetic player request",
+      "First synthetic reply.",
+      "A second line the player takes back.",
+    ]);
+    assert.deepEqual(output.afterReplyKinds, ["opening", "player", "response"]);
+    assert.deepEqual(output.afterReplyTexts, [output.opening, "Synthetic player request", "First synthetic reply."]);
+    assert.deepEqual(output.settledTexts, [
+      output.opening,
+      "Synthetic player request",
+      "First synthetic reply.",
+      "A third line after the cut.",
+      "Third synthetic reply.",
+    ]);
     // The dropped turn is gone from the ledger too, and the kept one is the thread's current turn.
     assert.equal(output.settledLedgerStatus, "completed");
 
     // The model's context, read from the session JSONL the next mount would read: the greeting the
-    // mount anchored heads it (Order 0, no transcript row and no turn of its own), and then the turns.
+    // mount anchored heads it (Order 0, no transcript row and no turn of its own), and each cut leaves
+    // the path ending exactly at the row the player named.
     assert.deepEqual(output.modelBefore, [
       output.opening,
       "Synthetic player request",
@@ -1192,12 +1251,41 @@ test(
       "A second line the player takes back.",
       "Second synthetic reply.",
     ]);
-    assert.deepEqual(output.modelAfter, [output.opening, "Synthetic player request", "First synthetic reply."]);
+    assert.deepEqual(output.modelAfterPlayer, [
+      output.opening,
+      "Synthetic player request",
+      "First synthetic reply.",
+      "A second line the player takes back.",
+    ]);
+    assert.deepEqual(output.modelAfterReply, [output.opening, "Synthetic player request", "First synthetic reply."]);
     assert.equal(
-      JSON.stringify(output.modelAfter).includes("Second synthetic reply."),
+      JSON.stringify(output.modelAfterReply).includes("Second synthetic reply."),
       false,
-      "the dropped turns must not be in the context the next mount derives from the session file",
+      "the dropped turn must not be in the context the next mount derives from the session file",
     );
+
+    // The durable marker, quoted as the file writes it: the vendor's own append-only context edit whose
+    // target IS the kept entry and whose parent is that same entry - the leaf was moved there first -
+    // carrying the kept entry's own content. Being the file's last entry is what survives a re-open.
+    const markerTargets = (marker: unknown, keptEntry: unknown, content: string) => {
+      const fact = marker as { type: string; parentId: string; targetId: string; replacement: { content: unknown } };
+      assert.equal(fact.type, "context_edit", JSON.stringify(marker));
+      assert.equal(fact.targetId, (keptEntry as { id: string }).id);
+      assert.equal(fact.parentId, (keptEntry as { id: string }).id);
+      assert.deepEqual(fact.replacement.content, [{ type: "text", text: content }]);
+    };
+    markerTargets(output.markerAfterPlayer, output.keptEntryAfterPlayer, "A second line the player takes back.");
+    markerTargets(output.markerAfterReply, output.keptEntryAfterReply, "First synthetic reply.");
+
+    // The following turn, from the conversation the cut left: its context is exactly the kept prefix
+    // plus its own prompt and answer, so nothing the cut removed comes back.
+    assert.deepEqual(output.modelAfterNextTurn, [
+      output.opening,
+      "Synthetic player request",
+      "First synthetic reply.",
+      "A third line after the cut.",
+      "Third synthetic reply.",
+    ]);
 
     // Every refusal is named, and not one of them touched either authority.
     const named = (entry: unknown) => (entry as { error?: string }).error ?? "";
@@ -1205,9 +1293,7 @@ test(
     assert.match(named(output.refusedOrder), /chat_message_revision_conflict/);
     assert.match(named(output.refusedOpening), /chat_rewind_opening_retained/);
     assert.match(named(output.refusedGeneration), /chat_pipeline_service_selection_conflict/);
-    assert.deepEqual(output.modelAfterRefusals, output.modelAfter);
-    const settledAfterRefusals = output.settledTexts as string[];
-    assert.equal(settledAfterRefusals.length, 3);
+    assert.deepEqual(output.modelAfterRefusals, output.modelAfterNextTurn);
   },
 );
 

@@ -1275,6 +1275,10 @@ function refuseMountedMutation(branch: string, code: string): never {
  * store but no live mount cannot reshape a conversation. Like the swipe ingress it neither creates
  * nor selects a Chat.
  *
+ * The shape is Pi's and SillyTavern's: the message the player names is KEPT and everything after it
+ * stops contributing - Pi moves the session leaf to that entry, and the vendor's append-only edit of
+ * it pins the cut durably (`rewindPiTranscriptTail`).
+ *
  * The order is the whole point. The durable read, the session's own shortening and the durable
  * truncation share one synchronous critical section - there is no `await` between them, and the Host
  * runs on a single event loop - so nothing can be admitted between the session shape this rewind
@@ -1308,14 +1312,15 @@ export async function rewindMountedChatTranscript(
   const store = record.store();
   const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
   // Row zero is the greeting the Chat opened on, and it is also the session's own anchor (the
-  // conversation's first assistant message, Order 0). A rewind drops a suffix, so the one suffix that
-  // would hold it is the whole conversation: it would omit every entry the model carries - the anchor
-  // included - and leave those omissions as the file's last entries. A rewind neither drops nor
-  // re-anchors it, and it names that refusal the way the store and the browser already do.
+  // conversation's first assistant message, Order 0). A rewind keeps the message it names and drops
+  // everything after it, so the kept row - the anchor included when it is the one named - is the entry
+  // the cut is pinned to, and only what follows it is proved positionally. The one target still refused
+  // by name is the greeting itself: a rewind that would leave nothing but the conversation's own opening
+  // is not a cut back into the exchange, and the opening is the row the thread's opening record names.
   if (state.messages[input.expectedOrder]?.kind === "opening")
     throw refuseMountedMutation("rewind target-opening", "chat_rewind_opening_retained");
   const dropped: PiTranscriptMessage[] = state.messages
-    .slice(input.expectedOrder)
+    .slice(input.expectedOrder + 1)
     .map((message) => Object.freeze({ role: message.role, text: message.text }));
   const rewound = rewindPiTranscriptTail(runtimeSession.session, dropped);
   if (rewound.status !== "rewound") {

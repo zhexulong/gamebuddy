@@ -702,16 +702,21 @@ export type ChatThreadStore = Readonly<{
     newText: string,
   ): Promise<ChatThreadState>;
   /**
-   * The durable half of a conversation rewind: drops the named message and every message after it.
+   * The durable half of a conversation rewind: KEEPS the named message and drops every message after it.
    *
-   * The transcript is the authority on where a conversation ends, so the caller names the exact row
+   * This is the shape both references have - SillyTavern truncates the conversation after the point, and
+   * Pi moves the session leaf to that entry - so the named row survives and what followed it is ready to
+   * be written again: her reply can be regenerated, and the player's own kept line can be answered once
+   * more. The transcript is the authority on where a conversation ends, so the caller names the exact row
    * it read AND the position it read it at - a row that has moved since that read is refused rather
    * than used as a rewind point the player never chose. The turn bookkeeping goes with the rows:
    * every turn whose evidence the drop removes (its accepted player row, its committed presentation
    * row, or a variant's target/anchor) is deleted with it, because a transcript cannot lose a row
    * while `validateTurnIntegrity` still expects it, and the thread's current turn is restored to
    * the newest survivor. A turn that is not terminal refuses the whole operation: a mounted turn is
-   * never silently truncated, and neither is the greeting opening the Chat started on.
+   * never silently truncated. The greeting the Chat started on is the one target refused by name,
+   * because a rewind to it would leave nothing but the conversation's own opening; and the read-back
+   * re-checks the surviving row count, so a cut that dropped the clicked row as well cannot commit.
    */
   rewindTranscript?(
     authority: MountedTurnTransitionAuthority,
@@ -2251,8 +2256,13 @@ export function createChatThreadStore(
         if (index !== input.expectedOrder) throw new Error("chat_message_revision_conflict");
         const ledger = current.turnLedger;
         if (ledger !== null && !isTerminalLedger(ledger)) throw new Error("chat_rewind_turn_active");
-        const dropped = current.messages.slice(index);
-        if (dropped.some((message) => message.kind === "opening")) throw new Error("chat_rewind_opening_retained");
+        // The clicked message is KEPT and everything after it goes - SillyTavern truncates after that
+        // point and Pi moves the session leaf to that entry - so the cut starts at the NEXT row and the
+        // named row itself is never dropped. The opening is the one target refused by name: a rewind to
+        // it would leave nothing but the greeting, which is not a cut back into the exchange.
+        const target = current.messages[index]!;
+        if (target.kind === "opening") throw new Error("chat_rewind_opening_retained");
+        const dropped = current.messages.slice(index + 1);
         const droppedIds = new Set(dropped.map((message) => message.messageId));
         // A turn survives only while every row it names survives. Its own `message_id` is the
         // accepted player row - or, for a same-position variant turn, an opaque identity that names
@@ -2306,7 +2316,7 @@ export function createChatThreadStore(
         // every other read runs, so a transcript that lost a row its ledger still expects rolls
         // this whole transaction back instead of committing a disagreement.
         const readBack = readStateFromDb(db, chatThreadId);
-        if (readBack.messages.length !== index) throw new Error("chat_rewind_readback_mismatch");
+        if (readBack.messages.length !== index + 1) throw new Error("chat_rewind_readback_mismatch");
         return readBack;
       });
     },

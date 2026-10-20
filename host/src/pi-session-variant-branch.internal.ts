@@ -146,15 +146,17 @@ export function branchPiVariantAnchor(
  *     cut to, so every dropped entry is omitted instead, with one `null` replacement each. The last
  *     such edit is then the file's last entry, which is what makes the omission survive a re-open.
  *
- * The dropped messages are the named row AND every row after it, which is why the proof is a suffix
- * and not a single lookup: a session a rewind already shortened still carries the rows the player
- * kept, so a second rewind from an earlier point still matches.
+ * The dropped messages are every row AFTER the one the player named, which is why the proof is a
+ * suffix and not a single lookup: the named row is the one the cut is pinned to - it is what the
+ * transcript now ends at - and a session a rewind already shortened still carries the rows the player
+ * kept, so a second rewind from an earlier point still matches. An empty suffix is not a refusal: the
+ * transcript's own last row asks for nothing to be removed, and the cut then lands on the entry the
+ * conversation already ends at.
  */
 export function rewindPiTranscriptTail(
   session: PiVariantBranchSession,
   dropped: readonly PiTranscriptMessage[],
 ): PiTranscriptRewindResult {
-  if (dropped.length === 0) return { status: "refused", reason: "rewind_nothing_dropped" };
   const messages = branchMessageEntries(session);
   if (messages.length < dropped.length) return { status: "refused", reason: "rewind_tail_unavailable" };
   const start = messages.length - dropped.length;
@@ -189,11 +191,7 @@ export function rewindPiTranscriptTail(
 export type PiTranscriptMessage = Readonly<{ role: "player" | "companion"; text: string }>;
 
 /** Why a refused rewind left the model's context exactly as it was. */
-type PiTranscriptRewindRefusal =
-  | "rewind_nothing_dropped"
-  | "rewind_tail_unavailable"
-  | "rewind_tail_text_mismatch"
-  | "rewind_keep_unavailable";
+type PiTranscriptRewindRefusal = "rewind_tail_unavailable" | "rewind_tail_text_mismatch" | "rewind_keep_unavailable";
 
 export type PiTranscriptRewindResult =
   | Readonly<{

@@ -624,8 +624,9 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       // The transcript is what a position means: a row that is no longer at the order the browser
       // rendered it is a stale view, and rewinding from it would drop messages the player never saw.
       if (order !== command.expectedOrder) throw mutationRefusal("chat_message_revision_conflict");
-      // The greeting is the conversation's own first message, not part of the exchange above it:
-      // dropping it would leave a thread whose recorded opening no longer exists.
+      // The clicked message is kept and everything after it is removed, so the greeting can never be in
+      // the dropped set - but a rewind whose TARGET is the greeting is still refused by name: it would
+      // leave nothing but the conversation's own opening, which is not a cut back into the exchange.
       if (target.kind === "opening") throw mutationRefusal("chat_rewind_opening_retained");
       // A turn that is not terminal is a reply still being written. Rewinding through it would
       // truncate a mounted turn, so it is refused rather than silently drained.
@@ -636,6 +637,8 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
           messageId: target.messageId,
           expectedOrder: order,
         });
+        // The read-back now ENDS at the row the player named: the clicked message is kept, so the row
+        // that closes the transcript is that one, and the projection answers with the durable row.
         const tail = next.messages[next.messages.length - 1];
         const result = Object.freeze({
           apiVersion: TAVERN_BROWSER_API_VERSION,

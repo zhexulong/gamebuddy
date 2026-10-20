@@ -1448,14 +1448,14 @@ test("listThreadLastMessages returns each thread's last appended message in one 
 });
 
 /**
- * A rewind is the one Chat mutation that removes transcript rows, so it must remove the ledger
- * those rows were the only evidence for, in the same transaction, or the next read refuses the
- * whole thread (`validateTurnIntegrity`). Both turns below are real accepted turns - a durable turn
- * row, an attempt, a committed presentation and its idempotency record - because that is the shape a
- * rewind actually meets, and the reply rows are named by the caller exactly as the provider commit
- * names them.
+ * A rewind is the one Chat mutation that shortens the transcript: it KEEPS the message the player named
+ * and removes the rows after it, which is the shape both references have, so it must remove the ledger
+ * those rows were the only evidence for, in the same transaction, or the next read refuses the whole
+ * thread (`validateTurnIntegrity`). Both turns below are real accepted turns - a durable turn row, an
+ * attempt, a committed presentation and its idempotency record - because that is the shape a rewind
+ * actually meets, and the rows are named by the caller exactly as the browser rendered them.
  */
-test("a rewind drops the named message and every row after it, together with the turns only those rows evidenced", async () => {
+test("a rewind keeps the named message and drops every row after it, together with the turns only those rows evidenced", async () => {
   const root = await canonicalTestRoot("gamebuddy-chat-thread-rewind-");
   const continuityKey = createHash("sha256")
     .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
@@ -1524,15 +1524,17 @@ test("a rewind drops the named message and every row after it, together with the
     );
     assert.equal(before.idempotency.length, 2);
 
-    // Rewinding to the second player line drops that turn's player row, its reply, the turn itself
-    // and its idempotency record; the first turn - rows and bookkeeping - is untouched.
+    // Rewinding to the second player line KEEPS that line - the shape both references have - and drops
+    // the reply that followed it. The dropped reply was that turn's committed bubble, so the turn and
+    // its idempotency record go with it, and the first turn - rows and bookkeeping - is untouched. The
+    // kept player row is left with no turn of its own, ready to be answered again.
     const after = await s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
       messageId: second.playerId,
       expectedOrder: 3,
     });
     assert.deepEqual(
       after.messages.map((message) => message.messageId),
-      ["opening_01", first.playerId, "reply_01"],
+      ["opening_01", first.playerId, "reply_01", second.playerId],
     );
     assert.equal(after.turnLedger?.turnId, first.turnId);
     assert.equal(after.turnLedger?.status, "completed");
@@ -1541,11 +1543,11 @@ test("a rewind drops the named message and every row after it, together with the
       [first.key],
     );
     // The ledger rows really are gone, not merely unread: a later read of the same thread must not
-    // raise `invalid_chat_thread_turn_ledger`, and the drop is durable across connections.
+    // raise `invalid_chat_thread_turn_ledger`, and the cut is durable across connections.
     const durable = await reopened.resumeThread("thread_01", "surface_01");
     assert.deepEqual(
       durable.messages.map((message) => message.messageId),
-      ["opening_01", first.playerId, "reply_01"],
+      ["opening_01", first.playerId, "reply_01", second.playerId],
     );
     assert.equal(durable.idempotency.length, 1);
     const tables = new DatabaseSync(join(root, "tavern", "v3", "continuities", continuityKey, "tavern.sqlite"));
@@ -1556,8 +1558,8 @@ test("a rewind drops the named message and every row after it, together with the
       tables.close();
     }
 
-    // A rewind through the greeting the Chat opened on is refused: the recorded opening would
-    // outlive the message it names.
+    // A rewind whose TARGET is the greeting the Chat opened on is refused by name: it would leave
+    // nothing but the conversation's own opening, which is not a cut back into the exchange.
     await assert.rejects(
       () =>
         s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
@@ -1584,20 +1586,42 @@ test("a rewind drops the named message and every row after it, together with the
       /chat_message_revision_conflict/,
     );
 
-    // A rewind cannot orphan a turn either: dropping a committed reply while its player line stays
-    // takes that turn's bookkeeping with it, and the transcript still reads back.
+    // Two more shapes, both on real turns. First the transcript's LAST row: keeping it leaves nothing
+    // after it, so the cut removes nothing and the thread is exactly as it was - a no-op rather than a
+    // refusal, which is why the surface simply does not offer the control there.
     const third = await turn(3, "Third line", "reply_03");
-    const orphaned = await s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
+    const threeTurns = await s.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      threeTurns.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId, third.playerId, "reply_03"],
+    );
+    const noop = await s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
       messageId: "reply_03",
+      expectedOrder: 5,
+    });
+    assert.deepEqual(
+      noop.messages.map((message) => message.messageId),
+      threeTurns.messages.map((message) => message.messageId),
+    );
+    assert.deepEqual(
+      noop.idempotency.map((record) => record.key),
+      threeTurns.idempotency.map((record) => record.key),
+    );
+
+    // Then keeping the PLAYER row whose reply goes: the committed bubble leaves the transcript, so that
+    // turn cannot outlive its own evidence and its bookkeeping goes with the row - and the thread still
+    // reads back.
+    const droppedReply = await s.rewindTranscript!(testTransitionAuthority.authority, "thread_01", {
+      messageId: third.playerId,
       expectedOrder: 4,
     });
     assert.deepEqual(
-      orphaned.messages.map((message) => message.messageId),
-      ["opening_01", first.playerId, "reply_01", third.playerId],
+      droppedReply.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", second.playerId, third.playerId],
     );
-    assert.equal(orphaned.turnLedger?.turnId, first.turnId);
+    assert.equal(droppedReply.turnLedger?.turnId, first.turnId);
     assert.deepEqual(
-      orphaned.idempotency.map((record) => record.key),
+      droppedReply.idempotency.map((record) => record.key),
       [first.key],
     );
 

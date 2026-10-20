@@ -432,9 +432,11 @@ test("a rewind leaves the dropped exchange out of the model's path, and the sess
 
 /**
  * Every shape the rewind derivation cannot prove refuses, and a refusal is silent: no entry is
- * appended, so the leaf, the entry count and the projection are byte-identical after. The whole
- * branch is droppable too - a transcript that becomes empty has no kept entry to pin the cut to, so
- * every dropped entry is omitted - and `revert()` restores exactly what was there.
+ * appended, so the leaf, the entry count and the projection are byte-identical after. An EMPTY suffix is
+ * not one of them - the cut's own last row asks for nothing to be removed, and that lands on the entry
+ * the conversation already ends at. The whole branch is droppable too - a transcript that becomes empty
+ * has no kept entry to pin the cut to, so every dropped entry is omitted - and `revert()` restores
+ * exactly what was there.
  */
 test("a transcript tail the session does not carry refuses and mutates nothing", async () => {
   const fixture = await createSession("gamebuddy-rewind-refusal-", [FIRST_REPLY]);
@@ -444,7 +446,6 @@ test("a transcript tail the session does not carry refuses and mutates nothing",
     const entriesBefore = fixture.sessionManager.getEntryCount();
     const playerLine = drop("player", PROMPT_TEXT);
     const cases = [
-      { dropped: [] as readonly PiTranscriptMessage[], reason: "rewind_nothing_dropped" },
       {
         dropped: [playerLine, drop("companion", "a reply this session never carried")],
         reason: "rewind_tail_text_mismatch",
@@ -466,6 +467,19 @@ test("a transcript tail the session does not carry refuses and mutates nothing",
       assert.equal(fixture.sessionManager.getLeafId(), leafBefore, item.reason);
       assert.equal(quoted(fixture.modelMessages()), before, item.reason);
     }
+
+    // An empty suffix is not a refusal, and it is not silent either: the cut keeps the row the player
+    // named, so the transcript's LAST row asks for nothing to be removed. The proof pins the cut to the
+    // entry the conversation already ends at - the model's path is byte-identical - and the appended
+    // no-op edit is what makes that durable for a session re-opened from the file, exactly as every
+    // other cut's pinning edit is. `revert()` puts the leaf back where it was.
+    const beforeEmpty = quoted(fixture.modelMessages());
+    const leafBeforeEmpty = fixture.sessionManager.getLeafId();
+    const nothingDropped = rewindPiTranscriptTail(fixture.session, []);
+    assert.equal(nothingDropped.status, "rewound");
+    assert.equal(quoted(fixture.modelMessages()), beforeEmpty);
+    if (nothingDropped.status === "rewound") nothingDropped.revert();
+    assert.equal(fixture.sessionManager.getLeafId(), leafBeforeEmpty);
 
     // The whole branch is a legal drop - a transcript that becomes empty - and the omissions are what
     // makes it survive a re-open, because the last edit is the file's last entry.

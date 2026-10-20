@@ -600,7 +600,11 @@ function mutationService(
   });
 }
 
-/** An emptied transcript: the rewind's answer when the player removed the first message. */
+/**
+ * A rewind's answer with no last row to name. The rewind now always KEEPS the row the player named, so
+ * this is the shape the wire still admits rather than one the Host can produce - and the delegate must
+ * forward whatever the service answered, which is what this fixture proves.
+ */
 const REWIND_RESULT: RewindChatResultV1 = Object.freeze({ apiVersion: 1, lastMessage: null });
 
 /** The edited row, as the durable read-back holds it: the edit's own answer. */
