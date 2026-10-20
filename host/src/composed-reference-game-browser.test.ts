@@ -153,7 +153,14 @@ async function start(handler: ReturnType<typeof createComposedReferenceGameBrows
     server.listen(0, "127.0.0.1", () => resolve());
   });
   const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  return { origin, server, async close() { await handler.close(); await closeServer(server); } };
+  return {
+    origin,
+    server,
+    async close() {
+      await handler.close();
+      await closeServer(server);
+    },
+  };
 }
 
 async function closeServer(server: Server): Promise<void> {
@@ -200,28 +207,64 @@ test("installation discovery confirms a legal opaque candidate and invokes each 
     readChat: async (context) => stateForChat(context),
     readGame: async (context) => stateForGame(context),
     gameDiscovery: {
-      read: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
-        handler.lifecycleActivationIssuer,
-        admission,
-        "discovery_read",
-        () => { calls.push("read"); return { apiVersion: 1 as const, candidates: [], diagnostics: [] }; },
-      )!,
-      confirm: async (admission, command) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
-        handler.lifecycleActivationIssuer,
-        admission,
-        "discovery_confirm",
-        () => { calls.push("confirm"); assert.deepEqual(command, { apiVersion: 1, candidateId: "Q".repeat(42) + "A" }); return { apiVersion: 1 as const, status: "registered" as const }; },
-      )!,
-      retry: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(handler.lifecycleActivationIssuer, admission, "discovery_retry", () => { calls.push("retry"); return { apiVersion: 1 as const, candidates: [], diagnostics: [] }; })!,
-      cancel: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(handler.lifecycleActivationIssuer, admission, "discovery_cancel", () => { calls.push("cancel"); return { apiVersion: 1 as const, status: "cancelled" as const }; })!,
-      manualPicker: async (admission) => consumeComposedReferenceGameBrowserLifecycleActivationAdmission(handler.lifecycleActivationIssuer, admission, "discovery_picker", () => { calls.push("manual-picker"); return { apiVersion: 1 as const, status: "accepted" as const }; })!,
+      read: async (admission) =>
+        consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+          handler.lifecycleActivationIssuer,
+          admission,
+          "discovery_read",
+          () => {
+            calls.push("read");
+            return { apiVersion: 1 as const, candidates: [], diagnostics: [] };
+          },
+        )!,
+      confirm: async (admission, command) =>
+        consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+          handler.lifecycleActivationIssuer,
+          admission,
+          "discovery_confirm",
+          () => {
+            calls.push("confirm");
+            assert.deepEqual(command, { apiVersion: 1, candidateId: "Q".repeat(42) + "A" });
+            return { apiVersion: 1 as const, status: "registered" as const };
+          },
+        )!,
+      retry: async (admission) =>
+        consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+          handler.lifecycleActivationIssuer,
+          admission,
+          "discovery_retry",
+          () => {
+            calls.push("retry");
+            return { apiVersion: 1 as const, candidates: [], diagnostics: [] };
+          },
+        )!,
+      cancel: async (admission) =>
+        consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+          handler.lifecycleActivationIssuer,
+          admission,
+          "discovery_cancel",
+          () => {
+            calls.push("cancel");
+            return { apiVersion: 1 as const, status: "cancelled" as const };
+          },
+        )!,
+      manualPicker: async (admission) =>
+        consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+          handler.lifecycleActivationIssuer,
+          admission,
+          "discovery_picker",
+          () => {
+            calls.push("manual-picker");
+            return { apiVersion: 1 as const, status: "accepted" as const };
+          },
+        )!,
     },
   });
   const server = await start(handler);
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const discoveryPath = `${server.origin}/api/composed-reference-game/v1/game/installation/discovery`;
     const read = await fetch(discoveryPath, { headers: { origin: server.origin, cookie } });
     assert.equal(read.status, 200);
@@ -239,17 +282,24 @@ test("installation discovery confirms a legal opaque candidate and invokes each 
     });
     assert.equal(confirmation.status, 200);
     assert.deepEqual(await confirmation.json(), { apiVersion: 1, status: "registered" });
-    for (const [name, path] of [["retry", "retry"], ["cancel", "cancel"], ["manual-picker", "manual-picker"]] as const) {
-      const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/installation/discovery/${path}`, {
-        method: "POST",
-        headers: {
-          origin: server.origin,
-          cookie,
-          "x-csrf-token": root.chat.csrfToken,
-          "content-type": "application/json",
+    for (const [name, path] of [
+      ["retry", "retry"],
+      ["cancel", "cancel"],
+      ["manual-picker", "manual-picker"],
+    ] as const) {
+      const response = await fetch(
+        `${server.origin}/api/composed-reference-game/v1/game/installation/discovery/${path}`,
+        {
+          method: "POST",
+          headers: {
+            origin: server.origin,
+            cookie,
+            "x-csrf-token": root.chat.csrfToken,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ apiVersion: 1 }),
         },
-        body: JSON.stringify({ apiVersion: 1 }),
-      });
+      );
       assert.equal(response.status, 200);
       assert.deepEqual(
         await response.json(),
@@ -259,7 +309,66 @@ test("installation discovery confirms a legal opaque candidate and invokes each 
       );
     }
     assert.deepEqual(calls, ["read", "confirm", "retry", "cancel", "manual-picker"]);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
+});
+
+/**
+ * The discovery reply carries the diagnostics its own scan produced.
+ *
+ * The panel can only tell "we could not read a source" from "we read everything and
+ * found nothing" if the route publishes the provider's diagnostics verbatim. A
+ * projection that dropped them would leave the surface deriving its sentence from
+ * `candidates.length` alone - which told a player with the game installed that no
+ * installation exists. A scan that throws answers a typed refusal, never an empty scan.
+ */
+test("installation discovery publishes the scan's own diagnostics", async () => {
+  const replies = [
+    {
+      apiVersion: 1 as const,
+      candidates: [],
+      diagnostics: ["registry-unavailable", "source-unavailable", "no-candidates"],
+    },
+    { apiVersion: 1 as const, candidates: [], diagnostics: ["no-candidates"] },
+  ];
+  let reads = 0;
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameDiscovery: {
+      read: async () => {
+        const reply = replies[reads++];
+        if (reply === undefined) throw new Error("stardew_installation_discovery_unavailable");
+        return reply;
+      },
+      confirm: async () => ({ apiVersion: 1, status: "unavailable" as const }),
+      retry: async () => replies[0]!,
+      cancel: async () => ({ apiVersion: 1, status: "cancelled" as const }),
+      manualPicker: async () => ({ apiVersion: 1, status: "unavailable" as const }),
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const discoveryPath = `${server.origin}/api/composed-reference-game/v1/game/installation/discovery`;
+    for (const reply of replies) {
+      const read = await fetch(discoveryPath, { headers: { origin: server.origin, cookie } });
+      assert.equal(read.status, 200);
+      assert.deepEqual(await read.json(), reply);
+    }
+    const refused = await fetch(discoveryPath, { headers: { origin: server.origin, cookie } });
+    assert.equal(refused.status, 503);
+    assert.deepEqual(
+      await refused.json(),
+      lifecycleProblemBody("stardew_installation_discovery_unavailable", "game_unavailable"),
+    );
+  } finally {
+    await server.close();
+  }
 });
 
 test("installation discovery boundary rejects unexpected query, wrong content type, and method drift", async () => {
@@ -270,20 +379,40 @@ test("installation discovery boundary rejects unexpected query, wrong content ty
     readChat: async (context) => stateForChat(context),
     readGame: async (context) => stateForGame(context),
     gameDiscovery: {
-      read: async () => { calls.push("read"); return { apiVersion: 1, candidates: [], diagnostics: [] }; },
-      confirm: async () => { calls.push("confirm"); return { apiVersion: 1, status: "registered" }; },
-      retry: async () => { calls.push("retry"); return { apiVersion: 1, candidates: [], diagnostics: [] }; },
-      cancel: async () => { calls.push("cancel"); return { apiVersion: 1, status: "cancelled" }; },
-      manualPicker: async () => { calls.push("manual-picker"); return { apiVersion: 1, status: "accepted" }; },
+      read: async () => {
+        calls.push("read");
+        return { apiVersion: 1, candidates: [], diagnostics: [] };
+      },
+      confirm: async () => {
+        calls.push("confirm");
+        return { apiVersion: 1, status: "registered" };
+      },
+      retry: async () => {
+        calls.push("retry");
+        return { apiVersion: 1, candidates: [], diagnostics: [] };
+      },
+      cancel: async () => {
+        calls.push("cancel");
+        return { apiVersion: 1, status: "cancelled" };
+      },
+      manualPicker: async () => {
+        calls.push("manual-picker");
+        return { apiVersion: 1, status: "accepted" };
+      },
     },
   });
   const server = await start(handler);
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const base = `${server.origin}/api/composed-reference-game/v1/game/installation/discovery`;
-    const authHeaders = { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" };
+    const authHeaders = {
+      origin: server.origin,
+      cookie,
+      "x-csrf-token": root.chat.csrfToken,
+      "content-type": "application/json",
+    };
     const query = await fetch(`${base}?unexpected=1`, { headers: authHeaders });
     assert.equal(query.status, 409);
     assert.deepEqual(await query.json(), { code: "malformed_request" });
@@ -293,31 +422,78 @@ test("installation discovery boundary rejects unexpected query, wrong content ty
       body: JSON.stringify({ apiVersion: 1 }),
     });
     assert.equal(wrongContentType.status, 401);
-    const wrongMethod = await fetch(base, { method: "POST", headers: authHeaders, body: JSON.stringify({ apiVersion: 1 }) });
+    const wrongMethod = await fetch(base, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ apiVersion: 1 }),
+    });
     assert.equal(wrongMethod.status, 404);
-    const wrongMutationMethod = await fetch(`${base}/retry`, { method: "GET", headers: { origin: server.origin, cookie, "sec-fetch-site": "same-origin" } });
+    const wrongMutationMethod = await fetch(`${base}/retry`, {
+      method: "GET",
+      headers: { origin: server.origin, cookie, "sec-fetch-site": "same-origin" },
+    });
     assert.equal(wrongMutationMethod.status, 404);
     assert.deepEqual(calls, []);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("installation discovery mutation requests reject empty, malformed, wrong-version, and extra fields", async () => {
   const calls: string[] = [];
   let handler!: ReturnType<typeof createComposedReferenceGameBrowserRequestHandler>;
   handler = createComposedReferenceGameBrowserRequestHandler({
-    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }), bootstrapToken,
-    readChat: async (context) => stateForChat(context), readGame: async (context) => stateForGame(context),
-    gameDiscovery: { read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }), confirm: async () => { calls.push("confirm"); return { apiVersion: 1, status: "registered" }; }, retry: async () => { calls.push("retry"); return { apiVersion: 1, candidates: [], diagnostics: [] }; }, cancel: async () => { calls.push("cancel"); return { apiVersion: 1, status: "cancelled" }; }, manualPicker: async () => { calls.push("manual-picker"); return { apiVersion: 1, status: "accepted" }; } },
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameDiscovery: {
+      read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
+      confirm: async () => {
+        calls.push("confirm");
+        return { apiVersion: 1, status: "registered" };
+      },
+      retry: async () => {
+        calls.push("retry");
+        return { apiVersion: 1, candidates: [], diagnostics: [] };
+      },
+      cancel: async () => {
+        calls.push("cancel");
+        return { apiVersion: 1, status: "cancelled" };
+      },
+      manualPicker: async () => {
+        calls.push("manual-picker");
+        return { apiVersion: 1, status: "accepted" };
+      },
+    },
   });
   const server = await start(handler);
   try {
-    const initial = await bootstrap(server.origin); const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!; const root = await initial.json() as { chat: { csrfToken: string } };
-    for (const path of ["confirm", "retry", "cancel", "manual-picker"] as const) for (const body of ["", "{", JSON.stringify({ apiVersion: 2 }), JSON.stringify({ apiVersion: 1, extra: true })]) {
-      const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/installation/discovery/${path}`, { method: "POST", headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body });
-      assert.equal(response.status, 409); assert.deepEqual(await response.json(), { code: "malformed_request" });
-    }
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    for (const path of ["confirm", "retry", "cancel", "manual-picker"] as const)
+      for (const body of ["", "{", JSON.stringify({ apiVersion: 2 }), JSON.stringify({ apiVersion: 1, extra: true })]) {
+        const response = await fetch(
+          `${server.origin}/api/composed-reference-game/v1/game/installation/discovery/${path}`,
+          {
+            method: "POST",
+            headers: {
+              origin: server.origin,
+              cookie,
+              "x-csrf-token": root.chat.csrfToken,
+              "content-type": "application/json",
+            },
+            body,
+          },
+        );
+        assert.equal(response.status, 409);
+        assert.deepEqual(await response.json(), { code: "malformed_request" });
+      }
     assert.equal(calls.length, 0);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("installation discovery admissions bind exact operation, expire, and consume once", async () => {
@@ -339,7 +515,7 @@ test("installation discovery admissions bind exact operation, expire, and consum
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string; browserSession: { expiresAtMs: number } } };
+    const root = (await initial.json()) as { chat: { csrfToken: string; browserSession: { expiresAtMs: number } } };
     const request = lifecycleRequest(server.origin, cookie, root.chat.csrfToken, {
       method: "GET",
       url: "/api/composed-reference-game/v1/game/installation/discovery",
@@ -348,22 +524,42 @@ test("installation discovery admissions bind exact operation, expire, and consum
     const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, request, server.origin);
     assert.ok(admission);
     assert.equal(
-      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, admission, "discovery_confirm", () => "wrong-operation"),
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        admission,
+        "discovery_confirm",
+        () => "wrong-operation",
+      ),
       undefined,
     );
     assert.equal(
-      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, admission, "discovery_read", () => "read"),
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        admission,
+        "discovery_read",
+        () => "read",
+      ),
       "read",
     );
     assert.equal(
-      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, admission, "discovery_read", () => "replayed"),
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        admission,
+        "discovery_read",
+        () => "replayed",
+      ),
       undefined,
     );
     const expired = issueComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, request, server.origin);
     assert.ok(expired);
     Date.now = () => root.chat.browserSession.expiresAtMs;
     assert.equal(
-      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, expired, "discovery_read", () => "expired"),
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        expired,
+        "discovery_read",
+        () => "expired",
+      ),
       undefined,
     );
   } finally {
@@ -391,39 +587,49 @@ test("installation discovery read and retry reject mutation projections", async 
     try {
       const initial = await bootstrap(server.origin);
       const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-      const root = await initial.json() as { chat: { csrfToken: string } };
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
       const base = `${server.origin}/api/composed-reference-game/v1/game/installation/discovery`;
-      const response = operation === "read"
-        ? await fetch(base, { headers: { origin: server.origin, cookie } })
-        : await fetch(`${base}/retry`, {
-            method: "POST",
-            headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-            body: JSON.stringify({ apiVersion: 1 }),
-          });
+      const response =
+        operation === "read"
+          ? await fetch(base, { headers: { origin: server.origin, cookie } })
+          : await fetch(`${base}/retry`, {
+              method: "POST",
+              headers: {
+                origin: server.origin,
+                cookie,
+                "x-csrf-token": root.chat.csrfToken,
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({ apiVersion: 1 }),
+            });
       assert.equal(response.status, 409);
       assert.deepEqual(await response.json(), { code: "state_unavailable" });
-    } finally { await server.close(); }
+    } finally {
+      await server.close();
+    }
   }
 });
 
 test("game.prerequisites.setup mount is exact and cannot drift from its production callback", () => {
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithSetup }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithSetup }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+      }),
     /setup operation is mismounted/,
   );
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-      gameSetup: async () => undefined,
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+        gameSetup: async () => undefined,
+      }),
     /setup operation is mismounted/,
   );
 });
@@ -441,7 +647,10 @@ test("authenticated game.prerequisites.setup is one-shot, schema-bound, and retu
         handler.lifecycleActivationIssuer,
         admission,
         "game_setup",
-        (facts) => { calls.push({ command, facts }); return true; },
+        (facts) => {
+          calls.push({ command, facts });
+          return true;
+        },
       );
       if (consumed !== true) throw new Error("setup_admission_invalid");
     },
@@ -450,12 +659,17 @@ test("authenticated game.prerequisites.setup is one-shot, schema-bound, and retu
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const path = `${server.origin}/api/composed-reference-game/v1/game/prerequisites/setup`;
     const command = { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" };
     const completed = await fetch(path, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(command),
     });
     assert.equal(completed.status, 204);
@@ -464,36 +678,71 @@ test("authenticated game.prerequisites.setup is one-shot, schema-bound, and retu
     assert.deepEqual((calls[0] as { command: unknown }).command, command);
 
     for (const request of [
-      { headers: { origin: server.origin, cookie: "gb_composed_reference_game_session=wrong", "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: command },
-      { headers: { origin: "http://127.0.0.1:1", cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: command },
-      { headers: { origin: server.origin, cookie, "x-csrf-token": "wrong", "content-type": "application/json" }, body: command },
-      { headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: { ...command, path: "C:\\Games\\Stardew Valley" } },
+      {
+        headers: {
+          origin: server.origin,
+          cookie: "gb_composed_reference_game_session=wrong",
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: command,
+      },
+      {
+        headers: {
+          origin: "http://127.0.0.1:1",
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: command,
+      },
+      {
+        headers: { origin: server.origin, cookie, "x-csrf-token": "wrong", "content-type": "application/json" },
+        body: command,
+      },
+      {
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: { ...command, path: "C:\\Games\\Stardew Valley" },
+      },
     ]) {
-      const response = await fetch(path, { method: "POST", headers: request.headers, body: JSON.stringify(request.body) });
+      const response = await fetch(path, {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify(request.body),
+      });
       assert.equal(response.status, request.body === command ? 401 : 409);
     }
     assert.equal(calls.length, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.launch mount is exact and cannot drift from its production callback", () => {
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithLaunch }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithLaunch }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+      }),
     /launch operation is mismounted/,
   );
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-      gameLaunch: async () => undefined,
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+        gameLaunch: async () => undefined,
+      }),
     /launch operation is mismounted/,
   );
 });
@@ -511,7 +760,10 @@ test("authenticated game.launch is one-shot, schema-bound, and returns an empty 
         handler.lifecycleActivationIssuer,
         admission,
         "game_launch",
-        (facts) => { calls.push({ command, facts }); return true; },
+        (facts) => {
+          calls.push({ command, facts });
+          return true;
+        },
       );
       if (consumed !== true) throw new Error("launch_admission_invalid");
     },
@@ -520,12 +772,17 @@ test("authenticated game.launch is one-shot, schema-bound, and returns an empty 
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const path = `${server.origin}/api/composed-reference-game/v1/game/launch`;
     const command = { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 };
     const launched = await fetch(path, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(command),
     });
     assert.equal(launched.status, 204);
@@ -534,25 +791,71 @@ test("authenticated game.launch is one-shot, schema-bound, and returns an empty 
     assert.deepEqual((calls[0] as { command: unknown }).command, command);
 
     for (const request of [
-      { headers: { origin: server.origin, cookie: "gb_composed_reference_game_session=wrong", "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: command },
-      { headers: { origin: "http://127.0.0.1:1", cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: command },
-      { headers: { origin: server.origin, cookie, "x-csrf-token": "wrong", "content-type": "application/json" }, body: command },
-      { headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: { ...command, expectedInstanceGeneration: 0 } },
-      { headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: { ...command, expectedInstanceGeneration: 1, path: "C:\\Games\\Stardew Valley" } },
+      {
+        headers: {
+          origin: server.origin,
+          cookie: "gb_composed_reference_game_session=wrong",
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: command,
+      },
+      {
+        headers: {
+          origin: "http://127.0.0.1:1",
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: command,
+      },
+      {
+        headers: { origin: server.origin, cookie, "x-csrf-token": "wrong", "content-type": "application/json" },
+        body: command,
+      },
+      {
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: { ...command, expectedInstanceGeneration: 0 },
+      },
+      {
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: { ...command, expectedInstanceGeneration: 1, path: "C:\\Games\\Stardew Valley" },
+      },
     ]) {
-      const response = await fetch(path, { method: "POST", headers: request.headers, body: JSON.stringify(request.body) });
+      const response = await fetch(path, {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify(request.body),
+      });
       assert.equal(response.status, request.body === command ? 401 : 409);
     }
     assert.equal(calls.length, 1);
 
     const unlaunched = await fetch(`${server.origin}/api/composed-reference-game/v1/game/prerequisites/setup`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }),
     });
     assert.equal(unlaunched.status, 404);
     assert.equal(calls.length, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.launch maps only frozen typed outcomes without leaking internal errors", async () => {
@@ -573,25 +876,37 @@ test("game.launch maps only frozen typed outcomes without leaking internal error
       bootstrapToken,
       readChat: async (context) => stateForChat(context),
       readGame: async (context) => stateForGame(context),
-      gameLaunch: async () => { throw new Error(internalMessage); },
+      gameLaunch: async () => {
+        throw new Error(internalMessage);
+      },
     });
     const server = await start(handler);
     try {
       const initial = await bootstrap(server.origin);
       const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-      const root = await initial.json() as { chat: { csrfToken: string } };
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
       const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/launch`, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-        body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }),
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          apiVersion: 1,
+          idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+          expectedInstanceGeneration: 1,
+        }),
       });
       assert.equal(response.status, 409);
       const text = await response.text();
       assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
       // An unbounded internal message must still be provably absent from the body.
-      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
-        assert.equal(text.includes(internalMessage), false);
-    } finally { await server.close(); }
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage)) assert.equal(text.includes(internalMessage), false);
+    } finally {
+      await server.close();
+    }
   }
 });
 
@@ -602,13 +917,15 @@ async function launchRefusal(thrown: unknown): Promise<string> {
     bootstrapToken,
     readChat: async (context) => stateForChat(context),
     readGame: async (context) => stateForGame(context),
-    gameLaunch: async () => { throw thrown; },
+    gameLaunch: async () => {
+      throw thrown;
+    },
   });
   const server = await start(handler);
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/launch`, {
       method: "POST",
       headers: {
@@ -621,7 +938,9 @@ async function launchRefusal(thrown: unknown): Promise<string> {
     });
     assert.equal(response.status, 409);
     return await response.text();
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 }
 
 test("the launch wrapper's distinct causes stop collapsing into one masked answer", async () => {
@@ -640,14 +959,23 @@ test("the launch wrapper's distinct causes stop collapsing into one masked answe
     // now names the fault, so nothing is stacked on top of it.
     [wrapped(new Error("stardew_player_host_launch_runtime_unavailable")), { code: "game_runtime_unavailable" }],
     // An unknown cause keeps the wrapper's code and is told apart by its own bounded name.
-    [wrapped(new Error("stardew_owned_player_host_bootstrap_owner_quarantined")), { code: "game_unavailable", cause: "stardew_owned_player_host_bootstrap_owner_quarantined" }],
-    [wrapped(new Error("stardew_installation_admission_failed")), { code: "game_unavailable", cause: "stardew_installation_admission_failed" }],
+    [
+      wrapped(new Error("stardew_owned_player_host_bootstrap_owner_quarantined")),
+      { code: "game_unavailable", cause: "stardew_owned_player_host_bootstrap_owner_quarantined" },
+    ],
+    [
+      wrapped(new Error("stardew_installation_admission_failed")),
+      { code: "game_unavailable", cause: "stardew_installation_admission_failed" },
+    ],
     // The bounded code may sit deeper than the first cause.
     [wrapped(nested), { code: "game_unavailable", cause: "stardew_contained_runtime_arm_unavailable" }],
     // An OS-level failure is not a coordinator code: only the wrapper may cross.
     [wrapped(osLevel), { code: "game_unavailable", cause: "stardew_player_host_launch_failed" }],
     // Refusals that carry no cause fall back to their own bounded name.
-    [new Error("stardew_player_host_launch_quarantined"), { code: "game_unavailable", cause: "stardew_player_host_launch_quarantined" }],
+    [
+      new Error("stardew_player_host_launch_quarantined"),
+      { code: "game_unavailable", cause: "stardew_player_host_launch_quarantined" },
+    ],
     [new Error("stardew_lifecycle_closing"), { code: "game_unavailable", cause: "stardew_lifecycle_closing" }],
   ];
 
@@ -681,22 +1009,24 @@ test("the bounded-cause walk terminates on a cyclic cause chain", async () => {
 
 test("game.stop mount is exact and cannot drift from its production callback", () => {
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithStop }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithStop }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+      }),
     /stop operation is mismounted/,
   );
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-      gameStop: async () => undefined,
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+        gameStop: async () => undefined,
+      }),
     /stop operation is mismounted/,
   );
 });
@@ -714,7 +1044,10 @@ test("authenticated game.stop is one-shot, schema-bound, and returns an empty co
         handler.lifecycleActivationIssuer,
         admission,
         "game_stop",
-        (facts) => { calls.push({ command, facts }); return true; },
+        (facts) => {
+          calls.push({ command, facts });
+          return true;
+        },
       );
       if (consumed !== true) throw new Error("stop_admission_invalid");
     },
@@ -723,11 +1056,16 @@ test("authenticated game.stop is one-shot, schema-bound, and returns an empty co
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const command = { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 1 };
     const stopped = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stop`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(command),
     });
     assert.equal(stopped.status, 204);
@@ -736,7 +1074,12 @@ test("authenticated game.stop is one-shot, schema-bound, and returns an empty co
     assert.deepEqual((calls[0] as { command: unknown }).command, command);
     const malformed = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stop`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ ...command, expectedAttachmentGeneration: 0 }),
     });
     assert.equal(malformed.status, 409);
@@ -749,7 +1092,9 @@ test("authenticated game.stop is one-shot, schema-bound, and returns an empty co
     });
     assert.equal(unauthorized.status, 401);
     assert.equal(calls.length, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("Chat-only broker issues one session and leaves game route unavailable", async () => {
@@ -757,20 +1102,30 @@ test("Chat-only broker issues one session and leaves game route unavailable", as
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile }),
     bootstrapToken,
-    async readChat(context) { received = context; return stateForChat(context); },
+    async readChat(context) {
+      received = context;
+      return stateForChat(context);
+    },
   });
   const server = await start(handler);
   try {
     const initial = await bootstrap(server.origin);
     assert.equal(initial.status, 200);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { game: null; chat: { csrfToken: string; browserSession: { expiresAtMs: number } } };
+    const root = (await initial.json()) as {
+      game: null;
+      chat: { csrfToken: string; browserSession: { expiresAtMs: number } };
+    };
     assert.equal(root.game, null);
     assert.equal(root.chat.csrfToken, received!.csrfToken);
     assert.equal(root.chat.browserSession.expiresAtMs, received!.browserSessionExpiresAtMs);
-    const game = await fetch(`${server.origin}/api/composed-reference-game/v1/game`, { headers: { origin: server.origin, cookie } });
+    const game = await fetch(`${server.origin}/api/composed-reference-game/v1/game`, {
+      headers: { origin: server.origin, cookie },
+    });
     assert.equal(game.status, 404);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("mounted game shares the exact minted read context and bootstrap remains one-time", async () => {
@@ -778,8 +1133,14 @@ test("mounted game shares the exact minted read context and bootstrap remains on
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
     bootstrapToken,
-    async readChat(context) { contexts.push(context); return stateForChat(context); },
-    async readGame(context) { contexts.push(context); return stateForGame(context); },
+    async readChat(context) {
+      contexts.push(context);
+      return stateForChat(context);
+    },
+    async readGame(context) {
+      contexts.push(context);
+      return stateForGame(context);
+    },
   });
   const server = await start(handler);
   try {
@@ -788,25 +1149,31 @@ test("mounted game shares the exact minted read context and bootstrap remains on
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
     assert.equal(contexts.length, 2);
     assert.deepEqual(contexts[0], contexts[1]);
-    const state = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, { headers: { origin: server.origin, cookie } });
+    const state = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+      headers: { origin: server.origin, cookie },
+    });
     assert.equal(state.status, 200);
     assert.equal((await state.json()).game.build.profileId, gameProfile.profileId);
-    const game = await fetch(`${server.origin}/api/composed-reference-game/v1/game`, { headers: { origin: server.origin, cookie } });
+    const game = await fetch(`${server.origin}/api/composed-reference-game/v1/game`, {
+      headers: { origin: server.origin, cookie },
+    });
     assert.equal(game.status, 200);
     assert.deepEqual((await game.json()).browserSession.expiresAtMs, contexts[0]!.browserSessionExpiresAtMs);
     assert.equal((await bootstrap(server.origin)).status, 401);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("broker fails closed when the supplied origin is not a literal loopback origin", async () => {
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile }),
     bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
+    async readChat(context) {
+      return stateForChat(context);
+    },
   });
-  const server = createServer((request, response) =>
-    handler.handle(request, response, "http://localhost:12345"),
-  );
+  const server = createServer((request, response) => handler.handle(request, response, "http://localhost:12345"));
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolve());
@@ -830,33 +1197,72 @@ test("broker fail-closes invalid origin, cookie, producer output, and close", as
   const invalidProducer = createComposedReferenceGameBrowserRequestHandler({
     profile,
     bootstrapToken,
-    async readChat(context) { return { ...stateForChat(context), csrfToken: "wrong" }; },
+    async readChat(context) {
+      return { ...stateForChat(context), csrfToken: "wrong" };
+    },
   });
   const badServer = await start(invalidProducer);
-  try { assert.equal((await bootstrap(badServer.origin)).status, 409); } finally { await badServer.close(); }
+  try {
+    assert.equal((await bootstrap(badServer.origin)).status, 409);
+  } finally {
+    await badServer.close();
+  }
 
-  const handler = createComposedReferenceGameBrowserRequestHandler({ profile, bootstrapToken, async readChat(context) { return stateForChat(context); } });
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile,
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+  });
   const server = await start(handler);
   try {
-    assert.equal((await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, { method: "POST", headers: { origin: "http://wrong", "content-type": "application/json" }, body: JSON.stringify({ apiVersion: 1, bootstrapToken }) })).status, 401);
+    assert.equal(
+      (
+        await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
+          method: "POST",
+          headers: { origin: "http://wrong", "content-type": "application/json" },
+          body: JSON.stringify({ apiVersion: 1, bootstrapToken }),
+        })
+      ).status,
+      401,
+    );
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    assert.equal((await fetch(`${server.origin}/api/composed-reference-game/v1/state`, { headers: { origin: server.origin, cookie: "gb_composed_reference_game_session=wrong" } })).status, 401);
+    assert.equal(
+      (
+        await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+          headers: { origin: server.origin, cookie: "gb_composed_reference_game_session=wrong" },
+        })
+      ).status,
+      401,
+    );
     await handler.close();
-    assert.equal((await fetch(`${server.origin}/api/composed-reference-game/v1/state`, { headers: { origin: server.origin, cookie } })).status, 503);
-  } finally { await closeServer(server.server); }
+    assert.equal(
+      (
+        await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+          headers: { origin: server.origin, cookie },
+        })
+      ).status,
+      503,
+    );
+  } finally {
+    await closeServer(server.server);
+  }
 });
 
 test("lifecycle activation admission is fieldless, exact-session-bound, and one-shot", async () => {
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile }),
     bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
+    async readChat(context) {
+      return stateForChat(context);
+    },
   });
   const server = await start(handler);
   try {
     const initial = await bootstrap(server.origin);
-    const root = await initial.json() as {
+    const root = (await initial.json()) as {
       chat: { csrfToken: string; browserSession: { expiresAtMs: number } };
     };
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
@@ -901,7 +1307,10 @@ test("lifecycle activation admission is fieldless, exact-session-bound, and one-
         issuer,
         cabinReadAdmission,
         "lifecycle_activation",
-        () => { wrongOperationCallbackCalls += 1; return "wrong-operation"; },
+        () => {
+          wrongOperationCallbackCalls += 1;
+          return "wrong-operation";
+        },
       ),
       undefined,
     );
@@ -966,22 +1375,27 @@ test("lifecycle activation admission is fieldless, exact-session-bound, and one-
       ),
       undefined,
     );
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("lifecycle admission rejects malformed auth, foreign and forged authority", async () => {
-  const makeHandler = () => createComposedReferenceGameBrowserRequestHandler({
-    profile: composeReferenceGameBrowserProfile({ tavernProfile }),
-    bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
-  });
+  const makeHandler = () =>
+    createComposedReferenceGameBrowserRequestHandler({
+      profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+      bootstrapToken,
+      async readChat(context) {
+        return stateForChat(context);
+      },
+    });
   const handler = makeHandler();
   const foreignHandler = makeHandler();
   const server = await start(handler);
   const foreignServer = await start(foreignHandler);
   try {
     const initial = await bootstrap(server.origin);
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
     const issuer = handler.lifecycleActivationIssuer;
     const validRequest = lifecycleRequest(server.origin, cookie, root.chat.csrfToken);
@@ -989,10 +1403,23 @@ test("lifecycle admission rejects malformed auth, foreign and forged authority",
       issueComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, request, origin);
 
     assert.equal(issue(lifecycleRequest(server.origin, cookie, root.chat.csrfToken, { method: "GET" })), null);
-    assert.equal(issue(lifecycleRequest(server.origin, cookie, root.chat.csrfToken, { headers: { "content-type": "text/plain" } })), null);
-    assert.equal(issue(lifecycleRequest(server.origin, "gb_composed_reference_game_session=wrong", root.chat.csrfToken)), null);
+    assert.equal(
+      issue(
+        lifecycleRequest(server.origin, cookie, root.chat.csrfToken, { headers: { "content-type": "text/plain" } }),
+      ),
+      null,
+    );
+    assert.equal(
+      issue(lifecycleRequest(server.origin, "gb_composed_reference_game_session=wrong", root.chat.csrfToken)),
+      null,
+    );
     assert.equal(issue(lifecycleRequest(server.origin, cookie, "wrong")), null);
-    assert.equal(issue(lifecycleRequest(server.origin, cookie, root.chat.csrfToken, { headers: { origin: "http://127.0.0.1:1" } })), null);
+    assert.equal(
+      issue(
+        lifecycleRequest(server.origin, cookie, root.chat.csrfToken, { headers: { origin: "http://127.0.0.1:1" } }),
+      ),
+      null,
+    );
     assert.equal(issue(validRequest, "http://localhost:1"), null);
     assert.equal(
       issueComposedReferenceGameBrowserLifecycleActivationAdmission(
@@ -1038,7 +1465,7 @@ test("lifecycle admission rejects malformed auth, foreign and forged authority",
     );
 
     const foreignInitial = await bootstrap(foreignServer.origin);
-    const foreignRoot = await foreignInitial.json() as { chat: { csrfToken: string } };
+    const foreignRoot = (await foreignInitial.json()) as { chat: { csrfToken: string } };
     const foreignCookie = foreignInitial.headers.get("set-cookie")!.split(";", 1)[0]!;
     const foreignAdmission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
       foreignHandler.lifecycleActivationIssuer,
@@ -1046,13 +1473,12 @@ test("lifecycle admission rejects malformed auth, foreign and forged authority",
       foreignServer.origin,
     );
     assert.ok(foreignAdmission);
-    const foreignBrowserSessionId =
-      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
-        foreignHandler.lifecycleActivationIssuer,
-        foreignAdmission,
-        "lifecycle_activation",
-        (facts) => facts.browserSessionId,
-      );
+    const foreignBrowserSessionId = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+      foreignHandler.lifecycleActivationIssuer,
+      foreignAdmission,
+      "lifecycle_activation",
+      (facts) => facts.browserSessionId,
+    );
     assert.match(foreignBrowserSessionId!, /^[A-Za-z0-9_-]{43}$/);
     assert.notEqual(foreignBrowserSessionId, browserSessionId);
   } finally {
@@ -1065,13 +1491,15 @@ test("lifecycle admission fails after expiry or broker close and publishes no ro
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile }),
     bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
+    async readChat(context) {
+      return stateForChat(context);
+    },
   });
   const server = await start(handler);
   const realDateNow = Date.now;
   try {
     const initial = await bootstrap(server.origin);
-    const root = await initial.json() as {
+    const root = (await initial.json()) as {
       apiVersion: number;
       build: unknown;
       chat: { csrfToken: string; browserSession: { expiresAtMs: number } };
@@ -1103,10 +1531,7 @@ test("lifecycle admission fails after expiry or broker close and publishes no ro
       ),
       undefined,
     );
-    assert.equal(
-      issueComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, request, server.origin),
-      null,
-    );
+    assert.equal(issueComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, request, server.origin), null);
     Date.now = realDateNow;
 
     const route = await fetch(`${server.origin}/api/composed-reference-game/v1/game.launch`, {
@@ -1146,8 +1571,12 @@ test("authenticated Stardew cabin routes dispatch only exact frozen wire contrac
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
     bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
-    async readGame(context) { return stateForGame(context); },
+    async readChat(context) {
+      return stateForChat(context);
+    },
+    async readGame(context) {
+      return stateForGame(context);
+    },
     stardewCabins: {
       async read(admission) {
         readCalls += 1;
@@ -1157,12 +1586,14 @@ test("authenticated Stardew cabin routes dispatch only exact frozen wire contrac
           "cabin_read",
           () => ({
             apiVersion: 1 as const,
-            choices: [{
-              displayLabel: "Cabin 1",
-              availability: "available" as const,
-              choiceHandle,
-              expiresAtMs: Date.now() + 60_000,
-            }],
+            choices: [
+              {
+                displayLabel: "Cabin 1",
+                availability: "available" as const,
+                choiceHandle,
+                expiresAtMs: Date.now() + 60_000,
+              },
+            ],
           }),
         )!;
       },
@@ -1188,7 +1619,7 @@ test("authenticated Stardew cabin routes dispatch only exact frozen wire contrac
   const server = await start(handler);
   try {
     const initial = await bootstrap(server.origin);
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
     const cabinPath = `${server.origin}/api/composed-reference-game/v1/game/stardew/cabins`;
 
@@ -1199,7 +1630,14 @@ test("authenticated Stardew cabin routes dispatch only exact frozen wire contrac
     const choicesText = await choicesResponse.text();
     assert.deepEqual(JSON.parse(choicesText), {
       apiVersion: 1,
-      choices: [{ displayLabel: "Cabin 1", availability: "available", choiceHandle, expiresAtMs: JSON.parse(choicesText).choices[0].expiresAtMs }],
+      choices: [
+        {
+          displayLabel: "Cabin 1",
+          availability: "available",
+          choiceHandle,
+          expiresAtMs: JSON.parse(choicesText).choices[0].expiresAtMs,
+        },
+      ],
     });
     assert.equal(readCalls, 1);
     for (const forbidden of [rawCabinId, "cabinId", "companionId", "ownerFarmhandId", "AI", "Bridge", "ready"])
@@ -1222,7 +1660,9 @@ test("authenticated Stardew cabin routes dispatch only exact frozen wire contrac
     assert.equal(confirmCalls, 1);
     for (const forbidden of [rawCabinId, "cabinId", "companionId", "ownerFarmhandId", "AI", "Bridge", "ready"])
       assert.equal(confirmationText.includes(forbidden), false);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("Stardew cabin routes reject wrong auth, origin, CSRF, and DTO before lifecycle callbacks", async () => {
@@ -1230,17 +1670,27 @@ test("Stardew cabin routes reject wrong auth, origin, CSRF, and DTO before lifec
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
     bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
-    async readGame(context) { return stateForGame(context); },
+    async readChat(context) {
+      return stateForChat(context);
+    },
+    async readGame(context) {
+      return stateForGame(context);
+    },
     stardewCabins: {
-      async read() { lifecycleCalls += 1; throw new Error("must-not-dispatch"); },
-      async confirm() { lifecycleCalls += 1; throw new Error("must-not-dispatch"); },
+      async read() {
+        lifecycleCalls += 1;
+        throw new Error("must-not-dispatch");
+      },
+      async confirm() {
+        lifecycleCalls += 1;
+        throw new Error("must-not-dispatch");
+      },
     },
   });
   const server = await start(handler);
   try {
     const initial = await bootstrap(server.origin);
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
     const cabinPath = `${server.origin}/api/composed-reference-game/v1/game/stardew/cabins`;
     const exactCommand = {
@@ -1250,20 +1700,44 @@ test("Stardew cabin routes reject wrong auth, origin, CSRF, and DTO before lifec
       confirmed: true,
     };
 
-    assert.equal((await fetch(cabinPath, { headers: { origin: server.origin, cookie: "gb_composed_reference_game_session=wrong" } })).status, 401);
+    assert.equal(
+      (
+        await fetch(cabinPath, {
+          headers: { origin: server.origin, cookie: "gb_composed_reference_game_session=wrong" },
+        })
+      ).status,
+      401,
+    );
     assert.equal((await fetch(cabinPath, { headers: { origin: "http://127.0.0.1:1", cookie } })).status, 401);
-    assert.equal((await fetch(`${cabinPath}/confirm`, {
-      method: "POST",
-      headers: { origin: server.origin, cookie, "content-type": "application/json", "x-csrf-token": "wrong" },
-      body: JSON.stringify(exactCommand),
-    })).status, 401);
-    assert.equal((await fetch(`${cabinPath}/confirm`, {
-      method: "POST",
-      headers: { origin: server.origin, cookie, "content-type": "application/json", "x-csrf-token": root.chat.csrfToken },
-      body: JSON.stringify({ ...exactCommand, cabinId: "forbidden-raw-id" }),
-    })).status, 409);
+    assert.equal(
+      (
+        await fetch(`${cabinPath}/confirm`, {
+          method: "POST",
+          headers: { origin: server.origin, cookie, "content-type": "application/json", "x-csrf-token": "wrong" },
+          body: JSON.stringify(exactCommand),
+        })
+      ).status,
+      401,
+    );
+    assert.equal(
+      (
+        await fetch(`${cabinPath}/confirm`, {
+          method: "POST",
+          headers: {
+            origin: server.origin,
+            cookie,
+            "content-type": "application/json",
+            "x-csrf-token": root.chat.csrfToken,
+          },
+          body: JSON.stringify({ ...exactCommand, cabinId: "forbidden-raw-id" }),
+        })
+      ).status,
+      409,
+    );
     assert.equal(lifecycleCalls, 0);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.prerequisites.setup maps only frozen typed outcomes without leaking internal errors", async () => {
@@ -1280,26 +1754,34 @@ test("game.prerequisites.setup maps only frozen typed outcomes without leaking i
       bootstrapToken,
       readChat: async (context) => stateForChat(context),
       readGame: async (context) => stateForGame(context),
-      gameSetup: async () => { throw new Error(internalMessage); },
+      gameSetup: async () => {
+        throw new Error(internalMessage);
+      },
     });
     const server = await start(handler);
     try {
       const initial = await bootstrap(server.origin);
       const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-      const root = await initial.json() as { chat: { csrfToken: string } };
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
       const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/prerequisites/setup`, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
         body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }),
       });
       assert.equal(response.status, 409);
       const text = await response.text();
       assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
       // An unbounded internal message must still be provably absent from the body.
-      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
-        assert.equal(text.includes(internalMessage), false);
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage)) assert.equal(text.includes(internalMessage), false);
       assert.equal(text.includes("Stardew Valley"), false);
-    } finally { await server.close(); }
+    } finally {
+      await server.close();
+    }
   }
 });
 
@@ -1316,25 +1798,37 @@ test("game.stop maps only frozen typed outcomes without leaking internal errors"
       bootstrapToken,
       readChat: async (context) => stateForChat(context),
       readGame: async (context) => stateForGame(context),
-      gameStop: async () => { throw new Error(internalMessage); },
+      gameStop: async () => {
+        throw new Error(internalMessage);
+      },
     });
     const server = await start(handler);
     try {
       const initial = await bootstrap(server.origin);
       const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-      const root = await initial.json() as { chat: { csrfToken: string } };
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
       const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stop`, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-        body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 1 }),
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          apiVersion: 1,
+          idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+          expectedAttachmentGeneration: 1,
+        }),
       });
       assert.equal(response.status, 409);
       const text = await response.text();
       assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
       // An unbounded internal message must still be provably absent from the body.
-      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
-        assert.equal(text.includes(internalMessage), false);
-    } finally { await server.close(); }
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage)) assert.equal(text.includes(internalMessage), false);
+    } finally {
+      await server.close();
+    }
   }
 });
 
@@ -1352,25 +1846,37 @@ test("game.disconnect maps only frozen typed outcomes without leaking internal e
       bootstrapToken,
       readChat: async (context) => stateForChat(context),
       readGame: async (context) => stateForGame(context),
-      gameDisconnect: async () => { throw new Error(internalMessage); },
+      gameDisconnect: async () => {
+        throw new Error(internalMessage);
+      },
     });
     const server = await start(handler);
     try {
       const initial = await bootstrap(server.origin);
       const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-      const root = await initial.json() as { chat: { csrfToken: string } };
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
       const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/disconnect`, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-        body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 1 }),
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          apiVersion: 1,
+          idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+          expectedAttachmentGeneration: 1,
+        }),
       });
       assert.equal(response.status, 409);
       const text = await response.text();
       assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
       // An unbounded internal message must still be provably absent from the body.
-      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
-        assert.equal(text.includes(internalMessage), false);
-    } finally { await server.close(); }
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage)) assert.equal(text.includes(internalMessage), false);
+    } finally {
+      await server.close();
+    }
   }
 });
 
@@ -1386,17 +1892,25 @@ test("Stardew cabin confirmation maps only frozen typed outcomes", async () => {
     const handler = createComposedReferenceGameBrowserRequestHandler({
       profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
       bootstrapToken,
-      async readChat(context) { return stateForChat(context); },
-      async readGame(context) { return stateForGame(context); },
+      async readChat(context) {
+        return stateForChat(context);
+      },
+      async readGame(context) {
+        return stateForGame(context);
+      },
       stardewCabins: {
-        async read() { return Object.freeze({ apiVersion: 1 as const, choices: [] }); },
-        async confirm() { throw new Error(internalMessage); },
+        async read() {
+          return Object.freeze({ apiVersion: 1 as const, choices: [] });
+        },
+        async confirm() {
+          throw new Error(internalMessage);
+        },
       },
     });
     const server = await start(handler);
     try {
       const initial = await bootstrap(server.origin);
-      const root = await initial.json() as { chat: { csrfToken: string } };
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
       const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
       const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stardew/cabins/confirm`, {
         method: "POST",
@@ -1422,19 +1936,57 @@ test("Stardew cabin confirmation maps only frozen typed outcomes", async () => {
 });
 
 test("construction rejects fake or mismounted capabilities", () => {
-  assert.throws(() => createComposedReferenceGameBrowserRequestHandler({ profile: {} as never, bootstrapToken, async readChat() { return TavernBrowserFixtureV1.snapshot(); } }), /Invalid composed/);
-  assert.throws(() => createComposedReferenceGameBrowserRequestHandler({ profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }), bootstrapToken, async readChat() { return TavernBrowserFixtureV1.snapshot(); } }), /game reader/);
-  assert.throws(() => createComposedReferenceGameBrowserRequestHandler({ profile: composeReferenceGameBrowserProfile({ tavernProfile }), bootstrapToken: "short", async readChat() { return TavernBrowserFixtureV1.snapshot(); } }), /bootstrap token/);
+  assert.throws(
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: {} as never,
+        bootstrapToken,
+        async readChat() {
+          return TavernBrowserFixtureV1.snapshot();
+        },
+      }),
+    /Invalid composed/,
+  );
+  assert.throws(
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+        bootstrapToken,
+        async readChat() {
+          return TavernBrowserFixtureV1.snapshot();
+        },
+      }),
+    /game reader/,
+  );
+  assert.throws(
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+        bootstrapToken: "short",
+        async readChat() {
+          return TavernBrowserFixtureV1.snapshot();
+        },
+      }),
+    /bootstrap token/,
+  );
 
   for (const gameProfile of [gameProfileWithCabinReadOnly, gameProfileWithCabinConfirmOnly]) {
     assert.throws(
-      () => createComposedReferenceGameBrowserRequestHandler({
-        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
-        bootstrapToken,
-        async readChat(context) { return stateForChat(context); },
-        async readGame(context) { return stateForGame(context); },
-        stardewCabins: { read: async () => ({ apiVersion: 1, choices: [] }), confirm: async () => ({ apiVersion: 1, status: "manifest_admitted" }) },
-      }),
+      () =>
+        createComposedReferenceGameBrowserRequestHandler({
+          profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+          bootstrapToken,
+          async readChat(context) {
+            return stateForChat(context);
+          },
+          async readGame(context) {
+            return stateForGame(context);
+          },
+          stardewCabins: {
+            read: async () => ({ apiVersion: 1, choices: [] }),
+            confirm: async () => ({ apiVersion: 1, status: "manifest_admitted" }),
+          },
+        }),
       /cabin operations are mismounted/,
     );
   }
@@ -1444,18 +1996,22 @@ test("construction rejects fake or mismounted capabilities", () => {
     { confirm: async () => ({ apiVersion: 1, status: "manifest_admitted" as const }) },
   ]) {
     assert.throws(
-      () => createComposedReferenceGameBrowserRequestHandler({
-        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
-        bootstrapToken,
-        async readChat(context) { return stateForChat(context); },
-        async readGame(context) { return stateForGame(context); },
-        stardewCabins: stardewCabins as never,
-      }),
+      () =>
+        createComposedReferenceGameBrowserRequestHandler({
+          profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
+          bootstrapToken,
+          async readChat(context) {
+            return stateForChat(context);
+          },
+          async readGame(context) {
+            return stateForGame(context);
+          },
+          stardewCabins: stardewCabins as never,
+        }),
       /cabin operations are mismounted/,
     );
   }
 });
-
 
 test("authenticated game.disconnect is schema-bound, admission-bound, and returns 204 empty", async () => {
   const calls: unknown[] = [];
@@ -1467,8 +2023,13 @@ test("authenticated game.disconnect is schema-bound, admission-bound, and return
     readGame: async (context) => stateForGame(context),
     gameDisconnect: async (admission, command) => {
       const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
-        handler.lifecycleActivationIssuer, admission, "game_disconnect",
-        (facts) => { calls.push({ command, facts }); return true; },
+        handler.lifecycleActivationIssuer,
+        admission,
+        "game_disconnect",
+        (facts) => {
+          calls.push({ command, facts });
+          return true;
+        },
       );
       if (consumed !== true) throw new Error("disconnect_admission_invalid");
     },
@@ -1477,11 +2038,16 @@ test("authenticated game.disconnect is schema-bound, admission-bound, and return
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const command = { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 1 };
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/disconnect`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(command),
     });
     assert.equal(response.status, 204);
@@ -1489,19 +2055,28 @@ test("authenticated game.disconnect is schema-bound, admission-bound, and return
     assert.equal(calls.length, 1);
     const malformed = await fetch(`${server.origin}/api/composed-reference-game/v1/game/disconnect`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ ...command, extra: true }),
     });
     assert.equal(malformed.status, 409);
     assert.equal(calls.length, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("composed state gate admits a resume-phase paused action-authority snapshot", async () => {
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
     bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
+    async readChat(context) {
+      return stateForChat(context);
+    },
     async readGame(context) {
       const base = GameBrowserFixtureV1.connectedState();
       // Resume-phase facts: the fresh attachment is connected_idle while the
@@ -1521,32 +2096,38 @@ test("composed state gate admits a resume-phase paused action-authority snapshot
     const initial = await bootstrap(server.origin);
     assert.equal(initial.status, 200);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const state = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, { headers: { origin: server.origin, cookie } });
+    const state = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+      headers: { origin: server.origin, cookie },
+    });
     assert.equal(state.status, 200);
-    const root = await state.json() as { game: { game: { connectionStatus: string; actionAuthority: string } } };
+    const root = (await state.json()) as { game: { game: { connectionStatus: string; actionAuthority: string } } };
     assert.equal(root.game.game.connectionStatus, "connected_idle");
     assert.equal(root.game.game.actionAuthority, "paused");
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.resume mount is exact and cannot drift from its production callback", () => {
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithResume }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithResume }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+      }),
     /resume operation is mismounted/,
   );
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-      gameResume: async () => ({ apiVersion: 1, status: "accepted" }),
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+        gameResume: async () => ({ apiVersion: 1, status: "accepted" }),
+      }),
     /resume operation is mismounted/,
   );
 });
@@ -1563,7 +2144,9 @@ test("authenticated game.resume is one-shot, schema-bound, and returns a strict 
     // never claims a native Resume attachment.
     gameResume: async (admission, command) => {
       const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
-        handler.lifecycleActivationIssuer, admission, "game_resume",
+        handler.lifecycleActivationIssuer,
+        admission,
+        "game_resume",
         (facts) => {
           calls.push({ command, facts });
           return Object.freeze({ apiVersion: 1 as const, status: "accepted" as const });
@@ -1577,25 +2160,45 @@ test("authenticated game.resume is one-shot, schema-bound, and returns a strict 
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const path = `${server.origin}/api/composed-reference-game/v1/game/resume`;
     const command = { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 };
     const resumed = await fetch(path, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(command),
     });
     assert.equal(resumed.status, 200);
     const text = await resumed.text();
     assert.deepEqual(JSON.parse(text), { apiVersion: 1, status: "accepted" });
-    for (const forbidden of ["pid", "process", "path", "token", "lease", "digest", "receipt", "attestation", "generation"])
+    for (const forbidden of [
+      "pid",
+      "process",
+      "path",
+      "token",
+      "lease",
+      "digest",
+      "receipt",
+      "attestation",
+      "generation",
+    ])
       assert.equal(text.includes(forbidden), false);
     assert.equal(calls.length, 1);
     assert.deepEqual((calls[0] as { command: unknown }).command, command);
     assert.equal((calls[0] as { facts: { browserSessionId: string } }).facts.browserSessionId.length, 43);
 
     for (const headers of [
-      { origin: server.origin, cookie: "gb_composed_reference_game_session=wrong", "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      {
+        origin: server.origin,
+        cookie: "gb_composed_reference_game_session=wrong",
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       { origin: "http://127.0.0.1:1", cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
       { origin: server.origin, cookie, "x-csrf-token": "wrong", "content-type": "application/json" },
     ]) {
@@ -1609,14 +2212,21 @@ test("authenticated game.resume is one-shot, schema-bound, and returns a strict 
     ]) {
       const response = await fetch(path, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
         body: JSON.stringify(body),
       });
       assert.equal(response.status, 409);
       assert.deepEqual(await response.json(), { code: "malformed_request" });
     }
     assert.equal(calls.length, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.resume rejects forged callback results without leaking native claims", async () => {
@@ -1635,11 +2245,20 @@ test("game.resume rejects forged callback results without leaking native claims"
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/resume`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-      body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 }),
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+        expectedAttachmentGeneration: 2,
+      }),
     });
     assert.equal(response.status, 409);
     const text = await response.text();
@@ -1648,7 +2267,9 @@ test("game.resume rejects forged callback results without leaking native claims"
     assert.equal(text.includes("leak-me"), false);
     assert.equal(text.includes("generation"), false);
     assert.equal(resumeCalls, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.resume maps only frozen typed outcomes without leaking internal errors", async () => {
@@ -1665,25 +2286,37 @@ test("game.resume maps only frozen typed outcomes without leaking internal error
       bootstrapToken,
       readChat: async (context) => stateForChat(context),
       readGame: async (context) => stateForGame(context),
-      gameResume: async () => { throw new Error(internalMessage); },
+      gameResume: async () => {
+        throw new Error(internalMessage);
+      },
     });
     const server = await start(handler);
     try {
       const initial = await bootstrap(server.origin);
       const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-      const root = await initial.json() as { chat: { csrfToken: string } };
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
       const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/resume`, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-        body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 }),
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          apiVersion: 1,
+          idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+          expectedAttachmentGeneration: 2,
+        }),
       });
       assert.equal(response.status, 409);
       const text = await response.text();
       assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
       // An unbounded internal message must still be provably absent from the body.
-      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
-        assert.equal(text.includes(internalMessage), false);
-    } finally { await server.close(); }
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage)) assert.equal(text.includes(internalMessage), false);
+    } finally {
+      await server.close();
+    }
   }
 });
 
@@ -1698,33 +2331,46 @@ test("unmounted game.resume route stays unavailable", async () => {
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/resume`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-      body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 }),
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+        expectedAttachmentGeneration: 2,
+      }),
     });
     assert.equal(response.status, 404);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 test("game.reopen mount is exact and cannot drift from its production callback", () => {
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithReopen }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithReopen }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+      }),
     /reopen operation is mismounted/,
   );
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-      gameReopen: async () => ({ apiVersion: 1, status: "reopened" }),
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+        gameReopen: async () => ({ apiVersion: 1, status: "reopened" }),
+      }),
     /reopen operation is mismounted/,
   );
 });
@@ -1741,7 +2387,9 @@ test("authenticated game.reopen is one-shot, schema-bound, and returns a strict 
     // never claims any native work.
     gameReopen: async (admission, command) => {
       const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
-        handler.lifecycleActivationIssuer, admission, "game_reopen",
+        handler.lifecycleActivationIssuer,
+        admission,
+        "game_reopen",
         (facts) => {
           calls.push({ command, facts });
           return Object.freeze({ apiVersion: 1 as const, status: "reopened" as const });
@@ -1755,25 +2403,45 @@ test("authenticated game.reopen is one-shot, schema-bound, and returns a strict 
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const path = `${server.origin}/api/composed-reference-game/v1/game/reopen`;
     const command = { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 };
     const reopened = await fetch(path, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(command),
     });
     assert.equal(reopened.status, 200);
     const text = await reopened.text();
     assert.deepEqual(JSON.parse(text), { apiVersion: 1, status: "reopened" });
-    for (const forbidden of ["pid", "process", "path", "token", "lease", "digest", "receipt", "attestation", "generation"])
+    for (const forbidden of [
+      "pid",
+      "process",
+      "path",
+      "token",
+      "lease",
+      "digest",
+      "receipt",
+      "attestation",
+      "generation",
+    ])
       assert.equal(text.includes(forbidden), false);
     assert.equal(calls.length, 1);
     assert.deepEqual((calls[0] as { command: unknown }).command, command);
     assert.equal((calls[0] as { facts: { browserSessionId: string } }).facts.browserSessionId.length, 43);
 
     for (const headers of [
-      { origin: server.origin, cookie: "gb_composed_reference_game_session=wrong", "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      {
+        origin: server.origin,
+        cookie: "gb_composed_reference_game_session=wrong",
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       { origin: "http://127.0.0.1:1", cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
       { origin: server.origin, cookie, "x-csrf-token": "wrong", "content-type": "application/json" },
     ]) {
@@ -1787,14 +2455,21 @@ test("authenticated game.reopen is one-shot, schema-bound, and returns a strict 
     ]) {
       const response = await fetch(path, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
         body: JSON.stringify(body),
       });
       assert.equal(response.status, 409);
       assert.deepEqual(await response.json(), { code: "malformed_request" });
     }
     assert.equal(calls.length, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.reopen rejects forged callback results without leaking native claims", async () => {
@@ -1813,11 +2488,20 @@ test("game.reopen rejects forged callback results without leaking native claims"
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/reopen`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-      body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 }),
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+        expectedAttachmentGeneration: 2,
+      }),
     });
     assert.equal(response.status, 409);
     const text = await response.text();
@@ -1826,7 +2510,9 @@ test("game.reopen rejects forged callback results without leaking native claims"
     assert.equal(text.includes("leak-me"), false);
     assert.equal(text.includes("generation"), false);
     assert.equal(reopenCalls, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.reopen maps only frozen typed outcomes without leaking internal errors", async () => {
@@ -1841,25 +2527,37 @@ test("game.reopen maps only frozen typed outcomes without leaking internal error
       bootstrapToken,
       readChat: async (context) => stateForChat(context),
       readGame: async (context) => stateForGame(context),
-      gameReopen: async () => { throw new Error(internalMessage); },
+      gameReopen: async () => {
+        throw new Error(internalMessage);
+      },
     });
     const server = await start(handler);
     try {
       const initial = await bootstrap(server.origin);
       const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-      const root = await initial.json() as { chat: { csrfToken: string } };
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
       const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/reopen`, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-        body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 }),
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          apiVersion: 1,
+          idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+          expectedAttachmentGeneration: 2,
+        }),
       });
       assert.equal(response.status, 409);
       const text = await response.text();
       assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
       // An unbounded internal message must still be provably absent from the body.
-      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
-        assert.equal(text.includes(internalMessage), false);
-    } finally { await server.close(); }
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage)) assert.equal(text.includes(internalMessage), false);
+    } finally {
+      await server.close();
+    }
   }
 });
 
@@ -1874,34 +2572,47 @@ test("unmounted game.reopen route stays unavailable", async () => {
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/reopen`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-      body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 }),
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+        expectedAttachmentGeneration: 2,
+      }),
     });
     assert.equal(response.status, 404);
-  } finally { await server.close(); }
-});// ─── game.create and game.resume.cancel ─────────────────────────────────────
+  } finally {
+    await server.close();
+  }
+}); // ─── game.create and game.resume.cancel ─────────────────────────────────────
 
 test("game.create mount is exact and cannot drift from its production callback", () => {
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCreate }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCreate }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+      }),
     /create operation is mismounted/,
   );
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-      gameCreate: async () => ({ apiVersion: 1, status: "unavailable", gameSessionId: null }),
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+        gameCreate: async () => ({ apiVersion: 1, status: "unavailable", gameSessionId: null }),
+      }),
     /create operation is mismounted/,
   );
 });
@@ -1916,7 +2627,9 @@ test("authenticated game.create is one-shot, schema-bound, and returns a strict 
     readGame: async (context) => stateForGame(context),
     gameCreate: async (admission, command) => {
       const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
-        handler.lifecycleActivationIssuer, admission, "game_create",
+        handler.lifecycleActivationIssuer,
+        admission,
+        "game_create",
         (facts) => {
           calls.push({ command, facts });
           return Object.freeze({
@@ -1934,27 +2647,55 @@ test("authenticated game.create is one-shot, schema-bound, and returns a strict 
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const path = `${server.origin}/api/composed-reference-game/v1/game/create`;
-    const command = { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null };
+    const command = {
+      apiVersion: 1,
+      idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+      integrationId: "stardew",
+      continuityIdentityId: null,
+    };
     const created = await fetch(path, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(command),
     });
     assert.equal(created.status, 200);
     const text = await created.text();
     assert.deepEqual(JSON.parse(text), {
-      apiVersion: 1, status: "accepted", gameSessionId: "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      apiVersion: 1,
+      status: "accepted",
+      gameSessionId: "a1b2c3d4e5f60718293a4b5c6d7e8f90",
     });
-    for (const forbidden of ["pid", "process", "path", "token", "lease", "digest", "receipt", "attestation", "generation", "bootstrap"])
+    for (const forbidden of [
+      "pid",
+      "process",
+      "path",
+      "token",
+      "lease",
+      "digest",
+      "receipt",
+      "attestation",
+      "generation",
+      "bootstrap",
+    ])
       assert.equal(text.includes(forbidden), false);
     assert.equal(calls.length, 1);
     assert.deepEqual((calls[0] as { command: unknown }).command, command);
     assert.equal((calls[0] as { facts: { browserSessionId: string } }).facts.browserSessionId.length, 43);
 
     for (const headers of [
-      { origin: server.origin, cookie: "gb_composed_reference_game_session=wrong", "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      {
+        origin: server.origin,
+        cookie: "gb_composed_reference_game_session=wrong",
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       { origin: "http://127.0.0.1:1", cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
       { origin: server.origin, cookie, "x-csrf-token": "wrong", "content-type": "application/json" },
     ]) {
@@ -1969,14 +2710,21 @@ test("authenticated game.create is one-shot, schema-bound, and returns a strict 
     ]) {
       const response = await fetch(path, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
         body: JSON.stringify(body),
       });
       assert.equal(response.status, 409);
       assert.deepEqual(await response.json(), { code: "malformed_request" });
     }
     assert.equal(calls.length, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.create rejects forged callback results without leaking native claims", async () => {
@@ -1988,18 +2736,34 @@ test("game.create rejects forged callback results without leaking native claims"
     readGame: async (context) => stateForGame(context),
     gameCreate: async () => {
       createCalls += 1;
-      return { apiVersion: 1, status: "attached", gameSessionId: "a1b2c3d4e5f60718293a4b5c6d7e8f90", launchGeneration: 4, token: "leak-me" } as never;
+      return {
+        apiVersion: 1,
+        status: "attached",
+        gameSessionId: "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        launchGeneration: 4,
+        token: "leak-me",
+      } as never;
     },
   });
   const server = await start(handler);
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/create`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-      body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null }),
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+        integrationId: "stardew",
+        continuityIdentityId: null,
+      }),
     });
     assert.equal(response.status, 409);
     const text = await response.text();
@@ -2008,7 +2772,9 @@ test("game.create rejects forged callback results without leaking native claims"
     assert.equal(text.includes("leak-me"), false);
     assert.equal(text.includes("launchGeneration"), false);
     assert.equal(createCalls, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.create maps only frozen typed outcomes without leaking internal errors", async () => {
@@ -2026,25 +2792,38 @@ test("game.create maps only frozen typed outcomes without leaking internal error
       bootstrapToken,
       readChat: async (context) => stateForChat(context),
       readGame: async (context) => stateForGame(context),
-      gameCreate: async () => { throw new Error(internalMessage); },
+      gameCreate: async () => {
+        throw new Error(internalMessage);
+      },
     });
     const server = await start(handler);
     try {
       const initial = await bootstrap(server.origin);
       const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-      const root = await initial.json() as { chat: { csrfToken: string } };
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
       const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/create`, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-        body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null }),
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          apiVersion: 1,
+          idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+          integrationId: "stardew",
+          continuityIdentityId: null,
+        }),
       });
       assert.equal(response.status, 409);
       const text = await response.text();
       assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
       // An unbounded internal message must still be provably absent from the body.
-      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
-        assert.equal(text.includes(internalMessage), false);
-    } finally { await server.close(); }
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage)) assert.equal(text.includes(internalMessage), false);
+    } finally {
+      await server.close();
+    }
   }
 });
 
@@ -2059,34 +2838,48 @@ test("unmounted game.create route stays unavailable", async () => {
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/create`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-      body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", integrationId: "stardew", continuityIdentityId: null }),
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+        integrationId: "stardew",
+        continuityIdentityId: null,
+      }),
     });
     assert.equal(response.status, 404);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.resume.cancel mount is exact and cannot drift from its production callback", () => {
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithResumeCancel }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithResumeCancel }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+      }),
     /resume cancel operation is mismounted/,
   );
   assert.throws(
-    () => createComposedReferenceGameBrowserRequestHandler({
-      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
-      bootstrapToken,
-      readChat: async (context) => stateForChat(context),
-      readGame: async (context) => stateForGame(context),
-      gameResumeCancel: async () => ({ apiVersion: 1, status: "cancelled" }),
-    }),
+    () =>
+      createComposedReferenceGameBrowserRequestHandler({
+        profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+        bootstrapToken,
+        readChat: async (context) => stateForChat(context),
+        readGame: async (context) => stateForGame(context),
+        gameResumeCancel: async () => ({ apiVersion: 1, status: "cancelled" }),
+      }),
     /resume cancel operation is mismounted/,
   );
 });
@@ -2101,7 +2894,9 @@ test("authenticated game.resume.cancel is one-shot, schema-bound, and returns th
     readGame: async (context) => stateForGame(context),
     gameResumeCancel: async (admission, command) => {
       const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
-        handler.lifecycleActivationIssuer, admission, "game_resume_cancel",
+        handler.lifecycleActivationIssuer,
+        admission,
+        "game_resume_cancel",
         (facts) => {
           calls.push({ command, facts });
           return Object.freeze({ apiVersion: 1 as const, status: "cancelled" as const });
@@ -2115,12 +2910,17 @@ test("authenticated game.resume.cancel is one-shot, schema-bound, and returns th
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const path = `${server.origin}/api/composed-reference-game/v1/game/resume/cancel`;
     const command = { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 };
     const cancelled = await fetch(path, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify(command),
     });
     assert.equal(cancelled.status, 200);
@@ -2138,14 +2938,21 @@ test("authenticated game.resume.cancel is one-shot, schema-bound, and returns th
     ]) {
       const response = await fetch(path, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
         body: JSON.stringify(body),
       });
       assert.equal(response.status, 409);
       assert.deepEqual(await response.json(), { code: "malformed_request" });
     }
     assert.equal(calls.length, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.resume.cancel rejects forged callback results without leaking native claims", async () => {
@@ -2164,11 +2971,20 @@ test("game.resume.cancel rejects forged callback results without leaking native 
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/resume/cancel`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-      body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 }),
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+        expectedAttachmentGeneration: 2,
+      }),
     });
     assert.equal(response.status, 409);
     const text = await response.text();
@@ -2176,7 +2992,9 @@ test("game.resume.cancel rejects forged callback results without leaking native 
     assert.equal(text.includes("cancelled"), false);
     assert.equal(text.includes("leak-me"), false);
     assert.equal(cancelCalls, 1);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("game.resume.cancel maps only frozen typed outcomes without leaking internal errors", async () => {
@@ -2193,25 +3011,37 @@ test("game.resume.cancel maps only frozen typed outcomes without leaking interna
       bootstrapToken,
       readChat: async (context) => stateForChat(context),
       readGame: async (context) => stateForGame(context),
-      gameResumeCancel: async () => { throw new Error(internalMessage); },
+      gameResumeCancel: async () => {
+        throw new Error(internalMessage);
+      },
     });
     const server = await start(handler);
     try {
       const initial = await bootstrap(server.origin);
       const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-      const root = await initial.json() as { chat: { csrfToken: string } };
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
       const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/resume/cancel`, {
         method: "POST",
-        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-        body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 }),
+        headers: {
+          origin: server.origin,
+          cookie,
+          "x-csrf-token": root.chat.csrfToken,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          apiVersion: 1,
+          idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+          expectedAttachmentGeneration: 2,
+        }),
       });
       assert.equal(response.status, 409);
       const text = await response.text();
       assert.deepEqual(JSON.parse(text), lifecycleProblemBody(internalMessage, expectedCode));
       // An unbounded internal message must still be provably absent from the body.
-      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage))
-        assert.equal(text.includes(internalMessage), false);
-    } finally { await server.close(); }
+      if (!BOUNDED_COORDINATOR_CODE.test(internalMessage)) assert.equal(text.includes(internalMessage), false);
+    } finally {
+      await server.close();
+    }
   }
 });
 
@@ -2226,14 +3056,25 @@ test("unmounted game.resume.cancel route stays unavailable", async () => {
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/resume/cancel`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
-      body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 2 }),
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+        expectedAttachmentGeneration: 2,
+      }),
     });
     assert.equal(response.status, 404);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("the lifecycle activation route stages through the mounted owner seam and refuses every other caller", async () => {
@@ -2254,7 +3095,10 @@ test("the lifecycle activation route stages through the mounted owner seam and r
         handler.lifecycleActivationIssuer,
         admission,
         "lifecycle_activation",
-        () => { calls.push("activate"); return Object.freeze({ schemaVersion: 1, state: "staged" }); },
+        () => {
+          calls.push("activate");
+          return Object.freeze({ schemaVersion: 1, state: "staged" });
+        },
       );
       if (consumed === undefined) throw new Error("stardew_lifecycle_activation_admission_invalid");
     },
@@ -2263,7 +3107,7 @@ test("the lifecycle activation route stages through the mounted owner seam and r
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const path = `${server.origin}/api/composed-reference-game/v1/lifecycle/activate`;
 
     const unauthenticated = await fetch(path, {
@@ -2275,7 +3119,12 @@ test("the lifecycle activation route stages through the mounted owner seam and r
 
     const withBody = await fetch(path, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ apiVersion: 1 }),
     });
     assert.equal(withBody.status, 409);
@@ -2283,12 +3132,19 @@ test("the lifecycle activation route stages through the mounted owner seam and r
 
     const activated = await fetch(path, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
     });
     assert.equal(activated.status, 204);
     assert.equal(await activated.text(), "");
     assert.deepEqual(calls, ["activate"]);
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 /**
@@ -2345,7 +3201,9 @@ function chatOnlyHandler(readChat: (context: ComposedReferenceGameBrowserReadCon
   return createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile }),
     bootstrapToken,
-    readChat: readChat as (context: ComposedReferenceGameBrowserReadContext) => Promise<ReturnType<typeof stateForChat>>,
+    readChat: readChat as (
+      context: ComposedReferenceGameBrowserReadContext,
+    ) => Promise<ReturnType<typeof stateForChat>>,
   });
 }
 
@@ -2357,20 +3215,16 @@ test("the bootstrap route names the branch of every origin and token refusal, an
   const handler = chatOnlyHandler(async (context) => stateForChat(context));
   const server = await start(handler);
   try {
-    const foreignHost = await bootstrapRefusal(
-      server.origin,
-      JSON.stringify({ apiVersion: 1, bootstrapToken }),
-      { host: "127.0.0.1:1" },
-    );
+    const foreignHost = await bootstrapRefusal(server.origin, JSON.stringify({ apiVersion: 1, bootstrapToken }), {
+      host: "127.0.0.1:1",
+    });
     assert.equal(foreignHost.status, 401);
     assert.deepEqual(JSON.parse(foreignHost.body), { code: "unauthorized" });
     assert.equal(foreignHost.cause, "bootstrap_origin_rejected");
 
-    const foreignOrigin = await bootstrapRefusal(
-      server.origin,
-      JSON.stringify({ apiVersion: 1, bootstrapToken }),
-      { origin: "http://127.0.0.1:1" },
-    );
+    const foreignOrigin = await bootstrapRefusal(server.origin, JSON.stringify({ apiVersion: 1, bootstrapToken }), {
+      origin: "http://127.0.0.1:1",
+    });
     assert.equal(foreignOrigin.status, 401);
     assert.deepEqual(JSON.parse(foreignOrigin.body), { code: "unauthorized" });
     assert.equal(foreignOrigin.cause, "bootstrap_origin_header_mismatch");
@@ -2407,7 +3261,9 @@ test("the bootstrap route names the branch of every origin and token refusal, an
     assert.equal(second.status, 401);
     assert.deepEqual(await second.json(), { code: "unauthorized" });
     assert.equal(second.headers.get(BOOTSTRAP_CAUSE_HEADER), "bootstrap_token_consumed");
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("the bootstrap route names the malformed-request branches without changing their statuses", async () => {
@@ -2433,7 +3289,9 @@ test("the bootstrap route names the malformed-request branches without changing 
     assert.equal(contentType.status, 409);
     assert.deepEqual(JSON.parse(contentType.body), { code: "malformed_request" });
     assert.equal(contentType.cause, "bootstrap_content_type_rejected");
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("a bootstrap whose root projection breaks names the projection, not just state_unavailable", async () => {
@@ -2452,7 +3310,9 @@ test("a bootstrap whose root projection breaks names the projection, not just st
     assert.equal(response.status, 409);
     assert.deepEqual(await response.json(), { code: "state_unavailable" });
     assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "chat_snapshot_mismatch");
-  } finally { await mismatchServer.close(); }
+  } finally {
+    await mismatchServer.close();
+  }
 
   const failingChat = chatOnlyHandler(async () => {
     throw new Error("composed_reference_game_chat_snapshot_invalid");
@@ -2463,7 +3323,9 @@ test("a bootstrap whose root projection breaks names the projection, not just st
     assert.equal(response.status, 409);
     assert.deepEqual(await response.json(), { code: "state_unavailable" });
     assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "composed_reference_game_chat_snapshot_invalid");
-  } finally { await failingServer.close(); }
+  } finally {
+    await failingServer.close();
+  }
 
   // An unbounded producer message (a path, OS text) is never projected: the closed-set
   // code of the check that failed stands in for it.
@@ -2475,7 +3337,9 @@ test("a bootstrap whose root projection breaks names the projection, not just st
     const response = await bootstrap(unboundedServer.origin);
     assert.equal(response.status, 409);
     assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "chat_projection_failed");
-  } finally { await unboundedServer.close(); }
+  } finally {
+    await unboundedServer.close();
+  }
 
   const failingGame = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
@@ -2492,7 +3356,9 @@ test("a bootstrap whose root projection breaks names the projection, not just st
     const response = await bootstrap(gameServer.origin);
     assert.equal(response.status, 409);
     assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "stardew_player_host_launch_runtime_unavailable");
-  } finally { await gameServer.close(); }
+  } finally {
+    await gameServer.close();
+  }
 });
 
 test("no route but the bootstrap names a cause, and no refusal body gained a field", async () => {
@@ -2512,7 +3378,9 @@ test("no route but the bootstrap names a cause, and no refusal body gained a fie
     assert.equal(unknown.status, 404);
     assert.equal(unknown.headers.get(BOOTSTRAP_CAUSE_HEADER), null);
     assert.deepEqual(await unknown.json(), { code: "not_found" });
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });
 
 test("the lifecycle activation route refuses an admission issued for another operation", async () => {
@@ -2540,12 +3408,19 @@ test("the lifecycle activation route refuses an admission issued for another ope
   try {
     const initial = await bootstrap(server.origin);
     const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
-    const root = await initial.json() as { chat: { csrfToken: string } };
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
     const response = await fetch(`${server.origin}/api/composed-reference-game/v1/lifecycle/activate`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
     });
     assert.equal(response.status, 409);
     assert.deepEqual(await response.json(), { code: "unauthorized" });
-  } finally { await server.close(); }
+  } finally {
+    await server.close();
+  }
 });

@@ -6,6 +6,8 @@ import {
   capabilitiesLabel,
   compatibilityLabel,
   connectionLabel,
+  installationDiscoveryFailureState,
+  installationDiscoveryState,
   installationStateLabel,
   instanceLabel,
   outcomeLabel,
@@ -48,6 +50,7 @@ const INSTALLATION_STATES = [
   "cancelled",
   "source-unavailable",
   "no-candidates",
+  "result-unavailable",
   "expired",
   "error",
 ];
@@ -112,6 +115,47 @@ test("the two shipped locales are both really translated", () => {
   }
   for (const state of INSTALLATION_STATES) {
     assert.notEqual(installationStateLabel(zh, state), installationStateLabel(en, state), `installation ${state} is not translated`);
+  }
+});
+
+/**
+ * The player sentence follows the Host's own answer, not the candidate count.
+ *
+ * Measured defect: on a machine where Stardew Valley IS installed, the Host's discovery
+ * replied with no candidate and diagnostics naming the sources it could not read
+ * (`registry-unavailable` + `source-unavailable`), and the panel read that as "No Stardew
+ * Valley installation was found." - a statement about the player's machine that the Host
+ * never made. A rejected read had a second version of the same fault: a thrown code this
+ * build does not know collapsed into "The installation search failed."
+ */
+test("the installation sentence follows the transport's own answer", () => {
+  // A reply that carries a candidate is a candidate whatever else it reported.
+  assert.equal(installationDiscoveryState(1, []), "candidates");
+  assert.equal(installationDiscoveryState(1, ["registry-unavailable"]), "candidates");
+  // A scan that could not read a source says so, from the Host's own diagnostics.
+  for (const diagnostic of ["source-unavailable", "registry-unavailable", "vdf-unreadable", "vdf-malformed", "invalid-app-manifest"])
+    assert.equal(installationDiscoveryState(0, [diagnostic]), "source-unavailable", diagnostic);
+  assert.equal(installationDiscoveryState(0, ["registry-unavailable", "invalid-app-manifest"]), "source-unavailable");
+  assert.equal(installationDiscoveryState(0, ["source-unavailable", "no-candidates"]), "source-unavailable");
+  // A scan that read everything and found nothing says exactly that.
+  assert.equal(installationDiscoveryState(0, ["no-candidates"]), "no-candidates");
+  assert.equal(installationDiscoveryState(0, []), "no-candidates");
+  // A rejected read: the two codes that mean the scan itself could not run, the one that
+  // means the Host refused to produce the result, and every code this build cannot name.
+  assert.equal(installationDiscoveryFailureState("game_unavailable"), "source-unavailable");
+  assert.equal(installationDiscoveryFailureState("source_unavailable"), "source-unavailable");
+  assert.equal(installationDiscoveryFailureState("state_unavailable"), "error");
+  for (const code of ["unauthorized", "not_found", "malformed_request", "closed", "invalid_stardew_installation_discovery", "network_error", null])
+    assert.equal(installationDiscoveryFailureState(code), "result-unavailable", String(code));
+});
+
+test("the four discovery outcomes are four different sentences", () => {
+  for (const locale of locales) {
+    const labels = messages(locale);
+    const sentences = ["source-unavailable", "no-candidates", "result-unavailable", "error"].map(
+      (state) => installationStateLabel(labels, state),
+    );
+    assert.equal(new Set(sentences).size, sentences.length, `${locale} collapses two discovery outcomes into one sentence`);
   }
 });
 

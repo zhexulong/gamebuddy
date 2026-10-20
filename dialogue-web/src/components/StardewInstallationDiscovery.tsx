@@ -3,20 +3,15 @@ import type {
   StardewInstallationDiscoveryV1,
   ComposedReferenceGameBrowserApi,
 } from "../composed-reference-game-browser-api";
-import { installationStateLabel } from "../game-presentation";
+import { observedProblemCode } from "../composed-problem-view";
+import {
+  installationDiscoveryFailureState,
+  installationDiscoveryState,
+  installationStateLabel,
+  type InstallationDiscoveryState,
+} from "../game-presentation";
 import type { Messages } from "../i18n";
 
-export type InstallationDiscoveryState =
-  | "not_configured"
-  | "loading"
-  | "candidates"
-  | "confirming"
-  | "retrying"
-  | "cancelled"
-  | "source-unavailable"
-  | "no-candidates"
-  | "expired"
-  | "error";
 type Props = {
   api: Pick<
     ComposedReferenceGameBrowserApi,
@@ -41,6 +36,11 @@ type Props = {
  *    typed states, so the surface never reads "still searching" and "nothing
  *    found" at once: searching while a scan is outstanding, the answer once it
  *    settles, and nothing else in between.
+ *  - **The answer decides the sentence, not the candidate count.** The Host's
+ *    reply carries the diagnostics its own scan produced, and an empty scan only
+ *    means "nothing was found" when none of them names a source it could not read
+ *    (`game-presentation.ts`). Deriving the sentence from `candidates.length`
+ *    alone told a player whose game IS installed that no installation exists.
  *  - **A scan that does not settle must not lock the panel.** The controls that
  *    *start* work are off while work is outstanding, but the one that abandons it
  *    is not, and abandoning it retires the read it interrupts - otherwise a slow
@@ -72,11 +72,10 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
       if (!mounted.current || epoch !== refreshEpoch.current) return;
       setDiscovery(result);
       setSelectedCandidateId(null);
-      setState(result.candidates.length ? "candidates" : "no-candidates");
+      setState(installationDiscoveryState(result.candidates.length, result.diagnostics));
     } catch (error) {
       if (!mounted.current || epoch !== refreshEpoch.current) return;
-      const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
-      setState(code === "game_unavailable" || code === "source_unavailable" ? "source-unavailable" : "error");
+      setState(installationDiscoveryFailureState(observedProblemCode(error)));
     } finally {
       if (!internal) setBusy(false);
     }
@@ -95,10 +94,7 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
         await api.cancelStardewInstallationDiscovery();
         if (mounted.current) setState("cancelled");
       } catch (error) {
-        if (mounted.current) {
-          const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
-          setState(code === "game_unavailable" || code === "source_unavailable" ? "source-unavailable" : "error");
-        }
+        if (mounted.current) setState(installationDiscoveryFailureState(observedProblemCode(error)));
       } finally {
         setBusy(false);
       }
@@ -135,15 +131,12 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
       }
       if (kind === "retry" && "candidates" in result) {
         setDiscovery(result);
-        setState(result.candidates.length ? "candidates" : "no-candidates");
+        setState(installationDiscoveryState(result.candidates.length, result.diagnostics));
         return;
       }
       setState("error");
     } catch (error) {
-      if (mounted.current) {
-        const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
-        setState(code === "game_unavailable" || code === "source_unavailable" ? "source-unavailable" : "error");
-      }
+      if (mounted.current) setState(installationDiscoveryFailureState(observedProblemCode(error)));
     } finally {
       setBusy(false);
     }
@@ -153,7 +146,11 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
   // one state in which abandoning the panel is not offered.
   const cancelDisabled = state === "confirming";
   const retryable =
-    state === "no-candidates" || state === "source-unavailable" || state === "error" || state === "expired";
+    state === "no-candidates" ||
+    state === "source-unavailable" ||
+    state === "result-unavailable" ||
+    state === "error" ||
+    state === "expired";
   return (
     <section
       className="game-installation-panel"

@@ -86,10 +86,7 @@ export function instanceLabel(labels: Messages, instance: GameProjection["instan
 }
 
 /** The Host's own compatibility sentence wins over the generic state word. */
-export function compatibilityLabel(
-  labels: Messages,
-  compatibility: GameProjection["compatibility"],
-): string {
+export function compatibilityLabel(labels: Messages, compatibility: GameProjection["compatibility"]): string {
   if (compatibility.message !== null) return compatibility.message;
   switch (compatibility.status) {
     case "unchecked":
@@ -105,10 +102,7 @@ export function compatibilityLabel(
   }
 }
 
-export function capabilitiesLabel(
-  labels: Messages,
-  summary: GameProjection["capabilitySummary"],
-): string {
+export function capabilitiesLabel(labels: Messages, summary: GameProjection["capabilitySummary"]): string {
   return summary.available
     ? labels.gameCapabilityCount.replace("{{count}}", String(summary.count))
     : labels.gameCapabilitiesUnavailable;
@@ -148,8 +142,68 @@ export function outcomeLabel(labels: Messages, outcome: GameProjection["latestOu
   }
 }
 
+export type InstallationDiscoveryState =
+  | "not_configured"
+  | "loading"
+  | "candidates"
+  | "confirming"
+  | "retrying"
+  | "cancelled"
+  | "source-unavailable"
+  | "no-candidates"
+  | "result-unavailable"
+  | "expired"
+  | "error";
+
+/**
+ * The discovery diagnostics that name a source or its metadata the scan could not
+ * read (`host/src/windows-stardew-installation-discovery/internal.ts`, `DiscoveryDiagnostic`).
+ * `no-candidates` and `candidate-invalid` are deliberately absent: they name the
+ * absence of a candidate, not a source that could not be read.
+ */
+const SOURCE_READ_FAILURE_DIAGNOSTICS: readonly string[] = [
+  "source-unavailable",
+  "registry-unavailable",
+  "vdf-unreadable",
+  "vdf-malformed",
+  "invalid-app-manifest",
+];
+
+/**
+ * The state a settled discovery reply names, from the reply's own answer.
+ *
+ * An empty scan is only "nothing was found" when no diagnostic names a source-read
+ * failure. The surface used to derive this from `candidates.length` alone, so the
+ * Host's honest "I could not read Steam/GOG" read as "no Stardew Valley installation
+ * was found" - on a machine where the game is installed.
+ */
+export function installationDiscoveryState(
+  candidateCount: number,
+  diagnostics: readonly string[],
+): InstallationDiscoveryState {
+  if (candidateCount > 0) return "candidates";
+  return diagnostics.some((diagnostic) => SOURCE_READ_FAILURE_DIAGNOSTICS.includes(diagnostic))
+    ? "source-unavailable"
+    : "no-candidates";
+}
+
+/**
+ * The state a rejected discovery read names.
+ *
+ * `game_unavailable`/`source_unavailable` are the Host saying the scan could not run;
+ * `state_unavailable` is it refusing to produce the result - a genuine search failure.
+ * Any other code is one this build does not recognise, and blaming the search for it
+ * would point the player at a fault that does not exist; its own sentence says only
+ * that the result could not be read.
+ */
+export function installationDiscoveryFailureState(code: string | null): InstallationDiscoveryState {
+  if (code === "game_unavailable" || code === "source_unavailable") return "source-unavailable";
+  if (code === "state_unavailable") return "error";
+  return "result-unavailable";
+}
+
 /** The localized label for an installation-discovery state (design/104 §5.1/§6). */
-export function installationStateLabel(labels: Messages, state: string): string {
+export function installationStateLabel(labels: Messages, state: InstallationDiscoveryState): string {
   switch (state) {
     case "not_configured":
       return labels.gameInstallationNotConfigured;
@@ -167,12 +221,14 @@ export function installationStateLabel(labels: Messages, state: string): string 
       return labels.gameInstallationSourceUnavailable;
     case "no-candidates":
       return labels.gameInstallationNoCandidates;
+    case "result-unavailable":
+      return labels.gameInstallationResultUnavailable;
     case "expired":
       return labels.gameInstallationExpired;
     case "error":
       return labels.gameInstallationError;
     default:
-      return labels.gameInstallationError;
+      return exhaustive(state);
   }
 }
 
@@ -237,17 +293,16 @@ export function deriveCapabilityBoard(labels: Messages, projection: GameProjecti
   const companionName = projection.companionName ?? labels.gameBoardCompanionTitle;
   return Object.freeze({
     title: labels.gameBoardTitle,
-    lead: summary.available
-      ? withCount(labels.gameBoardPublishedLead, summary.count)
-      : labels.gameBoardUnpublishedLead,
+    lead: summary.available ? withCount(labels.gameBoardPublishedLead, summary.count) : labels.gameBoardUnpublishedLead,
     cards: Object.freeze([
       Object.freeze({
         key: "companion" as const,
         icon: "companion" as const,
         title: companionName,
-        detail: projection.role === "companion"
-          ? labels.gameBoardCompanionPresent.replace("{{name}}", companionName)
-          : labels.gameBoardCompanionAbsent,
+        detail:
+          projection.role === "companion"
+            ? labels.gameBoardCompanionPresent.replace("{{name}}", companionName)
+            : labels.gameBoardCompanionAbsent,
       }),
       Object.freeze({
         key: "abilities" as const,
