@@ -2804,6 +2804,10 @@ try {
     // work of the day that followed it, and the baseline's judgement of the lot. Absent for every other
     // scenario, because it is a fact about crossings and not a generic field.
     multiday: multidayOutcome,
+    // Every submission the Agent made through the program tools, with what the Mod answered. Published on the result
+    // as well as in the bundle (where a failed run reads it), because `accepted: 0` - the companion chose batching and
+    // nothing ran through it - is the outcome a run's artifact has to be able to state.
+    programSubmissions: Object.freeze([...programSubmissions]),
     // The run's own narrative judgement, on the RESULT (the bundle carries the same object): the verdict folds it
     // in, so a caller reading `state` cannot miss it.
     // The run's own cadence, split into the three spans that a single "gap" number conflated: the game doing the
@@ -3336,6 +3340,10 @@ async function writeRunBundle({
     failure,
     repro,
     multiday: bundleCrossingRecord(multidayOutcome),
+    // Published HERE, not on either result literal: every result path builds its bundle through this function, which
+    // is also how `multiday` reaches a failed run. A run that ended badly - the one where "the companion submitted
+    // programs and nothing ran through them" matters most - must not lose the submissions it recorded.
+    programSubmissions: Object.freeze([...programSubmissions]),
   };
   // The timeline record COUNT is the fact log's length, so the on-disk file must match it (the validator
   // cross-checks the file against the manifest).

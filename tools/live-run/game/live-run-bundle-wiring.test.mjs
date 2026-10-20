@@ -307,3 +307,40 @@ test("a tool call's duration names its owner: nested agent, program tool, or act
   // A call with no result yet (session cut off mid-call) carries no duration: it is left out, not given one.
   assert.match(SOURCE, /if \(call === undefined\) continue;/);
 });
+
+test("program submissions are published on the failure path too, through the bundle both results write", () => {
+  // Measured 2026-10-21: the runner recorded every `stardew_submit_action_program` call, but published the record
+  // only on its progress line - so a run that ended badly, the exact case where "the companion chose batching and
+  // nothing ran through it" matters most, said nothing about it. Two publications, and neither is a new mechanism:
+  // the result literal carries it (as `multiday` does on that path), and `writeRunBundle`'s OWN bundle literal carries
+  // it for EVERY result path - that is the same place `multiday` reaches a failed run, because both result literals
+  // (success/blocked and crash) build their bundle through this one function.
+  const resultBlock = SOURCE.slice(SOURCE.indexOf("const result = {"), SOURCE.indexOf("const partialResult = {"));
+  assert.ok(resultBlock.length > 0, "the success result literal must exist");
+  assert.match(
+    resultBlock,
+    /^    programSubmissions: Object\.freeze\(\[\.\.\.programSubmissions\]\),$/mu,
+    "the run's own result must publish the submissions",
+  );
+  const bundleFn = SOURCE.slice(
+    SOURCE.indexOf("async function writeRunBundle({"),
+    SOURCE.indexOf("function buildRunObservation("),
+  );
+  assert.ok(bundleFn.includes("const bundle = {"), "writeRunBundle must exist and build the bundle");
+  const bundleLiteral = bundleFn.slice(
+    bundleFn.indexOf("const bundle = {"),
+    bundleFn.indexOf("const timeline = factLog.map"),
+  );
+  assert.match(
+    bundleLiteral,
+    /programSubmissions: Object\.freeze\(\[\.\.\.programSubmissions\]\),/u,
+    "the bundle every result path writes must carry the submissions",
+  );
+  // Read from the run's own record, not synthesized at publication time: the array is filled by the submit hook.
+  assert.match(SOURCE, /const programSubmissions = \[\];/u);
+  assert.match(SOURCE, /programSubmissions\.push\(/u);
+  // The guarantee is the shared function: a publication on the success result literal alone would fail the bundle
+  // assertion above, and a failure path that stopped calling writeRunBundle would fail here.
+  assert.match(SOURCE, /result\.bundle = await writeRunBundle\(\{/u);
+  assert.match(SOURCE, /partialResult\.bundle = await writeRunBundle\(\{/u);
+});
