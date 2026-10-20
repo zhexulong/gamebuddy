@@ -183,6 +183,11 @@ export type ConnectionForm = Readonly<{
    * beside them, and the probe decides whether the endpoint really serves what was named.
    */
   modelId: string;
+  /**
+   * Whether this endpoint needs a credential. Only a self-hosted entry lets the player state it; a
+   * curated provider always needs one, so its answer here is always true.
+   */
+  apiKeyRequired: boolean;
 }>;
 
 /**
@@ -424,6 +429,9 @@ export function ConnectionSettingsPanel({
 }>): ReactElement {
   const [providerId, setProviderId] = useState("");
   const [apiKey, setApiKey] = useState("");
+  // A self-hosted endpoint's own credential requirement, stated by the player. It starts at "needs
+  // one" so a compatible gateway keeps working, and a local server is one click away from keyless.
+  const [apiKeyRequired, setApiKeyRequired] = useState(true);
   const [baseUrl, setBaseUrl] = useState("");
   // The escape hatch is the one entry whose API shape the player chooses. The
   // OpenAI-compatible default is preselected because that is the entry's own
@@ -438,15 +446,16 @@ export function ConnectionSettingsPanel({
     providers.find((entry) => entry.providerId === providerId) ??
     providers.find((entry) => entry.escapeHatch) ??
     providers[0];
-  // What this provider's endpoints told us they serve, at their last probe: the only authority on
+  // What one provider's endpoints told us they serve, at their last probe: the only authority on
   // which models exist there, and the reason a player is not limited to our own catalogue.
-  const servedModels = [
+  const servedModelsFor = (providerId: string | undefined): readonly string[] => [
     ...new Set(
       connectionView.state.connections
-        .filter((row) => row.providerId === selected?.providerId && row.modelIds !== null)
+        .filter((row) => row.providerId === providerId && row.modelIds !== null)
         .flatMap((row) => row.modelIds ?? []),
     ),
   ];
+  const servedModels = servedModelsFor(selected?.providerId);
   // Our own curated ids. Suggestions, never gatekeeping: the field is a text field, and the probe
   // is what decides whether what the player named is really served.
   const suggestedModels = selected?.allowedPlayerModels ?? [];
@@ -490,7 +499,16 @@ export function ConnectionSettingsPanel({
           onSubmit={(event) => {
             event.preventDefault();
             if (selected === undefined) return;
-            void onCreate({ providerId: selected.providerId, apiKey, baseUrl, apiShape, modelId }).then((saved) => {
+            void onCreate({
+              providerId: selected.providerId,
+              apiKey,
+              baseUrl,
+              apiShape,
+              modelId,
+              // Only an entry that declares the answer may carry a `false`; every other provider
+              // needs a credential, and a stale local answer must never relax that.
+              apiKeyRequired: selected.setupFields.includes("apiKeyRequired") ? apiKeyRequired : true,
+            }).then((saved) => {
               // The credential is write-only: a saved connection is never
               // readable back, so once it is stored the field must not keep
               // the secret in the document (the test's outerHTML scan finds
@@ -506,7 +524,14 @@ export function ConnectionSettingsPanel({
             className="form-select"
             disabled={connectionView.pending}
             value={selected?.providerId ?? ""}
-            onChange={(event) => setProviderId(event.target.value)}
+            onChange={(event) => {
+              const nextProviderId = event.target.value;
+              setProviderId(nextProviderId);
+              setApiKeyRequired(true);
+              // The only default worth pre-filling is one the endpoint itself served. Our curated
+              // ids are suggestions: naming one silently would be claiming it exists.
+              setModelId(servedModelsFor(nextProviderId)[0] ?? "");
+            }}
           >
             {providers.map((provider) => (
               <option key={provider.providerId} value={provider.providerId}>
@@ -555,7 +580,28 @@ export function ConnectionSettingsPanel({
             </>
           )}
 
-          {selected?.setupFields.includes("apiKey") === true && (
+          {/*
+           * The endpoint's own credential requirement: only a self-hosted entry declares it,
+           * because only the player knows whether the server they pointed at needs a key.
+           */}
+          {selected?.setupFields.includes("apiKeyRequired") === true && (
+            <>
+              <label htmlFor="connection-api-key-required">{labels.connectionApiKeyRequirement}</label>
+              <select
+                id="connection-api-key-required"
+                className="form-select"
+                disabled={connectionView.pending}
+                value={apiKeyRequired ? "required" : "none"}
+                onChange={(event) => setApiKeyRequired(event.target.value === "required")}
+              >
+                <option value="required">{labels.connectionApiKeyRequirementYes}</option>
+                <option value="none">{labels.connectionApiKeyRequirementNone}</option>
+              </select>
+              <p className="field-hint">{labels.connectionApiKeyRequirementHint}</p>
+            </>
+          )}
+
+          {selected?.setupFields.includes("apiKey") === true && apiKeyRequired && (
             <>
               <label htmlFor="connection-api-key">{labels.connectionApiKey}</label>
               <input
@@ -572,13 +618,11 @@ export function ConnectionSettingsPanel({
             </>
           )}
 
-          {/*
-           * A local server that needs no credential still needs a value here, because the runtime
-           * rejects a provider with no key at all. pi's own documentation answers this with a
-           * placeholder ("the dummy key makes the model available to Pi; Ollama ignores it"), so the
-           * panel says that instead of leaving the player to guess.
-           */}
-          {selected?.escapeHatch === true && <p className="field-hint">{labels.connectionApiKeyLocalHint}</p>}
+          {selected?.setupFields.includes("apiKey") === true && !apiKeyRequired && (
+            <p className="field-hint" data-connection-keyless>
+              {labels.connectionApiKeyNotRequired}
+            </p>
+          )}
 
           {selected?.setupFields.includes("modelId") === true && (
             <>
@@ -593,6 +637,9 @@ export function ConnectionSettingsPanel({
                 list="connection-model-options"
                 autoComplete="off"
                 spellCheck={false}
+                // The player names the model. It is never defaulted to a curated id, because the
+                // endpoint - not our catalogue - decides which ids exist.
+                required
                 disabled={connectionView.pending}
                 placeholder={labels.connectionModelIdHint}
                 value={modelId}

@@ -646,7 +646,12 @@ test(
       const created = await fetch(`${origin}/api/tavern/v1/settings/connections`, {
         method: "POST",
         headers: { ...sessionHeaders, "Content-Type": "application/json", "X-CSRF-Token": snapshot.csrfToken },
-        body: JSON.stringify({ apiVersion: 1, providerId: "deepseek", apiKey: "sk-synthetic-credential" }),
+        body: JSON.stringify({
+          apiVersion: 1,
+          providerId: "deepseek",
+          apiKey: "sk-synthetic-credential",
+          modelId: "deepseek-v4-flash",
+        }),
       });
       assert.equal(created.status, 200);
       const createdBody = (await created.json()) as {

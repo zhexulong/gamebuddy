@@ -764,7 +764,7 @@ export type TavernProblemV1 = Readonly<{
  * fact a player may read back. No credential, credential source or raw provider
  * error exists anywhere in these shapes.
  */
-export type TavernConnectionSetupFieldV1 = "apiKey" | "apiShape" | "baseUrl" | "modelId";
+export type TavernConnectionSetupFieldV1 = "apiKey" | "apiKeyRequired" | "apiShape" | "baseUrl" | "modelId";
 /**
  * The exact `api` shapes the assistant runtime's provider adapters speak — the
  * browser mirror of the Host's own list. The escape hatch is the one entry
@@ -863,6 +863,8 @@ export type TavernConnectionCreateCommandV1 = Readonly<{
   baseUrl?: string;
   apiShape?: TavernConnectionApiShapeV1;
   modelId?: string;
+  /** The player's answer for a self-hosted endpoint: does it need a credential at all? */
+  apiKeyRequired?: boolean;
 }>;
 
 export type TavernConnectionProbeV1 = Readonly<{
@@ -1126,7 +1128,6 @@ const PROBLEM_CODES = [
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
-  "chat_edit_opening_retained",
   "chat_edit_not_player_message",
   "chat_edit_turn_active",
   "chat_delete_opening_retained",
@@ -1330,7 +1331,7 @@ const CONNECTION_MODEL_KEYS = ["modelId", "modelLabel", "allowedThinkingLevels",
 // dependency-free, and pinned to the Host's value by the mirror test.
 const CONNECTION_MODEL_LISTING_LIMIT = 32;
 const CONNECTION_PROBE_KEYS = ["apiVersion", "connectionId", "outcome", "failure", "state"] as const;
-const CONNECTION_SETUP_FIELDS = ["apiKey", "apiShape", "baseUrl", "modelId"] as const;
+const CONNECTION_SETUP_FIELDS = ["apiKey", "apiKeyRequired", "apiShape", "baseUrl", "modelId"] as const;
 // The thinking levels the embedded runtime accepts, mirroring pi's own
 // VALID_THINKING_LEVELS (pi-coding-agent/dist/cli/args.js). Kept as a literal here
 // because this module is deliberately dependency-free.
@@ -2516,7 +2517,7 @@ function isConnectionProvider(value: unknown): value is TavernConnectionProvider
     isLengthBoundedString(value.providerId, 1, 64) &&
     isLengthBoundedString(value.label, 1, 128) &&
     Array.isArray(value.setupFields) &&
-    value.setupFields.length <= 4 &&
+    value.setupFields.length <= CONNECTION_SETUP_FIELDS.length &&
     value.setupFields.every((field) => isOneOf(field, CONNECTION_SETUP_FIELDS)) &&
     new Set(value.setupFields).size === value.setupFields.length &&
     Array.isArray(value.allowedPlayerModels) &&
@@ -3422,6 +3423,7 @@ export function createManagementPipelineApi(
       if (command.baseUrl !== undefined) body.baseUrl = command.baseUrl;
       if (command.apiShape !== undefined) body.apiShape = command.apiShape;
       if (command.modelId !== undefined) body.modelId = command.modelId;
+      if (command.apiKeyRequired !== undefined) body.apiKeyRequired = command.apiKeyRequired;
       return exchange(
         fetchLike,
         "POST",

@@ -543,6 +543,12 @@ export const TavernConnectionSetupFieldV1Schema = Type.Union([
   Type.Literal("apiShape"),
   Type.Literal("baseUrl"),
   Type.Literal("modelId"),
+  // The endpoint's own credential requirement, stated by the player. A self-hosted server (Ollama,
+  // LM Studio, vLLM) needs no credential at all, while an OpenAI-compatible gateway does, and only
+  // the player knows which they pointed at - so it is a fact they state rather than a Host guess.
+  // The curated public providers never declare it: their key requirement is not the player's to
+  // relax, and `apiKeyRequired` absent therefore means "a credential is required".
+  Type.Literal("apiKeyRequired"),
 ]);
 /**
  * The exact `api` shapes the assistant runtime can speak.
@@ -609,7 +615,7 @@ const ListedModelId = Type.String({ minLength: 1, maxLength: MODEL_ID_MAX_LENGTH
 export const TavernConnectionProviderV1Schema = strictObject({
   providerId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
   label: Type.String({ minLength: 1, maxLength: 128 }),
-  setupFields: Type.Array(TavernConnectionSetupFieldV1Schema, { maxItems: 4 }),
+  setupFields: Type.Array(TavernConnectionSetupFieldV1Schema, { maxItems: 5 }),
   /** Curated guidance the panel offers as suggestions; never the set of ids a player may type. */
   allowedPlayerModels: Type.Array(TavernConnectionModelV1Schema, { maxItems: TAVERN_MODEL_LISTING_LIMIT }),
   /** True only for the one OpenAI-compatible escape hatch (design/28 §1). */
@@ -706,6 +712,12 @@ export const TavernConnectionCreateCommandV1Schema = strictObject({
   /** The escape hatch's player-supplied API shape, from the runtime's own set. */
   apiShape: Type.Optional(TavernConnectionApiShapeV1Schema),
   modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  /**
+   * The player's answer to whether this endpoint needs a credential. Only an entry that declares
+   * `apiKeyRequired` may receive it, and only `false` admits a record with no key (`apiKey` absent).
+   * Absent means a credential is required, which is what every curated provider needs.
+   */
+  apiKeyRequired: Type.Optional(Type.Boolean()),
 });
 export const TavernConnectionRevisionCommandV1Schema = strictObject({
   apiVersion: ApiVersion,

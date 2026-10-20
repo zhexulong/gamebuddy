@@ -76,6 +76,12 @@ export type TavernConnectionRecord = Readonly<{
   failure: TavernConnectionProbeFailure | null;
   /** The endpoint's own model listing from the last probe, or null when it read none. */
   modelIds: TavernConnectionProbeModelIds;
+  /**
+   * Whether this connection needs a credential. Stated by the player for a self-hosted endpoint and
+   * always true for a curated provider; it is what lets a keyless record exist without making
+   * "no key" mean "no probe": the probe reads this same fact.
+   */
+  apiKeyRequired: boolean;
   lastCheckedAtMs: number | null;
 }>;
 
@@ -91,6 +97,11 @@ export type TavernConnectionDraftInput = Readonly<{
   baseUrl: string | null;
   apiShape: string | null;
   modelId: string | null;
+  /**
+   * The player's stated credential requirement, for an entry that declares it. Absent/null means
+   * they stated nothing, and a credential is then required - never silently optional.
+   */
+  apiKeyRequired?: boolean | null;
 }>;
 
 /** One connection-store mutation: the next document plus its credential side effect. */
@@ -198,7 +209,7 @@ export class TavernConnectionStore {
     const baseUrl = this.resolveBaseUrl(provider, input.baseUrl);
     const apiShape = this.resolveApiShape(provider, input.apiShape);
     const modelId = this.resolveModelId(provider, input.modelId);
-    const apiKey = this.resolveApiKey(provider, input.apiKey);
+    const credential = this.resolveCredential(provider, input.apiKey, input.apiKeyRequired ?? null);
     return await this.mutate((current) => {
       if (current.connections.length >= MAX_CONNECTIONS)
         throw new TavernConnectionInputError("connection_limit_reached");
@@ -209,18 +220,18 @@ export class TavernConnectionStore {
         baseUrl,
         apiShape,
         modelId,
-        thinkingLevel:
-          catalogModel(provider, modelId)?.defaultThinkingLevel ??
-          provider.allowedPlayerModels[0]?.defaultThinkingLevel ??
-          "high",
+        // The level the named model declares for itself; a model we never listed has no declared
+        // vocabulary of its own, so the runtime's own default applies rather than a curated guess.
+        thinkingLevel: catalogModel(provider, modelId)?.defaultThinkingLevel ?? "high",
         readiness: "configured",
         failure: null,
         modelIds: null,
+        apiKeyRequired: credential.apiKeyRequired,
         lastCheckedAtMs: null,
       });
       return {
         document: { ...current, connections: [...current.connections, record] },
-        ...(apiKey === null
+        ...(credential.apiKey === null
           ? {}
           : {
               // Pi's provider store keeps its single provider-key slot; the
@@ -228,8 +239,8 @@ export class TavernConnectionStore {
               // escape-hatch records for the same provider do not overwrite
               // each other's credential (design/28 §5.3: each player-supplied
               // endpoint has its own credential).
-              connectionKey: { connectionId, apiKey },
-              credentials: { piProviderId: provider.piProviderId, apiKey },
+              connectionKey: { connectionId, apiKey: credential.apiKey },
+              credentials: { piProviderId: provider.piProviderId, apiKey: credential.apiKey },
             }),
       };
     });
@@ -389,44 +400,59 @@ export class TavernConnectionStore {
   }
 
   /**
-   * The model this record will name. A catalog model is resolved to its own id; a model id the
-   * player typed is accepted for any provider they configure, bounded by the one model id ceiling,
-   * and its truth is settled later by the probe (see `selectModel`).
+   * The model this record will name. A provider the player configures must be TOLD one - our curated
+   * ids are suggestions, so none of them is ever substituted for a model the player did not name,
+   * and the endpoint's own listing (read by the probe) is what settles whether the id exists. Only
+   * the operator-managed environment entry, whose model the player does not choose, takes its
+   * entry's own first model.
    */
   private resolveModelId(provider: TavernCatalogProvider, value: string | null): string {
-    if (value !== null) {
-      // A provider the player configures takes any bounded model id, catalogued or not: the
-      // endpoint's own listing, read by the probe, is what decides whether it exists.
-      if (acceptsPlayerModel(provider)) {
-        if (!PLAYER_MODEL_ID_PATTERN.test(value)) throw new TavernConnectionInputError("invalid_model_id");
-        return value;
-      }
-      if (catalogModel(provider, value) === null) throw new TavernConnectionInputError("model_not_allowed");
+    if (acceptsPlayerModel(provider)) {
+      if (value === null || !PLAYER_MODEL_ID_PATTERN.test(value))
+        throw new TavernConnectionInputError("invalid_model_id");
       return value;
     }
-    // Nothing was named: a draft still needs a model, and the first curated one is the entry's own
-    // default. A provider with no curated models at all (the escape hatch) must be told one.
-    const model = provider.allowedPlayerModels[0];
-    if (model === undefined) throw new TavernConnectionInputError("invalid_model_id");
+    if (value !== null && catalogModel(provider, value) === null)
+      throw new TavernConnectionInputError("model_not_allowed");
+    const model = value === null ? provider.allowedPlayerModels[0] : catalogModel(provider, value);
+    if (model === null || model === undefined) throw new TavernConnectionInputError("model_not_allowed");
     return model.modelId;
   }
 
-  private resolveApiKey(provider: TavernCatalogProvider, value: string | null): string | null {
+  /**
+   * One fact in two halves, because the record and the probe have to agree about it: the credential
+   * to use, and whether this connection needs one at all.
+   *
+   * An endpoint that needs no credential is the case this exists for (a local Ollama/LM Studio/
+   * vLLM server). Only an entry that declares `apiKeyRequired` may receive the player's answer, and
+   * only their `false` admits a keyless record; every other provider - the curated public ones and
+   * the operator-managed environment entry - requires one, so `api_key_required` still fires there.
+   */
+  private resolveCredential(
+    provider: TavernCatalogProvider,
+    value: string | null,
+    statedRequired: boolean | null,
+  ): Readonly<{ apiKey: string | null; apiKeyRequired: boolean }> {
     // An environment-provided credential is never submitted, stored or shown.
     if (provider.environmentVariable !== null) {
-      if (value !== null) throw new TavernConnectionInputError("api_key_not_accepted");
-      return null;
+      if (value !== null || statedRequired !== null) throw new TavernConnectionInputError("api_key_not_accepted");
+      return { apiKey: null, apiKeyRequired: true };
     }
     if (!provider.setupFields.includes("apiKey")) {
-      if (value !== null) throw new TavernConnectionInputError("api_key_not_accepted");
-      return null;
+      if (value !== null || statedRequired !== null) throw new TavernConnectionInputError("api_key_not_accepted");
+      return { apiKey: null, apiKeyRequired: false };
     }
-    if (value === null) throw new TavernConnectionInputError("api_key_required");
+    const apiKeyRequired = provider.setupFields.includes("apiKeyRequired") ? statedRequired !== false : true;
+    if (value === null) {
+      if (apiKeyRequired) throw new TavernConnectionInputError("api_key_required");
+      return { apiKey: null, apiKeyRequired: false };
+    }
     const trimmed = value.trim();
     if (trimmed.length === 0 || trimmed.length > MAX_API_KEY_LENGTH)
       throw new TavernConnectionInputError("api_key_required");
     if (hasUnpairedUtf16Surrogate(trimmed)) throw new TavernConnectionInputError("api_key_required");
-    return trimmed;
+    // A key was supplied, so this connection needs one whatever the player said about the field.
+    return { apiKey: trimmed, apiKeyRequired: true };
   }
 
   private async mutate(
@@ -564,6 +590,7 @@ function serialize(document: TavernConnectionDocument): string {
       readiness: entry.readiness,
       failure: entry.failure,
       modelIds: entry.modelIds,
+      apiKeyRequired: entry.apiKeyRequired,
       lastCheckedAtMs: entry.lastCheckedAtMs,
     })),
   });
@@ -619,6 +646,7 @@ function validateRecord(value: unknown): TavernConnectionRecord {
     !READINESS.has(value.readiness) ||
     (value.failure !== null && (typeof value.failure !== "string" || !PROBE_FAILURES.has(value.failure))) ||
     !isPublishedModelIds(value.modelIds) ||
+    typeof value.apiKeyRequired !== "boolean" ||
     !isTimestampOrNull(value.lastCheckedAtMs) ||
     !hasExactKeys(value, [
       "connectionId",
@@ -630,6 +658,7 @@ function validateRecord(value: unknown): TavernConnectionRecord {
       "readiness",
       "failure",
       "modelIds",
+      "apiKeyRequired",
       "lastCheckedAtMs",
     ])
   )
@@ -656,6 +685,10 @@ function validateRecord(value: unknown): TavernConnectionRecord {
     throw new Error("invalid_tavern_connection_store");
   if (recordValue.readiness === "failed" && recordValue.failure === null)
     throw new Error("invalid_tavern_connection_store");
+  // The credential requirement is the player's answer for the one entry that declares it, and a
+  // required true elsewhere: a durable record may not claim a curated provider needs no key.
+  if (!provider.setupFields.includes("apiKeyRequired") && recordValue.apiKeyRequired !== true)
+    throw new Error("invalid_tavern_connection_store");
   return Object.freeze({
     connectionId: recordValue.connectionId,
     providerId: recordValue.providerId,
@@ -666,6 +699,7 @@ function validateRecord(value: unknown): TavernConnectionRecord {
     readiness: recordValue.readiness,
     failure: recordValue.failure,
     modelIds: recordValue.modelIds === null ? null : Object.freeze([...recordValue.modelIds]),
+    apiKeyRequired: recordValue.apiKeyRequired,
     lastCheckedAtMs: recordValue.lastCheckedAtMs,
   });
 }

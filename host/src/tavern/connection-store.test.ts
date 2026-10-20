@@ -188,6 +188,78 @@ test("catalog providers reject a player-supplied endpoint, and the escape hatch 
   });
 });
 
+/**
+ * A self-hosted endpoint that needs no credential at all is a connection the player can create.
+ *
+ * The fact is theirs to state, and the record carries it: only an entry that declares `apiKeyRequired`
+ * may hold a keyless connection, the curated public providers still refuse a missing key, and the
+ * probe reads the same fact instead of treating a missing key as a misconfiguration.
+ */
+test("a keyless self-hosted connection is allowed only where the player stated it, and nowhere else", async () => {
+  await withRoot(async (root, store) => {
+    const keyless = await store.create({
+      providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+      apiKey: null,
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiShape: "openai-completions",
+      modelId: "qwen2.5-coder:7b",
+      apiKeyRequired: false,
+    });
+    assert.equal(keyless.connections[0]!.apiKeyRequired, false);
+    assert.equal(await store.credentialFor(keyless.connections[0]!), null);
+    assert.deepEqual(
+      JSON.parse(await readFile(connectionDocumentPath(root), "utf8")).connections[0].apiKeyRequired,
+      false,
+    );
+
+    // The same entry still needs a key when the player says so, and a curated provider always does.
+    await assert.rejects(
+      store.create({
+        providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+        apiKey: null,
+        baseUrl: "http://127.0.0.1:11434/v1",
+        apiShape: "openai-completions",
+        modelId: "qwen2.5-coder:7b",
+        apiKeyRequired: true,
+      }),
+      (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "api_key_required",
+    );
+    await assert.rejects(
+      store.create({
+        providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+        apiKey: null,
+        baseUrl: "http://127.0.0.1:11434/v1",
+        apiShape: "openai-completions",
+        modelId: "qwen2.5-coder:7b",
+      }),
+      (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "api_key_required",
+      "stating nothing is not the same as stating no credential is needed",
+    );
+    await assert.rejects(
+      store.create({
+        providerId: "deepseek",
+        apiKey: null,
+        baseUrl: null,
+        apiShape: null,
+        modelId: "deepseek-v4-flash",
+      }),
+      (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "api_key_required",
+    );
+    // The curated provider cannot be told its key is optional either: the fact is not its to state.
+    await assert.rejects(
+      store.create({
+        providerId: "deepseek",
+        apiKey: null,
+        baseUrl: null,
+        apiShape: null,
+        modelId: "deepseek-v4-flash",
+        apiKeyRequired: false,
+      }),
+      (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "api_key_required",
+    );
+  });
+});
+
 test("the environment connection never accepts, stores or reads back a credential", async () => {
   await withRoot(async (root, store) => {
     await assert.rejects(
@@ -224,7 +296,7 @@ test("probe outcomes are recorded as a closed vocabulary and gate activation", a
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: null,
+      modelId: "deepseek-v4-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
     await assert.rejects(
@@ -267,7 +339,7 @@ test("the endpoint's own model listing is durable, bounded and sanitised, and a 
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: null,
+      modelId: "deepseek-v4-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
     const listed = ["deepseek-v4-flash", "deepseek-v4-pro"];
@@ -315,7 +387,7 @@ test("changing the selected model withdraws readiness until it is probed again",
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: null,
+      modelId: "deepseek-v4-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
     const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-flash"] });
@@ -363,7 +435,7 @@ test("a stale expectedRevision is a durable conflict, never a silent overwrite",
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: null,
+      modelId: "deepseek-v4-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
     const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-flash"] });
@@ -387,7 +459,7 @@ test("removing a connection drops its stored credential and keeps unrelated prov
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: null,
+      modelId: "deepseek-v4-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
     const removed = await store.remove(connectionId, created.revision);
@@ -405,7 +477,7 @@ test("the active connection cannot be removed", async () => {
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: null,
+      modelId: "deepseek-v4-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
     const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-flash"] });
@@ -432,7 +504,7 @@ test("a corrupted connection document fails closed instead of reading as empty",
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: null,
+      modelId: "deepseek-v4-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
 
@@ -567,6 +639,7 @@ test("a durable escape-hatch record keeps its query-string endpoint and API shap
       readiness: "configured",
       failure: null,
       modelIds: null,
+      apiKeyRequired: true,
       lastCheckedAtMs: null,
     };
     const writeDocument = async (record: unknown) =>
@@ -595,6 +668,13 @@ test("a durable escape-hatch record keeps its query-string endpoint and API shap
     await writeDocument({ ...persistedConnection(connectionId), apiShape: "openai-completions" });
     await assert.rejects(store.read(), /invalid_tavern_connection_store/);
 
+    // So is a pinned provider claiming its credential is optional: only the one entry that declares
+    // the fact may carry the player's answer, so a record may not relax a curated provider's key.
+    await writeDocument({ ...persistedConnection(connectionId), apiKeyRequired: false });
+    await assert.rejects(store.read(), /invalid_tavern_connection_store/);
+    await writeDocument({ ...hatchRecord, apiKeyRequired: false });
+    assert.equal((await store.read()).connections[0]!.apiKeyRequired, false);
+
     // So is an escape-hatch record that omits the shape it must have chosen.
     await writeDocument({ ...hatchRecord, apiShape: null });
     await assert.rejects(store.read(), /invalid_tavern_connection_store/);
@@ -614,6 +694,7 @@ function persistedConnection(connectionId: string) {
     readiness: "configured",
     failure: null,
     modelIds: null,
+    apiKeyRequired: true,
     lastCheckedAtMs: null,
   };
 }

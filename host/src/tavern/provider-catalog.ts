@@ -71,7 +71,7 @@ export const TAVERN_ENVIRONMENT_VARIABLE = "CPA_OAI_API_KEY" as const;
  * The complete set of player-fillable setup fields. It is a closed allowlist:
  * no script, header, provider payload or free-form configuration field exists.
  */
-export type TavernProviderSetupFieldId = "apiKey" | "apiShape" | "baseUrl" | "modelId";
+export type TavernProviderSetupFieldId = "apiKey" | "apiKeyRequired" | "apiShape" | "baseUrl" | "modelId";
 
 export type TavernCatalogModel = Readonly<{
   modelId: string;
@@ -113,6 +113,13 @@ export type TavernCatalogProvider = Readonly<{
    * requires that key and installs its own scheme — `x-api-key`, `api-key`, SigV4,
    * or the SDK's Bearer), which is also why the provider entry written for Pi never
    * carries an `authHeader` flag.
+   *
+   * It follows the entry's own `piApi`, because that is what the endpoint speaks: a
+   * bearer-authenticated API shape (`openai-completions`, `openai-responses`) is
+   * probed with a bearer token. `false` here means the probe sends NO credential at
+   * all, which a real public endpoint answers with 401 - so the connection could
+   * never reach `ready`. It is true wherever the entry pins a bearer shape, and
+   * false only for a provider that authenticates some other way.
    */
   probeBearerAuth: boolean;
 }>;
@@ -170,7 +177,9 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
       defineModel("deepseek-v4-pro", "DeepSeek V4 Pro", ["high", "max"], "high", "deepseek"),
     ],
     escapeHatch: false,
-    probeBearerAuth: false,
+    // `openai-completions` authenticates a request with a bearer token; without this the probe
+    // sends no credential at all and a real endpoint answers 401.
+    probeBearerAuth: true,
   }),
   defineProvider({
     providerId: "openai",
@@ -185,7 +194,9 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
       defineModel("gpt-5.5", "GPT-5.5", ["low", "medium", "high", "xhigh"], "high", "native"),
     ],
     escapeHatch: false,
-    probeBearerAuth: false,
+    // `openai-responses` authenticates a request with a bearer token; without this the probe sends
+    // no credential at all and a real endpoint answers 401.
+    probeBearerAuth: true,
   }),
   defineProvider({
     providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
@@ -196,8 +207,10 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     environmentVariable: null,
     // The escape hatch relaxes where the endpoint lives and the API shape that
     // endpoint speaks — two facts about an endpoint the Host cannot know. The
-    // model id is the player's in every entry they configure, not only here.
-    setupFields: ["baseUrl", "apiShape", "apiKey", "modelId"],
+    // model id is the player's in every entry they configure, not only here, and it
+    // is the one entry where the credential requirement is theirs to state: a local
+    // server needs no key at all, and a compatible gateway does.
+    setupFields: ["baseUrl", "apiShape", "apiKey", "modelId", "apiKeyRequired"],
     allowedPlayerModels: [],
     escapeHatch: true,
     probeBearerAuth: true,

@@ -378,14 +378,28 @@ test("the connection read projects the catalog, and selectable models are the ca
     const escapeHatches = body.providers.filter((provider) => provider.escapeHatch);
     assert.equal(escapeHatches.length, 1);
     assert.equal(escapeHatches[0]!.providerId, TAVERN_ESCAPE_HATCH_PROVIDER_ID);
-    assert.deepEqual([...escapeHatches[0]!.setupFields].sort(), ["apiKey", "apiShape", "baseUrl", "modelId"]);
-    // No provider payload, script or arbitrary-URL field exists anywhere.
-    assert.deepEqual([...new Set(body.providers.flatMap((provider) => provider.setupFields))].sort(), [
+    assert.deepEqual([...escapeHatches[0]!.setupFields].sort(), [
       "apiKey",
+      "apiKeyRequired",
       "apiShape",
       "baseUrl",
       "modelId",
     ]);
+    // No provider payload, script or arbitrary-URL field exists anywhere.
+    assert.deepEqual([...new Set(body.providers.flatMap((provider) => provider.setupFields))].sort(), [
+      "apiKey",
+      "apiKeyRequired",
+      "apiShape",
+      "baseUrl",
+      "modelId",
+    ]);
+    // The credential requirement is the player's only on the entry that declares it.
+    for (const providerId of ["cpa-oai", "deepseek", "openai"])
+      assert.deepEqual(
+        byId.get(providerId)!.setupFields.includes("apiKeyRequired"),
+        false,
+        `${providerId} must not let the player relax its credential requirement`,
+      );
   });
 });
 
@@ -400,6 +414,8 @@ test("a catalog key is written to the Pi provider store and never read back to t
         apiVersion: 1,
         providerId: "deepseek",
         apiKey: "sk-synthetic-credential",
+        // A curated id is a suggestion, not a default: every draft names its model.
+        modelId: "deepseek-v4-flash",
       },
     );
     assert.equal(created.status, 200);
@@ -679,6 +695,8 @@ test("probe failures are reported as closed categories with no provider text", a
           apiVersion: 1,
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
+          // A curated id is a suggestion, not a default: every draft names its model.
+          modelId: "deepseek-v4-flash",
         },
       );
       const connection = (created.body as { revision: number; connections: readonly { connectionId: string }[] })
@@ -842,6 +860,91 @@ test("the published listing is cut at the contract's ceiling without weakening t
   );
 });
 
+/**
+ * A self-hosted endpoint that needs no credential (Ollama, LM Studio, vLLM) is a connection the
+ * player can create, and the probe reads the same fact instead of assuming a key.
+ *
+ * Without it such an endpoint answered 401 to a credential-less probe, so the connection could never
+ * become `ready` and the activation button could never enable - the rule that made a keyless local
+ * server unsaveable.
+ */
+test("a keyless self-hosted endpoint saves and probes ready, and a curated provider still refuses no key", async () => {
+  const calls: string[] = [];
+  const models = ["qwen2.5-coder:7b", "llama-3.1-8b"];
+  await withHandler(
+    {
+      // An unauthenticated `/models`: no credential is offered, and none is needed.
+      probe: stubEndpoint((url, headers) => {
+        calls.push(`${url}|${headers.authorization ?? ""}`);
+        return { status: 200, body: listModels(...models) };
+      }),
+    },
+    async (_root, request, bootstrap) => {
+      await bootstrap();
+      const created = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+          baseUrl: "http://127.0.0.1:11434/v1",
+          apiShape: "openai-completions",
+          modelId: "qwen2.5-coder:7b",
+          apiKeyRequired: false,
+        },
+      );
+      assert.equal(created.status, 200);
+      const body = created.body as { revision: number; connections: readonly { connectionId: string }[] };
+      const connectionId = body.connections[0]!.connectionId;
+      const probed = await request(
+        "POST",
+        `/api/tavern/v1/settings/connections/${connectionId}/test`,
+        {},
+        { apiVersion: 1, expectedRevision: body.revision },
+      );
+      assert.equal(probed.status, 200);
+      const probedBody = probed.body as {
+        outcome: string;
+        failure: string | null;
+        state: { connections: readonly { readiness: string; modelIds: readonly string[] }[] };
+      };
+      assert.equal(probedBody.outcome, "ready", "a keyless endpoint is probed without a credential");
+      assert.equal(probedBody.failure, null);
+      assert.deepEqual(probedBody.state.connections[0]!.modelIds, models);
+      assert.deepEqual(calls, ["http://127.0.0.1:11434/v1/models|"]);
+
+      // The curated providers keep requiring one, with or without the player's opinion.
+      for (const override of [{}, { apiKeyRequired: false }] as const) {
+        const refused = await request(
+          "POST",
+          "/api/tavern/v1/settings/connections",
+          {},
+          { apiVersion: 1, providerId: "deepseek", modelId: "deepseek-v4-flash", ...override },
+        );
+        assert.equal(refused.status, 400, `deepseek without a key (${JSON.stringify(override)})`);
+        assert.equal((refused.body as { code: string }).code, "invalid_request");
+      }
+      // And the entry that declares the fact still needs it when the player says so.
+      const required = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+          baseUrl: "http://127.0.0.1:11434/v1",
+          apiShape: "openai-completions",
+          modelId: "qwen2.5-coder:7b",
+          apiKeyRequired: true,
+        },
+      );
+      assert.equal(required.status, 400);
+      assert.equal((required.body as { code: string }).code, "invalid_request");
+    },
+  );
+});
+
 test("a transport failure is classified as unreachable, and a hang as timeout", async () => {
   await withHandler(
     {
@@ -860,6 +963,8 @@ test("a transport failure is classified as unreachable, and a hang as timeout", 
           apiVersion: 1,
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
+          // A curated id is a suggestion, not a default: every draft names its model.
+          modelId: "deepseek-v4-flash",
         },
       );
       const connection = (created.body as { revision: number; connections: readonly { connectionId: string }[] })
@@ -898,6 +1003,8 @@ test("a typed model id is a legal draft on every entry the player configures, an
           apiVersion: 1,
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
+          // A curated id is a suggestion, not a default: every draft names its model.
+          modelId: "deepseek-v4-flash",
         },
       );
       const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!
@@ -1038,6 +1145,8 @@ test("a connection activation during a running turn is Class B: it succeeds and 
           apiVersion: 1,
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
+          // A curated id is a suggestion, not a default: every draft names its model.
+          modelId: "deepseek-v4-flash",
         },
       );
       const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!
@@ -1085,6 +1194,8 @@ test("removal needs the exact revision, cannot drop the active connection, and d
           apiVersion: 1,
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
+          // A curated id is a suggestion, not a default: every draft names its model.
+          modelId: "deepseek-v4-flash",
         },
       );
       const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!

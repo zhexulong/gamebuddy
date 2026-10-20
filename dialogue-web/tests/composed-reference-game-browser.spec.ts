@@ -2660,6 +2660,125 @@ test("the product Settings surface creates, tests and activates a connection who
 });
 
 /**
+ * A local endpoint that needs no credential at all (design/28 §1, §5.2).
+ *
+ * Ollama, LM Studio and vLLM need no key, and the panel used to demand one: the fact is the
+ * player's to state, and once stated the connection saves without a credential and probes ready
+ * against a `/models` that asks for none.
+ */
+test("a local endpoint that needs no credential saves keyless and probes ready", async ({ page }) => {
+  const connectionId = "K".repeat(42) + "A";
+  const baseUrl = "http://127.0.0.1:11434/v1";
+  const modelId = "qwen2.5-coder:7b";
+  const escapeHatch = {
+    providerId: "openai-compatible",
+    label: "OpenAI-compatible",
+    setupFields: ["apiKey", "apiKeyRequired", "baseUrl", "apiShape", "modelId"],
+    allowedPlayerModels: [],
+    escapeHatch: true,
+    environmentManaged: false,
+  };
+  const writes: Array<{ path: string; body: unknown }> = [];
+  let readiness: "configured" | "ready" = "configured";
+
+  const connectionState = () => ({
+    apiVersion: 1,
+    revision: 1,
+    active: null,
+    connections: [
+      {
+        connectionId,
+        label: `OpenAI-compatible \u00b7 ${modelId}`,
+        providerId: escapeHatch.providerId,
+        providerLabel: escapeHatch.label,
+        configured: true,
+        readiness,
+        active: false,
+        modelId,
+        modelLabel: modelId,
+        thinkingLevel: "high",
+        allowedThinkingLevels: ["low", "high", "max"],
+        modelIds: [modelId, "llama-3.1-8b"],
+        baseUrl,
+        failure: null,
+        lastCheckedAtMs: null,
+      },
+    ],
+    providers: [escapeHatch],
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+  await page.route("**/api/tavern/v1/settings/language", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ revision: 1, locale: "en-US" }) }),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null }),
+    }),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ devices: [], defaultSelectable: true }) }),
+  );
+  await page.route(/\/api\/tavern\/v1\/settings\/connection$/, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) }),
+  );
+  await page.route(/\/api\/tavern\/v1\/settings\/connections$/, async (route) => {
+    writes.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) });
+  });
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/test$/, async (route) => {
+    writes.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    readiness = "ready";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: 1, connectionId, outcome: "ready", failure: null, state: connectionState() }),
+    });
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const panel = page.getByTestId("settings-surface").locator("[data-connection-settings]");
+  await expect(panel).toBeVisible();
+
+  await panel.locator("#connection-provider").selectOption("openai-compatible");
+  await panel.locator("#connection-base-url").fill(baseUrl);
+  await panel.locator("#connection-model-id").fill(modelId);
+  // Stating that this endpoint needs no credential is one choice, and the key field goes away with it.
+  await expect(panel.locator("#connection-api-key-required")).toHaveValue("required");
+  await expect(panel.locator("#connection-api-key")).toBeVisible();
+  await panel.locator("#connection-api-key-required").selectOption("none");
+  await expect(panel.locator("#connection-api-key")).toHaveCount(0);
+
+  await panel.getByRole("button", { name: "Save connection" }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toEqual({
+    path: "/api/tavern/v1/settings/connections",
+    body: {
+      apiVersion: 1,
+      providerId: "openai-compatible",
+      baseUrl,
+      apiShape: "openai-completions",
+      modelId,
+      apiKeyRequired: false,
+    },
+  });
+
+  await panel.getByRole("button", { name: "Test connection" }).click();
+  await expect.poll(() => writes.length).toBe(2);
+  await expect(panel.locator("[data-connection-row]")).toContainText("Ready");
+  await expect(panel.getByRole("button", { name: "Save and activate" })).toBeEnabled();
+});
+
+/**
  * The endpoint's own model listing, in the draft form and on the record, and the
  * probe still deciding whether a typed id becomes usable (design/28 §5.1, §5.3).
  *

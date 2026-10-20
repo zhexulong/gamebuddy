@@ -29,6 +29,12 @@ export type TavernConnectionProbeInput = Readonly<{
   /** Host-owned endpoint; the player's own submitted URL for the escape hatch. */
   baseUrl: string;
   apiKey: string | null;
+  /**
+   * Whether this connection needs a credential, read from the record's own stated fact. A keyless
+   * self-hosted endpoint is probed without one; an endpoint that required a key and has none is the
+   * case `not_configured` describes.
+   */
+  apiKeyRequired: boolean;
   modelId: string;
 }>;
 
@@ -38,7 +44,7 @@ export async function probeTavernConnection(
   input: TavernConnectionProbeInput,
   transport: typeof fetch = fetch,
 ): Promise<TavernConnectionProbeResult> {
-  if (input.apiKey === null) return failed("not_configured");
+  if (input.apiKeyRequired && input.apiKey === null) return failed("not_configured");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {
@@ -47,7 +53,7 @@ export async function probeTavernConnection(
       signal: controller.signal,
       headers: {
         accept: "application/json",
-        ...(input.provider.probeBearerAuth ? { authorization: `Bearer ${input.apiKey}` } : {}),
+        ...(input.provider.probeBearerAuth && input.apiKey !== null ? { authorization: `Bearer ${input.apiKey}` } : {}),
       },
     });
     // The listing is parsed only for model ids. An endpoint error may echo

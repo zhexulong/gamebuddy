@@ -1226,7 +1226,10 @@ export function SettingsSurfacePanel({
         {
           apiVersion: 1,
           providerId: provider.providerId,
-          ...(provider.setupFields.includes("apiKey") ? { apiKey: form.apiKey } : {}),
+          // A keyless self-hosted endpoint sends no credential at all, and the fact that none is
+          // needed travels with the command (never inferred from an absent field).
+          ...(provider.setupFields.includes("apiKey") && form.apiKeyRequired ? { apiKey: form.apiKey } : {}),
+          ...(provider.setupFields.includes("apiKeyRequired") ? { apiKeyRequired: form.apiKeyRequired } : {}),
           ...(provider.setupFields.includes("baseUrl") ? { baseUrl: form.baseUrl } : {}),
           ...(provider.setupFields.includes("apiShape") ? { apiShape: form.apiShape } : {}),
           // One model field for every provider the player configures: the id they chose or typed,

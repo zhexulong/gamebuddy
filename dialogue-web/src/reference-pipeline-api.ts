@@ -365,10 +365,9 @@ const PROBLEM_CODES = [
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
-  // The edit's own three: the row is the greeting the Chat opened on (which has its own editor, on
-  // the Characters surface), the row is neither the player's own words nor her reply, or a reply is
-  // being written from the very text the edit would replace.
-  "chat_edit_opening_retained",
+  // The edit's own two: the row is neither the player's own words nor her reply, or a reply is being
+  // written from the very text the edit would replace. (The greeting the Chat opened on is editable
+  // in place now, so the Host's contract no longer names a refusal for it.)
   "chat_edit_not_player_message",
   "chat_edit_turn_active",
   // The delete's own three. The last is not about the point the player chose: a row whose Pi session

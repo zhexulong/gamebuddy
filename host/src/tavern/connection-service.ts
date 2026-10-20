@@ -117,6 +117,7 @@ export function createTavernConnectionService(options: TavernConnectionServiceOp
           baseUrl: command.baseUrl ?? null,
           apiShape: command.apiShape ?? null,
           modelId: command.modelId ?? null,
+          apiKeyRequired: command.apiKeyRequired ?? null,
         });
         return await project();
       });
@@ -195,11 +196,15 @@ async function probeRecord(
   const provider = catalogProvider(record.providerId);
   if (provider === null) return Object.freeze({ outcome: "failed", failure: "not_configured", modelIds: null });
   // The environment connection is the one provider whose credential this
-  // surface never stores; its key is read from the operator environment only.
-  const apiKey = await store.credentialFor(record);
+  // surface never stores; its key is read from the operator environment only. A connection the
+  // player stated needs none sends none - not even the Pi provider slot's key, which a sibling
+  // connection for the same provider may have written there.
+  const apiKey = record.apiKeyRequired ? await store.credentialFor(record) : null;
   const baseUrl = record.baseUrl ?? provider.baseUrl;
   if (baseUrl === null) return Object.freeze({ outcome: "failed", failure: "invalid_endpoint", modelIds: null });
-  return await probe({ provider, baseUrl, apiKey, modelId: record.modelId });
+  // The record's own stated requirement travels with the credential, so the probe never has to guess
+  // whether a missing key is a misconfiguration (`not_configured`) or simply nothing needed.
+  return await probe({ provider, baseUrl, apiKey, apiKeyRequired: record.apiKeyRequired, modelId: record.modelId });
 }
 
 function projectRecord(record: TavernConnectionRecord, active: boolean): TavernConnectionV1 {
