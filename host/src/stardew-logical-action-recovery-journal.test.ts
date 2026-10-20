@@ -10,7 +10,7 @@ import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 import {
   StardewLogicalActionRecoveryJournal,
-  recoveryJournalValidationCount,
+  recoveryJournalWriteProfile,
   type HostNodeAdmissionRecord,
 } from "./stardew-logical-action-recovery-journal.js";
 import { readStrictJsonFile } from "./strict-json-reader.js";
@@ -794,6 +794,67 @@ test("a write that cannot fit the byte budget is refused", async () => {
   }
 });
 
+test("a Host killed inside a write leaves a readable journal, not a partial document", async () => {
+  const dir = await root();
+  try {
+    const path = join(dir, "stardew-logical-action-recovery-journal.json");
+    const journal = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    await journal.prepare(record());
+    // A write publishes by renaming its exclusive temporary over the journal, so a Host killed
+    // mid-write can leave that temporary behind but never a half-written journal. The residue
+    // here is the interrupted document; the journal beside it must still stand on its own.
+    await writeFile(`${path}.${process.pid}.interrupted.tmp`, '{"schemaVersion":1,"records":[{"logicalActionId"');
+    await journal.close();
+
+    const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    assert.equal(reopened.record("logical-1")?.state, "prepared");
+    await reopened.markSentUnknown("logical-1");
+    assert.equal(reopened.record("logical-1")?.state, "sent_unknown");
+
+    const source = await readFile(path, "utf8");
+    assert.deepEqual(await readStrictJsonFile(path), JSON.parse(source));
+    await reopened.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("one action's transitions serialise one record each, never the whole journal", async () => {
+  const dir = await root();
+  try {
+    const journal = await StardewLogicalActionRecoveryJournal.open({ ...options(dir), maxRecords: 200 });
+    // Settled history, because a journal that only ever holds the action under test proves
+    // nothing about how a write's cost scales with the document that contains it.
+    for (let index = 1; index <= 120; index += 1) {
+      const id = `history-${index}`;
+      await journal.prepare({ ...record(id), dispatchOrdinal: index });
+      await journal.markTerminalSettled(id);
+    }
+    await journal.prepare({ ...record("logical-observed"), dispatchOrdinal: 121 });
+    const documentBytes = (await readFile(join(dir, "stardew-logical-action-recovery-journal.json"), "utf8")).length;
+
+    const before = recoveryJournalWriteProfile();
+    await journal.markSentUnknown("logical-observed");
+    await journal.markRecoveryPending("logical-observed");
+    await journal.markTerminalSettled("logical-observed");
+    const after = recoveryJournalWriteProfile();
+
+    assert.equal(after.documentWrites - before.documentWrites, 3, "every transition must still be one durable write");
+    assert.equal(
+      after.documentParses - before.documentParses,
+      0,
+      "a write over this process's own bytes must not read and parse the document again",
+    );
+    const serialised = after.serialisedBytes - before.serialisedBytes;
+    assert.ok(
+      serialised <= 3 * 1024,
+      `three transitions serialised ${serialised} bytes of a ${documentBytes}-byte journal: a write must serialise the records that changed, not the document that holds them`,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("a warm journal does not re-validate its own bytes, and validates foreign bytes again", async () => {
   const dir = await root();
   try {
@@ -801,18 +862,26 @@ test("a warm journal does not re-validate its own bytes, and validates foreign b
     const journal = await StardewLogicalActionRecoveryJournal.open(options(dir));
     await journal.prepare(record("logical-1"));
 
-    const warm = recoveryJournalValidationCount();
+    const warm = recoveryJournalWriteProfile().documentParses;
     await journal.markSentUnknown("logical-1");
-    assert.equal(recoveryJournalValidationCount(), warm, "a write over this process's own bytes must not re-validate");
+    assert.equal(
+      recoveryJournalWriteProfile().documentParses,
+      warm,
+      "a write over this process's own bytes must not re-validate",
+    );
 
     // A foreign writer changes the bytes, so they can never be taken for ours: the next write
     // validates them again and keeps what that writer put there.
     const document = JSON.parse(await readFile(path, "utf8")) as { records: Array<Record<string, unknown>> };
     document.records.push({ ...record("logical-foreign"), dispatchOrdinal: 2, state: "prepared" });
     await writeFile(path, JSON.stringify(document));
-    const afterForeignWrite = recoveryJournalValidationCount();
+    const afterForeignWrite = recoveryJournalWriteProfile().documentParses;
     await journal.markRecoveryPending("logical-1");
-    assert.equal(recoveryJournalValidationCount(), afterForeignWrite + 1, "foreign bytes must be validated again");
+    assert.equal(
+      recoveryJournalWriteProfile().documentParses,
+      afterForeignWrite + 1,
+      "foreign bytes must be validated again",
+    );
 
     const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
     assert.equal(reopened.record("logical-1")?.state, "recovery_pending");

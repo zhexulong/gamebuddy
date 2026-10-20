@@ -6,6 +6,7 @@ import {
   type BodyNodeAdmissionGrant,
   type ExecutionRequest,
 } from "./protocol.js";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const STARDEW_LOGICAL_ACTION_RECOVERY_STATES = Object.freeze([
@@ -91,14 +92,36 @@ type NormalizedOpenOptions = StardewLogicalActionRecoveryJournalOpenOptions;
 
 const FILE_NAME = "stardew-logical-action-recovery-journal.json";
 
-let documentValidationCount = 0;
+let documentParseCount = 0;
+let documentWriteCount = 0;
+let serialisedByteCount = 0;
 
 /**
- * How many documents this process fully validated. The warm-cache falsifier asserts that a
- * write over bytes this process wrote adds none, and that foreign bytes add one.
+ * What the durable write path actually did, so the cost of a write is a measured fact rather
+ * than an estimate. One action causes about three transitions; each must cost one bounded
+ * atomic write of the records that changed, not a parse and a re-serialisation of the whole
+ * journal that holds them.
  */
-export function recoveryJournalValidationCount(): number {
-  return documentValidationCount;
+export type StardewLogicalActionRecoveryJournalWriteProfile = Readonly<{
+  /** Times the whole document had to be read strictly, parsed and validated. */
+  documentParses: number;
+  documentWrites: number;
+  serialisedBytes: number;
+}>;
+
+export function recoveryJournalWriteProfile(): StardewLogicalActionRecoveryJournalWriteProfile {
+  return Object.freeze({
+    documentParses: documentParseCount,
+    documentWrites: documentWriteCount,
+    serialisedBytes: serialisedByteCount,
+  });
+}
+
+/** Every byte of journal material this process serialised. */
+function serialiseJournalMaterial(value: unknown): string {
+  const source = JSON.stringify(value);
+  serialisedByteCount += Buffer.byteLength(source, "utf8");
+  return source;
 }
 const DEFAULT_MAX_RECORDS = 256;
 const DEFAULT_MAX_BYTES = 1024 * 1024;
@@ -132,23 +155,84 @@ function owesNothing(record: StardewLogicalActionRecoveryRecord): boolean {
  * owes recovery, this returns the unbounded document and the caller's budget refusal stands
  * — a refusal that is then honest, because the in-flight set alone is over budget.
  */
-function makeRoom(
-  document: Document,
-  maxRecords: number,
-  maxBytes: number,
-  encode: (candidate: Document) => string = (candidate) => JSON.stringify(candidate),
-): Document {
-  let current = document;
+function makeRoom(journal: EncodedJournal, maxRecords: number, maxBytes: number): EncodedJournal {
+  let current = journal;
   for (;;) {
-    const encoded = encode(current);
-    if (current.records.length <= maxRecords && Buffer.byteLength(encoded, "utf8") <= maxBytes) return current;
-    const victim = current.records.findIndex((record) => owesNothing(record));
+    if (current.records.length <= maxRecords && journalBytes(current) <= maxBytes) return current;
+    const victim = current.records.findIndex((item) => owesNothing(item.record));
     if (victim < 0) return current;
-    current = makeDocumentFrom(
-      current,
-      current.records.filter((_, index) => index !== victim),
-    );
+    current = { ...current, records: current.records.filter((_, index) => index !== victim) };
   }
+}
+
+/** One record with the bytes it occupies in the durable document, encoded once. */
+type EncodedRecord<T> = Readonly<{ record: T; fragment: string; bytes: number }>;
+
+/**
+ * The durable document as its pre-encoded parts.
+ *
+ * The journal is the only writer under the path lock, and one action causes about three
+ * transitions. Each of them used to read, parse and re-serialise the whole document: a measured
+ * ladder run serialised nine copies of its 60 KB journal per action, and roughly two seconds of
+ * every 2.1 s action tool call was this bookkeeping. A transition changes exactly one record, so
+ * the document is held here as one encoded fragment per record and a write serialises only the
+ * record that changed.
+ */
+type EncodedJournal = Readonly<{
+  /** Every document of this journal begins exactly like this: `{"schemaVersion":1,"scope":…`. */
+  head: string;
+  admissionRecords: readonly EncodedRecord<HostNodeAdmissionRecord>[];
+  records: readonly EncodedRecord<StardewLogicalActionRecoveryRecord>[];
+}>;
+
+function encodeJournal(
+  scope: Readonly<Record<string, unknown>> | undefined,
+  records: readonly StardewLogicalActionRecoveryRecord[],
+  admissionRecords: readonly HostNodeAdmissionRecord[],
+): EncodedJournal {
+  return Object.freeze({
+    head: `{"schemaVersion":1${scope === undefined ? "" : `,"scope":${serialiseJournalMaterial(scope)}`}`,
+    admissionRecords: Object.freeze(admissionRecords.map(encodeRecord)),
+    records: Object.freeze(records.map(encodeRecord)),
+  });
+}
+
+function encodeRecord<T>(record: T): EncodedRecord<T> {
+  const fragment = serialiseJournalMaterial(record);
+  return Object.freeze({ record, fragment, bytes: Buffer.byteLength(fragment, "utf8") });
+}
+
+function journalPrefix(journal: EncodedJournal): string {
+  const admissionRecords =
+    journal.admissionRecords.length === 0
+      ? ""
+      : `,"admissionRecords":[${journal.admissionRecords.map((item) => item.fragment).join(",")}]`;
+  return `${journal.head}${admissionRecords},"records":[`;
+}
+
+function journalSource(journal: EncodedJournal): string {
+  return `${journalPrefix(journal)}${journal.records.map((item) => item.fragment).join(",")}]}`;
+}
+
+/** Exact UTF-8 byte length of `journalSource`, summed from the encoded records. */
+function journalBytes(journal: EncodedJournal): number {
+  let total = Buffer.byteLength(journalPrefix(journal), "utf8") + 2;
+  for (const item of journal.records) total += item.bytes;
+  return total + Math.max(0, journal.records.length - 1);
+}
+
+/** The journal with `record` replacing its own entry in place, or appended as a new one. */
+function withRecord(journal: EncodedJournal, record: StardewLogicalActionRecoveryRecord): EncodedJournal {
+  const index = journal.records.findIndex((item) => item.record.logicalActionId === record.logicalActionId);
+  if (index < 0) return { ...journal, records: [...journal.records, encodeRecord(record)] };
+  const existing = journal.records[index]!;
+  // A transition the document already carries (the same state written again) is the same bytes.
+  const encoded = existing.record === record ? existing : encodeRecord(record);
+  return { ...journal, records: journal.records.map((item, at) => (at === index ? encoded : item)) };
+}
+
+function withAdmissionRecord(journal: EncodedJournal, record: HostNodeAdmissionRecord): EncodedJournal {
+  return { ...journal, admissionRecords: [...journal.admissionRecords, encodeRecord(record)] };
 }
 
 export class StardewLogicalActionRecoveryJournal {
@@ -182,35 +266,58 @@ export class StardewLogicalActionRecoveryJournal {
     const maxBytes = normalized.maxBytes ?? DEFAULT_MAX_BYTES;
     assertBudget(maxRecords, maxBytes);
     const path = resolve(normalized.directory, FILE_NAME);
-    let document: Document;
-    // The bytes this process last wrote successfully, with the document they validated to.
-    // Every write still takes the lock and still reads the file: crash recovery and foreign
-    // writers must not be served from memory. A foreign write changes the bytes, so it can
-    // never match this entry; only a successful write of our own bytes warms it.
-    let validated: { source: string; document: Document } | undefined;
+    let document!: Document;
+    // The document this process last wrote, with its bytes and its already-encoded records. The
+    // path lock is the only writer, so a write whose bytes are still on disk needs no parse and
+    // no validation. Any other bytes are read strictly and merged: a second Host, a foreign
+    // writer, or an older lifecycle's document must never be overwritten from memory, and a
+    // foreign write changes the bytes, so it can never match this entry.
+    let durable: { source: string; journal: EncodedJournal } | undefined;
 
-    const readCurrentDocument = async (): Promise<Document> => {
-      const parsed = await readStrictJsonFile(path, maxBytes);
-      if (validated !== undefined && JSON.stringify(parsed) === validated.source) return validated.document;
-      return validateDocument(parsed, normalized, maxRecords);
+    /** The bytes on disk, or undefined when they cannot be the bytes this process wrote. */
+    const readSource = async (): Promise<string | undefined> => {
+      let bytes: Buffer;
+      try {
+        bytes = await readFile(path);
+      } catch (error) {
+        if (isNodeError(error) && error.code === "ENOENT") throw error;
+        return undefined;
+      }
+      return bytes.length > maxBytes ? undefined : bytes.toString("utf8");
     };
 
-    const writeDocument = async (next: Document, encoded: string): Promise<void> => {
-      await atomicWriteFile(path, encoded, normalized.directory);
-      validated = { source: encoded, document: next };
+    const readValidatedDocument = async (): Promise<Document> => {
+      documentParseCount += 1;
+      return validateDocument(await readStrictJsonFile(path, maxBytes), normalized, maxRecords);
+    };
+
+    const encodeDocument = (validated: Document): EncodedJournal =>
+      encodeJournal(normalized.scope, validated.records, validated.admissionRecords ?? []);
+
+    /** The durable document as this write carries it forward. */
+    const readCurrent = async (): Promise<EncodedJournal> => {
+      if (durable !== undefined && (await readSource()) === durable.source) return durable.journal;
+      return encodeDocument(await readValidatedDocument());
+    };
+
+    const writeDocument = async (next: EncodedJournal): Promise<void> => {
+      const source = journalSource(next);
+      documentWriteCount += 1;
+      await atomicWriteFile(path, source, normalized.directory);
+      durable = { source, journal: next };
     };
 
     await withPathLock(
       path,
       async () => {
         try {
-          document = await readCurrentDocument();
+          document = await readValidatedDocument();
         } catch (error) {
           if (!isNodeError(error) || error.code !== "ENOENT") throw error;
           document = makeDocument(normalized);
-          const encoded = JSON.stringify(document);
-          if (Buffer.byteLength(encoded, "utf8") > maxBytes) throw new Error("recovery_journal_budget_exceeded");
-          await writeDocument(document, encoded);
+          const empty = encodeDocument(document);
+          if (journalBytes(empty) > maxBytes) throw new Error("recovery_journal_budget_exceeded");
+          await writeDocument(empty);
         }
       },
       { containmentRoot: normalized.directory },
@@ -226,18 +333,19 @@ export class StardewLogicalActionRecoveryJournal {
       await withPathLock(
         path,
         async () => {
-          const current = await readCurrentDocument();
-          const admissionRecords = [...(current.admissionRecords ?? [])];
-          if (admissionRecords.some((item) => admissionKey(item.challenge) === admissionKey(record.challenge)))
+          const current = await readCurrent();
+          if (
+            current.admissionRecords.some(
+              (item) => admissionKey(item.record.challenge) === admissionKey(record.challenge),
+            )
+          )
             throw new Error("duplicate_node_admission_record");
-          admissionRecords.push(record);
           // Admission records are not settled history, so eviction never removes one; the
           // bounded document still has to fit, and evicting settled actions is what keeps a
           // long-lived journal writable (see makeRoom).
-          const next = makeRoom(makeDocument(normalized, current.records, admissionRecords), maxRecords, maxBytes);
-          const encoded = JSON.stringify(next);
-          if (Buffer.byteLength(encoded, "utf8") > maxBytes) throw new Error("recovery_journal_budget_exceeded");
-          await writeDocument(next, encoded);
+          const next = makeRoom(withAdmissionRecord(current, record), maxRecords, maxBytes);
+          if (journalBytes(next) > maxBytes) throw new Error("recovery_journal_budget_exceeded");
+          await writeDocument(next);
         },
         { containmentRoot: normalized.directory },
       );
@@ -250,17 +358,15 @@ export class StardewLogicalActionRecoveryJournal {
       await withPathLock(
         path,
         async () => {
-          const current = await readCurrentDocument();
-          const records = [...current.records];
-          const index = records.findIndex((item) => item.logicalActionId === record.logicalActionId);
+          const current = await readCurrent();
+          const index = current.records.findIndex((item) => item.record.logicalActionId === record.logicalActionId);
           if (index < 0) {
-            if (record.state !== "prepared" || records.some((item) => sameIdentity(item, record))) {
+            if (record.state !== "prepared" || current.records.some((item) => sameIdentity(item.record, record))) {
               throw new Error("duplicate_recovery_journal_record");
             }
-            records.push(record);
             durableRecord = record;
           } else {
-            const existing = records[index]!;
+            const existing = current.records[index]!.record;
             assertSameImmutableMaterial(existing, record);
             if (record.state === "prepared") throw new Error("duplicate_recovery_journal_record");
             if (existing.state === record.state) {
@@ -269,24 +375,20 @@ export class StardewLogicalActionRecoveryJournal {
               if (!allowedTransition(existing.state, record.state)) {
                 throw new Error("invalid_recovery_journal_transition");
               }
-              records[index] = record;
               durableRecord = record;
             }
           }
-          const next = makeRoom(
-            makeDocument(normalized, records, current.admissionRecords ?? []),
-            maxRecords,
-            maxBytes,
-          );
-          const encoded = JSON.stringify(next);
-          if (next.records.length > maxRecords || Buffer.byteLength(encoded, "utf8") > maxBytes) {
+          const next = makeRoom(withRecord(current, durableRecord!), maxRecords, maxBytes);
+          if (next.records.length > maxRecords || journalBytes(next) > maxBytes) {
             throw new Error("recovery_journal_budget_exceeded");
           }
           // Tell the in-memory view which settled records the durable document no longer
           // holds, so memory and disk cannot disagree about what the journal contains.
-          const kept = new Set(next.records.map((item) => item.logicalActionId));
-          evicted = records.filter((item) => !kept.has(item.logicalActionId)).map((item) => item.logicalActionId);
-          await writeDocument(next, encoded);
+          const kept = new Set(next.records.map((item) => item.record.logicalActionId));
+          evicted = current.records
+            .filter((item) => !kept.has(item.record.logicalActionId))
+            .map((item) => item.record.logicalActionId);
+          await writeDocument(next);
         },
         { containmentRoot: normalized.directory },
       );
@@ -532,21 +634,7 @@ function makeDocument(
  * The same document with a different record list, keeping its scope and admission records.
  * Used by eviction, which only ever removes settled history.
  */
-function makeDocumentFrom(
-  document: Document,
-  records: StardewLogicalActionRecoveryRecord[],
-  admissionRecords: HostNodeAdmissionRecord[] = document.admissionRecords ?? [],
-): Document {
-  return canonicalize({
-    schemaVersion: 1,
-    ...(document.scope === undefined ? {} : { scope: document.scope }),
-    records,
-    ...(admissionRecords.length === 0 ? {} : { admissionRecords }),
-  }) as Document;
-}
-
 function validateDocument(value: unknown, options: NormalizedOpenOptions, maxRecords: number): Document {
-  documentValidationCount += 1;
   if (
     !isRecord(value) ||
     value.schemaVersion !== 1 ||
