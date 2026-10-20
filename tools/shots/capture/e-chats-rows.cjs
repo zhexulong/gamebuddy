@@ -270,6 +270,36 @@ const forceLongPreview = () => {
   return forced;
 };
 
+/** What actually differs between two mounted snapshots, in one line - or "identical". */
+function snapshotDifference(before, after) {
+  const parts = [];
+  const durableKeys = new Set([...Object.keys(before.durable ?? {}), ...Object.keys(after.durable ?? {})]);
+  for (const key of durableKeys) {
+    if (key === "transcript") continue;
+    if (JSON.stringify(before.durable?.[key]) !== JSON.stringify(after.durable?.[key])) {
+      parts.push(`durable.${key}: ${JSON.stringify(before.durable?.[key])} -> ${JSON.stringify(after.durable?.[key])}`);
+    }
+  }
+  const a = before.durable?.transcript ?? [];
+  const b = after.durable?.transcript ?? [];
+  if (a.length !== b.length) parts.push(`transcript length: ${a.length} -> ${b.length}`);
+  for (let index = 0; index < Math.min(a.length, b.length); index += 1) {
+    if (JSON.stringify(a[index]) !== JSON.stringify(b[index])) {
+      const left = a[index] ?? {};
+      const right = b[index] ?? {};
+      const changed = [...new Set([...Object.keys(left), ...Object.keys(right)])]
+        .filter((key) => JSON.stringify(left[key]) !== JSON.stringify(right[key]))
+        .map((key) => `${key}: ${JSON.stringify(left[key])} -> ${JSON.stringify(right[key])}`);
+      parts.push(`transcript[${index}] ${changed.join(", ")}`.slice(0, 240));
+      break;
+    }
+  }
+  if (JSON.stringify(before.dom) !== JSON.stringify(after.dom)) {
+    parts.push(`rendered rows: ${before.dom.length} -> ${after.dom.length}`);
+  }
+  return parts.length === 0 ? "identical" : parts.join(" | ").slice(0, 400);
+}
+
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("e-chats-rows.txt");
@@ -502,7 +532,9 @@ const forceLongPreview = () => {
     assertClaim(
       "the mount is the Chat this driver started on, byte-identical to the snapshot taken before the rename",
       JSON.stringify(snapshotAfterBack) === JSON.stringify(snapshotBefore),
-      `${JSON.stringify(snapshotAfterBack)} vs ${JSON.stringify(snapshotBefore)}`.slice(0, 300),
+      // Name the difference, not the two whole snapshots: a claim that only says "false" leaves the next
+      // reader re-deriving what moved, and the first failure of this claim in the real run could not be read.
+      snapshotDifference(snapshotBefore, snapshotAfterBack),
     );
 
     // === ITEM: archive the spare, from the list, while the mount is the row this driver started on ===
@@ -534,6 +566,7 @@ const forceLongPreview = () => {
     assertClaim(
       "the mounted Chat is byte-identical after the archive",
       JSON.stringify(snapshotAfterArchive) === JSON.stringify(snapshotBefore),
+      snapshotDifference(snapshotBefore, snapshotAfterArchive),
     );
     assertClaim(
       "the archive produced no selection request",
