@@ -853,3 +853,153 @@ test("the Chat catalog refuses a scenario macro the run cannot render", async ()
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("buildGameSurfaceAuthoredCatalog mounts the companion's scenario as Tier 2 stable background without moving the book or the volatile layer", () => {
+  const scope = {
+    continuityId: "continuity",
+    sessionId: "pi-session-game-scenario",
+    surface: "game" as const,
+    threadId: "game-session",
+    profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+  };
+  const worldBook = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "default-companion",
+    revision: 3,
+    alwaysOnPremise: "The reviewed companion backdrop.",
+    entries: [
+      {
+        entryId: "pact",
+        title: "Farm pact",
+        content: "{{char}} and {{user}} share the farm.",
+        scope: "setting",
+        provenance: "st-card-import",
+        tokenBudget: "small",
+        constant: true,
+      },
+      {
+        entryId: "rain",
+        title: "Rainy plan",
+        content: "Tea on the porch when it rains.",
+        scope: "setting",
+        provenance: "st-card-import",
+        tokenBudget: "small",
+      },
+    ],
+  });
+  const binding = { metadata: worldBookMetadata(worldBook), book: worldBook };
+  const withoutScenario = buildGameSurfaceAuthoredCatalog(scope, binding, { char: "Kohaku" });
+  const catalog = buildGameSurfaceAuthoredCatalog(
+    scope,
+    binding,
+    { char: "Kohaku" },
+    {
+      scenarioId: "player-scenario-abc",
+      revision: 2,
+      canonicalHash: "b".repeat(64),
+      text: "{{char}} left the city and took over grandfather's run-down farm beside {{user}}.",
+    },
+  );
+
+  // The scenario is a stable source under the existing `scenario` kind - the
+  // same vocabulary the Chat catalog and the vendor validator already speak.
+  const scenarioSource = catalog.stableSources.find((source) => source.kind === "scenario");
+  assert.equal(scenarioSource?.sourceId, "player-scenario-abc");
+  assert.equal(scenarioSource?.revision, "2");
+  // Rendered through the run's macro table: never a raw `{{user}}`/`{{char}}`.
+  assert.match(scenarioSource?.content ?? "", /Kohaku left the city/u);
+  assert.match(scenarioSource?.content ?? "", /beside the player\./u);
+  assert.doesNotMatch(scenarioSource?.content ?? "", /\{\{/u);
+  // The book's own stable source and the per-turn volatile layer keep their exact
+  // bytes and total order keys: the scenario only ADDS a stable source.
+  assert.deepEqual(
+    catalog.stableSources.find((source) => source.kind === "lorebook_constant"),
+    withoutScenario.stableSources.find((source) => source.kind === "lorebook_constant"),
+  );
+  assert.deepEqual(catalog.volatileSources, withoutScenario.volatileSources);
+  assert.equal(withoutScenario.volatileSources[0]?.totalOrderKey, "0002");
+  // One increasing sequence: the scenario continues after the book and its candidates.
+  assert.equal(scenarioSource?.totalOrderKey, "0003");
+});
+
+test("the companion's scenario reaches the Game even when the card carries no world book", () => {
+  const scope = {
+    continuityId: "continuity",
+    sessionId: "pi-session-game-scenario-solo",
+    surface: "game" as const,
+    threadId: "game-session",
+    profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+  };
+  const catalog = buildGameSurfaceAuthoredCatalog(
+    scope,
+    undefined,
+    { char: "Kohaku" },
+    {
+      scenarioId: "player-scenario-solo",
+      revision: 1,
+      canonicalHash: "c".repeat(64),
+      text: "{{char}} farms with {{user}}.",
+    },
+  );
+  assert.deepEqual(
+    catalog.stableSources.map((source) => source.kind),
+    ["scenario"],
+  );
+  assert.equal(catalog.volatileSources.length, 0);
+});
+
+test("the Game catalog refuses a scenario macro the run cannot render", () => {
+  const scope = {
+    continuityId: "continuity",
+    sessionId: "pi-session-game-scenario-poisoned",
+    surface: "game" as const,
+    threadId: "game-session",
+    profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+  };
+  assert.throws(
+    () =>
+      buildGameSurfaceAuthoredCatalog(
+        scope,
+        undefined,
+        { char: "Kohaku" },
+        {
+          scenarioId: "poisoned",
+          revision: 1,
+          canonicalHash: "d".repeat(64),
+          text: "A {{unknown_macro}} reference.",
+        },
+      ),
+    /game_authored_context_unrendered_macro/,
+  );
+});
+
+test("the vendor publishes the Game catalog carrying the companion's scenario as a stable kind", async () => {
+  const scope = {
+    continuityId: "continuity",
+    sessionId: "pi-session-game-scenario-vendor",
+    surface: "game" as const,
+    threadId: "game-session",
+    profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+  };
+  const catalog = buildGameSurfaceAuthoredCatalog(
+    scope,
+    undefined,
+    { char: "Kohaku" },
+    {
+      scenarioId: "player-scenario-vendor",
+      revision: 1,
+      canonicalHash: "e".repeat(64),
+      text: "{{char}} farms with {{user}}.",
+    },
+  );
+  const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/tavern");
+  const capability = publishGameBuddyAuthoredStableCatalog(scope, catalog);
+  try {
+    assert.deepEqual(
+      capability.prepare("preflight_01").sourceRefs.map((ref) => ref.kind),
+      ["scenario"],
+    );
+  } finally {
+    await capability.clear();
+  }
+});
