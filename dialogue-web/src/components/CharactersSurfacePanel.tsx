@@ -1367,7 +1367,13 @@ function WorldBookDraftEditor({
           {labels.worldBookEntryAdd}
         </button>
       </div>
-      <div className="composer-actions">
+      {/* The form's own act row. The draft is one column of every entry the item
+          holds and a real one runs thousands of pixels, so this row follows the
+          scrollport instead of the form's top: the player who is editing the
+          first entry reaches 保存 without scrolling past the rest of it. The row
+          keeps its place in the flow, so the form's height is unchanged and the
+          row's own buttons, and what they do, are untouched. */}
+      <div className="composer-actions" data-world-book-draft-actions>
         <button
           type="button"
           className="small-button"

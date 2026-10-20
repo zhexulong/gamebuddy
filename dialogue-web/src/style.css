@@ -5184,6 +5184,40 @@
     border-radius: var(--radius-sm);
   }
 
+  /* ==========================================================================
+     The world-book draft's own act row follows the scrollport
+
+     A draft is one column of every entry the item holds, and the entries are
+     forms: measured at 1440x900 on the product's own library panel, an item with
+     three entries put 保存 2 466 px below the first entry's summary field, so the
+     act the whole form exists for was reachable only by scrolling past every
+     other entry - and the first entry is exactly the one a player opens the
+     editor to change.
+
+     The row the two buttons already live in is the draft's own last child, so
+     making THAT row sticky moves nothing else: it keeps its place in the flow
+     (the form's height, and the button's own service, are unchanged) and follows
+     the scrollport instead of its own position in the column. It takes the same
+     measure and the same centring every other block of this column takes - the
+     notices, the draft and the surface's own blocks - so the bar is the column
+     the fields above it are on, not a second one.
+
+     The opaque panel tone and the hairline are what the row needs now that it is
+     the one block in the form something scrolls behind: it is the form's own
+     face, so it is drawn in the draft's own colour rather than a new one.
+     ========================================================================== */
+
+  [data-world-book-draft] > [data-world-book-draft-actions] {
+    position: sticky;
+    bottom: 0;
+    width: 100%;
+    max-width: var(--management-form-measure);
+    margin-inline: auto;
+    padding: var(--space-2) 0;
+    background-color: var(--surface-panel);
+    border-top: 1px solid var(--border-subtle);
+  }
+
   [data-world-book-confirm] {
     display: flex;
     flex-direction: column;
