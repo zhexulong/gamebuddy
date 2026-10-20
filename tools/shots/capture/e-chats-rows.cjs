@@ -273,6 +273,12 @@ const forceLongPreview = () => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("e-chats-rows.txt");
+
+  /** A claim about the product fails the driver when it is false: a false print would read as a pass. */
+  const assertClaim = (label, ok, detail) => {
+    say(`${label}: ${ok}${detail === undefined ? "" : ` (${detail})`}`);
+    if (!ok) throw new Error(`driver_e: ${label}`);
+  };
   // Every request this page makes, so "a non-mounted mutation produces no selection" can be a fact about the
   // wire rather than an inference from the DOM (`selectRequests` above filters this list).
   const wire = [];
@@ -411,7 +417,12 @@ const forceLongPreview = () => {
   if (selectedIndex < 0 || otherIndex < 0) {
     say("named skip: this list has no second, unselected row, so the non-mounted half cannot be driven");
   } else {
+    // Two unique titles carry the identity of the rows this half acts on. An auto-title cannot: the list
+    // renumbers 新对话 1 / 新对话 2 as rows come and go, so the same row reads differently later.
     const OTHER_TITLE = "不是我在的那一行";
+    const SPARE_TITLE = "驱动E造的备用会话";
+
+    // === ITEM: a row that is not the mounted Chat ===
     const wireBeforeRename = wire.length;
     say(`renaming row ${otherIndex}: ${await page.evaluate(renameRow, { index: otherIndex })}`);
     await page.waitForTimeout(600);
@@ -423,97 +434,113 @@ const forceLongPreview = () => {
       if (listAfterRename.rows.some((row) => row.title === OTHER_TITLE)) break;
     }
     const snapshotAfterRename = await mountedSnapshot(page);
-    say(`that row carries its own title now: ${listAfterRename.rows.some((row) => row.title === OTHER_TITLE)}`);
-    say(
-      `the mounted row is the same row and still selected: ${listAfterRename.rows.findIndex((row) => row.selected) === selectedIndex}`,
+    assertClaim("that row carries its own title now", listAfterRename.rows.some((row) => row.title === OTHER_TITLE));
+    assertClaim(
+      "the mounted row is the same row and still selected",
+      listAfterRename.rows.findIndex((row) => row.selected) === selectedIndex,
+      `selected index ${listAfterRename.rows.findIndex((row) => row.selected)} was ${selectedIndex}`,
     );
-    say(`the mounted Chat is byte-identical after the rename: ${JSON.stringify(snapshotAfterRename) === JSON.stringify(snapshotBefore)}`);
-    say(`selection requests the rename produced: ${JSON.stringify(selectRequests(wire.slice(wireBeforeRename)))}`);
+    assertClaim(
+      "the mounted Chat is byte-identical after the rename",
+      JSON.stringify(snapshotAfterRename) === JSON.stringify(snapshotBefore),
+    );
+    assertClaim(
+      "the rename produced no selection request",
+      selectRequests(wire.slice(wireBeforeRename)).length === 0,
+      JSON.stringify(selectRequests(wire.slice(wireBeforeRename))),
+    );
     await shot(page, "41b-chats-renamed-a-row-you-are-not-in-1440x900.png");
 
     // === ITEM: the spare Chat this driver creates, so the row the archive half removes is one it made ===
     //
-    // The list belongs to the whole run: a driver that archives a row it found spends a row the drivers
-    // after it need (K chooses a NON-selected row, and this half used to leave it none). So the row the
-    // archive below removes is one this driver creates here, through the same New Chat control the
-    // second-row loop above uses, and the two rows it found - one renamed above - are still on the list
-    // when it is done.
+    // The list belongs to the whole run: a driver that archives a row it FOUND spends a row the drivers after it
+    // need (K chooses a NON-selected row). So the row archived below is one this driver creates, and it is given a
+    // unique title immediately - which is what lets the archive half name it after two other rows have moved.
     say("=== ITEM: the spare Chat this driver creates for the archive half ===");
     const landedInSpare = await createChatAndLand(page, say);
-    say("the created Chat became the mount (the shell lands in what it creates):", landedInSpare);
-    if (landedInSpare) {
-      say("re-opened the Chats surface:", await activateSurface(page, "会话"));
-      await page.waitForTimeout(1200);
-    }
+    assertClaim("the created Chat became the mount (the shell lands in what it creates)", landedInSpare);
+    say("re-opened the Chats surface:", await activateSurface(page, "会话"));
+    await page.waitForTimeout(1200);
     let spareRows = await page.evaluate(rowControls);
     for (let attempt = 0; attempt < 12 && spareRows.rows.length <= listBefore.rows.length; attempt += 1) {
       await page.waitForTimeout(1500);
       spareRows = await page.evaluate(rowControls);
     }
-    // Creating a Chat mounts it, so the created row is the selected one and the row this driver started
-    // on is then the unselected one that is not the row it just renamed. A selection moves the region,
-    // never the list, so both indices survive the switch back below.
-    const createdOnList = spareRows.rows.length > listBefore.rows.length;
-    const createdRowIndex = landedInSpare ? spareRows.rows.findIndex((row) => row.selected) : -1;
-    const backIndex =
-      createdRowIndex < 0
-        ? -1
-        : spareRows.rows.findIndex(
-            (row, index) => index !== createdRowIndex && !row.selected && row.title !== OTHER_TITLE,
-          );
-    const archiveIndex =
-      createdRowIndex >= 0 ? createdRowIndex : spareRows.rows.findIndex((row) => !row.selected && row.title !== OTHER_TITLE);
-    say(
-      `rows after creating the spare: ${spareRows.rows.length} (was ${listBefore.rows.length}); selected=${spareRows.rows.findIndex((row) => row.selected)} archiveRow=${archiveIndex}`,
+    assertClaim(
+      "the created Chat is on the list",
+      spareRows.rows.length > listBefore.rows.length,
+      `${spareRows.rows.length} rows, was ${listBefore.rows.length}`,
+    );
+    const createdRowIndex = spareRows.rows.findIndex((row) => row.selected);
+    assertClaim("the created Chat is the selected row", createdRowIndex >= 0, `index ${createdRowIndex}`);
+    say(`renaming the created row to a unique title: ${await page.evaluate(renameRow, { index: createdRowIndex })}`);
+    await page.waitForTimeout(600);
+    say(`commit: ${await page.evaluate(commitRename, { title: SPARE_TITLE })}`);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await page.waitForTimeout(1500);
+      spareRows = await page.evaluate(rowControls);
+      if (spareRows.rows.some((row) => row.title === SPARE_TITLE)) break;
+    }
+    assertClaim("the spare carries its own unique title", spareRows.rows.some((row) => row.title === SPARE_TITLE));
+
+    // Back to the Chat this driver started on: the only row that is neither of the two unique titles.
+    const backIndex = spareRows.rows.findIndex((row) => row.title !== OTHER_TITLE && row.title !== SPARE_TITLE);
+    assertClaim("the row this driver started on is still on the list", backIndex >= 0, `index ${backIndex}`);
+    say(`choosing the row this driver started on again (row ${backIndex}): ${await page.evaluate(clickChatSelect, { index: backIndex })}`);
+    let backSelected = false;
+    for (let attempt = 0; attempt < 20 && backSelected === false; attempt += 1) {
+      await page.waitForTimeout(1500);
+      if (await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null)) {
+        await activateSurface(page, "会话");
+        await page.waitForTimeout(1000);
+      }
+      spareRows = await page.evaluate(rowControls);
+      backSelected = spareRows.rows[backIndex]?.title !== SPARE_TITLE && spareRows.rows[backIndex]?.selected === true;
+    }
+    const snapshotAfterBack = await mountedSnapshot(page);
+    assertClaim("the row this driver started on is the mounted one again", backSelected);
+    assertClaim(
+      "the mount is the Chat this driver started on, byte-identical to the snapshot taken before the rename",
+      JSON.stringify(snapshotAfterBack) === JSON.stringify(snapshotBefore),
+      `${JSON.stringify(snapshotAfterBack)} vs ${JSON.stringify(snapshotBefore)}`.slice(0, 300),
     );
 
-    if (!createdOnList || archiveIndex < 0 || (createdRowIndex >= 0 && backIndex < 0)) {
-      say("named skip: the created Chat could not be told apart on the list, so the archive half cannot name the row it made");
-    } else {
-      if (createdRowIndex >= 0) {
-        say(`choosing the row this driver started on again (row ${backIndex}): ${await page.evaluate(clickChatSelect, { index: backIndex })}`);
-        let backSelected = false;
-        for (let attempt = 0; attempt < 20 && backSelected === false; attempt += 1) {
-          await page.waitForTimeout(1500);
-          if (await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null)) {
-            await activateSurface(page, "会话");
-            await page.waitForTimeout(1000);
-            spareRows = await page.evaluate(rowControls);
-          }
-          backSelected = spareRows.rows[backIndex]?.selected === true;
-        }
-        say(`the row this driver started on is the mounted one again: ${backSelected}`);
-        say(
-          `the mount is the Chat this driver started on, byte-identical to the snapshot taken before the rename: ${JSON.stringify(await mountedSnapshot(page)) === JSON.stringify(snapshotBefore)}`,
-        );
-      }
-
-      const spareTitle = spareRows.rows[archiveIndex]?.title ?? null;
-      const wireBeforeArchive = wire.length;
-      say(
-        `archiving the row this driver created (row ${archiveIndex} of ${spareRows.rows.length}, title ${JSON.stringify(spareTitle)}): ${await page.evaluate(armControl, { index: archiveIndex, label: ARCHIVE_LABEL })}`,
-      );
-      await page.waitForTimeout(800);
-      say(`the armed confirmation, and whose row it is: ${JSON.stringify(await page.evaluate(retentionConfirmFacts))}`);
-      say(`confirming: ${await page.evaluate(commitRetention)}`);
-      let listAfterArchive = null;
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        await page.waitForTimeout(1500);
-        listAfterArchive = await page.evaluate(rowControls);
-        if (!listAfterArchive.rows.some((row) => row.title === spareTitle)) break;
-      }
-      const snapshotAfterArchive = await mountedSnapshot(page);
-      say(`rows now: ${JSON.stringify(listAfterArchive.rows.map((row) => row.title))}`);
-      say(`the archived row left the list: ${!listAfterArchive.rows.some((row) => row.title === spareTitle)}`);
-      say(
-        `the two rows this driver found are still on the list (one of them renamed): ${listAfterArchive.rows.length === listBefore.rows.length && listAfterArchive.rows.some((row) => row.title === OTHER_TITLE)}`,
-      );
-      say(
-        `the mounted Chat is byte-identical after the archive: ${JSON.stringify(snapshotAfterArchive) === JSON.stringify(snapshotBefore)}`,
-      );
-      say(`selection requests the archive produced: ${JSON.stringify(selectRequests(wire.slice(wireBeforeArchive)))}`);
-      await shot(page, "41c-chats-archived-a-row-you-are-not-in-1440x900.png");
+    // === ITEM: archive the spare, from the list, while the mount is the row this driver started on ===
+    const archiveIndex = spareRows.rows.findIndex((row) => row.title === SPARE_TITLE);
+    assertClaim("the spare is on the list to archive", archiveIndex >= 0, `index ${archiveIndex}`);
+    const wireBeforeArchive = wire.length;
+    say(`archiving the spare (row ${archiveIndex} of ${spareRows.rows.length})`);
+    say(`arming: ${await page.evaluate(armControl, { index: archiveIndex, label: ARCHIVE_LABEL })}`);
+    await page.waitForTimeout(800);
+    const armed = await page.evaluate(retentionConfirmFacts);
+    say(`the armed confirmation, and whose row it is: ${JSON.stringify(armed)}`);
+    assertClaim("the confirmation belongs to the spare", armed.rowTitle === SPARE_TITLE, `row ${armed.rowTitle}`);
+    say(`confirming: ${await page.evaluate(commitRetention)}`);
+    let listAfterArchive = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await page.waitForTimeout(1500);
+      listAfterArchive = await page.evaluate(rowControls);
+      if (!listAfterArchive.rows.some((row) => row.title === SPARE_TITLE)) break;
     }
+    const snapshotAfterArchive = await mountedSnapshot(page);
+    say(`rows now: ${JSON.stringify(listAfterArchive.rows.map((row) => row.title))}`);
+    assertClaim("the archived row left the list", !listAfterArchive.rows.some((row) => row.title === SPARE_TITLE));
+    assertClaim(
+      "the two rows this driver found are still on the list (one of them renamed)",
+      listAfterArchive.rows.length === listBefore.rows.length &&
+        listAfterArchive.rows.some((row) => row.title === OTHER_TITLE),
+      `${listAfterArchive.rows.length} rows, was ${listBefore.rows.length}`,
+    );
+    assertClaim(
+      "the mounted Chat is byte-identical after the archive",
+      JSON.stringify(snapshotAfterArchive) === JSON.stringify(snapshotBefore),
+    );
+    assertClaim(
+      "the archive produced no selection request",
+      selectRequests(wire.slice(wireBeforeArchive)).length === 0,
+      JSON.stringify(selectRequests(wire.slice(wireBeforeArchive))),
+    );
+    await shot(page, "41c-chats-archived-a-row-you-are-not-in-1440x900.png");
   }
 
   flush();
