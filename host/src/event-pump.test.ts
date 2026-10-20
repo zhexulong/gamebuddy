@@ -438,13 +438,16 @@ test("event pump classifies terminal receipt overflow separately from all nonter
     revision: 1,
     payload: { kind: "warped" },
   });
-  for (let index = 0; index < MAX_PENDING_RECEIPTS - 1; index++) {
+  // Filled to the limit with PROGRESS receipts, which is what makes an eviction possible: a terminal is the
+  // authority for its execution and may never be dropped, so an all-terminal window has nothing to evict and
+  // must seal (the case below).
+  for (let index = 0; index < MAX_PENDING_RECEIPTS; index++) {
     mixedPump.enqueueFact({
       source: "stardew_mod",
       kind: "execution_receipt",
-      correlationId: `terminal_${index}`,
+      correlationId: `progress_${index}`,
       revision: 1,
-      payload: { state: "failed" },
+      payload: { state: "meaningful_progress" },
     });
   }
   mixedPump.enqueueFact({
@@ -455,7 +458,9 @@ test("event pump classifies terminal receipt overflow separately from all nonter
     payload: { state: "failed" },
   });
   assert.equal(mixedPump.droppedFacts, 1);
-  assert.equal(mixedPump.pendingCount, MAX_PENDING_RECEIPTS);
+  // The bound is per destination, and this pump also holds the warped semantic event from above - so the
+  // total is one more than the receipts window, and saying so is what keeps this assertion about the window.
+  assert.equal(mixedPump.pendingCount, MAX_PENDING_RECEIPTS + 1);
 });
 
 test("event pump keeps a long run's PROGRESS observations from filling the pending window", () => {

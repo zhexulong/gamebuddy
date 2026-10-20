@@ -595,13 +595,17 @@ test("Host service seals real terminal-receipt overflow before disconnect callba
     reentered.fact = loop.pump.pendingCount === callbackSawPending;
   });
 
+  // The window is filled with TERMINAL receipts, which are the authority for their executions and may never be
+  // dropped: a progress-filled window is the one the drop rule evicts from (its own journey lives in
+  // event-pump.test.ts), so this journey is about the overflow that really does seal - one terminal too many
+  // with nothing replaceable in the window.
   for (let index = 0; index < MAX_PENDING_RECEIPTS; index++) {
     adapter.emit({
       source: "arcade_adapter",
       kind: "execution_receipt",
-      correlationId: `progress_${index}`,
+      correlationId: `terminal_${index}`,
       revision: 1,
-      payload: { state: "meaningful_progress" },
+      payload: { state: "failed" },
     });
   }
   adapter.emit({
