@@ -926,13 +926,26 @@ test("a night's terminal is read from the receipt the fact log actually holds", 
   assert.equal(terminalReceiptFor([{ ...recorded, worldFactPayload: null }], recorded.requestId), undefined);
 });
 
-test("the run bundle publishes the crossing record, and one it cannot judge cannot refuse the manifest", () => {
+test("the run bundle publishes the crossing record, and one it cannot judge is reported instead of refusing the manifest", () => {
   // The gate reads `bundle.multiday`, and the bundle used to drop the runner's own crossing record, so
   // `run_reports_a_crossing` failed on every run whatever the nights did. It is forwarded now - but only a
   // record the bundle contract can judge (a non-empty crossings count its `dayRecords` agree with), because
   // `writeEvidenceBundle` REFUSES a manifest whose crossings disagree with its records, and a metadata gap
   // must not destroy the run's evidence along with it.
   const bundleCrossingRecord = extractRunnerFunction(RUNNER_SOURCE, "bundleCrossingRecord");
+  // What the guard drops is REPORTED where this runner's other diagnostics go (`BRIDGE_DISCONNECTED`,
+  // `EVIDENCE_BUNDLE_REFUSED`): `multiday: null` on its own would not say WHY a crossing record could not be
+  // described, so the reason is named instead of vanishing into the manifest.
+  const reports = [];
+  const reporting = (produce) => {
+    const original = console.error;
+    console.error = (...args) => reports.push(args.map(String).join(" "));
+    try {
+      return produce();
+    } finally {
+      console.error = original;
+    }
+  };
   const record = {
     crossings: 1,
     requestedCrossings: 1,
@@ -940,10 +953,35 @@ test("the run bundle publishes the crossing record, and one it cannot judge cann
     assessment: { state: "passed", ok: true },
     dayRecords: [{ day: 1 }],
   };
-  assert.equal(bundleCrossingRecord(record), record, "a judgeable record is published");
-  assert.equal(bundleCrossingRecord({ ...record, crossings: 0, dayRecords: [] }), null, "0 crossings is not a record");
-  assert.equal(bundleCrossingRecord({ ...record, crossings: 2 }), null, "a count its records contradict is not one");
+  assert.equal(
+    reporting(() => bundleCrossingRecord(record)),
+    record,
+    "a judgeable record is published",
+  );
+  assert.deepEqual(reports, [], "a judgeable record is not reported as a gap");
+  assert.equal(
+    reporting(() => bundleCrossingRecord({ ...record, crossings: 0, dayRecords: [] })),
+    null,
+    "0 crossings is not a record",
+  );
+  assert.match(
+    reports.at(-1) ?? "",
+    /MULTIDAY_CROSSING_RECORD_NOT_PUBLISHED .*multiday_crossings_invalid/,
+    "0 crossings is REPORTED, not silently dropped",
+  );
+  assert.equal(
+    reporting(() => bundleCrossingRecord({ ...record, crossings: 2 })),
+    null,
+    "a count its records contradict is not one",
+  );
+  assert.match(
+    reports.at(-1) ?? "",
+    /multiday_day_records_disagree_with_crossings/,
+    "the other unjudgeable shape is reported by its own reason code",
+  );
+  const reportedSoFar = reports.length;
   assert.equal(bundleCrossingRecord(null), null);
+  assert.equal(reports.length, reportedSoFar, "no record at all is an absence, not a gap");
   const base = {
     schemaVersion: 1,
     run: {
@@ -983,7 +1021,7 @@ test("the run bundle publishes the crossing record, and one it cannot judge cann
     "the raw 0-crossing record would refuse the whole manifest",
   );
   assert.deepEqual(
-    codesFor({ ...base, multiday: bundleCrossingRecord({ crossings: 0, dayRecords: [] }) }),
+    codesFor({ ...base, multiday: reporting(() => bundleCrossingRecord({ crossings: 0, dayRecords: [] })) }),
     [],
     "the guarded record leaves the manifest writable",
   );

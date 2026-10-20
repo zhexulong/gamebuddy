@@ -3004,16 +3004,30 @@ function judgeRunHistorianRubric(runtimeRoot) {
  * The crossing record to publish in the run's evidence bundle, or null when there is none to publish.
  *
  * The bundle contract judges a crossing record by its own `crossings` count, so only a count that record can
- * describe is forwarded: a non-empty count its `dayRecords` agree with. A record that fails that test is left
- * out rather than let into the manifest, because `writeEvidenceBundle` REFUSES a bundle whose crossings
- * disagree with its records - and a metadata gap must not destroy the run's evidence along with it.
+ * describe is forwarded: a non-empty count its `dayRecords` agree with. A record that fails that test is
+ * REPORTED and left out rather than let into the manifest, because `writeEvidenceBundle` REFUSES a bundle
+ * whose crossings disagree with its records - and a metadata gap must not destroy the run's evidence along
+ * with it (the same rule that keeps a gpu/resolution gap from refusing a headless bundle instead of naming
+ * it). The reason code is the bundle contract's own, so the report and the refusal it avoids are spelled the
+ * same way.
  */
 function bundleCrossingRecord(outcome) {
   if (outcome === null || outcome === undefined) return null;
   const { crossings, dayRecords } = outcome;
-  if (!Number.isInteger(crossings) || crossings < 1) return null;
-  if (!Array.isArray(dayRecords) || dayRecords.length !== crossings) return null;
-  return outcome;
+  let reasonCode = null;
+  if (!Number.isInteger(crossings) || crossings < 1) reasonCode = "multiday_crossings_invalid";
+  else if (!Array.isArray(dayRecords) || dayRecords.length !== crossings)
+    reasonCode = "multiday_day_records_disagree_with_crossings";
+  if (reasonCode === null) return outcome;
+  console.error(
+    "MULTIDAY_CROSSING_RECORD_NOT_PUBLISHED",
+    JSON.stringify({
+      reasonCode,
+      crossings: Number.isInteger(crossings) ? crossings : null,
+      dayRecords: Array.isArray(dayRecords) ? dayRecords.length : null,
+    }),
+  );
+  return null;
 }
 
 async function writeRunBundle({
