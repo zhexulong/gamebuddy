@@ -108,6 +108,40 @@ public sealed class BodyOwnerNamingTests
     }
 
     [Fact]
+    public void DayAdvanceOwner_IsApproachableWhileTheNightWaitsToBegin()
+    {
+        // The night does not own the body until it can start. Measured 2026-10-20 (run 01-44-58): an outdoor
+        // `advance_day` claimed the body as committed and uninterruptible, the lifecycle then reported `not_home`,
+        // and the `enter_exit` that would have walked the actor home was refused as body_owned_by_day_advance - so
+        // nothing could make progress until the engine passed the farmer out at 2:00 AM. While the lifecycle is
+        // still AwaitingEligibility the hold is a walk-up the companion may interrupt; the falsifier is the test
+        // above, which pins that an UNKNOWN lifecycle stays committed (releasing the body on a guess would be worse
+        // than the deadlock it fixes).
+        // A REAL lifecycle, started the way the controller starts one, so the phase under test is the phase the game
+        // produces rather than a fabricated one.
+        SleepAndAdvanceDayLifecycle lifecycle = SleepAndAdvanceDayLifecycle.TryStart(new DummyMonitor(), new SleepAndAdvanceDayLifecycleConfig
+        {
+            Enable = true,
+            EvidencePath = string.Empty,
+            MinimumOnlineFarmers = 1,
+            TimeoutSeconds = 540,
+            ReadyBarrierFrameBudget = 18000,
+        })!;
+        // `ActiveDayAdvance` is private, so it is built the way this file already builds private slots: an
+        // uninitialised instance of the real nested type, with its Lifecycle backing field pointed at the real
+        // lifecycle above.
+        Type advanceType = typeof(ExecutionManager).GetNestedType("ActiveDayAdvance", BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("ExecutionManager.ActiveDayAdvance unavailable.");
+        object advance = RuntimeHelpers.GetUninitializedObject(advanceType);
+        advanceType.GetField("<Lifecycle>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(advance, lifecycle);
+        LocalExecutionReceipt receipt = Refuse(("activeDayAdvance", advance));
+
+        receipt.ReasonCode.Should().Be("body_owned_by_day_advance");
+        receipt.Evidence.Should().Contain("interruptible=true").And.Contain("phase=approaching").And.Contain("cancel_safe=true");
+    }
+
+    [Fact]
     public void ActivityOwner_IsNamed()
     {
         LocalExecutionReceipt receipt = Refuse(("activePet", new LocalPettingSpec(

@@ -139,6 +139,16 @@ internal sealed class SleepAndAdvanceDayLifecycle
 
     internal string TerminalEvidence { get; private set; } = string.Empty;
 
+    /// <summary>
+    /// Whether the night is accepted but cannot start yet - the actor is not where the sleep can begin.
+    ///
+    /// Exposed because body ownership depends on it: a dispatched night that is still waiting does not own the actor,
+    /// and the companion has to be able to walk home for it to ever begin (measured 2026-10-20: an outdoor
+    /// `advance_day` held the body as committed, refused the `enter_exit` that would have brought the actor inside, and
+    /// ran until the engine's 2:00 AM pass-out).
+    /// </summary>
+    internal bool IsAwaitingEligibility => this.phase == Phase.AwaitingEligibility;
+
     private enum Phase
     {
         AwaitingEligibility,

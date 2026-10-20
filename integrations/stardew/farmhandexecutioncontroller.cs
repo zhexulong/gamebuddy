@@ -750,7 +750,28 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activeBusRide is not null)
             owners.Add((BodyOwnedByRide, this.activeBusRide.ExecutionId, "ride_bus", false, "committed", false));
         if (this.activeDayAdvance is not null)
-            owners.Add((BodyOwnedByDayAdvance, this.activeDayAdvance.ExecutionId, "advance_day", false, "committed", false));
+        {
+            // The night does NOT own the body until it can actually begin.
+            //
+            // Measured 2026-10-20 (run 01-44-58): the companion dispatched advance_day outdoors, acceptance claimed the
+            // body as committed and uninterruptible, the lifecycle then reported not_home for four minutes, and the one
+            // action that could fix it - enter_exit, to walk home - was refused as body_owned_by_day_advance. The
+            // engine's own 2:00 AM pass-out was what ended the run. The lifecycle's first phase is
+            // AwaitingEligibility, which is exactly the state "accepted but not yet able to start", and it walks itself
+            // to the bed once the actor is home (WalkingToBed only after the eligibility gate). So while it is still
+            // waiting, the hold is a WALK-UP that the companion may interrupt by walking home; from WalkingToBed onward
+            // it is a committed sleep and the refusal stays what it was.
+            // A slot whose lifecycle is unavailable is treated as COMMITTED: releasing the body on a guess is the one
+            // thing this must never do, and the uninitialised-slot case is what the owner-naming test pins.
+            bool waitingToBegin = this.activeDayAdvance.Lifecycle is { IsAwaitingEligibility: true };
+            owners.Add((
+                BodyOwnedByDayAdvance,
+                this.activeDayAdvance.ExecutionId,
+                "advance_day",
+                waitingToBegin,
+                waitingToBegin ? "approaching" : "committed",
+                waitingToBegin));
+        }
         if (this.activePet is not null)
             owners.Add((BodyOwnedByActivity, this.activePet.ExecutionId, "pet_animal", false, "committed", false));
         if (this.activeAnimalProduct is not null)
