@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
-import { resolve } from "node:path";
+import { createWriteStream, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { launchStardewLiveRun, normalizeLiveRunWindowMode } from "./lib/stardew-live-run.mjs";
 import { listStardewProcessIds } from "./lib/windows-process-tree.mjs";
 
@@ -28,7 +28,26 @@ if (!(GAME_PATH && MODS_PATH)) {
 }
 GAME_PATH = GAME_PATH.replaceAll("/", "\\");
 MODS_PATH = MODS_PATH.replaceAll("/", "\\");
-const PIPE_NAME = "gamebuddy-stardew";
+// The pipe name comes from the config the MOD reads, not from a constant here.
+//
+// Measured 2026-10-19: this file waited for a hardcoded `gamebuddy-stardew` while the fixture had seeded
+// `gamebuddy-native-local-stable` into `<modsPath>/GameBuddy.Stardew/config.json`, so the Mod opened one pipe and the
+// launcher listened on another - which surfaces 150 s later as `stardew_pipe_not_listening`, not as the mismatch it is.
+// Reading the Mod own config makes the name single-authority; a missing or malformed field is a named refusal rather
+// than a silent fallback to a guess.
+function bridgePipeNameFor(modsPath) {
+  const configPath = join(modsPath, "GameBuddy.Stardew", "config.json");
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch (error) {
+    throw new Error(`bridge_config_unreadable:${configPath}:${String(error?.code ?? error)}`);
+  }
+  const name = parsed?.PipeName;
+  if (typeof name !== "string" || !/^[A-Za-z0-9_-]{1,128}$/u.test(name))
+    throw new Error(`bridge_pipe_name_invalid:${configPath}:${String(name)}`);
+  return name;
+}
 
 // Window mode is configuration, not a constant (the frozen 5-mode vocabulary
 // lives in tools/lib/stardew-live-run.mjs; host/src/live-run/window-mode.ts is
@@ -55,7 +74,7 @@ try {
     gamePath: GAME_PATH,
     modsPath: MODS_PATH,
     windowMode: WINDOW_MODE,
-    pipeName: PIPE_NAME,
+    pipeName: bridgePipeNameFor(MODS_PATH),
     timeoutMs: 150_000,
   });
   console.error("SMAPI_LAUNCHED", JSON.stringify({ pid: game.pid, windowMode: game.windowMode }));
