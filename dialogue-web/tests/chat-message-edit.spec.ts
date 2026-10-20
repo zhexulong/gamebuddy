@@ -32,6 +32,13 @@ import { expect, test, type Page } from "@playwright/test";
  *    is open, the editor's field starts at the top of the box the bubble had, and Cancel or Escape
  *    brings the bubble back at that same box. The copies that are really painted are counted, so
  *    "once" is a number rather than a claim.
+ * 6. `the field grows with the words in it, and Ctrl+Enter saves` - `rows={2}` pinned the field at 62 px
+ *    for any length, so a 300-character reply was read through a keyhole. The field is now as tall as
+ *    its own text between the two-row floor and a 300 px ceiling, past which it scrolls internally
+ *    rather than growing the row without limit; a bare Enter still inserts the newline it always did,
+ *    Escape still cancels (the row's own document listener, above), and Ctrl+Enter is the save. The
+ *    row's closed geometry - the bubble's box and the strip's 44 px row - is measured on both sides of
+ *    the editor, because a field that grew the row would be the same defect from the other end.
  */
 
 const CONVERSATION = [
@@ -86,6 +93,9 @@ async function openConversation(page: Page): Promise<void> {
 /** The touch minimum the rest of the strip uses, plus the sub-pixel the measured box may round to. */
 const TOUCH_MINIMUM = 44;
 const ONE_ROW = TOUCH_MINIMUM + 1;
+
+/** The editor's ceiling, the number `MessageEditor` clamps the field's height to. */
+const EDIT_FIELD_MAX_HEIGHT = 300;
 
 test("the edit control is one control in the player's strip, names what saving does, and is the touch minimum", async ({
   page,
@@ -240,4 +250,97 @@ test("the save sends the words and the position the page rendered, and closes on
   await expect(page.locator('[data-handle="h3"] .message-bubble')).toContainText("And then?");
   // And the one control is back in its place.
   await expect(page.locator('[data-handle="h3"] [data-testid="message-edit"]')).toHaveCount(1);
+});
+
+test("the field grows with the words in it, caps, scrolls inside, and Ctrl+Enter saves while Enter does not", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openConversation(page);
+  await page.evaluate(() => window.chatProbe.resetEditCalls());
+
+  const field = page.locator('[data-testid="message-edit-field"]');
+  const fieldBox = () =>
+    field.evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      return {
+        height: Math.round(box.height),
+        top: Math.round(box.top),
+        scrollHeight: node.scrollHeight,
+        clientHeight: node.clientHeight,
+        overflowY: getComputedStyle(node).overflowY,
+      };
+    });
+  /** The row's own closed geometry: the bubble's box and the strip under it. */
+  const rowGeometry = (handle: string) =>
+    page.evaluate((target) => {
+      const row = document.querySelector<HTMLElement>(`[data-handle="${target}"]`)!;
+      const bubble = row.querySelector<HTMLElement>(".message-bubble");
+      const strip = row.querySelector<HTMLElement>(".message-actions");
+      const box = (node: Element | null) => {
+        if (node === null) return null;
+        const rect = node.getBoundingClientRect();
+        return { width: Math.round(rect.width), height: Math.round(rect.height), top: Math.round(rect.top) };
+      };
+      return { bubble: box(bubble), strip: box(strip) };
+    }, handle);
+
+  const closed = await rowGeometry("h1");
+  // Her reply is the row the capture read: a 422 x 46 bubble and one 44 px strip. The editor lives on
+  // the player's row here, so this one is only measured - a field that changed the strip's or the
+  // bubble's box would be the same defect from the other end.
+  const reply = await rowGeometry("h2");
+  await page.click('[data-handle="h1"] [data-testid="message-edit"]');
+
+  // A short reply opens at the two-row floor, which is the height the fixed field had: the bubble and
+  // the strip around it keep the geometry they had.
+  const short = await fieldBox();
+  const longText = "她说了很多话。".repeat(17);
+  await field.fill(longText);
+  const long = await fieldBox();
+  const cappedText = "她说了很多话。".repeat(300);
+  await field.fill(cappedText);
+  const capped = await fieldBox();
+  console.log(
+    `MEASURE edit-field 1440x900: short ${short.height} | long(${longText.length}) ${long.height} | capped ${capped.height} ` +
+      `(scrollHeight ${capped.scrollHeight}, clientHeight ${capped.clientHeight}, overflow-y ${capped.overflowY}) | ` +
+      `player row ${JSON.stringify(closed)} | her reply ${JSON.stringify(reply)}`,
+  );
+
+  // The keyhole is what this test is about: 300 characters must not read the same as two words.
+  expect(long.height, "300 characters grow the field past its floor").toBeGreaterThan(short.height);
+  expect(short.height, "and a short reply still opens the two-row field it always did").toBeGreaterThanOrEqual(
+    TOUCH_MINIMUM,
+  );
+  expect(short.height, "exactly the two-row box, not a taller one").toBeLessThanOrEqual(ONE_ROW + 20);
+  // The ceiling is a height, not a scrollbar-less field: at it the field stops growing and scrolls inside.
+  expect(capped.height, "the field stops at its 300 px ceiling").toBe(EDIT_FIELD_MAX_HEIGHT);
+  expect(capped.height, "which is taller than the 300-character reply asked for").toBeGreaterThan(long.height);
+  expect(capped.scrollHeight, "and the rest of the text is reachable by scrolling the field itself").toBeGreaterThan(
+    capped.clientHeight,
+  );
+  expect(capped.overflowY, "so the field's own scrollbar is the one that moves").toBe("auto");
+  expect(long.overflowY, "while a reply under the ceiling has no internal scrollbar").toBe("hidden");
+
+  // A bare Enter is the field's own key: it inserts the newline and sends nothing.
+  await field.fill("Where are we?");
+  await page.keyboard.press("Enter");
+  expect(await field.inputValue(), "Enter inserted the newline the player typed").toBe("Where are we?\n");
+  expect(await page.evaluate(() => window.chatProbe.editCalls()), "and nothing was sent").toEqual([]);
+
+  // Ctrl+Enter is the save, and it sends the same pair the Save button sends.
+  await page.keyboard.press("Control+Enter");
+  expect(await page.evaluate(() => window.chatProbe.editCalls())).toEqual([
+    { handle: "h1", order: 1, text: "Where are we?\n" },
+  ]);
+
+  // And the row is exactly where it was: Escape brings the bubble back in the box it had, and the
+  // strip still one 44 px row.
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-testid="message-edit-form"]')).toHaveCount(0);
+  const reopened = await rowGeometry("h1");
+  expect(reopened.bubble, "the bubble comes back in its own box").toEqual(closed.bubble);
+  expect(reopened.strip, "and the strip is one row, unchanged").toEqual(closed.strip);
+  expect(reopened.strip?.height, "the measured 44 px strip the capture read").toBe(TOUCH_MINIMUM);
+  expect(await rowGeometry("h2"), "and her reply's own row never moved").toEqual(reply);
 });

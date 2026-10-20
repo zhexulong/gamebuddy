@@ -1022,17 +1022,25 @@
   }
 
   /* The edit field. It is the one field in this strip that is often a long piece of prose - a rewritten
-     message or a rewritten reply - so it takes the panel's own measure (the same 640 px
-     `--management-form-measure` names) as its ceiling and 280 px as its floor, instead of shrinking to
-     whatever short bubble it opened under. The defect: on a one-line reply at 1440x900 the field
-     measured 183 px, so the words being corrected were read through a slot. The bubble the row draws
-     still follows the row's own 85% rule; the field is what grows, and `width: 100%` keeps it filling
-     the strip at every width in between. */
+      message or a rewritten reply - so it takes the panel's own measure (the same 640 px
+      `--management-form-measure` names) as its ceiling and 280 px as its floor, instead of shrinking to
+      whatever short bubble it opened under. The defect: on a one-line reply at 1440x900 the field
+      measured 183 px, so the words being corrected were read through a slot. The bubble the row draws
+      still follows the row's own 85% rule; the field is what grows, and `width: 100%` keeps it filling
+      the strip at every width in between.
+
+      Its HEIGHT is the content's: `MessageEditor` measures the field and writes the height, so a
+      300-character reply is read whole instead of through the two rows `rows={2}` used to pin it to
+      (measured 62 px for any length). The two-row floor stays the sheet's job - the floor is what a
+      short reply has always opened at, so the bubble and the strip keep the geometry they had - and the
+      ceiling is `MessageEditor`'s 300 px, past which the field scrolls internally instead of pushing the
+      conversation off screen. `resize` is retired with the fixed height: a drag would be silently undone
+      by the next keystroke, and a control that lies is worse than no control. */
   .message-edit-field {
     width: 100%;
     min-width: 280px;
     max-width: var(--management-form-measure);
-    min-height: var(--touch-target-min);
+    min-height: calc(2 * 1.6em + 2 * var(--space-2) + 2px);
     padding: var(--space-2) var(--space-3);
     font-family: inherit;
     font-size: 14px;
@@ -1041,7 +1049,8 @@
     background-color: var(--surface-raised);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
-    resize: vertical;
+    resize: none;
+    overflow-y: hidden;
     /* The field ring, not the browser's outline: this is the one text field whose
        focus was the element-level outline while every other field in the product
        draws the shared `--focus-ring` border/box-shadow pair (the unified list in

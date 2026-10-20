@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ChevronLeft, ChevronRight, LoaderCircle, Pencil, RefreshCw, Trash2, Undo2 } from "lucide-react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
@@ -15,6 +15,13 @@ import { openingVariantWords } from "./opening-variant-labels";
  * an idle bubble carries an inert, zero-size span.
  */
 const CARET_MARKUP = '<span class="message-caret" aria-hidden="true"></span>';
+
+/**
+ * The editor field's ceiling, in the CSS pixel the height is set in. A rewritten message is prose, so the
+ * field grows with it instead of showing two rows of a 300-character reply; past this height the field
+ * scrolls internally rather than pushing the conversation it belongs to off the screen.
+ */
+const EDIT_FIELD_MAX_HEIGHT = 300;
 
 /*
  * The opening switcher's words are the shared greeting-variant vocabulary
@@ -65,9 +72,37 @@ function MessageEditor({
   saveLabel: string;
   cancelLabel: string;
 }>) {
+  const fieldRef = useRef<HTMLTextAreaElement | null>(null);
+  /**
+   * The field is as tall as the words in it, between two rows and the ceiling.
+   *
+   * `height: auto` first, because `scrollHeight` is the content's own height only while the box is not
+   * already stretched to it; the two-row floor itself is the sheet's `min-height`, so a short reply
+   * still opens a field the size the strip has always given it and the bubble's geometry does not move.
+   */
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    if (field === null) return;
+    field.style.height = "auto";
+    const content = field.scrollHeight;
+    field.style.height = `${Math.min(content, EDIT_FIELD_MAX_HEIGHT)}px`;
+    field.style.overflowY = content > EDIT_FIELD_MAX_HEIGHT ? "auto" : "hidden";
+  }, [text]);
+  /**
+   * Ctrl+Enter saves. A bare Enter is the field's own key - it inserts a newline, because a reply being
+   * rewritten is prose and a newline is part of it - and Escape is the row's own cancel, already bound
+   * on the document (`Escape` closes the field exactly as Cancel does).
+   */
+  const onFieldKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.key !== "Enter" || !event.ctrlKey) return;
+    event.preventDefault();
+    if (busy || !canSave) return;
+    onSave();
+  };
   return (
     <div className="message-edit" data-testid="message-edit-form">
       <textarea
+        ref={fieldRef}
         className="message-edit-field"
         data-testid="message-edit-field"
         aria-label={fieldLabel}
@@ -75,6 +110,7 @@ function MessageEditor({
         disabled={busy}
         rows={2}
         onChange={(event) => onTextChange(event.target.value)}
+        onKeyDown={onFieldKeyDown}
       />
       <div className="message-edit-actions">
         <button
