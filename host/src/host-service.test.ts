@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createCompanionInterruption } from "./companion-interruption.js";
 import { CompanionLoop } from "./companion-loop.js";
-import type { WorldFact } from "./event-pump.js";
+import { MAX_PENDING_RECEIPTS, MAX_PENDING_SEMANTIC_EVENTS, type WorldFact } from "./event-pump.js";
 import {
   CompanionHostService,
   createGamePresentationAdmissionProvider,
@@ -538,7 +538,7 @@ test("Host service overflow cancels a scheduled delivery and seals subsequent ad
     }) as never,
   );
   const service = new CompanionHostService(loop, adapter.events);
-  for (let index = 0; index < 128; index++) {
+  for (let index = 0; index < MAX_PENDING_SEMANTIC_EVENTS; index++) {
     adapter.emit({
       source: "arcade_adapter",
       kind: "semantic_event",
@@ -595,7 +595,7 @@ test("Host service seals real terminal-receipt overflow before disconnect callba
     reentered.fact = loop.pump.pendingCount === callbackSawPending;
   });
 
-  for (let index = 0; index < 128; index++) {
+  for (let index = 0; index < MAX_PENDING_RECEIPTS; index++) {
     adapter.emit({
       source: "arcade_adapter",
       kind: "execution_receipt",
@@ -613,7 +613,7 @@ test("Host service seals real terminal-receipt overflow before disconnect callba
   });
 
   await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
-  assert.equal(callbackSawPending, 128);
+  assert.equal(callbackSawPending, MAX_PENDING_RECEIPTS);
   assert.equal(reentered.fact, true);
   assert.equal(reentered.player, true);
   assert.equal(loop.pump.pendingCount, 0);
@@ -894,10 +894,7 @@ test("a turn refuses an over-budget byte stream and a terminal turn refuses late
   tracker.endBatch();
 
   // A piece from the closed turn can no longer be committed.
-  await assert.rejects(
-    presenter({ sourceEventId: "source_silent", text: "late" }),
-    /presentation_lineage_unavailable/,
-  );
+  await assert.rejects(presenter({ sourceEventId: "source_silent", text: "late" }), /presentation_lineage_unavailable/);
   service.close();
 });
 
@@ -1654,13 +1651,14 @@ test("completed playback observation sets no interruption note", async () => {
   service.close();
 });
 
-
-function stopSettlementFact(input: Readonly<{
-  stopId: string;
-  sourceEventId: string;
-  epoch: number;
-  revision: number;
-}>): WorldFact {
+function stopSettlementFact(
+  input: Readonly<{
+    stopId: string;
+    sourceEventId: string;
+    epoch: number;
+    revision: number;
+  }>,
+): WorldFact {
   return {
     source: "stardew_mod",
     kind: "semantic_event",
@@ -1773,12 +1771,14 @@ test("Host STOP settlement observer snapshots listeners before delivery", async 
     reasonCode: "player_stop_all",
   });
   await stopped.settled;
-  adapter.emit(stopSettlementFact({
-    stopId: stopped.admission.stopId,
-    sourceEventId: stopped.admission.sourceEventId,
-    epoch: stopped.admission.epoch,
-    revision: 9,
-  }));
+  adapter.emit(
+    stopSettlementFact({
+      stopId: stopped.admission.stopId,
+      sourceEventId: stopped.admission.sourceEventId,
+      epoch: stopped.admission.epoch,
+      revision: 9,
+    }),
+  );
   assert.deepEqual(observed, ["first"]);
   service.close();
 });
@@ -1819,7 +1819,6 @@ test("Host STOP settlement observer unsubscribe and close make subscription and 
   ]);
   assert.deepEqual(closedObserved, []);
 });
-
 
 test("accepted player input reports the turn's own outcome when the session fails", async () => {
   // The service returns AFTER the turn settled, so it knows how it ended. Reporting only `accepted: true`
