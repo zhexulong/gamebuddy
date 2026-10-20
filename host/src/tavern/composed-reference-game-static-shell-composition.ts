@@ -17,6 +17,7 @@ import {
   TavernBrowserContractV1,
   TavernBrowserValidatorsV1,
   type ComposedTavernProfile,
+  type WorldInfoStateV1,
 } from "./browser-contract/index.js";
 import type { ChatEventStream } from "./chat-event-stream.js";
 import type { ChatPipelineService } from "./chat-pipeline-service.js";
@@ -402,6 +403,7 @@ async function projectComposedChatSnapshot(
   context: ComposedReferenceGameBrowserReadContext,
 ): Promise<TavernStateSnapshotV1> {
   const state = await options.referenceStateFacade.read();
+  const worldInfo = await projectComposedWorldInfo(options);
   const tavernProfile = options.profile.tavernProfile;
   const snapshot = {
     apiVersion: 1,
@@ -423,7 +425,7 @@ async function projectComposedChatSnapshot(
         present: state.draft.text !== null,
       },
       turn: state.turn,
-      worldInfo: null,
+      worldInfo,
     },
     memory: {
       readAvailable: false,
@@ -451,6 +453,51 @@ async function projectComposedChatSnapshot(
   // is only how the literal's inferred type reaches the contract's nominal one,
   // and it goes through `unknown` so it cannot silently widen to a near-miss.
   return snapshot as unknown as TavernStateSnapshotV1;
+}
+
+/**
+ * The World Info the composed root's Chat half carries.
+ *
+ * It is the management profile's own bound service - the exact authority `GET
+ * /api/tavern/v1/world-info` answers from on this same origin - read here for
+ * the snapshot instead of being fetched a second time by the surface. One
+ * `read()` yields the state, the revision and the items together, so the
+ * revision the snapshot publishes is the revision of the items beside it rather
+ * than a revision read before or after them.
+ *
+ * `null` is exactly the mount that published no World Info route: with no
+ * management profile declaring `world-info.read`, this shell serves no World
+ * Info surface at all, and `null` says that instead of inventing an empty
+ * library. A projection that fails its frozen schema is a failure of the whole
+ * snapshot - never a silently absent one.
+ */
+async function projectComposedWorldInfo(
+  options: ComposedReferenceGameStaticShellCompositionOptions,
+): Promise<WorldInfoStateV1 | null> {
+  const management = options.management;
+  if (management?.profile === undefined || !management.profile.routeIds.includes("world-info.read")) return null;
+  const service = management.worldInfoService;
+  // A profile that declares the route without the service that owns it fails
+  // closed, exactly as the management dispatcher does: this projection never
+  // turns a missing capability into an empty library.
+  if (service === undefined) throw new Error("composed_reference_game_world_info_unavailable");
+  const worldInfo = await service.read();
+  if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
+    throw new Error("composed_reference_game_world_info_invalid");
+  // The contract's own shape, field by field: the service's projection is
+  // readonly, and the snapshot the broker validates is built from it here rather
+  // than carried by reference into a type it only happens to resemble.
+  return {
+    state: worldInfo.state,
+    revision: worldInfo.revision,
+    items: worldInfo.items.map((item) => ({
+      handle: item.handle,
+      title: item.title,
+      summary: item.summary,
+      selected: item.selected,
+      pending: item.pending,
+    })),
+  };
 }
 
 function navigationItem(itemId: string) {

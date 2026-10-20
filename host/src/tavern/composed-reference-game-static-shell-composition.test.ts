@@ -1365,6 +1365,104 @@ test("composed shell serves the mounted management domains under the one broker 
   }
 });
 
+test("the composed root's Chat half carries the exact World Info the route serves, from one authority", async () => {
+  const fixture = await artifactFixture();
+  const townItem = `${"E".repeat(42)}A`;
+  const mineItem = `${"F".repeat(42)}A`;
+  const firstRevision = `${"H".repeat(42)}A`;
+  const secondRevision = `${"J".repeat(42)}A`;
+  // The one mutable library both projections read. `reads` counts the service
+  // calls, so a cached copy or a second read path shows up as a wrong number.
+  let reads = 0;
+  let library: {
+    state: "selected" | "pending";
+    revision: string;
+    items: readonly Readonly<{
+      handle: string;
+      title: string;
+      summary: string | null;
+      selected: boolean;
+      pending: boolean;
+    }>[];
+  } = {
+    state: "selected",
+    revision: firstRevision,
+    items: [
+      Object.freeze({ handle: townItem, title: "Pelican Town", summary: null, selected: true, pending: false }),
+      Object.freeze({ handle: mineItem, title: "The Mines", summary: "Deep.", selected: false, pending: false }),
+    ],
+  };
+  const base = managementBundle();
+  const server = await startComposedReferenceGameStaticShellComposition({
+    profile,
+    bootstrapToken: token,
+    referenceStateFacade: fakeFacade as any,
+    eventStream,
+    artifactRoot: fixture.root,
+    inspector: inspector(),
+    management: Object.freeze({
+      ...base,
+      worldInfoService: Object.freeze({
+        ...base.worldInfoService!,
+        read: async () => {
+          reads += 1;
+          return library;
+        },
+      }),
+    }),
+  });
+  try {
+    const { cookie } = await bootstrapBroker(server);
+    const readRoot = async () => {
+      const state = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+        headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+      });
+      assert.equal(state.status, 200);
+      const root = (await state.json()) as { chat: { chat: { worldInfo: unknown } } };
+      return root.chat.chat.worldInfo;
+    };
+    const readRoute = async () => {
+      const route = await fetch(`${server.origin}/api/tavern/v1/world-info`, {
+        headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+      });
+      assert.equal(route.status, 200);
+      return await route.json();
+    };
+
+    // The snapshot's projection IS the route's payload: same state, same
+    // revision, same item handles in the same order - not a second shape that
+    // happens to agree today.
+    const snapshotWorldInfo = await readRoot();
+    const routeWorldInfo = await readRoute();
+    assert.deepEqual(snapshotWorldInfo, routeWorldInfo);
+    assert.deepEqual(
+      (snapshotWorldInfo as { items: readonly { handle: string }[] }).items.map((item) => item.handle),
+      [townItem, mineItem],
+    );
+    assert.equal((snapshotWorldInfo as { revision: string }).revision, firstRevision);
+
+    // A library change moves both, and the snapshot follows it on the next read:
+    // there is no cached projection inside the shell.
+    library = {
+      state: "pending",
+      revision: secondRevision,
+      items: [
+        Object.freeze({ handle: mineItem, title: "The Mines", summary: "Deeper.", selected: false, pending: true }),
+      ],
+    };
+    const changedSnapshot = await readRoot();
+    assert.deepEqual(changedSnapshot, await readRoute());
+    assert.deepEqual(changedSnapshot, library);
+    // One service read per projection taken - the bootstrap root, two `/state`
+    // reads and two route reads, five in all - so a cached copy, a second read
+    // path, or a projection that reads the library twice would move this number.
+    assert.equal(reads, 5);
+  } finally {
+    await server.close();
+    await fixture.dispose();
+  }
+});
+
 test("composed shell fails closed for management routes whose services were not given", async () => {
   const fixture = await artifactFixture();
   const shared = {
