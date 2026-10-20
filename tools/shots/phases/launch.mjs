@@ -12,7 +12,7 @@
 // (desktopCompositionMutableRootPaths(root).data) — never overridden to the temp root, which is what
 // made the declared layout look unused in older one-off runs.
 import { access, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -176,6 +176,33 @@ async function main() {
   say("cdp port:", cdpPort);
   say("cdp lock:", cdpPortLockDir(cdpPort));
 
+  // A run that skipped `pin`/`build` has no worktree to launch from, and a dynamic import of a path that does
+  // not exist fails inside the spawn - which reads like a broken product rather than a skipped phase. `capture`
+  // already refuses in this shape (`launch_state_missing:… — run the launch phase first`); this is the same
+  // refusal one step earlier, and it happens before the port is claimed, because there is nothing to launch.
+  // Measured twice tonight: both runs that started at `launch` reported
+  // `LAUNCH SCRIPT FAILED: Error [ERR_MODULE_NOT_FOUND] …\worktree\tools\desktop-composition-launch.m…`.
+  const launcherPath = join(paths.worktree, "tools", "desktop-composition-launch.mjs");
+  const missingPrerequisite = !existsSync(paths.worktree)
+    ? `worktree_missing:${paths.worktree}`
+    : existsSync(launcherPath)
+      ? null
+      : `launcher_missing:${launcherPath}`;
+  if (missingPrerequisite !== null) {
+    say(`LAUNCH REFUSED: ${missingPrerequisite} — run the pin and build phases first`);
+    await writeFile(
+      paths.launchStateFile,
+      JSON.stringify(
+        { kind: "launch_failed", tag: run.tag, commit: run.commit, cdpPort, detail: missingPrerequisite },
+        null,
+        1,
+      ),
+      "utf8",
+    );
+    say("DONE-LAUNCH-FAILED");
+    process.exit(2);
+  }
+
   // The port is the run's one claim: waiting runs print the holder by name, a dead holder's browser
   // fails the run closed. Only reached after this phase owns the port does anything get launched.
   try {
@@ -192,7 +219,7 @@ async function main() {
     process.exit(2);
   }
 
-  const launcher = await import(pathToFileURL(join(paths.worktree, "tools", "desktop-composition-launch.mjs")).href);
+  const launcher = await import(pathToFileURL(launcherPath).href);
   const { launchDesktopCompositionGateChild, desktopCompositionMutableRootPaths, assertDesktopCompositionRunRoots } =
     launcher;
   for (const name of [
