@@ -11,6 +11,8 @@ import { execFileSync } from "node:child_process";
  *     file - the failure mode that gets hooks uninstalled. The ratchets stay CI's job; the total is
  *     printed here as information.
  *   - No tests, no builds, no network. A hook that is slow is a hook everyone bypasses.
+ *   - It PRINTS the staged set before doing anything, because in a shared checkout that set is not always
+ *     the author's own (see the comment at that block).
  *
  * Escape hatch is git's own: `git commit --no-verify`.
  */
@@ -23,6 +25,27 @@ const git = (args, options = {}) =>
 const staged = git(["diff", "--cached", "--name-only", "--diff-filter=ACMR"])
   .split(/\r?\n/)
   .filter((path) => path.length > 0);
+
+// What is actually about to be committed, printed before anything else. In this repository several
+// sessions share one checkout and one index, so a `git add` can be followed by a neighbour's `git add`,
+// and a `git commit` without a pathspec then carries both - five commits landed that way in one evening,
+// one of which moved a finished fix into an unrelated commit message. The list is the step everyone
+// skips (the last staged set is invisible by the time the message is written), so the hook shows it.
+// It warns, and never refuses: a mixed set is sometimes deliberate, and a hook that blocks on a guess is
+// a hook that gets uninstalled (`--no-verify` is right there).
+const summary = staged
+  .slice(0, 25)
+  .map((path) => `  ${path}`)
+  .join("\n");
+console.log(
+  `pre-commit: staging ${staged.length} file(s):\n${summary}${staged.length > 25 ? `\n  …and ${staged.length - 25} more` : ""}`,
+);
+const owners = [...new Set(staged.map((path) => path.split("/")[0]))];
+if (owners.length > 1) {
+  console.log(
+    `pre-commit: this commit spans ${owners.length} top-level directories (${owners.join(", ")}) - if only some of them are yours, commit with an explicit pathspec (\`git commit -F <msg> -- <paths>\`)`,
+  );
+}
 
 const targets = staged.filter((path) => FORMATTABLE.test(path));
 if (targets.length === 0) {
