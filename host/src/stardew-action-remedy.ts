@@ -77,12 +77,17 @@ export function remedyForBodyHold(reasonCode: string | null, detail: string | nu
     }
     case "transient_busy": {
       const kind = evidenceField(detail, "transient_kind") ?? "a short animation";
-      const windowMs = evidenceField(detail, "retry_window_ms") ?? "2000";
+      // The bound belongs to the Mod (`WorldModel.TransientRetryWindowMs`), which publishes it as
+      // `retry_window_ms` in the refusal evidence. A default here would be a second owner of that number -
+      // the duplicated-authority class - so when the evidence is silent the guidance stays honest and
+      // names no figure at all.
+      const windowMs = evidenceField(detail, "retry_window_ms");
       return {
         action: null,
         guidance:
           `The farmhand is briefly busy with ${kind}; this clears on its own and no tool can shorten it. ` +
-          `Re-issue the SAME request after about ${windowMs} ms rather than changing the target.`,
+          `Re-issue the SAME request ${windowMs === null ? "after a moment" : `after about ${windowMs} ms`} ` +
+          `rather than changing the target.`,
       };
     }
     case "cutscene_active":
@@ -186,9 +191,6 @@ export function remedyForBodyHold(reasonCode: string | null, detail: string | nu
  * The tool layer and the live probe both call THIS, so what a probe asserts is literally what the Agent
  * reads - an assertion on a hand-written sentence would prove nothing about the tool result.
  */
-export function describeBodyHoldRefusal(
-  reasonCode: string | null,
-  evidence: unknown,
-): StardewActionRemedy | null {
+export function describeBodyHoldRefusal(reasonCode: string | null, evidence: unknown): StardewActionRemedy | null {
   return remedyForBodyHold(reasonCode, evidenceDetailOf(evidence));
 }
