@@ -28,7 +28,11 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
-const SCENARIO = "native_respond_level_up_v1";
+// The world this gate arms: the PLAIN multi-day world, because the gate dispatches `advance_day` itself and that
+// action only works indoors - this world starts the actor at home in bed. The label used to read
+// `native_respond_level_up_v1`, a name the Mod's switch has never had; a result that names a world nobody can arm
+// is the same defect as a mapping that points at one.
+const SCENARIO = "native_multi_day_v1";
 /** The MILESTONE half's world: the same night with the milestone skill left unchosen, so both cards are live. */
 const MILESTONE_SCENARIO = "native_level_up_branch_v1";
 const EXPECTED_ACTIONS = ["advance_day", "respond_level_up", "move_to_tile", "observe_scene"];
