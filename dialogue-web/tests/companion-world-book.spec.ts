@@ -53,7 +53,10 @@ const composedRoot = {
       transcript: [],
       draft: { revision: 0, present: false },
       turn: null,
-      worldInfo: null,
+      // The mount's own World Info: the Host projects it from the same read its
+      // `GET /world-info` answers from, so the surface reads this snapshot and not
+      // the route. Empty is where a fresh product starts.
+      worldInfo: { state: "none", revision: handle, items: [] },
     },
     memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null },
     eventStream: null,
@@ -113,9 +116,6 @@ async function stubCharacters(
   );
   await page.route("**/api/tavern/v1/greeting", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, label: null, variants: [] })),
-  );
-  await page.route("**/api/tavern/v1/world-info", (route) =>
-    route.fulfill(jsonOk({ state: "none", revision: handle, items: [] })),
   );
   await page.route("**/api/tavern/v1/import-history", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, entries: [] })),
@@ -291,13 +291,26 @@ test("the companion's own trigger list draws the same card rows as the bindable 
     ],
   });
   // The attachable library is non-empty here, so its own row is the comparison.
-  // Registered after `stubCharacters`, which is what makes it win the match.
-  await page.route("**/api/tavern/v1/world-info", (route) =>
+  // Registered after `stubCharacters`, which is what makes it win the match: the
+  // library now reaches the surface through the composed snapshot's Chat half, so
+  // the override is that route and not a second read of `/world-info`.
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
     route.fulfill(
       jsonOk({
-        state: "none",
-        revision: handle,
-        items: [{ handle: worldInfoItemHandle, title: "Pelican Town", summary: null, selected: false, pending: false }],
+        ...composedRoot,
+        chat: {
+          ...composedRoot.chat,
+          chat: {
+            ...composedRoot.chat.chat,
+            worldInfo: {
+              state: "none",
+              revision: handle,
+              items: [
+                { handle: worldInfoItemHandle, title: "Pelican Town", summary: null, selected: false, pending: false },
+              ],
+            },
+          },
+        },
       }),
     ),
   );

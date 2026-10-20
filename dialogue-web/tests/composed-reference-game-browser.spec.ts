@@ -44,7 +44,9 @@ const chat = {
     ],
     draft: { revision: 4, present: true },
     turn: null,
-    worldInfo: null,
+    // The mount's World Info, which the Host projects from the same read its
+    // `GET /world-info` answers from: empty is where a fresh product's library is.
+    worldInfo: { state: "none", revision: handle, items: [] },
   },
   memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null },
   eventStream: null,
@@ -3032,7 +3034,6 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
  */
 
 const importIdHandle = `${"I".repeat(42)}A`;
-const worldBookRevision = `${"W".repeat(42)}A`;
 
 const jsonOk = (body: unknown) => ({
   status: 200,
@@ -3058,6 +3059,10 @@ async function stubCharacterReads(
   }> = {},
 ): Promise<void> {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
+  // The surface's own World Info read is this snapshot's Chat half (the Host builds
+  // both from one read), so the mount re-enters through the same root the bootstrap
+  // served rather than through the `GET /world-info` route it no longer reads.
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
   await page.route("**/api/tavern/v1/companions", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, companions: overrides.companions ?? [] })),
@@ -3075,9 +3080,6 @@ async function stubCharacterReads(
   );
   await page.route("**/api/tavern/v1/greeting", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, label: null, variants: [] })),
-  );
-  await page.route("**/api/tavern/v1/world-info", (route) =>
-    route.fulfill(jsonOk({ state: "none", revision: worldBookRevision, items: [] })),
   );
   await page.route("**/api/tavern/v1/import-history", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, entries: [] })),

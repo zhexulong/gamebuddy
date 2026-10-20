@@ -1081,17 +1081,21 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
-   * The World Info revision this surface shows. The composed Chat projection
-   * carries no World Info at all (`chat.worldInfo: null` in the composed root and
-   * a profile identity the management wire validator rejects), so this mount reads
-   * the dedicated `GET /world-info` route the management dispatcher serves on the
-   * same origin; the bind's compare-and-swap carries the composed snapshot's own
-   * selection generation.
+   * The World Info revision this surface shows: the composed root's own Chat half.
+   *
+   * The shell projects it from the same World Info read that answers `GET
+   * /world-info`, so the state, the revision and the items beside it come from one
+   * read and can never describe two different moments. `null` therefore means
+   * exactly one thing - this mount declares no `world-info.read` - and never "the
+   * items happened to be missing". Its own bind's compare-and-swap carries the
+   * composed snapshot's selection generation, which is the only fact `bind` needs
+   * that the projection does not carry.
    */
   const readProductWorldInfo = useCallback(async (): Promise<WorldInfoSurfaceSource> => {
     const current = viewRef.current;
+    const root = await composedApiRef.current.readState();
     return {
-      worldInfo: await managementPipelineApiRef.current.readWorldInfo(),
+      worldInfo: root.chat.chat?.worldInfo ?? null,
       selectionGeneration: current.kind === "ready" ? (current.session.snapshot.selection?.generation ?? 0) : 0,
     };
   }, []);

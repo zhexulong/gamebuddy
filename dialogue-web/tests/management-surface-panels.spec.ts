@@ -80,6 +80,18 @@ function json200(body: unknown) {
 }
 
 /**
+ * The composed root the shell reads, with its Chat half carrying `worldInfo`.
+ *
+ * The Characters surface reads the World Info library from this snapshot - the same
+ * read the Host's `GET /world-info` answers from - so a root whose `chat.worldInfo`
+ * is `null` describes a mount that declares no `world-info.read` at all, which is
+ * not what these journeys' Host serves.
+ */
+function rootWithWorldInfo(worldInfo: unknown) {
+  return { ...composedRoot, chat: { ...composedChat, chat: { ...composedChat.chat, worldInfo } } };
+}
+
+/**
  * The composed shell's Chats surface: the same panel, over the same route, and
  * the rename moves this shell's own Chat projection through the composed
  * `/state` read (the shell cannot fold a management read-back into the frozen
@@ -168,14 +180,20 @@ test("the product Chats surface renames through chat/title and moves the convers
  * standalone World Info peer surface is gone, so the same bind state machine -
  * read, bind with the exact opaque revision, then re-read the authoritative
  * revision before anything is reported - runs from inside Characters, in the
- * character domain's own vocabulary. The composed Chat projection carries no
- * World Info at all, so the panel reads the dedicated management route.
+ * character domain's own vocabulary. The library is read from the composed
+ * snapshot's own Chat half, which the Host projects from the same World Info read
+ * its route answers from: the surface therefore reads that route zero times, and
+ * every fact it shows comes from one read of one snapshot.
  */
 test("the product Characters surface owns the world book and binds through world-info.bind with the authoritative revision", async ({ page }) => {
   const revision = `${'W'.repeat(42)}A`;
   const nextRevision = `${'X'.repeat(42)}A`;
   const writes: unknown[] = [];
+  // Two tallies of the same fact, from the two sides that can see it: the route the
+  // panel must no longer read, and the network itself.
   const reads = { count: 0 };
+  const worldInfoReads: string[] = [];
+  const stateReads = { count: 0 };
   let selected = false;
 
   const currentWorldInfo = () => ({
@@ -184,9 +202,17 @@ test("the product Characters surface owns the world book and binds through world
     items: [{ handle: worldInfoItemHandle, title: "Pelican Town", summary: null, selected, pending: false }],
   });
 
+  page.on("request", (request) => {
+    if (request.method() === "GET" && new URL(request.url()).pathname === "/api/tavern/v1/world-info")
+      worldInfoReads.push(request.url());
+  });
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
   );
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads.count += 1;
+    return route.fulfill(json200(rootWithWorldInfo(currentWorldInfo())));
+  });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedDraft) }),
   );
@@ -210,6 +236,9 @@ test("the product Characters surface owns the world book and binds through world
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) }),
     );
   }
+  // The bind's own write, on the management route it owns. Its GET leg is a read the
+  // surface must no longer make: the tally below holds that, and the arm still
+  // answers so a regression renders and fails the count instead of erroring out.
   await page.route("**/api/tavern/v1/world-info", async (route) => {
     if (route.request().method() === "GET") {
       reads.count += 1;
@@ -231,7 +260,11 @@ test("the product Characters surface owns the world book and binds through world
   await expect(page.getByRole("button", { name: "World Info", exact: true })).toHaveCount(0);
   const binding = surface.locator("[data-world-book]");
   await expect(binding.getByText("Pelican Town", { exact: true })).toBeVisible();
-  expect(reads.count).toBe(1);
+  // The mount's one read is the composed snapshot's, not a second read of the route
+  // the snapshot was built from.
+  expect(stateReads.count).toBe(1);
+  const readsAtMount = worldInfoReads.length;
+  expect(readsAtMount, "/world-info was read again after the snapshot already carried it").toBe(0);
 
   await binding.getByRole("button", { name: "Attach: Pelican Town" }).click();
   await expect.poll(() => writes.length).toBe(1);
@@ -244,7 +277,15 @@ test("the product Characters surface owns the world book and binds through world
   // The service result is never applied locally: the panel re-reads the
   // authoritative revision, which is what turns the control into Detach.
   await expect(binding.getByRole("button", { name: "Detach: Pelican Town" })).toBeEnabled();
-  expect(reads.count).toBe(2);
+  expect(stateReads.count).toBe(2);
+  expect(reads.count, "/world-info was read again after the bind").toBe(0);
+  // The read budget the surface spends on `/world-info`: before this unit it read
+  // that route once per mount and once per bind (>=1 per mount); it now reads the
+  // composed snapshot the Host already built from that same service.
+  console.log(
+    `[world-info-read-budget] /world-info GETs by the surface: at-mount=${readsAtMount} after-bind=${worldInfoReads.length - readsAtMount} total=${worldInfoReads.length} (was >=1 per mount); route GETs=${reads.count}; composed /state reads=${stateReads.count}`,
+  );
+  expect(worldInfoReads.length, "the characters surface read /world-info").toBe(0);
   await expect(binding.getByRole("status")).toContainText("Saved.");
 });
 
@@ -352,9 +393,11 @@ test("the product Settings surface shows the real settings panels and moves both
  *    memory, which would let a refresh silently promote it to settled.
  */
 test("the product Characters surface shows a world book bind made after a message as pending until the next turn", async ({ page }) => {
-  const revision = `${"W".repeat(42)}A`;
+  const revision = `${'W'.repeat(42)}A`;
   const writes: unknown[] = [];
+  // The route the surface must no longer read, counted on its GET leg.
   const reads = { count: 0 };
+  const stateReads = { count: 0 };
   let bound = false;
 
   const currentWorldInfo = () => ({
@@ -367,10 +410,16 @@ test("the product Characters surface shows a world book bind made after a messag
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
   );
   // A reload carries no boot token: the shell re-enters through the composed
-  // state read, so this journey's reload leg needs the route it actually uses.
-  await page.route("**/api/composed-reference-game/v1/state", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
-  );
+  // state read, so this journey's reload leg needs the route it actually uses - and
+  // it is the same snapshot read that carries the World Info the surface shows.
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads.count += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(rootWithWorldInfo(currentWorldInfo())),
+    });
+  });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedDraft) }),
   );
@@ -398,7 +447,6 @@ test("the product Characters surface shows a world book bind made after a messag
     bound = (route.request().postDataJSON() as { sourceHandle: string | null }).sourceHandle !== null;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(currentWorldInfo()) });
   });
-
   const openWorldBook = async () => {
     await page.getByRole("button", { name: "Characters", exact: true }).click();
     const surface = page.getByTestId("characters-surface");
@@ -409,6 +457,8 @@ test("the product Characters surface shows a world book bind made after a messag
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   const binding = await openWorldBook();
   await expect(binding.getByText("Pelican Town", { exact: true })).toBeVisible();
+  const readsAtMount = stateReads.count;
+  expect(readsAtMount, "the mount reads the composed snapshot once").toBe(1);
 
   await binding.getByRole("button", { name: "Attach: Pelican Town" }).click();
   await expect.poll(() => writes.length).toBe(1);
@@ -418,9 +468,10 @@ test("the product Characters surface shows a world book bind made after a messag
     expectedRevision: revision,
     sourceHandle: worldInfoItemHandle,
   });
-  // The service result is never applied locally: the panel re-reads, and what it
-  // re-reads is a pending bind.
-  await expect.poll(() => reads.count).toBe(2);
+  // The service result is never applied locally: the panel re-reads the composed
+  // snapshot, and what it re-reads is a pending bind.
+  await expect.poll(() => stateReads.count).toBe(readsAtMount + 1);
+  expect(reads.count, "/world-info was read again instead of the snapshot").toBe(0);
   await expect(binding).toContainText("Saved. It fully applies on the next turn.");
   await expect(binding.getByRole("button", { name: "Detach: Pelican Town" })).toBeEnabled();
 
@@ -428,6 +479,7 @@ test("the product Characters surface shows a world book bind made after a messag
   const reloaded = await openWorldBook();
   await expect(reloaded).toContainText("Saved. It fully applies on the next turn.");
   await expect(reloaded.getByRole("button", { name: "Detach: Pelican Town" })).toBeEnabled();
+  expect(reads.count, "/world-info was read on the reload leg").toBe(0);
 });
 
 /**
@@ -1739,12 +1791,14 @@ type FakeWorldBookItem = Readonly<{
 }>;
 
 /**
- * A mutable stand-in for the managed library, over the routes `world-info.read`
- * and `/world-info/item` own, with the wire's own rules: one item's content at
- * its own revision (`detail`), a duplicate title refused, an update CASed on the
- * item's revision, and delete/rename refused for a title a conversation holds.
- * Every mutation answers with the whole re-projected library, exactly as the
- * Host does, and `requests` records what the panel actually sent.
+ * A mutable stand-in for the managed library: `state()` is the projection the
+ * composed snapshot's Chat half carries (the read the Host answers `GET
+ * /world-info` from), and `/world-info/item` is the route the panel's own item
+ * reads and writes go to - with the wire's own rules: one item's content at its own
+ * revision (`detail`), a duplicate title refused, an update CASed on the item's
+ * revision, and delete/rename refused for a title a conversation holds. Every
+ * mutation answers with the whole re-projected library, exactly as the Host does,
+ * and `requests` records what the panel actually sent.
  */
 function fakeWorldBook(initial: readonly FakeWorldBookItem[], revisionSeed: string) {
   const items = new Map(initial.map((item) => [item.handle, item] as const));
@@ -1788,6 +1842,8 @@ function fakeWorldBook(initial: readonly FakeWorldBookItem[], revisionSeed: stri
   });
   return {
     requests,
+    /** The library's current projection: what the composed snapshot's Chat half carries. */
+    state,
     /** Another writer's item: only a mutation's own reply will carry it to this mount. */
     addItem: (item: FakeWorldBookItem): void => {
       items.set(item.handle, item);
@@ -1803,7 +1859,6 @@ function fakeWorldBook(initial: readonly FakeWorldBookItem[], revisionSeed: stri
       held.add(publicTitle);
     },
     async register(page: Page): Promise<void> {
-      await page.route("**/api/tavern/v1/world-info", (route) => route.fulfill(json200(state())));
       await page.route(/\/api\/tavern\/v1\/world-info\/item(\?|$)/u, async (route) => {
         const request = route.request();
         if (request.method() === "GET") {
@@ -1886,13 +1941,21 @@ function fakeWorldBook(initial: readonly FakeWorldBookItem[], revisionSeed: stri
  * The composed Characters surface over `library`: the shell's own reads, the
  * character domain's one-shot reads, and the library's two routes. Returns the
  * `[data-world-book]` panel, ready to drive.
+ *
+ * The library reaches the panel through the composed snapshot's Chat half - the
+ * same read the Host answers `GET /world-info` from - so both the bootstrap and the
+ * state the panel re-reads serve the library as it stands at that moment.
  */
 async function mountCharactersWithLibrary(
   page: Page,
-  library: { register: (page: Page) => Promise<void> },
+  library: { register: (page: Page) => Promise<void>; state: () => unknown },
 ): Promise<Locator> {
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot)));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(composedRoot)));
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill(json200(rootWithWorldInfo(library.state()))),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill(json200(rootWithWorldInfo(library.state()))),
+  );
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
   await page.route("**/api/tavern/v1/companions", (route) =>
     route.fulfill(json200({ apiVersion: 1, companions: [] })),

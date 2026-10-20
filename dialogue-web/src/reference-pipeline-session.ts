@@ -88,6 +88,22 @@ export type BrowserEventV1 = Readonly<{
   payload: unknown;
 }>;
 
+/** One item of the mount's bindable World Info library, as the projection carries it. */
+export type WorldInfoItemV1 = Readonly<{
+  handle: string;
+  title: string;
+  summary: string | null;
+  selected: boolean;
+  pending: boolean;
+}>;
+
+/** The mounted Chat's World Info binding: its state, the exact revision and the items at it. */
+export type WorldInfoStateV1 = Readonly<{
+  state: "none" | "selected" | "pending" | "unavailable";
+  revision: string;
+  items: readonly WorldInfoItemV1[];
+}>;
+
 export type TavernStateSnapshotV1 = Readonly<{
   apiVersion: 1;
   build: Readonly<{ browserContract: "tavern_browser_api/v1"; profileId: string }>;
@@ -102,7 +118,7 @@ export type TavernStateSnapshotV1 = Readonly<{
     transcript: readonly BrowserMessageV1[];
     draft: Readonly<{ revision: number; present: boolean }>;
     turn: BrowserTurnV1 | null;
-    worldInfo: Readonly<Record<string, unknown>> | null;
+    worldInfo: WorldInfoStateV1 | null;
   }> | null;
   memory: Readonly<{ readAvailable: boolean; mutationAvailable: boolean; projectionRevision: string | null }>;
   voice?: Readonly<{ state: "unavailable" | "ready" | "speaking" }> | null;

@@ -117,6 +117,26 @@ export type BrowserDraftV1 = Readonly<{
   text: string | null;
 }>;
 
+/** One item of the mount's bindable World Info library, as the projection carries it. */
+export type WorldInfoItemV1 = Readonly<{
+  handle: string;
+  title: string;
+  summary: string | null;
+  selected: boolean;
+  pending: boolean;
+}>;
+
+/**
+ * The mounted Chat's World Info binding: its state, the exact revision and the items
+ * at that revision. One projection of one read, so the revision always describes the
+ * items beside it.
+ */
+export type WorldInfoStateV1 = Readonly<{
+  state: (typeof WORLD_INFO_STATES)[number];
+  revision: string;
+  items: readonly WorldInfoItemV1[];
+}>;
+
 export type BrowserEventV1 =
   | Readonly<{
       apiVersion: 1;
@@ -183,7 +203,7 @@ export type TavernStateSnapshotV1 = Readonly<{
     transcript: readonly BrowserMessageV1[];
     draft: Readonly<{ revision: number; present: boolean }>;
     turn: BrowserTurnV1 | null;
-    worldInfo: Readonly<Record<string, unknown>> | null;
+    worldInfo: WorldInfoStateV1 | null;
   }> | null;
   memory: Readonly<{ readAvailable: boolean; mutationAvailable: boolean; projectionRevision: string | null }>;
   /** Additive optional v1 voice surface: present only when a Host voice surface is attached. */
