@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
+import { identityProfileMetadata } from "../identity-profile.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import { resolveRuntimePaths } from "../runtime.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { TavernArtifactStore } from "./artifact-store.js";
+import { createChatThreadStore } from "./chat-thread-store.js";
+import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
+import { createTavernLibraryService } from "./library-service.js";
+import { provisionNewCompanion } from "./new-companion-service.js";
 import { StCardImportService } from "./st-card-import-service.js";
 import { resolveTavernPaths, tavernImportPath } from "./tavern-paths.js";
 
@@ -60,9 +66,8 @@ test("ST card application import persists hash-verified inert candidate/report a
         // no expression-style field at all, so there is no interaction/expression
         // field to carry. These used to be padded with English Host prose, which
         // froze into the Tier-1 persona of a Chinese companion.
-        // first_mes with no mes_example folds into one reviewed example row
-        // (voice-anchor fallback); the greeting field remains too.
-        "example_1",
+        // `first_mes` with no `mes_example` is the greeting and nothing else: the
+        // voice-anchor fallback that used to add an `example_1` row here is gone.
         "first_greeting",
         "worldbook_st-st-v3-1",
       ],
@@ -243,5 +248,84 @@ test("a staged card always offers at least its own name for review", async () =>
     await service.recordReview("import_min", { reviewedFields: eligible, approvedAtMs: 1 });
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The opening a card wrote is the greeting, and nothing more.
+ *
+ * A card that ships `first_mes` and no `mes_example` used to have the whole
+ * opening folded into one reviewed `example_1` row as a "voice anchor". An
+ * opening is scene-setting prose, so that few-shot taught the model that a reply
+ * IS that long, and short conversations came back as long, self-narrating turns.
+ * These three facts hold the fix up: there is no example row, no loss is hidden
+ * behind its absence, and the opening still reaches the greeting set and the
+ * Chat's own Message 0.
+ */
+test("a companion provisioned from a card with first_mes and no mes_example opens on that greeting with no example row", async () => {
+  const root = await canonicalTestRoot("tavern-st-import-greeting-");
+  let threads: ReturnType<typeof createChatThreadStore> | undefined;
+  try {
+    const paths = resolveTavernPaths({ root } as never, identity);
+    const service = new StCardImportService(new TavernArtifactStore(root), paths);
+    // The common real shape: a written opening, and no `mes_example` at all.
+    const opening = "*The screen door creaks open.* Morning - the parsnips are up.";
+    const imported = await service.import(
+      "import_greeting",
+      JSON.stringify({
+        spec: "chara_card_v3",
+        data: { name: "Greeting Rae", description: "Quiet, attentive.", first_mes: opening },
+      }),
+    );
+    // (a) No example row exists for this card - not the opening, and nothing
+    // derived from it - so the reviewed field list is the greeting and no more.
+    assert.deepEqual(
+      imported.candidate.artifact.fields.map((field) => field.field),
+      ["name", "identity_role", "continuity", "persona_core", "first_greeting"],
+    );
+    // (b) Nothing is hidden behind that absence: no loss is recorded, and no
+    // disposition claims the card's absent `mes_example` was read from anywhere.
+    assert.equal("losses" in imported.report.artifact, false);
+    assert.deepEqual(
+      imported.report.artifact.dispositions.filter((entry) => entry.field === "mes_example"),
+      [],
+    );
+    // (c) The opening still seeds the greeting path: the provisioned companion
+    // owns it as the greeting set's only variant AND as its Message 0.
+    await service.recordReview("import_greeting", {
+      reviewedFields: ["name", "persona_core", "first_greeting"],
+      approvedAtMs: 7,
+    });
+    threads = createChatThreadStore(root, "import-greeting");
+    const provisioned = await provisionNewCompanion(
+      root,
+      identity.playerId,
+      imported.candidate.artifact,
+      await service.confirmedReview("import_greeting"),
+      threads,
+    );
+    const tavernPaths = resolveTavernPaths(resolveRuntimePaths(provisioned.identity, root), provisioned.identity);
+    const greeting = await createGreetingManagementService(
+      new TavernArtifactStore(root),
+      tavernPaths.companionRoot,
+    ).read();
+    assert.deepEqual(
+      greeting?.variants.map((variant) => variant.text),
+      [opening],
+    );
+    const library = createTavernLibraryService(tavernPaths, new TavernArtifactStore(root), threads, {
+      async readExact() {
+        return identityProfileMetadata(provisioned.profile);
+      },
+    });
+    const chat = await library.createNewChat({
+      chatThreadId: "thread-greeting",
+      chatSurfaceSessionId: "surface-greeting",
+    });
+    assert.equal(chat.messages[0]?.kind, "opening");
+    assert.equal(chat.messages[0]?.text, opening);
+  } finally {
+    threads?.close?.();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

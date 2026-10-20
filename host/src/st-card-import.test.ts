@@ -850,23 +850,47 @@ test("PBT Property 4: Generated Card Preview maps to valid IdentityProfile with 
     { numRuns: 100 },
   );
 });
-test("preview folds first_mes into a reviewed example row when mes_example is missing (voice anchor fallback)", () => {
+test("a card with first_mes and no mes_example teaches no few-shot: the opening is not manufactured into an example row", () => {
+  // The failure this catches: the whole opening was folded into one reviewed
+  // example row as a "voice anchor". An opening is scene-setting prose (200-500
+  // characters on real cards), so a few-shot that IS the opening taught the
+  // model that a reply is that long - the long, self-narrating first turns a
+  // short conversation came back with.
+  const opening = '{{char}} glances up from the amethyst and smiles—"you\'re back."';
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: { name: "Anchor Rae", description: "Quiet, attentive.", first_mes: opening },
+  });
+  const profile = candidateToIdentityProfile(preview, 1);
+  // No example row at all - not the opening, and not anything derived from it.
+  assert.deepEqual(preview.profileCandidate.examples, []);
+  assert.equal(profile.examples, undefined);
+  // The opening is kept where it belongs, and the absent row hides no card
+  // material: the greeting is still the card's own, and the ledger is empty.
+  assert.equal(preview.profileCandidate.firstGreeting, opening);
+  assert.deepEqual(preview.losses, []);
+  // The register is carried by the Host floor every companion gets, not by a
+  // manufactured example.
+  const prompt = buildChatCompanionSystemPrompt(profile);
+  assert.doesNotMatch(prompt, /\[Dialogue Examples\]/);
+  assert.match(prompt, /Do not write long speeches or essays/);
+});
+
+test("a card that ships mes_example keeps exactly its parsed examples, beside its opening", () => {
   const preview = previewStCard({
     spec: "chara_card_v3",
     data: {
-      name: "Anchor Rae",
-      description: "Quiet, attentive.",
-      first_mes: '{{char}} glances up from the amethyst and smiles—"you\'re back."',
+      name: "Rin",
+      description: "calm",
+      first_mes: "Rin leans on the fence and waits.",
+      mes_example: "{{user}}: today?\n{{char}}: Harvest first.",
     },
   });
   const profile = candidateToIdentityProfile(preview, 1);
-  // The greeting is folded into one reviewable example, macro-rendered.
-  assert.deepEqual(profile.examples, [
-    { user: "(starts the journey)", companion: 'Anchor Rae glances up from the amethyst and smiles—"you\'re back."' },
-  ]);
-  const prompt = buildChatCompanionSystemPrompt(profile);
-  assert.match(prompt, /\[Dialogue Examples\]/);
-  assert.match(prompt, /Anchor Rae glances up/);
+  assert.deepEqual(profile.examples, [{ user: "today?", companion: "Harvest first." }]);
+  assert.equal(preview.profileCandidate.firstGreeting, "Rin leans on the fence and waits.");
+  assert.deepEqual(preview.losses, []);
+  assert.match(buildChatCompanionSystemPrompt(profile), /\[Dialogue Examples\]/);
 });
 test("an example block with a label outside the two ST speakers is reported, never silently dropped", () => {
   // The failure this catches: `mes_example` split into blocks, a block whose

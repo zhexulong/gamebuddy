@@ -336,15 +336,20 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
     boundedMultilineText(data.mes_example, ST_CARD_DECODER_LIMITS_V1.examplesBytes),
     losses,
   );
-  // Voice-anchor fallback: many ecosystem cards hand-write a first_mes but no
-  // mes_example. Without few-shot teaching the dialogue style drifts once the
-  // opening message slides out of context. Fold the greeting into one reviewed
-  // example row instead (same schema, same review gate, same [Dialogue
-  // Examples] renderer) - the anchor then never ages out of the Tier 1 prefix.
-  const examples =
-    parsedExamples.length > 0 || greeting === undefined
-      ? parsedExamples
-      : Object.freeze([Object.freeze({ user: "(starts the journey)", companion: greeting })]);
+  // No few-shot is manufactured when the card wrote no `mes_example`. This used
+  // to fold the whole opening (`first_mes`) into one example row as a "voice
+  // anchor", which taught the wrong register: an opening is scene-setting prose
+  // (200-500 characters on real cards), so a few-shot that IS the opening
+  // teaches the model that a reply is that long, and short conversations came
+  // back as long, self-narrating turns. The card format splits the two jobs -
+  // `first_mes` is a Non-Permanent Token sent once when a chat opens,
+  // `mes_example` is the few-shot channel - and the Host floor already carries
+  // the register (`buildCompanionSystemPrompt`: first person, "Do not write long
+  // speeches or essays; match the player's energy and pacing"). Like a persona
+  // dimension the card never wrote, a few-shot the card never wrote is absent
+  // rather than Host-authored. The opening itself is not lost: `greeting` below
+  // is still the candidate's `firstGreeting`, which provisions the companion's
+  // greeting set and its Message 0, and so is no import loss.
   // The card's OWN material and nothing else. `description` is who she is
   // (core); `personality` is how she treats the player (interactionStyle). The
   // ST v2/v3 spec has no expression-style field at all, so a card that never
@@ -406,7 +411,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
         continuity: "Maintain one continuous shared experience with the player across chat and game surfaces.",
       }),
       ...(persona === undefined ? {} : { persona }),
-      examples: Object.freeze(examples),
+      examples: Object.freeze(parsedExamples),
       ...(greeting === undefined ? {} : { firstGreeting: greeting }),
       ...(alternateGreetings === undefined ? {} : { alternateGreetings }),
     }),

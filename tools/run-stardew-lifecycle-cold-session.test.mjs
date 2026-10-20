@@ -32,7 +32,9 @@ function sessionRequest({ runDir, extra = [] } = {}) {
       WorldId: "world-1",
       PlayerId: "player-1",
       CompanionId: "companion-1",
-      PipeName: "gamebuddy-stardew",
+      // Deliberately NOT a name any launcher defaults to: the value is arbitrary for this test, and a literal that
+      // matches a real default is exactly the duplicated authority that cost four runs tonight.
+      PipeName: "test-pipe-not-a-default",
       BridgeToken: "0123456789abcdef0123456789abcdef",
     }),
     "utf8",
