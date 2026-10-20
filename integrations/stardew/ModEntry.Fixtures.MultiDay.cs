@@ -287,9 +287,13 @@ public sealed partial class ModEntry
         // which is a harmless, permanent, real perk. Combat is already pinned at 10, so nothing the companion does
         // can raise it into a milestone; the entry itself is synthetic (a real actor would have it from gaining the
         // level), and it is reported in the arm log rather than hidden.
+        // The BRANCH Given arms the MILESTONE itself: combat at level 5, whose two professions are the choices the
+        // companion has to be shown. It used to arm the ordinary entry below in BOTH worlds, which the projection
+        // correctly reports as no milestone at all - so the branch world could never satisfy the gate it exists for
+        // (measured: `milestone_not_projected:0` with `pendingLevelUpChoices: []`, combat left at 4).
         const int PendingLevelUpSkill = 4;
-        const int PendingLevelUpLevel = 6;
-        player.newLevels.Add(new Point(PendingLevelUpSkill, PendingLevelUpLevel));
+        int pendingLevelUpLevel = armProfessionMilestone ? MilestoneLevel : 6;
+        player.newLevels.Add(new Point(PendingLevelUpSkill, pendingLevelUpLevel));
         if (player.newLevels.Count != 1)
             throw new InvalidOperationException($"fixture_native_local_multi_day_pending_level_up_not_armed:{player.newLevels.Count}");
 
@@ -308,8 +312,11 @@ public sealed partial class ModEntry
         // likely. A scenario-only accommodation with no assertion behind it does not belong in the world.
 
         this.nativeLocalPlayerFixtureInitialized = true;
+        string pendingGuarantees = armProfessionMilestone
+            ? "guarantee=one_pending_level_up_is_a_profession_milestone;guarantee=the_milestone_skill_is_left_unchosen"
+            : "guarantee=one_pending_level_up_is_an_ordinary_level;guarantee=skills_pinned_with_their_professions";
         this.Monitor.Log(
-            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};time={Game1.timeOfDay};stamina={player.Stamina}/{player.MaxStamina};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups={player.newLevels.Count};pending_level_up={(player.newLevels.Count > 0 ? $"{player.newLevels[0].X}@{player.newLevels[0].Y}" : "none")};skills_pinned={string.Join(",", PinnedSkills)}@{10};professions={player.professions.Count};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;guarantee=one_pending_level_up_is_an_ordinary_level;guarantee=skills_pinned_with_their_professions;guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
+            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};time={Game1.timeOfDay};stamina={player.Stamina}/{player.MaxStamina};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups={player.newLevels.Count};pending_level_up={(player.newLevels.Count > 0 ? $"{player.newLevels[0].X}@{player.newLevels[0].Y}" : "none")};skills_pinned={string.Join(",", PinnedSkills)}@{10};professions={player.professions.Count};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;{pendingGuarantees};guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
             LogLevel.Info);
     }
 }

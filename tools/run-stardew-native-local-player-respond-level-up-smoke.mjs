@@ -159,7 +159,11 @@ export async function runRespondLevelUpSmoke(
       timeoutMs: terminalTimeoutMs,
     });
     trace.push({ step: "resolve_dispatch", action: "respond_level_up", state: resolved.state });
-    if (resolved.state !== "accepted") throw new Error(`respond_level_up_not_accepted:${String(resolved.reasonCode)}`);
+    // A settled response IS the answer: a milestone resolves synchronously, so the first response is already the
+    // terminal one (`succeeded` with its own reason code). Requiring `accepted` made a success read as a failure.
+    const settledSynchronously = resolved.state === "succeeded" || resolved.state === "partially_succeeded";
+    if (resolved.state !== "accepted" && !settledSynchronously)
+      throw new Error(`respond_level_up_not_accepted:${String(resolved.state)}/${String(resolved.reasonCode)}`);
     const terminal = await waitForTerminal(receipts, resolved, terminalTimeoutMs);
     trace.push({ step: "resolve", receipt: summarizeReceipt(terminal) });
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "level_up_resolved") {
@@ -256,7 +260,18 @@ export async function runRespondLevelUpBranchSmoke(
     const pending = (snapshot.pendingLevelUpChoices ?? []).filter(
       (entry) => entry.level === milestoneLevel && entry.skill === milestoneSkill,
     );
-    if (pending.length !== 1) throw new Error(`milestone_not_projected:${String(pending.length)}`);
+    if (pending.length !== 1) {
+      // Name what the projection actually offered, so a missing milestone is diagnosable from the gate output alone
+      // instead of from a five-minute re-run with extra logging.
+      trace.push({
+        step: "projection_seen",
+        location: snapshot.location,
+        pendingLevelUpChoices: snapshot.pendingLevelUpChoices ?? null,
+        professions: snapshot.professions ?? null,
+        actorDispositionKind: snapshot.actorDispositionKind ?? null,
+      });
+      throw new Error(`milestone_not_projected:${String(pending.length)}`);
+    }
     const milestone = pending[0];
     const chosen = choice === "branch_a" ? milestone.leftId : milestone.rightId;
     const other = choice === "branch_a" ? milestone.rightId : milestone.leftId;
@@ -289,7 +304,11 @@ export async function runRespondLevelUpBranchSmoke(
       idempotencyKey: `respond_level_up_branch_${String(Date.now())}_idem`,
       timeoutMs: terminalTimeoutMs,
     });
-    if (resolved.state !== "accepted") throw new Error(`respond_level_up_not_accepted:${String(resolved.reasonCode)}`);
+    // A settled response IS the answer: a milestone resolves synchronously, so the first response is already the
+    // terminal one (`succeeded` with its own reason code). Requiring `accepted` made a success read as a failure.
+    const settledSynchronously = resolved.state === "succeeded" || resolved.state === "partially_succeeded";
+    if (resolved.state !== "accepted" && !settledSynchronously)
+      throw new Error(`respond_level_up_not_accepted:${String(resolved.state)}/${String(resolved.reasonCode)}`);
     const terminal = await waitForTerminal(receipts, resolved, terminalTimeoutMs);
     trace.push({ step: "resolve", receipt: summarizeReceipt(terminal) });
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "level_up_resolved")
