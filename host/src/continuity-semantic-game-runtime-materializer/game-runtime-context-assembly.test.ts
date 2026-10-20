@@ -6,6 +6,12 @@ import { canonicalTestRoot } from "../test-support/canonical-test-root.test-supp
 import { DEFAULT_IDENTITY_PROFILE, identityProfileHash, writeIdentityProfile } from "../identity-profile.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
+import { TavernArtifactStore } from "../tavern/artifact-store.js";
+import {
+  companionScenarioId,
+  createScenarioManagementService,
+} from "../tavern/scenario-management/scenario-management.js";
+import { resolveTavernPaths } from "../tavern/tavern-paths.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { writeWorldBook } from "../worldbook.js";
 import { assembleGameRuntimeContext } from "./game-runtime-context-assembly.js";
@@ -111,13 +117,34 @@ test("invalid canonical files fail closed to the runtime default instead of surf
   assert.deepEqual(context, {});
 });
 
-test("assembly never reads a scenario: tavern fiction must not reach the game world", async () => {
-  const runtimeRoot = await runtimeRootFor("no-scenario");
+test("a stray scenario.json beside the profile is not a scenario source: only the companion's own durable record is read", async () => {
+  const runtimeRoot = await runtimeRootFor("stray-scenario");
   const paths = resolveRuntimePaths(IDENTITY, runtimeRoot);
   await mkdir(paths.runtimeCwd, { recursive: true });
-  // A scenario artifact existing next to the profile must have no effect.
+  // A scenario artifact in the runtime cwd is not the companion's scenario
+  // record: the Game reads the durable record under the Tavern companion root,
+  // never a file that merely happens to sit beside the profile.
   await writeFile(join(paths.runtimeCwd, "scenario.json"), JSON.stringify({ scenario: "tavern fiction" }), "utf8");
   const context = await assembleGameRuntimeContext({ identity: IDENTITY, runtimeRoot });
   assert.equal("scenario" in context, false);
   assert.deepEqual(context, {});
+});
+
+test("assembly reads the companion's own durable scenario the Chat surface binds", async () => {
+  const runtimeRoot = await runtimeRootFor("scenario");
+  const paths = resolveRuntimePaths(IDENTITY, runtimeRoot);
+  await mkdir(paths.runtimeCwd, { recursive: true });
+  const tavernPaths = resolveTavernPaths(paths, IDENTITY);
+  await createScenarioManagementService(new TavernArtifactStore(runtimeRoot), tavernPaths.companionRoot).create({
+    name: "Farm opening",
+    description: "{{char}} left the city and took over grandfather's run-down farm beside {{user}}.",
+  });
+
+  const context = await assembleGameRuntimeContext({ identity: IDENTITY, runtimeRoot });
+  assert.equal(context.scenario?.scenarioId, companionScenarioId(tavernPaths.companionRoot));
+  assert.equal(context.scenario?.revision, 1);
+  assert.match(context.scenario?.canonicalHash ?? "", /^[a-f0-9]{64}$/);
+  // The authored text keeps its macros; the catalog owns rendering them.
+  assert.match(context.scenario?.text ?? "", /\{\{char\}\}/u);
+  assert.match(context.scenario?.text ?? "", /\{\{user\}\}/u);
 });
