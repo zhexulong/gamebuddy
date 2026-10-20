@@ -254,7 +254,16 @@ export class TavernConnectionStore {
     });
   }
 
-  /** Selects the allowed model/thinking level; a changed model needs a fresh probe. */
+  /**
+   * Selects the model/thinking level for one record. A catalog model is checked against its own
+   * declared levels; a model the player typed is bounded only by the model id ceiling, because
+   * whether the endpoint serves it is the probe's answer, not this store's.
+   *
+   * The invariant this leaves standing is the one the probe protects: a record can never BE `ready`
+   * while naming a model the endpoint did not offer, so a typed id that the endpoint does not serve
+   * fails `not_found` and the record can never be activated. A changed model still withdraws
+   * readiness until it is probed again.
+   */
   async selectModel(
     connectionId: string,
     expectedRevision: number,
@@ -379,16 +388,26 @@ export class TavernConnectionStore {
     return value;
   }
 
+  /**
+   * The model this record will name. A catalog model is resolved to its own id; a model id the
+   * player typed is accepted for any provider they configure, bounded by the one model id ceiling,
+   * and its truth is settled later by the probe (see `selectModel`).
+   */
   private resolveModelId(provider: TavernCatalogProvider, value: string | null): string {
-    if (acceptsPlayerModel(provider)) {
-      if (value === null || !PLAYER_MODEL_ID_PATTERN.test(value))
-        throw new TavernConnectionInputError("invalid_model_id");
+    if (value !== null) {
+      // A provider the player configures takes any bounded model id, catalogued or not: the
+      // endpoint's own listing, read by the probe, is what decides whether it exists.
+      if (acceptsPlayerModel(provider)) {
+        if (!PLAYER_MODEL_ID_PATTERN.test(value)) throw new TavernConnectionInputError("invalid_model_id");
+        return value;
+      }
+      if (catalogModel(provider, value) === null) throw new TavernConnectionInputError("model_not_allowed");
       return value;
     }
-    if (value !== null && catalogModel(provider, value) === null)
-      throw new TavernConnectionInputError("model_not_allowed");
-    const model = value === null ? provider.allowedPlayerModels[0] : catalogModel(provider, value);
-    if (model === null || model === undefined) throw new TavernConnectionInputError("model_not_allowed");
+    // Nothing was named: a draft still needs a model, and the first curated one is the entry's own
+    // default. A provider with no curated models at all (the escape hatch) must be told one.
+    const model = provider.allowedPlayerModels[0];
+    if (model === undefined) throw new TavernConnectionInputError("invalid_model_id");
     return model.modelId;
   }
 
@@ -505,12 +524,12 @@ const EMPTY_DOCUMENT: TavernConnectionDocument = Object.freeze({
 });
 
 /**
- * Thinking levels accepted for a player-supplied model id. The catalog cannot
- * describe an arbitrary compatible endpoint's model, so the vocabulary the embedded
- * runtime itself accepts is offered for it instead of any provider payload.
+ * Thinking levels accepted for a player-supplied model id, on any provider. The catalog cannot
+ * describe a model the Host never listed, so the vocabulary the embedded runtime itself accepts is
+ * offered for it instead of any provider payload.
  *
- * This is the SAME set a catalog model may declare: `off`/`minimal` are pi's own
- * levels too, and a player-supplied endpoint is exactly where they are wanted.
+ * This is the SAME set a catalog model may declare: `off`/`minimal` are pi's own levels too, and a
+ * model the player named themselves is exactly where they are wanted.
  */
 const PLAYER_MODEL_THINKING_LEVELS: readonly CompanionThinkingLevel[] = COMPANION_THINKING_LEVELS;
 

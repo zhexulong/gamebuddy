@@ -331,8 +331,26 @@ test("changing the selected model withdraws readiness until it is probed again",
       store.selectModel(connectionId, changed.revision, "deepseek-v4-pro", "medium"),
       (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "thinking_level_not_allowed",
     );
+    // Malformed stays refused - it is not a model id this product can carry at all...
     await assert.rejects(
-      store.selectModel(connectionId, changed.revision, "invented-model", "high"),
+      store.selectModel(connectionId, changed.revision, "with space", "high"),
+      (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "model_not_allowed",
+    );
+    // ...while an id the Host never curated is a legal draft on a provider the player configures:
+    // whether the endpoint serves it is the probe's answer, not this list's.
+    const typed = await store.selectModel(connectionId, changed.revision, "deepseek-v4-next", "high");
+    assert.equal(typed.connections[0]!.modelId, "deepseek-v4-next");
+    assert.equal(typed.connections[0]!.readiness, "configured");
+    // The one entry whose model the player does not own keeps refusing it.
+    const environment = await store.create({
+      providerId: "cpa-oai",
+      apiKey: null,
+      baseUrl: null,
+      apiShape: null,
+      modelId: null,
+    });
+    await assert.rejects(
+      store.selectModel(environment.connections[1]!.connectionId, environment.revision, "deepseek-v4-next", "high"),
       (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "model_not_allowed",
     );
   });

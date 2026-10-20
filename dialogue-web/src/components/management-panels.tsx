@@ -177,11 +177,12 @@ export type ConnectionForm = Readonly<{
   baseUrl: string;
   /** Player-supplied API shape, used only by the escape hatch. */
   apiShape: TavernConnectionApiShapeV1;
-  /** Player-supplied model id, used only by the escape hatch. */
+  /**
+   * The model id the player chose or typed. One field for every provider the player configures:
+   * the curated catalogue is offered as suggestions and the endpoint's own listing is offered
+   * beside them, and the probe decides whether the endpoint really serves what was named.
+   */
   modelId: string;
-  /** Catalog model selection for every other provider. */
-  catalogModelId: string;
-  thinkingLevel: TavernConnectionThinkingLevelV1;
 }>;
 
 /**
@@ -429,7 +430,6 @@ export function ConnectionSettingsPanel({
   // name; the value is always sent, never inferred by the Host.
   const [apiShape, setApiShape] = useState<TavernConnectionApiShapeV1>("openai-completions");
   const [modelId, setModelId] = useState("");
-  const [catalogModelId, setCatalogModelId] = useState("");
 
   const providers = connectionView.state.providers;
   // The escape hatch is a catalog entry like any other; it is preselected only
@@ -438,8 +438,18 @@ export function ConnectionSettingsPanel({
     providers.find((entry) => entry.providerId === providerId) ??
     providers.find((entry) => entry.escapeHatch) ??
     providers[0];
-  const models = selected?.allowedPlayerModels ?? [];
-  const chosenModel = models.find((model) => model.modelId === catalogModelId) ?? models[0];
+  // What this provider's endpoints told us they serve, at their last probe: the only authority on
+  // which models exist there, and the reason a player is not limited to our own catalogue.
+  const servedModels = [
+    ...new Set(
+      connectionView.state.connections
+        .filter((row) => row.providerId === selected?.providerId && row.modelIds !== null)
+        .flatMap((row) => row.modelIds ?? []),
+    ),
+  ];
+  // Our own curated ids. Suggestions, never gatekeeping: the field is a text field, and the probe
+  // is what decides whether what the player named is really served.
+  const suggestedModels = selected?.allowedPlayerModels ?? [];
 
   return (
     <section className="management-settings-section" aria-label={labels.connectionSettings} data-connection-settings>
@@ -480,15 +490,7 @@ export function ConnectionSettingsPanel({
           onSubmit={(event) => {
             event.preventDefault();
             if (selected === undefined) return;
-            void onCreate({
-              providerId: selected.providerId,
-              apiKey,
-              baseUrl,
-              apiShape,
-              modelId,
-              catalogModelId: chosenModel?.modelId ?? catalogModelId,
-              thinkingLevel: chosenModel?.defaultThinkingLevel ?? "high",
-            }).then((saved) => {
+            void onCreate({ providerId: selected.providerId, apiKey, baseUrl, apiShape, modelId }).then((saved) => {
               // The credential is write-only: a saved connection is never
               // readable back, so once it is stored the field must not keep
               // the secret in the document (the test's outerHTML scan finds
@@ -504,10 +506,7 @@ export function ConnectionSettingsPanel({
             className="form-select"
             disabled={connectionView.pending}
             value={selected?.providerId ?? ""}
-            onChange={(event) => {
-              setProviderId(event.target.value);
-              setCatalogModelId("");
-            }}
+            onChange={(event) => setProviderId(event.target.value)}
           >
             {providers.map((provider) => (
               <option key={provider.providerId} value={provider.providerId}>
@@ -581,13 +580,17 @@ export function ConnectionSettingsPanel({
            */}
           {selected?.escapeHatch === true && <p className="field-hint">{labels.connectionApiKeyLocalHint}</p>}
 
-          {selected?.escapeHatch === true ? (
+          {selected?.setupFields.includes("modelId") === true && (
             <>
               <label htmlFor="connection-model-id">{labels.connectionModelId}</label>
               <input
                 id="connection-model-id"
                 className="form-input"
                 type="text"
+                // Everything this provider's endpoints have told us they serve, then our own
+                // curated ids. A picker and a text field at once: choose one, or type any id the
+                // endpoint serves that neither list knows about.
+                list="connection-model-options"
                 autoComplete="off"
                 spellCheck={false}
                 disabled={connectionView.pending}
@@ -595,23 +598,24 @@ export function ConnectionSettingsPanel({
                 value={modelId}
                 onChange={(event) => setModelId(event.target.value)}
               />
-            </>
-          ) : (
-            <>
-              <label htmlFor="connection-model">{labels.connectionModel}</label>
-              <select
-                id="connection-model"
-                className="form-select"
-                disabled={connectionView.pending || models.length === 0}
-                value={chosenModel?.modelId ?? ""}
-                onChange={(event) => setCatalogModelId(event.target.value)}
-              >
-                {models.map((model) => (
-                  <option key={model.modelId} value={model.modelId}>
-                    {model.modelLabel}
-                  </option>
+              <datalist id="connection-model-options">
+                {servedModels.map((id) => (
+                  <option key={`served-${id}`} value={id} label={labels.connectionModelServed} />
                 ))}
-              </select>
+                {suggestedModels.map((model) => (
+                  <option
+                    key={`suggested-${model.modelId}`}
+                    value={model.modelId}
+                    label={`${model.modelLabel} \u00b7 ${labels.connectionModelSuggested}`}
+                  />
+                ))}
+              </datalist>
+              {servedModels.length > 0 && (
+                <p className="field-hint" data-connection-served-count>
+                  {`${servedModels.length} ${labels.connectionModelsServed}`}
+                </p>
+              )}
+              <p className="field-hint">{labels.connectionModelSuggestionsHint}</p>
             </>
           )}
 
@@ -703,6 +707,31 @@ export function ConnectionRow({
         )}
       </dl>
       <div className="composer-actions">
+        {/*
+         * What this endpoint actually served, once a probe has read it. The model a record names
+         * is always an option, so the control never misrepresents the state it is showing, and
+         * the list is offered rather than enforced: the probe still decides, on the next test.
+         */}
+        {connection.modelIds !== null && (
+          <>
+            <label className="visually-hidden-input-label" htmlFor={`connection-model-${connection.connectionId}`}>
+              {labels.connectionModel}
+            </label>
+            <select
+              id={`connection-model-${connection.connectionId}`}
+              className="form-select"
+              disabled={pending}
+              value={connection.modelId}
+              onChange={(event) => onSelectModel(connection.connectionId, event.target.value, connection.thinkingLevel)}
+            >
+              {[connection.modelId, ...connection.modelIds.filter((id) => id !== connection.modelId)].map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         <label className="visually-hidden-input-label" htmlFor={`connection-level-${connection.connectionId}`}>
           {labels.connectionThinkingLevel}
         </label>

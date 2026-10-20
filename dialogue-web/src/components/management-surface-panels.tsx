@@ -1229,8 +1229,9 @@ export function SettingsSurfacePanel({
           ...(provider.setupFields.includes("apiKey") ? { apiKey: form.apiKey } : {}),
           ...(provider.setupFields.includes("baseUrl") ? { baseUrl: form.baseUrl } : {}),
           ...(provider.setupFields.includes("apiShape") ? { apiShape: form.apiShape } : {}),
-          ...(form.catalogModelId === "" ? {} : { modelId: form.catalogModelId }),
-          ...(provider.setupFields.includes("modelId") ? { modelId: form.modelId } : {}),
+          // One model field for every provider the player configures: the id they chose or typed,
+          // and nothing when they named none (the Host then keeps the entry's first suggestion).
+          ...(provider.setupFields.includes("modelId") && form.modelId !== "" ? { modelId: form.modelId } : {}),
         },
         token,
       );

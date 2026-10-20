@@ -531,12 +531,13 @@ export const StCardImportHistoryV1Schema = strictObject({
  *
  * `setupFields` is the Host-defined allowlist of player-fillable fields; it is
  * a closed union with no free-form script, header, arbitrary URL or provider
- * payload field. Every model the browser may select appears in
- * `allowedPlayerModels`; the single escape-hatch entry declares
- * `setupFields: ["baseUrl", "apiShape", "apiKey", "modelId"]` instead, so it is
- * a catalog entry like any other that additionally lets the player supply the
- * endpoint it points at, the API shape that endpoint speaks and the model id it
- * serves.
+ * payload field. `allowedPlayerModels` is curated guidance the panel marks as
+ * suggestions, NOT the set of models the browser may select: every entry the
+ * player configures declares `modelId`, so a player can type any bounded model
+ * id, and the connection's own `modelIds` (what its endpoint listed at the last
+ * probe) is what the panel offers beside those suggestions. The escape-hatch
+ * entry additionally declares `baseUrl` and `apiShape`, the two facts about an
+ * endpoint the Host cannot know.
  */
 export const TavernConnectionSetupFieldV1Schema = Type.Union([
   Type.Literal("apiKey"),
@@ -610,6 +611,7 @@ export const TavernConnectionProviderV1Schema = strictObject({
   providerId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
   label: Type.String({ minLength: 1, maxLength: 128 }),
   setupFields: Type.Array(TavernConnectionSetupFieldV1Schema, { maxItems: 4 }),
+  /** Curated guidance the panel offers as suggestions; never the set of ids a player may type. */
   allowedPlayerModels: Type.Array(TavernConnectionModelV1Schema, { maxItems: TAVERN_MODEL_LISTING_LIMIT }),
   /** True only for the one OpenAI-compatible escape hatch (design/28 §1). */
   escapeHatch: Type.Boolean(),

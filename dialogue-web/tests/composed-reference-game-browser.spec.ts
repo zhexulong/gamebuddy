@@ -2441,7 +2441,9 @@ test("the product Settings surface creates, tests and activates a connection who
   const catalogProvider = {
     providerId: "openai",
     label: "OpenAI",
-    setupFields: ["apiKey"],
+    // A pinned entry declares `modelId` too: the curated ids are suggestions it offers beside the
+    // endpoint's own listing, and the player may type any id this endpoint serves.
+    setupFields: ["apiKey", "modelId"],
     allowedPlayerModels: [
       { modelId: "gpt-4o", modelLabel: "GPT-4o", allowedThinkingLevels: ["low", "high"], defaultThinkingLevel: "high" },
       { modelId: "gpt-4o-mini", modelLabel: "GPT-4o mini", allowedThinkingLevels: ["low", "high"], defaultThinkingLevel: "low" },
@@ -2453,6 +2455,8 @@ test("the product Settings surface creates, tests and activates a connection who
   const writes: Array<{ path: string; method: string; body: unknown; csrf: string | undefined }> = [];
   let recordCreated = false;
   let readiness: "configured" | "ready" = "configured";
+  // What the endpoint's own `/models` listing served, as of the last probe. Null before one.
+  let servedModels: readonly string[] | null = null;
   let active = false;
   let recordModelId = modelId;
   let recordThinkingLevel = "high";
@@ -2484,7 +2488,7 @@ test("the product Settings surface creates, tests and activates a connection who
     modelLabel: recordModelId,
     thinkingLevel: recordThinkingLevel,
     allowedThinkingLevels: ["low", "high"],
-    modelIds: null,
+    modelIds: servedModels,
     baseUrl,
     failure: null,
     lastCheckedAtMs: null,
@@ -2538,6 +2542,8 @@ test("the product Settings surface creates, tests and activates a connection who
   });
   await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/test$/, async (route) => {
     record(route);
+    // The endpoint answers with its own listing, which includes the model the player named.
+    servedModels = [modelId, "llama-3.1-8b", "phi-4"];
     readiness = "ready";
     await route.fulfill({
       status: 200,
@@ -2565,12 +2571,12 @@ test("the product Settings surface creates, tests and activates a connection who
   const panel = surface.locator("[data-connection-settings]");
   await expect(panel).toBeVisible();
 
-  // The catalog entry really offers a model dropdown; the escape hatch offers
-  // the API key and base URL the owner was missing. Both are reachable from the
-  // one provider control.
+  // Both entries reach the same model control: the catalog entry offers its own
+  // curated ids as suggestions, and the player can type any id either entry's
+  // endpoint serves. The escape hatch additionally offers the API key and base URL.
   await panel.locator("#connection-provider").selectOption("openai");
-  await expect(panel.locator("#connection-model")).toBeVisible();
-  await expect(panel.locator("#connection-model option")).toHaveCount(2);
+  await expect(panel.locator("#connection-model-id")).toBeVisible();
+  await expect(panel.locator("#connection-model-id")).toHaveAttribute("list", "connection-model-options");
   await panel.locator("#connection-provider").selectOption("openai-compatible");
   await expect(panel.locator("#connection-api-key")).toBeVisible();
   await expect(panel.locator("#connection-base-url")).toBeVisible();
@@ -2617,6 +2623,12 @@ test("the product Settings surface creates, tests and activates a connection who
     csrf: csrfToken,
   });
   await expect(panel.locator("[data-connection-row]")).toContainText("Ready");
+  // The row now offers the endpoint's own listing, so the player can pick one of those instead.
+  const rowModel = panel.locator(`#connection-model-${connectionId}`);
+  await expect(rowModel).toBeVisible();
+  await expect(rowModel.locator("option")).toHaveCount(3);
+  // ...and the draft form offers them too, beside the entries marked as suggestions.
+  await expect(panel.locator("#connection-model-options option")).toHaveCount(3);
   await expect.poll(documentCarriesKey).toBe(false);
 
   await panel.getByRole("button", { name: "Save and activate" }).click();
@@ -2640,6 +2652,191 @@ test("the product Settings surface creates, tests and activates a connection who
   });
   // The whole journey - create, test, activate, model - never surfaces the key.
   await expect.poll(documentCarriesKey).toBe(false);
+});
+
+/**
+ * The endpoint's own model listing, in the draft form and on the record, and the
+ * probe still deciding whether a typed id becomes usable (design/28 §5.1, §5.3).
+ *
+ * The owner's comparison with SillyTavern and Liyuan came down to one thing: they
+ * render the model list their endpoint serves and this product read it and threw it
+ * away. Here the endpoint serves three models, the form offers them beside the two
+ * curated ids it marks as suggestions, a typed id that is not among them never
+ * becomes ready, and picking one that is turns the same record ready.
+ */
+test("the endpoint's own listing is what the form offers, and a typed id it does not serve never becomes ready", async ({ page }) => {
+  const connectionId = "L".repeat(42) + "A";
+  const apiKey = "sk-typed-model-secret-0001";
+  const invented = "gpt-9-invented";
+  const suggestions = [
+    { modelId: "gpt-5.6-luna", modelLabel: "GPT-5.6 Luna", allowedThinkingLevels: ["low", "high"], defaultThinkingLevel: "high" },
+    { modelId: "gpt-5.5", modelLabel: "GPT-5.5", allowedThinkingLevels: ["low", "high"], defaultThinkingLevel: "high" },
+  ];
+  const catalogProvider = {
+    providerId: "openai",
+    label: "OpenAI",
+    setupFields: ["apiKey", "modelId"],
+    allowedPlayerModels: suggestions,
+    escapeHatch: false,
+    environmentManaged: false,
+  };
+  // What the endpoint says it serves. `gpt-4o-mini` is served and NOT curated, which
+  // is exactly the case the curated list used to make unreachable.
+  const listed = ["gpt-4o-mini", "gpt-5.6-luna", "gpt-5.5"];
+
+  const writes: Array<{ path: string; body: unknown }> = [];
+  let created = false;
+  let recordModelId = "";
+  let readiness: "configured" | "ready" | "failed" = "configured";
+  let failure: string | null = null;
+
+  const rowModelIds = (): readonly string[] | null => (readiness === "configured" ? null : listed);
+  const connectionRow = () => ({
+    connectionId,
+    label: `${catalogProvider.label} \u00b7 ${recordModelId}`,
+    providerId: catalogProvider.providerId,
+    providerLabel: catalogProvider.label,
+    configured: true,
+    readiness,
+    active: false,
+    modelId: recordModelId,
+    modelLabel: recordModelId,
+    thinkingLevel: "high",
+    allowedThinkingLevels: ["low", "high"],
+    modelIds: rowModelIds(),
+    baseUrl: null,
+    failure,
+    lastCheckedAtMs: null,
+  });
+  const connectionState = () => ({
+    apiVersion: 1,
+    revision: 1,
+    active: null,
+    connections: created ? [connectionRow()] : [],
+    providers: [catalogProvider],
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+  await page.route("**/api/tavern/v1/settings/language", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ revision: 1, locale: "en-US" }) }),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null }),
+    }),
+  );
+  await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ devices: [], defaultSelectable: true }) }),
+  );
+  await page.route(/\/api\/tavern\/v1\/settings\/connection$/, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) }),
+  );
+  await page.route(/\/api\/tavern\/v1\/settings\/connections$/, async (route) => {
+    const body = route.request().postDataJSON() as { modelId?: string };
+    writes.push({ path: new URL(route.request().url()).pathname, body });
+    recordModelId = body.modelId ?? suggestions[0]!.modelId;
+    created = true;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) });
+  });
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/test$/, async (route) => {
+    writes.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+    // The probe's own answer: the endpoint listed these models, and only the model this
+    // record names decides whether that is a ready connection.
+    if (listed.includes(recordModelId)) {
+      readiness = "ready";
+      failure = null;
+    } else {
+      readiness = "failed";
+      failure = "not_found";
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        connectionId,
+        outcome: readiness === "ready" ? "ready" : "failed",
+        failure,
+        state: connectionState(),
+      }),
+    });
+  });
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/model$/, async (route) => {
+    const body = route.request().postDataJSON() as { modelId: string };
+    writes.push({ path: new URL(route.request().url()).pathname, body });
+    recordModelId = body.modelId;
+    readiness = "configured";
+    failure = null;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) });
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const panel = page.getByTestId("settings-surface").locator("[data-connection-settings]");
+  await expect(panel).toBeVisible();
+
+  // The entry pins its endpoint, so no base URL and no API shape: one key and one model field.
+  await panel.locator("#connection-provider").selectOption("openai");
+  await expect(panel.locator("#connection-base-url")).toHaveCount(0);
+  await expect(panel.locator("#connection-model-id")).toBeVisible();
+  // Both curated ids are offered, and both say they are suggestions rather than rules.
+  await expect(panel.locator("#connection-model-options option")).toHaveCount(2);
+  await expect(panel.locator("#connection-model-options option").first()).toHaveAttribute(
+    "label",
+    `${suggestions[0]!.modelLabel} \u00b7 suggestion`,
+  );
+
+  // A typed id the endpoint does not serve is accepted as a draft and never becomes ready.
+  await panel.locator("#connection-api-key").fill(apiKey);
+  await panel.locator("#connection-model-id").fill(invented);
+  await panel.getByRole("button", { name: "Save connection" }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toEqual({
+    path: "/api/tavern/v1/settings/connections",
+    body: { apiVersion: 1, providerId: "openai", apiKey, modelId: invented },
+  });
+  // Not probed yet: no listing is claimed, so the record offers no listing select.
+  await expect(panel.locator(`#connection-model-${connectionId}`)).toHaveCount(0);
+
+  await panel.getByRole("button", { name: "Test connection" }).click();
+  await expect.poll(() => writes.length).toBe(2);
+  // The record is not ready, so it cannot be activated - the invariant the probe protects.
+  await expect(panel.getByRole("button", { name: "Save and activate" })).toBeDisabled();
+
+  // The endpoint's own listing is now what the form offers, and the record offers it too.
+  await expect(panel.locator("#connection-model-options option")).toHaveCount(listed.length + suggestions.length);
+  const listingSelect = panel.locator(`#connection-model-${connectionId}`);
+  await expect(listingSelect).toBeVisible();
+  await expect(listingSelect.locator("option")).toHaveCount(listed.length + 1);
+
+  // Picking one of the models the endpoint actually serves is a `/model` write, not a second create.
+  await listingSelect.selectOption("gpt-4o-mini");
+  await expect.poll(() => writes.length).toBe(3);
+  expect(writes[2]).toEqual({
+    path: `/api/tavern/v1/settings/connections/${connectionId}/model`,
+    body: { apiVersion: 1, expectedRevision: 1, modelId: "gpt-4o-mini", thinkingLevel: "high" },
+  });
+
+  // Tested again, the model the endpoint lists is ready...
+  await panel.getByRole("button", { name: "Test connection" }).click();
+  await expect.poll(() => writes.length).toBe(4);
+  await expect(panel.locator("[data-connection-failure]")).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Save and activate" })).toBeEnabled();
+
+  // The listing select is reachable at the narrow width too, where the row wraps.
+  await page.setViewportSize({ width: 400, height: 800 });
+  const narrowSelect = await panel.locator(`#connection-model-${connectionId}`).boundingBox();
+  console.log(`[model-listing @400x800] ${JSON.stringify(narrowSelect)}`);
+  expect(narrowSelect, "the listing select is rendered at 400x800").not.toBeNull();
+  expect(narrowSelect!.width, "the listing select keeps a usable width at 400x800").toBeGreaterThan(80);
 });
 
 

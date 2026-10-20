@@ -876,65 +876,152 @@ test("a transport failure is classified as unreachable, and a hang as timeout", 
   );
 });
 
-test("model selection is restricted to the catalog and to the model's own thinking levels", async () => {
-  await withHandler({}, async (_root, request, bootstrap) => {
-    await bootstrap();
-    const created = await request(
-      "POST",
-      "/api/tavern/v1/settings/connections",
-      {},
-      {
-        apiVersion: 1,
-        providerId: "deepseek",
-        apiKey: "sk-synthetic-credential",
-      },
-    );
-    const revision = (created.body as { revision: number }).revision;
-    const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!
-      .connectionId;
-    const base = `/api/tavern/v1/settings/connections/${connectionId}/model`;
-    const selectModel = async (overrides: Record<string, unknown>) =>
-      await request("POST", base, {}, { apiVersion: 1, expectedRevision: revision, ...overrides });
+/**
+ * The model control on any provider the player configures (design/28 §1, §5.3).
+ *
+ * The Host's own list is curated guidance: a player types an id it never listed, and the probe -
+ * not the route - decides whether the endpoint serves it. What stays refused is a fact about the
+ * model rather than about our list (a level that exact catalog model does not offer), a malformed
+ * id, and a model on the one entry whose model is the operator's, not the player's.
+ */
+test("a typed model id is a legal draft on every entry the player configures, and only the probe makes it ready", async () => {
+  const served = ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-next"];
+  await withHandler(
+    { probe: stubEndpoint(() => ({ status: 200, body: listModels(...served) })) },
+    async (_root, request, bootstrap) => {
+      await bootstrap();
+      const created = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          providerId: "deepseek",
+          apiKey: "sk-synthetic-credential",
+        },
+      );
+      const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!
+        .connectionId;
+      const base = `/api/tavern/v1/settings/connections/${connectionId}/model`;
+      // Every mutation CASes on the revision the last one produced, so one running cursor keeps
+      // each request about the model id rather than about a stale document.
+      let revision = (created.body as { revision: number }).revision;
+      const selectModel = async (overrides: Record<string, unknown>) => {
+        const result = await request("POST", base, {}, { apiVersion: 1, expectedRevision: revision, ...overrides });
+        if (result.status === 200) revision = (result.body as { revision: number }).revision;
+        return result;
+      };
+      const row = (body: unknown) =>
+        (body as { connections: readonly { modelId: string; thinkingLevel: string; readiness: string }[] })
+          .connections[0]!;
+      const testBody = (body: unknown) =>
+        body as {
+          outcome: string;
+          failure: string | null;
+          state: { revision: number; connections: readonly { modelId: string; readiness: string }[] };
+        };
+      const test = async () => {
+        const result = await request(
+          "POST",
+          `/api/tavern/v1/settings/connections/${connectionId}/test`,
+          {},
+          { apiVersion: 1, expectedRevision: revision },
+        );
+        assert.equal(result.status, 200);
+        const body = testBody(result.body);
+        revision = body.state.revision;
+        return body;
+      };
 
-    // A model outside the catalog, and a level that exact model does not offer.
-    assert.equal((await selectModel({ modelId: "invented-model", thinkingLevel: "high" })).status, 400);
-    assert.equal((await selectModel({ modelId: "deepseek-v4-pro", thinkingLevel: "medium" })).status, 400);
-    const allowed = await selectModel({ modelId: "deepseek-v4-pro", thinkingLevel: "max" });
-    assert.equal(allowed.status, 200);
-    assert.equal(
-      (allowed.body as { connections: readonly { modelId: string; thinkingLevel: string }[] }).connections[0]!.modelId,
-      "deepseek-v4-pro",
-    );
-    assert.equal(
-      (allowed.body as { connections: readonly { modelId: string; thinkingLevel: string }[] }).connections[0]!
-        .thinkingLevel,
-      "max",
-    );
+      // A level that exact catalog model does not offer, and an id the model id ceiling refuses.
+      assert.equal((await selectModel({ modelId: "deepseek-v4-pro", thinkingLevel: "medium" })).status, 400);
+      assert.equal((await selectModel({ modelId: "with space", thinkingLevel: "high" })).status, 400);
+      const allowed = await selectModel({ modelId: "deepseek-v4-pro", thinkingLevel: "max" });
+      assert.equal(allowed.status, 200);
+      assert.equal(row(allowed.body).modelId, "deepseek-v4-pro");
+      assert.equal(row(allowed.body).thinkingLevel, "max");
 
-    // The escape hatch accepts the model id its endpoint serves, bounded.
-    const hatch = await request(
-      "POST",
-      "/api/tavern/v1/settings/connections",
-      {},
-      {
-        apiVersion: 1,
-        providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
-        apiKey: "ollama",
-        baseUrl: "http://127.0.0.1:11434/v1",
-        apiShape: "openai-completions",
-        modelId: "qwen2.5-coder:7b",
-      },
-    );
-    const hatchId = (hatch.body as { connections: readonly { connectionId: string }[] }).connections[1]!.connectionId;
-    const hatchRevision = (hatch.body as { revision: number }).revision;
-    const unbounded = await request(
-      "POST",
-      `/api/tavern/v1/settings/connections/${hatchId}/model`,
-      {},
-      { apiVersion: 1, expectedRevision: hatchRevision, modelId: "with space", thinkingLevel: "high" },
-    );
-    assert.equal(unbounded.status, 400);
-  });
+      // The endpoint serves the model, so the probe makes the record ready.
+      assert.equal((await test()).outcome, "ready");
+
+      // A model id the Host never listed is a legal draft for a provider the player configures,
+      // and naming it withdraws readiness until it is probed - the invariant, not a gate on ids.
+      const typed = await selectModel({ modelId: "deepseek-v4-next", thinkingLevel: "high" });
+      assert.equal(typed.status, 200);
+      assert.equal(row(typed.body).modelId, "deepseek-v4-next");
+      assert.equal(row(typed.body).readiness, "configured");
+      assert.equal((await test()).outcome, "ready", "the endpoint's own listing served it");
+
+      // And an id the endpoint does not serve never becomes ready, so it can never be activated.
+      const absent = await selectModel({ modelId: "deepseek-v4-imagined", thinkingLevel: "high" });
+      assert.equal(absent.status, 200);
+      const absentProbe = await test();
+      assert.equal(absentProbe.outcome, "failed");
+      assert.equal(absentProbe.failure, "not_found");
+      assert.equal(absentProbe.state.connections[0]!.readiness, "failed");
+      const activation = await request(
+        "POST",
+        `/api/tavern/v1/settings/connections/${connectionId}/activate`,
+        {},
+        { apiVersion: 1, expectedRevision: absentProbe.state.revision },
+      );
+      assert.equal(activation.status, 409);
+      assert.equal((activation.body as { code: string }).code, "connection_not_ready");
+
+      // The operator-managed environment entry keeps its own model: it is not the player's to name.
+      const environment = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        { apiVersion: 1, providerId: "cpa-oai" },
+      );
+      const environmentBody = environment.body as {
+        revision: number;
+        connections: readonly { connectionId: string }[];
+      };
+      const environmentModel = await request(
+        "POST",
+        `/api/tavern/v1/settings/connections/${environmentBody.connections[1]!.connectionId}/model`,
+        {},
+        {
+          apiVersion: 1,
+          expectedRevision: environmentBody.revision,
+          modelId: "deepseek-v4-next",
+          thinkingLevel: "high",
+        },
+      );
+      assert.equal(environmentModel.status, 400);
+      assert.equal((environmentModel.body as { code: string }).code, "invalid_request");
+
+      // The escape hatch accepts the model id its endpoint serves, bounded.
+      const hatch = await request(
+        "POST",
+        "/api/tavern/v1/settings/connections",
+        {},
+        {
+          apiVersion: 1,
+          providerId: TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+          apiKey: "ollama",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          apiShape: "openai-completions",
+          modelId: "qwen2.5-coder:7b",
+        },
+      );
+      const hatchId = (hatch.body as { connections: readonly { connectionId: string }[] }).connections[2]!.connectionId;
+      const unbounded = await request(
+        "POST",
+        `/api/tavern/v1/settings/connections/${hatchId}/model`,
+        {},
+        {
+          apiVersion: 1,
+          expectedRevision: (hatch.body as { revision: number }).revision,
+          modelId: "with space",
+          thinkingLevel: "high",
+        },
+      );
+      assert.equal(unbounded.status, 400);
+    },
+  );
 });
 
 test("a connection activation during a running turn is Class B: it succeeds and leaves the turn untouched", async () => {

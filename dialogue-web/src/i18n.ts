@@ -266,6 +266,11 @@ const en = {
   connectionModel: "Model",
   connectionModelId: "Model ID",
   connectionModelIdHint: "The model name the endpoint serves, for example qwen2.5-coder:7b",
+  connectionModelServed: "served by this endpoint",
+  connectionModelSuggested: "suggestion",
+  connectionModelSuggestionsHint:
+    "Entries marked as suggestions come from GameBuddy's own catalogue. Your endpoint may serve others: type any model id it serves, and testing the connection is what proves it does.",
+  connectionModelsServed: "models served by this endpoint",
   connectionThinkingLevel: "Thinking level",
   connectionReadiness: "Readiness",
   connectionReadinessUnconfigured: "Not configured",
@@ -872,6 +877,11 @@ const zh: Messages = {
   connectionModel: "模型",
   connectionModelId: "模型 ID",
   connectionModelIdHint: "该端点提供的模型名，例如 qwen2.5-coder:7b",
+  connectionModelServed: "该端点提供",
+  connectionModelSuggested: "建议",
+  connectionModelSuggestionsHint:
+    "标记为建议的条目来自 GameBuddy 自带的推荐。你的端点可能还提供其他模型：直接输入它提供的任意模型 ID，测试连接即可确认。",
+  connectionModelsServed: "个模型由该端点提供",
   connectionThinkingLevel: "思考强度",
   connectionReadiness: "状态",
   connectionReadinessUnconfigured: "未配置",

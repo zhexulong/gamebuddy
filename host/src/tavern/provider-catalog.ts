@@ -7,10 +7,15 @@ import type { CompanionThinkingLevel } from "../runtime-identity.js";
  * The browser may only select an entry of this catalog. Exactly one entry is
  * the endpoint escape hatch: it is a catalog entry like any other, passes the
  * same validation and appears in the same list, but the player supplies its
- * base URL, the API shape that endpoint speaks, and the model id that endpoint
- * serves (because a local server's model id is part of where the endpoint
- * lives, not a provider choice). Every other entry pins the endpoint and the
- * API shape itself, so no route can accept an arbitrary endpoint for them.
+ * base URL and the API shape that endpoint speaks. Every other entry pins the
+ * endpoint and the API shape itself, so no route can accept an arbitrary
+ * endpoint for them.
+ *
+ * The model id is the player's in every entry the player configures, including
+ * the pinned ones: `allowedPlayerModels` is curated guidance (the models this
+ * Host recommends and knows how to describe), never the set of ids an endpoint
+ * may serve. A player types any id, and the Host-owned probe - not this list -
+ * decides whether the endpoint offers it.
  */
 
 /**
@@ -90,6 +95,12 @@ export type TavernCatalogProvider = Readonly<{
   /** Environment-provided credential: never stored, read back or edited. */
   environmentVariable: string | null;
   setupFields: readonly TavernProviderSetupFieldId[];
+  /**
+   * Curated guidance, not a gate: the models this Host recommends for this entry and knows how to
+   * describe (labels, thinking levels, reasoning dialect). A player may name any bounded model id
+   * for any provider they configure; what decides whether it works is the probe against the
+   * endpoint's own listing.
+   */
   allowedPlayerModels: readonly TavernCatalogModel[];
   /** True only for the single OpenAI-compatible escape hatch entry. */
   escapeHatch: boolean;
@@ -153,7 +164,7 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     piApi: "openai-completions",
     baseUrl: "https://api.deepseek.com",
     environmentVariable: null,
-    setupFields: ["apiKey"],
+    setupFields: ["apiKey", "modelId"],
     allowedPlayerModels: [
       defineModel("deepseek-v4-flash", "DeepSeek V4 Flash", ["low", "high", "max"], "high", "deepseek"),
       defineModel("deepseek-v4-pro", "DeepSeek V4 Pro", ["high", "max"], "high", "deepseek"),
@@ -168,7 +179,7 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     piApi: "openai-responses",
     baseUrl: "https://api.openai.com/v1",
     environmentVariable: null,
-    setupFields: ["apiKey"],
+    setupFields: ["apiKey", "modelId"],
     allowedPlayerModels: [
       defineModel("gpt-5.6-luna", "GPT-5.6 Luna", ["low", "medium", "high", "xhigh", "max"], "high", "native"),
       defineModel("gpt-5.5", "GPT-5.5", ["low", "medium", "high", "xhigh"], "high", "native"),
@@ -183,9 +194,9 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     piApi: null,
     baseUrl: null,
     environmentVariable: null,
-    // The escape hatch relaxes where the endpoint lives, the API shape that
-    // endpoint speaks and the model id it serves — three facts about an
-    // endpoint the Host cannot know. Everything else stays Host-owned.
+    // The escape hatch relaxes where the endpoint lives and the API shape that
+    // endpoint speaks — two facts about an endpoint the Host cannot know. The
+    // model id is the player's in every entry they configure, not only here.
     setupFields: ["baseUrl", "apiShape", "apiKey", "modelId"],
     allowedPlayerModels: [],
     escapeHatch: true,
@@ -201,7 +212,13 @@ export function catalogModel(provider: TavernCatalogProvider, modelId: string): 
   return provider.allowedPlayerModels.find((model) => model.modelId === modelId) ?? null;
 }
 
-/** True when this provider accepts a bounded player-supplied model id. */
+/**
+ * True when this provider accepts a bounded player-supplied model id. Every provider the player
+ * configures does: the Host's curated ids are a starting point, not the set of ids an endpoint may
+ * serve, so a player who wants a model we did not list types its id and the probe decides whether
+ * the endpoint actually offers it. Only the operator-managed environment entry does not - its
+ * credential, endpoint and model are owned by the environment, not by the player.
+ */
 export function acceptsPlayerModel(provider: TavernCatalogProvider): boolean {
   return provider.setupFields.includes("modelId");
 }
