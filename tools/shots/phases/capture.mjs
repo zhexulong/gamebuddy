@@ -39,6 +39,9 @@ const DRIVERS = [
   { key: "q-companion-world-book", file: "q-companion-world-book.cjs", out: "q-companion-world-book.txt" },
   { key: "r-card-export", file: "r-card-export.cjs", out: "r-card-export.txt" },
   { key: "s-avatar-upload", file: "s-avatar-upload.cjs", out: "s-avatar-upload.txt" },
+  // The Game surface's installation-discovery panel: its sentence against the Host's own answer for the
+  // same moment, read through the product's own route (see the driver's own header).
+  { key: "t-installation-discovery", file: "t-installation-discovery.cjs", out: "t-installation-discovery.txt" },
 ];
 
 async function exists(path) {
