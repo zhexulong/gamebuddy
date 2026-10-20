@@ -66,6 +66,11 @@ export function CharactersPanel({
   const labels = characterLabels(locale);
   const [companionList, setCompanionList] = useState<CompanionListV1 | "loading" | "unavailable">("loading");
   const [inspected, setInspected] = useState<InspectedCompanion | null>(null);
+  // The picture digest each roster row was last told about, keyed by handle. The panel owns
+  // it because the row this panel draws is what needs the reload key, and it must outlive the
+  // drawer that learned it: an upload leaves `companion.list` untouched, so re-reading the
+  // roster carries no digest to replace this one with (only the upload's own reply does).
+  const [avatarDigests, setAvatarDigests] = useState<Readonly<Record<string, string>>>({});
   // The roster row that opened the inspector; the drawer gives focus back to it on
   // close (the shell's own focus-restoration idiom).
   const inspectorOpener = useRef<HTMLElement | null>(null);
@@ -382,7 +387,12 @@ export function CharactersPanel({
                         setInspected({ handle: entry.handle, name: entry.name, isCurrent: entry.isCurrent });
                       }}
                     >
-                      <CompanionAvatar handle={entry.handle} name={entry.name} className="avatar-small" />
+                      <CompanionAvatar
+                        handle={entry.handle}
+                        name={entry.name}
+                        className="avatar-small"
+                        digest={avatarDigests[entry.handle]}
+                      />
                       {/* The row's own name, in its own element: the monogram beside it is
                           decoration, so the control's text is not the companion's name and a
                           reader that wants the name must not have to subtract a glyph. */}
@@ -750,6 +760,7 @@ export function CharactersPanel({
             companion={inspected}
             locale={locale}
             onClose={() => setInspected(null)}
+            onAvatarUpdated={(handle, digest) => setAvatarDigests((current) => ({ ...current, [handle]: digest }))}
             restoreFocusTo={inspectorOpener}
           />
         </>

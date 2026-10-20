@@ -32,6 +32,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const token = "A".repeat(43);
 const rosterHandle = "B".repeat(42) + "A";
+const untouchedHandle = "E".repeat(42) + "A";
 const csrfToken = "C".repeat(42) + "A";
 const expiresAtMs = 1_900_000_000_000;
 
@@ -119,7 +120,15 @@ async function mount(page: Page): Promise<HostStub> {
     route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
   );
   await page.route("**/api/tavern/v1/companions", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, companions: [{ handle: rosterHandle, name: "Mira", isCurrent: false }] })),
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        companions: [
+          { handle: rosterHandle, name: "Mira", isCurrent: false },
+          { handle: untouchedHandle, name: "Nora", isCurrent: false },
+        ],
+      }),
+    ),
   );
   await page.route("**/api/tavern/v1/companions/*/profile", (route) =>
     route.fulfill(
@@ -347,4 +356,48 @@ test("a file the Host refuses keeps the picture she has, and the refusal is a se
     "That file is not a picture GameBuddy can keep. Choose a PNG image.",
   );
   await expect.poll(async () => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(2);
+});
+
+/**
+ * The roster is a second surface with its own picture request, and the one the player
+ * sits in front of: the inspector is a drawer that closes. An upload writes the file her
+ * face serves, not a record the roster's own read (`companion.list`) projects, so the row
+ * cannot learn of a new picture by re-reading - the drawer tells the panel the digest its
+ * upload answered with, and the row reloads under it. This journey proves the row that
+ * did not upload shows the picture, and that a companion the player never touched keeps
+ * her monogram.
+ */
+test("the roster row shows the picture the drawer just uploaded", async ({ page }) => {
+  const host = await mount(page);
+  const drawer = await openDrawer(page);
+  const roster = page.getByTestId("characters-surface");
+  const miraRow = roster.locator('[data-companion-entry] [data-companion-inspect][aria-label*="Mira"]');
+  const noraRow = roster.locator('[data-companion-entry] [data-companion-inspect][aria-label*="Nora"]');
+
+  // Both rows open as monograms: neither companion has a picture, and her absence is
+  // the 404 the face is never asked to remember.
+  await expect(miraRow.locator(".avatar-image")).toHaveCount(0);
+  await expect(noraRow.locator(".avatar-image")).toHaveCount(0);
+  await expect(miraRow.locator(".avatar")).toHaveText("M");
+  await expect(noraRow.locator(".avatar")).toHaveText("N");
+
+  // The drawer gives Mira a picture. Nothing re-reads `companion.list` afterwards.
+  const picker = drawer.locator("[data-companion-inspector-avatar] [data-companion-avatar-file]");
+  const picture = await pictureOf(page, 3, 2);
+  await picker.setInputFiles({ name: "mira.png", mimeType: "image/png", buffer: picture });
+  await expect.poll(() => host.uploads.length).toBe(1);
+
+  // The ROSTER ROW - not the drawer that uploaded - now draws the picture, at the one URL
+  // her face serves it at, decoded by the browser: `naturalWidth` is the real picture's
+  // own width, so the row has these bytes rather than a broken glyph or her monogram.
+  const rosterImage = miraRow.locator(".avatar-image");
+  await expect(rosterImage).toHaveCount(1);
+  await expect(rosterImage).toHaveAttribute("src", `/assets/companions/${rosterHandle}/avatar.png`);
+  await expect.poll(async () => rosterImage.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(3);
+  expect(await rosterImage.evaluate((node) => (node as HTMLImageElement).naturalHeight)).toBe(2);
+
+  // The companion the player did not touch keeps her monogram: a picture belongs to one
+  // handle, and one row's upload must not blank another row's fallback.
+  await expect(noraRow.locator(".avatar-image")).toHaveCount(0);
+  await expect(noraRow.locator(".avatar")).toHaveText("N");
 });

@@ -53,6 +53,7 @@ export function CompanionInspectorDrawer({
   companion,
   locale,
   onClose,
+  onAvatarUpdated,
   restoreFocusTo,
 }: {
   api: ManagementPipelineApi;
@@ -62,6 +63,13 @@ export function CompanionInspectorDrawer({
   companion: InspectedCompanion | null;
   locale: Locale;
   onClose: () => void;
+  /**
+   * A picture the player just stored for `companion`, told to the surface that draws the
+   * roster row. The row cannot learn it any other way: an upload writes the file her face
+   * serves, so `companion.list` - the roster's own read - is untouched and re-reading it
+   * carries no digest. The upload's own reply is the one fact the row has a new picture.
+   */
+  onAvatarUpdated: (handle: string, digest: string) => void;
   /** The row's own control; focus returns here on close. */
   restoreFocusTo: RefObject<HTMLElement | null>;
 }): ReactElement | null {
@@ -104,7 +112,13 @@ export function CompanionInspectorDrawer({
           ? labels.companionInspectorInPlay
           : labels.companionInspectorNotInPlay.replace("{{name}}", companion.name)}
       </p>
-      <CompanionAvatarSection api={api} csrfToken={csrfToken} companion={companion} labels={labels} />
+      <CompanionAvatarSection
+        api={api}
+        csrfToken={csrfToken}
+        companion={companion}
+        labels={labels}
+        onAvatarUpdated={onAvatarUpdated}
+      />
       {view.kind === "loading" ? (
         <p className="loading-text">{labels.loading}</p>
       ) : view.kind === "unavailable" ? (
@@ -138,11 +152,13 @@ function CompanionAvatarSection({
   csrfToken,
   companion,
   labels,
+  onAvatarUpdated,
 }: {
   api: ManagementPipelineApi;
   csrfToken: string;
   companion: InspectedCompanion;
   labels: CharacterLabels;
+  onAvatarUpdated: (handle: string, digest: string) => void;
 }): ReactElement {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [digest, setDigest] = useState<string | undefined>(undefined);
@@ -163,6 +179,7 @@ function CompanionAvatarSection({
       const bytes = new Uint8Array(await file.arrayBuffer());
       const saved = await api.uploadCompanionAvatar(companion.handle, canonicalBase64Of(bytes), csrfToken);
       setDigest(saved.digest);
+      onAvatarUpdated(companion.handle, saved.digest);
       setNotice({ ok: true, text: labels.avatarSaved });
     } catch (error) {
       setNotice({ ok: false, text: companionAvatarRefusal(labels, error) });

@@ -39,8 +39,9 @@ export function CompanionAvatar({
    * answers with it. It is the reload key, and the reason a replaced picture appears at
    * once: the image element is rebuilt under the new digest, the browser revalidates the
    * URL it already holds (the face answers `no-cache`), and the bytes behind a changed
-   * digest replace the ones on screen. Passed by nothing else: a surface that merely
-   * draws her has no newer fact than the URL.
+   * digest replace the ones on screen. The drawer passes its own upload's answer for her
+   * hero, and the roster passes the digest the drawer told it for that row - a surface
+   * that merely draws her and was told of no upload has no newer fact than the URL.
    */
   digest?: string;
 }): ReactElement {
