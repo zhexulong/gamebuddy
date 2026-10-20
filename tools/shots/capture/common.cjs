@@ -117,6 +117,11 @@ module.exports = { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot
  * with the page's own session cookie (a read sends no CSRF header). The DOM is what the player sees;
  * this is what the Host kept, and a driver reports the two apart because they can disagree - a
  * message the transcript no longer renders still has an `order` here, which is what a delete leaves.
+ *
+ * `selection` is the mount's own published identity. The chat handle, selection generation and
+ * state revision are all minted by the mounted lease's projection (an HMAC keyed on a per-lease
+ * secret), so all three - and every transcript handle - change together the moment the Host mounts
+ * a different lease, and none of them change while the same lease stays mounted.
  */
 async function readDurableTranscript(page) {
   return await page.evaluate(async () => {
@@ -125,8 +130,17 @@ async function readDurableTranscript(page) {
       if (!response.ok) return { ok: false, status: response.status };
       const body = await response.json();
       const chat = body.chat ?? null;
+      const selection = body.selection ?? null;
       return {
         ok: true,
+        selection:
+          selection === null
+            ? null
+            : {
+                chatHandle: selection.chatHandle,
+                generation: selection.generation,
+                stateRevision: selection.stateRevision,
+              },
         title: chat?.title ?? null,
         companion: chat?.companion?.name ?? null,
         transcript: (chat?.transcript ?? []).map((message) => ({

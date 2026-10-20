@@ -270,14 +270,15 @@ const forceLongPreview = () => {
   return forced;
 };
 
-/** The same snapshot with the per-mount opaque handles removed, for comparisons across a re-mount. */
+/** The same snapshot with the per-mount identity removed, for comparisons across a re-mount. */
 function withoutHandles(snapshot) {
+  const { selection: _selection, transcript, ...rest } = snapshot.durable ?? {};
   return {
     durable: {
-      ...snapshot.durable,
-      transcript: (snapshot.durable?.transcript ?? []).map(({ handle: _handle, ...rest }) => rest),
+      ...rest,
+      transcript: (transcript ?? []).map(({ handle: _handle, ...keep }) => keep),
     },
-    dom: (snapshot.dom ?? []).map(({ handle: _handle, ...rest }) => rest),
+    dom: (snapshot.dom ?? []).map(({ handle: _handle, ...keep }) => keep),
   };
 }
 
@@ -545,7 +546,8 @@ function snapshotDifference(before, after) {
     // message carries a different handle after every re-mount, by design. The first run of this claim failed on
     // exactly that (`transcript[0] handle: "LWIK-Fgn…" -> "0qd00-YR…"`) and on nothing else, which is what says
     // the content is what this claim is about. The archive below runs without a re-mount, so it keeps the
-    // byte-for-byte form.
+    // byte-for-byte form - but against the mount this driver is on now (`snapshotAfterBack`), never against
+    // `snapshotBefore`, whose handles belong to the mount two switches ago.
     assertClaim(
       "the mount is the same Chat with the same content after coming back to it (handles are per-mount)",
       JSON.stringify(withoutHandles(snapshotAfterBack)) === JSON.stringify(withoutHandles(snapshotBefore)),
@@ -553,9 +555,25 @@ function snapshotDifference(before, after) {
     );
 
     // === ITEM: archive the spare, from the list, while the mount is the row this driver started on ===
+    //
+    // The byte-identity baseline is `snapshotAfterBack` - the mount this driver is on right now - and
+    // NOT `snapshotBefore`, which was read before this driver created the spare and selected back, so
+    // its handles belong to a mount two switches ago. A message handle is minted per mount: an HMAC
+    // keyed on a secret created once per `startMountedChatRuntime`
+    // (host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts:1709,2977),
+    // and a switch releases the old mount and mints the successor - so any switch changes handles, and
+    // a byte comparison may only span a window with no switch in it. Archiving a row that is NOT the
+    // mounted one has no switch in it: the panel's `transition()` re-reads the list and calls
+    // `onCurrentChatRemoved` only when the removed handle IS the mounted one
+    // (dialogue-web/src/components/management-surface-panels.tsx:505-512), and the Host swaps the lane
+    // only for a committed `chat.select`
+    // (host/src/composition/desktop-presentation-admission-owner.ts:743). So the mount stays the same
+    // object - handles, chat handle and selection generation included - and that byte-identity is what
+    // proves the archive did not re-mount.
     const archiveIndex = spareRows.rows.findIndex((row) => row.title === SPARE_TITLE);
     assertClaim("the spare is on the list to archive", archiveIndex >= 0, `index ${archiveIndex}`);
     const wireBeforeArchive = wire.length;
+    say(`the mounted identity just before the archive: ${JSON.stringify(snapshotAfterBack.durable.selection)}`);
     say(`archiving the spare (row ${archiveIndex} of ${spareRows.rows.length})`);
     say(`arming: ${await page.evaluate(armControl, { index: archiveIndex, label: ARCHIVE_LABEL })}`);
     await page.waitForTimeout(800);
@@ -578,10 +596,11 @@ function snapshotDifference(before, after) {
         listAfterArchive.rows.some((row) => row.title === OTHER_TITLE),
       `${listAfterArchive.rows.length} rows, was ${listBefore.rows.length}`,
     );
+    say(`the mounted identity just after the archive: ${JSON.stringify(snapshotAfterArchive.durable.selection)}`);
     assertClaim(
-      "the mounted Chat is byte-identical after the archive",
-      JSON.stringify(snapshotAfterArchive) === JSON.stringify(snapshotBefore),
-      snapshotDifference(snapshotBefore, snapshotAfterArchive),
+      "the mounted Chat is byte-identical after the archive (same mount: unchanged message handles, chat handle and selection generation)",
+      JSON.stringify(snapshotAfterArchive) === JSON.stringify(snapshotAfterBack),
+      snapshotDifference(snapshotAfterBack, snapshotAfterArchive),
     );
     assertClaim(
       "the archive produced no selection request",
