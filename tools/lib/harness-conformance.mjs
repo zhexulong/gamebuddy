@@ -1,0 +1,381 @@
+/**
+ * Harness conformance: the static wiring facts that ended live runs before a game process existed,
+ * checked from the file system in seconds.
+ *
+ * Every failure this covers was already knowable offline - the same class the run preflight,
+ * `tools/lib/live-run-preflight.mjs`, reads from a tree. This module does not touch a game, a live run,
+ * or the network: it imports the real preflight, the real fixture library, the real runner resolver and
+ * the real descriptor tables, and checks them against synthetic trees and the repository's own sources.
+ *
+ * Five checks, each returning a list of findings (empty = conformant):
+ *
+ *   1. `checkLiveRunPreflight`      - `preflightLiveRun` passes a GOOD synthetic tree and fails with the
+ *                                     RIGHT code on each BAD tree it must catch.
+ *   2. `checkScenarioAcceptance`    - every harness action's `fixtureScenario(fixtureActions(id), id)` is
+ *                                     a scenario name the Mod's own fixture switch accepts.
+ *   3. `checkRunnerResolution`      - every action's resolved runner exists and carries `import.meta.main`.
+ *   4. `checkExperimentalRunners`   - every `STARDEW_EXPERIMENTAL_ACTION_RUNNERS` runner exists on disk.
+ *   5. `checkGateFalsifiers`        - every `tools/check-*.mjs` gate either prints a falsifier in its rules/
+ *                                     self mode or is declared in `GATES_WITHOUT_FALSIFIER` with a reason.
+ *
+ * Check 5's classification was found by RUNNING each gate, not guessed: a gate "prints a falsifier in its
+ * rules/self mode" when its default (no-argument, offline) run emits a self-verification report - a JSON
+ * object carrying a per-check/per-rule outcome list (`checks`) or an explicit offline `mode` - rather than
+ * only inspecting the live tree. On 2026-10-20 exactly seven gates did; the other 41 run offline checks whose
+ * falsifier lives in their own `check-*.test.mjs` (or in a run they consume), and are named below with why.
+ */
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { preflightLiveRun } from "./live-run-preflight.mjs";
+import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
+import { resolveStardewActionGateRunner } from "../resolve-stardew-action-gate-runner.mjs";
+import { STARDEW_EXPERIMENTAL_ACTION_RUNNERS } from "../stardew-action-gate-descriptors.mjs";
+
+const finding = (code, detail) => ({ code, detail });
+
+/** Actions whose scenario/runner wiring decides whether a harness run can start at all. */
+export const HARNESS_ACTIONS = Object.freeze([
+  "respond_level_up",
+  "respond_level_up_branch",
+  "hold_absorption",
+  "till_soil",
+  "multi_day",
+]);
+
+/** A scenario name the Mod's fixture code names literally, e.g. `native_till_soil_v1`. */
+const NATIVE_SCENARIO = /"(native_[a-z0-9_]+_v\d+)"/gu;
+
+/**
+ * Every `native_*_vN` string the Mod's fixture switch names in `ModEntry.Fixtures.cs`.
+ *
+ * The file holds one `FixtureScenario is not (...)` allowlist and the `FixtureScenario == "..."` dispatch
+ * blocks that build each world; a scenario missing from the allowlist is refused before it can arm, which
+ * is the silent failure this check exists to catch.
+ */
+export function scenariosAcceptedByMod(modEntrySource) {
+  return new Set([...modEntrySource.matchAll(NATIVE_SCENARIO)].map((match) => match[1]));
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Check 1: the run preflight catches each failure on a synthetic tree, and passes a good one.
+// ---------------------------------------------------------------------------------------------------
+
+const SECONDS = 1000;
+const T_INPUT = new Date(Date.now() - 20 * SECONDS);
+const T_OUTPUT = new Date(Date.now() - 10 * SECONDS);
+const T_STALE = new Date(Date.now() - 60 * SECONDS);
+
+const touch = (path, mtime) => utimesSync(path, mtime, mtime);
+const write = (path, contents, mtime) => {
+  mkdirSync(join(path, ".."), { recursive: true });
+  writeFileSync(path, contents, "utf8");
+  if (mtime !== undefined) touch(path, mtime);
+};
+
+/**
+ * Materialize one synthetic run tree and return the `preflightLiveRun` options for it.
+ *
+ * Each variant is the GOOD tree plus exactly one defect, so the preflight's FIRST failure names the defect.
+ */
+export function materializePreflightTree(baseDir, variant) {
+  const hostRoot = join(baseDir, "host");
+  const modRoot = join(baseDir, "mod");
+  const modsPath = join(baseDir, "mods");
+  const releaseDir = join(baseDir, "release");
+  const fixtureRoot = join(baseDir, "fixtures");
+  const saveName = "GameBuddyFixtureHarness";
+
+  write(join(hostRoot, "src", "main.ts"), "// input\n", T_INPUT);
+  write(join(hostRoot, "dist-test", "main.js"), "// artifact\n", T_OUTPUT);
+  write(join(modRoot, "ModEntry.cs"), "// c# input\n", T_INPUT);
+  write(join(releaseDir, "GameBuddy.Stardew.dll"), "dll", variant === "stale_mod_bundle" ? T_STALE : T_OUTPUT);
+  write(
+    join(modsPath, "GameBuddy.Stardew", "config.json"),
+    JSON.stringify({ PipeName: "GameBuddyHarnessConformance" }),
+  );
+  if (variant === "two_mod_folders") mkdirSync(join(modsPath, "GameBuddy.NativeLocalPlayer"), { recursive: true });
+
+  if (variant !== "missing_fixture_template") {
+    mkdirSync(join(fixtureRoot, "templates", saveName), { recursive: true });
+  }
+  if (variant === "held_fixture_lock") {
+    write(join(fixtureRoot, ".stardew-native-local-player-fixture.lock"), "held\n");
+  }
+  if (variant === "orphaned_fixture_entry") {
+    write(join(fixtureRoot, "GameBuddyFixtureHarness.orphaned-1234"), "backup\n");
+  }
+
+  return { modsPath, releaseDir, fixtureRoot, saveName, hostRoot, modRoot };
+}
+
+/**
+ * Run `preflightLiveRun` over a GOOD tree and each BAD tree, and require the FIRST failure to name the
+ * defect. A preflight that misses a tree (or names the wrong code) is the finding.
+ */
+export function checkLiveRunPreflight({ preflight = preflightLiveRun, baseDir } = {}) {
+  const root = baseDir ?? mkdtempSync(join(tmpdir(), "harness-conformance-"));
+  const trees = [
+    { variant: "good", expect: null },
+    { variant: "two_mod_folders", expect: "mods_path_exactly_one_gamebuddy" },
+    { variant: "stale_mod_bundle", expect: "mod_bundle_fresh" },
+    { variant: "missing_fixture_template", expect: "fixture_template_present" },
+    { variant: "held_fixture_lock", expect: "fixture_lock_free" },
+    { variant: "orphaned_fixture_entry", expect: "fixture_root_has_no_orphan_backups" },
+  ];
+  const findings = [];
+  try {
+    for (const { variant, expect } of trees) {
+      const options = materializePreflightTree(join(root, variant), variant);
+      const result = preflight(options);
+      const first = result.firstFailure ?? null;
+      if (expect === null) {
+        if (!result.ok || first !== null) {
+          findings.push(finding("preflight_rejected_a_good_tree", `${variant}: ${first?.code ?? "not ok"}`));
+        }
+      } else if (result.ok) {
+        findings.push(finding("preflight_missed_a_bad_tree", `${variant}: expected ${expect}, preflight passed`));
+      } else if (first?.code !== expect) {
+        findings.push(finding("preflight_named_the_wrong_code", `${variant}: expected ${expect}, got ${first?.code}`));
+      }
+    }
+  } finally {
+    if (baseDir === undefined) rmSync(root, { recursive: true, force: true });
+  }
+  return findings;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Check 2: the scenario every harness action maps to is one the Mod's fixture switch accepts.
+// ---------------------------------------------------------------------------------------------------
+
+export function checkScenarioAcceptance({
+  modEntrySource,
+  fixture = { actions: fixtureActions, scenario: fixtureScenario },
+  actionIds = HARNESS_ACTIONS,
+} = {}) {
+  const accepted = scenariosAcceptedByMod(modEntrySource);
+  const findings = [];
+  for (const actionId of actionIds) {
+    let scenario;
+    try {
+      scenario = fixture.scenario(fixture.actions(actionId), actionId);
+    } catch (error) {
+      findings.push(finding("scenario_unresolved", `${actionId}: ${String(error?.message ?? error)}`));
+      continue;
+    }
+    if (typeof scenario !== "string" || scenario.length === 0) {
+      findings.push(finding("scenario_unresolved", `${actionId}: empty scenario`));
+      continue;
+    }
+    if (!accepted.has(scenario)) {
+      findings.push(
+        finding("scenario_not_accepted_by_mod", `${actionId} -> ${scenario}: absent from ModEntry.Fixtures.cs`),
+      );
+    }
+  }
+  return findings;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Check 3: each action resolves to an existing runner that refuses to start on import.
+// ---------------------------------------------------------------------------------------------------
+
+export function checkRunnerResolution({
+  actionIds = HARNESS_ACTIONS,
+  resolve = resolveStardewActionGateRunner,
+  toolsDir,
+  exists = existsSync,
+  readText = (path) => readFileSync(path, "utf8"),
+} = {}) {
+  const findings = [];
+  for (const actionId of actionIds) {
+    let runner;
+    try {
+      runner = resolve(actionId);
+    } catch (error) {
+      findings.push(finding("runner_unresolved", `${actionId}: ${String(error?.message ?? error)}`));
+      continue;
+    }
+    const path = join(toolsDir, runner);
+    if (!exists(path)) {
+      findings.push(finding("runner_not_found", `${actionId} -> ${runner}`));
+      continue;
+    }
+    if (!/import\.meta\.main/u.test(readText(path))) {
+      findings.push(finding("runner_missing_cli", `${actionId} -> ${runner} has no import.meta.main`));
+    }
+  }
+  return findings;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Check 4: every experimental runner the descriptor table names exists on disk.
+// ---------------------------------------------------------------------------------------------------
+
+export function checkExperimentalRunners({
+  runners = STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
+  toolsDir,
+  exists = existsSync,
+} = {}) {
+  const findings = [];
+  for (const [actionId, runner] of Object.entries(runners)) {
+    if (!exists(join(toolsDir, runner)))
+      findings.push(finding("experimental_runner_missing", `${actionId} -> ${runner}`));
+  }
+  return findings;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Check 5: every gate prints a falsifier in its rules/self mode, or is declared below.
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * Gates whose default (offline) run emits a self-verification report - a JSON object carrying a per-check
+ * or per-rule outcome list - i.e. it proves its own rules can go red. Found by running every gate on
+ * 2026-10-20; `checkGateFalsifiers` re-reads each one's source to confirm the self-mode report is still there.
+ */
+export const GATES_WITH_FALSIFIER = Object.freeze([
+  "check-evidence-bundle.mjs",
+  "check-game-historian-rubric.mjs",
+  "check-live-run-failure-dump.mjs",
+  "check-live-run-isolation.mjs",
+  "check-live-run-multiday-baseline.mjs",
+  "check-stardew-fixture-action-coverage.mjs",
+  "check-stardew-native-notice-coverage.mjs",
+]);
+
+/** The self-mode report a `GATES_WITH_FALSIFIER` gate must still carry. */
+const SELF_MODE_REPORT = /checks|mode\s*:/u;
+
+/**
+ * Gates that do NOT print a falsifier in a rules/self mode. Each names why; a gate whose falsifier lives in
+ * its own `check-*.test.mjs` is excused because the project rule is "the falsifier is part of the gate's
+ * own test" (design/research/live-run-throughput.md, Tier 5 item 11), and the suite's own run confirms it.
+ */
+export const GATES_WITHOUT_FALSIFIER = Object.freeze([
+  { gate: "check-chat-conversational-quality-gate.mjs", reason: "requires --transcript/--db run input" },
+  { gate: "check-commit-staging.mjs", reason: "reads the git index; no offline rule set" },
+  { gate: "check-crab-pot-output-fixture-contract.mjs", reason: "requires --contract input" },
+  { gate: "check-dependency-risk.mjs", reason: "static report; falsifier in check-dependency-risk.test.mjs" },
+  { gate: "check-diff.mjs", reason: "runs git diff --check; no offline rule set" },
+  { gate: "check-dist-runtime-exports.mjs", reason: "reads the built dist; no offline rule set" },
+  { gate: "check-duplicated-authority.mjs", reason: "static source gate; no offline rule set" },
+  { gate: "check-error-identity-classification.mjs", reason: "static source gate; falsifier in its test" },
+  { gate: "check-gameplay-capability-catalog.mjs", reason: "static catalog gate; falsifier in its test" },
+  {
+    gate: "check-harness-conformance.mjs",
+    reason: "this suite's CLI; falsifiers in tools/lib/harness-conformance.test.mjs",
+  },
+  { gate: "check-head-typecheck.mjs", reason: "runs tsc over the worktree; no offline rule set" },
+  { gate: "check-host-diagnostic-output.mjs", reason: "static source gate; falsifier in its test" },
+  { gate: "check-host-game-physical-seam.mjs", reason: "static source gate; falsifier in its test" },
+  { gate: "check-host-production-import-boundary.mjs", reason: "full source scan; falsifier in its test" },
+  { gate: "check-host-windows-test-preflight.mjs", reason: "reads the Windows environment; falsifier in its test" },
+  { gate: "check-live-run-verdict-guards.mjs", reason: "static source gate; falsifier in its test" },
+  { gate: "check-production-pack-load.mjs", reason: "loads the built production pack; falsifier in its test" },
+  { gate: "check-publint.mjs", reason: "runs publint against the vendor baseline" },
+  { gate: "check-scope-references.mjs", reason: "static source gate; falsifier in its test" },
+  { gate: "check-stardew-action-promotion.mjs", reason: "static table gate; falsifier in its test" },
+  { gate: "check-stardew-actor-admissibility.mjs", reason: "requires a live-run artifact" },
+  { gate: "check-stardew-companion-production-admission.mjs", reason: "requires a production-admission artifact" },
+  { gate: "check-stardew-dialogue-autonomy.mjs", reason: "requires a ladder-result json" },
+  { gate: "check-stardew-dialogue-stream.mjs", reason: "requires a result json" },
+  {
+    gate: "check-stardew-execution-receipt-field-parity.mjs",
+    reason: "static field-parity gate; falsifier in its test",
+  },
+  { gate: "check-stardew-fixture-scenario-wiring.mjs", reason: "static wiring gate; falsifier in its test" },
+  { gate: "check-stardew-gameplay-completeness.mjs", reason: "requires --report input" },
+  { gate: "check-stardew-hold-sufficiency.mjs", reason: "requires a live-run artifact" },
+  { gate: "check-stardew-loop-closure.mjs", reason: "static source gate; falsifier in its test" },
+  { gate: "check-stardew-native-mechanism-review-register.mjs", reason: "requires a mechanism report and register" },
+  { gate: "check-stardew-native-multiplayer-sensitivity.mjs", reason: "requires --register/--source-root inputs" },
+  {
+    gate: "check-stardew-native-normal-player-ingress-register.mjs",
+    reason: "requires a register and mechanism report",
+  },
+  { gate: "check-stardew-native-pathfinder-source.mjs", reason: "static source gate; falsifier in its test" },
+  { gate: "check-stardew-native-router-exit-classifier.mjs", reason: "requires an inventory and classifier input" },
+  { gate: "check-stardew-native-source-closure.mjs", reason: "requires a certificate and decompile root" },
+  { gate: "check-stardew-native-transition-ledger.mjs", reason: "requires a ledger and source root" },
+  { gate: "check-stardew-receipt-attribution.mjs", reason: "static source gate; falsifier in its test" },
+  { gate: "check-stardew-tool-family-stamina-evidence.mjs", reason: "static source gate; falsifier in its test" },
+  { gate: "check-stardew-wia-agent-loop.mjs", reason: "requires a ladder-result json" },
+  { gate: "check-tavern-release-prerequisites.mjs", reason: "reads the live environment; no offline rule set" },
+  { gate: "check-test-store-teardown.mjs", reason: "static source gate; falsifier in its test" },
+  { gate: "check-text-hygiene.mjs", reason: "scans the tree; falsifier in its test" },
+]);
+
+/** Every gate file the suite recognises: `tools/check-*.mjs`, minus tests and mutation scripts. */
+export function harnessGateNames(toolsDir) {
+  return readdirSync(toolsDir)
+    .filter((name) => /^check-.*\.mjs$/u.test(name) && !name.endsWith(".test.mjs") && !name.endsWith(".mutation.mjs"))
+    .sort();
+}
+
+/**
+ * Require every enumerated gate to be either a `GATES_WITH_FALSIFIER` gate (whose source still carries the
+ * self-mode report) or a declared `GATES_WITHOUT_FALSIFIER` exception. A gate in neither - a new gate that
+ * forgot both - is the finding.
+ */
+export function checkGateFalsifiers({
+  gateNames,
+  withFalsifier = GATES_WITH_FALSIFIER,
+  withoutFalsifier = GATES_WITHOUT_FALSIFIER,
+  toolsDir,
+  readText = (path) => readFileSync(path, "utf8"),
+} = {}) {
+  const declared = new Set(withoutFalsifier.map((entry) => entry.gate));
+  const withSet = new Set(withFalsifier);
+  const findings = [];
+  for (const name of gateNames) {
+    const selfReports = withSet.has(name);
+    const declaredExcept = declared.has(name);
+    if (selfReports && declaredExcept) {
+      findings.push(finding("gate_classified_twice", name));
+      continue;
+    }
+    if (selfReports) {
+      if (!SELF_MODE_REPORT.test(readText(join(toolsDir, name)))) {
+        findings.push(finding("falsifier_signature_missing", `${name}: no self-mode report in source`));
+      }
+      continue;
+    }
+    if (!declaredExcept) findings.push(finding("gate_without_falsifier", name));
+  }
+  return findings;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The suite: run all five checks, in order.
+// ---------------------------------------------------------------------------------------------------
+
+export const CONFORMANCE_CHECKS = Object.freeze([
+  "preflight_synthetic_trees",
+  "scenario_mod_acceptance",
+  "runner_resolution",
+  "experimental_runner_inventory",
+  "gate_falsifiers",
+]);
+
+/** Run the five checks against a real checkout and return `{ id, findings }` for each. */
+export function runHarnessConformance({ toolsDir, repoRoot }) {
+  const modEntrySource = readFileSync(join(repoRoot, "integrations", "stardew", "ModEntry.Fixtures.cs"), "utf8");
+  return [
+    { id: "preflight_synthetic_trees", findings: checkLiveRunPreflight({}) },
+    { id: "scenario_mod_acceptance", findings: checkScenarioAcceptance({ modEntrySource }) },
+    { id: "runner_resolution", findings: checkRunnerResolution({ toolsDir }) },
+    { id: "experimental_runner_inventory", findings: checkExperimentalRunners({ toolsDir }) },
+    { id: "gate_falsifiers", findings: checkGateFalsifiers({ gateNames: harnessGateNames(toolsDir), toolsDir }) },
+  ];
+}

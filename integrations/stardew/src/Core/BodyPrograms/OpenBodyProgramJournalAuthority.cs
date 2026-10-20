@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Text.Json;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
 
 namespace GameBuddy.Stardew.Core.BodyPrograms;
 
@@ -32,6 +33,24 @@ public sealed class OpenBodyProgramJournalAuthority
     {
         this.store = store; this.catalog = catalog; this.scope = scope; this.currentPolicy = currentPolicy; this.nowMs = nowMs; this.state = state; this.OpenStatus = status;
     }
+
+    /// <summary>
+    /// How stale a dispatched node's durable deadline must be before journal open abandons its program
+    /// (ADR-006 amendment). The clock is <see cref="BodyProgramJournalNode.DerivedDeadlineMs"/>, the durable
+    /// dispatch anchor: the Mod derives it at dispatch from the action's own descriptor watchdog.
+    /// </summary>
+    /// <remarks>
+    /// Why one full largest-action watchdog: the largest execution budget any published action declares is the
+    /// ten-minute navigation/lifecycle ceiling (<see cref="FarmhandActionCatalog.LifecycleWatchdogMs"/>), so
+    /// requiring a further ten minutes past the deadline means a node is only abandoned once its dispatch is at
+    /// least ~11 minutes old for an ordinary 60s action and ~20 minutes for a navigation/lifecycle one - strictly
+    /// beyond every legitimate action window, so no live process could still settle it. Anything fresher is left
+    /// alone, because a crash that recent may still be recovering.
+    /// </remarks>
+    internal const long RecoveryAbandonAgeMs = FarmhandActionCatalog.LifecycleWatchdogMs;
+
+    /// <summary>Stable audit reason for a journal-open abandonment of a program whose unknown dispatch aged out.</summary>
+    internal const string RecoveryAbandonReasonCode = "journal_open_stale_dispatch";
 
     public BodyProgramJournalOpenStatus OpenStatus { get; private set; }
 
@@ -159,6 +178,7 @@ public sealed class OpenBodyProgramJournalAuthority
                         : BodyProgramJournalOpenStatus.Opened;
                     var authority = new OpenBodyProgramJournalAuthority(store, catalog, scope, currentPolicy, nowMs, fenced, openStatus);
                     if (changed && !authority.TryPersist(fenced)) authority.OpenStatus = BodyProgramJournalOpenStatus.PersistenceWriteFailed;
+                    authority.AbandonAgedUnknownDispatches();
                     return authority;
                 default:
                     return new(store, catalog, scope, currentPolicy, nowMs, Empty(scope, policy), BodyProgramJournalOpenStatus.PersistenceReadFailed);
@@ -535,6 +555,37 @@ public sealed class OpenBodyProgramJournalAuthority
             ? BodyProgramJournalOpenStatus.RecoveryRequired
             : BodyProgramJournalOpenStatus.Opened;
         return BodyProgramControllerResult.Success(SnapshotFor(this.state.Programs.Single(item => item.Program.ProgramId == programId)));
+    }
+
+    /// <summary>
+    /// Journal-open self-heal for the ADR-006 amendment: a program left <see cref="BodyProgramState.RecoveryRequired"/> by
+    /// an unknown dispatch that is now older than <see cref="RecoveryAbandonAgeMs"/> is abandoned, so the save's program
+    /// routes come back instead of answering <c>quarantined</c>/<c>authority_unavailable</c> for ever. Without this a
+    /// single dispatched-but-unsettled node from a crash disabled that save until someone cleared the journal by hand.
+    /// </summary>
+    /// <remarks>
+    /// Every unknown node in the program must have aged out before anything is written: one recent unknown dispatch still
+    /// means the crash may be recoverable, and the journal is left exactly as it was. The abandonment itself is
+    /// <see cref="TryAbandonProgram"/> - not a retry, not a success claim - and nothing is settled for a node whose
+    /// execution binding was not retained, because the durable contract cannot express such a node as abandoned.
+    /// </remarks>
+    private void AbandonAgedUnknownDispatches()
+    {
+        if (this.OpenStatus != BodyProgramJournalOpenStatus.RecoveryRequired) return;
+        long now = this.nowMs();
+        foreach (BodyProgramJournalProgram program in this.state.Programs.ToArray())
+        {
+            if (program.State != BodyProgramState.RecoveryRequired) continue;
+            BodyProgramJournalNode[] unknown = program.Nodes.Where(node => !IsTerminal(node.State) && node.NodeAttempt >= 1).ToArray();
+            // `Abandoned` requires the retained execution binding, so a node fenced before its dispatch (an attempt with
+            // no binding) is a shape this heal may not invent a meaning for: the whole program is left untouched.
+            if (unknown.Length == 0 || unknown.Any(node => node.ExecutionBinding is null)) continue;
+            // "Every unknown node aged out" is decided by the youngest one: its deadline is the largest.
+            long youngestAgeMs = now - unknown.Max(node => node.DerivedDeadlineMs!.Value);
+            if (youngestAgeMs < RecoveryAbandonAgeMs) continue;
+            if (!this.TryAbandonProgram(program.Program.ProgramId, RecoveryAbandonReasonCode).IsSuccess) continue;
+            Console.WriteLine($"[GameBuddy-body-program-abandoned] program={program.Program.ProgramId};nodes={string.Join(',', unknown.Select(node => node.NodeId))};dispatchAgeMs={youngestAgeMs};reason={RecoveryAbandonReasonCode}");
+        }
     }
 
     /// <summary>

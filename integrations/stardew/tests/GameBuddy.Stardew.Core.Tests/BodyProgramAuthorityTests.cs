@@ -1052,6 +1052,69 @@ public sealed class BodyProgramAuthorityTests
         reopened.TryConsumeHostGrant(grant).Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
         reopened.TryBeginNativeDispatch(grant, execution).Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
     }
+
+    [Fact]
+    public void OpenAbandonsAProgramWhoseUnknownDispatchAgedPastTheBoundAndTheScopeBecomesWritable()
+    {
+        // The crash shape: one node is dispatched (Running) and never settled, so the persisted journal is exactly what
+        // a killed process leaves behind. Opening it must heal the save instead of disabling its program routes for ever.
+        var store = new MemoryStore();
+        long now = 10;
+        OpenBodyProgramJournalAuthority authority = Open(store, now: () => now);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+        long dispatchedDeadlineMs = authority.Status("program").Snapshot!.Nodes.Single().DerivedDeadlineMs!.Value;
+
+        // Long after both the dispatch and its own deadline: no live process can settle that node any more.
+        now = dispatchedDeadlineMs + OpenBodyProgramJournalAuthority.RecoveryAbandonAgeMs + 1;
+        OpenBodyProgramJournalAuthority reopened = Open(store, now: () => now);
+
+        reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+        BodyProgramStatusSnapshot status = reopened.Status("program").Snapshot!;
+        status.State.Should().Be(BodyProgramState.Failed);
+        BodyProgramJournalNode abandoned = status.Nodes.Single();
+        abandoned.State.Should().Be(BodyProgramNodeState.Abandoned);
+        abandoned.NodeAttempt.Should().Be(1);
+        abandoned.ExecutionBinding.Should().NotBeNull("the dispatch is the fact this state exists to record");
+        abandoned.GrantId.Should().BeNull();
+        abandoned.ReceiptId.Should().BeNull();
+        // The durable receipt for the abandonment, and the scope writable again: the next submission is accepted
+        // instead of Quarantined.
+        reopened.Events("program", 0, 32).Events.Should().ContainSingle(@event => @event.Kind == "abandoned");
+        reopened.Submit(Program("next")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+    }
+
+    [Fact]
+    public void OpenLeavesAFreshUnknownDispatchUntouchedBecauseTheCrashMayStillBeRecovering()
+    {
+        var store = new MemoryStore();
+        long now = 10;
+        OpenBodyProgramJournalAuthority authority = Open(store, now: () => now);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+        long dispatchedDeadlineMs = authority.Status("program").Snapshot!.Nodes.Single().DerivedDeadlineMs!.Value;
+
+        // FALSIFIER: the dispatch has only just reached its own deadline, far inside the bound - the crash may still be
+        // recovering, so nothing may be abandoned and the scope stays visibly unavailable rather than silently healed.
+        now = dispatchedDeadlineMs;
+        OpenBodyProgramJournalAuthority fresh = Open(store, now: () => now);
+        fresh.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+        fresh.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.RecoveryRequired);
+        fresh.Submit(Program("blocked")).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+
+        // One millisecond inside the bound the answer is still the same: the bound is what decides, not the mere
+        // passage of the deadline.
+        now = dispatchedDeadlineMs + OpenBodyProgramJournalAuthority.RecoveryAbandonAgeMs - 1;
+        OpenBodyProgramJournalAuthority younger = Open(store, now: () => now);
+        younger.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+        younger.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.RecoveryRequired);
+        younger.Submit(Program("blocked")).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+    }
+
     [Fact]
     public void SuccessorChallengeMaterializesDeclaredBindingFromExactProducingAttempt()
     {
