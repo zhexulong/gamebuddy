@@ -724,6 +724,11 @@ export function fixtureActions(action) {
   throw new Error("invalid_native_local_fixture_action");
 }
 export function fixtureScenario(actions, action) {
+  // FIRST, because it is action-exact and must not be shadowed: an earlier rule keyed off the ACTION SET (these
+  // actions include `advance_day` and `observe_scene`) claimed this key and armed the ordinary world, which is why the
+  // milestone gate kept reporting `milestone_not_projected:0` - the fixture never armed the branch Given at all.
+  if (action === "respond_level_up_branch") return "native_level_up_branch_v1";
+
   // The requested harness action can select a distinct scenario for the SAME
   // action set: the built-in kitchen fridge is the chest store/take intent over a
   // different container, so both publish chest_store/chest_retrieve yet must
@@ -789,11 +794,6 @@ export function fixtureScenario(actions, action) {
   // `respond_level_up` MUST be keyed off the action here, before the `advance_day` fallback below:
   // its action set contains advance_day, so that fallback would claim it and arm the ordinary
   // move-only world - where no level-up can ever be pending, unlike the world this action needs.
-  // The MILESTONE half: the same world as `respond_level_up` EXCEPT that the milestone skill sits at level 4 with its
-  // level-5 profession unchosen, which is the only world where `branch_a`/`branch_b` are live choices at all. It MUST
-  // be keyed here, before the `respond_level_up` branch below, or that branch would claim it and arm the ordinary
-  // world - where the action can only ever answer `modal_not_level_up` for a milestone.
-  if (action === "respond_level_up_branch") return "native_level_up_branch_v1";
   if (action === "respond_level_up") return "native_respond_level_up_v1";
   // The lifecycle action owns its own route and preconditions; it needs no
   // fixture scenario beyond the ordinary move-only world.

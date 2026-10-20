@@ -5,15 +5,19 @@
 // this phase tear down processes and write the post-run isolation measurement.
 //
 // Invocation:  node phases/launch.mjs <path-to-run.json> [<cdp-port>]
+// The launcher this drives takes no CDP port, so this phase claims the run's port with a named lock
+// (lib/cdp-port-lock.mjs) for the run's whole life: a second run waits by name instead of letting its
+// Edge answer on the first run's endpoint. Every exit path tears down only the pids this run started.
 // The deployment manifest's `runtimeRoot` is set to the launcher's OWN declared data root
 // (desktopCompositionMutableRootPaths(root).data) — never overridden to the temp root, which is what
 // made the declared layout look unused in older one-off runs.
 import { access, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { appendFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runPaths, loadRunConfig } from "../lib/config.mjs";
+import { acquireCdpPortLock, cdpPortLockDir } from "../lib/cdp-port-lock.mjs";
 
 const run = loadRunConfig({ runConfigFile: process.argv[2] });
 if (run === null) throw new Error(`run_config_unreadable:${process.argv[2]}`);
@@ -25,6 +29,45 @@ const say = (...parts) => {
   const line = parts.map((part) => (typeof part === "string" ? part : JSON.stringify(part))).join(" ");
   appendFileSync(LOG, `${line}\n`);
 };
+
+const redactUrl = (url) => String(url).replace(/boot=[^&]*/u, "boot=<redacted>");
+
+async function readCdpTargets(port) {
+  try {
+    return await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+  } catch {
+    return null;
+  }
+}
+
+// Every process this phase spawns is tracked here and torn down as a tree, by pid only - never by
+// image name or command-line pattern. `taskkill /T` takes the process's own children with it (the
+// Host's helper processes, Edge's renderer/GPU children), which a bare `kill()` leaves running. The
+// bracket is registered once so no exit path - normal, failed or thrown - can skip it; a pid already
+// reported exited is never killed again, so a recycled pid can never be hit.
+const startedChildren = new Set();
+function trackChild(child) {
+  startedChildren.add(child);
+  return child;
+}
+function killPidTree(pid) {
+  const result = spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+  if (result.error !== undefined) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
+}
+function killStartedChildren() {
+  for (const child of startedChildren) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    killPidTree(child.pid);
+  }
+  startedChildren.clear();
+}
+process.once("exit", killStartedChildren);
 
 async function exists(p) {
   try {
@@ -131,6 +174,23 @@ async function main() {
   say("artifact:", paths.artifact);
   say("run root (KEPT, never removed):", paths.runRoot);
   say("cdp port:", cdpPort);
+  say("cdp lock:", cdpPortLockDir(cdpPort));
+
+  // The port is the run's one claim: waiting runs print the holder by name, a dead holder's browser
+  // fails the run closed. Only reached after this phase owns the port does anything get launched.
+  try {
+    await acquireCdpPortLock({ port: cdpPort, say });
+  } catch (error) {
+    const detail = String(error?.message ?? error);
+    say("CDP PORT LOCK REFUSED:", detail);
+    await writeFile(
+      paths.launchStateFile,
+      JSON.stringify({ kind: "launch_failed", tag: run.tag, commit: run.commit, cdpPort, detail }, null, 1),
+      "utf8",
+    );
+    say("DONE-LAUNCH-FAILED");
+    process.exit(2);
+  }
 
   const launcher = await import(pathToFileURL(join(paths.worktree, "tools", "desktop-composition-launch.mjs")).href);
   const { launchDesktopCompositionGateChild, desktopCompositionMutableRootPaths, assertDesktopCompositionRunRoots } =
@@ -191,7 +251,7 @@ async function main() {
       manifestPath: paths.deploymentManifest,
       readyTimeoutMs: 240_000,
       spawnImpl: (command, args, options) => {
-        child = spawn(command, args, options);
+        child = trackChild(spawn(command, args, options));
         child.stderr.setEncoding("utf8");
         child.stderr.on("data", (chunk) => {
           stderr += chunk;
@@ -202,6 +262,8 @@ async function main() {
   } catch (error) {
     say("LAUNCH FAILED:", String(error).slice(0, 800));
     say("child stderr (first 1500):", stderr.slice(0, 1500));
+    // The exit hook kills the product child this run started, and its own children with it.
+    say("teardown: killing the pids this run started");
     await writeFile(
       paths.launchStateFile,
       JSON.stringify({ kind: "launch_failed", detail: String(error).slice(0, 800), prodBefore }, null, 1),
@@ -223,6 +285,7 @@ async function main() {
     return null;
   });
   if (launchUrl === null) {
+    say("teardown: killing the pids this run started");
     say("DONE-LAUNCH-FAILED");
     process.exit(2);
   }
@@ -251,18 +314,20 @@ async function main() {
 
   await writeFile(paths.portFile, port, "ascii");
 
-  const browser = spawn(
-    run.edgeExe,
-    [
-      `--remote-debugging-port=${cdpPort}`,
-      `--user-data-dir=${paths.browserProfile}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-features=msEdgeFirstRun,CalculateNativeWinOcclusion",
-      "--window-size=1460,940",
-      launchUrl,
-    ],
-    { detached: false, stdio: "ignore", windowsHide: false },
+  const browser = trackChild(
+    spawn(
+      run.edgeExe,
+      [
+        `--remote-debugging-port=${cdpPort}`,
+        `--user-data-dir=${paths.browserProfile}`,
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-features=msEdgeFirstRun,CalculateNativeWinOcclusion",
+        "--window-size=1460,940",
+        launchUrl,
+      ],
+      { detached: false, stdio: "ignore", windowsHide: false },
+    ),
   );
   say("browser pid:", browser.pid, "exe:", run.edgeExe, "cdpPort:", cdpPort);
 
@@ -307,11 +372,64 @@ async function main() {
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
-  say("page target:", target === null ? "NONE" : String(target.url).replace(/boot=[^&]*/u, "boot=<redacted>"));
+  // When the page is not there, name what the endpoint DID serve: a collision with another run reads
+  // as a collision (different product port, a browser this run did not start), not as a browser race.
+  if (target === null) {
+    say("page target: NONE");
+    const targets = await readCdpTargets(cdpPort);
+    say("  this run's product port:", port, "- no page at that port answered on cdp port", cdpPort);
+    if (targets === null) {
+      say("  the cdp endpoint on", cdpPort, "did not answer /json/list");
+    } else {
+      say("  the cdp endpoint on", cdpPort, "serves", targets.length, "target(s):");
+      for (const item of targets) say("    target type=", String(item?.type), "url=", redactUrl(item?.url));
+      const foreignPages = targets.filter(
+        (item) => item?.type === "page" && !String(item?.url).includes(`127.0.0.1:${port}`),
+      );
+      if (foreignPages.length > 0)
+        say(
+          "  COLLISION: those page(s) belong to another run - a browser this run did not start owns cdp port",
+          cdpPort,
+          "while this run launched product port",
+          port,
+        );
+    }
+  } else {
+    say("page target:", redactUrl(target.url));
+  }
   say("page title:", String(title));
   say("page mounted:", Boolean(mounted));
   say("entry alive after mount:", launch.child.exitCode === null);
   say("ENTRY STDERR BYTES after mount:", Buffer.byteLength(stderr, "utf8"));
+
+  // Holding the port with no mounted page is a failed launch: the run cannot proceed from here, and
+  // holding the stop-flag wait would leave this run's processes alive under the claimed port.
+  if (target === null || mounted !== true) {
+    const detail = target === null ? "cdp_page_target_missing" : "cdp_page_not_mounted";
+    say("LAUNCH NOT MOUNTED:", detail, "(product port", port, "cdp port", cdpPort, ")");
+    say("teardown: killing the pids this run started");
+    await writeFile(
+      paths.launchStateFile,
+      JSON.stringify(
+        {
+          kind: "launch_failed",
+          tag: run.tag,
+          commit: run.commit,
+          port,
+          cdpPort,
+          childPid: launch.child.pid ?? null,
+          browserPid: browser.pid ?? null,
+          runRoot: paths.runRoot,
+          detail,
+        },
+        null,
+        1,
+      ),
+      "utf8",
+    );
+    say("DONE-LAUNCH-FAILED");
+    process.exit(2);
+  }
 
   const prodAfterLaunch = await fingerprint(prod);
   say("production fingerprint AFTER LAUNCH:", JSON.stringify(prodAfterLaunch));
@@ -361,16 +479,8 @@ async function main() {
   } catch {
     /* already gone */
   }
-  try {
-    launch.child.kill();
-  } catch {
-    /* already gone */
-  }
-  try {
-    browser.kill();
-  } catch {
-    /* already gone */
-  }
+  // Kills the product child, the browser and their own children - only the pids this run started.
+  killStartedChildren();
   await new Promise((resolve) => setTimeout(resolve, 5000));
   say("child exited code=", launch.child.exitCode, "alive after kill=", launch.child.exitCode === null);
   const prodAfter = await fingerprint(prod);
@@ -400,7 +510,20 @@ async function main() {
   process.exit(0);
 }
 
-await main().catch((error) => {
+await main().catch(async (error) => {
   appendFileSync(LOG, `LAUNCH SCRIPT FAILED: ${String(error).slice(0, 800)}\nDONE-LAUNCH-FAILED\n`);
+  try {
+    await writeFile(
+      paths.launchStateFile,
+      JSON.stringify(
+        { kind: "launch_failed", tag: run.tag, commit: run.commit, cdpPort, detail: String(error).slice(0, 800) },
+        null,
+        1,
+      ),
+      "utf8",
+    );
+  } catch {
+    /* the state dir is gone; the log tail still carries the failure */
+  }
   process.exit(2);
 });
