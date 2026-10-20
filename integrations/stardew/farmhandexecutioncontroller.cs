@@ -4864,7 +4864,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // the only place every receipt passes through on its way out, so the stored record, the fact the Host
         // audits and the answer the wait resolves into all carry the identical bytes: a response that differed
         // from its published fact by one annotation would be refused by the Host's receipt-order audit.
-        if (this.heldMsByRequestId.Remove(receipt.RequestId, out long heldMs))
+        // NOT `Remove`: the same receipt reaches the Host through two channels - the fact stream and the response
+        // to the execution_request - and an annotation consumed by the first publish makes the second one differ
+        // from it by exactly that field. Equal revision with different content is `non_monotonic_revision`, which
+        // the Host must refuse, and a refused fact is a fatal transport fault (measured 2026-10-20, run g112attrib:
+        // 402 s in, the bridge closed and the night never happened). Every copy of this request's receipts therefore
+        // carries the same annotation; the entry is cleared when the execution settles.
+        if (this.heldMsByRequestId.TryGetValue(receipt.RequestId, out long heldMs))
         {
             published = published with
             {
@@ -4872,6 +4878,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             };
             this.Remember(published);
         }
+        // The annotation has been carried by every copy of this request's receipts; a settled execution cannot publish
+        // again, so the entry can go.
+        if (published.State is ExecutionState.Succeeded or ExecutionState.Failed or ExecutionState.Cancelled
+            or ExecutionState.Rejected)
+            this.heldMsByRequestId.Remove(published.RequestId);
         this.publishedReceiptRevisionByExecutionId[receipt.ExecutionId] = published.Revision;
         this.monitor.Log($"[receipt-publish-marker] request={published.RequestId};state={published.State};reason={published.ReasonCode};revision={published.Revision}", LogLevel.Trace);
         if (category is not null && !this.navigationExecutionIds.Contains(published.ExecutionId))
