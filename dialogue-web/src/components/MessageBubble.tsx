@@ -271,19 +271,23 @@ export const MessageBubble = memo(function MessageBubble({
   // it. It is the same shape as the opening choice, and it reads the same way.
   const swipeSet = swipeInfo !== undefined && swipeInfo.totalSwipes > 1 ? swipeInfo : undefined;
   /**
-   * The rewind point is the message the conversation is cut back TO, so the greeting is never one
-   * (the Host refuses it), a row that is not part of the transcript is never one, and a point that
-   * would remove nothing but the row it is named after is not a rewind at all - the count has to be
-   * more than this row.
+   * The rewind point is the row the conversation is cut back TO, and the cut KEEPS that row: it
+   * drops everything after it, which is what makes a PLAYER row a legal point - their own line
+   * survives, the reply that answered it does not, and they are ready to be answered again (the
+   * owner's ruling, 2026-10-20: rewind the way Pi and SillyTavern do).
    *
-   * That last one is the owner's ruling (audit 2026-10-19): on the transcript's LAST row a rewind and
-   * a delete are the same act - both remove that one message - so the row offers the delete alone.
-   * The two controls were indistinguishable there, and the rewind exists for cutting a conversation
-   * back, which is exactly what the delete already does to a single row.
+   * The greeting is still never a point: the Host refuses it, because a cut there would leave
+   * nothing but the conversation's own opening. And a row with nothing after it is not a rewind at
+   * all - the count has to be more than this row - which is the earlier ruling kept: on the
+   * transcript's LAST row a rewind and a delete would be the same act, so the row offers the delete
+   * alone.
    */
-  const rewindPoint =
-    onRewind !== undefined && removedCount > 1 && message.order > 0 && !isPlayer ? removedCount : undefined;
-  const rewindName = labels.rewindHereName.replace("{{count}}", String(removedCount));
+  const rewindPoint = onRewind !== undefined && removedCount > 1 && message.order > 0 ? removedCount - 1 : undefined;
+  /**
+   * The count the accessible name states is what the press REMOVES. `removedCount` also counts this
+   * row, and this row survives the cut - so it is one less.
+   */
+  const rewindName = labels.rewindHereName.replace("{{count}}", String(removedCount - 1));
   /**
    * The delete point is the message the player is looking at, and it is never the opening: the row at
    * order zero is the greeting the Chat started on (the Host refuses it, and so does this surface). A
@@ -292,13 +296,13 @@ export const MessageBubble = memo(function MessageBubble({
    */
   const deletePoint = onDelete !== undefined && message.order > 0 ? message.order : undefined;
   /**
-   * Her reply's edit point. The greeting the Chat opened on is NOT one: it has its own editor on the
-   * Characters surface, and the Host refuses an edit of it by name (`chat_edit_opening_retained`), so
-   * the control is absent rather than offered and refused - an affordance that exists only to refuse
-   * is worse than none. The transcript's first row is that greeting, and it is the same premise the
-   * rewind and the delete already read.
+   * Her rows' edit point, the OPENING included: the greeting is edited in place, for this session
+   * alone (the owner's ruling, 2026-10-20, superseding the earlier "the greeting is a retained
+   * anchor"). It is the same control and the same editor her replies use, and it never leaves this
+   * surface - the reviewed greeting assets stay untouched. The Host still refuses a row it cannot
+   * prove (a session that predates the greeting's own entry), and the refusal has its own sentence.
    */
-  const editReplyPoint = onEdit !== undefined && !isPlayer && message.order > 0 ? message.order : undefined;
+  const editReplyPoint = onEdit !== undefined && !isPlayer ? message.order : undefined;
   /**
    * The editor is this row's own presentation state: it holds the words the player is rewriting, and
    * it exists only while the row does - a row a rewind dropped takes its open editor with it. The
@@ -354,6 +358,64 @@ export const MessageBubble = memo(function MessageBubble({
   // controls, so a message with neither keeps no empty row under the bubble.
   const hasControls =
     openingChoice !== undefined || swipeSet !== undefined || deletePoint !== undefined || editReplyPoint !== undefined;
+  /**
+   * The rewind's own two-step pair, hoisted out of either side's strip. Both sides of the exchange
+   * carry it now - a player rewinds to their own line to be answered again, and her reply keeps the
+   * words the cut is named after - so the confirmation and the control that arms it are ONE
+   * presentation rather than one markup per role. An armed rewind is the row's only control: the
+   * pager, regenerate, the edit and the destructive Delete step aside, because a destructive press
+   * rendered beside Save and Cancel is a mis-click waiting to happen.
+   */
+  const rewindConfirmation = rewindArmed ? (
+    <div className="message-confirm" data-testid="message-rewind-confirm">
+      <p className="message-confirm-prompt" role="status">
+        {labels.rewindConfirmPrompt}
+      </p>
+      <div className="message-confirm-actions">
+        <button
+          type="button"
+          className="action-btn rewind-confirm-yes"
+          data-testid="message-rewind-confirm-yes"
+          disabled={busy}
+          onClick={() => onRewindConfirm?.(message.handle, message.order)}
+          title={labels.rewindConfirmYes}
+          aria-label={labels.rewindConfirmYes}
+        >
+          {labels.rewindConfirmYes}
+        </button>
+        <button
+          type="button"
+          className="action-btn rewind-confirm-no"
+          data-testid="message-rewind-confirm-no"
+          onClick={() => onRewindCancel?.()}
+          title={labels.rewindConfirmNo}
+          aria-label={labels.rewindConfirmNo}
+        >
+          {labels.rewindConfirmNo}
+        </button>
+      </div>
+    </div>
+  ) : null;
+  const rewindControl =
+    !rewindArmed && rewindPoint !== undefined ? (
+      <button
+        type="button"
+        className="action-btn rewind-btn"
+        data-testid="message-rewind"
+        disabled={busy}
+        {...(pending === "rewind" ? { "data-busy": "true" as const } : {})}
+        onClick={() => onRewind?.(message.handle, message.order)}
+        title={rewindName}
+        aria-label={rewindName}
+      >
+        {pending === "rewind" ? (
+          <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+        ) : (
+          <Undo2 size={14} aria-hidden="true" />
+        )}
+        <span className="action-word">{labels.rewindHere}</span>
+      </button>
+    ) : null;
   // The Host's per-message language, painted on the text only: the author line
   // and the swipe/regenerate controls are player-facing UI words and must keep
   // the surface's own language. `und` paints nothing (browserMessageLanguageTag),
@@ -444,36 +506,7 @@ export const MessageBubble = memo(function MessageBubble({
               <>
                 {/* An armed rewind is this message's only control: the pager and regenerate step aside
                 for the confirmation the same way a Chats row's own strip does. */}
-                {rewindArmed && (
-                  <div className="message-confirm" data-testid="message-rewind-confirm">
-                    <p className="message-confirm-prompt" role="status">
-                      {labels.rewindConfirmPrompt}
-                    </p>
-                    <div className="message-confirm-actions">
-                      <button
-                        type="button"
-                        className="action-btn rewind-confirm-yes"
-                        data-testid="message-rewind-confirm-yes"
-                        disabled={busy}
-                        onClick={() => onRewindConfirm?.(message.handle, message.order)}
-                        title={labels.rewindConfirmYes}
-                        aria-label={labels.rewindConfirmYes}
-                      >
-                        {labels.rewindConfirmYes}
-                      </button>
-                      <button
-                        type="button"
-                        className="action-btn rewind-confirm-no"
-                        data-testid="message-rewind-confirm-no"
-                        onClick={() => onRewindCancel?.()}
-                        title={labels.rewindConfirmNo}
-                        aria-label={labels.rewindConfirmNo}
-                      >
-                        {labels.rewindConfirmNo}
-                      </button>
-                    </div>
-                  </div>
-                )}
+                {rewindConfirmation}
                 {!rewindArmed && openingChoice && (
                   <div className="swipe-controls" aria-label={labels.swipeNavigation}>
                     {/* The glyph is the visible control and the number between the two
@@ -547,30 +580,13 @@ export const MessageBubble = memo(function MessageBubble({
                     <span className="action-word">{labels.regenerateVariant}</span>
                   </button>
                 )}
-                {!rewindArmed && rewindPoint !== undefined && (
-                  <button
-                    type="button"
-                    className="action-btn rewind-btn"
-                    data-testid="message-rewind"
-                    disabled={busy}
-                    {...(pending === "rewind" ? { "data-busy": "true" as const } : {})}
-                    onClick={() => onRewind?.(message.handle, message.order)}
-                    title={rewindName}
-                    aria-label={rewindName}
-                  >
-                    {pending === "rewind" ? (
-                      <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                    ) : (
-                      <Undo2 size={14} aria-hidden="true" />
-                    )}
-                    <span className="action-word">{labels.rewindHere}</span>
-                  </button>
-                )}
-                {/* Her reply's own edit control, in the strip she already has rather than a second row of
+                {rewindControl}
+                {/* Her rows' own edit control, in the strip she already has rather than a second row of
                 buttons, and in the same spot the player row's edit control takes (immediately before
-                the destructive Delete, which is where both rows end their strip). It is absent on the
-                opening, and it is the ONLY control this change adds: the words are one more thing a
-                row can do to itself, not a new group of them. */}
+                the destructive Delete, which is where both rows end their strip). It is offered on every
+                one of her rows - the OPENING included, which is edited in place for this session alone
+                (the owner's ruling, 2026-10-20) - and it is the words one more thing a row can do to
+                itself, not a new group of them. */}
                 {!rewindArmed && editReplyPoint !== undefined && (
                   <button
                     type="button"
@@ -620,68 +636,79 @@ export const MessageBubble = memo(function MessageBubble({
         )}
         {/* The player's own row carries its own controls in the same strip the companion's reply
             uses rather than a second row of buttons: the words are already on the page, so the
-            affordances that change them belong under them. */}
-        {isPlayer && !deleteArmed && (onEdit !== undefined || deletePoint !== undefined) && (
-          <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
-            {onEdit !== undefined &&
-              (editor !== null ? (
-                <MessageEditor
-                  text={editor.text}
-                  busy={busy}
-                  canSave={editor.text.trim().length > 0 && editor.text !== message.text}
-                  fieldLabel={labels.editMessageField}
-                  saveLabel={labels.editMessageSave}
-                  cancelLabel={labels.editMessageCancel}
-                  onTextChange={(text) => setEditor({ text, sent: editor.sent })}
-                  onCancel={() => setEditor(null)}
-                  onSave={() => {
-                    setEditor({ text: editor.text, sent: editor.text });
-                    onEdit(message.handle, message.order, editor.text);
-                  }}
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="action-btn edit-btn"
-                  data-testid="message-edit"
-                  disabled={busy}
-                  {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
-                  onClick={openEditor}
-                  title={labels.editMessageName}
-                  aria-label={labels.editMessageName}
-                >
-                  {pending === "edit" ? (
-                    <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                  ) : (
-                    <Pencil size={14} aria-hidden="true" />
-                  )}
-                  <span className="action-word">{labels.editMessage}</span>
-                </button>
-              ))}
-            {/* While the editor is open the strip is the editor: a destructive Delete sitting beside
+            affordances that change them belong under them. The REWIND is one of them: rewinding to
+            this line keeps it and drops the reply that answered it, which is the player's own way to
+            be answered again (the owner's ruling, 2026-10-20). Its place is where her row puts it -
+            first in the strip - and an armed rewind leaves this strip with nothing but itself. */}
+        {isPlayer &&
+          !deleteArmed &&
+          (rewindPoint !== undefined || rewindArmed || onEdit !== undefined || deletePoint !== undefined) && (
+            <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
+              {rewindConfirmation}
+              {/* While the field is open the strip is the editor: the destructive rewind sits out, exactly as
+                the destructive Delete does, because a control that cuts the conversation away beside Save
+                and Cancel is a mis-click waiting to happen. */}
+              {editor === null && rewindControl}
+              {!rewindArmed &&
+                onEdit !== undefined &&
+                (editor !== null ? (
+                  <MessageEditor
+                    text={editor.text}
+                    busy={busy}
+                    canSave={editor.text.trim().length > 0 && editor.text !== message.text}
+                    fieldLabel={labels.editMessageField}
+                    saveLabel={labels.editMessageSave}
+                    cancelLabel={labels.editMessageCancel}
+                    onTextChange={(text) => setEditor({ text, sent: editor.sent })}
+                    onCancel={() => setEditor(null)}
+                    onSave={() => {
+                      setEditor({ text: editor.text, sent: editor.text });
+                      onEdit(message.handle, message.order, editor.text);
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="action-btn edit-btn"
+                    data-testid="message-edit"
+                    disabled={busy}
+                    {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
+                    onClick={openEditor}
+                    title={labels.editMessageName}
+                    aria-label={labels.editMessageName}
+                  >
+                    {pending === "edit" ? (
+                      <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                    ) : (
+                      <Pencil size={14} aria-hidden="true" />
+                    )}
+                    <span className="action-word">{labels.editMessage}</span>
+                  </button>
+                ))}
+              {/* While the editor is open the strip is the editor: a destructive Delete sitting beside
                 Save and Cancel is a mis-click waiting to happen, and this row's own armed confirm
                 already follows that rule (it replaces the other controls rather than joining them). */}
-            {deletePoint !== undefined && editor === null && (
-              <button
-                type="button"
-                className="action-btn delete-btn"
-                data-testid="message-delete"
-                disabled={busy}
-                {...(pending === "delete" ? { "data-busy": "true" as const } : {})}
-                onClick={() => onDelete?.(message.handle, message.order)}
-                title={labels.deleteMessageName}
-                aria-label={labels.deleteMessageName}
-              >
-                {pending === "delete" ? (
-                  <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                ) : (
-                  <Trash2 size={14} aria-hidden="true" />
-                )}
-                <span className="action-word">{labels.deleteMessage}</span>
-              </button>
-            )}
-          </div>
-        )}
+              {!rewindArmed && deletePoint !== undefined && editor === null && (
+                <button
+                  type="button"
+                  className="action-btn delete-btn"
+                  data-testid="message-delete"
+                  disabled={busy}
+                  {...(pending === "delete" ? { "data-busy": "true" as const } : {})}
+                  onClick={() => onDelete?.(message.handle, message.order)}
+                  title={labels.deleteMessageName}
+                  aria-label={labels.deleteMessageName}
+                >
+                  {pending === "delete" ? (
+                    <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                  ) : (
+                    <Trash2 size={14} aria-hidden="true" />
+                  )}
+                  <span className="action-word">{labels.deleteMessage}</span>
+                </button>
+              )}
+            </div>
+          )}
         {/* An armed delete is this row's only control: like the rewind's arm, the confirmation
             replaces the pager, regenerate, edit and delete rather than joining them, and it states
             exactly what goes - this one message, not the conversation after it. */}

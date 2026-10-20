@@ -13,12 +13,12 @@ import { expect, test, type Page } from "@playwright/test";
  *    the name is where the player is told that. Measured from the layout at both widths, not from a
  *    class name: the box is at least the 44 px touch minimum (`--touch-target-min`) and the strip is
  *    still ONE row (`two controls in one strip that wrapped at 400 px` is the defect this measures).
- * 2. `is offered on both messages of the exchange, and never on the opening` - the greeting has its own
- *    editor on the Characters surface (and its own refusal, `chat_edit_opening_retained`), so this
- *    surface offers it no control; the player's own rows and her replies each carry exactly one. The
- *    premise changed with the owner's ruling that correcting the model is a normal thing a player does
- *    - her reply used to be excluded from the edit - and the force is kept: one control per row of the
- *    exchange, none on the greeting, and never a second resident control beside it.
+ * 2. `is offered on every row of the exchange, the opening included` - the greeting is edited in place,
+ *    for this session alone (the owner's ruling, 2026-10-20, superseding "the greeting is a retained
+ *    anchor"), so row zero carries the same control and the same editor; the player's own rows and her
+ *    replies each carry exactly one. The premise changed twice under owner rulings - her reply used to
+ *    be excluded, and before that the opening - and the force is kept: exactly one edit control per row
+ *    of the transcript, never a second resident control beside it.
  * 3. `opens the field the words came from, and sends the pair only on save` - the editor holds the
  *    current text, the two answers are Save and Cancel, nothing is sent by opening or by cancelling,
  *    and the save sends the handle, the text AND the order the page rendered the row at, because the
@@ -114,19 +114,18 @@ test("the edit control is one control in the player's strip, names what saving d
   }
 });
 
-test("the edit is offered on both messages of the exchange, and never on the opening", async ({ page }) => {
+test("the edit is offered on every row of the exchange, the opening included", async ({ page }) => {
   await openConversation(page);
 
-  // The greeting has its own editor on the Characters surface; her replies, the other half of the
-  // exchange, each carry one.
-  expect(await page.evaluate(() => window.chatProbe.editControl("h0"))).toBeNull();
+  // The greeting is edited where it is read: the same in-place editor, for this session alone.
+  expect(await page.evaluate(() => window.chatProbe.editControl("h0"))).not.toBeNull();
   expect(await page.evaluate(() => window.chatProbe.editControl("h2"))).not.toBeNull();
   expect(await page.evaluate(() => window.chatProbe.editControl("h4"))).not.toBeNull();
   // The player's own rows each carry exactly one.
   expect(await page.evaluate(() => window.chatProbe.editControl("h1"))).not.toBeNull();
   expect(await page.evaluate(() => window.chatProbe.editControl("h3"))).not.toBeNull();
   // And exactly one apiece: a second resident edit control is the defect.
-  for (const handle of ["h1", "h2", "h3", "h4"])
+  for (const handle of ["h0", "h1", "h2", "h3", "h4"])
     await expect(page.locator(`[data-handle="${handle}"] [data-testid="message-edit"]`)).toHaveCount(1);
 
   // Opened, the field replaces that one control rather than sitting beside it.

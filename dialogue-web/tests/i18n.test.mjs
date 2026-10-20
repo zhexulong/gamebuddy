@@ -78,31 +78,36 @@ test("the zero-message anchor keeps its companion placeholder in both locales", 
 });
 
 /**
- * The rewind's confirmation, in the owner's words (audit 2026-10-19).
+ * The rewind's confirmation, in the owner's words.
  *
- * The defect: the confirm read 「删除 / 保留」 for an action that removes this message AND every
- * message after it, which named neither the point the conversation is cut back to nor the difference
- * between it and the single-message delete beside it. The ruling is exact wording, so it is pinned
- * exactly in the catalogue the players read it in; the English catalogue is held to the same force -
- * the prompt names the point and the removal, and the two answers are the rewind and the way out -
- * rather than to a translation of the Chinese sentence.
+ * The premise changed with the owner's ruling of 2026-10-20 (a rewind KEEPS the message it names and
+ * drops what follows, the way Pi and SillyTavern both do), and the force is kept exactly: the point the
+ * conversation is cut back to, the fact that this row SURVIVES, and the removal after it are named in
+ * the catalogue the players read it in; the English catalogue is held to the same force - the prompt
+ * names the point, what it keeps and what it removes, and the two answers are the rewind and the way
+ * out - rather than to a translation of the Chinese sentence.
  */
-test("the rewind's confirmation says what it removes, in both catalogues", () => {
+test("the rewind's confirmation says what it keeps and what it removes, in both catalogues", () => {
   const zh = messages("zh-CN");
-  assert.equal(zh.rewindConfirmPrompt, "回退到此之前（删除本条及之后）");
-  assert.equal(zh.rewindConfirmYes, "确认回退");
+  assert.equal(zh.rewindHere, "回退到此处");
+  assert.equal(zh.rewindConfirmPrompt, "确认回退到此处（保留本条，删除其后全部消息）");
+  assert.equal(zh.rewindConfirmYes, "回退到此处");
   assert.equal(zh.rewindConfirmNo, "取消");
 
   const en = messages("en");
-  assert.equal(en.rewindConfirmPrompt, "Rewind to before this (deletes this message and everything after it)");
-  assert.equal(en.rewindConfirmYes, "Confirm rewind");
+  assert.equal(en.rewindHere, "Rewind to here");
+  assert.equal(en.rewindConfirmPrompt, "Confirm rewind to here (keeps this message, deletes everything after it)");
+  assert.equal(en.rewindConfirmYes, "Rewind to here");
   assert.equal(en.rewindConfirmNo, "Cancel");
 
   for (const locale of ["en", "zh-CN"]) {
     const labels = messages(locale);
-    // The control's own name already states the removal and the count it would make; the confirm may
-    // not be a second, vaguer sentence about the same press.
-    assert.match(labels.rewindHereName, /removes this message and everything after it|删除这条消息及其之后的全部内容/u);
+    // The control's own name already states what the cut keeps and what it removes, and the count it
+    // would make; the confirm may not be a second, vaguer sentence about the same press.
+    assert.match(
+      labels.rewindHereName,
+      /keeps this message and removes everything after it|保留这条消息，删除其后的全部内容/u,
+    );
     assert.match(labels.rewindHereName, /\{\{count\}\}/u);
     assert.notEqual(labels.rewindConfirmYes, labels.rewindConfirmNo);
   }

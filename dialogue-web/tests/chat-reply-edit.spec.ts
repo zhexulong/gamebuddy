@@ -24,16 +24,17 @@ import { expect, test, type Page } from "@playwright/test";
  *    the variant a later swipe selects back to), and the edit lands on the ACTIVE one: the pager still
  *    says the same position after the edit, the variant the player swipes to carries the Host's own
  *    untouched words, and swiping back shows the edit.
- * 4. `the greeting carries no control at all` - not a disabled one: the greeting has its own editor on
- *    the Characters surface and the Host refuses an edit of it by name, so an affordance that exists
- *    only to refuse is worse than none. The row is still one of HER rows, which is what makes the
- *    absence a decision rather than an accident of role.
+ * 4. `the greeting is edited in place, and its own switcher still names the opening` - the owner's
+ *    ruling of 2026-10-20 supersedes "the greeting is a retained anchor": row zero offers the same
+ *    control and the same editor her replies do, the edit rewrites that row's text in place (one
+ *    bubble, same handle, same position), and the greeting's own variant switcher keeps naming the
+ *    opening the conversation is on. What stays out of reach is the CARD's greeting assets - this is
+ *    the session's own row.
  * 5. `a refusal keeps its own sentence, and the conversation it refused is unchanged` - driven through
  *    the real composed shell, because that is where a refusal becomes a sentence. The refusal is
  *    resolved by the authoritative reread when that reread can run, so the conversation is asserted
  *    unchanged there; when the reread cannot run either, the sentence is what the player has, and each
- *    code states its own (a stale order says the conversation moved on, the greeting's own code says
- *    where the greeting IS edited).
+ *    code states its own (a stale order says the conversation moved on, an in-flight reply says so).
  */
 
 const CONVERSATION = [
@@ -68,6 +69,18 @@ type ReplyEditProbe = {
     bubble: { width: number; height: number; left: number; right: number } | null;
     strip: { width: number; height: number };
   } | null;
+  editInPlace(
+    handle: string,
+    text: string,
+  ): {
+    row: { top: number; bottom: number; height: number };
+    bubble: { top: number; bottom: number; height: number } | null;
+    field: { top: number; bottom: number; height: number } | null;
+    textNodes: number;
+    carriers: readonly string[];
+    copies: number;
+  } | null;
+  withOpening(handle: string, text: string): void;
   editCalls(): readonly { handle: string; order: number; text: string }[];
   resetEditCalls(): void;
   applyEditedText(handle: string, text: string): void;
@@ -235,30 +248,80 @@ test("with several variants on her row, the edit lands on the active one and the
   expect(rows.map((row) => row.handle)).toEqual(["h0", "h1", "h2", "h3", "h4"]);
 });
 
-test("the greeting carries no edit control at all, while her other rows carry one", async ({ page }) => {
+test("the greeting is edited in place, and its own switcher still names the opening", async ({ page }) => {
   await openConversation(page);
+  // The Host still leaves the opening open for choice, so the greeting carries the switcher its own
+  // edit must not disturb.
+  await page.evaluate(() => window.chatProbe.withOpening("h0", "An opening greet."));
+  await page.evaluate(() => window.chatProbe.resetEditCalls());
 
-  // The greeting is still one of HER rows - the same role as the two that are editable - so its lack of
-  // a control is the surface's own decision, not a consequence of who spoke.
-  await expect(page.locator('[data-handle="h0"]')).toHaveClass(/companion/);
-  expect(await page.evaluate(() => window.chatProbe.editControl("h0"))).toBeNull();
-  await expect(page.locator('[data-handle="h0"] [data-testid="message-edit"]')).toHaveCount(0);
-  // Not even a disabled one: the affordance is absent here rather than offered and refused.
-  await expect(page.locator('[data-handle="h0"] [data-testid="message-edit"][disabled]')).toHaveCount(0);
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 400, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const where = `${viewport.width}x${viewport.height}`;
 
-  // Her replies, on the other hand, each carry exactly one.
-  expect(await page.evaluate(() => window.chatProbe.editControl("h2"))).not.toBeNull();
-  expect(await page.evaluate(() => window.chatProbe.editControl("h4"))).not.toBeNull();
-  await expect(page.locator('[data-handle="h2"] [data-testid="message-edit"]')).toHaveCount(1);
-  await expect(page.locator('[data-handle="h4"] [data-testid="message-edit"]')).toHaveCount(1);
+    // The greeting is one of HER rows, and the control it carries is the one her replies carry.
+    await expect(page.locator('[data-handle="h0"]'), where).toHaveClass(/companion/);
+    await expect(page.locator('[data-handle="h0"] [data-testid="message-edit"]'), where).toHaveCount(1);
+    await expect(page.locator('[data-handle="h0"] .swipe-indicator'), where).toHaveText("Default 1/2");
 
-  const rows = await page.evaluate(() => window.chatProbe.transcriptRows());
+    const closed = await page.evaluate(() => window.chatProbe.editInPlace("h0", "An opening greet."));
+    await page.click('[data-handle="h0"] [data-testid="message-edit"]');
+    const open = await page.evaluate(() => window.chatProbe.editInPlace("h0", "An opening greet."));
+    const form = await page.evaluate(() => window.chatProbe.editForm("h0"));
+    const buttons = await page.locator('[data-handle="h0"] .message-actions button').allTextContents();
+    console.log(
+      `MEASURE opening-edit ${where}: row ${closed?.row.height} -> ${open?.row.height} | ` +
+        `bubble ${JSON.stringify(closed?.bubble)} -> ${JSON.stringify(open?.bubble)} | ` +
+        `field ${JSON.stringify(open?.field)} | copies ${open?.copies} (text nodes ${open?.textNodes}) | ` +
+        `strip buttons ${JSON.stringify(buttons.map((label) => label.trim()))}`,
+    );
+    // The editor is the whole strip, holding the greeting's own words - which stand on screen once.
+    expect(form?.value, where).toBe("An opening greet.");
+    expect(open?.bubble, where).toBeNull();
+    expect(open?.textNodes, where).toBe(0);
+    expect(open?.copies, where).toBe(1);
+    expect(buttons.map((label) => label.trim()), where).toEqual(["Save", "Cancel"]);
+    await page.click('[data-testid="message-edit-cancel"]');
+    // Cancel is lossless: the greeting's own bubble comes back at the box it had.
+    const restored = await page.evaluate(() => window.chatProbe.editInPlace("h0", "An opening greet."));
+    expect(restored?.field, where).toBeNull();
+    expect(restored?.bubble, where).toEqual(closed?.bubble);
+  }
+
+  // The save sends the opening's own handle and its order - zero, because the transcript is what a
+  // position means and the greeting IS row zero.
+  await page.click('[data-handle="h0"] [data-testid="message-edit"]');
+  await page.fill('[data-testid="message-edit-field"]', "Good morning, traveller.");
+  await page.click('[data-testid="message-edit-save"]');
+  expect(await page.evaluate(() => window.chatProbe.editCalls())).toEqual([
+    { handle: "h0", order: 0, text: "Good morning, traveller." },
+  ]);
+
+  // The authoritative reread is what lands it: the same row, at the same position, drawing ONE bubble.
+  const before = await page.evaluate(() => window.chatProbe.transcriptRows());
+  await page.evaluate(() => window.chatProbe.applyEditedText("h0", "Good morning, traveller."));
+  await expect(page.locator('[data-handle="h0"] [data-testid="message-edit-form"]')).toHaveCount(0);
+  const after = await page.evaluate(() => window.chatProbe.transcriptRows());
   console.log(
-    `MEASURE journey4.4: rows ${rows.length} handles ${rows.map((row) => row.handle).join(",")} opening row index ${
-      rows[0]?.index
-    }`,
+    `MEASURE opening-edit landed: rows ${before.length} -> ${after.length} handles ${after
+      .map((row) => row.handle)
+      .join(",")} row0 ${JSON.stringify(after[0])} indicator ${JSON.stringify(
+      await page.locator('[data-handle="h0"] .swipe-indicator').innerText(),
+    )}`,
   );
-  expect(rows.map((row) => row.handle)).toEqual(["h0", "h1", "h2", "h3", "h4"]);
+  // In place: no second bubble, the same handle, the same position, and the greeting's own switcher
+  // still says which opening this is.
+  expect(after.map((row) => row.handle)).toEqual(before.map((row) => row.handle));
+  expect(after.length).toBe(before.length);
+  expect(after[0]?.index).toBe(0);
+  expect(after[0]?.bubbles).toBe(1);
+  expect((after[0]?.text ?? "").trim()).toBe("Good morning, traveller.");
+  await expect(page.locator('[data-handle="h0"] .swipe-indicator')).toHaveText("Default 1/2");
+  // And its one control is back in its place.
+  await expect(page.locator('[data-handle="h0"] [data-testid="message-edit"]')).toHaveCount(1);
 });
 
 /**
@@ -423,10 +486,9 @@ test("a refusal keeps its own sentence, and the conversation it refused is uncha
   await expect(page.getByRole("alert")).toContainText("no longer where the page read it");
   console.log(`MEASURE journey4.5b: alert ${JSON.stringify(await page.getByRole("alert").innerText())}`);
 
-  // The greeting's own refusal has its own sentence, and it does not borrow the stale order's words.
-  // This is the code arriving at the surface, which no control on it can earn any more: the greeting
-  // carries no edit control, and the Host is still the one that names what a row like this is.
-  refusalCode = "chat_edit_opening_retained";
+  // Another refusal has its own sentence, and it does not borrow the stale order's words: the surface
+  // states the code it actually received rather than one generic "something went wrong".
+  refusalCode = "chat_edit_turn_active";
   // A fresh mount: the boot token is stripped from the fragment on the way in, so re-navigating to it is
   // a same-document fragment change and would not remount the shell.
   await page.goto("about:blank");
@@ -435,8 +497,8 @@ test("a refusal keeps its own sentence, and the conversation it refused is uncha
   await startEdit();
   await save();
   await settle(3);
-  await expect(page.getByRole("alert")).toContainText("That is the opening");
-  await expect(page.getByRole("alert")).toContainText("Characters surface");
+  await expect(page.getByRole("alert")).toContainText("A reply is still being written");
+  await expect(page.getByRole("alert")).toContainText("Wait for the reply to finish");
   await expect(page.getByRole("alert")).not.toContainText("The conversation moved");
   console.log(`MEASURE journey4.5c: alert ${JSON.stringify(await page.getByRole("alert").innerText())}`);
 });

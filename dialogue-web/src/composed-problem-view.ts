@@ -64,12 +64,6 @@ function messageMutationProblemView(code: string | null, labels: Messages): Prob
         title: labels.problemChatRewindTurnActiveTitle,
         detail: labels.problemChatRewindTurnActiveDetail,
       };
-    case "chat_edit_opening_retained":
-      return {
-        kind: "problem",
-        title: labels.problemChatEditOpeningRetainedTitle,
-        detail: labels.problemChatEditOpeningRetainedDetail,
-      };
     case "chat_edit_not_player_message":
       return {
         kind: "problem",
