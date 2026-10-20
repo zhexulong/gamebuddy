@@ -294,6 +294,7 @@ export const GATES_WITH_FALSIFIER = Object.freeze([
   "check-live-run-failure-dump.mjs",
   "check-live-run-isolation.mjs",
   "check-live-run-multiday-baseline.mjs",
+  "check-live-run-silence.mjs",
   "check-stardew-fixture-action-coverage.mjs",
   "check-stardew-native-notice-coverage.mjs",
 ]);
