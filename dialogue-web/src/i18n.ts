@@ -368,7 +368,11 @@ const en = {
   deleteMessageName: "Delete this message: the model stops reading it from the next turn on",
   deleteConfirmPrompt: "Delete this message? This cannot be undone.",
   deleteConfirmYes: "Delete",
-  deleteConfirmNo: "Keep",
+  // The negative answer to every destructive confirmation in this product is the same word -
+  // `取消` / `Cancel` (the owner's ruling, 2026-10-20). It is the way OUT of the press, never a
+  // second name for the state the row is already in; the affirmative is the one that says what
+  // the press does.
+  deleteConfirmNo: "Cancel",
   // The Host's own name for the greeting variant a new chat opened on: it labels
   // the greeting set's entries `Default` / `Alternate N` (the card's own 1-based
   // order). The catalogue carries that vocabulary so a zh-CN UI never prints the
@@ -658,7 +662,9 @@ const en = {
   chatRetentionTrashConfirm:
     "Move this chat to the trash? It leaves the active list and can be restored later. Continue?",
   chatRetentionTrashConfirmYes: "Move to trash",
-  chatRetentionConfirmNo: "Keep the chat",
+  // The same negative as every other destructive pair in the product: `取消`. The verbs above
+  // stay specific to what each press does; the way out is one word.
+  chatRetentionConfirmNo: "Cancel",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -975,7 +981,7 @@ const zh: Messages = {
   deleteMessageName: "删除这条消息：模型从下一轮开始不再读到它",
   deleteConfirmPrompt: "删除这条消息？此操作无法撤销。",
   deleteConfirmYes: "删除",
-  deleteConfirmNo: "保留",
+  deleteConfirmNo: "取消",
   openingVariantDefault: "默认",
   openingVariantAlternate: "备用 {{index}}",
 
@@ -1230,7 +1236,7 @@ const zh: Messages = {
   chatRetentionArchiveConfirmYes: "归档",
   chatRetentionTrashConfirm: "将此会话移入回收站？它将离开活动列表，之后可以恢复。是否继续？",
   chatRetentionTrashConfirmYes: "移入回收站",
-  chatRetentionConfirmNo: "保留会话",
+  chatRetentionConfirmNo: "取消",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {

@@ -112,3 +112,28 @@ test("the rewind's confirmation says what it keeps and what it removes, in both 
     assert.notEqual(labels.rewindConfirmYes, labels.rewindConfirmNo);
   }
 });
+
+/**
+ * One confirmation vocabulary: `[verb] / 取消`.
+ *
+ * The owner's ruling (2026-10-20) is that the affirmative names what the press DOES, and the way
+ * out is always the same word - so a row's two answers never become a pair of state names the
+ * player has to decode. The verb stays specific (`Delete`, `Move to trash`, `Rewind to here`) and
+ * may not collapse into the negative's word either, which is why both halves are pinned.
+ */
+test("every destructive confirmation answers with [verb] / 取消 in both catalogues", () => {
+  const pairs = [
+    ["rewindConfirmYes", "rewindConfirmNo"],
+    ["deleteConfirmYes", "deleteConfirmNo"],
+    ["chatRetentionArchiveConfirmYes", "chatRetentionConfirmNo"],
+    ["chatRetentionTrashConfirmYes", "chatRetentionConfirmNo"],
+  ];
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    const out = locale === "en" ? "Cancel" : "取消";
+    for (const [yes, no] of pairs) {
+      assert.equal(labels[no], out, `${locale}.${no} is not the one way out`);
+      assert.notEqual(labels[yes], labels[no], `${locale}.${yes} collapsed into the negative's word`);
+    }
+  }
+});

@@ -105,12 +105,14 @@ test("the delete arms, states what goes, replaces the row's controls, and sends 
   expect(armed?.prompt).toContain("Delete this message?");
   expect(armed?.prompt).toContain("cannot be undone");
   expect(armed?.yes).toBe("Delete");
-  expect(armed?.no).toBe("Keep");
+  // The negative is the product's one way out (the owner's confirmation ruling, 2026-10-20): the
+  // affirmative above names the act, and this answer only leaves the row as it was.
+  expect(armed?.no).toBe("Cancel");
   // The confirmation replaces the row's own controls rather than sitting among them.
   expect(armed?.ordinaryControls).toBe(0);
   await expect(page.locator("ol.message-list > li")).toHaveCount(CONVERSATION.length);
 
-  // Keep closes the arm and sends nothing.
+  // Cancel closes the arm and sends nothing.
   await page.click('[data-testid="message-delete-confirm-no"]');
   expect(await page.evaluate(() => window.chatProbe.deleteConfirm("h2"))).toBeNull();
   expect(await page.evaluate(() => window.chatProbe.deleteControl("h2"))).not.toBeNull();
