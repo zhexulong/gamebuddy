@@ -667,6 +667,10 @@ function summarizeExecutionOutcomes({ facts, actionOfRequest, terminalReasonCode
  */
 function summarizePresentationEvidence() {
   return Object.freeze({
+    // Each piece carries `atMs` on the run clock, and the turn's own start is published beside them, so a reader can
+    // place a spoken line against a dispatch instead of only against its own turn. Before this the silence gate had
+    // to report its longest stretch as an UPPER BOUND (161 s, `cause: run_end`, measured 2026-10-20).
+    turnStartedAtMs,
     pieces: Object.freeze([...presentationPieces]),
     pieceCount: presentationPieces.length,
     firstPieceTtfbMs: presentationPieces.length > 0 ? presentationPieces[0].elapsedMs : null,
