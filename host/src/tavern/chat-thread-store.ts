@@ -719,19 +719,21 @@ export type ChatThreadStore = Readonly<{
     input: Readonly<{ messageId: string; expectedOrder: number }>,
   ): Promise<ChatThreadState>;
   /**
-   * The durable half of an in-place edit: the player's own message, or her reply, carries different
-   * text from now on. Like the rewind, the caller names the exact row it read AND the position it read
-   * it at - a row that has moved since that read is refused rather than edited where the player never
-   * saw it.
+   * The durable half of an in-place edit: the player's own message, or her reply, or the greeting the
+   * Chat opened on, carries different text from now on. Like the rewind, the caller names the exact row
+   * it read AND the position it read it at - a row that has moved since that read is refused rather than
+   * edited where the player never saw it.
    *
-   * A reply's words stand in two places and they are one fact: the row's own text is the message every
-   * reader sees, and the row's active variant is the words a later swipe selects back to. Both are
-   * rewritten together, and only the ACTIVE variant is: her other attempts are hers and stay as they
-   * were. The greeting the Chat opened on is refused (`chat_edit_opening_retained`) - it is the
-   * conversation's own anchor with its own editor, not one of the exchanges - and so is any row that is
-   * neither the player's own words nor her reply. A turn that is not terminal refuses the whole
-   * operation, because the accepted player row is the prompt the reply in flight is being written from:
-   * editing it would leave the transcript disagreeing with a request the model already received.
+   * A reply's words, and the greeting's, stand in two places and they are one fact: the row's own text
+   * is the message every reader sees, and the row's active variant is the words a later swipe selects
+   * back to. Both are rewritten together, and only the ACTIVE variant is: her other attempts are hers and
+   * stay as they were. The greeting is row zero - the conversation's own opening, which the thread's
+   * opening record names - and the edit is local to this session: the transcript's row and that session's
+   * own anchor move, while the reviewed card's greeting assets are never touched. A row that is neither
+   * the player's own words, her reply, nor that opening is not a message this operation edits. A turn
+   * that is not terminal refuses the whole operation, because the accepted player row is the prompt the
+   * reply in flight is being written from: editing it would leave the transcript disagreeing with a
+   * request the model already received.
    */
   editTranscriptMessage?(
     authority: MountedTurnTransitionAuthority,
@@ -2324,14 +2326,14 @@ export function createChatThreadStore(
         if (index < 0) throw new Error("chat_message_not_found");
         if (index !== input.expectedOrder) throw new Error("chat_message_revision_conflict");
         const target = current.messages[index]!;
-        // The greeting is the conversation's own opening - the row the thread's opening names and the row
-        // the exchange above it is read against - and it has its own editor, so it does not change here.
-        if (target.kind === "opening") throw new Error("chat_edit_opening_retained");
-        // The player's own words, or her reply, and nothing else: those are the two messages the player
-        // may correct, and either one is a real exchange this operation rewrites.
+        // The player's own words, her reply, or the greeting the Chat opened on. Row zero is the
+        // conversation's own opening - the row the thread's opening record names - and the player adjusts
+        // it in place for THIS session: its row and the active variant its row carries move together,
+        // exactly as a reply's do, while the reviewed card's own greeting assets are never touched. A row
+        // that is none of those is not a message this operation edits.
         const editable =
           (target.role === "player" && target.kind === "player") ||
-          (target.role === "companion" && target.kind === "response");
+          (target.role === "companion" && (target.kind === "response" || target.kind === "opening"));
         if (!editable) throw new Error("chat_edit_not_player_message");
         const ledger = current.turnLedger;
         if (ledger !== null && !isTerminalLedger(ledger)) throw new Error("chat_edit_turn_active");
@@ -2340,11 +2342,11 @@ export function createChatThreadStore(
           chatThreadId,
           input.messageId,
         );
-        // Her reply's words stand in two places and they are one fact: `readMessages` hands every reader
-        // the row's own text as the message, and the row's variant list is what a later swipe selects
-        // from. Only the ACTIVE variant is rewritten - her other attempts stay as they were - because an
-        // edit that wrote one and not the other would resurrect the replaced words the moment the player
-        // switched away and back.
+        // Her reply's words - and the greeting's - stand in two places and they are one fact: `readMessages`
+        // hands every reader the row's own text as the message, and the row's variant list is what a later
+        // swipe selects from. Only the ACTIVE variant is rewritten - her other attempts stay as they were -
+        // because an edit that wrote one and not the other would resurrect the replaced words the moment
+        // the player switched away and back.
         if (target.role === "companion")
           db.prepare(
             "UPDATE tavern_message_swipes SET text = ? WHERE thread_id = ? AND message_id = ? AND swipe_index = ?",

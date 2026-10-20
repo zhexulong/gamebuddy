@@ -916,7 +916,6 @@ test("delegated handler answers the reference profile's Edit route, and every re
     // Each refusal the Host names keeps its own code: the player is told which row the edit cannot
     // touch, not that the runtime went away.
     for (const refusal of [
-      "chat_edit_opening_retained",
       "chat_edit_not_player_message",
       "chat_edit_turn_active",
       "chat_message_not_found",
@@ -926,7 +925,7 @@ test("delegated handler answers the reference profile's Edit route, and every re
       assert.equal(refused.status, 409, refusal);
       assert.equal(((await refused.json()) as { code: string }).code, refusal);
     }
-    assert.equal(recorder.edits.length, 5);
+    assert.equal(recorder.edits.length, 4);
   } finally {
     await server.close();
     assert.equal(recorder.closes, 1);

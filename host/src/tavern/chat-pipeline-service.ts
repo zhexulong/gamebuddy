@@ -665,14 +665,13 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       // The transcript is what a position means: a row that is no longer where the browser read it is
       // a stale view, and editing from it would rewrite a message the player is not looking at.
       if (order !== command.expectedOrder) throw mutationRefusal("chat_message_revision_conflict");
-      // The player's own words, or her reply: both are messages the player may correct, and a reply's
-      // text is also the variant its row carries, which the store rewrites with it. The greeting the
-      // Chat opened on is the conversation's own anchor with its own editor, and any row that is
-      // neither is not a message this operation edits.
-      if (target.kind === "opening") throw mutationRefusal("chat_edit_opening_retained");
+      // The player's own words, her reply, or the greeting the Chat opened on: those are the messages
+      // the player may correct, and each one is a message this operation rewrites. The greeting is row
+      // zero, edited for this session alone - its row and the active variant its row carries move
+      // together - and any row that is none of them is not a message this operation edits.
       const editable =
         (target.role === "player" && target.kind === "player") ||
-        (target.role === "companion" && target.kind === "response");
+        (target.role === "companion" && (target.kind === "response" || target.kind === "opening"));
       if (!editable) throw mutationRefusal("chat_edit_not_player_message");
       // A turn that is not terminal is a reply being written from the very text this edit replaces,
       // so the transcript is not allowed to change under it.
@@ -926,8 +925,8 @@ function validateSubmitCommand(command: SubmitMessageCommandV1, lease: MountedCh
 }
 
 /**
- * The message-mutation refusals that name the point the player chose: the rewind's four, the edit's
- * three and the delete's three. They keep their own code all the way to the surface; every other failure
+ * The message-mutation refusals that name the point the player chose: the rewind's four, the edit's two
+ * and the delete's three. They keep their own code all the way to the surface; every other failure
  * (store shape, session path, read-back, admission, unknown) collapses to the service's fail-closed code
  * so no raw path, identifier or content can escape. One list for all three operations, because each
  * forwards the durable store's own refusals unchanged - and only codes a store or ingress can really
@@ -938,7 +937,6 @@ const CHAT_MESSAGE_MUTATION_REFUSALS: readonly string[] = [
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
-  "chat_edit_opening_retained",
   "chat_edit_not_player_message",
   "chat_edit_turn_active",
   "chat_delete_opening_retained",

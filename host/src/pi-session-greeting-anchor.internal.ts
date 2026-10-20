@@ -14,9 +14,11 @@
  * the entries that existed before its own prompt as the entries it produced
  * (`bindSettledPromptEntries`), so the anchor can never be attributed to a turn, and the ledger has no
  * turn, attempt, generation or `presentation_commit` for it - it is context the model reads, not a
- * message any operation wrote. The transcript's own mutations refuse row zero by name
- * (`chat_rewind_opening_retained`, `chat_edit_opening_retained`, `chat_delete_opening_retained`), so
- * nothing drops it from the other side either.
+ * message any operation wrote. The transcript's own rewind and delete refuse row zero by name
+ * (`chat_rewind_opening_retained`, `chat_delete_opening_retained`), so nothing drops it from the other
+ * side; the one operation that does reach it is the in-place edit (`chat.edit`), which replaces this
+ * entry's words for the session exactly as it replaces a reply's, and never touches the reviewed
+ * greeting assets.
  *
  * WHAT DECIDES THAT IT IS ALREADY THERE. The session's own entries, which are the only authority that
  * cannot drift from the write: a file that already opens on a line of the conversation is exactly a

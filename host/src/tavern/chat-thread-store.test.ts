@@ -1312,8 +1312,12 @@ test("a swipe variant is the same reply position: one player row, and the active
  * switches away and back. Every assertion is made on a read-back, and the variant-scan assertion reads
  * the same bounded tail the per-turn World Info selection uses, so "the corrected words are the visible
  * ones" is proven against the Host's own context assembly rather than against this store's return value.
+ *
+ * The greeting the Chat opened on is the same operation on row zero: the player adjusts the opening in
+ * place for THIS session, so its text and the active variant its row carries move together, and the
+ * thread's recorded opening - the reviewed card's own greeting record - is never one of the two places.
  */
-test("an edit of her reply rewrites the variant it stands on and leaves her other attempts alone", async () => {
+test("an edit of her reply rewrites the variant it stands on, leaves her other attempts alone, and reaches the greeting in place", async () => {
   const { root, store: s, creation, key } = await store();
   const reopened = createChatThreadStore(root, key);
   try {
@@ -1366,27 +1370,32 @@ test("an edit of her reply rewrites the variant it stands on and leaves her othe
     assert.equal(durable.messages[2]!.text, "Hello again, corrected");
     assert.deepEqual(durable.messages[2]!.swipes, ["Hello back", "Hello again, corrected"]);
 
-    // The greeting is the row this operation refuses, and a refusal moves neither place.
-    await assert.rejects(
-      () =>
-        s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
-          messageId: "opening_01",
-          expectedOrder: 0,
-          text: "Rewrite the greeting",
-        }),
-      /chat_edit_opening_retained/,
-    );
-    const afterRefusal = await reopened.resumeThread("thread_01", "surface_01");
+    // The greeting the Chat opened on is edited in place like her reply, and for THIS session alone:
+    // row zero's text and the active variant its row carries move together, no other row moves, and the
+    // thread's recorded opening - the card's own greeting record - is not this operation's to touch.
+    const editedOpening = await s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+      messageId: "opening_01",
+      expectedOrder: 0,
+      text: "Welcome, the tavern is yours tonight.",
+    });
     assert.deepEqual(
-      afterRefusal.messages.map((message) => message.text),
-      durable.messages.map((message) => message.text),
+      editedOpening.messages.map((message) => message.messageId),
+      durable.messages.map((message) => message.messageId),
     );
-    assert.deepEqual(
-      afterRefusal.messages.map((message) => message.swipes),
-      durable.messages.map((message) => message.swipes),
-    );
+    assert.equal(editedOpening.messages[0]!.text, "Welcome, the tavern is yours tonight.");
+    assert.equal(editedOpening.messages[0]!.kind, "opening");
+    assert.equal(editedOpening.messages[0]!.role, "companion");
+    assert.deepEqual(editedOpening.messages[0]!.swipes, ["Welcome, the tavern is yours tonight."]);
+    assert.deepEqual(editedOpening.thread.openingSelection, durable.thread.openingSelection);
+    // Her reply, the row the edit above rewrote, is exactly where that edit left it.
+    assert.equal(editedOpening.messages[2]!.text, "Hello again, corrected");
+    assert.deepEqual(editedOpening.messages[2]!.swipes, ["Hello back", "Hello again, corrected"]);
+    // Both places row zero's words stand are durable across connections, not this store's own memory.
+    const afterOpening = await reopened.resumeThread("thread_01", "surface_01");
+    assert.equal(afterOpening.messages[0]!.text, "Welcome, the tavern is yours tonight.");
+    assert.deepEqual(afterOpening.messages[0]!.swipes, ["Welcome, the tavern is yours tonight."]);
     // A player line is not a variant position: it carries no variant an edit could rewrite.
-    assert.equal(afterRefusal.messages[1]!.swipes, undefined);
+    assert.equal(afterOpening.messages[1]!.swipes, undefined);
   } finally {
     reopened.close?.();
     s.close?.();
@@ -1638,10 +1647,11 @@ test("a rewind drops the named message and every row after it, together with the
  *
  * Her reply is the other message this operation edits, and the variant bookkeeping its own edit keeps
  * (the row's text and the active variant its row carries, rewritten together) is proven next door, in
- * "an edit of her reply rewrites the variant it stands on and leaves her other attempts alone". Here the
- * greeting the Chat opened on is the row that refuses, with a code of its own: it is the conversation's
- * own anchor and has its own editor, which is a different fact from the one the player-only refusal used
- * to carry.
+ * "an edit of her reply rewrites the variant it stands on, leaves her other attempts alone, and reaches
+ * the greeting in place". Here the greeting the Chat opened on is edited in place itself: row zero's text
+ * and the active variant its row carries move together, every other row stays where it is, and the
+ * thread's recorded opening - the card's own greeting record - is not one of the two places an edit
+ * writes.
  */
 test("an edit rewrites the player's own row in place and leaves the transcript exactly as it was when it refuses", async () => {
   const root = await canonicalTestRoot("gamebuddy-chat-thread-edit-");
@@ -1729,10 +1739,38 @@ test("an edit rewrites the player's own row in place and leaves the transcript e
     assert.equal(after.turnLedger?.turnId, second.turnId);
     assert.equal(after.turnLedger?.status, "completed");
     assert.equal(after.idempotency.length, 2);
+    // The greeting the Chat opened on is the same operation on row zero, and it is local to this session:
+    // its text and the active variant its row carries move together, no other row moves, and the thread's
+    // recorded opening - the card's own greeting record - is not one of the two places this writes.
+    const editedOpening = await s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+      messageId: "opening_01",
+      expectedOrder: 0,
+      text: "Welcome, the tavern is yours tonight.",
+    });
+    assert.deepEqual(
+      editedOpening.messages.map((message) => message.messageId),
+      before.messages.map((message) => message.messageId),
+    );
+    assert.equal(editedOpening.messages[0]!.text, "Welcome, the tavern is yours tonight.");
+    assert.equal(editedOpening.messages[0]!.kind, "opening");
+    assert.deepEqual(editedOpening.messages[0]!.swipes, ["Welcome, the tavern is yours tonight."]);
+    assert.deepEqual(editedOpening.thread.openingSelection, before.thread.openingSelection);
+    assert.deepEqual(
+      editedOpening.messages.slice(1).map((message) => message.text),
+      after.messages.slice(1).map((message) => message.text),
+    );
+    assert.equal(editedOpening.turnLedger?.turnId, second.turnId);
+    assert.equal(editedOpening.idempotency.length, 2);
     const durable = await reopened.resumeThread("thread_01", "surface_01");
     assert.deepEqual(
       durable.messages.map((message) => message.text),
-      ["Welcome to the tavern.", "First line, corrected", "First line back", "Second line", "Second line back"],
+      [
+        "Welcome, the tavern is yours tonight.",
+        "First line, corrected",
+        "First line back",
+        "Second line",
+        "Second line back",
+      ],
     );
     // The turn's own evidence is still readable: the edit changed words, not the ledger the words
     // belong to.
@@ -1761,17 +1799,6 @@ test("an edit rewrites the player's own row in place and leaves the transcript e
           text: "The wrong row entirely",
         }),
       /chat_message_revision_conflict/,
-    );
-    // The greeting the Chat opened on: the conversation's own anchor, which has its own editor, so an
-    // in-place edit refuses by naming exactly that rather than as a row the player did not write.
-    await assert.rejects(
-      () =>
-        s.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
-          messageId: "opening_01",
-          expectedOrder: 0,
-          text: "Rewrite the greeting",
-        }),
-      /chat_edit_opening_retained/,
     );
     // Text the durable store will not carry (empty, or non-NFC) is its own refusal, not an edit.
     await assert.rejects(

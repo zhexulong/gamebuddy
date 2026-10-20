@@ -1332,9 +1332,9 @@ export async function rewindMountedChatTranscript(
 
 /**
  * The one authorized in-place edit ingress. An edit replaces what the model's own session carries for
- * one message - the player's own line or her reply, the two messages the player may correct - and only a
- * live mounted lease holds the exact runtime session whose path the mounted conversation owns; so a
- * caller with a store but no live mount cannot reshape a conversation. Like the swipe and rewind
+ * one message - the player's own line, her reply, or the greeting the Chat opened on - and only a live
+ * mounted lease holds the exact runtime session whose path the mounted conversation owns; so a caller
+ * with a store but no live mount cannot reshape a conversation. Like the swipe and rewind
  * ingresses it neither creates nor selects a Chat and never prompts Pi.
  *
  * The order is the whole point, and it is the rewind's: the durable read, the session's own
@@ -1375,22 +1375,25 @@ export async function editMountedChatMessage(
   const target = state.messages[input.expectedOrder];
   if (target === undefined || target.messageId !== input.messageId)
     throw refuseMountedMutation("edit target-mismatch", "chat_message_revision_conflict");
-  // The player's own line or her reply, and nothing else: the greeting the Chat opened on has its own
-  // editor, and a row that is neither of the two exchanges is not a message this operation edits.
-  if (target.kind === "opening") throw refuseMountedMutation("edit target-opening", "chat_edit_opening_retained");
+  // The player's own line, her reply, or the greeting the Chat opened on: row zero is the conversation's
+  // own opening, which the mount anchors in the session as its first assistant message, and a row that is
+  // none of them is not a message this operation edits.
   const editable =
     (target.role === "player" && target.kind === "player") ||
-    (target.role === "companion" && target.kind === "response");
+    (target.role === "companion" && (target.kind === "response" || target.kind === "opening"));
   if (!editable) throw refuseMountedMutation("edit target-not-editable", "chat_edit_not_player_message");
   // The greeting is never prompted into the session as a turn, but the mount anchors it there as the
-  // conversation's own first assistant message (`pi-session-greeting-anchor.internal.ts`), so the
-  // entry's own position is the number of transcript rows before it that a prompt could carry, plus
-  // that one anchor when it holds a position among them.
+  // conversation's own first assistant message (`pi-session-greeting-anchor.internal.ts`), so that anchor
+  // IS the opening row's own entry, at the entries' first position; every row after it sits at the number
+  // of transcript rows before it that a prompt could carry, plus that one anchor when it holds a position
+  // among them.
   const rowsBeforeTarget = state.messages
     .slice(0, input.expectedOrder)
     .filter((message) => message.kind !== "opening").length;
   const entryIndex =
-    rowsBeforeTarget + (greetingAnchorOccupiesFirstTranscriptEntry(runtimeSession.sessionManager) ? 1 : 0);
+    target.kind === "opening"
+      ? 0
+      : rowsBeforeTarget + (greetingAnchorOccupiesFirstTranscriptEntry(runtimeSession.sessionManager) ? 1 : 0);
   const edited = editPiTranscriptEntry(
     runtimeSession.session,
     entryIndex,
