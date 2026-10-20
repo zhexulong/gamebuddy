@@ -3024,6 +3024,7 @@ the owner.
 | obligation | class | decided by |
 | --- | --- | --- |
 | `no_machine_token_leak` | Invariant | interaction gate |
+| `no_self_tag_leak` | Invariant | interaction gate |
 | `no_step_recital` | Invariant | interaction gate |
 | `no_unobserved_world_reaction` | Invariant | interaction gate |
 | `spoken_within_ceiling` | Invariant | interaction gate |
