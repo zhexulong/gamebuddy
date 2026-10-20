@@ -531,9 +531,17 @@ function canonicalPresentationSource(batch: SerializedBatch): string | undefined
   return sensorySources.length > 0 ? sensorySources.at(-1) : undefined;
 }
 
-/** White-listed salient sensory kinds allowed to mint a bounded presentation lease. */
+/**
+ * White-listed salient sensory kinds allowed to mint a bounded presentation lease.
+ *
+ * `day_started` / `time_milestone` are the Mod's own salient events. `companion_arrival` is the Host's
+ * (see `companion-arrival-fact.ts`): she has just arrived on the farm and the world clock gave its first
+ * reading. It is the one proactive turn the product owes the player at arrival, so it must open the same
+ * presentation lease every other proactive turn does, or her greeting would reach the model and never
+ * reach the chat.
+ */
 function isSalientSensoryKind(kind: string | undefined): boolean {
-  return kind === "day_started" || kind === "time_milestone";
+  return kind === "day_started" || kind === "time_milestone" || kind === "companion_arrival";
 }
 
 function isOpaqueSource(value: unknown): value is string {

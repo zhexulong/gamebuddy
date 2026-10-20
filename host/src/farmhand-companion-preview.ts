@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { companionArrivalAlreadySaid } from "./companion-arrival-fact.js";
 import { createCompanionLiveEvidenceArtifact } from "./companion-live-evidence-artifact.js";
 import { createLiveSourceAttester } from "./companion-live-source-attestation.js";
 import { CompanionLoop } from "./companion-loop.js";
@@ -135,7 +136,9 @@ export function parseFarmhandCompanionPreviewConfig(value: unknown): FarmhandCom
     !isIdentifier(value.runtimeInstanceId) ||
     (value.requiredPresentationLocale !== "zh-CN" && value.requiredPresentationLocale !== "en-US") ||
     !isRecord(identity) ||
-    Object.keys(identity).some((key) => !["playerId", "companionId", "continuityId", "saveId", "worldId"].includes(key)) ||
+    Object.keys(identity).some(
+      (key) => !["playerId", "companionId", "continuityId", "saveId", "worldId"].includes(key),
+    ) ||
     !isIdentifier(identity.playerId) ||
     !isIdentifier(identity.companionId) ||
     !isIdentifier(identity.continuityId) ||
@@ -186,7 +189,6 @@ export async function startFarmhandCompanionPreview(value: unknown): Promise<Far
   return await startPreview(parseFarmhandCompanionPreviewConfig(value), productionDependencies());
 }
 
-
 async function startPreview(
   config: FarmhandCompanionPreviewConfig,
   dependencies: FarmhandCompanionPreviewDependencies,
@@ -231,8 +233,7 @@ async function composePreview(
   if (presentationLocale !== config.requiredPresentationLocale)
     throw new Error("farmhand_preview_presentation_locale_mismatch");
   const presentation = dependencies.presentationPort(launch);
-  if (!isFarmhandPresentationBridge(presentation))
-    throw new Error("farmhand_preview_presentation_bridge_unavailable");
+  if (!isFarmhandPresentationBridge(presentation)) throw new Error("farmhand_preview_presentation_bridge_unavailable");
   const turnTracker = new GameTurnLineageTracker();
   const runtime = await dependencies.createRuntime(
     config.identity,
@@ -281,7 +282,6 @@ export async function relaunchFarmhandCompanionPreview(
 ): Promise<FarmhandCompanionPreview> {
   return await relaunchPreview(parseFarmhandCompanionPreviewConfig(value), predecessor, productionDependencies());
 }
-
 
 async function relaunchPreview(
   config: FarmhandCompanionPreviewConfig,
@@ -471,6 +471,7 @@ function productionDependencies(): FarmhandCompanionPreviewDependencies {
         turnTracker,
         runtime.bindIntegrationReceipt,
         evidence,
+        Object.freeze({ alreadySaid: () => companionArrivalAlreadySaid(runtime.sessionManager) }),
       ),
   });
 }
