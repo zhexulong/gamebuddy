@@ -448,12 +448,16 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "answer_dialogue_answered",
     "native_wia_answer_question_v1",
   ),
+  // The PLAIN multi-day world, not the composed play-session one: this gate dispatches `advance_day` itself, and
+  // that action only works indoors - the plain world starts the actor at home in bed, while the play-session world
+  // warps it to the farm crossroads. The name has to be one the Mod accepts, and it has to be the world the fixture
+  // library arms for this action; two records for one fact is what the conformance check now refuses to reconcile.
   gate(
     "respond_level_up",
     1,
     "run-stardew-native-local-player-respond-level-up-smoke.mjs",
     "level_up_resolved",
-    "native_multi_day_play_session_v1",
+    "native_multi_day_v1",
   ),
   // Promoted to live-verified on 2026-10-08 after their native-local gates passed.
   gate(

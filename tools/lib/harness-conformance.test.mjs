@@ -15,7 +15,6 @@ import {
   harnessGateNames,
   readModFixtureSources,
 } from "./harness-conformance.mjs";
-import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
 
 const toolsDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(toolsDir, "..");
@@ -31,25 +30,48 @@ test("preflight check reports a preflight that misses a bad tree", () => {
   assert.deepEqual(checkLiveRunPreflight({ preflight: preflightLiveRun }), []);
 });
 
-test("scenario check reports a scenario the Mod's fixture code does not name", () => {
-  const findings = checkScenarioAcceptance({
-    modSources: [{ file: "ModEntry.Fixtures.cs", source: 'FixtureScenario is not ("native_till_soil_v1")' }],
+test("scenario check reports a fixture-library mapping the Mod never learned, and no run plan can rescue it", () => {
+  const modSources = [
+    { file: "ModEntry.Fixtures.cs", source: 'FixtureScenario is not ("native_till_soil_v1")' },
+    {
+      file: "ModEntry.Fixtures.MultiDay.cs",
+      source: 'fixture.FixtureScenario == "native_multi_day_play_session_v1"',
+    },
+  ];
+
+  // The fixture library's own mapping is the authority: a name the Mod's switch does not name is the
+  // finding on its own, with no run-plan record in sight.
+  const noPlan = checkScenarioAcceptance({
+    modSources,
     fixture: { actions: () => ["till_soil"], scenario: () => "native_absent_v1" },
     publishedScenarios: new Map(),
     actionIds: ["till_soil"],
   });
   assert.deepEqual(
-    findings.map((entry) => entry.code),
+    noPlan.map((entry) => entry.code),
     ["scenario_not_accepted_by_mod"],
   );
 
-  assert.deepEqual(checkScenarioAcceptance({ modSources: readModFixtureSources(repoRoot) }), []);
+  // The exact defect the old fallback masked: the fixture library named `native_respond_level_up_v1` (a
+  // world the Mod's switch has never had) while the run plan recorded `native_multi_day_play_session_v1`
+  // (accepted). The plan is a second authority for the same fact, and its disagreement is a finding, not
+  // a rescue - the fixture library's own mapping must itself be accepted.
+  const maskedByPlan = checkScenarioAcceptance({
+    modSources,
+    fixture: { actions: () => ["respond_level_up"], scenario: () => "native_respond_level_up_v1" },
+    publishedScenarios: new Map([["respond_level_up", "native_multi_day_play_session_v1"]]),
+    actionIds: ["respond_level_up"],
+  });
+  assert.deepEqual(
+    maskedByPlan.map((entry) => entry.code),
+    ["scenario_not_accepted_by_mod"],
+  );
+  assert.match(maskedByPlan[0].detail, /second authority for the same fact that disagrees/u);
 
-  // The plan's world only rescues an action when the switch actually names it: a run plan that records an
-  // unknown world too is still a finding.
+  // A run plan that records an unknown world too is still the same finding.
   const planAlsoUnknown = checkScenarioAcceptance({
-    modSources: [{ file: "ModEntry.Fixtures.cs", source: '"native_other_v1"' }],
-    fixture: { actions: fixtureActions, scenario: fixtureScenario },
+    modSources,
+    fixture: { actions: () => ["till_soil"], scenario: () => "native_absent_v1" },
     publishedScenarios: new Map([["till_soil", "native_absent_plan_v1"]]),
     actionIds: ["till_soil"],
   });
@@ -57,6 +79,9 @@ test("scenario check reports a scenario the Mod's fixture code does not name", (
     planAlsoUnknown.map((entry) => entry.code),
     ["scenario_not_accepted_by_mod"],
   );
+
+  // The real checkout's own wiring is conformant.
+  assert.deepEqual(checkScenarioAcceptance({ modSources: readModFixtureSources(repoRoot) }), []);
 });
 
 test("runner check reports a runner that is not on disk", () => {

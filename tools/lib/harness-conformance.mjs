@@ -181,17 +181,16 @@ export function checkLiveRunPreflight({ preflight = preflightLiveRun, baseDir } 
 /**
  * Require every harness action's world to be one the Mod's fixture switch accepts.
  *
- * Two authored records can name that world, and the check reads both:
+ * The authority is the fixture library's own mapping, `fixtureScenario(fixtureActions(id), id)` - what
+ * `prepare-stardew-native-local-player-fixture.mjs` writes into the Mod config for that fixture key. That name
+ * must be one the switch accepts; nothing substitutes for it.
  *
- *   - the fixture derive path, `fixtureScenario(fixtureActions(id), id)` - what
- *     `prepare-stardew-native-local-player-fixture.mjs` writes into the Mod config for that fixture key;
- *   - the published action's run-plan record, `STARDEW_PUBLISHED_ACTION_GATES[].fixtureScenario` - the world a
- *     gate is launched against (`launch-ladder-live.mjs --action play_session_multi_day` for `multiday_routine`,
- *     whose required scenario is `native_multi_day_play_session_v1`).
- *
- * The derive path is the primary record, so a name it produces that the switch does not accept is a finding UNLESS
- * the published run plan names a different, accepted world: where both records exist and disagree, the plan is what
- * arms the gate. Where the plan is silent (an experimental key), only the derive path can save the action.
+ * The published action's run-plan record, `STARDEW_PUBLISHED_ACTION_GATES[].fixtureScenario`, is a SECOND
+ * authority for the same fact: it names the world a gate is launched against (`launch-ladder-live.mjs --action
+ * play_session_multi_day` for `multiday_routine`, whose required scenario is `native_multi_day_play_session_v1`).
+ * A second authority cannot rescue the first: where the run plan records a different, accepted world while the
+ * derive path names one the switch does not, that disagreement is the finding - not a passing substitute. The run
+ * plan's value is only ever reported beside the fixture library's own mapping, never used in its place.
  */
 export function checkScenarioAcceptance({
   modSources,
@@ -215,12 +214,16 @@ export function checkScenarioAcceptance({
     }
     if (accepted.has(armed)) continue;
     const planned = publishedScenarios.get(actionId) ?? null;
-    if (planned !== null && accepted.has(planned)) continue;
+    const disagreement =
+      planned !== null && planned !== armed
+        ? `; the run plan records ${planned}, a second authority for the same fact that disagrees and cannot ` +
+          "substitute for it"
+        : "";
     findings.push(
       finding(
         "scenario_not_accepted_by_mod",
-        `${actionId}: the fixture derive path names ${armed} and the run plan records ${String(planned)}; neither is ` +
-          `among the ${String(accepted.size)} scenarios named under integrations/stardew/ModEntry.Fixtures*.cs`,
+        `${actionId}: the fixture derive path names ${armed}, which is not among the ${String(accepted.size)} ` +
+          `scenarios named under integrations/stardew/ModEntry.Fixtures*.cs${disagreement}`,
       ),
     );
   }
