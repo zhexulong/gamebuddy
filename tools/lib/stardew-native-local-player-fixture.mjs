@@ -797,7 +797,12 @@ export function fixtureScenario(actions, action) {
   // `respond_level_up` MUST be keyed off the action here, before the `advance_day` fallback below:
   // its action set contains advance_day, so that fallback would claim it and arm the ordinary
   // move-only world - where no level-up can ever be pending, unlike the world this action needs.
-  if (action === "respond_level_up") return "native_respond_level_up_v1";
+  // The ORDINARY level-up Given is the plain multi-day world: it arms exactly one pending ordinary level
+  // (`ModEntry.Fixtures.MultiDay.cs`, which arms `4@6` unless the milestone flag is set). This used to name
+  // `native_respond_level_up_v1`, a world the Mod's own switch has never heard of - so the ordinary gate was
+  // refused at preparation and never ran, while the conformance check that should have caught it was masked by a
+  // fallback to the run plan's record.
+  if (action === "respond_level_up") return "native_multi_day_v1";
   // The lifecycle action owns its own route and preconditions; it needs no
   // fixture scenario beyond the ordinary move-only world.
   if (actions.includes("advance_day")) return "";
