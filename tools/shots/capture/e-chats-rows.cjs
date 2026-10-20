@@ -170,6 +170,57 @@ const commitRetention = () => {
   return "confirmed";
 };
 
+/** The product's own New Chat control, on the Chats list - the same one the second-row loop above uses. */
+const startNewChat = () => {
+  const surface = document.querySelector('[data-testid="chats-surface"]');
+  if (surface === null) return "no_chats_surface";
+  const button = [...surface.querySelectorAll("button")].find((candidate) =>
+    (candidate.textContent ?? "").includes("新建会话"),
+  );
+  if (button === undefined) return "no_create_button";
+  if (button.disabled) return "create_disabled";
+  button.click();
+  return "clicked";
+};
+
+/** One row's own select control. K drives this same gesture; the archive half uses it to go back. */
+const clickChatSelect = ({ index }) => {
+  const surface = document.querySelector('[data-testid="chats-surface"]');
+  if (surface === null) return "no_chats_surface";
+  const row = [...surface.querySelectorAll('[data-testid="chat-item"]')][index];
+  if (row === undefined) return "no_such_row";
+  const button = row.querySelector('[data-testid="chat-select"]');
+  if (button === null) return "no_chat_select";
+  if (button.disabled) return "select_disabled";
+  button.click();
+  return "clicked";
+};
+
+/**
+ * Create one Chat through the product's own New Chat control and wait for the shell to land in it.
+ *
+ * The control has two jobs: with openings to choose from it opens the picker and the Chat exists only
+ * once an opening is picked, and with none it creates the Chat outright. This driver means "another
+ * conversation", which is the default opening. Creating lands IN the created Chat - the shell selects
+ * it and moves the region to the chat surface - and that landing is the fact that says the created
+ * Chat is the mount, so it is what this returns.
+ */
+async function createChatAndLand(page, say) {
+  const started = await page.evaluate(startNewChat);
+  say("the product's own New Chat control:", started);
+  if (started !== "clicked") return false;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await page.waitForTimeout(1500);
+    if ((await page.locator('[data-testid="opening-option"]').count()) > 0) {
+      await page.locator('[data-testid="opening-option"]').first().click();
+      say("the create control opened the opening picker; the default opening was chosen");
+      continue;
+    }
+    if (await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null)) return true;
+  }
+  return false;
+}
+
 /** The select requests the wire carries - the one thing a non-mounted mutation must not produce. */
 const selectRequests = (wire) => wire.filter((entry) => entry.route.includes("/chat/select"));
 
@@ -253,14 +304,7 @@ const forceLongPreview = () => {
       say(`gave up after ${createAttempts - 1} create attempts without a second row on the list`);
       break;
     }
-    const created = await page.evaluate(() => {
-      const surface = document.querySelector('[data-testid="chats-surface"]');
-      if (surface === null) return "no_chats_surface";
-      const button = [...surface.querySelectorAll("button")].find((candidate) => (candidate.textContent ?? "").includes("新建会话"));
-      if (button === undefined) return "no_create_button";
-      button.click();
-      return "clicked";
-    });
+    const created = await page.evaluate(startNewChat);
     say("create another conversation:", created);
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await page.waitForTimeout(1500);
@@ -387,25 +431,89 @@ const forceLongPreview = () => {
     say(`selection requests the rename produced: ${JSON.stringify(selectRequests(wire.slice(wireBeforeRename)))}`);
     await shot(page, "41b-chats-renamed-a-row-you-are-not-in-1440x900.png");
 
-    const wireBeforeArchive = wire.length;
-    say(`archiving row ${otherIndex}: ${await page.evaluate(armControl, { index: otherIndex, label: ARCHIVE_LABEL })}`);
-    await page.waitForTimeout(800);
-    say(`the armed confirmation, and whose row it is: ${JSON.stringify(await page.evaluate(retentionConfirmFacts))}`);
-    say(`confirming: ${await page.evaluate(commitRetention)}`);
-    let listAfterArchive = null;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      await page.waitForTimeout(1500);
-      listAfterArchive = await page.evaluate(rowControls);
-      if (!listAfterArchive.rows.some((row) => row.title === OTHER_TITLE)) break;
+    // === ITEM: the spare Chat this driver creates, so the row the archive half removes is one it made ===
+    //
+    // The list belongs to the whole run: a driver that archives a row it found spends a row the drivers
+    // after it need (K chooses a NON-selected row, and this half used to leave it none). So the row the
+    // archive below removes is one this driver creates here, through the same New Chat control the
+    // second-row loop above uses, and the two rows it found - one renamed above - are still on the list
+    // when it is done.
+    say("=== ITEM: the spare Chat this driver creates for the archive half ===");
+    const landedInSpare = await createChatAndLand(page, say);
+    say("the created Chat became the mount (the shell lands in what it creates):", landedInSpare);
+    if (landedInSpare) {
+      say("re-opened the Chats surface:", await activateSurface(page, "会话"));
+      await page.waitForTimeout(1200);
     }
-    const snapshotAfterArchive = await mountedSnapshot(page);
-    say(`rows now: ${JSON.stringify(listAfterArchive.rows.map((row) => row.title))}`);
-    say(`the archived row left the list: ${!listAfterArchive.rows.some((row) => row.title === OTHER_TITLE)}`);
+    let spareRows = await page.evaluate(rowControls);
+    for (let attempt = 0; attempt < 12 && spareRows.rows.length <= listBefore.rows.length; attempt += 1) {
+      await page.waitForTimeout(1500);
+      spareRows = await page.evaluate(rowControls);
+    }
+    // Creating a Chat mounts it, so the created row is the selected one and the row this driver started
+    // on is then the unselected one that is not the row it just renamed. A selection moves the region,
+    // never the list, so both indices survive the switch back below.
+    const createdOnList = spareRows.rows.length > listBefore.rows.length;
+    const createdRowIndex = landedInSpare ? spareRows.rows.findIndex((row) => row.selected) : -1;
+    const backIndex =
+      createdRowIndex < 0
+        ? -1
+        : spareRows.rows.findIndex(
+            (row, index) => index !== createdRowIndex && !row.selected && row.title !== OTHER_TITLE,
+          );
+    const archiveIndex =
+      createdRowIndex >= 0 ? createdRowIndex : spareRows.rows.findIndex((row) => !row.selected && row.title !== OTHER_TITLE);
     say(
-      `the mounted Chat is byte-identical after the archive: ${JSON.stringify(snapshotAfterArchive) === JSON.stringify(snapshotBefore)}`,
+      `rows after creating the spare: ${spareRows.rows.length} (was ${listBefore.rows.length}); selected=${spareRows.rows.findIndex((row) => row.selected)} archiveRow=${archiveIndex}`,
     );
-    say(`selection requests the archive produced: ${JSON.stringify(selectRequests(wire.slice(wireBeforeArchive)))}`);
-    await shot(page, "41c-chats-archived-a-row-you-are-not-in-1440x900.png");
+
+    if (!createdOnList || archiveIndex < 0 || (createdRowIndex >= 0 && backIndex < 0)) {
+      say("named skip: the created Chat could not be told apart on the list, so the archive half cannot name the row it made");
+    } else {
+      if (createdRowIndex >= 0) {
+        say(`choosing the row this driver started on again (row ${backIndex}): ${await page.evaluate(clickChatSelect, { index: backIndex })}`);
+        let backSelected = false;
+        for (let attempt = 0; attempt < 20 && backSelected === false; attempt += 1) {
+          await page.waitForTimeout(1500);
+          if (await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null)) {
+            await activateSurface(page, "会话");
+            await page.waitForTimeout(1000);
+            spareRows = await page.evaluate(rowControls);
+          }
+          backSelected = spareRows.rows[backIndex]?.selected === true;
+        }
+        say(`the row this driver started on is the mounted one again: ${backSelected}`);
+        say(
+          `the mount is the Chat this driver started on, byte-identical to the snapshot taken before the rename: ${JSON.stringify(await mountedSnapshot(page)) === JSON.stringify(snapshotBefore)}`,
+        );
+      }
+
+      const spareTitle = spareRows.rows[archiveIndex]?.title ?? null;
+      const wireBeforeArchive = wire.length;
+      say(
+        `archiving the row this driver created (row ${archiveIndex} of ${spareRows.rows.length}, title ${JSON.stringify(spareTitle)}): ${await page.evaluate(armControl, { index: archiveIndex, label: ARCHIVE_LABEL })}`,
+      );
+      await page.waitForTimeout(800);
+      say(`the armed confirmation, and whose row it is: ${JSON.stringify(await page.evaluate(retentionConfirmFacts))}`);
+      say(`confirming: ${await page.evaluate(commitRetention)}`);
+      let listAfterArchive = null;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await page.waitForTimeout(1500);
+        listAfterArchive = await page.evaluate(rowControls);
+        if (!listAfterArchive.rows.some((row) => row.title === spareTitle)) break;
+      }
+      const snapshotAfterArchive = await mountedSnapshot(page);
+      say(`rows now: ${JSON.stringify(listAfterArchive.rows.map((row) => row.title))}`);
+      say(`the archived row left the list: ${!listAfterArchive.rows.some((row) => row.title === spareTitle)}`);
+      say(
+        `the two rows this driver found are still on the list (one of them renamed): ${listAfterArchive.rows.length === listBefore.rows.length && listAfterArchive.rows.some((row) => row.title === OTHER_TITLE)}`,
+      );
+      say(
+        `the mounted Chat is byte-identical after the archive: ${JSON.stringify(snapshotAfterArchive) === JSON.stringify(snapshotBefore)}`,
+      );
+      say(`selection requests the archive produced: ${JSON.stringify(selectRequests(wire.slice(wireBeforeArchive)))}`);
+      await shot(page, "41c-chats-archived-a-row-you-are-not-in-1440x900.png");
+    }
   }
 
   flush();
