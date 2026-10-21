@@ -1144,12 +1144,15 @@ test("a real reconciliation conflict is the only failure presented as reconcilia
 });
 
 test("a route this build does not serve is presented as an absent route", async () => {
+  // Through the composed *game* client, so the absent route is the game's own: the same three codes
+  // answer a page that asked for a game route, and a sentence about reaching the chat would name a
+  // surface the player is not on.
   for (const code of ["not_found", "unsupported_api_version", "profile_operation_unavailable"]) {
     for (const locale of ["en", "zh-CN"]) {
       const labels = messages(locale);
       const view = composedProblemView(await refusal({ code }, 404), labels);
-      assert.equal(view.title, labels.problemRouteUnavailableTitle);
-      assert.equal(view.detail, labels.problemRouteUnavailableDetail);
+      assert.equal(view.title, labels.gameProblemRouteUnavailableTitle);
+      assert.equal(view.detail, labels.gameProblemRouteUnavailableDetail);
     }
   }
 });
@@ -1157,11 +1160,13 @@ test("a route this build does not serve is presented as an absent route", async 
 test("a retryable unavailability keeps its own presentation", async () => {
   for (const locale of ["en", "zh-CN"]) {
     const labels = messages(locale);
+    // The game's own state read refused: the code is declared, so it keeps the game's sentence
+    // rather than the shell's generic "temporarily unavailable" line.
     const view = composedProblemView(await refusal({ code: "state_unavailable" }, 409), labels);
-    assert.equal(view.title, labels.problemTemporarilyUnavailableTitle);
-    assert.equal(view.detail, labels.problemTemporarilyUnavailableDetail);
+    assert.equal(view.title, labels.gameProblemStateUnavailableTitle);
+    assert.equal(view.detail, labels.gameProblemStateUnavailableDetail);
     const upstream = composedProblemView(await refusal({ code: "game_unavailable" }, 503), labels);
-    assert.equal(upstream.detail, labels.problemTemporarilyUnavailableDetail);
+    assert.equal(upstream.detail, labels.gameProblemUnavailableDetail);
   }
 });
 
@@ -1181,13 +1186,12 @@ test("anything the client cannot classify shows the code it actually received", 
     await refusal({ code: "game_unavailable", cause: "stardew_player_host_launch_failed" }, 409),
     labels,
   );
-  assert.equal(caused.title, labels.problemInternalErrorTitle);
+  assert.equal(caused.title, labels.gameProblemUnavailableTitle);
   assert.equal(
     caused.detail,
-    labels.problemInternalErrorCauseDetail
-      .replace("{{code}}", "game_unavailable")
-      .replace("{{cause}}", "stardew_player_host_launch_failed"),
+    labels.gameProblemUnavailableCauseDetail.replace("{{cause}}", "stardew_player_host_launch_failed"),
   );
+  assert.equal(caused.detail.includes("game_unavailable"), false, "the code is not shown back at the player");
 
   // A malformed composed root is the client's own protocol failure: it names its
   // own closed reason instead of being re-worded as something it is not. This is
@@ -1409,9 +1413,9 @@ test("a real composed refusal reaches the player as its own category, over real 
     assert.equal(wrappedFailure.causeCode, "stardew_private_launch_admission_failed");
 
     const launchView = composedProblemView(wrappedFailure, en);
-    assert.equal(launchView.title, en.problemInternalErrorTitle);
-    assert.ok(launchView.detail.includes("game_unavailable"), launchView.detail);
+    assert.equal(launchView.title, en.gameProblemUnavailableTitle);
     assert.ok(launchView.detail.includes("stardew_private_launch_admission_failed"), launchView.detail);
+    assert.equal(launchView.detail.includes("game_unavailable"), false, "the raw code never reaches the player");
     assert.equal(launchView.detail.includes(en.problemReconciliationFailedDetail), false);
   } finally {
     await surface.close();

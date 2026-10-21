@@ -1,7 +1,4 @@
-import {
-  type TavernStateSnapshotV1,
-  validateSnapshot,
-} from "./reference-pipeline-api.js";
+import { type TavernStateSnapshotV1, validateSnapshot } from "./reference-pipeline-api.js";
 
 /**
  * Browser-only boundary for the composed reference-game profile.
@@ -13,16 +10,13 @@ import {
  * `/bootstrap` or `/state` as a composed refresh source.
  */
 
-const COMPOSED_REFERENCE_GAME_BROWSER_API_V1 =
-  "composed_reference_game_browser_api/v1" as const;
+const COMPOSED_REFERENCE_GAME_BROWSER_API_V1 = "composed_reference_game_browser_api/v1" as const;
 const COMPOSED_REFERENCE_GAME_BROWSER_API_VERSION = 1 as const;
 const COMPOSED_REFERENCE_GAME_PROFILE_ID = "gamebuddy.composed.reference-game" as const;
-const COMPOSED_REFERENCE_GAME_TAVERN_PROFILE_ID =
-  "gamebuddy.chat-core.reference-pipeline" as const;
+const COMPOSED_REFERENCE_GAME_TAVERN_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline" as const;
 const COMPOSED_REFERENCE_GAME_PROFILE_ID_GAME = "gamebuddy.game.preview" as const;
 
-const BASE64URL_ALPHABET =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const OPAQUE_HANDLE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
 const MAX_GAME_LABEL_LENGTH = 256;
 const MAX_CABIN_DISPLAY_LABEL_LENGTH = 128;
@@ -59,6 +53,44 @@ const CABIN_CONFIRMATION_KEYS = ["apiVersion", "status"] as const;
 const INSTALLATION_DISCOVERY_KEYS = ["apiVersion", "candidates", "diagnostics"] as const;
 const INSTALLATION_CANDIDATE_KEYS = ["candidateId", "source", "label", "hint", "status"] as const;
 const INSTALLATION_DIAGNOSTICS_MAX = 32;
+
+/**
+ * The `game_browser_api/v1` problem vocabulary, mirrored.
+ *
+ * The Host declares it (`host/src/game-browser-contract/index.ts`,
+ * `GAME_BROWSER_PROBLEM_CODES_V1`, and the `GameProblemCode` union beside it). This bundle cannot
+ * import the Host package - no Host module, no typebox, no runtime code - so the mirror is the
+ * browser's only copy, and `problem-code-gate.test.mjs` (`problem-code.9`) pins it to EQUALITY with
+ * the declaration: a code the Host adds fails there until it is mirrored here, and the sentence map
+ * in `composed-problem-view.ts` is typed over this union, so a mirrored code with no words for the
+ * player fails the typecheck in the module that owes them.
+ */
+export const GAME_PROBLEM_CODES = [
+  "unauthorized",
+  "csrf_failed",
+  "invalid_request",
+  "unsupported_api_version",
+  "profile_operation_unavailable",
+  "idempotency_conflict",
+  "idempotency_in_progress",
+  "idempotency_expired",
+  "game_unavailable",
+  "game_prerequisites_missing",
+  "game_compatibility_error",
+  "game_instance_not_found",
+  "game_attachment_conflict",
+  "game_operation_in_progress",
+  "stardew_cabin_choice_stale",
+  "stardew_manifest_handoff_uncertain",
+  "game_runtime_unavailable",
+  "game_storage_unavailable",
+  "closed",
+  "malformed_request",
+  "not_found",
+  "state_unavailable",
+  "game_endgame_settlement_unavailable",
+] as const;
+export type GameProblemCode = (typeof GAME_PROBLEM_CODES)[number];
 
 const ROOT_KEYS = ["apiVersion", "build", "chat", "game"] as const;
 const ROOT_BUILD_KEYS = ["browserContract", "profileId"] as const;
@@ -310,7 +342,6 @@ export type ComposedReferenceGameBrowserApi = Readonly<{
   confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1>;
 }>;
 
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
@@ -340,20 +371,17 @@ function isCanonicalUnpaddedBase64Url(value: string): boolean {
     if (!BASE64URL_ALPHABET.includes(character)) return false;
   }
   const finalIndex = BASE64URL_ALPHABET.indexOf(value[value.length - 1]!);
-  return value.length % 4 === 0 ||
-    (value.length % 4 === 2 ? finalIndex % 16 === 0 : finalIndex % 4 === 0);
+  return value.length % 4 === 0 || (value.length % 4 === 2 ? finalIndex % 16 === 0 : finalIndex % 4 === 0);
 }
 
 function isOpaqueHandle(value: unknown): value is string {
-  return typeof value === "string" &&
-    OPAQUE_HANDLE_PATTERN.test(value) &&
-    isCanonicalUnpaddedBase64Url(value);
+  return typeof value === "string" && OPAQUE_HANDLE_PATTERN.test(value) && isCanonicalUnpaddedBase64Url(value);
 }
 
 function isCanonicalBase64UrlBytes(value: unknown, byteLength: number): value is string {
-  return typeof value === "string" &&
-    value.length === Math.ceil(byteLength * 8 / 6) &&
-    isCanonicalUnpaddedBase64Url(value);
+  return (
+    typeof value === "string" && value.length === Math.ceil((byteLength * 8) / 6) && isCanonicalUnpaddedBase64Url(value)
+  );
 }
 
 function isStardewChoiceHandle(value: unknown): value is string {
@@ -361,9 +389,7 @@ function isStardewChoiceHandle(value: unknown): value is string {
 }
 
 function isInstallationCandidateId(value: unknown): value is string {
-  return typeof value === "string" &&
-    OPAQUE_HANDLE_PATTERN.test(value) &&
-    isCanonicalUnpaddedBase64Url(value);
+  return typeof value === "string" && OPAQUE_HANDLE_PATTERN.test(value) && isCanonicalUnpaddedBase64Url(value);
 }
 
 function isIdempotencyKey(value: unknown): value is string {
@@ -379,107 +405,158 @@ function isNullableLabel(value: unknown, maximum: number): value is string | nul
 }
 
 function validateStardewCabinChoices(value: unknown): StardewCabinChoicesV1 {
-  if (!isRecord(value) || !hasExactKeys(value, CABIN_CHOICES_KEYS) || value.apiVersion !== 1 || !Array.isArray(value.choices) || value.choices.length > MAX_CABIN_CHOICES) {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, CABIN_CHOICES_KEYS) ||
+    value.apiVersion !== 1 ||
+    !Array.isArray(value.choices) ||
+    value.choices.length > MAX_CABIN_CHOICES
+  ) {
     throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_choices");
   }
   const choices: StardewCabinChoiceV1[] = [];
   for (const choice of value.choices) {
-    if (!isRecord(choice) ||
-        !hasExactKeys(choice, CABIN_CHOICE_KEYS) ||
-        !isBoundedString(choice.displayLabel, 1, MAX_CABIN_DISPLAY_LABEL_LENGTH) ||
-        choice.availability !== "available" ||
-        !isStardewChoiceHandle(choice.choiceHandle) ||
-        !isSafeInteger(choice.expiresAtMs, 0)) {
+    if (
+      !isRecord(choice) ||
+      !hasExactKeys(choice, CABIN_CHOICE_KEYS) ||
+      !isBoundedString(choice.displayLabel, 1, MAX_CABIN_DISPLAY_LABEL_LENGTH) ||
+      choice.availability !== "available" ||
+      !isStardewChoiceHandle(choice.choiceHandle) ||
+      !isSafeInteger(choice.expiresAtMs, 0)
+    ) {
       throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_choice");
     }
-    choices.push(Object.freeze({
-      displayLabel: choice.displayLabel,
-      availability: choice.availability,
-      choiceHandle: choice.choiceHandle,
-      expiresAtMs: choice.expiresAtMs,
-    }));
+    choices.push(
+      Object.freeze({
+        displayLabel: choice.displayLabel,
+        availability: choice.availability,
+        choiceHandle: choice.choiceHandle,
+        expiresAtMs: choice.expiresAtMs,
+      }),
+    );
   }
   return Object.freeze({ apiVersion: 1, choices: Object.freeze(choices) });
 }
 
 function validateStardewInstallationDiscovery(value: unknown): StardewInstallationDiscoveryV1 {
-  if (!isRecord(value) || !hasExactKeys(value, INSTALLATION_DISCOVERY_KEYS) || value.apiVersion !== 1 || !Array.isArray(value.candidates) || !Array.isArray(value.diagnostics) || value.diagnostics.length > INSTALLATION_DIAGNOSTICS_MAX) throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_discovery");
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, INSTALLATION_DISCOVERY_KEYS) ||
+    value.apiVersion !== 1 ||
+    !Array.isArray(value.candidates) ||
+    !Array.isArray(value.diagnostics) ||
+    value.diagnostics.length > INSTALLATION_DIAGNOSTICS_MAX
+  )
+    throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_discovery");
   const candidates: StardewInstallationCandidateV1[] = [];
   for (const candidate of value.candidates) {
-    if (!isRecord(candidate) || !hasExactKeys(candidate, INSTALLATION_CANDIDATE_KEYS) || !isInstallationCandidateId(candidate.candidateId) || !isBoundedString(candidate.source, 1, 64) || !isBoundedString(candidate.label, 1, 256) || !isNullableLabel(candidate.hint, 256) || !["candidate", "invalid", "admission_required"].includes(candidate.status as string)) throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_candidate");
-    candidates.push(Object.freeze({ candidateId: candidate.candidateId, source: candidate.source, label: candidate.label, hint: candidate.hint, status: candidate.status as StardewInstallationCandidateV1["status"] }));
+    if (
+      !isRecord(candidate) ||
+      !hasExactKeys(candidate, INSTALLATION_CANDIDATE_KEYS) ||
+      !isInstallationCandidateId(candidate.candidateId) ||
+      !isBoundedString(candidate.source, 1, 64) ||
+      !isBoundedString(candidate.label, 1, 256) ||
+      !isNullableLabel(candidate.hint, 256) ||
+      !["candidate", "invalid", "admission_required"].includes(candidate.status as string)
+    )
+      throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_candidate");
+    candidates.push(
+      Object.freeze({
+        candidateId: candidate.candidateId,
+        source: candidate.source,
+        label: candidate.label,
+        hint: candidate.hint,
+        status: candidate.status as StardewInstallationCandidateV1["status"],
+      }),
+    );
   }
-  if (!value.diagnostics.every((item) => isBoundedString(item, 1, 128))) throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_diagnostics");
-  return Object.freeze({ apiVersion: 1, candidates: Object.freeze(candidates), diagnostics: Object.freeze(value.diagnostics as string[]) });
+  if (!value.diagnostics.every((item) => isBoundedString(item, 1, 128)))
+    throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_diagnostics");
+  return Object.freeze({
+    apiVersion: 1,
+    candidates: Object.freeze(candidates),
+    diagnostics: Object.freeze(value.diagnostics as string[]),
+  });
 }
 function validateStardewInstallationMutation(value: unknown): StardewInstallationMutationV1 {
-  if (!isRecord(value) || !hasExactKeys(value, ["apiVersion", "status"]) || value.apiVersion !== 1 || !["accepted", "registered", "cancelled", "unavailable"].includes(value.status as string)) throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_mutation");
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["apiVersion", "status"]) ||
+    value.apiVersion !== 1 ||
+    !["accepted", "registered", "cancelled", "unavailable"].includes(value.status as string)
+  )
+    throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_mutation");
   return Object.freeze({ apiVersion: 1, status: value.status as StardewInstallationMutationV1["status"] });
 }
 
 function validateStardewCabinConfirmation(value: unknown): StardewCabinConfirmationV1 {
-  if (!isRecord(value) ||
-      !hasExactKeys(value, CABIN_CONFIRMATION_KEYS) ||
-      value.apiVersion !== 1 ||
-      value.status !== "manifest_admitted") {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, CABIN_CONFIRMATION_KEYS) ||
+    value.apiVersion !== 1 ||
+    value.status !== "manifest_admitted"
+  ) {
     throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_confirmation");
   }
   return Object.freeze({ apiVersion: 1, status: "manifest_admitted" });
 }
 
 function validateGameResumeResult(value: unknown): GameResumeResultV1 {
-  if (!isRecord(value) ||
-      !hasExactKeys(value, ["apiVersion", "status"]) ||
-      value.apiVersion !== 1 ||
-      (value.status !== "accepted" && value.status !== "attached" && value.status !== "unavailable")) {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["apiVersion", "status"]) ||
+    value.apiVersion !== 1 ||
+    (value.status !== "accepted" && value.status !== "attached" && value.status !== "unavailable")
+  ) {
     throw new ComposedReferenceGameProtocolError("invalid_game_resume_result");
   }
   return Object.freeze({ apiVersion: 1, status: value.status });
 }
 
 function validateGameReopenResult(value: unknown): GameReopenResultV1 {
-  if (!isRecord(value) ||
-      !hasExactKeys(value, ["apiVersion", "status"]) ||
-      value.apiVersion !== 1 ||
-      value.status !== "reopened") {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["apiVersion", "status"]) ||
+    value.apiVersion !== 1 ||
+    value.status !== "reopened"
+  ) {
     throw new ComposedReferenceGameProtocolError("invalid_game_reopen_result");
   }
   return Object.freeze({ apiVersion: 1, status: "reopened" });
 }
 
 function validateGameCreateResult(value: unknown): GameCreateResultV1 {
-  if (!isRecord(value) ||
-      !hasExactKeys(value, ["apiVersion", "status", "gameSessionId"]) ||
-      value.apiVersion !== 1) {
+  if (!isRecord(value) || !hasExactKeys(value, ["apiVersion", "status", "gameSessionId"]) || value.apiVersion !== 1) {
     throw new ComposedReferenceGameProtocolError("invalid_game_create_result");
   }
   if (value.status === "unavailable" && value.gameSessionId === null) {
     return Object.freeze({ apiVersion: 1, status: "unavailable", gameSessionId: null });
   }
-  if (
-    (value.status === "accepted" || value.status === "attached") &&
-    isSafeId(value.gameSessionId)
-  ) {
+  if ((value.status === "accepted" || value.status === "attached") && isSafeId(value.gameSessionId)) {
     return Object.freeze({ apiVersion: 1, status: value.status, gameSessionId: value.gameSessionId });
   }
   throw new ComposedReferenceGameProtocolError("invalid_game_create_result");
 }
 
 function validateGameResumeCancelResult(value: unknown): GameResumeCancelResultV1 {
-  if (!isRecord(value) ||
-      !hasExactKeys(value, ["apiVersion", "status"]) ||
-      value.apiVersion !== 1 ||
-      value.status !== "cancelled") {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["apiVersion", "status"]) ||
+    value.apiVersion !== 1 ||
+    value.status !== "cancelled"
+  ) {
     throw new ComposedReferenceGameProtocolError("invalid_game_resume_cancel_result");
   }
   return Object.freeze({ apiVersion: 1, status: "cancelled" });
 }
 
 function validateGameEndgameResult(value: unknown): GameEndgameResultV1 {
-  if (!isRecord(value) ||
-      !hasExactKeys(value, ["apiVersion", "status"]) ||
-      value.apiVersion !== 1 ||
-      (value.status !== "gameended" && value.status !== "unavailable")) {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["apiVersion", "status"]) ||
+    value.apiVersion !== 1 ||
+    (value.status !== "gameended" && value.status !== "unavailable")
+  ) {
     throw new ComposedReferenceGameProtocolError("invalid_game_endgame_result");
   }
   return Object.freeze({ apiVersion: 1, status: value.status });
@@ -487,62 +564,76 @@ function validateGameEndgameResult(value: unknown): GameEndgameResultV1 {
 
 function isGameProjection(value: unknown): value is GameBrowserStateV1 {
   if (!isRecord(value) || !hasExactKeys(value, GAME_STATE_KEYS) || value.apiVersion !== 1) return false;
-  if (!isRecord(value.build) ||
-      !hasExactKeys(value.build, GAME_BUILD_KEYS) ||
-      value.build.browserContract !== "game_browser_api/v1" ||
-      value.build.profileId !== COMPOSED_REFERENCE_GAME_PROFILE_ID_GAME) {
+  if (
+    !isRecord(value.build) ||
+    !hasExactKeys(value.build, GAME_BUILD_KEYS) ||
+    value.build.browserContract !== "game_browser_api/v1" ||
+    value.build.profileId !== COMPOSED_REFERENCE_GAME_PROFILE_ID_GAME
+  ) {
     return false;
   }
-  if (!isOpaqueHandle(value.csrfToken) ||
-      !isRecord(value.browserSession) ||
-      !hasExactKeys(value.browserSession, ["expiresAtMs"]) ||
-      !isSafeInteger(value.browserSession.expiresAtMs, 0) ||
-      !isRecord(value.game) ||
-      !hasExactKeys(value.game, GAME_KEYS)) {
+  if (
+    !isOpaqueHandle(value.csrfToken) ||
+    !isRecord(value.browserSession) ||
+    !hasExactKeys(value.browserSession, ["expiresAtMs"]) ||
+    !isSafeInteger(value.browserSession.expiresAtMs, 0) ||
+    !isRecord(value.game) ||
+    !hasExactKeys(value.game, GAME_KEYS)
+  ) {
     return false;
   }
 
   const game = value.game;
-  if (!isRecord(game.prerequisites) ||
-      !hasExactKeys(game.prerequisites, GAME_PREREQUISITES_KEYS) ||
-      !isOneOf(game.prerequisites.status, PREREQUISITE_STATUSES) ||
-      !isNullableLabel(game.prerequisites.detectedGame, MAX_GAME_LABEL_LENGTH) ||
-      !Array.isArray(game.prerequisites.missingItems) ||
-      game.prerequisites.missingItems.length > MAX_GAME_MISSING_ITEMS ||
-      !game.prerequisites.missingItems.every((item) => isBoundedString(item, 1, MAX_GAME_LABEL_LENGTH))) {
+  if (
+    !isRecord(game.prerequisites) ||
+    !hasExactKeys(game.prerequisites, GAME_PREREQUISITES_KEYS) ||
+    !isOneOf(game.prerequisites.status, PREREQUISITE_STATUSES) ||
+    !isNullableLabel(game.prerequisites.detectedGame, MAX_GAME_LABEL_LENGTH) ||
+    !Array.isArray(game.prerequisites.missingItems) ||
+    game.prerequisites.missingItems.length > MAX_GAME_MISSING_ITEMS ||
+    !game.prerequisites.missingItems.every((item) => isBoundedString(item, 1, MAX_GAME_LABEL_LENGTH))
+  ) {
     return false;
   }
-  if (!isRecord(game.instance) ||
-      !hasExactKeys(game.instance, GAME_INSTANCE_KEYS) ||
-      !isOneOf(game.instance.status, INSTANCE_STATUSES) ||
-      !isNullableLabel(game.instance.gameTitle, MAX_GAME_LABEL_LENGTH) ||
-      !isSafeInteger(game.instance.generation, 0)) {
+  if (
+    !isRecord(game.instance) ||
+    !hasExactKeys(game.instance, GAME_INSTANCE_KEYS) ||
+    !isOneOf(game.instance.status, INSTANCE_STATUSES) ||
+    !isNullableLabel(game.instance.gameTitle, MAX_GAME_LABEL_LENGTH) ||
+    !isSafeInteger(game.instance.generation, 0)
+  ) {
     return false;
   }
-  if (!isRecord(game.compatibility) ||
-      !hasExactKeys(game.compatibility, GAME_COMPATIBILITY_KEYS) ||
-      !isOneOf(game.compatibility.status, COMPATIBILITY_STATUSES) ||
-      !isNullableLabel(game.compatibility.message, MAX_GAME_MESSAGE_LENGTH)) {
+  if (
+    !isRecord(game.compatibility) ||
+    !hasExactKeys(game.compatibility, GAME_COMPATIBILITY_KEYS) ||
+    !isOneOf(game.compatibility.status, COMPATIBILITY_STATUSES) ||
+    !isNullableLabel(game.compatibility.message, MAX_GAME_MESSAGE_LENGTH)
+  ) {
     return false;
   }
-  if (!isRecord(game.attachment) ||
-      !hasExactKeys(game.attachment, GAME_ATTACHMENT_KEYS) ||
-      !isOneOf(game.attachment.status, ATTACHMENT_STATUSES) ||
-      !isSafeInteger(game.attachment.generation, 0)) {
+  if (
+    !isRecord(game.attachment) ||
+    !hasExactKeys(game.attachment, GAME_ATTACHMENT_KEYS) ||
+    !isOneOf(game.attachment.status, ATTACHMENT_STATUSES) ||
+    !isSafeInteger(game.attachment.generation, 0)
+  ) {
     return false;
   }
-  if (!isOneOf(game.connectionStatus, CONNECTION_STATUSES) ||
-      !isOneOf(game.actionAuthority, ACTION_AUTHORITY_STATUSES) ||
-      !(game.role === null || game.role === "player" || game.role === "companion") ||
-      !isNullableLabel(game.companionName, MAX_GAME_LABEL_LENGTH) ||
-      !isNullableLabel(game.selectedWorld, MAX_GAME_LABEL_LENGTH) ||
-      !isNullableLabel(game.selectedSave, MAX_GAME_LABEL_LENGTH) ||
-      !isRecord(game.capabilitySummary) ||
-      !hasExactKeys(game.capabilitySummary, GAME_CAPABILITY_SUMMARY_KEYS) ||
-      typeof game.capabilitySummary.available !== "boolean" ||
-      !isSafeInteger(game.capabilitySummary.count, 0) ||
-      game.capabilitySummary.count > 512 ||
-      !isOneOf(game.latestOutcome, OUTCOMES)) {
+  if (
+    !isOneOf(game.connectionStatus, CONNECTION_STATUSES) ||
+    !isOneOf(game.actionAuthority, ACTION_AUTHORITY_STATUSES) ||
+    !(game.role === null || game.role === "player" || game.role === "companion") ||
+    !isNullableLabel(game.companionName, MAX_GAME_LABEL_LENGTH) ||
+    !isNullableLabel(game.selectedWorld, MAX_GAME_LABEL_LENGTH) ||
+    !isNullableLabel(game.selectedSave, MAX_GAME_LABEL_LENGTH) ||
+    !isRecord(game.capabilitySummary) ||
+    !hasExactKeys(game.capabilitySummary, GAME_CAPABILITY_SUMMARY_KEYS) ||
+    typeof game.capabilitySummary.available !== "boolean" ||
+    !isSafeInteger(game.capabilitySummary.count, 0) ||
+    game.capabilitySummary.count > 512 ||
+    !isOneOf(game.latestOutcome, OUTCOMES)
+  ) {
     return false;
   }
   return true;
@@ -553,16 +644,16 @@ function isGameProjection(value: unknown): value is GameBrowserStateV1 {
  * Validation is closed at every object boundary: additive fields are not
  * silently ignored, and a foreign profile is never rendered as Game state.
  */
-export function validateComposedReferenceGameRoot(
-  value: unknown,
-): ComposedReferenceGameBrowserRootV1 {
-  if (!isRecord(value) ||
-      !hasExactKeys(value, ROOT_KEYS) ||
-      value.apiVersion !== 1 ||
-      !isRecord(value.build) ||
-      !hasExactKeys(value.build, ROOT_BUILD_KEYS) ||
-      value.build.browserContract !== COMPOSED_REFERENCE_GAME_BROWSER_API_V1 ||
-      value.build.profileId !== COMPOSED_REFERENCE_GAME_PROFILE_ID) {
+export function validateComposedReferenceGameRoot(value: unknown): ComposedReferenceGameBrowserRootV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ROOT_KEYS) ||
+    value.apiVersion !== 1 ||
+    !isRecord(value.build) ||
+    !hasExactKeys(value.build, ROOT_BUILD_KEYS) ||
+    value.build.browserContract !== COMPOSED_REFERENCE_GAME_BROWSER_API_V1 ||
+    value.build.profileId !== COMPOSED_REFERENCE_GAME_PROFILE_ID
+  ) {
     throw new ComposedReferenceGameProtocolError("invalid_composed_root");
   }
 
@@ -634,11 +725,7 @@ function problemFromResponse(response: Response, value: unknown): ComposedRefere
   return new ComposedReferenceGameProblemError(value.code, response.status);
 }
 
-async function exchangeEmpty(
-  fetchLike: typeof fetch,
-  path: string,
-  init: RequestInit,
-): Promise<void> {
+async function exchangeEmpty(fetchLike: typeof fetch, path: string, init: RequestInit): Promise<void> {
   let response: Response;
   try {
     response = await fetchLike(path, { ...init, credentials: "same-origin" });
@@ -718,8 +805,11 @@ export function createComposedReferenceGameBrowserApi(
       });
     },
     async setupGame(request: GameSetupRequestV1): Promise<void> {
-      if (request.apiVersion !== 1 || !isIdempotencyKey(request.idempotencyKey) ||
-          !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey"]))
+      if (
+        request.apiVersion !== 1 ||
+        !isIdempotencyKey(request.idempotencyKey) ||
+        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey"])
+      )
         throw new ComposedReferenceGameProtocolError("invalid_game_setup_request");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
       await exchangeEmpty(fetchLike, "/api/composed-reference-game/v1/game/prerequisites/setup", {
@@ -729,9 +819,16 @@ export function createComposedReferenceGameBrowserApi(
       });
     },
     async launchGame(request: GameLaunchRequestV1): Promise<void> {
-      if (request.apiVersion !== 1 || !isIdempotencyKey(request.idempotencyKey) ||
-          !isSafeInteger(request.expectedInstanceGeneration, 1) ||
-          !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedInstanceGeneration"]))
+      if (
+        request.apiVersion !== 1 ||
+        !isIdempotencyKey(request.idempotencyKey) ||
+        !isSafeInteger(request.expectedInstanceGeneration, 1) ||
+        !hasExactKeys(request as Record<string, unknown>, [
+          "apiVersion",
+          "idempotencyKey",
+          "expectedInstanceGeneration",
+        ])
+      )
         throw new ComposedReferenceGameProtocolError("invalid_game_launch_request");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
       await exchangeEmpty(fetchLike, "/api/composed-reference-game/v1/game/launch", {
@@ -745,8 +842,13 @@ export function createComposedReferenceGameBrowserApi(
         request.apiVersion !== 1 ||
         !isIdempotencyKey(request.idempotencyKey) ||
         !isSafeInteger(request.expectedAttachmentGeneration, 1) ||
-        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedAttachmentGeneration"])
-      ) throw new ComposedReferenceGameProtocolError("invalid_game_stop_request");
+        !hasExactKeys(request as Record<string, unknown>, [
+          "apiVersion",
+          "idempotencyKey",
+          "expectedAttachmentGeneration",
+        ])
+      )
+        throw new ComposedReferenceGameProtocolError("invalid_game_stop_request");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
       await exchangeEmpty(fetchLike, "/api/composed-reference-game/v1/game/stop", {
         method: "POST",
@@ -759,8 +861,13 @@ export function createComposedReferenceGameBrowserApi(
         request.apiVersion !== 1 ||
         !isIdempotencyKey(request.idempotencyKey) ||
         !isSafeInteger(request.expectedAttachmentGeneration, 1) ||
-        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedAttachmentGeneration"])
-      ) throw new ComposedReferenceGameProtocolError("invalid_game_disconnect_request");
+        !hasExactKeys(request as Record<string, unknown>, [
+          "apiVersion",
+          "idempotencyKey",
+          "expectedAttachmentGeneration",
+        ])
+      )
+        throw new ComposedReferenceGameProtocolError("invalid_game_disconnect_request");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
       await exchangeEmpty(fetchLike, "/api/composed-reference-game/v1/game/disconnect", {
         method: "POST",
@@ -773,8 +880,13 @@ export function createComposedReferenceGameBrowserApi(
         request.apiVersion !== 1 ||
         !isIdempotencyKey(request.idempotencyKey) ||
         !isSafeInteger(request.expectedAttachmentGeneration, 1) ||
-        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedAttachmentGeneration"])
-      ) throw new ComposedReferenceGameProtocolError("invalid_game_resume_request");
+        !hasExactKeys(request as Record<string, unknown>, [
+          "apiVersion",
+          "idempotencyKey",
+          "expectedAttachmentGeneration",
+        ])
+      )
+        throw new ComposedReferenceGameProtocolError("invalid_game_resume_request");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
       return exchange(
         fetchLike,
@@ -792,8 +904,13 @@ export function createComposedReferenceGameBrowserApi(
         request.apiVersion !== 1 ||
         !isIdempotencyKey(request.idempotencyKey) ||
         !isSafeInteger(request.expectedAttachmentGeneration, 1) ||
-        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedAttachmentGeneration"])
-      ) throw new ComposedReferenceGameProtocolError("invalid_game_reopen_request");
+        !hasExactKeys(request as Record<string, unknown>, [
+          "apiVersion",
+          "idempotencyKey",
+          "expectedAttachmentGeneration",
+        ])
+      )
+        throw new ComposedReferenceGameProtocolError("invalid_game_reopen_request");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
       return exchange(
         fetchLike,
@@ -811,8 +928,13 @@ export function createComposedReferenceGameBrowserApi(
         request.apiVersion !== 1 ||
         !isIdempotencyKey(request.idempotencyKey) ||
         !isSafeInteger(request.expectedAttachmentGeneration, 1) ||
-        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedAttachmentGeneration"])
-      ) throw new ComposedReferenceGameProtocolError("invalid_game_resume_cancel_request");
+        !hasExactKeys(request as Record<string, unknown>, [
+          "apiVersion",
+          "idempotencyKey",
+          "expectedAttachmentGeneration",
+        ])
+      )
+        throw new ComposedReferenceGameProtocolError("invalid_game_resume_cancel_request");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
       return exchange(
         fetchLike,
@@ -831,8 +953,14 @@ export function createComposedReferenceGameBrowserApi(
         !isIdempotencyKey(request.idempotencyKey) ||
         !isSafeId(request.integrationId) ||
         !(request.continuityIdentityId === null || isSafeId(request.continuityIdentityId)) ||
-        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "integrationId", "continuityIdentityId"])
-      ) throw new ComposedReferenceGameProtocolError("invalid_game_create_request");
+        !hasExactKeys(request as Record<string, unknown>, [
+          "apiVersion",
+          "idempotencyKey",
+          "integrationId",
+          "continuityIdentityId",
+        ])
+      )
+        throw new ComposedReferenceGameProtocolError("invalid_game_create_request");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
       return exchange(
         fetchLike,
@@ -851,8 +979,14 @@ export function createComposedReferenceGameBrowserApi(
         !isIdempotencyKey(request.idempotencyKey) ||
         !isSafeInteger(request.expectedAttachmentGeneration, 1) ||
         request.confirm !== true ||
-        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedAttachmentGeneration", "confirm"])
-      ) throw new ComposedReferenceGameProtocolError("invalid_game_endgame_request");
+        !hasExactKeys(request as Record<string, unknown>, [
+          "apiVersion",
+          "idempotencyKey",
+          "expectedAttachmentGeneration",
+          "confirm",
+        ])
+      )
+        throw new ComposedReferenceGameProtocolError("invalid_game_endgame_request");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
       return exchange(
         fetchLike,
@@ -874,33 +1008,75 @@ export function createComposedReferenceGameBrowserApi(
       );
     },
     async readStardewInstallationDiscovery(): Promise<StardewInstallationDiscoveryV1> {
-      return exchange(fetchLike, "/api/composed-reference-game/v1/game/installation/discovery", { method: "GET" }, validateStardewInstallationDiscovery);
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/installation/discovery",
+        { method: "GET" },
+        validateStardewInstallationDiscovery,
+      );
     },
     async confirmStardewInstallation(candidateId: string): Promise<StardewInstallationMutationV1> {
-      if (!isInstallationCandidateId(candidateId)) throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_candidate_id");
+      if (!isInstallationCandidateId(candidateId))
+        throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_candidate_id");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
-      return exchange(fetchLike, "/api/composed-reference-game/v1/game/installation/discovery/confirm", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken }, body: JSON.stringify({ apiVersion: 1, candidateId }) }, validateStardewInstallationMutation);
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/installation/discovery/confirm",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({ apiVersion: 1, candidateId }),
+        },
+        validateStardewInstallationMutation,
+      );
     },
     async retryStardewInstallationDiscovery(): Promise<StardewInstallationDiscoveryV1> {
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
-      return exchange(fetchLike, "/api/composed-reference-game/v1/game/installation/discovery/retry", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken }, body: JSON.stringify({ apiVersion: 1 }) }, validateStardewInstallationDiscovery);
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/installation/discovery/retry",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({ apiVersion: 1 }),
+        },
+        validateStardewInstallationDiscovery,
+      );
     },
     async cancelStardewInstallationDiscovery(): Promise<StardewInstallationMutationV1> {
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
-      return exchange(fetchLike, "/api/composed-reference-game/v1/game/installation/discovery/cancel", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken }, body: JSON.stringify({ apiVersion: 1 }) }, validateStardewInstallationMutation);
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/installation/discovery/cancel",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({ apiVersion: 1 }),
+        },
+        validateStardewInstallationMutation,
+      );
     },
     async openStardewInstallationPicker(): Promise<StardewInstallationMutationV1> {
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
-      return exchange(fetchLike, "/api/composed-reference-game/v1/game/installation/discovery/manual-picker", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken }, body: JSON.stringify({ apiVersion: 1 }) }, validateStardewInstallationMutation);
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/installation/discovery/manual-picker",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({ apiVersion: 1 }),
+        },
+        validateStardewInstallationMutation,
+      );
     },
-    async confirmStardewCabin(
-      request: StardewCabinConfirmationRequestV1,
-    ): Promise<StardewCabinConfirmationV1> {
-      if (request.apiVersion !== 1 ||
-          !isIdempotencyKey(request.idempotencyKey) ||
-          !isStardewChoiceHandle(request.choiceHandle) ||
-          request.confirmed !== true ||
-          !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "choiceHandle", "confirmed"])) {
+    async confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1> {
+      if (
+        request.apiVersion !== 1 ||
+        !isIdempotencyKey(request.idempotencyKey) ||
+        !isStardewChoiceHandle(request.choiceHandle) ||
+        request.confirmed !== true ||
+        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "choiceHandle", "confirmed"])
+      ) {
         throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_confirmation_request");
       }
       if (csrfToken === undefined) {

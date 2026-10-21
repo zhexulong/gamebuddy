@@ -665,6 +665,13 @@ test("item 11: each failed-turn problem code renders its own player sentence, ne
     expect(readings[code], `${code}'s sentence carries no machine vocabulary`).not.toContain("_");
   }
 
+  // `runtime_unavailable` is what a machine with no usable model credentials produces on its first
+  // reply, and it is not a wait: sending the same message again reproduces it. So the sentence names
+  // the cause and the one place it is fixed - and never promises that a moment will change it.
+  expect(readings.runtime_unavailable).toContain("API key");
+  expect(readings.runtime_unavailable).toContain("Settings");
+  expect(readings.runtime_unavailable).not.toContain("Try again in a moment");
+
   // A code this build's contract mirror does not know is *rejected at the
   // boundary* rather than rendered: the projection validator refuses the whole
   // turn rather than putting an unknown member in front of the player. That is the

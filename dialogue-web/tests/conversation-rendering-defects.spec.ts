@@ -965,6 +965,9 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
       return {
         className: child.className,
         name: (child.getAttribute("aria-label") ?? "").trim(),
+        // The glyph actually drawn, from the icon family's own class: the rewind and
+        // Regenerate sit next to each other and must not be one shape.
+        glyph: [...(child.querySelector("svg")?.classList ?? [])].find((token) => token.startsWith("lucide-")) ?? null,
         width: round(rect.width),
         height: round(rect.height),
         centre: Math.round(rect.top + rect.height / 2),
@@ -1014,6 +1017,45 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
     width: 136,
     height: 46,
   });
+
+  // The rewind does not wear the regenerate arrow. `Undo2` and `RefreshCw` were one
+  // stroke apart, and a player reading the counter-clockwise circular arrow as
+  // "answer me again" pressed the one control here that DELETES the rest of the
+  // conversation - so the glyph is pinned on both sides: a cut on the destructive
+  // control, the circular arrow on Regenerate, never the same shape. The two share a
+  // screen rather than a strip - Regenerate is the Host's precondition for the
+  // transcript's LAST reply, a rewind point is never the last row - which is exactly
+  // how one vocabulary teaches the other, so both are read from the transcript.
+  const glyphs = await page.evaluate(() => {
+    const read = (selector: string) => {
+      const button = document.querySelector<HTMLElement>(selector);
+      if (button === null) return null;
+      const rect = button.getBoundingClientRect();
+      const svg = button.querySelector("svg");
+      return {
+        glyph: svg === null ? null : ([...svg.classList].find((token) => token.startsWith("lucide-")) ?? null),
+        name: (button.getAttribute("aria-label") ?? "").trim(),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      };
+    };
+    return {
+      regenerate: read(".regenerate-btn"),
+    };
+  });
+  const rewindControl = measured.strip.controls.find((control) => String(control.className).includes("rewind-btn"));
+  expect(rewindControl?.glyph, "the rewind draws a cut").toBe("lucide-scissors");
+  expect(glyphs.regenerate?.glyph, "Regenerate keeps its circular arrow").toBe("lucide-refresh-cw");
+  expect(rewindControl?.glyph, "so the destructive control is not the friendly one").not.toBe(
+    glyphs.regenerate?.glyph,
+  );
+  expect(rewindControl?.name, "and the rewind still names what it keeps and removes").toContain("回退到此处");
+  expect(rewindControl?.name, "including the count it would remove").toContain("（共 2 条）");
+  expect(glyphs.regenerate?.name, "while Regenerate is still named by its own word").toBe("重新生成");
+  expect(rewindControl?.width, "the rewind's box did not move with its glyph").toBe(44);
+  expect(rewindControl?.height, "and neither did its target").toBe(44);
+  expect(glyphs.regenerate?.width, "nor did the control beside it in the transcript").toBe(44);
+  expect(glyphs.regenerate?.height, "which keeps the same touch floor").toBe(44);
 
   // The player's own line: as wide as the line, and no wider.
   expect(

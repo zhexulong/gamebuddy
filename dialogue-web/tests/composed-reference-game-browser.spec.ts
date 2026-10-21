@@ -6619,3 +6619,107 @@ async function readPlayerRow(row: import("@playwright/test").Locator) {
     };
   });
 }
+
+/**
+ * The first-run handoff, measured against design/research/game-first-run-review-2026-10-21.md: three
+ * places where the panel only said what to do after the player had already done it wrong, or said
+ * nothing at all. Each assertion fails against the copy those screens shipped.
+ */
+
+test("step 1 numbers its two controls, so their order is read before either is pressed", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/?step-one-order=1#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+  const panel = page.getByRole("region", { name: "Game state" });
+  const order = panel.getByTestId("game-guide-step-one-order");
+  await expect(order).toBeVisible();
+
+  // Both controls, before anything is pressed, in the one order the Host accepts them in.
+  await expect(order.getByRole("listitem")).toHaveCount(2);
+  const offered = await order
+    .getByRole("button")
+    .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("data-testid")));
+  expect(offered, "activation is offered before setup, which is the order the Host refuses in reverse").toEqual([
+    "game-activate",
+    "game-setup",
+  ]);
+
+  // The step says so in words, and the two controls are an ordered list, so the order is the list's
+  // own semantics rather than a convention the copy has to carry alone.
+  await expect(panel.locator('[data-guide-step="1"] .game-guide-step-detail')).toContainText(
+    "enable companion play, then set up Stardew Valley",
+  );
+  expect(await order.evaluate((node) => node.tagName), "an ordered list is what makes the order readable").toBe("OL");
+});
+
+test("a cabin list read before the game started says what happened, and why reloading fixes it", async ({ page }) => {
+  // The shape a launch leaves behind: a Player Host instance exists, so the handoff no longer reads as
+  // "there is no session yet" - the read that failed ran when the page opened.
+  const launched = {
+    ...game,
+    game: {
+      ...game.game,
+      instance: { status: "running", gameTitle: "Stardew Valley", generation: 1 },
+      connectionStatus: "active",
+      actionAuthority: "active",
+      capabilitySummary: { available: true, count: 1 },
+    },
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(launched) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(launched) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ code: "stardew_cabin_handoff_unavailable" }),
+    }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/?after-launch=1#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+  const handoff = page.locator(".stardew-cabin-handoff");
+  await expect(handoff).toContainText("Cabins can only be read while the game you launched is starting up");
+  // What happened (the read ran when the page opened), what to do, and that doing it costs nothing.
+  await expect(handoff).toContainText("reload this page to pick a cabin");
+  await expect(handoff).toContainText("the game keeps running");
+  await expect(handoff, "no internal vocabulary reaches the player").not.toContainText("Host");
+  // A state with a next step, not a fault: a warning tone here taught the player that a correct first
+  // run had broken.
+  expect(await handoff.locator("[data-tone]").first().getAttribute("data-tone")).toBe("info");
+});
+
+test("an empty cabin list names the next step instead of only the absence", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/?empty-cabins=1#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+  const handoff = page.locator(".stardew-cabin-handoff");
+  await expect(handoff).toContainText("no empty cabin");
+  await expect(handoff, "the player is told what to build and where").toContainText("Robin's carpenter shop");
+  await expect(handoff, "and how the new cabin reaches this list").toContainText("reload this page to choose it");
+  await expect(handoff).not.toContainText("No cabins are currently available.");
+});

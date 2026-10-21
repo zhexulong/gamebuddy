@@ -53,6 +53,16 @@
  * `composedProblemView` in both catalogues, and fails the internal-error sentence for any member,
  * which is the assertion that would have caught the gap.
  *
+ * `problem-code.9` and `problem-code.10` are the same pair for the second contract the composed
+ * shell serves, `game_browser_api/v1`. `.8` could not see that surface at all: it drives the tavern
+ * union through a `TavernProblemError`, and the game client's own twenty-three codes arrive as a
+ * `ComposedReferenceGameProblemError`. Nine of them had a tavern sentence (the codes the two unions
+ * share) and every other one reached the player as the internal-error line. `.9` pins the game
+ * client's `GAME_PROBLEM_CODES` mirror to EQUALITY with the contract's union - the browser cannot
+ * import the Host package, so the gate is what holds the copy honest - and `.10` drives every
+ * member through the real view in both catalogues, failing the internal-error reading for any of
+ * them.
+ *
  * Reading a code out of a call is positional, not "any string argument": the
  * argument index comes from the callee's own parameter named `code`, so
  * `sendSseResync(response, stream, "ambiguous_cursor", generation)` - whose third
@@ -74,6 +84,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { ComposedReferenceGameProblemError } from "../src/composed-reference-game-browser-api.ts";
 import { composedProblemView } from "../src/composed-problem-view.ts";
 import { messages } from "../src/i18n.ts";
 import { TavernProblemError } from "../src/reference-pipeline-api.ts";
@@ -96,6 +107,9 @@ const ALL_HANDLERS = [...TAVERN_HANDLERS, COMPOSED_HANDLER];
 
 /** The client mirrors of the declared vocabularies. */
 const CLIENT_MIRRORS = [join(WEB, "reference-pipeline-api.ts"), join(WEB, "management-pipeline-api.ts")];
+
+/** The composed game client mirrors the game contract's own problem union. */
+const GAME_CLIENT = join(WEB, "composed-reference-game-browser-api.ts");
 
 /** A bounded token: the shape every problem code has. */
 const BOUNDED_CODE = /^[a-z][a-z0-9_]{0,63}$/u;
@@ -330,12 +344,12 @@ test("problem-code.3: every client mirror is a subset of the declared set", (t) 
         failures.push(`${entry.where} mirrors undeclared turn code ${JSON.stringify(entry.value)}`);
     }
   }
-  for (const list of ["GAME_ABSENT_ROUTE_PROBLEM_CODES"]) {
-    for (const entry of literalsInDeclaration(join(WEB, "composed-problem-view.ts"), list)) {
-      mirrored += 1;
-      if (!tavern.has(entry.value) && !game.has(entry.value) && !turn.has(entry.value))
-        failures.push(`${entry.where} classifies undeclared code ${JSON.stringify(entry.value)}`);
-    }
+  // The composed game client's own mirror is `.3`-shaped too (a game code it invents is
+  // unreachable), and `problem-code.9` holds it to EQUALITY so it cannot be a stale subset.
+  for (const entry of literalsInDeclaration(GAME_CLIENT, "GAME_PROBLEM_CODES")) {
+    mirrored += 1;
+    if (!game.has(entry.value))
+      failures.push(`${entry.where} mirrors undeclared game code ${JSON.stringify(entry.value)}`);
   }
   t.diagnostic(
     `problem-code.3: ${mirrored} mirrored code(s) checked against ${tavern.size} tavern + ${turn.size} turn + ${game.size} game declared, ${failures.length} undeclared`,
@@ -440,14 +454,14 @@ test("problem-code.6 (mutation): an invented code and a catch that decides nothi
  * code the mirror knows that no tavern route declares (unreachable branch). Pure, so the
  * mutation half of `problem-code.7` exercises the same comparison the gate asserts.
  */
-export function codeSetDrift(where, mirrored, authority) {
+export function codeSetDrift(where, mirrored, authority, noun = "tavern route") {
   return [
     ...[...authority]
       .filter((code) => !mirrored.has(code))
       .map((code) => `${where} does not recognise declared code ${JSON.stringify(code)}`),
     ...[...mirrored]
       .filter((code) => !authority.has(code))
-      .map((code) => `${where} recognises a code no tavern route declares ${JSON.stringify(code)}`),
+      .map((code) => `${where} recognises a code no ${noun} declares ${JSON.stringify(code)}`),
   ];
 }
 
@@ -559,4 +573,121 @@ test("problem-code.8: every declared code reaches the player as its own sentence
     "a declared code is a refusal the player can act on; showing it as an internal error is the dishonesty this rule exists for",
   );
   assert.deepEqual(failures, [], "every declared code must reach the player as its own sentence");
+});
+
+/**
+ * A wire problem carrying one game code, in the shape the composed game client raises for a
+ * validated refusal.
+ */
+function gameProblemFor(code, status = 409, cause = null) {
+  return new ComposedReferenceGameProblemError(code, status, null, cause);
+}
+
+test("problem-code.9: the composed game client's mirror IS the game contract's union", (t) => {
+  // The direction `problem-code.7` holds the tavern mirrors to, for the other contract. The bundle
+  // cannot import the Host package, so `GAME_PROBLEM_CODES` is the browser's only copy of the game
+  // union - and a copy that silently misses a member is how a typed refusal reads as protocol
+  // corruption, or (here) as an internal error.
+  const { game } = authorities();
+  const entries = literalsInDeclaration(GAME_CLIENT, "GAME_PROBLEM_CODES");
+  const mirrored = new Set(entries.map((entry) => entry.value));
+  const findings = codeSetDrift("composed-reference-game-browser-api.ts", mirrored, game, "game route");
+  t.diagnostic(
+    `problem-code.9: ${mirrored.size} mirrored game code(s) checked for equality against ${game.size} declared, ${findings.length} drifted`,
+  );
+  assert.deepEqual(
+    findings,
+    [],
+    "a game mirror that does not know a declared code cannot give that refusal the player's own words",
+  );
+
+  // The comparison itself: one member short and one invented both fail, so a future edit that turns
+  // this back into a subset check fails here instead of passing on the drift it exists to catch.
+  assert.deepEqual(
+    codeSetDrift(
+      "mutation.ts",
+      new Set([...game].filter((code) => code !== "state_unavailable")),
+      game,
+      "game route",
+    ),
+    ['mutation.ts does not recognise declared code "state_unavailable"'],
+  );
+  assert.deepEqual(codeSetDrift("mutation.ts", new Set([...game, "invented_code"]), game, "game route"), [
+    'mutation.ts recognises a code no game route declares "invented_code"',
+  ]);
+});
+
+test("problem-code.10: every declared game code reaches the player as its own sentence", (t) => {
+  // The measured defect this rule exists for: the game contract declares twenty-three codes, the
+  // composed view named nine of them by reusing a tavern sentence, and the rest arrived as
+  // "GameBuddy reported an internal error" - as a system fault rather than as the game refusal they
+  // are. `problem-code.8` is the same rule for the tavern union; this is its second contract.
+  const { game } = authorities();
+  const declared = [...game].sort();
+  const failures = [];
+  const families = new Map();
+  let internalReadings = 0;
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    for (const code of declared) {
+      const view = composedProblemView(gameProblemFor(code), labels);
+      const internalDetails = [
+        labels.problemInternalErrorDetail.replace("{{code}}", code),
+        labels.problemInternalErrorCauseDetail
+          .replace("{{code}}", code)
+          .replace("{{cause}}", labels.problemInternalErrorNoCode),
+      ];
+      if (internalDetails.includes(view.detail)) internalReadings += 1;
+      if (view.kind !== "problem" || view.title.length === 0 || view.detail.length === 0)
+        failures.push(`${locale} ${code} has no sentence`);
+      // A code is contract vocabulary; the sentence may never print it back at the player.
+      if (view.title.includes(code) || view.detail.includes(code))
+        failures.push(`${locale} ${code} prints the raw code`);
+      // The sentence belongs to the code, not to the `retryable` flag beside it.
+      const retried = composedProblemView(gameProblemFor(code, 503), labels);
+      if (retried.title !== view.title || retried.detail !== view.detail)
+        failures.push(`${locale} ${code} reads differently when the refusal is retryable`);
+      if (locale === "en") {
+        const sentence = `${view.title}\n${view.detail}`;
+        families.set(sentence, [...(families.get(sentence) ?? []), code]);
+      }
+    }
+  }
+  const groups = [...families.entries()].sort((left, right) => right[1].length - left[1].length);
+  for (const [, codes] of groups)
+    t.diagnostic(`problem-code.10 family (${codes.length}): ${codes.join(", ")}`);
+  t.diagnostic(
+    `problem-code.10: ${declared.length} declared game code(s) through the real view in 2 catalogues, ${groups.length} sentence family/families, ${internalReadings} internal-error reading(s), ${failures.length} violation(s)`,
+  );
+  assert.equal(
+    internalReadings,
+    0,
+    "a declared game code is a refusal the player can act on; showing it as an internal error is the dishonesty this rule exists for",
+  );
+  assert.deepEqual(failures, [], "every declared game code must reach the player as its own sentence");
+
+  // The one game sentence that carries producer vocabulary: `game_unavailable` is the wrapper the
+  // Host answers with when a step of the game's lifecycle failed, and the bounded `stardew_*` cause
+  // it registers is what names the step. That diagnostic must survive - and the code itself must
+  // not, which is what separates the sentence from the internal-error line it replaced.
+  const labels = messages("en");
+  const diagnosed = composedProblemView(
+    gameProblemFor("game_unavailable", 409, "stardew_private_launch_admission_failed"),
+    labels,
+  );
+  t.diagnostic(`problem-code.10 diagnostic: ${diagnosed.title} / ${diagnosed.detail}`);
+  assert.ok(
+    diagnosed.detail.includes("stardew_private_launch_admission_failed"),
+    "the bounded cause the Host registered is the only thing that names which step failed",
+  );
+  assert.equal(diagnosed.detail.includes("game_unavailable"), false);
+
+  // The mutation half: a game code with no entry in the map falls through to the internal-error
+  // sentence, which is the reading the assertion above fails on.
+  const undeclared = composedProblemView(gameProblemFor("gate_invented_game_code"), labels);
+  assert.equal(
+    undeclared.detail,
+    labels.problemInternalErrorDetail.replace("{{code}}", "gate_invented_game_code"),
+    "an undeclared game code is the shape a missing sentence takes",
+  );
 });

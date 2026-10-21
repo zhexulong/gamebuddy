@@ -15,6 +15,8 @@ import {
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { gameOperationFailureSentence, type GameOperationFailure } from "../composed-problem-view";
+import type { Messages } from "../i18n";
 import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "../composed-reference-game-browser-api";
 import {
   compatibilityLabel,
@@ -25,7 +27,6 @@ import {
   type CapabilityBoard,
   type CapabilityBoardCard,
 } from "../game-presentation";
-import type { Messages } from "../i18n";
 
 /**
  * The Game panel: one presentation component for every state the composed Game
@@ -96,33 +97,49 @@ export type GameStatePanelProps = Readonly<{
   integrationId: string;
   syncing: boolean;
   lifecycle: Readonly<{
-    activation: Readonly<{ available: boolean; active: boolean; failed: boolean; notConfigured: boolean; unavailable: boolean }>;
-    setup: Readonly<{ available: boolean; active: boolean; failed: boolean; notStaged: boolean }>;
-    launch: Readonly<{ available: boolean; active: boolean; failed: boolean; notStaged: boolean }>;
+    activation: Readonly<{
+      available: boolean;
+      active: boolean;
+      failure: GameOperationFailure | null;
+      notConfigured: boolean;
+      unavailable: boolean;
+    }>;
+    setup: Readonly<{ available: boolean; active: boolean; failure: GameOperationFailure | null; notStaged: boolean }>;
+    launch: Readonly<{ available: boolean; active: boolean; failure: GameOperationFailure | null; notStaged: boolean }>;
   }>;
   session: Readonly<{
-    stop: Readonly<{ available: boolean; active: boolean; failed: boolean }>;
-    disconnect: Readonly<{ available: boolean; active: boolean; failed: boolean }>;
+    stop: Readonly<{ available: boolean; active: boolean; failure: GameOperationFailure | null }>;
+    disconnect: Readonly<{ available: boolean; active: boolean; failure: GameOperationFailure | null }>;
     /**
      * The deliberate terminal operation (`game.endgame`). `confirmArmed` is the
      * UI-level confirm step: the first click arms, only the confirm button sends.
      * `available` false means the control is absent, never a disabled lookalike.
      */
-    endgame: Readonly<{ available: boolean; active: boolean; failed: boolean; confirmArmed: boolean }>;
+    endgame: Readonly<{
+      available: boolean;
+      active: boolean;
+      failure: GameOperationFailure | null;
+      confirmArmed: boolean;
+    }>;
   }>;
   resume: Readonly<{
     available: boolean;
     active: boolean;
-    failed: boolean;
+    failure: GameOperationFailure | null;
     unavailable: boolean;
     cancelActive: boolean;
-    cancelFailed: boolean;
+    cancelFailure: GameOperationFailure | null;
     failureSurface: boolean;
   }>;
-  reopen: Readonly<{ available: boolean; active: boolean; failed: boolean; unavailable: boolean }>;
+  reopen: Readonly<{
+    available: boolean;
+    active: boolean;
+    failure: GameOperationFailure | null;
+    unavailable: boolean;
+  }>;
   create: Readonly<{
     active: boolean;
-    failed: boolean;
+    failure: GameOperationFailure | null;
     unavailable: boolean;
     formOpen: boolean;
     continuityIdentity: string;
@@ -266,49 +283,55 @@ export function GameStatePanel({
                 )}
               </div>
             ) : (
-              <ol
-                className="game-guide-steps"
-                data-testid="game-start-guide"
-                aria-label={labels.gameStartGuide}
-              >
+              <ol className="game-guide-steps" data-testid="game-start-guide" aria-label={labels.gameStartGuide}>
                 <li className="game-guide-step" data-guide-step="1">
                   <h4 className="game-guide-step-title">{labels.gameGuideStepOneTitle}</h4>
                   <p className="game-guide-step-detail">{labels.gameGuideStepOneDetail}</p>
-                  <div className="game-actions">
+                  {/* Step 1 holds two controls the Host accepts in one order
+                      only, so they are numbered here: the order is part of the
+                      step the player reads, not something a refusal teaches
+                      after they picked the second one first. */}
+                  <ol className="game-guide-substeps" data-testid="game-guide-step-one-order">
                     {lifecycle.activation.available && (
-                      <button
-                        type="button"
-                        className="game-action primary"
-                        data-testid="game-activate"
-                        disabled={lifecycle.activation.active}
-                        aria-label={labels.gameActivation}
-                        onClick={handlers.activate}
-                      >
-                        <Power size={16} aria-hidden="true" />
-                        {labels.gameActivation}
-                      </button>
+                      <li className="game-guide-substep">
+                        <button
+                          type="button"
+                          className="game-action primary"
+                          data-testid="game-activate"
+                          disabled={lifecycle.activation.active}
+                          aria-label={labels.gameActivation}
+                          onClick={handlers.activate}
+                        >
+                          <Power size={16} aria-hidden="true" />
+                          {labels.gameActivation}
+                        </button>
+                        <p className="game-subpanel-note">{labels.gameActivationHint}</p>
+                      </li>
                     )}
                     {lifecycle.setup.available && (
-                      <button
-                        type="button"
-                        className="game-action"
-                        data-testid="game-setup"
-                        disabled={lifecycle.setup.active}
-                        onClick={handlers.setup}
-                      >
-                        <Settings size={16} aria-hidden="true" />
-                        {labels.gameSetup}
-                      </button>
+                      <li className="game-guide-substep">
+                        <button
+                          type="button"
+                          className="game-action"
+                          data-testid="game-setup"
+                          disabled={lifecycle.setup.active}
+                          onClick={handlers.setup}
+                        >
+                          <Settings size={16} aria-hidden="true" />
+                          {labels.gameSetup}
+                        </button>
+                        <p className="game-subpanel-note">{labels.gameSetupHint}</p>
+                      </li>
                     )}
-                  </div>
+                  </ol>
                   {lifecycle.activation.active && (
                     <p className="game-status" data-tone="progress" role="status">
                       {labels.gameActivationInProgress}
                     </p>
                   )}
-                  {lifecycle.activation.failed && (
+                  {lifecycle.activation.failure !== null && (
                     <p className="game-status" data-tone="danger" role="status">
-                      {labels.gameActivationFailed}
+                      {gameOperationFailureSentence(lifecycle.activation.failure, labels.gameActivationFailed)}
                     </p>
                   )}
                   {lifecycle.activation.notConfigured && (
@@ -326,9 +349,9 @@ export function GameStatePanel({
                       {labels.gameActivationRequired}
                     </p>
                   ) : (
-                    lifecycle.setup.failed && (
+                    lifecycle.setup.failure !== null && (
                       <p className="game-status" data-tone="danger" role="status">
-                        {labels.gameSetupFailed}
+                        {gameOperationFailureSentence(lifecycle.setup.failure, labels.gameSetupFailed)}
                       </p>
                     )
                   )}
@@ -357,9 +380,9 @@ export function GameStatePanel({
                       {labels.gameActivationRequired}
                     </p>
                   ) : (
-                    lifecycle.launch.failed && (
+                    lifecycle.launch.failure !== null && (
                       <p className="game-status" data-tone="warning" role="status">
-                        {labels.gameLaunchFailed}
+                        {gameOperationFailureSentence(lifecycle.launch.failure, labels.gameLaunchFailed)}
                       </p>
                     )
                   )}
@@ -387,9 +410,9 @@ export function GameStatePanel({
                 {labels.gameReopenInProgress}
               </p>
             )}
-            {reopen.failed && (
+            {reopen.failure !== null && (
               <p className="game-status" data-tone="danger" role="status">
-                {labels.gameReopenFailed}
+                {gameOperationFailureSentence(reopen.failure, labels.gameReopenFailed)}
               </p>
             )}
             {reopen.unavailable && (
@@ -404,9 +427,7 @@ export function GameStatePanel({
               latest outcome alone: the acting authority is the board's card. */}
           <PanelGroup id="game-group-session" title={labels.gameGroupSession}>
             <dl className="game-facts">
-              <GameFact label={labels.gameFactOutcome}>
-                {outcomeLabel(labels, game.game.latestOutcome)}
-              </GameFact>
+              <GameFact label={labels.gameFactOutcome}>{outcomeLabel(labels, game.game.latestOutcome)}</GameFact>
             </dl>
             <div className="game-actions">
               {session.stop.available && (
@@ -434,14 +455,14 @@ export function GameStatePanel({
                 </button>
               )}
             </div>
-            {session.stop.failed && (
+            {session.stop.failure !== null && (
               <p className="game-status" data-tone="warning" role="status">
-                {labels.gameStopFailed}
+                {gameOperationFailureSentence(session.stop.failure, labels.gameStopFailed)}
               </p>
             )}
-            {session.disconnect.failed && (
+            {session.disconnect.failure !== null && (
               <p className="game-status" data-tone="danger" role="status">
-                {labels.gameDisconnectFailed}
+                {gameOperationFailureSentence(session.disconnect.failure, labels.gameDisconnectFailed)}
               </p>
             )}
             {/* The one terminal operation, deliberately set apart from the
@@ -494,9 +515,9 @@ export function GameStatePanel({
                     {labels.gameEndgameInProgress}
                   </p>
                 )}
-                {session.endgame.failed && (
+                {session.endgame.failure !== null && (
                   <p className="game-status" data-tone="danger" role="status">
-                    {labels.gameEndgameFailed}
+                    {gameOperationFailureSentence(session.endgame.failure, labels.gameEndgameFailed)}
                   </p>
                 )}
               </div>
@@ -564,9 +585,9 @@ export function GameStatePanel({
                   {labels.gameResumeInProgress}
                 </p>
               )}
-              {resume.failed && (
+              {resume.failure !== null && (
                 <p className="game-status" data-tone="danger" role="status">
-                  {labels.gameResumeFailed}
+                  {gameOperationFailureSentence(resume.failure, labels.gameResumeFailed)}
                 </p>
               )}
               {resume.unavailable && (
@@ -579,9 +600,9 @@ export function GameStatePanel({
                   {labels.gameResumeCancelInProgress}
                 </p>
               )}
-              {resume.cancelFailed && (
+              {resume.cancelFailure !== null && (
                 <p className="game-status" data-tone="danger" role="status">
-                  {labels.gameResumeCancelFailed}
+                  {gameOperationFailureSentence(resume.cancelFailure, labels.gameResumeCancelFailed)}
                 </p>
               )}
             </PanelGroup>
@@ -618,9 +639,9 @@ export function GameStatePanel({
                   {labels.gameCreateInProgress}
                 </p>
               )}
-              {create.failed && (
+              {create.failure !== null && (
                 <p className="game-status" data-tone="danger" role="status">
-                  {labels.gameCreateFailed}
+                  {gameOperationFailureSentence(create.failure, labels.gameCreateFailed)}
                 </p>
               )}
               {create.unavailable && (
@@ -636,11 +657,7 @@ export function GameStatePanel({
           {/* The machine facts, demoted below the board: true and useful, but
               not what the surface is about. The capability summary is not here
               - the board above is its presentation. */}
-          <PanelGroup
-            id="game-group-connection"
-            title={labels.gameGroupConnection}
-            className="game-group-secondary"
-          >
+          <PanelGroup id="game-group-connection" title={labels.gameGroupConnection} className="game-group-secondary">
             <ConnectionFacts game={game} labels={labels} />
           </PanelGroup>
         </>
@@ -666,9 +683,7 @@ function ConnectionFacts({ game, labels }: { game: GameBrowserStateV1; labels: M
       <GameFact label={labels.gameFactInstance}>{instanceLabel(labels, projection.instance)}</GameFact>
       <GameFact label={labels.gameFactWorld}>{projection.selectedWorld ?? labels.gameValueNone}</GameFact>
       <GameFact label={labels.gameFactSave}>{projection.selectedSave ?? labels.gameValueNone}</GameFact>
-      <GameFact label={labels.gameFactCompatibility}>
-        {compatibilityLabel(labels, projection.compatibility)}
-      </GameFact>
+      <GameFact label={labels.gameFactCompatibility}>{compatibilityLabel(labels, projection.compatibility)}</GameFact>
     </dl>
   );
 }
@@ -718,7 +733,7 @@ function CabinHandoff({
             {labels.stardewCabinsAwaitingSession}
           </p>
         ) : (
-          <p className="game-status" data-tone="warning" role="status">
+          <p className="game-status" data-tone="info" role="status">
             {labels.stardewCabinsUnavailable}
           </p>
         ))}

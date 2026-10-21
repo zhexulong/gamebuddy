@@ -1,34 +1,25 @@
 import { useCallback, useEffect, useState, type ReactElement } from "react";
-import type { ManagementPipelineApi, TavernConnectionThinkingLevelV1, TavernModelProfileV1, TavernModelProfilesV1 } from "../management-pipeline-api";
-import { applyAdvancedPiSettingsEdit } from "../pi-settings-model";
+import type {
+  ManagementPipelineApi,
+  TavernConnectionThinkingLevelV1,
+  TavernModelProfileV1,
+  TavernModelProfilesV1,
+} from "../management-pipeline-api";
 import type { Messages } from "../i18n";
 
 /**
  * One surface's model settings (design/104 §3; the owner's ruling that the model a
  * surface uses belongs on that surface rather than only in a global Settings view).
  *
- * Two halves, and the split is the owner's own:
- *
- *  - **Necessary**, and therefore a control: which model this surface uses, and at
- *    which thinking level. The player may type any model id their endpoint serves -
- *    the Host never checks it against the recommended catalog - and the suggestion
- *    list is guidance, not a restriction. A save is a durable revision CAS: the
- *    saved value is what the Host re-reads, and a revision that moved underneath is
- *    reported as a conflict rather than shown as saved.
- *
- *  - **Advanced**, and therefore Pi's own JSON: `models.json` in exactly Pi's shape.
- *    This section is capability-gated rather than faked: this Host publishes no route
- *    that reads or writes the raw document (the provider store merges one entry under
- *    `providers`), so the section says what that document *is* and who writes it here
- *    instead of offering a textarea whose save would go nowhere. When a Host route
- *    appears, it passes a writer here and the same validation path
- *    (`applyAdvancedPiSettingsEdit`) becomes live.
- *
- *    Every sentence in it comes from the surface's own `labels`, so the block
- *    cannot render in a language the rest of the surface is not using.
+ * Which model this surface uses, and at which thinking level. The player may type
+ * any model id their endpoint serves - the Host never checks it against the
+ * recommended catalog - and the suggestion list is guidance, not a restriction. A
+ * save is a durable revision CAS: the saved value is what the Host re-reads, and a
+ * revision that moved underneath is reported as a conflict rather than shown as
+ * saved.
  *
  * Reading is the browser session's; writing carries the mounted session's CSRF token,
- * so both halves move on the same broker session as the rest of the surface.
+ * so the surface moves on the same broker session as the rest of it.
  */
 
 export function SurfaceModelSettings({
@@ -36,16 +27,11 @@ export function SurfaceModelSettings({
   api,
   csrfToken,
   labels,
-  writeAdvancedSettings,
-  readAdvancedSettings,
 }: Readonly<{
   surface: "chat" | "game";
   api: ManagementPipelineApi;
   csrfToken: string;
   labels: Messages;
-  /** Present only once the Host publishes a route for Pi's raw document. */
-  writeAdvancedSettings?: (document: Readonly<{ providers: Readonly<Record<string, Readonly<Record<string, unknown>>>> }>) => Promise<void>;
-  readAdvancedSettings?: () => Promise<unknown>;
 }>): ReactElement {
   const [profiles, setProfiles] = useState<TavernModelProfilesV1 | "loading" | "unavailable">("loading");
   const [modelId, setModelId] = useState("");
@@ -192,117 +178,7 @@ export function SurfaceModelSettings({
           </span>
         )}
       </div>
-
-      <section className="surface-advanced-settings" data-advanced-settings={writeAdvancedSettings === undefined ? "unavailable" : "available"}>
-        <h4>{labels.advancedPiSettingsTitle}</h4>
-        {writeAdvancedSettings === undefined ? (
-          // Honest absence, and useful: this Host publishes no route for Pi's raw
-          // document, so instead of a textarea whose save would go nowhere
-          // (design/26 §1 forbids the disabled lookalike) the section says what
-          // that document is, who writes it here, and therefore why there is
-          // nothing to edit on this surface.
-          <p className="state-placeholder" data-advanced-settings-state="unavailable">
-            {labels.advancedPiSettingsNoRoute}
-          </p>
-        ) : (
-          <AdvancedPiSettings
-            hint={labels.advancedPiSettingsHint}
-            save={labels.advancedPiSettingsSave}
-            applied={labels.advancedPiSettingsApplied}
-            invalidJson={labels.advancedPiSettingsInvalidJson}
-            invalidShape={labels.advancedPiSettingsInvalidShape}
-            read={readAdvancedSettings}
-            write={writeAdvancedSettings}
-          />
-        )}
-      </section>
     </section>
-  );
-}
-
-/**
- * The advanced editor, rendered only when a Host route exists. It validates through
- * the same parser the model module owns, so an edit that is not Pi's document is
- * refused whole and never reaches the file.
- */
-function AdvancedPiSettings({
-  hint,
-  save,
-  applied,
-  invalidJson,
-  invalidShape,
-  read,
-  write,
-}: Readonly<{
-  hint: string;
-  save: string;
-  applied: string;
-  invalidJson: string;
-  invalidShape: string;
-  read?: () => Promise<unknown>;
-  write: (document: Readonly<{ providers: Readonly<Record<string, Readonly<Record<string, unknown>>>> }>) => Promise<void>;
-}>): ReactElement {
-  const [text, setText] = useState("");
-  const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (read === undefined) return;
-    let active = true;
-    void read()
-      .then((value) => {
-        if (!active) return;
-        const document = value === null || value === undefined ? { providers: {} } : value;
-        setText(serializeAdvanced(document));
-      })
-      .catch(() => active && setNotice(invalidShape));
-    return () => {
-      active = false;
-    };
-  }, [read, invalidShape]);
-
-  return (
-    <>
-      <p className="surface-model-settings-hint">{hint}</p>
-      <textarea
-        className="surface-advanced-editor"
-        value={text}
-        rows={12}
-        spellCheck={false}
-        aria-label={hint}
-        onChange={(event) => {
-          setText(event.target.value);
-          setNotice(null);
-        }}
-      />
-      <div className="surface-model-actions">
-        <button
-          type="button"
-          className="small-button"
-          disabled={busy}
-          onClick={() => {
-            void (async () => {
-              setBusy(true);
-              try {
-                const result = await applyAdvancedPiSettingsEdit(text, write);
-                setNotice(result.ok ? applied : result.problem === "invalid_json" ? invalidJson : invalidShape);
-              } catch {
-                setNotice(invalidShape);
-              } finally {
-                setBusy(false);
-              }
-            })();
-          }}
-        >
-          {save}
-        </button>
-      </div>
-      {notice !== null && (
-        <p className="surface-model-notice" role="status">
-          {notice}
-        </p>
-      )}
-    </>
   );
 }
 
@@ -334,15 +210,12 @@ function levelLabel(level: string, labels: Messages): string {
 }
 
 function problemCodeOf(error: unknown): string | null {
-  if (typeof error === "object" && error !== null && "code" in error && typeof (error as { code: unknown }).code === "string")
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code: unknown }).code === "string"
+  )
     return (error as { code: string }).code;
   return null;
-}
-
-function serializeAdvanced(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return "";
-  }
 }

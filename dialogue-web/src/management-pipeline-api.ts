@@ -237,6 +237,34 @@ export type WorldInfoUpdateCommandV1 = Readonly<{
   itemHandle: string;
   item: WorldInfoAuthoredContentV1 & Readonly<{ expectedRevision: number }>;
 }>;
+/**
+ * `world-info.import`: one external lorebook file, carried whole. The file's interior is the Host
+ * importer's business, so this mirror admits any JSON object and decides nothing about its entries.
+ */
+export type WorldInfoImportCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  expectedRevision: string;
+  lorebook: Readonly<Record<string, unknown>>;
+}>;
+/**
+ * `chat.export`: one Chat's transcript as a SillyTavern chat file. `jsonl` is the file itself, so
+ * the download saves the Host's own bytes and never re-serializes the transcript here.
+ */
+export type ChatExportDispositionV1 = Readonly<{
+  field: string;
+  classification: "accepted_typed" | "dropped_unsupported" | "rejected_invalid";
+  reason: string;
+}>;
+export type ChatExportV1 = Readonly<{
+  apiVersion: 1;
+  format: "tavern-interchange/v1";
+  chatHandle: string;
+  messageCount: number;
+  dispositions: readonly ChatExportDispositionV1[];
+  canonicalHash: string;
+  jsonl: string;
+}>;
 
 /** Metadata-only companion library entry: opaque handle plus display name. */
 export type CompanionListEntryV1 = Readonly<{

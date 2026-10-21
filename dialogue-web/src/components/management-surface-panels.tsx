@@ -39,7 +39,7 @@ import type { Locale, Messages } from "../i18n";
 import { useArmedConfirmation } from "./armed-confirmation";
 import { ContextDrawer } from "./ContextDrawer";
 import { MarkdownMessage } from "./MarkdownMessage";
-import { openingVariantWords } from "./opening-variant-labels";
+import { openingVariantName } from "./opening-variant-labels";
 import {
   type ChatTitleV1,
   createManagementPipelineApi,
@@ -666,7 +666,10 @@ export function ChatsSurfacePanel({
               // minted once, when the set is read (`openingOptions`), so React keys by that identity
               // rather than by a loop index - the same discipline the editor rows follow.
               const preview = openingPreview(variant.text);
-              const name = openingVariantWords({ label: variant.label, index, count: openings.length }, labels);
+              // The option names the opening it commits and nothing more: the position in the set
+              // belongs to the strip under the opening bubble, and composing the two here put the
+              // index into the name twice (`备用 1 2/3`).
+              const name = openingVariantName({ label: variant.label, index, count: openings.length }, labels);
               const expanded = expandedOpening === variant.optionId;
               const revealName = (expanded ? labels.openingCollapseName : labels.openingExpandName).replace(
                 "{{name}}",

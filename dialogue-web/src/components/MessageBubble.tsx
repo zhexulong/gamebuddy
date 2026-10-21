@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, LoaderCircle, Pencil, RefreshCw, Trash2, Undo2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, LoaderCircle, Pencil, RefreshCw, Scissors, Trash2 } from "lucide-react";
 import { memo, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
@@ -510,6 +510,13 @@ export const MessageBubble = memo(function MessageBubble({
       </div>
     </div>
   ) : null;
+  // The rewind's own glyph is a CUT, not a circular arrow. It used to be `Undo2`, which is one stroke
+  // away from the `RefreshCw` the Regenerate button beside it wears: a player reading `[ ↶ ]` as
+  // "answer me again" pressed the one control in this strip that DELETES the rest of the conversation.
+  // Scissors is the metaphor for severing a branch - the cut point is this row, which survives - and it
+  // keeps the row's two destructive controls apart: this one cuts the conversation here, Delete
+  // (`Trash2`) removes one message. The word and the accessible name still state what the press keeps,
+  // what it removes and how much (`rewindHere` / `rewindHereName`).
   const rewindControl =
     !rewindArmed && rewindPoint !== undefined ? (
       <button
@@ -526,7 +533,7 @@ export const MessageBubble = memo(function MessageBubble({
         {pending === "rewind" ? (
           <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
         ) : (
-          <Undo2 size={14} aria-hidden="true" />
+          <Scissors size={14} aria-hidden="true" />
         )}
         <span className="action-word">{labels.rewindHere}</span>
       </button>

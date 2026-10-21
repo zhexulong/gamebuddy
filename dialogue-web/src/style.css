@@ -4626,9 +4626,59 @@
     overflow-wrap: anywhere;
   }
 
+  /* Step 1's two controls are one sequence: their number is the list's counter,
+   graphic like the step numbers above rather than text read twice. */
+  .game-guide-substeps {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: game-guide-substep;
+  }
+
+  .game-guide-substeps:empty {
+    display: none;
+  }
+
+  .game-guide-substep {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 2px;
+    align-items: center;
+  }
+
+  .game-guide-substep::before {
+    grid-row: 1 / span 2;
+    align-self: start;
+    counter-increment: game-guide-substep;
+    content: counter(game-guide-substep);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background-color: var(--surface-elevated);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .game-guide-substep > .game-action {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .game-guide-substep > .game-subpanel-note {
+    grid-column: 2;
+  }
+
   /* Everything else a step carries - its controls, its own feedback, the cabin
    handoff - spans the body column, so no control sits under the step number. */
   .game-guide-step > .game-actions,
+  .game-guide-step > .game-guide-substeps,
   .game-guide-step > .game-status,
   .game-guide-step > .stardew-cabin-handoff {
     grid-column: 2;

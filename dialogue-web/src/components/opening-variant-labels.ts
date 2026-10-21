@@ -12,23 +12,42 @@
 export type OpeningVariantLabels = Readonly<{ openingVariantDefault: string; openingVariantAlternate: string }>;
 
 /** The Host's `Default` / `Alternate N` in player words; any other label as published. */
-function openingVariantLabel(label: string, labels: OpeningVariantLabels): string {
+function translatedLabel(label: string, labels: OpeningVariantLabels): string {
   if (label === "Default") return labels.openingVariantDefault;
   const alternate = /^Alternate (\d+)$/u.exec(label);
   return alternate === null ? label : labels.openingVariantAlternate.replace("{{index}}", alternate[1]!);
 }
 
+/** The opening's position in the set it came from: `2/3`. */
+function position(variant: Readonly<{ index: number; count: number }>): string {
+  return `${variant.index + 1}/${variant.count}`;
+}
+
 /**
- * An opening's own name plus its position in the set it came from.
+ * An opening's own name: the label the Host published, in the player's words, or
+ * the bare position when it published nothing rather than a name invented here.
  *
- * The position says how many openings there are, so the name alone is enough to
- * tell the player which one they are looking at; a set the Host published no
- * label for leaves the position alone rather than inventing a name.
+ * The name is what a chooser row reads, so it never carries the position: the
+ * position belongs to the strip under the opening bubble, and composing both put
+ * the same row at `Default 1/3` and `备用 1 2/3` - one opening named twice, its
+ * place read as part of its name.
+ */
+export function openingVariantName(
+  variant: Readonly<{ label: string | null; index: number; count: number }>,
+  labels: OpeningVariantLabels,
+): string {
+  return variant.label === null ? position(variant) : translatedLabel(variant.label, labels);
+}
+
+/**
+ * The opening bubble's pager: the opening's name and its position beside it, as
+ * Tavern's own `‹ Alternate 1 2/3 ›` reads. Here the two are distinct facts - the
+ * name is the card's own order among its alternates, the position is the place in
+ * the whole set - and the pair is what the player swiping is choosing between.
  */
 export function openingVariantWords(
   variant: Readonly<{ label: string | null; index: number; count: number }>,
   labels: OpeningVariantLabels,
 ): string {
-  const position = `${variant.index + 1}/${variant.count}`;
-  return variant.label === null ? position : `${openingVariantLabel(variant.label, labels)} ${position}`;
+  return `${openingVariantName(variant, labels)} ${position(variant)}`;
 }

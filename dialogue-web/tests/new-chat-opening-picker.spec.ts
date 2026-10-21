@@ -28,6 +28,10 @@ import { expect, test, type Page } from "@playwright/test";
  * 5. `the chooser's geometry` measures the open chooser and each option's preview
  *    at 1440x900 and 400x800, and reports it. Nothing is asserted by class name:
  *    every claim is the player-visible text or a measured box.
+ * 6. `names each opening once, without the strip's counter, in both languages` -
+ *    an option carries the label the Host published and not the position in the
+ *    set, which the strip under the opening bubble shows. It pins the exact text
+ *    in en and zh-CN, so `Alternate 1 2/3` / `备用 1 2/3` cannot come back.
  */
 
 const token = "A".repeat(43);
@@ -48,6 +52,17 @@ const OPENINGS = [
   { label: "Default", text: DEFAULT_OPENING },
   { label: "Rainy evening", text: RAINY_OPENING },
   { label: "Late night", text: NIGHT_OPENING },
+];
+
+/**
+ * The Host's own structural spelling: `Default` plus the card's 1-based
+ * `Alternate N` (`buildGreetingVariants`, `host/src/tavern/new-companion-service.ts`),
+ * which is the set a card without its own names produces.
+ */
+const STRUCTURAL_OPENINGS = [
+  { label: "Default", text: DEFAULT_OPENING },
+  { label: "Alternate 1", text: RAINY_OPENING },
+  { label: "Alternate 2", text: NIGHT_OPENING },
 ];
 
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
@@ -249,16 +264,17 @@ test("creates the Chat on the opening the player picked", async ({ page }) => {
   await boot(page);
   await openChats(page);
 
-  // The chooser names each opening with the vocabulary the opening bubble's own
-  // switcher uses, and shows the first line of what it says.
+  // The chooser names each opening by its own name and shows the first line of what
+  // it says. The position in the set is not part of a name: it belongs to the strip
+  // under the opening bubble, which is where the player reads `1/3`.
   await page.getByTestId("new-chat").click();
   const picker = page.getByTestId("opening-picker");
   await expect(picker).toBeVisible();
   await expect(picker.getByTestId("opening-option")).toHaveCount(3);
   await expect(picker.getByTestId("opening-option-name")).toHaveText([
-    "Default 1/3",
-    "Rainy evening 2/3",
-    "Late night 3/3",
+    "Default",
+    "Rainy evening",
+    "Late night",
   ]);
   await expect(picker.getByTestId("opening-option-line")).toHaveText([
     "Good morning, farmer. The valley is quiet today.",
@@ -275,6 +291,34 @@ test("creates the Chat on the opening the player picked", async ({ page }) => {
   await expect(transcript).toContainText("The kettle is already on.");
   await expect(transcript).not.toContainText(DEFAULT_OPENING);
   expect(host.isCreated()).toBe(true);
+});
+
+test("names each opening once, without the strip's counter, in both languages", async ({ page }) => {
+  await mountHost(page, { openings: STRUCTURAL_OPENINGS });
+  await boot(page);
+  await openChats(page);
+
+  await page.getByTestId("new-chat").click();
+  const picker = page.getByTestId("opening-picker");
+  await expect(picker).toBeVisible();
+  // The card's own order among the alternates stays in the name; the position in
+  // the set never joins it.
+  await expect(picker.getByTestId("opening-option-name")).toHaveText(["Default", "Alternate 1", "Alternate 2"]);
+  await expect(picker.getByTestId("opening-option-name").nth(1)).toHaveText("Alternate 1");
+
+  // The same set on a zh-CN surface: the catalogue's own words plus the card's own
+  // order, and still no counter. Both languages are pinned because the duplication
+  // came from the shared composition of name and position, not from one template.
+  await page.addInitScript(() => window.localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+  await page.getByRole("button", { name: "会话", exact: true }).click();
+  await expect(page.getByTestId("chats-surface")).toBeVisible();
+  await page.getByTestId("new-chat").click();
+  const chinese = page.getByTestId("opening-picker");
+  await expect(chinese).toBeVisible();
+  await expect(chinese.getByTestId("opening-option-name")).toHaveText(["默认", "备用 1", "备用 2"]);
+  await expect(chinese.getByTestId("opening-option-name").nth(1)).toHaveText("备用 1");
 });
 
 test("offers no chooser when the companion has one opening", async ({ page }) => {

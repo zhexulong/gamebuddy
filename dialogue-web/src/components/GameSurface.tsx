@@ -12,6 +12,7 @@ import {
   type StardewCabinChoiceV1,
 } from "../composed-reference-game-browser-api";
 import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-controls";
+import { gameOperationFailure, type GameOperationFailure } from "../composed-problem-view";
 import { GameDiagnosticsDisclosure } from "./GameDiagnosticsDisclosure";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
@@ -74,51 +75,51 @@ export function GameSurface({
   const cabinConfirmationActiveRef = useRef(false);
   const gameActivationActiveRef = useRef(false);
   const [gameActivationActive, setGameActivationActive] = useState(false);
-  const [gameActivationFailed, setGameActivationFailed] = useState(false);
+  const [gameActivationFailure, setGameActivationFailure] = useState<GameOperationFailure | null>(null);
   const [gameActivationNotConfigured, setGameActivationNotConfigured] = useState(false);
   const [gameActivationUnavailable, setGameActivationUnavailable] = useState(false);
   const gameSetupActiveRef = useRef(false);
   const gameSetupKeyRef = useRef<string | undefined>(undefined);
   const [gameSetupActive, setGameSetupActive] = useState(false);
-  const [gameSetupFailed, setGameSetupFailed] = useState(false);
+  const [gameSetupFailure, setGameSetupFailure] = useState<GameOperationFailure | null>(null);
   const [gameSetupNotStaged, setGameSetupNotStaged] = useState(false);
   const gameStopActiveRef = useRef(false);
   const gameStopKeysRef = useRef(new Map<number, string>());
   const [gameStopActive, setGameStopActive] = useState(false);
-  const [gameStopFailed, setGameStopFailed] = useState(false);
+  const [gameStopFailure, setGameStopFailure] = useState<GameOperationFailure | null>(null);
   const gameLaunchActiveRef = useRef(false);
   const gameLaunchKeysRef = useRef(new Map<number, string>());
   const [gameLaunchActive, setGameLaunchActive] = useState(false);
-  const [gameLaunchFailed, setGameLaunchFailed] = useState(false);
+  const [gameLaunchFailure, setGameLaunchFailure] = useState<GameOperationFailure | null>(null);
   const [gameLaunchNotStaged, setGameLaunchNotStaged] = useState(false);
   const disconnectActiveRef = useRef(false);
   const disconnectKeysRef = useRef(new Map<number, string>());
   const [disconnectActive, setDisconnectActive] = useState(false);
-  const [disconnectFailed, setDisconnectFailed] = useState(false);
+  const [disconnectFailure, setDisconnectFailure] = useState<GameOperationFailure | null>(null);
   const gameResumeActiveRef = useRef(false);
   const gameResumeKeysRef = useRef(new Map<number, string>());
   const [gameResumeActive, setGameResumeActive] = useState(false);
-  const [gameResumeFailed, setGameResumeFailed] = useState(false);
+  const [gameResumeFailure, setGameResumeFailure] = useState<GameOperationFailure | null>(null);
   const [gameResumeUnavailable, setGameResumeUnavailable] = useState(false);
   const gameReopenActiveRef = useRef(false);
   const gameReopenKeysRef = useRef(new Map<number, string>());
   const [gameReopenActive, setGameReopenActive] = useState(false);
-  const [gameReopenFailed, setGameReopenFailed] = useState(false);
+  const [gameReopenFailure, setGameReopenFailure] = useState<GameOperationFailure | null>(null);
   const [gameReopenUnavailable, setGameReopenUnavailable] = useState(false);
   const gameResumeCancelActiveRef = useRef(false);
   const gameResumeCancelKeysRef = useRef(new Map<number, string>());
   const [gameResumeCancelActive, setGameResumeCancelActive] = useState(false);
-  const [gameResumeCancelFailed, setGameResumeCancelFailed] = useState(false);
+  const [gameResumeCancelFailure, setGameResumeCancelFailure] = useState<GameOperationFailure | null>(null);
   const gameCreateActiveRef = useRef(false);
   const [gameCreateActive, setGameCreateActive] = useState(false);
-  const [gameCreateFailed, setGameCreateFailed] = useState(false);
+  const [gameCreateFailure, setGameCreateFailure] = useState<GameOperationFailure | null>(null);
   const [gameCreateUnavailable, setGameCreateUnavailable] = useState(false);
   const [createFormOpen, setCreateFormOpen] = useState(false);
   const [continuityIdentityInput, setContinuityIdentityInput] = useState("");
   const gameEndgameActiveRef = useRef(false);
   const gameEndgameKeysRef = useRef(new Map<number, string>());
   const [gameEndgameActive, setGameEndgameActive] = useState(false);
-  const [gameEndgameFailed, setGameEndgameFailed] = useState(false);
+  const [gameEndgameFailure, setGameEndgameFailure] = useState<GameOperationFailure | null>(null);
   /**
    * The UI-level confirm step for the terminal endgame operation: the first
    * click only arms this, and the POST happens on the confirm button alone
@@ -237,7 +238,7 @@ export function GameSurface({
     if (!deriveGameLifecycleControlAvailability({ ready: true, game: current.root.game }).activationAvailable) return;
     gameActivationActiveRef.current = true;
     setGameActivationActive(true);
-    setGameActivationFailed(false);
+    setGameActivationFailure(null);
     setGameActivationNotConfigured(false);
     setGameActivationUnavailable(false);
     try {
@@ -264,7 +265,7 @@ export function GameSurface({
         if (error instanceof ComposedReferenceGameProblemError && error.code === "not_found")
           setGameActivationUnavailable(true);
         else if (isInstallationNotConfiguredRefusal(error)) setGameActivationNotConfigured(true);
-        else setGameActivationFailed(true);
+        else setGameActivationFailure(gameOperationFailure(error, labels));
       }
     } finally {
       gameActivationActiveRef.current = false;
@@ -280,7 +281,7 @@ export function GameSurface({
     gameSetupKeyRef.current = idempotencyKey;
     gameSetupActiveRef.current = true;
     setGameSetupActive(true);
-    setGameSetupFailed(false);
+    setGameSetupFailure(null);
     setGameSetupNotStaged(false);
     try {
       await composedApi.setupGame({ apiVersion: 1, idempotencyKey });
@@ -298,7 +299,7 @@ export function GameSurface({
         // Preserve the original key while the command outcome is uncertain.
       }
       setGameSetupNotStaged(notStaged);
-      setGameSetupFailed(!notStaged);
+      setGameSetupFailure(notStaged ? null : gameOperationFailure(error, labels));
       const latest = readView();
       if (
         !notStaged &&
@@ -334,7 +335,7 @@ export function GameSurface({
     gameStopKeysRef.current.set(generation, idempotencyKey);
     gameStopActiveRef.current = true;
     setGameStopActive(true);
-    setGameStopFailed(false);
+    setGameStopFailure(null);
     try {
       await composedApi.stopGame({
         apiVersion: 1,
@@ -357,7 +358,7 @@ export function GameSurface({
         rereadSucceeded &&
         fresh.kind === "ready" &&
         fresh.root.game?.game.attachment.generation !== generation;
-      setGameStopFailed(!staleGenerationReconciled);
+      setGameStopFailure(staleGenerationReconciled ? null : gameOperationFailure(error, labels));
     } finally {
       gameStopActiveRef.current = false;
       setGameStopActive(false);
@@ -375,7 +376,7 @@ export function GameSurface({
     gameLaunchKeysRef.current.set(generation, idempotencyKey);
     gameLaunchActiveRef.current = true;
     setGameLaunchActive(true);
-    setGameLaunchFailed(false);
+    setGameLaunchFailure(null);
     setGameLaunchNotStaged(false);
     try {
       await composedApi.launchGame({
@@ -407,7 +408,7 @@ export function GameSurface({
         gameSetupKeyRef.current = undefined;
       }
       setGameLaunchNotStaged(notStaged);
-      setGameLaunchFailed(!notStaged);
+      setGameLaunchFailure(notStaged ? null : gameOperationFailure(error, labels));
     } finally {
       gameLaunchActiveRef.current = false;
       setGameLaunchActive(false);
@@ -432,7 +433,7 @@ export function GameSurface({
     disconnectKeysRef.current.set(generation, idempotencyKey);
     disconnectActiveRef.current = true;
     setDisconnectActive(true);
-    setDisconnectFailed(false);
+    setDisconnectFailure(null);
     try {
       await composedApi.disconnectGame({
         apiVersion: 1,
@@ -440,7 +441,7 @@ export function GameSurface({
         expectedAttachmentGeneration: generation,
       });
       await rereadGame();
-    } catch {
+    } catch (error) {
       let rereadSucceeded = false;
       try {
         await rereadGame();
@@ -457,7 +458,7 @@ export function GameSurface({
         fresh.root.game.game.connectionStatus === "failed"
       )
         disconnectKeysRef.current.delete(generation);
-      setDisconnectFailed(true);
+      setDisconnectFailure(gameOperationFailure(error, labels));
     } finally {
       disconnectActiveRef.current = false;
       setDisconnectActive(false);
@@ -517,7 +518,7 @@ export function GameSurface({
     gameResumeKeysRef.current.set(generation, idempotencyKey);
     gameResumeActiveRef.current = true;
     setGameResumeActive(true);
-    setGameResumeFailed(false);
+    setGameResumeFailure(null);
     setGameResumeUnavailable(false);
     let outcome: GameResumeResultV1 | undefined;
     try {
@@ -541,7 +542,7 @@ export function GameSurface({
         rereadSucceeded &&
         fresh.kind === "ready" &&
         fresh.root.game?.game.attachment.generation !== generation;
-      setGameResumeFailed(!staleGenerationReconciled);
+      setGameResumeFailure(staleGenerationReconciled ? null : gameOperationFailure(error, labels));
       gameResumeActiveRef.current = false;
       setGameResumeActive(false);
       return;
@@ -643,7 +644,7 @@ export function GameSurface({
     gameReopenKeysRef.current.set(generation, idempotencyKey);
     gameReopenActiveRef.current = true;
     setGameReopenActive(true);
-    setGameReopenFailed(false);
+    setGameReopenFailure(null);
     setGameReopenUnavailable(false);
     try {
       await composedApi.reopenGame({
@@ -666,7 +667,7 @@ export function GameSurface({
         rereadSucceeded &&
         fresh.kind === "ready" &&
         fresh.root.game?.game.attachment.generation !== generation;
-      setGameReopenFailed(!staleGenerationReconciled);
+      setGameReopenFailure(staleGenerationReconciled ? null : gameOperationFailure(error, labels));
       gameReopenActiveRef.current = false;
       setGameReopenActive(false);
       return;
@@ -707,7 +708,7 @@ export function GameSurface({
       gameProjection.game.attachment.status !== "attached" ||
       gameProjection.game.attachment.generation < 1 ||
       !RESUMABLE_CONNECTION_STATUSES.has(gameProjection.game.connectionStatus) ||
-      (!gameResumeFailed && !gameResumeUnavailable)
+      (gameResumeFailure === null && !gameResumeUnavailable)
     )
       return;
     const generation = gameProjection.game.attachment.generation;
@@ -716,7 +717,7 @@ export function GameSurface({
     gameResumeCancelKeysRef.current.set(generation, idempotencyKey);
     gameResumeCancelActiveRef.current = true;
     setGameResumeCancelActive(true);
-    setGameResumeCancelFailed(false);
+    setGameResumeCancelFailure(null);
     try {
       await composedApi.cancelResume({
         apiVersion: 1,
@@ -728,7 +729,7 @@ export function GameSurface({
       } catch {
         /* retain the current authoritative projection */
       }
-      setGameResumeFailed(false);
+      setGameResumeFailure(null);
       setGameResumeUnavailable(false);
     } catch (error) {
       let rereadSucceeded = false;
@@ -748,10 +749,10 @@ export function GameSurface({
       if (staleGenerationReconciled) {
         // The reconnect epoch already ended under a newer attachment: there is
         // nothing to cancel, so the stale failure surface is cleared.
-        setGameResumeFailed(false);
+        setGameResumeFailure(null);
         setGameResumeUnavailable(false);
       } else {
-        setGameResumeCancelFailed(true);
+        setGameResumeCancelFailure(gameOperationFailure(error, labels));
       }
     } finally {
       gameResumeCancelActiveRef.current = false;
@@ -807,7 +808,7 @@ export function GameSurface({
       gameCreateActiveRef.current ||
       current.kind !== "ready" ||
       current.root.game === null ||
-      (!gameResumeFailed && !gameResumeUnavailable)
+      (gameResumeFailure === null && !gameResumeUnavailable)
     )
       return;
     const continuityText = continuityIdentityInput.trim();
@@ -820,18 +821,18 @@ export function GameSurface({
     };
     gameCreateActiveRef.current = true;
     setGameCreateActive(true);
-    setGameCreateFailed(false);
+    setGameCreateFailure(null);
     setGameCreateUnavailable(false);
     let outcome: GameCreateResultV1 | undefined;
     try {
       outcome = await composedApi.createGameSession(request);
-    } catch {
+    } catch (error) {
       try {
         await rereadGame();
       } catch {
         /* retain the current authoritative projection */
       }
-      setGameCreateFailed(true);
+      setGameCreateFailure(gameOperationFailure(error, labels));
       gameCreateActiveRef.current = false;
       setGameCreateActive(false);
       return;
@@ -868,7 +869,7 @@ export function GameSurface({
     } else {
       // The new session is authoritative at ready-actions-paused; the stale
       // resume failure surface is cleared and the form is done.
-      setGameResumeFailed(false);
+      setGameResumeFailure(null);
       setGameResumeUnavailable(false);
       setCreateFormOpen(false);
       setContinuityIdentityInput("");
@@ -901,7 +902,7 @@ export function GameSurface({
     gameEndgameKeysRef.current.set(generation, idempotencyKey);
     gameEndgameActiveRef.current = true;
     setGameEndgameActive(true);
-    setGameEndgameFailed(false);
+    setGameEndgameFailure(null);
     setEndgameConfirmArmed(false);
     try {
       const outcome = await composedApi.endgameGame({
@@ -913,7 +914,7 @@ export function GameSurface({
       if (outcome.status === "unavailable") {
         // The world was not terminated and nothing was torn down: this is a
         // refusal the player sees, with the exact key preserved for a retry.
-        setGameEndgameFailed(true);
+        setGameEndgameFailure({ kind: "unsettled" });
         return;
       }
       await rereadGame();
@@ -932,7 +933,7 @@ export function GameSurface({
         rereadSucceeded &&
         fresh.kind === "ready" &&
         fresh.root.game?.game.attachment.generation !== generation;
-      setGameEndgameFailed(!staleGenerationReconciled);
+      setGameEndgameFailure(staleGenerationReconciled ? null : gameOperationFailure(error, labels));
     } finally {
       gameEndgameActiveRef.current = false;
       setGameEndgameActive(false);
@@ -976,7 +977,7 @@ export function GameSurface({
     game.game.attachment.status === "attached" &&
     game.game.attachment.generation > 0 &&
     RESUMABLE_CONNECTION_STATUSES.has(game.game.connectionStatus) &&
-    (gameResumeFailed || gameResumeUnavailable || game.game.latestOutcome === "failed");
+    (gameResumeFailure !== null || gameResumeUnavailable || game.game.latestOutcome === "failed");
   // One command, one control. `game.resume` is both the connection-restore
   // action and its own retry, so the panel offers it under exactly one honest
   // name: the failure rollup (`Retry`) owns the attempt that already failed
@@ -1026,55 +1027,55 @@ export function GameSurface({
           activation: {
             available: gameActivationAvailable,
             active: gameActivationActive,
-            failed: gameActivationFailed,
+            failure: gameActivationFailure,
             notConfigured: gameActivationNotConfigured,
             unavailable: gameActivationUnavailable,
           },
           setup: {
             available: gameSetupAvailable,
             active: gameSetupActive,
-            failed: gameSetupFailed,
+            failure: gameSetupFailure,
             notStaged: gameSetupNotStaged,
           },
           launch: {
             available: gameLaunchAvailable,
             active: gameLaunchActive,
-            failed: gameLaunchFailed,
+            failure: gameLaunchFailure,
             notStaged: gameLaunchNotStaged,
           },
         }}
         session={{
-          stop: { available: gameStopAvailable, active: gameStopActive, failed: gameStopFailed },
+          stop: { available: gameStopAvailable, active: gameStopActive, failure: gameStopFailure },
           disconnect: {
             available: disconnectAvailable,
             active: disconnectActive,
-            failed: disconnectFailed,
+            failure: disconnectFailure,
           },
           endgame: {
             available: gameEndgameAvailable,
             active: gameEndgameActive,
-            failed: gameEndgameFailed,
+            failure: gameEndgameFailure,
             confirmArmed: endgameConfirmArmed,
           },
         }}
         resume={{
           available: gameResumeAvailable,
           active: gameResumeActive,
-          failed: gameResumeFailed,
+          failure: gameResumeFailure,
           unavailable: gameResumeUnavailable,
           cancelActive: gameResumeCancelActive,
-          cancelFailed: gameResumeCancelFailed,
+          cancelFailure: gameResumeCancelFailure,
           failureSurface: resumeFailureSurface,
         }}
         reopen={{
           available: gameReopenAvailable,
           active: gameReopenActive,
-          failed: gameReopenFailed,
+          failure: gameReopenFailure,
           unavailable: gameReopenUnavailable,
         }}
         create={{
           active: gameCreateActive,
-          failed: gameCreateFailed,
+          failure: gameCreateFailure,
           unavailable: gameCreateUnavailable,
           formOpen: createFormOpen,
           continuityIdentity: continuityIdentityInput,

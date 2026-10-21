@@ -2,6 +2,8 @@ import type { Messages } from "./i18n";
 import {
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
+  GAME_PROBLEM_CODES,
+  type GameProblemCode,
 } from "./composed-reference-game-browser-api";
 import { PROBLEM_CODES, TavernProblemError, TavernProtocolError } from "./reference-pipeline-api";
 import type { TavernProblemCode } from "./reference-pipeline-api";
@@ -40,11 +42,19 @@ import { ReferencePipelineSessionError } from "./reference-pipeline-session";
  *    cause, path or producer text is rendered.
  *
  * Below the union is the untyped boundary, stated rather than hidden: a code arrives off the wire,
- * and the composed shell also serves `game-browser-contract`, whose own problem union is not a
- * tavern `ProblemCode`. A value the union does not declare keeps the classification this surface
- * already had (an absent game route, a retryable outage) and otherwise reaches the internal-error
- * sentence carrying the code it actually received - a diagnostic for a build that met a Host it does
- * not know, never the normal path.
+ * and a value neither contract declares reaches the internal-error sentence carrying the code it
+ * actually received - a diagnostic for a build that met a Host it does not know, never the normal
+ * path.
+ *
+ * The composed shell serves a second contract, `game_browser_api/v1`
+ * (`host/src/game-browser-contract/index.ts`), and the same defect lived there: of its twenty-three
+ * codes this module named nine by reusing a tavern sentence, and the rest fell through to a generic
+ * one. `GAME_PROBLEM_VIEWS` below is exhaustive over that union for the same reason
+ * `PROBLEM_SENTENCES` is over the tavern's - and it also records, per code, whether the code's own
+ * meaning is that the command was **refused before it ran** or that the outcome is **unsettled**. The
+ * game panel needs that distinction: its per-operation line says "the result is uncertain", which is
+ * true after a transport failure and false after `unauthorized`, `game_operation_in_progress` or
+ * `idempotency_conflict`, where the Host stated it did not run the command at all.
  */
 
 export type ProblemViewState = Readonly<{ kind: "problem"; title: string; detail: string }>;
@@ -309,10 +319,141 @@ function isDeclaredProblemCode(code: string): code is TavernProblemCode {
 }
 
 /**
- * The composed shell also serves `game-browser-contract`, whose own route refusal is not a tavern
- * `ProblemCode` and keeps the absent-route sentence this surface already gave it.
+ * What a game refusal says about the command it answered.
+ *
+ * `refused` is the Host stating it did **not** carry the command out: the operation did not
+ * happen, and the player's next step is the one the sentence names. `unsettled` is the Host saying
+ * something went wrong without saying whether the command ran - a stop that may or may not have
+ * stopped the game. The distinction is not decoration: the game panel's per-operation line says
+ * "the result is uncertain", which is the truth for the second class and a false claim for the
+ * first. `game_unavailable` is the one wrapper whose cause carries the meaning, so its sentence is
+ * templated on the bounded `stardew_*` cause; `game_runtime_unavailable`,
+ * `game_endgame_settlement_unavailable` and `state_unavailable` are unsettled because the Host
+ * names a failure whose effect on the command it cannot state.
  */
-const GAME_ABSENT_ROUTE_PROBLEM_CODES: readonly string[] = ["not_found"];
+type GameOutcome = "refused" | "unsettled";
+
+type GameProblemView = Readonly<{
+  outcome: GameOutcome;
+  sentence: (labels: Messages, cause: string | null) => ProblemViewState;
+}>;
+
+/** A game refusal whose words are one catalogue pair, with no cause to name. */
+function refused(sentenceOf: ProblemSentence): GameProblemView {
+  return { outcome: "refused", sentence: (labels) => sentenceOf(labels) };
+}
+
+/** A game refusal whose own sentence states that the command's effect is unknown. */
+function unsettled(sentenceOf: ProblemSentence): GameProblemView {
+  return { outcome: "unsettled", sentence: (labels) => sentenceOf(labels) };
+}
+
+// The facts that need game wording of their own. The pairs above are read here unchanged where the
+// fact and the next step are the same on both surfaces (a session that ended, something still
+// running); these name a game the chat page is not on, so \"Reload the chat\" would point the player
+// at the wrong page.
+const gamePrerequisitesMissing: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemPrerequisitesMissingTitle, labels.gameProblemPrerequisitesMissingDetail);
+const gameCompatibility: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemCompatibilityTitle, labels.gameProblemCompatibilityDetail);
+const gameInstanceGone: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemInstanceGoneTitle, labels.gameProblemInstanceGoneDetail);
+const gameAttachmentMoved: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemAttachmentMovedTitle, labels.gameProblemAttachmentMovedDetail);
+const gameNotRepeated: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemNotRepeatedTitle, labels.gameProblemNotRepeatedDetail);
+const gameCabinChoiceStale: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemCabinChoiceStaleTitle, labels.gameProblemCabinChoiceStaleDetail);
+const gameHandoffUncertain: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemHandoffUncertainTitle, labels.gameProblemHandoffUncertainDetail);
+const gameRuntimeUnavailable: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemRuntimeUnavailableTitle, labels.gameProblemRuntimeUnavailableDetail);
+const gameStorageUnavailable: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemStorageUnavailableTitle, labels.gameProblemStorageUnavailableDetail);
+const gameEndgameSettlement: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemEndgameSettlementTitle, labels.gameProblemEndgameSettlementDetail);
+const gameClosed: ProblemSentence = (labels) => sentence(labels.gameProblemClosedTitle, labels.gameProblemClosedDetail);
+const gameRequestRejected: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemRequestRejectedTitle, labels.gameProblemRequestRejectedDetail);
+const gameRouteUnavailable: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemRouteUnavailableTitle, labels.gameProblemRouteUnavailableDetail);
+const gameStateUnavailable: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemStateUnavailableTitle, labels.gameProblemStateUnavailableDetail);
+
+/**
+ * Every member of the game contract's `GameProblemCode` union, and what the player reads for it.
+ * The annotation is the exhaustiveness proof, exactly as it is above.
+ */
+const GAME_PROBLEM_VIEWS: Readonly<Record<GameProblemCode, GameProblemView>> = {
+  unauthorized: refused(sessionExpired),
+  csrf_failed: refused(sessionExpired),
+  invalid_request: refused(gameRequestRejected),
+  unsupported_api_version: refused(gameRouteUnavailable),
+  profile_operation_unavailable: refused(gameRouteUnavailable),
+
+  idempotency_conflict: refused(gameNotRepeated),
+  idempotency_expired: refused(gameNotRepeated),
+  idempotency_in_progress: refused(stillRunning),
+
+  game_unavailable: {
+    outcome: "unsettled",
+    sentence: (labels, cause) =>
+      sentence(
+        labels.gameProblemUnavailableTitle,
+        cause === null
+          ? labels.gameProblemUnavailableDetail
+          : labels.gameProblemUnavailableCauseDetail.replace("{{cause}}", cause),
+      ),
+  },
+  game_prerequisites_missing: refused(gamePrerequisitesMissing),
+  game_compatibility_error: refused(gameCompatibility),
+  game_instance_not_found: refused(gameInstanceGone),
+  game_attachment_conflict: refused(gameAttachmentMoved),
+  game_operation_in_progress: refused(stillRunning),
+  stardew_cabin_choice_stale: refused(gameCabinChoiceStale),
+  stardew_manifest_handoff_uncertain: unsettled(gameHandoffUncertain),
+  game_runtime_unavailable: unsettled(gameRuntimeUnavailable),
+  game_storage_unavailable: refused(gameStorageUnavailable),
+
+  closed: refused(gameClosed),
+  malformed_request: refused(gameRequestRejected),
+  not_found: refused(gameRouteUnavailable),
+  state_unavailable: unsettled(gameStateUnavailable),
+  game_endgame_settlement_unavailable: unsettled(gameEndgameSettlement),
+};
+
+/** The codes the game contract declares, for the untyped boundary below the map. */
+const DECLARED_GAME_PROBLEM_CODES: ReadonlySet<string> = new Set(GAME_PROBLEM_CODES);
+
+function gameProblemView(code: string): GameProblemView | null {
+  return DECLARED_GAME_PROBLEM_CODES.has(code) ? GAME_PROBLEM_VIEWS[code as GameProblemCode] : null;
+}
+
+/**
+ * The failure line a game command's own refusal earns, or the fact that its outcome is unsettled.
+ *
+ * A game panel line that says "the result is uncertain" is true only when the Host did not say
+ * whether it ran the command. Where the Host named a refusal - `unauthorized`,
+ * `game_operation_in_progress`, `idempotency_conflict` - it stated that nothing ran, and the
+ * player's own sentence for that refusal is the honest line; the operation's uncertain sentence is
+ * the false one. The sentence is the catalogue's `detail`: the panel's line is one sentence, and the
+ * title ("Something is still running") has no room above it.
+ */
+export type GameOperationFailure = Readonly<{ kind: "unsettled" }> | Readonly<{ kind: "refused"; sentence: string }>;
+
+export function gameOperationFailure(error: unknown, labels: Messages): GameOperationFailure {
+  if (error instanceof ComposedReferenceGameProblemError) {
+    const view = gameProblemView(error.code);
+    if (view !== null && view.outcome === "refused")
+      return { kind: "refused", sentence: view.sentence(labels, error.causeCode).detail };
+  }
+  return { kind: "unsettled" };
+}
+
+/** The line a failed game command shows: the refusal's own words, or the operation's own sentence. */
+export function gameOperationFailureSentence(failure: GameOperationFailure, unsettled: string): string {
+  return failure.kind === "refused" ? failure.sentence : unsettled;
+}
 
 /** Bounded token shape for every code that may be shown to the player. */
 const BOUNDED_PROBLEM_TOKEN_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -361,14 +502,17 @@ function internalProblem(error: unknown, labels: Messages): ProblemViewState {
 export function composedProblemView(error: unknown, labels: Messages): ProblemViewState {
   const code = problemCode(error);
 
+  // A code is read against the union its route belongs to: the same string can mean different
+  // things on the two surfaces (`idempotency_conflict` cannot tell a chat page to reload a chat it
+  // is not on), so a game refusal is answered by the game map first.
+  if (code !== null && error instanceof ComposedReferenceGameProblemError) {
+    const view = gameProblemView(code);
+    if (view !== null) return view.sentence(labels, error.causeCode);
+  }
   if (code !== null && isDeclaredProblemCode(code)) return PROBLEM_SENTENCES[code](labels);
-
-  if (code !== null && GAME_ABSENT_ROUTE_PROBLEM_CODES.includes(code)) {
-    return {
-      kind: "problem",
-      title: labels.problemRouteUnavailableTitle,
-      detail: labels.problemRouteUnavailableDetail,
-    };
+  if (code !== null) {
+    const view = gameProblemView(code);
+    if (view !== null) return view.sentence(labels, null);
   }
   if (isRetryableProblem(error)) {
     return {
