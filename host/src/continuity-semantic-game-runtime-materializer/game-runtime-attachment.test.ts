@@ -230,9 +230,9 @@ test("the attachment builder keeps its named refusal for a Game profile it canno
   );
   assert.match(
     source,
-    /if \(modelConfig === null\)\s*\n\s*throw new Error\("game_runtime_model_configuration_unavailable"\);/,
+    /if \(modelConfig === null\)\s*throw new Error\("game_runtime_model_configuration_unavailable"\);/,
   );
-  assert.match(source, /\.read\("game"\)/);
+  assert.match(source, /\.read\(\s*"game",?\s*\)/);
 });
 
 /**
