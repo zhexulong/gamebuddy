@@ -546,7 +546,6 @@ const en = {
   authoredContentSaved: "Saved.",
   authoredContentError: "Could not save. The content changed elsewhere; reload and retry.",
   chatRetentionArchive: "Archive",
-  chatRetentionRestore: "Restore",
   chatRetentionTrash: "Trash",
   chatRetentionFailed: "The chat lifecycle could not be changed.",
   cardImportTitle: "Import card",
@@ -746,10 +745,9 @@ const en = {
   // first click arms, only the confirm button sends, and the cancel keeps the
   // current state. The words state the consequence and never promise
   // reversibility the action does not have.
-  chatRetentionArchiveConfirm: "Archive this chat? It leaves the active list and can be restored later. Continue?",
+  chatRetentionArchiveConfirm: "Archive this chat? It leaves the active list. This cannot be undone.",
   chatRetentionArchiveConfirmYes: "Archive",
-  chatRetentionTrashConfirm:
-    "Move this chat to the trash? It leaves the active list and can be restored later. Continue?",
+  chatRetentionTrashConfirm: "Move this chat to the trash? It leaves the active list. This cannot be undone.",
   chatRetentionTrashConfirmYes: "Move to trash",
   // The same negative as every other destructive pair in the product: `取消`. The verbs above
   // stay specific to what each press does; the way out is one word.
@@ -1205,7 +1203,6 @@ const zh: Messages = {
   authoredContentSaved: "已保存。",
   authoredContentError: "无法保存。内容已在其他位置更改；请重新加载后再试。",
   chatRetentionArchive: "归档",
-  chatRetentionRestore: "恢复",
   chatRetentionTrash: "删除",
   chatRetentionFailed: "无法更改聊天生命周期。",
   cardImportTitle: "导入角色卡",
@@ -1386,9 +1383,9 @@ const zh: Messages = {
   // --- ruling-and-ui-defects lane block（U-05）：某一行的破坏性动作属于“刻意动作”。
   // 与产品中的结束游戏分组同一形状：首次点击只是预置，只有确认按钮才会发出请求，
   // 取消则保持当前状态。措辞说明后果，绝不承诺该动作并不具备的可逆性。
-  chatRetentionArchiveConfirm: "归档此会话？它将离开活动列表，之后可以从归档中恢复。是否继续？",
+  chatRetentionArchiveConfirm: "归档此会话？它将离开活动列表，此操作不可撤销。",
   chatRetentionArchiveConfirmYes: "归档",
-  chatRetentionTrashConfirm: "将此会话移入回收站？它将离开活动列表，之后可以恢复。是否继续？",
+  chatRetentionTrashConfirm: "将此会话移入回收站？它将离开活动列表，此操作不可撤销。",
   chatRetentionTrashConfirmYes: "移入回收站",
   chatRetentionConfirmNo: "取消",
 } satisfies Record<MessageKey, string>;
