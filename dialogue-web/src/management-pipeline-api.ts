@@ -413,8 +413,10 @@ const MAX_CARD_FILE_BASE64_CHARS = Math.ceil(MAX_CARD_FILE_BYTES / 3) * 4;
  * The largest picture the avatar route accepts. It is the card file's own ceiling rather
  * than a second number: the Host's avatar module derives its bound from the same card
  * decoder limit (`ST_CARD_DECODER_LIMITS_V1.inputBytesPng`), because an avatar IS the
- * card's picture. The picker refuses a larger file before reading a byte of it, so the
- * refusal is a sentence rather than a 45 MB round trip.
+ * card's picture. The picker refuses a larger picture before the request is made, so the
+ * refusal is a sentence rather than a 45 MB round trip - and it is checked on the PNG the
+ * upload would carry (the picked file is converted in the browser, `pngBytesOfPickedPicture`),
+ * which is the byte string this ceiling describes.
  */
 export const MAX_AVATAR_FILE_BYTES = MAX_CARD_FILE_BYTES;
 

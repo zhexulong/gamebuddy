@@ -6,7 +6,7 @@ import { MAX_AVATAR_FILE_BYTES, problemTextWithCode, TavernProblemError } from "
 import { CompanionAvatar } from "./CompanionAvatar";
 import { ContextDrawer } from "./ContextDrawer";
 import { characterLabels, type CharacterLabels } from "./character-domain-labels";
-import { canonicalBase64Of } from "./png-character-card";
+import { canonicalBase64Of, pngBytesOfPickedPicture } from "./png-character-card";
 
 /**
  * The read-only companion inspector (design/28 §2).
@@ -146,6 +146,11 @@ export function CompanionInspectorDrawer({
  * and the browser revalidates the URL it already holds, so the new picture is on screen
  * the moment the Host confirms it. Re-choosing the same file changes nothing, because
  * the digest does not change.
+ *
+ * The picker takes a PNG, a JPEG or a WebP picture, because those are the pictures a
+ * player has; the Host still takes a PNG and nothing else, so the file is converted
+ * (`pngBytesOfPickedPicture`) before it is sent. Two facts follow, and both are the point:
+ * the Host's boundary did not move, and a player with a JPEG portrait can give her a face.
  */
 function CompanionAvatarSection({
   api,
@@ -167,16 +172,24 @@ function CompanionAvatarSection({
 
   const choose = async (file: File): Promise<void> => {
     setNotice(null);
-    // The picker's own bound, in the Host's own number: a picture over the ceiling is
-    // refused here, in her words, instead of after 45 MB have made the round trip to be
-    // refused on the other side.
-    if (file.size > MAX_AVATAR_FILE_BYTES) {
-      setNotice({ ok: false, text: labels.avatarTooLarge });
-      return;
-    }
     setBusy(true);
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
+      // The bytes that leave this surface are the browser's own PNG encoding of the picked
+      // picture, so the ceiling is checked on exactly those bytes - the ones the Host is
+      // handed - and not on the file the player happened to have. A 40 MB JPEG that encodes
+      // to a 450 KB PNG is accepted, because 450 KB is what she would be storing.
+      const bytes = await pngBytesOfPickedPicture(file);
+      if (bytes === null) {
+        // A file this browser cannot read as a picture never becomes a request: the Host's
+        // answer to bytes that are not a picture is about ITS boundary, and the player's
+        // fault is earlier than that.
+        setNotice({ ok: false, text: labels.avatarUndecodable });
+        return;
+      }
+      if (bytes.length > MAX_AVATAR_FILE_BYTES) {
+        setNotice({ ok: false, text: labels.avatarTooLarge });
+        return;
+      }
       const saved = await api.uploadCompanionAvatar(companion.handle, canonicalBase64Of(bytes), csrfToken);
       setDigest(saved.digest);
       onAvatarUpdated(companion.handle, saved.digest);
@@ -210,7 +223,7 @@ function CompanionAvatarSection({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/png"
+          accept="image/png,image/jpeg,image/webp"
           aria-label={labels.avatarChoose}
           className="card-import-file-input"
           disabled={busy}

@@ -9,7 +9,8 @@ import { expect, test, type Page } from "@playwright/test";
  * picture is set. What this journey proves, end to end in a real browser:
  *
  *  - the control exists exactly once, is a real 44 px hit target, and the picker behind
- *    it takes PNG and nothing else;
+ *    it offers PNG, JPEG and WebP - the pictures a player has - while the Host still
+ *    receives a complete PNG (`pngBytesOfPickedPicture` converts it in the browser);
  *  - the picture the player picked is ON SCREEN at once (`naturalWidth > 0`, and after a
  *    second, differently shaped picture, its real dimensions), through the same
  *    `CompanionAvatar` every other surface draws her with - and at HERO size here (128 px), because
@@ -18,7 +19,8 @@ import { expect, test, type Page } from "@playwright/test";
  *  - the client is served the caching answer it depends on: her absence is a 404 that is
  *    never remembered, and her picture keeps its one URL, is served `no-cache`, and
  *    carries the DIGEST of its own bytes as its `ETag`;
- *  - a file the Host refuses keeps the picture she has, and the refusal is a sentence.
+ *  - a file no browser can decode is its own sentence and never a request, and a picture
+ *    the Host refuses keeps the one she has.
  *
  * What it cannot show, and does not claim: that a real browser revalidates that URL. A
  * response fulfilled by this zone's interception is not stored in the browser's HTTP
@@ -201,6 +203,24 @@ async function pictureOf(page: Page, width: number, height: number): Promise<Buf
   return Buffer.from(encoded, "base64");
 }
 
+/** One real JPEG of the requested size, encoded by the browser's own encoder. */
+async function jpegPictureOf(page: Page, width: number, height: number): Promise<Buffer> {
+  const encoded = await page.evaluate(
+    (size) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = size.width;
+      canvas.height = size.height;
+      const context = canvas.getContext("2d");
+      if (context === null) throw new Error("no 2d context");
+      context.fillStyle = "#a2445c";
+      context.fillRect(0, 0, size.width, size.height);
+      return canvas.toDataURL("image/jpeg", 0.9).split(",", 2)[1] ?? "";
+    },
+    { width, height },
+  );
+  return Buffer.from(encoded, "base64");
+}
+
 async function openDrawer(page: Page) {
   await page.addInitScript((value) => localStorage.setItem("gamebuddy.tavern.ui-locale", value), "en");
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
@@ -270,10 +290,11 @@ test("the player gives a companion a picture, and the new picture is on screen a
     "the picture and its trigger share the row's centre line",
   ).toBeLessThanOrEqual(1);
 
-  // The picker takes PNG and nothing else, and is emptied after a pick so the same file
-  // can be chosen again.
+  // The picker offers the pictures a player actually has, and is emptied after a pick so the
+  // same file can be chosen again. The Host still takes a PNG and only a PNG; what changed is
+  // that the surface converts the picked file before it sends it.
   const picker = section.locator("[data-companion-avatar-file]");
-  await expect(picker).toHaveAttribute("accept", "image/png");
+  await expect(picker).toHaveAttribute("accept", "image/png,image/jpeg,image/webp");
   await expect(picker).toHaveAttribute("aria-label", "Give her a picture");
 
   // The first picture: 1x1, picked from disk, uploaded, and on screen.
@@ -331,8 +352,22 @@ test("a file the Host refuses keeps the picture she has, and the refusal is a se
   const image = section.locator(".avatar-image");
   await expect.poll(async () => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(2);
 
-  // A file that is not a picture at all: the Host names the refusal, and the picture she
-  // already has is still the one on screen - and still the one the face serves.
+  // A file that is not a picture at all. The browser cannot decode it, so it never becomes a
+  // request: the sentence is this surface's own, the Host is not asked about bytes the
+  // player's machine could not read, and the picture she already has is still on screen.
+  await picker.setInputFiles({
+    name: "not-a-picture.png",
+    mimeType: "image/png",
+    buffer: Buffer.from('{"data":{"name":"Mira"}}', "utf8"),
+  });
+  await expect(section.locator("[data-companion-avatar-notice]")).toHaveText(
+    "GameBuddy could not read that file as a picture, so nothing was sent. Choose a PNG, JPEG or WebP image.",
+  );
+  expect(host.uploads.length, "a file this browser cannot decode is never sent").toBe(1);
+  await expect.poll(async () => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(2);
+
+  // The other half: a picture this browser encoded perfectly well, and the Host refuses the
+  // bytes anyway. That refusal is its own sentence, and her picture stays.
   await page.route(`**/api/tavern/v1/companions/${rosterHandle}/avatar`, (route) =>
     route.fulfill({
       status: 422,
@@ -347,15 +382,48 @@ test("a file the Host refuses keeps the picture she has, and the refusal is a se
       }),
     }),
   );
-  await picker.setInputFiles({
-    name: "not-a-picture.png",
-    mimeType: "image/png",
-    buffer: Buffer.from('{"data":{"name":"Mira"}}', "utf8"),
-  });
+  await picker.setInputFiles({ name: "mira-smaller.png", mimeType: "image/png", buffer: await pictureOf(page, 3, 1) });
   await expect(section.locator("[data-companion-avatar-notice]")).toHaveText(
-    "That file is not a picture GameBuddy can keep. Choose a PNG image.",
+    "That file is not a picture GameBuddy can keep. Choose a PNG, JPEG or WebP image.",
   );
   await expect.poll(async () => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(2);
+});
+
+test("a JPEG portrait is converted in the browser, and the Host is handed the PNG it keeps", async ({ page }) => {
+  const host = await mount(page);
+  const drawer = await openDrawer(page);
+  const section = drawer.locator("[data-companion-inspector-avatar]");
+  const picker = section.locator("[data-companion-avatar-file]");
+
+  // A portrait in the format players actually have. The fixture is a real JPEG, encoded here by
+  // the same canvas route the surface's own conversion uses - so the journey proves the decode,
+  // not a filename.
+  const jpeg = await jpegPictureOf(page, 5, 4);
+  expect([...jpeg.subarray(0, 2)], "the fixture really is a JPEG").toEqual([0xff, 0xd8]);
+
+  await picker.setInputFiles({ name: "mira.jpg", mimeType: "image/jpeg", buffer: jpeg });
+  await expect(section.locator("[data-companion-avatar-notice]")).toHaveText("She has this picture now.");
+  await expect.poll(() => host.uploads.length).toBe(1);
+
+  // What the Host was handed, read out of its own request: a complete PNG, and not the file the
+  // player picked. The boundary did not move - a PNG-only writer still receives a PNG.
+  const sent = Buffer.from((host.uploads[0]!.body as { avatarBase64: string }).avatarBase64, "base64");
+  console.log(`[companion-avatar] picked jpeg=${jpeg.length} B, sent png=${sent.length} B`);
+  expect(
+    [...sent.subarray(0, 8)],
+    "the upload carries the PNG signature, not the JPEG's",
+  ).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+  expect(sent.equals(jpeg), "the bytes sent are the browser's PNG, not the picked JPEG").toBe(false);
+
+  // And it is the picture, not a blank canvas: the face serves exactly those bytes (its ETag is
+  // their digest) and the browser decodes them at the JPEG's own size.
+  const sentDigest = createHash("sha256").update(sent).digest("hex");
+  await expect.poll(() => host.faceAnswers.some((answer) => answer.headers.etag === `"${sentDigest}"`)).toBe(true);
+  const image = section.locator(".avatar-image");
+  await expect(image).toHaveCount(1);
+  await expect.poll(async () => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(5);
+  expect(await image.evaluate((node) => (node as HTMLImageElement).naturalHeight)).toBe(4);
+  await expect(image).toHaveAttribute("src", `/assets/companions/${rosterHandle}/avatar.png`);
 });
 
 /**
