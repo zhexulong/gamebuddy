@@ -2076,7 +2076,14 @@
     margin: 0;
     font-size: 12px;
     line-height: 1.5;
-    color: var(--text-disabled);
+    /* The sentence under a field says how to use it, so it is live text and not
+       a control the player cannot use. Measured in the mounted shell: it read
+       `--text-disabled` (`#90877e`) at 5.57:1 on this surface's canvas
+       (`#0c0b0b`) - and 4.74:1 on the card tone (`#201d1d`) wherever the group
+       sits on one - which is the pair `.message-author` and `.chat-item-meta`
+       were moved off for the same reason. `--text-secondary` reads 10.92:1 and
+       9.30:1 on those two backgrounds. */
+    color: var(--text-secondary);
     overflow-wrap: anywhere;
   }
 
@@ -2832,10 +2839,17 @@
     overflow-wrap: anywhere;
   }
 
+  /* The scan's answer, the installation's own identity line and the wire chip
+     beside it are all live text: the panel's `role="status"` sentence is the one
+     thing it is asserting, and the other two say what was found. Measured in the
+     mounted shell, `--text-disabled` (`#90877e`) read 5.20:1 on the panel
+     (`#161414`), 4.74:1 on the candidate card (`#201d1d`) - the product's lowest
+     body-text contrast - and 5.20:1 on the chip; `--text-secondary` reads
+     10.20:1 and 9.30:1 on the same backgrounds. */
   .installation-source {
     padding: 1px 6px;
     font-size: 11px;
-    color: var(--text-disabled);
+    color: var(--text-secondary);
     background-color: var(--surface-panel);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-xs);
@@ -2845,7 +2859,7 @@
     flex-basis: 100%;
     font-size: 12px;
     line-height: 1.5;
-    color: var(--text-disabled);
+    color: var(--text-secondary);
   }
 
   .installation-candidate .game-action {
@@ -2855,7 +2869,7 @@
   .installation-state {
     margin: 0;
     font-size: 12px;
-    color: var(--text-disabled);
+    color: var(--text-secondary);
   }
 
   /* ==========================================================================

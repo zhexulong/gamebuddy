@@ -22,6 +22,11 @@ import { expect, test, type Page } from "@playwright/test";
  *      answer is a mount-local default rather than one truthful answer per
  *      moment, and its one abandoning control is disabled exactly when the player
  *      needs it.
+ *   5. The panel's live status sentence, an installation's own identity line and
+ *      the helper copy that explains a settings field all read `--text-disabled`,
+ *      the token the sheet names for text the player cannot use. The failure this
+ *      catches: a hint and a disabled control are the same grey, so instruction
+ *      reads as prohibition, and it is the dimmest text on the surface holding it.
  */
 
 const token = "A".repeat(43);
@@ -41,6 +46,10 @@ const ZH = {
   advancedTitle: "高级配置",
   advancedSettings: "模型与连接设置",
   advancedNotEditable: "本页面无法修改",
+  gameEntry: "游戏",
+  settingsEntry: "设置",
+  installedLabel: "Stardew Valley",
+  installedHint: "Detected installation (path hidden)",
 } as const;
 
 type GameProjectionOverrides = Readonly<{ instanceStatus?: string; attachmentStatus?: string }>;
@@ -462,4 +471,114 @@ test("defect 4: the settled surface does not carry a generic loading line", asyn
   const surfaceText = (await page.getByTestId("game-surface").innerText()) ?? "";
   console.log(`[defect-4] settled surface carries the generic loading line: ${surfaceText.includes(ZH.genericLoading)}`);
   expect(surfaceText, "no block still claims to be loading once every read has settled").not.toContain(ZH.genericLoading);
+});
+
+// --- defect 5 -----------------------------------------------------------------
+
+/**
+ * Defect 5. Four declarations on this surface and the next one paint live prose in
+ * `--text-disabled`, the sheet's token for text the player cannot use: the panel's
+ * own status sentence (`role="status"` - the scan's live answer), the identity line
+ * under the installation's name, the wire chip beside that name, and the helper copy
+ * that explains a settings field. The sheet had already retired that tone from
+ * `.message-author` and `.chat-item-meta` for exactly this reason; these four were
+ * left behind, and they are the dimmest text on the surfaces that hold them.
+ *
+ * The failure this catches: instruction and prohibition are the same grey. Nothing
+ * distinguishes "read this to use the control" from "you cannot use this", and the
+ * sentence explaining a field is quieter than the field.
+ *
+ * The assertion is the identity the change is - each of the four computes the
+ * product's secondary tone and never the disabled one, at the same size on the same
+ * background - plus the geometry, re-measured with the pre-fix tone re-applied in
+ * the same mount, so the change is a colour and not a layout.
+ */
+test("defect 5: live status, identity and helper copy read the secondary tone", async ({ page }) => {
+  const candidateId = "Q".repeat(22);
+  await mountShell(page, {
+    discoveryCandidates: [
+      {
+        candidateId,
+        source: "known-location",
+        label: ZH.installedLabel,
+        hint: ZH.installedHint,
+        status: "admission_required",
+      },
+    ],
+  });
+  await openSurface(page, ZH.gameEntry, "game-surface");
+  const panel = installationPanel(page);
+  await expect(panel.locator(".installation-hint")).toBeVisible();
+  const installation = [".installation-state", ".installation-hint", ".installation-source"] as const;
+
+  const tokens = await page.evaluate(() => {
+    const read = (name: string): string => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${name})`;
+      document.body.appendChild(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    };
+    return { secondary: read("--text-secondary"), disabled: read("--text-disabled") };
+  });
+
+  const boxOf = async () => ({
+    panel: await panel.boundingBox(),
+    status: await panel.locator(".installation-state").boundingBox(),
+    candidate: await panel.locator(".installation-candidate").first().boundingBox(),
+    hint: await panel.locator(".installation-hint").boundingBox(),
+  });
+
+  const after = await sampleContrast(page, installation);
+  const afterBox = await boxOf();
+
+  // The tone these rules carried before the fix, re-applied in the same mount: the
+  // readings and the boxes below are the ones the panel showed, measured by the same
+  // engine on the same pixels.
+  const preFix = await page.addStyleTag({
+    content: ".installation-state,.installation-hint,.installation-source{color:var(--text-disabled)}",
+  });
+  const before = await sampleContrast(page, installation);
+  const beforeBox = await boxOf();
+  await preFix.evaluate((node) => node.remove());
+
+  await openSurface(page, ZH.settingsEntry, "settings-surface");
+  await expect(page.locator(".management-settings-hint").first()).toBeVisible();
+  const hintAfter = await sampleContrast(page, [".management-settings-hint"]);
+  const preFixHints = await page.addStyleTag({
+    content: ".management-settings-hint,.field-hint{color:var(--text-disabled)}",
+  });
+  const hintBefore = await sampleContrast(page, [".management-settings-hint"]);
+  await preFixHints.evaluate((node) => node.remove());
+
+  console.log(`[defect-5] tokens: ${JSON.stringify(tokens)}`);
+  console.log(`[defect-5] after: ${JSON.stringify([...after, ...hintAfter])}`);
+  console.log(`[defect-5] before: ${JSON.stringify([...before, ...hintBefore])}`);
+  console.log(`[defect-5] box after: ${JSON.stringify(afterBox)} before: ${JSON.stringify(beforeBox)}`);
+
+  expect(tokens.secondary, "the two tokens are the ones the change is between").not.toBe(tokens.disabled);
+  for (const reading of [...after, ...hintAfter]) {
+    expect(reading, `${reading.selector} is on screen`).toMatchObject({ found: true });
+    expect(
+      reading.color,
+      `${reading.selector} "${reading.text}" reads ${reading.color} on ${reading.background} at ${reading.size}px = ${reading.ratio.toFixed(2)}:1`,
+    ).toBe(tokens.secondary);
+    expect(reading.color, `${reading.selector} never reads the token named for text the player cannot use`).not.toBe(tokens.disabled);
+    expect(reading.ratio, `${reading.selector} clears the 4.5:1 body-text floor`).toBeGreaterThanOrEqual(4.5);
+  }
+  for (const reading of [...before, ...hintBefore]) {
+    expect(
+      reading.color,
+      `${reading.selector} really did read the disabled tone before the fix: ${reading.color} on ${reading.background} = ${reading.ratio.toFixed(2)}:1`,
+    ).toBe(tokens.disabled);
+  }
+  for (const reading of after) {
+    const wasReading = before.find((candidate) => candidate.selector === reading.selector)!;
+    expect(
+      reading.ratio,
+      `${reading.selector} reads brighter than the disabled tone did on the same pixel (${reading.ratio.toFixed(2)}:1 against ${wasReading.ratio.toFixed(2)}:1)`,
+    ).toBeGreaterThan(wasReading.ratio);
+  }
+  expect(afterBox, "the block's own box is the box the disabled tone drew").toEqual(beforeBox);
 });
