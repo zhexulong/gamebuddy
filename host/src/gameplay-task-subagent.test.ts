@@ -12,10 +12,12 @@ import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import {
   admitGameplayAction,
   awaitTaskOwnedTerminalReceipt,
+  GAMEPLAY_TASK_DELEGATE_BUDGET_MS,
   GameplayTaskSubagent,
   hasActionPostconditionEvidence,
   hasAuthoritativeCompletion,
   selectTaskOwnedCancellation,
+  type GameplayTaskResult,
 } from "./gameplay-task-subagent.js";
 import type { ExecutionWake, IntegrationLaunchHandle } from "./integration-launcher.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
@@ -717,6 +719,65 @@ test("GameplayTaskSubagent reserves before construction, binds abort to its task
     assert.equal(resultA.state, "cancelled");
     const resultB = await worker.run("B");
     assert.equal(resultB.state, "blocked");
+  });
+});
+
+test("a delegated task that outlives its budget returns the named code instead of waiting", async (t) => {
+  await mkdir(paths.runtimeCwd, { recursive: true });
+  const state: MutableIntegrationState = {
+    connected: true,
+    sessionId: "session_01",
+    capabilities: [],
+    snapshot: liveSnapshot([]),
+    latestReceipt: null,
+    latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
+  };
+  const calls = { execute: [] as string[], cancel: [] as string[] };
+  await withScriptedMod(state, calls, async (mod) => {
+    let prompting!: () => void;
+    const promptStarted = new Promise<void>((resolve) => (prompting = resolve));
+    let release!: () => void;
+    const aborted = new Promise<void>((resolve) => (release = resolve));
+    const worker = new GameplayTaskSubagent(paths, mod.connection, undefined, {
+      create: async ({ customTools }) =>
+        ({
+          agent: { state: { tools: customTools } },
+          messages: [],
+          subscribe: () => () => undefined,
+          prompt: async () => {
+            prompting();
+            await aborted;
+          },
+          abort: async () => release(),
+          dispose: () => undefined,
+        }) as unknown as AgentSession,
+    });
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const delegated = worker
+        .createDelegateTool()
+        .execute(
+          "test_call",
+          { task: "hold the session" },
+          new AbortController().signal,
+          undefined,
+          undefined as never,
+        );
+      await promptStarted;
+      const reservedTaskId = worker.activeTaskId;
+      assert.notEqual(reservedTaskId, null, "the budget bounds a task that really started");
+      t.mock.timers.tick(GAMEPLAY_TASK_DELEGATE_BUDGET_MS);
+      const result = await delegated;
+      const details = result.details as GameplayTaskResult;
+      assert.equal(details.taskId, reservedTaskId);
+      assert.equal(details.state, "blocked");
+      assert.deepEqual(details.report, { reasonCode: "delegate_budget_exhausted" });
+    } finally {
+      t.mock.timers.reset();
+    }
+    // The child was cancelled by the same step that returned the named code.
+    await until(() => worker.activeTaskId === null, "budget_cancelled_task_never_released");
   });
 });
 
@@ -1430,10 +1491,7 @@ test("worker mints a fresh runtime-owned admission for each action invocation", 
     const parent = new AbortController();
     const running = worker.run("same admission", parent.signal);
     try {
-      await until(
-        () => calls.execute.length >= 2,
-        "fresh_admission_second_dispatch_not_dispatched",
-      );
+      await until(() => calls.execute.length >= 2, "fresh_admission_second_dispatch_not_dispatched");
     } finally {
       parent.abort();
     }

@@ -24,6 +24,18 @@ import type {
 import type { GameConnection } from "./game-connection.js";
 import type { CompanionModelConfig, RuntimePaths } from "./runtime.js";
 
+/**
+ * The longest one delegated task may hold its caller. The audited live run spent
+ * 172.9 s inside a single `delegate_game_task` call (41% of a 422 s run) and 34.4 s
+ * in a later one, so the delegate is a bounded channel, not a place to park a
+ * session: 45 s stays well under a minute, still admits one ops round trip, and
+ * makes the caller's wait finite.
+ */
+export const GAMEPLAY_TASK_DELEGATE_BUDGET_MS = 45_000;
+
+/** Named terminal result for a delegation that outlived its budget. */
+export const GAMEPLAY_TASK_DELEGATE_BUDGET_EXHAUSTED = "delegate_budget_exhausted";
+
 /** Gameplay workers are deliberately pinned independently from the dialogue model. */
 export const GAMEPLAY_SUBAGENT_MODEL_CONFIG = Object.freeze({
   provider: "cpa-oai",
@@ -215,12 +227,47 @@ export class GameplayTaskSubagent {
         task: Type.String({ minLength: 1, maxLength: 2_000 }),
       }),
       execute: async (_toolCallId, params, signal) => {
-        const result = await this.run(params.task, signal);
+        const result = await this.delegateWithinBudget(params.task, signal);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result) }],
           details: result,
         };
       },
+    });
+  }
+
+  /**
+   * The delegate's only entry point from a Pi session, and therefore the one
+   * place the budget is enforced: the caller receives the worker's own result or
+   * the named `delegate_budget_exhausted` terminal result, never an unbounded
+   * wait on a nested agent.
+   */
+  private async delegateWithinBudget(task: string, parentSignal?: AbortSignal): Promise<GameplayTaskResult> {
+    const run = this.run(task, parentSignal);
+    // `run` reserves its task synchronously, so the budget already knows which
+    // task it is about to end.
+    const taskId = this.activeTaskId;
+    if (taskId === null) throw new Error("gameplay_task_reservation_missing");
+    let budget: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<"expired">((resolve) => {
+      budget = setTimeout(() => resolve("expired"), GAMEPLAY_TASK_DELEGATE_BUDGET_MS);
+    });
+    let settled: GameplayTaskResult | "expired";
+    try {
+      settled = await Promise.race([run, expired]);
+    } finally {
+      clearTimeout(budget);
+    }
+    if (settled !== "expired") return settled;
+    // Stop waiting and stop working in the same step: the task's own cancel path
+    // aborts the child and cancels an execution it already owns.
+    this.cancel(GAMEPLAY_TASK_DELEGATE_BUDGET_EXHAUSTED);
+    void run.catch(() => undefined);
+    return Object.freeze({
+      taskId,
+      state: "blocked",
+      summary: null,
+      report: Object.freeze({ reasonCode: GAMEPLAY_TASK_DELEGATE_BUDGET_EXHAUSTED }),
     });
   }
 

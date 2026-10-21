@@ -1129,6 +1129,11 @@ export async function createRuntimeWithFixedToolsCore(
 
   assertFrozenFixedTools(fixedTools);
   const fixedToolNames = fixedTools.map((tool) => tool.name);
+  // A fixed tool may declare `defaultActive: false` when the runtime cannot give it anything to act on yet. It stays
+  // allowlisted, so `setActiveToolsByName` can mount it, but Pi does not declare it to the provider until then.
+  const mountedFixedToolNames = new Set(
+    fixedTools.filter((tool) => tool.defaultActive !== false).map((tool) => tool.name),
+  );
   if (fixedTools.length > 0 && runtimeSurface !== "game") throw new Error("fixed_runtime_tools_require_game_surface");
   const companionStatus = createCompanionStatusTool(integration);
   const dispatchController =
@@ -1175,6 +1180,15 @@ export async function createRuntimeWithFixedToolsCore(
     worldBook === undefined
       ? []
       : createWorldBookTools(worldBook, worldBookScope ?? undefined, { char: profile.identity.name });
+  // `delegate_game_task` is composed but deliberately not mounted here. Every
+  // runtime on this surface has a live game session attached, and the tool
+  // returned only when its nested agent finished: one call swallowed 172.9 s of
+  // a 422 s run, 41% (`toolTiming.byCategory.delegate_game_task` in
+  // `tools/_multiday_routine-g112attrib.result.json`; 34.4 s in
+  // `tools/_multiday_routine-g118answer.result.json`). Disclosure may only
+  // reduce, so the worker and its bounded budget stay composed below for a
+  // Chat/ops surface that carries no live session instead of being mounted on
+  // this one.
   const gameplaySubagent =
     gameplaySubagentEnabled && runtimeSurface === "game"
       ? integration !== undefined && modelConfig !== undefined
@@ -1185,14 +1199,6 @@ export async function createRuntimeWithFixedToolsCore(
             throw new Error("gameplay_subagent_requires_model_and_integration");
           })()
       : undefined;
-  const rawGameplayTools = gameplaySubagent === undefined ? [] : [gameplaySubagent.createDelegateTool()];
-  // The delegate itself is an execution entry point. Fence it as well as the
-  // module-owned action tools so a terminal adapter lifecycle cannot start a
-  // new worker task through an already-mounted Pi session.
-  const gameplayTools =
-    integration === undefined
-      ? rawGameplayTools
-      : rawGameplayTools.map((tool) => gateIntegrationTool(tool, integration));
   // Chat is a pure dialogue surface. Native assistant content is its sole
   // player-visible expression channel; no status, Magic Context, Game, or
   // delegation tool may steer it into an intermediate tool-use turn.
@@ -1204,12 +1210,12 @@ export async function createRuntimeWithFixedToolsCore(
           ...fixedToolNames,
           ...integrationTools.map((tool) => tool.name),
           ...worldBookTools.map((tool) => tool.name),
-          ...gameplayTools.map((tool) => tool.name),
         ].sort();
+  const expectedToolNames = allowedToolNames.filter(
+    (name) => !fixedToolNames.includes(name) || mountedFixedToolNames.has(name),
+  );
   const customTools =
-    runtimeSurface === "chat"
-      ? []
-      : [companionStatus, ...fixedTools, ...integrationTools, ...worldBookTools, ...gameplayTools];
+    runtimeSurface === "chat" ? [] : [companionStatus, ...fixedTools, ...integrationTools, ...worldBookTools];
   if (new Set(allowedToolNames).size !== allowedToolNames.length) throw new Error("runtime_tool_name_collision");
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"];
   try {
@@ -1257,8 +1263,11 @@ export async function createRuntimeWithFixedToolsCore(
       ) => () => void)
     | undefined;
   try {
+    // Pi activates every allowlisted tool on construction, including a fixed tool that declared itself
+    // `defaultActive: false`: mounting it is this runtime's decision, not the allowlist's.
+    if (expectedToolNames.length !== allowedToolNames.length) session.setActiveToolsByName(expectedToolNames);
     const activeTools = session.agent.state.tools.map((tool) => tool.name).sort();
-    const expectedTools = allowedToolNames;
+    const expectedTools = expectedToolNames;
     if (JSON.stringify(activeTools) !== JSON.stringify(expectedTools)) {
       throw new Error(
         `Companion tool isolation failed: expected ${expectedTools.join(", ")}, got ${activeTools.join(", ") || "(none)"}.`,
