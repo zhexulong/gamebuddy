@@ -6,6 +6,14 @@ import { IncrementalSpeechAccumulator } from "./companion-speech-incremental.js"
 
 const MAX_NATIVE_COMPANION_TEXT_UTF8_BYTES = 16_384;
 
+/**
+ * How long a completed sentence may stay unspoken before the player has had
+ * time to notice the silence. It is the point where the companion says one
+ * thing while it works instead of leaving the game silent; anything it says
+ * about its own actions after that is what the shape rule below forbids.
+ */
+const WORKING_REMARK_SILENCE_MS = 3_000;
+
 type AssistantMessage = Readonly<{
   id?: string;
   responseId?: string;
@@ -87,11 +95,12 @@ export type NativeCompanionContentSinks = Readonly<{
    */
   onPreviewDelta(delta: string): void | Promise<void>;
   /**
-   * Optional complete-sentence projection: when this sink is provided the
-   * observer treats the delta lane as the presentation lane and emits each
-   * dehydrated sentence the moment its boundary arrives, in arrival order.
-   * When it is absent the observer keeps its preview/final semantics exactly;
-   * Chat consumers never provide it.
+   * Optional mid-message piece: when this sink is provided the observer may
+   * release ONE working remark per assistant turn - the first completed sentence
+   * of an open message, and only after the player has been silent for a real
+   * pause. Everything else leaves through `onFinalText`. When it is absent the
+   * observer keeps its preview/final semantics exactly; Chat consumers never
+   * provide it.
    */
   onIncrementalText?(text: string): void | Promise<void>;
   /**
@@ -128,9 +137,9 @@ export type NativeCompanionContentObserver = Readonly<{
  * exposing any presentation, game, store, or provider authority to Pi. It
  * filters reasoning and tool calls structurally and accepts only final text
  * from the matching assistant message. When the caller supplies
- * `onIncrementalText`, completed sentences are emitted from the delta lane as
- * they arrive and `onFinalText` then commits only the never-completed
- * residual; without that sink the preview/final semantics are unchanged.
+ * `onIncrementalText`, one working remark may leave mid-message after a real
+ * silence; the message's own text then commits once, as a single paragraph, at
+ * `message_end`. Without that sink the preview/final semantics are unchanged.
  * Callers own surface-specific durable commit and cancellation admission.
  *
  * `options.stageDirection` is the explicit presentation choice. `"strip"` is
@@ -185,33 +194,68 @@ export function attachNativeCompanionContent(
   };
   const presentIsEmpty = (text: string): boolean =>
     stripStageDirection ? isEmptyAfterDehydration(text) : text.trim().length === 0;
-  // Completed sentences held until message_end decides whether this assistant
-  // message is the player-visible response. A Pi turn's intermediate tool-use
-  // messages also carry text (the model's running commentary between actions),
-  // and the non-incremental lane deliberately withholds those. Emitting at delta
-  // time presented that commentary as companion speech — a real live run showed
-  // the game saying "我在屋子里，先出门去农场。" and "先摘一颗。" to the player.
+  // Completed sentences held until this message's fate is known. A Pi turn's
+  // intermediate tool-use messages also carry text (the model's running
+  // commentary between actions), and presenting that commentary as companion
+  // speech is a hard product breach a real live run produced ("我在屋子里，先出门去农场。").
+  // A real Pi session probe proved `toolcall_start` arrives AFTER the preamble's
+  // `text_delta`, and a presented bubble cannot be retracted, so a message's
+  // fate is only settled at `message_end`.
   //
-  // Tradeoff: holding until message_end forfeits progressive emission of the
-  // FINAL reply too, so a slowly-streamed reply reaches the surface later. That
-  // is accepted because (a) presenting planning text is a hard product breach and
-  // (b) `stopReason` is unavailable during the stream, so no deterministic rule
-  // can separate reply from preamble earlier. Sentence chunking — the actual
-  // goal here — is unaffected.
+  // That cannot mean "silent until message_end" either: a reply the model streams
+  // over several seconds left the player in silence and then put the whole answer
+  // on screen in one instant. The two rules that replace it are named below: one
+  // working remark per turn after a real silence, and everything still held at
+  // `message_end` as one paragraph.
   let pendingSentences: string[] = [];
-  // One working remark per Pi turn, released from the FIRST intermediate
-  // tool-use message that carries one. A step report is emitted step by step,
-  // so it appears in EVERY tool-use message; allowing exactly one piece per
-  // turn therefore lets company through while making a running narration
-  // structurally unable to reach the surface. This is a shape rule (how many
-  // pieces, from where), not a semantic filter over the wording.
+  // One working remark per Pi turn. A step report is emitted step by step, so it
+  // appears in EVERY tool-use message; allowing exactly one piece per turn
+  // therefore lets company through while making a running narration structurally
+  // unable to reach the surface. This is a shape rule (how many pieces, from
+  // where), not a semantic filter over the wording. The one piece is released
+  // either while a message is still streaming (the silence timer below) or, when
+  // a tool-use message ends sooner than that, from its first sentence.
   let workingRemarkReleased = false;
   let callbackTail = Promise.resolve();
+  let remarkTimer: ReturnType<typeof setTimeout> | undefined;
   let unsubscribe: (() => void) | undefined;
 
   const dispatch = (callback: () => void | Promise<void>): void => {
     if (revoked || closed) return;
     callbackTail = callbackTail.then(callback);
+  };
+
+  /**
+   * Arms this turn's one working remark: holds the first completed sentence of
+   * whatever message is streaming and releases it once the player has been
+   * silent for `WORKING_REMARK_SILENCE_MS`. A message that finishes sooner never
+   * arms anything, so an ordinary reply is not cut in half by this.
+   */
+  const scheduleWorkingRemark = (): void => {
+    if (!incrementalActive || workingRemarkReleased || remarkTimer !== undefined) return;
+    if (pendingSentences.length === 0) return;
+    remarkTimer = setTimeout(() => {
+      remarkTimer = undefined;
+      dispatch(async () => {
+        if (revoked || closed || finalizing || workingRemarkReleased || tracked === undefined) return;
+        const first = pendingSentences.shift();
+        if (first === undefined) return;
+        if (presentIsEmpty(first)) {
+          // Text the player cannot hear is not a remark, so it must not spend the
+          // turn's one piece: wait for the next sentence instead.
+          scheduleWorkingRemark();
+          return;
+        }
+        workingRemarkReleased = true;
+        await sinks.onIncrementalText!(present(first));
+      });
+    }, WORKING_REMARK_SILENCE_MS);
+  };
+
+  const clearRemarkTimer = (): void => {
+    if (remarkTimer === undefined) return;
+    clearTimeout(remarkTimer);
+    remarkTimer = undefined;
   };
 
   const onEvent = (event: NativeCompanionContentEvent | AgentSessionEvent): void => {
@@ -227,6 +271,7 @@ export function attachNativeCompanionContent(
         trackedTextContentIndexes = new Set<number>();
         // A new tracked message must not inherit a previous message's buffered
         // stream: each assistant message owns its own sentence accumulator.
+        clearRemarkTimer();
         incrementalAccumulator = new IncrementalSpeechAccumulator();
         pendingSentences = [];
       }
@@ -273,10 +318,11 @@ export function attachNativeCompanionContent(
         // the surface can present finished dialogue before message_end.
         dispatch(async () => await sinks.onPreviewDelta(delta));
         if (incrementalActive) {
-          // Hold completed sentences; message_end is the first point at which we
-          // know whether this message is the player-visible response or an
-          // intermediate tool-use step, so emission cannot happen here.
+          // Each sentence that completes inside this delta joins the message's
+          // held paragraph; the silence timer decides whether the first one has
+          // been held long enough to be spoken as the turn's working remark.
           for (const sentence of incrementalAccumulator.push(delta)) pendingSentences.push(sentence);
+          if (pendingSentences.length > 0) scheduleWorkingRemark();
         }
       }
       return;
@@ -292,6 +338,7 @@ export function attachNativeCompanionContent(
       tracked = undefined;
       trackedIdentity = undefined;
       trackedTextContentIndexes = new Set<number>();
+      clearRemarkTimer();
       incrementalAccumulator = new IncrementalSpeechAccumulator();
       pendingSentences = [];
       dispatch(async () => await sinks.onRejected("identity_mismatch"));
@@ -305,6 +352,7 @@ export function attachNativeCompanionContent(
       tracked = undefined;
       trackedIdentity = undefined;
       trackedTextContentIndexes = new Set<number>();
+      clearRemarkTimer();
       incrementalAccumulator = new IncrementalSpeechAccumulator();
       pendingSentences = [];
       // A tool-use assistant message is an intermediate agent-loop result, not
@@ -317,7 +365,9 @@ export function attachNativeCompanionContent(
       // Under incremental activation (Game only) the surface is a sequence of
       // short native expressions instead of one message, so a bounded remark
       // from such a message is legitimate company while working -- and its
-      // absence is what left the player in silence for the whole task.
+      // absence is what left the player in silence for the whole task. The
+      // silence timer has already spent the turn's piece when the message
+      // outlived it, so this only covers a message that ended sooner.
       //
       // This stays a structural rule: one piece, from the first sentence, under
       // a byte bound. It deliberately does NOT try to judge whether a short
@@ -350,17 +400,14 @@ export function attachNativeCompanionContent(
         return;
       }
       if (incrementalActive) {
-        // This message is the player-visible reply, so release its completed
-        // sentences in arrival order, then the residual that never finished a
-        // sentence. Sentences are held until here because `stopReason` is the
-        // first point that separates the reply from an intermediate tool-use
-        // preamble; see the accumulator comment above.
-        for (const sentence of messageSentences) {
-          if (presentIsEmpty(sentence)) continue;
-          dispatch(async () => await sinks.onIncrementalText!(present(sentence)));
-        }
-        const residual = messageAccumulator.flush();
-        if (!presentIsEmpty(residual)) dispatch(async () => await sinks.onFinalText(present(residual), stopReason));
+        // One finished reply is one paragraph. Emitting each held sentence
+        // separately put four bubbles in front of the player inside the same
+        // instant, which reads as a stutter rather than as speech; the only
+        // piece allowed to leave early is the working remark above. Joining the
+        // raw units before dehydrating keeps the space between two English
+        // sentences, which per-unit dehydration would trim off.
+        const paragraph = present([...messageSentences, messageAccumulator.flush()].join(""));
+        if (!presentIsEmpty(paragraph)) dispatch(async () => await sinks.onFinalText(paragraph, stopReason));
         return;
       }
       const text = readSafeAssistantText(finalMessage, stripStageDirection, dropScaffolding);
@@ -393,11 +440,13 @@ export function attachNativeCompanionContent(
     },
     revoke(): void {
       revoked = true;
+      clearRemarkTimer();
       unsubscribe?.();
       unsubscribe = undefined;
     },
     async close(): Promise<void> {
       if (closed) return await callbackTail;
+      clearRemarkTimer();
       unsubscribe?.();
       unsubscribe = undefined;
       await callbackTail;

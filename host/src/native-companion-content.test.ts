@@ -344,8 +344,8 @@ test("incremental activation releases at most one working remark per turn", asyn
   fx.emit({ type: "message_end", message: assistant([text("花椰菜给她了。")], "stop") });
   await observer.close();
 
-  assert.deepEqual(inlines, ["先出门去农场。", "花椰菜给她了。"]);
-  assert.deepEqual(finals, []);
+  assert.deepEqual(inlines, ["先出门去农场。"]);
+  assert.deepEqual(finals, ["花椰菜给她了。"]);
 });
 
 test("never commits aborted, error, empty, control-text, or foreign assistant output", async () => {
@@ -434,7 +434,7 @@ test("revocation suppresses late preview and final content and close drains an a
   assert.deepEqual(previews, ["first"]);
   assert.deepEqual(finals, []);
 });
-test("incremental activation emits each completed sentence from the delta lane and nothing again at message_end", async () => {
+test("incremental activation commits a completed reply once, as its final text", async () => {
   const fx = fakeSession();
   const inlines: string[] = [];
   const finals: string[] = [];
@@ -477,13 +477,155 @@ test("incremental activation emits each completed sentence from the delta lane a
     message: trackedPartial,
     assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "下雨。", partial: trackedPartial },
   });
-  // Every sentence already left the accumulator; the whole reply presented
-  // itself incrementally, so message_end must not emit a duplicate final piece.
+  // Both sentences completed inside the stream; the reply still leaves as one
+  // final piece, and nothing is presented twice.
   fx.emit({ type: "message_end", message: assistant([text("早安!今天下雨。")], "stop", "response-1") });
   await observer.close();
 
-  assert.deepEqual(inlines, ["早安!", "今天下雨。"]);
-  assert.deepEqual(finals, []);
+  assert.deepEqual(inlines, []);
+  assert.deepEqual(finals, ["早安!今天下雨。"]);
+});
+
+test("presents a finished reply as one paragraph instead of one piece per sentence", async () => {
+  // Falsifier for the burst the player actually saw: four sentences that the
+  // stream completed at the same instant used to reach the Mod as four
+  // consecutive bubbles, which reads as a stutter rather than a reply.
+  const fx = fakeSession();
+  const inlines: string[] = [];
+  const finals: string[] = [];
+  const observer = attach(fx, {
+    onPreviewDelta: async () => undefined,
+    onIncrementalText: async (value) => {
+      inlines.push(value);
+    },
+    onFinalText: async (value) => {
+      finals.push(value);
+    },
+    onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
+  });
+  observer.open();
+  observer.openPreviews();
+  const partial = assistant([text("")]);
+  fx.emit({ type: "message_start", message: partial });
+  fx.emit({
+    type: "message_update",
+    message: partial,
+    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial },
+  });
+  for (const delta of ["我先去农场。", "地里的花椰菜熟了。", "摘完去找乔迪。", "回头再补种点别的。"]) {
+    fx.emit({
+      type: "message_update",
+      message: partial,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta, partial },
+    });
+  }
+  fx.emit({
+    type: "message_end",
+    message: assistant([text("我先去农场。地里的花椰菜熟了。摘完去找乔迪。回头再补种点别的。")], "stop", "response-1"),
+  });
+  await observer.close();
+
+  assert.deepEqual(inlines, []);
+  assert.deepEqual(finals, ["我先去农场。地里的花椰菜熟了。摘完去找乔迪。回头再补种点别的。"]);
+});
+
+test("joins the held reply without eating the space between English sentences", async () => {
+  // The live runs that speak English put the space between two sentences at the
+  // head of the second unit; dehydrating each unit separately would trim it and
+  // weld `Hello.` to `Today.` once the pieces are joined.
+  const fx = fakeSession();
+  const inlines: string[] = [];
+  const finals: string[] = [];
+  const observer = attach(fx, {
+    onPreviewDelta: async () => undefined,
+    onIncrementalText: async (value) => {
+      inlines.push(value);
+    },
+    onFinalText: async (value) => {
+      finals.push(value);
+    },
+    onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
+  });
+  observer.open();
+  observer.openPreviews();
+  const partial = assistant([text("")]);
+  fx.emit({ type: "message_start", message: partial });
+  fx.emit({
+    type: "message_update",
+    message: partial,
+    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial },
+  });
+  for (const delta of ["Hello.", " Today is", " warmer."]) {
+    fx.emit({
+      type: "message_update",
+      message: partial,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta, partial },
+    });
+  }
+  fx.emit({
+    type: "message_end",
+    message: assistant([text("Hello. Today is warmer.")], "stop", "response-1"),
+  });
+  await observer.close();
+
+  assert.deepEqual(inlines, []);
+  assert.deepEqual(finals, ["Hello. Today is warmer."]);
+});
+
+test("releases the held first sentence as the turn's one working remark after three seconds of silence", async (t) => {
+  // Falsifier for the silence hole: the first sentence completes at t=0 and the
+  // message stays open for 20s. It must be spoken at ~3s, not at message_end.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const fx = fakeSession();
+  const inlines: string[] = [];
+  const observer = attach(fx, {
+    onPreviewDelta: async () => undefined,
+    onIncrementalText: async (value) => {
+      inlines.push(value);
+    },
+    onFinalText: async (value) => assert.fail(`unexpected final text: ${value}`),
+    onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
+  });
+  observer.open();
+  observer.openPreviews();
+  const partial = assistant([text("")]);
+  fx.emit({ type: "message_start", message: partial });
+  fx.emit({
+    type: "message_update",
+    message: partial,
+    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial },
+  });
+  fx.emit({
+    type: "message_update",
+    message: partial,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "先出门去农场。", partial },
+  });
+  await flush();
+  assert.deepEqual(inlines, []);
+  t.mock.timers.tick(2_999);
+  await flush();
+  assert.deepEqual(inlines, []);
+  t.mock.timers.tick(1);
+  await flush();
+  assert.deepEqual(inlines, ["先出门去农场。"]);
+
+  // Sixteen more seconds of the same intermediate tool-use message, then its
+  // end. The turn's one working remark is spent, so the step report stays out.
+  t.mock.timers.tick(16_000);
+  fx.emit({
+    type: "message_update",
+    message: partial,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "先摘一颗。", partial },
+  });
+  await flush();
+  t.mock.timers.tick(20_000);
+  fx.emit({
+    type: "message_end",
+    message: assistant([thinking("plan"), text("先出门去农场。先摘一颗。"), toolCall], "toolUse"),
+  });
+  await flush();
+  assert.deepEqual(inlines, ["先出门去农场。"]);
+  await observer.close();
 });
 
 test("incremental activation commits only the never-completed residual at message_end", async () => {
@@ -518,9 +660,9 @@ test("incremental activation commits only the never-completed residual at messag
   fx.emit({ type: "message_end", message: assistant([text("我这就去。把草拔了。")], "stop", "response-1") });
   await observer.close();
 
-  assert.deepEqual(inlines, []);
   // The residual stream is the whole final piece; the message_end text is
   // authority only for the non-incremental lane.
+  assert.deepEqual(inlines, []);
   assert.deepEqual(finals, ["我这就去"]);
 });
 
@@ -616,8 +758,8 @@ test("incremental activation never opens a sentence boundary inside a thinking f
   });
   await observer.close();
 
-  assert.deepEqual(inlines, ["早安!"]);
-  assert.deepEqual(finals, []);
+  assert.deepEqual(inlines, []);
+  assert.deepEqual(finals, ["早安!"]);
 });
 
 test("hands every final text the stop reason Pi recorded, and only `length` can say the reply is a prefix", async () => {

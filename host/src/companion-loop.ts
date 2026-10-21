@@ -7,7 +7,6 @@ import {
   type NativeCompanionContentObserver,
 } from "./native-companion-content.js";
 import { CompanionEventPump, type CompanionTurnOutcome, type DeliveryDisposition } from "./event-pump.js";
-import { chunkCompanionSpeech } from "./companion-speech-chunker.js";
 import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
 
 export type NativeGameCompanionContent = Readonly<{
@@ -272,41 +271,27 @@ export class CompanionLoop {
                     await this.#turnObserver?.presentNativeAssistantContent?.(content);
                   },
                   onFinalText: async (text) => {
-                    // One consumed batch admits a sequence of native expressions:
-                    // the dehydrated final text — under incremental activation the
-                    // message_end residual — is chunked at deterministic sentence
-                    // boundaries (companion-speech-chunker) so the game sees short,
-                    // conversational pieces in order instead of one wall of text.
-                    // Serialization is guaranteed by the observer's callbackTail
-                    // (native-companion-content) and the observer itself emits one
-                    // message_end per Pi turn (its `finalizing` flag), so multiple
-                    // onFinalText calls here are the ordered chunks, not foreign
-                    // batches. Voice finalizes exactly once after the last piece.
-                    const chunks = chunkCompanionSpeech(text);
-                    const pieces = chunks.length === 0 ? [text] : chunks;
-                    let lastPresentation: Promise<void> | undefined;
-                    for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex += 1) {
-                      const piece = pieces[pieceIndex]!;
-                      // Voice finalizes after the last piece of this batch once,
-                      // so cleanup (finally) never cancels an already-finalized job.
-                      // Compare by index, not by text: two identical chunks must
-                      // not both look like the last one.
-                      const isLastPiece = pieceIndex === pieces.length - 1;
-                      if (this.voiceSink !== undefined && isLastPiece) {
-                        try {
-                          await voiceBegin;
-                          await this.voiceSink.finalize();
-                          voiceFinalized = true;
-                        } catch {
-                          // Voice degradation is graceful.
-                        }
+                    // One message's text is one paragraph, committed once. The
+                    // previous per-sentence chunking put four bubbles in front
+                    // of the player inside the same instant, which reads as a
+                    // stutter rather than as speech; the only piece allowed to
+                    // leave before this is the working remark the observer
+                    // released after a real silence. Voice finalizes after this
+                    // one piece, so cleanup (finally) never cancels an
+                    // already-finalized job.
+                    if (this.voiceSink !== undefined) {
+                      try {
+                        await voiceBegin;
+                        await this.voiceSink.finalize();
+                        voiceFinalized = true;
+                      } catch {
+                        // Voice degradation is graceful.
                       }
-                      const content = Object.freeze({ sourceEventId, text: piece });
-                      const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
-                      if (presentation !== undefined) lastPresentation = presentation;
-                      await presentation;
                     }
-                    if (lastPresentation !== undefined) nativeContentFinal = lastPresentation;
+                    const content = Object.freeze({ sourceEventId, text });
+                    const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
+                    if (presentation !== undefined) nativeContentFinal = presentation;
+                    await presentation;
                   },
                   onRejected: (reason) => {
                     // `aborted`/`error` are the transport-level endings; the remaining reasons are

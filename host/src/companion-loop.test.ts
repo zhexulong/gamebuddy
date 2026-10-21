@@ -423,10 +423,7 @@ test("CompanionLoop presents incremental sentences without any voice sink", asyn
     timestampMs: 1,
   });
   await loop.flush();
-  assert.deepEqual(presented, [
-    { sourceEventId: "player_source_incr", text: "早安!" },
-    { sourceEventId: "player_source_incr", text: "今天下雨。" },
-  ]);
+  assert.deepEqual(presented, [{ sourceEventId: "player_source_incr", text: "早安!今天下雨。" }]);
 });
 
 test("CompanionLoop presents only the buffered residual when no sentence ever completed", async () => {
@@ -574,11 +571,10 @@ test("CompanionLoop presents incremental sentences as they arrive and the messag
     timestampMs: 1,
   });
   await loop.flush();
-  // Two incremental presentations, then the buffered residual as the last piece.
+  // One finished reply, one presented piece: the buffered sentences and the
+  // unbounded tail are joined instead of arriving as a burst of fragments.
   assert.deepEqual(presented, [
-    { sourceEventId: "player_source_chunk", text: "我这就去南瓜地浇水。" },
-    { sourceEventId: "player_source_chunk", text: "把杂草也一起拔了。" },
-    { sourceEventId: "player_source_chunk", text: "然后把种子撒上" },
+    { sourceEventId: "player_source_chunk", text: "我这就去南瓜地浇水。把杂草也一起拔了。然后把种子撒上" },
   ]);
 });
 
@@ -674,13 +670,8 @@ test("CompanionLoop finalizes the voice job exactly once with identical incremen
     timestampMs: 1,
   });
   await loop.flush();
-  // Three identical incremental sentences plus one residual piece, in order.
-  assert.deepEqual(presented, [
-    { sourceEventId: "player_source_dup", text: "好。" },
-    { sourceEventId: "player_source_dup", text: "好。" },
-    { sourceEventId: "player_source_dup", text: "好。" },
-    { sourceEventId: "player_source_dup", text: "好" },
-  ]);
+  // One paragraph piece, even though three identical sentences completed first.
+  assert.deepEqual(presented, [{ sourceEventId: "player_source_dup", text: "好。好。好。好" }]);
   // The voice job must open once and finalize exactly once, never twice.
   assert.equal(voiceOps.filter((op) => op === "finalize").length, 1);
   assert.equal(voiceOps.filter((op) => op.startsWith("begin:")).length, 1);
@@ -954,10 +945,7 @@ test("CompanionLoop grants a bounded presentation lease to salient sensory world
   });
   await loop.flush();
   assert.deepEqual(lifecycle, ["begin", "end"]);
-  assert.deepEqual(presented, [
-    { sourceEventId: "day_started_day_3", text: "早安!" },
-    { sourceEventId: "day_started_day_3", text: "今天也要加油。" },
-  ]);
+  assert.deepEqual(presented, [{ sourceEventId: "day_started_day_3", text: "早安!今天也要加油。" }]);
 });
 
 test("CompanionLoop steers a busy Pi session without aborting it", async () => {
