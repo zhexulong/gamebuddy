@@ -2117,6 +2117,33 @@ const traceClockFields = (clock) => ({
   season: ["spring", "summer", "fall", "winter"][clock?.seasonIndex] ?? null,
   year: typeof clock?.year === "number" ? clock.year : null,
 });
+/**
+ * The program lineage a receipt ACTUALLY carries, or null when it carries none.
+ *
+ * This is the conditional half of the attach. The Mod mints the program binding internally and its receipts do not yet
+ * name the program, so this is EMPTY today by construction. It must never synthesise a programId: a lineage the runner
+ * invented would make every execution look attributed and hide the very gap the per-program counts exist to expose. The
+ * only two accepted shapes are the receipt's own `programId`/`nodeId` fields and a `program_id=`/`node_id=` marker in
+ * `evidence.detail`; a receipt with neither stays unattributed, not guessed.
+ */
+function traceLineage(receipt) {
+  if (receipt === null || typeof receipt !== "object") return null;
+  let programId = typeof receipt.programId === "string" && receipt.programId.length > 0 ? receipt.programId : null;
+  let nodeId = typeof receipt.nodeId === "string" && receipt.nodeId.length > 0 ? receipt.nodeId : null;
+  const detail = typeof receipt.evidence?.detail === "string" ? receipt.evidence.detail : "";
+  for (const pair of detail.split(";")) {
+    const index = pair.indexOf("=");
+    if (index <= 0) continue;
+    const key = pair.slice(0, index);
+    const value = pair.slice(index + 1);
+    if (key === "program_id" && programId === null && value.length > 0) programId = value;
+    if (key === "node_id" && nodeId === null && value.length > 0) nodeId = value;
+  }
+  const lineage = {};
+  if (programId !== null) lineage.programId = programId;
+  if (nodeId !== null) lineage.nodeId = nodeId;
+  return Object.keys(lineage).length === 0 ? null : Object.freeze(lineage);
+}
 const originalExecute = client.execute.bind(client);
 client.execute = async (request) => {
   const clock = dispatchClock();
@@ -2143,6 +2170,9 @@ client.execute = async (request) => {
       dispatchedAtMs,
       // The other half, so `execMs` and `thinkMs` can be told apart (tools/lib/action-cadence.mjs).
       settledAtMs: Date.now(),
+      // Present ONLY when the receipt itself carries the lineage: a receipt with none stays unattributed rather than
+      // claimed, so a program's dispatches cannot be padded with executions nobody attributed to it.
+      ...(traceLineage(receipt) ?? {}),
     };
     actionTrace.push(entry);
     console.error("AGENT_EXECUTE", JSON.stringify(entry));
@@ -2174,6 +2204,76 @@ let agentProgramId = null;
 // zero actions through them while still making 883 individual tool calls - and the run's own result could not say
 // so, because a submission left no trace in it. A path that ships and does nothing is worse than an absent one.
 const programSubmissions = [];
+/** Page size for the journal read: the wire caps an events page at 32 (validateBodyProgramEventsResult). */
+const PROGRAM_EVENTS_PAGE_SIZE = 32;
+/** The per-program execution records, filled at assembly time so both result paths publish the same answer. */
+let programOutcomes = Object.freeze([]);
+/**
+ * One submission's execution record, read from the Mod's own journal.
+ *
+ * `accepted` is an ingress fact and only an ingress fact: eight of ten audited runs published accepted batches and no
+ * artifact could say whether a node ran. `dispatched` is the count of the Mod's own `native_dispatch` events - exactly
+ * "the executions the program produced" - and `nodeOutcomes` are the per-node states the Mod reports. A journal query
+ * that fails is `observed: false` with `dispatched: null`, NEVER `dispatched: 0`: an unobserved program and a program
+ * that dispatched nothing are different facts and collapsing them would turn a read failure into a measured zero. A
+ * `programId` the Mod never minted (a rejected submit) reads `not_found` and is likewise `observed: false`, with
+ * `accepted: false` saying why.
+ */
+async function readProgramOutcomes({ submissions, statusQuery, eventsQuery }) {
+  const records = [];
+  for (const submission of submissions) {
+    const programId = typeof submission?.programId === "string" ? submission.programId : null;
+    const accepted = submission?.accepted === true;
+    const unobserved = Object.freeze({ programId, accepted, observed: false, dispatched: null, nodeOutcomes: [] });
+    if (programId === null) {
+      records.push(unobserved);
+      continue;
+    }
+    try {
+      const status = await statusQuery(programId);
+      if (status?.code !== "found" || status.snapshot === null) {
+        records.push(unobserved);
+        continue;
+      }
+      const events = [];
+      let cursor = 0;
+      // The wire caps a page at 32 and a found page advances the cursor; an empty or non-advancing page ends the read.
+      for (let page = 0; page < 128; page += 1) {
+        const result = await eventsQuery(programId, cursor);
+        if (result?.code !== "found") break;
+        const batch = Array.isArray(result.events) ? result.events : [];
+        events.push(...batch);
+        if (batch.length === 0 || result.nextCursor <= cursor) break;
+        cursor = result.nextCursor;
+      }
+      records.push(
+        Object.freeze({
+          programId,
+          accepted,
+          observed: true,
+          dispatched: events.filter((event) => event?.kind === "native_dispatch").length,
+          nodeOutcomes: Object.freeze(
+            (status.snapshot.nodes ?? []).map((node) =>
+              Object.freeze({ nodeId: node?.nodeId ?? null, state: node?.state ?? null }),
+            ),
+          ),
+        }),
+      );
+    } catch {
+      records.push(unobserved);
+    }
+  }
+  return Object.freeze(records);
+}
+
+/** Reads the journal for every submission over the live bridge. Called once, at assembly time. */
+async function sampleProgramOutcomes() {
+  return readProgramOutcomes({
+    submissions: programSubmissions,
+    statusQuery: (programId) => client.programStatus({ programId }),
+    eventsQuery: (programId, cursor) => client.programEvents({ programId, cursor, pageSize: PROGRAM_EVENTS_PAGE_SIZE }),
+  });
+}
 const originalProgramSubmit = client.programSubmit.bind(client);
 client.programSubmit = async (program) => {
   if (program?.programId !== undefined) agentProgramId = program.programId;
@@ -3317,6 +3417,10 @@ async function buildRunResult({ state, error = null, capture, runtimeRoot, settl
           atMs: Date.now(),
         });
   const dispatched = summarizeDispatchedActions(actionTrace);
+  // Read the Mod's own journal NOW, once per run: this is assembly time, so the per-program execution facts are
+  // committed to the result and the bundle together and neither can disagree with the other. Assigned to the module
+  // binding `writeRunBundle` reads, so both result paths publish the same read without a second query.
+  programOutcomes = await sampleProgramOutcomes();
   const result = {
     ...evidence,
     // The run's own window: `startedAtMs` is the runner's own phase clock, so a reader can compute the TAIL (last
@@ -3335,6 +3439,10 @@ async function buildRunResult({ state, error = null, capture, runtimeRoot, settl
     // as well as in the bundle (where a failed run reads it), because `accepted: 0` - the companion chose batching and
     // nothing ran through it - is the outcome a run's artifact has to be able to state.
     programSubmissions: Object.freeze([...programSubmissions]),
+    // The per-program execution record, read from the Mod's journal at assembly time. `dispatched` is the count of the
+    // Mod's own `native_dispatch` events - the executions the program produced - and `observed: false` (with
+    // `dispatched: null`) is an unobserved program, which a program that ran nothing must never be confused with.
+    programOutcomes,
     // The run's own cadence, split into the three spans that a single "gap" number conflated: the game doing the
     // work, the agent deciding, and the dispatch-to-dispatch total. Published for EVERY scenario, because "the
     // companion feels laggy" is a question about all of them.
@@ -3486,6 +3594,10 @@ async function writeRunBundle({
     // is also how `multiday` reaches a failed run. A run that ended badly - the one where "the companion submitted
     // programs and nothing ran through them" matters most - must not lose the submissions it recorded.
     programSubmissions: Object.freeze([...programSubmissions]),
+    // The per-program execution record, read from the Mod's journal by `buildRunResult` before this bundle is written,
+    // so the failed run - the one where "the batch ran nothing" matters most - reads the same `dispatched`/`observed`
+    // facts as a passed one.
+    programOutcomes,
   };
   // The timeline record COUNT is the fact log's length, so the on-disk file must match it (the validator
   // cross-checks the file against the manifest).

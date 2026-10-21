@@ -1297,6 +1297,8 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
       { action: "plant_seed", state: "rejected" },
     ],
     programSubmissions: [{ tool: "stardew_submit_action_program", accepted: false }],
+    programOutcomes: [],
+    sampleProgramOutcomes: async () => [],
     multidayOutcome: { crossings: 1, dayRecords: [] },
     SCENARIO: "morning_routine",
     LEGACY_LADDER: null,
@@ -1333,4 +1335,116 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
   for (const field of ["startedAtMs", "endedAtMs", "actionCadence", "toolTiming", "presentation"]) {
     assert.ok(Object.hasOwn(result, field), `${field} must be published`);
   }
+});
+
+test("an unobserved program is not a program that dispatched nothing", async () => {
+  // Decision (c): a failed journal read and a program that ran nothing are DIFFERENT facts. The falsifier: when the
+  // Mod's status query throws or answers not_found, the record is `observed: false` with `dispatched: null` - never
+  // `dispatched: 0`, which would silently turn a read failure into a measured empty execution.
+  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes");
+  const failing = await readProgramOutcomes({
+    submissions: [{ programId: "p_unreadable", accepted: true }],
+    statusQuery: async () => {
+      throw new Error("bridge_disconnected");
+    },
+    eventsQuery: async () => ({ code: "not_found", events: [], nextCursor: 0 }),
+  });
+  assert.deepEqual(failing, [
+    { programId: "p_unreadable", accepted: true, observed: false, dispatched: null, nodeOutcomes: [] },
+  ]);
+  assert.equal(failing[0].dispatched, null, "an unobserved program must not read as dispatched: 0");
+
+  // A programId the Mod never minted (a rejected submit) is unobserved too, and `accepted: false` says why.
+  const notFound = await readProgramOutcomes({
+    submissions: [{ programId: "p_rejected", accepted: false }],
+    statusQuery: async () => ({ code: "not_found", snapshot: null }),
+    eventsQuery: async () => ({ code: "not_found", events: [], nextCursor: 0 }),
+  });
+  assert.equal(notFound[0].observed, false);
+  assert.equal(notFound[0].accepted, false);
+  assert.equal(notFound[0].dispatched, null);
+
+  // A program with NO programId at all (the submit hook's own null shape) cannot be queried: unobserved, not zero.
+  const noId = await readProgramOutcomes({
+    submissions: [{ programId: null, accepted: true }],
+    statusQuery: async () => {
+      throw new Error("must not be queried");
+    },
+    eventsQuery: async () => ({ code: "not_found", events: [], nextCursor: 0 }),
+  });
+  assert.equal(noId[0].observed, false);
+  assert.equal(noId[0].dispatched, null);
+});
+
+test("a program that dispatched three nodes reports dispatched: 3, and its node outcomes", async () => {
+  // The positive falsifier: `dispatched` is exactly the count of the Mod's own `native_dispatch` events - the executions
+  // the program produced - and the per-node states are what the Mod's status snapshot reports.
+  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes");
+  const events = [
+    { cursor: 1, programId: "p1", kind: "admitted", nodeId: "a" },
+    { cursor: 2, programId: "p1", kind: "native_dispatch", nodeId: "a" },
+    { cursor: 3, programId: "p1", kind: "node_succeeded", nodeId: "a" },
+    { cursor: 4, programId: "p1", kind: "native_dispatch", nodeId: "b" },
+    { cursor: 5, programId: "p1", kind: "native_dispatch", nodeId: "b" },
+  ];
+  const records = await readProgramOutcomes({
+    submissions: [{ programId: "p1", accepted: true }],
+    statusQuery: async () => ({
+      code: "found",
+      snapshot: {
+        programId: "p1",
+        state: "succeeded",
+        nodes: [
+          { nodeId: "a", state: "succeeded" },
+          { nodeId: "b", state: "failed" },
+        ],
+      },
+    }),
+    eventsQuery: async (_programId, cursor) =>
+      cursor === 0
+        ? { code: "found", events, nextCursor: 5, highWater: 5 }
+        : { code: "found", events: [], nextCursor: 5, highWater: 5 },
+  });
+  assert.equal(records[0].observed, true);
+  assert.equal(records[0].dispatched, 3, "three native_dispatch events are three executions");
+  assert.deepEqual(records[0].nodeOutcomes, [
+    { nodeId: "a", state: "succeeded" },
+    { nodeId: "b", state: "failed" },
+  ]);
+
+  // A found program with NO native_dispatch events is a real measured zero: observed, dispatched: 0.
+  const idle = await readProgramOutcomes({
+    submissions: [{ programId: "p2", accepted: true }],
+    statusQuery: async () => ({ code: "found", snapshot: { programId: "p2", state: "succeeded", nodes: [] } }),
+    eventsQuery: async () => ({ code: "found", events: [], nextCursor: 0, highWater: 0 }),
+  });
+  assert.equal(idle[0].observed, true);
+  assert.equal(idle[0].dispatched, 0, "observed-with-zero and unobserved are distinct facts");
+});
+
+test("lineage is attached only when the receipt carries it, never synthesised", () => {
+  // Decision (c) conditional attach: today the Mod mints the program binding internally and receipts carry no program
+  // field, so the lineage is EMPTY for a real run. The falsifier: a receipt with no lineage yields no keys (unattributed,
+  // not guessed), a receipt with a programId field or a `program_id=` marker yields exactly what it carried.
+  const traceLineage = extractRunnerFunction(RUNNER_SOURCE, "traceLineage");
+  assert.equal(traceLineage({ state: "succeeded", reasonCode: "soil_tilled", evidence: { detail: "x=1" } }), null);
+  assert.equal(traceLineage(null), null);
+  assert.equal(traceLineage({ evidence: null }), null);
+  assert.deepEqual(traceLineage({ programId: "p1", nodeId: "a" }), { programId: "p1", nodeId: "a" });
+  assert.deepEqual(traceLineage({ evidence: { detail: "program_id=p9;node_id=cut" } }), {
+    programId: "p9",
+    nodeId: "cut",
+  });
+  // The receipt's own field wins a direct conflict with a marker, and an empty marker is not a lineage.
+  assert.deepEqual(traceLineage({ programId: "direct", evidence: { detail: "program_id=marker" } }), {
+    programId: "direct",
+  });
+  assert.equal(traceLineage({ evidence: { detail: "program_id=;node_id=" } }), null);
+
+  // The trace entry reads it: an unattributed receipt cannot gain the field, and an attributed one carries it.
+  const execute = RUNNER_SOURCE.slice(
+    RUNNER_SOURCE.indexOf("client.execute = async (request) => {"),
+    RUNNER_SOURCE.indexOf("// Capture the Agent-authored program id"),
+  );
+  assert.match(execute, /\.\.\.\(traceLineage\(receipt\) \?\? \{\}\)/);
 });
