@@ -275,55 +275,61 @@ async function runHotReloadScenario(
   return JSON.parse(Buffer.concat(output).toString("utf8")) as Record<string, any>;
 }
 
-const realWindowsMount = { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false };
+const realWindowsMount = {
+  skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false,
+};
 
-test("an idle mounted Chat adopts a newly activated connection in place, byte-identically", realWindowsMount, async (t) => {
-  const root = canonicalTestRootSync("semantic-connection-hot-reload-");
-  try {
-    const observed = await runHotReloadScenario(root, "with-turns");
-    t.diagnostic(
-      JSON.stringify({
-        mountedOnA: observed.mountedOnA,
-        reloaded: observed.reloaded,
-        entries: observed.before.session.entries,
-        transcript: observed.before.transcript,
-      }),
-    );
-    // (a) The mount runs on the connection that was active when it opened, on the
-    // thinking level Pi clamped that model to (a mount clamps, so this reload must
-    // reach the same state).
-    assert.equal(observed.mountedOnA.status, "applied");
-    assert.equal(observed.mountedOnA.modelSelection.provider, "gamebuddy-openai-compatible");
-    assert.equal(observed.mountedOnA.modelSelection.modelId, "model-a");
-    // The Pi session itself records that model as the conversation's own.
-    assert.ok(
-      observed.before.session.entries.some(
-        (entry: unknown[]) =>
-          entry[0] === "model_change" && entry[1] === "gamebuddy-openai-compatible" && entry[2] === "model-a",
-      ),
-      `expected the mount's own model_change entry, got ${JSON.stringify(observed.before.session.entries)}`,
-    );
-    // (b) The player activates B...
-    assert.deepEqual(observed.activatedB, { provider: "OpenAI-compatible endpoint", modelId: "model-b" });
-    // (c) ...and the mounted runtime carries B, read back from the live session.
-    assert.equal(observed.reloaded.status, "applied");
-    assert.deepEqual(observed.reloaded.modelSelection, {
-      provider: "gamebuddy-openai-compatible",
-      modelId: "model-b",
-      thinkingLevel: observed.mountedOnA.modelSelection.thinkingLevel,
-    });
-    // While the transcript, the ledger and the Pi session's own entries are unchanged.
-    assert.equal(observed.unchanged.sessionText, true);
-    assert.equal(observed.unchanged.entries, true);
-    assert.equal(observed.unchanged.transcript, true);
-    assert.deepEqual(observed.after.transcript, observed.before.transcript);
-    assert.ok(observed.before.transcript.messages.length >= 3, "the Chat must hold a turn, not only its opening");
-    assert.equal(observed.before.transcript.ledger.status, "completed");
-    assert.equal(observed.after.transcript.ledger.status, "completed");
-  } finally {
-    cleanup(root);
-  }
-});
+test(
+  "an idle mounted Chat adopts a newly activated connection in place, byte-identically",
+  realWindowsMount,
+  async (t) => {
+    const root = canonicalTestRootSync("semantic-connection-hot-reload-");
+    try {
+      const observed = await runHotReloadScenario(root, "with-turns");
+      t.diagnostic(
+        JSON.stringify({
+          mountedOnA: observed.mountedOnA,
+          reloaded: observed.reloaded,
+          entries: observed.before.session.entries,
+          transcript: observed.before.transcript,
+        }),
+      );
+      // (a) The mount runs on the connection that was active when it opened, on the
+      // thinking level Pi clamped that model to (a mount clamps, so this reload must
+      // reach the same state).
+      assert.equal(observed.mountedOnA.status, "applied");
+      assert.equal(observed.mountedOnA.modelSelection.provider, "gamebuddy-openai-compatible");
+      assert.equal(observed.mountedOnA.modelSelection.modelId, "model-a");
+      // The Pi session itself records that model as the conversation's own.
+      assert.ok(
+        observed.before.session.entries.some(
+          (entry: unknown[]) =>
+            entry[0] === "model_change" && entry[1] === "gamebuddy-openai-compatible" && entry[2] === "model-a",
+        ),
+        `expected the mount's own model_change entry, got ${JSON.stringify(observed.before.session.entries)}`,
+      );
+      // (b) The player activates B...
+      assert.deepEqual(observed.activatedB, { provider: "OpenAI-compatible endpoint", modelId: "model-b" });
+      // (c) ...and the mounted runtime carries B, read back from the live session.
+      assert.equal(observed.reloaded.status, "applied");
+      assert.deepEqual(observed.reloaded.modelSelection, {
+        provider: "gamebuddy-openai-compatible",
+        modelId: "model-b",
+        thinkingLevel: observed.mountedOnA.modelSelection.thinkingLevel,
+      });
+      // While the transcript, the ledger and the Pi session's own entries are unchanged.
+      assert.equal(observed.unchanged.sessionText, true);
+      assert.equal(observed.unchanged.entries, true);
+      assert.equal(observed.unchanged.transcript, true);
+      assert.deepEqual(observed.after.transcript, observed.before.transcript);
+      assert.ok(observed.before.transcript.messages.length >= 3, "the Chat must hold a turn, not only its opening");
+      assert.equal(observed.before.transcript.ledger.status, "completed");
+      assert.equal(observed.after.transcript.ledger.status, "completed");
+    } finally {
+      cleanup(root);
+    }
+  },
+);
 
 test("a Chat holding nothing but its opening adopts it silently", realWindowsMount, async (t) => {
   const root = canonicalTestRootSync("semantic-connection-hot-reload-opening-");

@@ -234,12 +234,10 @@ type MountedChatRuntimeLeaseRecord = {
   readonly chatSurfaceSessionId: string;
   readonly selectionGeneration: number;
   readonly attemptBinding?: MountedAttemptBinding;
-  /**
-   * Live materialized runtime session for the start scope; never public.
-   */
+  /** Live materialized runtime session for the start scope; never public. */
   readonly providerRuntimeSession?: RuntimeSession;
   /** Construction-private model reload for this exact mount; never public. */
-  readonly reloadModelSelection?: () => Promise<unknown>;
+  readonly reloadModelSelection?: NonNullable<MaterializedChatRuntime["reloadModelSelection"]>;
   /** Exact mounted authored catalog capability; never public or retained by callers. */
   authoredContextCapability?: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability;
   refreshAuthoredContext?: (
