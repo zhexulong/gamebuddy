@@ -493,6 +493,7 @@ let presentedSummary = null;
 // agent turn was accepted, so the first piece's time-to-first-bubble is
 // measurable instead of inferred.
 const presentationPieces = [];
+const presentationPieceAtMs = [];
 let turnStartedAtMs = null;
 /**
  * The agent session's own terminal record for the turn(s) this run drove.
@@ -793,6 +794,7 @@ function summarizePresentationEvidence() {
     // to report its longest stretch as an UPPER BOUND (161 s, `cause: run_end`, measured 2026-10-20).
     turnStartedAtMs,
     pieces: Object.freeze([...presentationPieces]),
+    pieceAtMs: Object.freeze([...presentationPieceAtMs]),
     pieceCount: presentationPieces.length,
     firstPieceTtfbMs: presentationPieces.length > 0 ? presentationPieces[0].elapsedMs : null,
     // A turn that arrived as one wall at the end vs several pieces over time.
@@ -822,7 +824,12 @@ const onCompanionTextPresented = (text, locale) => {
   // chunked-presentation evidence must not depend on voice being enabled or on
   // whether the piece happened to be the first one.
   const elapsedMs = turnStartedAtMs === null ? null : Date.now() - turnStartedAtMs;
+  const committedAtMs = Date.now();
   presentationPieces.push(Object.freeze({ index: presentationPieces.length, text, locale, elapsedMs }));
+  // The absolute commit moment, kept in a SIDE array on purpose: `pieces` keeps its published shape (several tests pin
+  // it), while a reader still gets the moment each piece landed on the run clock. Without it the silence audit can only
+  // answer `not established`, which is what it had to do for every run before this.
+  presentationPieceAtMs.push(committedAtMs);
   console.error(
     "AGENT_PRESENTATION_PIECE",
     JSON.stringify({ index: presentationPieces.length - 1, elapsedMs, chars: text.length }),
