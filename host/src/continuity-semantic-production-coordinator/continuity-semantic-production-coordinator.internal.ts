@@ -57,7 +57,6 @@ import {
   rewindPiTranscriptTail,
   type PiTranscriptMessage,
 } from "../pi-session-variant-branch.internal.js";
-import { greetingAnchorOccupiesFirstTranscriptEntry } from "../pi-session-greeting-anchor.internal.js";
 import { identityKey, type RuntimeSession } from "../runtime.js";
 import {
   acknowledgeMountedWorldInfoBinding,
@@ -1389,24 +1388,19 @@ export async function editMountedChatMessage(
   // Unreachable by the store's own kinds: a row whose role and kind disagree is a store/product
   // disagreement, so it fails closed as an internal fault instead of borrowing a player-facing code.
   if (!editable) throw refuseMountedMutation("edit target-not-editable", "chat_message_not_editable");
-  // The greeting is never prompted into the session as a turn, but the mount anchors it there as the
-  // conversation's own first assistant message (`pi-session-greeting-anchor.internal.ts`), so that anchor
-  // IS the opening row's own entry, at the entries' first position; every row after it sits at the number
-  // of transcript rows before it that a prompt could carry, plus that one anchor when it holds a position
-  // among them.
-  const rowsBeforeTarget = state.messages
-    .slice(0, input.expectedOrder)
-    .filter((message) => message.kind !== "opening").length;
-  const entryIndex =
-    target.kind === "opening"
-      ? 0
-      : rowsBeforeTarget + (greetingAnchorOccupiesFirstTranscriptEntry(runtimeSession.sessionManager) ? 1 : 0);
-  const edited = editPiTranscriptEntry(
-    runtimeSession.session,
-    entryIndex,
-    Object.freeze({ role: target.role, text: target.text }),
-    input.text,
-  );
+  // The transcript rows the model's own context carries, in order, up to and including the row the
+  // player named: each one is paired with the entry contributing exactly its words in its role
+  // (`editPiTranscriptEntry`), so an entry no row names - the Host's own system prompt, an intermediate
+  // tool-use commentary - is passed over rather than counted, and the row after such an entry lands.
+  // The conversation's own opening row is named only when it is the row being edited: the mount anchors
+  // it as the session's first assistant message, but that anchor is an entry no row must name - a
+  // greeting the row projection drops contributes no row at all - and the exchange rows after it are
+  // proved on their own.
+  const rows: PiTranscriptMessage[] = state.messages
+    .slice(0, input.expectedOrder + 1)
+    .filter((message, order) => message.kind !== "opening" || order === input.expectedOrder)
+    .map((message) => Object.freeze({ role: message.role, text: message.text }));
+  const edited = editPiTranscriptEntry(runtimeSession.session, rows, input.text);
   if (edited.status !== "edited") {
     process.stderr.write(`[edit] session shape refused: ${edited.reason}\n`);
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_edit_unavailable");

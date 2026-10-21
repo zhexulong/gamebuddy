@@ -30,6 +30,7 @@ const EDITED_PROMPT_TEXT = "I waited at the bus stop until noon, then took the s
 const THIRD_PROMPT_TEXT = "I asked the driver where this one goes.";
 const EDITED_EARLIER_PROMPT_TEXT = "The early bus pulled out as I reached the stop.";
 const HOST_SYSTEM_PROMPT = "You are the companion in this scene; speak only for yourself.";
+const TOOL_COMMENTARY = "Checking the shelf by the door.";
 
 type Fixture = Readonly<{
   root: string;
@@ -522,7 +523,7 @@ test("an edit replaces one entry's words, and a session re-opened from its file 
       ["assistant", [{ type: "text", text: SECOND_REPLY }]],
     ]);
 
-    const edited = editPiTranscriptEntry(fixture.session, 0, drop("player", PROMPT_TEXT), EDITED_PROMPT_TEXT);
+    const edited = editPiTranscriptEntry(fixture.session, [drop("player", PROMPT_TEXT)], EDITED_PROMPT_TEXT);
     assert.equal(edited.status, "edited");
     // Only the one entry's words changed: the entry's own content shape is kept, and nothing after it
     // left the path - an edit is not a cut.
@@ -584,14 +585,21 @@ test("an entry the session does not carry refuses, and a revert is itself durabl
     const before = quoted(fixture.modelMessages());
     const leafBefore = fixture.sessionManager.getLeafId();
     const entriesBefore = fixture.sessionManager.getEntryCount();
+    // A row the model carries nothing for refuses, whichever way it fails to pair: words no entry
+    // holds, an entry's own words named in the other role, the same words named for an earlier row, and
+    // a row past the end of what the session carries. The pairing proves a prefix, so each case refuses
+    // on the first row it cannot carry - and the last row is the target.
     const cases = [
-      { index: 4, target: drop("player", PROMPT_TEXT), reason: "edit_target_unavailable" },
-      { index: 0, target: drop("player", "a line this session never carried"), reason: "edit_target_text_mismatch" },
-      { index: 0, target: drop("companion", PROMPT_TEXT), reason: "edit_target_text_mismatch" },
-      { index: 1, target: drop("player", FIRST_REPLY), reason: "edit_target_text_mismatch" },
+      { rows: [drop("player", "a line this session never carried")], reason: "edit_target_unavailable" },
+      { rows: [drop("companion", PROMPT_TEXT)], reason: "edit_target_unavailable" },
+      { rows: [drop("player", FIRST_REPLY)], reason: "edit_target_unavailable" },
+      {
+        rows: [drop("player", PROMPT_TEXT), drop("companion", FIRST_REPLY), drop("player", "a line after the end")],
+        reason: "edit_target_unavailable",
+      },
     ] as const;
     for (const item of cases) {
-      const result = editPiTranscriptEntry(fixture.session, item.index, item.target, EDITED_PROMPT_TEXT);
+      const result = editPiTranscriptEntry(fixture.session, item.rows, EDITED_PROMPT_TEXT);
       assert.equal(result.status, "refused", item.reason);
       if (result.status === "refused") assert.equal(result.reason, item.reason);
       assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore, item.reason);
@@ -599,7 +607,7 @@ test("an entry the session does not carry refuses, and a revert is itself durabl
       assert.equal(quoted(fixture.modelMessages()), before, item.reason);
     }
 
-    const edited = editPiTranscriptEntry(fixture.session, 0, drop("player", PROMPT_TEXT), EDITED_PROMPT_TEXT);
+    const edited = editPiTranscriptEntry(fixture.session, [drop("player", PROMPT_TEXT)], EDITED_PROMPT_TEXT);
     assert.equal(edited.status, "edited");
     assert.deepEqual(fixture.modelMessages(), [
       ["user", [{ type: "text", text: EDITED_PROMPT_TEXT }]],
@@ -610,7 +618,7 @@ test("an entry the session does not carry refuses, and a revert is itself durabl
 
     // The restoration is a session entry rather than a leaf move, so a re-open reads the original
     // words too: there is nothing for the next mount to undo.
-    const editedAgain = editPiTranscriptEntry(fixture.session, 0, drop("player", PROMPT_TEXT), EDITED_PROMPT_TEXT);
+    const editedAgain = editPiTranscriptEntry(fixture.session, [drop("player", PROMPT_TEXT)], EDITED_PROMPT_TEXT);
     assert.equal(editedAgain.status, "edited");
     fixture.dispose();
     const revivedManager = SessionManager.continueRecent(fixture.cwd, fixture.sessionDir);
@@ -657,14 +665,13 @@ test("an edit proves its entry in a session whose head is the Host's own system 
       "system",
     );
 
-    // The transcript's own positions - row 0 is the first player line, row 2 the second - each land on
-    // the entry that carries that row, with the system prompt left alone at the head.
-    const editedFirst = editPiTranscriptEntry(fixture.session, 0, drop("player", PROMPT_TEXT), EDITED_PROMPT_TEXT);
+    // The transcript's own rows each pair with the entry that carries them - row 0 is the first player
+    // line, row 2 the second - with the system prompt passed over at the head.
+    const editedFirst = editPiTranscriptEntry(fixture.session, [drop("player", PROMPT_TEXT)], EDITED_PROMPT_TEXT);
     assert.equal(editedFirst.status, "edited", JSON.stringify(editedFirst));
     const editedSecond = editPiTranscriptEntry(
       fixture.session,
-      2,
-      drop("player", EARLIER_PROMPT_TEXT),
+      [drop("player", EDITED_PROMPT_TEXT), drop("companion", FIRST_REPLY), drop("player", EARLIER_PROMPT_TEXT)],
       EDITED_EARLIER_PROMPT_TEXT,
     );
     assert.equal(editedSecond.status, "edited", JSON.stringify(editedSecond));
@@ -676,11 +683,11 @@ test("an edit proves its entry in a session whose head is the Host's own system 
       ["assistant", [{ type: "text", text: SECOND_REPLY }]],
     ]);
 
-    // The proof keeps its force: a position the session cannot prove still refuses and mutates nothing.
+    // The proof keeps its force: a row the session cannot carry still refuses and mutates nothing.
     const entriesBefore = fixture.sessionManager.getEntryCount();
-    const refused = editPiTranscriptEntry(fixture.session, 1, drop("player", PROMPT_TEXT), EDITED_PROMPT_TEXT);
+    const refused = editPiTranscriptEntry(fixture.session, [drop("player", PROMPT_TEXT)], EDITED_PROMPT_TEXT);
     assert.equal(refused.status, "refused");
-    if (refused.status === "refused") assert.equal(refused.reason, "edit_target_text_mismatch");
+    if (refused.status === "refused") assert.equal(refused.reason, "edit_target_unavailable");
     assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore);
 
     // Durable: each replacement is an appended edit, so the file's own last entries carry the new
@@ -699,6 +706,82 @@ test("an edit proves its entry in a session whose head is the Host's own system 
         ["assistant", [{ type: "text", text: SECOND_REPLY }]],
       ],
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The intermediate tool-use commentary a real agent loop leaves on the session's path: an assistant
+ * message that only reports a step, with no durable transcript row naming it.
+ */
+function appendCommentary(sessionManager: SessionManager, text: string): string {
+  return sessionManager.appendMessage({
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: "openai-completions",
+    provider: "test",
+    model: "test-model",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "toolUse",
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * The shape a real agent loop leaves behind: an assistant message that only reports a step, between the
+ * reply before it and the exchange after it, which no transcript row names. An ordinal among the entries
+ * that carry text counted that commentary, so every row after it was proved one entry early - the entry
+ * named carried the commentary's words, not the row's - and refused, while the rows before it landed.
+ * The pairing passes over every entry no row names, so the row after it lands on its own entry and the
+ * commentary is left exactly as it was.
+ */
+test("an edit passes over an intermediate tool-use commentary and reaches the row after it", async () => {
+  const fixture = await createSession("gamebuddy-transcript-edit-commentary-", [FIRST_REPLY]);
+  appendPrompt(fixture.sessionManager, EARLIER_PROMPT_TEXT);
+  appendCommentary(fixture.sessionManager, TOOL_COMMENTARY);
+  appendReply(fixture.sessionManager, SECOND_REPLY);
+  fixture.session.refreshContext();
+  try {
+    // The premise, read off the session itself: the commentary sits between the second player line and
+    // its reply, and the transcript's rows are the two exchanges around it.
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: TOOL_COMMENTARY }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+    ]);
+    const entriesBefore = fixture.sessionManager.getEntryCount();
+
+    const edited = editPiTranscriptEntry(
+      fixture.session,
+      [
+        drop("player", PROMPT_TEXT),
+        drop("companion", FIRST_REPLY),
+        drop("player", EARLIER_PROMPT_TEXT),
+        drop("companion", SECOND_REPLY),
+      ],
+      SECOND_REGENERATED_REPLY,
+    );
+    assert.equal(edited.status, "edited", JSON.stringify(edited));
+    // Only the target's words changed: the commentary is still on the path with its own words, and the
+    // append-only edit is the one entry this operation wrote.
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: TOOL_COMMENTARY }]],
+      ["assistant", [{ type: "text", text: SECOND_REGENERATED_REPLY }]],
+    ]);
+    assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore + 1);
   } finally {
     await fixture.close();
   }
