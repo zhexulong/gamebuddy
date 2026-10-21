@@ -26,17 +26,15 @@ const config = require(configPath);
  * silently.
  */
 const ZONES = {
-  chatContract:
-    "^dialogue-web/src/reference-pipeline-(api|session)\\.ts$",
-  platformContract:
-    "^dialogue-web/src/(management-pipeline-(api|session)|composed-reference-game-browser-api)\\.ts$",
+  chatContract: "^dialogue-web/src/reference-pipeline-(api|session)\\.ts$",
+  platformContract: "^dialogue-web/src/(management-pipeline-(api|session)|composed-reference-game-browser-api)\\.ts$",
   composedRoot: "^dialogue-web/src/components/ComposedReferenceGameApp\\.tsx$",
   surface: "^dialogue-web/src/components/[^/]*Surface\\.tsx$",
   surfaceSupport:
     "^dialogue-web/src/((game-(lifecycle-controls|presentation)|composed-problem-view|composed-surface-route|pi-settings-model)\\.ts|components/(CharacterCardImport|CharactersPanel|CharactersSurfacePanel|CompanionInspectorDrawer|GameDiagnosticsDisclosure|GameStatePanel|StardewInstallationDiscovery|SurfaceModelSettings|composed-reference-game-view|management-panels|management-surface-panels|character-domain-labels|memory-notebook-labels|png-character-card|turn-failure-text)\\.tsx?)$",
   sharedUi:
-    "^dialogue-web/src/(components/(MessageBubble|Timeline|CompanionAvatar|ProblemView|SkipLink|Composer|MarkdownMessage|SurfaceView|AppBar|ContextDrawer|opening-variant-labels)\\.tsx?|components/drawers/ChatsDrawer\\.tsx)$",
-  shared: "^dialogue-web/src/(i18n|types)\\.ts$",
+    "^dialogue-web/src/components/(MessageBubble|Timeline|CompanionAvatar|ProblemView|SkipLink|Composer|MarkdownMessage|SurfaceView|AppBar|ContextDrawer|armed-confirmation|opening-variant-labels)\\.tsx?$",
+  shared: "^dialogue-web/src/i18n\\.ts$",
 };
 
 /**
@@ -55,10 +53,14 @@ function depcruiseBin() {
 }
 
 function runDepcruise(cwd, configPathArg, input) {
-  const result = spawnSync(process.execPath, [depcruiseBin(), "--config", configPathArg, "--output-type", "json", input], {
-    cwd,
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    process.execPath,
+    [depcruiseBin(), "--config", configPathArg, "--output-type", "json", input],
+    {
+      cwd,
+      encoding: "utf8",
+    },
+  );
   assert.equal(result.error, undefined, `depcruise failed to start: ${result.error?.message ?? ""}`);
   const parsed = JSON.parse(result.stdout || "{}");
   return {
@@ -74,7 +76,8 @@ function collectSourceFiles() {
     for (const entry of readDirectory(dir)) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) files.push(relative(srcRoot, full).replaceAll("\\", "/"));
+      else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))
+        files.push(relative(srcRoot, full).replaceAll("\\", "/"));
     }
   };
   walk(srcRoot);
@@ -135,7 +138,10 @@ test("zone rules reference only known zones and every zone is guarded", () => {
   }
   const referenced = new Set(config.forbidden.flatMap((rule) => [rule.from.path, rule.to.path]));
   for (const zone of zoneStrings) {
-    assert.ok([...referenced].some((path) => path.includes(zone) || path === zone), `zone ${zone} is not referenced by any rule`);
+    assert.ok(
+      [...referenced].some((path) => path.includes(zone) || path === zone),
+      `zone ${zone} is not referenced by any rule`,
+    );
   }
   assert.equal(config.options.includeOnly, "^dialogue-web/src/");
 });
@@ -146,7 +152,11 @@ test("every dialogue-web/src file belongs to exactly one golden zone", () => {
   for (const file of allFiles) {
     if (file === "main.tsx") continue; // shell assembler is intentionally unzoned
     const matches = Object.entries(ZONES).filter(([, pattern]) => new RegExp(pattern).test(`dialogue-web/src/${file}`));
-    assert.equal(matches.length, 1, `file ${file} matches ${matches.length} zones: ${matches.map(([name]) => name).join(",")}`);
+    assert.equal(
+      matches.length,
+      1,
+      `file ${file} matches ${matches.length} zones: ${matches.map(([name]) => name).join(",")}`,
+    );
   }
 });
 
@@ -154,13 +164,20 @@ test("current cross-surface drift is exactly the documented ledger", () => {
   const { violations } = runDepcruise(repoRoot, configPath, "dialogue-web/src/main.tsx");
   const actual = violations.map(([rule, from, to]) => [rule, from, to].join("|")).sort();
   const expected = DRIFT_LEDGER.map(([rule, from, to]) => [rule, from, to].join("|")).sort();
-  assert.deepEqual(actual, expected, "cross-surface drift differs from the documented ledger — new violations must be fixed, ledger entries must only shrink via deliberate decoupling changes");
+  assert.deepEqual(
+    actual,
+    expected,
+    "cross-surface drift differs from the documented ledger — new violations must be fixed, ledger entries must only shrink via deliberate decoupling changes",
+  );
 });
 
 test("boundary rules actually fire on a fixture violating every direction", () => {
   const fixture = mkdtempSync(join(tmpdir(), "gamebuddy-boundary-"));
   try {
-    writeFileSync(join(fixture, "tsconfig.json"), JSON.stringify({ compilerOptions: { moduleResolution: "node" }, include: ["src/**/*"] }));
+    writeFileSync(
+      join(fixture, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { moduleResolution: "node" }, include: ["src/**/*"] }),
+    );
     const write = (rel, content) => {
       const full = join(fixture, rel);
       mkdirSync(dirname(full), { recursive: true });
@@ -185,7 +202,14 @@ test("boundary rules actually fire on a fixture violating every direction", () =
     // --- shared leaf must not import a surface either ---
     write("src/i18n.ts", 'import "./components/ChatSurface";\n');
 
-    const rebased = { ...structuredClone(config), options: { ...structuredClone(config.options), includeOnly: "^src/", tsConfig: { fileName: join(fixture, "tsconfig.json") } } };
+    const rebased = {
+      ...structuredClone(config),
+      options: {
+        ...structuredClone(config.options),
+        includeOnly: "^src/",
+        tsConfig: { fileName: join(fixture, "tsconfig.json") },
+      },
+    };
     for (const rule of rebased.forbidden) {
       rule.from.path = rule.from.path.replaceAll("^dialogue-web/src/", "^src/");
       rule.to.path = rule.to.path.replaceAll("^dialogue-web/src/", "^src/");
@@ -197,7 +221,14 @@ test("boundary rules actually fire on a fixture violating every direction", () =
     const rulesFired = new Set(violations.map(([rule]) => rule));
     assert.deepEqual(
       [...rulesFired].sort(),
-      ["no-chat-contract-internal-dependency", "no-contract-imports-ui", "no-shared-imports-modules", "no-shared-ui-imports-surfaces", "no-surface-support-to-surface", "no-surface-to-other-surface"].sort(),
+      [
+        "no-chat-contract-internal-dependency",
+        "no-contract-imports-ui",
+        "no-shared-imports-modules",
+        "no-shared-ui-imports-surfaces",
+        "no-surface-support-to-surface",
+        "no-surface-to-other-surface",
+      ].sort(),
       `fixture must fire every boundary rule; fired: ${[...rulesFired].join(",")}`,
     );
   } finally {

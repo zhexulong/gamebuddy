@@ -506,7 +506,7 @@ const UNREAD_RECORDED_DEBT = [
   },
   {
     reason: "the shell names each nav entry with its own `<surface>Panel` key (`labels().charactersPanel` ...); these bare words have no reader",
-    keys: ["characters", "memory", "persona", "settings", "worldInfo"],
+    keys: ["characters", "chats", "memory", "persona", "settings", "worldInfo"],
   },
   {
     reason: "the Chats surface reads `chatsPanel`/`chatRetention*`; these older action words have no reader",

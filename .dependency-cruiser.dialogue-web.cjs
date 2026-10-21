@@ -23,7 +23,7 @@ const path = require("node:path");
  *   surface              components/*Surface                   — the peer surface bodies
  *   surface-support      panels, views, models and labels the surfaces share
  *   shared-ui            props-driven presentation primitives
- *   shared               i18n / types                          — leaf utilities
+ *   shared               i18n                                  — leaf utilities
  *
  * Rules fire as `error`. tools/check-dialogue-web-boundaries.test.mjs owns the
  * golden zone manifest, the drift ledger (must be empty) and negative tests
@@ -37,8 +37,8 @@ const SURFACE = "^dialogue-web/src/components/[^/]*Surface\\.tsx$";
 const SURFACE_SUPPORT =
   "^dialogue-web/src/((game-(lifecycle-controls|presentation)|composed-problem-view|composed-surface-route|pi-settings-model)\\.ts|components/(CharacterCardImport|CharactersPanel|CharactersSurfacePanel|CompanionInspectorDrawer|GameDiagnosticsDisclosure|GameStatePanel|StardewInstallationDiscovery|SurfaceModelSettings|composed-reference-game-view|management-panels|management-surface-panels|character-domain-labels|memory-notebook-labels|png-character-card|turn-failure-text)\\.tsx?)$";
 const SHARED_UI =
-  "^dialogue-web/src/(components/(MessageBubble|Timeline|CompanionAvatar|ProblemView|SkipLink|Composer|MarkdownMessage|SurfaceView|AppBar|ContextDrawer|opening-variant-labels)\\.tsx?|components/drawers/ChatsDrawer\\.tsx)$";
-const SHARED = "^dialogue-web/src/(i18n|types)\\.ts$";
+  "^dialogue-web/src/components/(MessageBubble|Timeline|CompanionAvatar|ProblemView|SkipLink|Composer|MarkdownMessage|SurfaceView|AppBar|ContextDrawer|armed-confirmation|opening-variant-labels)\\.tsx?$";
+const SHARED = "^dialogue-web/src/i18n\\.ts$";
 
 module.exports = {
   forbidden: [
