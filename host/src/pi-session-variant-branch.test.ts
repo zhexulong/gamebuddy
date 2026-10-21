@@ -737,6 +737,36 @@ function appendCommentary(sessionManager: SessionManager, text: string): string 
 }
 
 /**
+ * A revert puts back the contribution the edit replaced, never the entry's oldest words: after two edits
+ * of the same row, a store write that refuses leaves the ROW holding the first edit's text, so the model
+ * has to read exactly that text again instead of jumping back to words the player already corrected.
+ */
+test("a revert after a second edit restores the words that edit replaced", async () => {
+  const fixture = await createSession("gamebuddy-transcript-edit-revert-again-", [FIRST_REPLY]);
+  try {
+    const first = editPiTranscriptEntry(fixture.session, [drop("player", PROMPT_TEXT)], EDITED_PROMPT_TEXT);
+    assert.equal(first.status, "edited", JSON.stringify(first));
+    const second = editPiTranscriptEntry(
+      fixture.session,
+      [drop("player", EDITED_PROMPT_TEXT)],
+      EDITED_EARLIER_PROMPT_TEXT,
+    );
+    assert.equal(second.status, "edited", JSON.stringify(second));
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: EDITED_EARLIER_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+    ]);
+    if (second.status === "edited") second.revert();
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: EDITED_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+    ]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
  * The shape a real agent loop leaves behind: an assistant message that only reports a step, between the
  * reply before it and the exchange after it, which no transcript row names. An ordinal among the entries
  * that carry text counted that commentary, so every row after it was proved one entry early - the entry
@@ -761,6 +791,9 @@ test("an edit passes over an intermediate tool-use commentary and reaches the ro
       ["assistant", [{ type: "text", text: SECOND_REPLY }]],
     ]);
     const entriesBefore = fixture.sessionManager.getEntryCount();
+    const replyEntryId = fixture.sessionManager
+      .getEntries()
+      .find((entry) => entry.type === "message" && chatTranscriptAssistantText(entry.message) === SECOND_REPLY)?.id;
 
     const edited = editPiTranscriptEntry(
       fixture.session,
@@ -782,6 +815,11 @@ test("an edit passes over an intermediate tool-use commentary and reaches the ro
       ["assistant", [{ type: "text", text: TOOL_COMMENTARY }]],
       ["assistant", [{ type: "text", text: SECOND_REGENERATED_REPLY }]],
     ]);
+    // The edit wrote ONE append-only edit and it names the reply's own entry - never the commentary's,
+    // whose words the model still reads above the replacement.
+    const appended = fixture.sessionManager.getEntries().filter((entry) => entry.type === "context_edit");
+    assert.equal(appended.length, 1);
+    assert.equal((appended[0] as { targetId?: string }).targetId, replyEntryId);
     assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore + 1);
   } finally {
     await fixture.close();

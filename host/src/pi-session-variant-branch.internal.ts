@@ -226,31 +226,54 @@ export type PiTranscriptEditResult =
 
 /**
  * One entry the model carries, as the transcript row it contributes: the entry an edit names, the row's
- * role, and the exact words that row holds.
+ * role, the exact words that row holds, and the contribution an edit replaces and a revert puts back
+ * (`null` for a message an edit could not replace).
  */
-type PiModelCarriedRow = Readonly<{ id: string; role: "player" | "companion"; text: string }>;
+type PiModelCarriedRow = Readonly<{
+  id: string;
+  role: "player" | "companion";
+  text: string;
+  content: ContextEditableContent | null;
+}>;
 
 /**
  * The entries the model's own context carries, in order, as the transcript rows they contribute.
  *
  * Read off the session's projection rather than its branch, because a context edit changes what an
  * entry contributes without changing the entry: an entry the player already rewrote contributes its
- * new words, and the row it carries holds those same words - which is what lets a later row be proved
- * at all after an earlier one was edited. An entry that contributes no transcript line - the Host's
- * own system prompt, a tool result, a reply of pure scaffolding - contributes no row either.
+ * new words - and they are also what a revert of a later edit has to put back, since a store write that
+ * refuses leaves the row holding exactly those words. An entry that contributes no transcript line -
+ * the Host's own system prompt, a tool result, a reply of pure scaffolding - contributes no row either.
  */
 function modelCarriedRows(session: PiVariantBranchSession): readonly PiModelCarriedRow[] {
   const rows: PiModelCarriedRow[] = [];
   for (const { sourceEntry, messages } of session.sessionManager.buildSessionProjection().entries) {
     if (sourceEntry.type !== "message") continue;
     for (const message of messages) {
+      const content = editableContentOfMessage(message);
       const player = chatTranscriptPlayerText(message);
-      if (player !== null) rows.push(Object.freeze({ id: sourceEntry.id, role: "player" as const, text: player }));
+      if (player !== null)
+        rows.push(Object.freeze({ id: sourceEntry.id, role: "player" as const, text: player, content }));
       const reply = chatTranscriptAssistantText(message);
-      if (reply !== null) rows.push(Object.freeze({ id: sourceEntry.id, role: "companion" as const, text: reply }));
+      if (reply !== null)
+        rows.push(Object.freeze({ id: sourceEntry.id, role: "companion" as const, text: reply, content }));
     }
   }
   return rows;
+}
+
+/**
+ * The exact content one projected message contributes, or `null` for a message a context edit could not
+ * replace. Pairing names the entry by its words, so this answers the one question an edit still has:
+ * what to replace, and what a refused store write puts back.
+ */
+function editableContentOfMessage(message: unknown): ContextEditableContent | null {
+  if (typeof message !== "object" || message === null) return null;
+  const value = message as { role?: unknown; content?: unknown };
+  if (value.role !== "user" && value.role !== "assistant") return null;
+  if (typeof value.content === "string") return value.content;
+  if (!Array.isArray(value.content)) return null;
+  return value.content as ContextEditableContent;
 }
 
 /**
@@ -296,9 +319,9 @@ function pairTranscriptRows(
  * entry no row names (the Host's own system prompt, an intermediate tool-use commentary, a greeting
  * anchor whose words the row projection drops) is passed over instead of occupying a position, and the
  * LAST paired entry is the target. The row the player named must pair - one the model carries nothing
- * for refuses as `edit_target_unavailable` - and a paired entry whose content an edit cannot replace
- * refuses as `edit_target_text_mismatch`; a shape it cannot prove refuses and the caller must then leave
- * the transcript unchanged.
+ * for refuses as `edit_target_unavailable` - and a paired entry whose contribution an edit cannot
+ * replace refuses as `edit_target_text_mismatch`; a shape it cannot prove refuses and the caller must
+ * then leave the transcript unchanged.
  *
  * What it does with that proof is the vendor's append-only edit of one entry: the target keeps its
  * place on the active path, the entries after it stay on it, and only its contribution changes. The
@@ -314,11 +337,10 @@ export function editPiTranscriptEntry(
   const paired = pairTranscriptRows(modelCarriedRows(session), rows);
   const target = paired[paired.length - 1];
   if (target === undefined || target === null) return { status: "refused", reason: "edit_target_unavailable" };
-  // The entry's own current content is what a revert puts back: only a player or a reply message
-  // carries the transcript's text for its role, and those are exactly the messages a context edit
-  // replaces. An entry that carries none is an entry whose content no edit can replace.
-  const original = editableContentOf(session.sessionManager.getEntry(target.id));
-  if (original === null) return { status: "refused", reason: "edit_target_text_mismatch" };
+  // The contribution the entry makes now is what a revert puts back, and it is the fact the pairing
+  // above cannot answer: pairing names the entry by its words, while an edit replaces its content.
+  if (target.content === null) return { status: "refused", reason: "edit_target_text_mismatch" };
+  const original = target.content;
   session.sessionManager.appendContextEdit(target.id, { content: editedContentOf(original, text) });
   session.refreshContext();
   return Object.freeze({
