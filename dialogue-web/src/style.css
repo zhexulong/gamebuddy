@@ -5534,6 +5534,44 @@
   }
 
   /* ==========================================================================
+   A narrow bar names the surface in the surface itself (owner ruling, 2026-10-21)
+
+   The retired band above was retired because the AppBar's own entry names the
+   surface it is showing. Below 861 px that premise is gone: `.nav-button
+   .nav-label` is `display: none` (the bar's own media query, near `.nav-button`),
+   so the bar is a row of unlabelled icons - and under 480 px four of the six
+   entries are not even drawn, they live inside the `More` panel whose trigger
+   carries no active state at all. At 400x800 the shell therefore said nothing
+   about which surface was occupying the main region: the `更多` button looked the
+   same on Chats, Characters, Settings and Memory.
+
+   So the heading is drawn again exactly where the bar stops drawing names, and
+   nowhere else. 861 px and up is untouched by this block - the bar spells the
+   selected surface's own word there, `aria-current="page"` included - which is
+   the 1440 ruling above, still standing. The region's accessible name does not
+   change at either width: it is the same `h2` this rule un-clips, referenced by
+   `aria-labelledby` (`SurfaceView`), so `getByRole("region", { name: "聊天" })`
+   still resolves to exactly one node.
+
+   Measured, mounted, at 400x800: the band is 368x55 at y=56..111, the word 聊天
+   draws 34x26 inside it at y=72, and the scroll container starts at y=119 - the
+   band plus the column's own 8 px gap - reading `clientHeight` 682 where the
+   retired band read 744. At 1440x900 nothing new is drawn: the header keeps
+   `position: absolute` and `clip-path: inset(50%)`, the content still starts at
+   the surface's top (56) and reads 844, and the region's name resolves once at
+   both widths.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+  @media (max-width: 860px) {
+    .surface-view > .surface-header {
+      position: static;
+      clip-path: none;
+    }
+  }
+
+  /* ==========================================================================
    The companion's world-book notice joins the authoring form's measure (item 5)
 
    `[data-companion-world-book-draft]` above takes the form measure and centres

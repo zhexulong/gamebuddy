@@ -449,34 +449,37 @@ test("defect 4: a published title is what the transcript heading shows", async (
   expect(titled, "a published title is what the transcript heading shows").toBe("Gate Chat");
 });
 
-// --- defect 4, the narrow window (owner ruling, 2026-10-19) ------------------
+// --- defect 4, the narrow window (owner ruling 2026-10-19, superseded 2026-10-21) ---
 
 /**
- * The title stack's second layer on the window that has no room for it.
+ * The title stack's second layer on the window that has no room for it - and the
+ * window that has no other name.
  *
- * At 400x800 the bar, the surface's own heading and the transcript's title band
- * stacked three names above the first bubble, and the heading's 55 px plus the
- * surface column's 8 px gap was the layer the bar already covers: the bar's entry
- * for the conversation carries the same word, marks itself `aria-current="page"`,
- * and keeps that name even on the widths where the bar is icon-only.
+ * The 2026-10-19 ruling dropped the band because the bar's own entry carried the
+ * same word, marked itself `aria-current="page"`, and kept that name even where
+ * the bar is icon-only. The 2026-10-21 ruling found the half that premise never
+ * covered: below 861 px `.nav-label` is not drawn at all, so the bar is a row of
+ * unlabelled icons - and under 480 px four of the six entries are not drawn
+ * either, they sit inside the `More` panel whose trigger looks the same on every
+ * one of them. At 400x800 the shell named no surface anywhere.
  *
- * The heading is still THERE, which is the half this test is really about: it is
- * the node `SurfaceView` points `aria-labelledby` at, it is where a surface's
- * mount focus goes, and the accessibility tree has to keep it. So the assertions
- * are read from the accessibility tree (the region is found by its name) and from
- * the focus the shell gives it - not from whether a rectangle happens to paint.
+ * So the heading is drawn where the bar stopped naming, and the assertions keep
+ * the force the earlier premise protected from the other side:
  *
- * The last assertion is the other side of the breakpoint: at 1440x900 nothing
- * moves, so this is a narrow rule and not a heading the product lost.
+ *  - the region's accessible name is still exactly one node at both widths, and it
+ *    is still the heading `SurfaceView` points `aria-labelledby` at - not a copy
+ *    of the word somewhere else;
+ *  - the mount focus still lands on that heading;
+ *  - 1440x900 still draws nothing new: the band is still out of the flow and out of
+ *    the column, and the room it spends there is still the measured 62 px.
  *
- * The room it gives back is measured where the audit measured it. The shots' own
- * `.surface-content` read `clientHeight` 682 at 400x800 while the heading was still
- * drawn (`shots-final20`, b3c46a87) and 744 after the rule (`shots-final21`,
- * 41dd9b7c); 1440x900 read 782 both times. The before-state is measured here rather
- * than subtracted, because the heading's box lands on a half pixel: turning the two
- * declarations off in this same mounted layout is the 682 itself.
+ * The 400x800 measurement is read from the layout rather than from a class name:
+ * the band's own box (`headerHeight`), the word in it, where the scroll container
+ * starts relative to that box and the column's gap, and - by turning the two
+ * declarations back on in this same mounted layout - what the band costs there
+ * (62 px: the 54 px box and the column's 8 px gap).
  */
-test("defect 4: the narrow window drops the heading's box and keeps the region's name", async ({ page }) => {
+test("defect 4: the narrow window draws the surface's name and the wide window still does not", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 800 });
   await mountShell(page, { root: composedRoot({ transcript: [], title: "Gate Chat" }) });
 
@@ -486,15 +489,23 @@ test("defect 4: the narrow window drops the heading's box and keeps the region's
     const surface = document.querySelector<HTMLElement>('[data-testid="chat-surface"]')!;
     const content = surface.querySelector<HTMLElement>(".surface-content")!;
     const style = getComputedStyle(header);
+    const headerRect = header.getBoundingClientRect();
+    const headingRect = heading.getBoundingClientRect();
     return {
       clipPath: style.clipPath,
       position: style.position,
-      headerHeight: Math.round(header.getBoundingClientRect().height),
       surfaceTop: Math.round(surface.getBoundingClientRect().top),
       regionHeight: Math.round(surface.getBoundingClientRect().height),
+      gap: Math.round(Number.parseFloat(getComputedStyle(surface).rowGap || "0")),
+      headerHeight: Math.round(headerRect.height),
+      headerWidth: Math.round(headerRect.width),
+      headerBottom: Math.round(headerRect.bottom),
+      headingText: (heading.textContent ?? "").trim(),
+      headingTop: Math.round(headingRect.top),
+      headingHeight: Math.round(headingRect.height),
+      headingWidth: Math.round(headingRect.width),
       contentTop: Math.round(content.getBoundingClientRect().top),
       contentClientHeight: content.clientHeight,
-      headingText: (heading.textContent ?? "").trim(),
       labelledBy: surface.getAttribute("aria-labelledby"),
       headingFocused: document.activeElement === heading,
     };
@@ -502,41 +513,41 @@ test("defect 4: the narrow window drops the heading's box and keeps the region's
   const namedRegions = await page.getByRole("region", { name: "聊天", exact: true }).count();
   console.log(`[defect-4 narrow] ${JSON.stringify({ ...narrow, namedRegions })}`);
 
-  // It stopped being drawn the way this sheet retires anything it keeps: out of
-  // the visual flow, not out of the document.
-  expect(narrow.clipPath, "the heading is out of the visual flow").toBe("inset(50%)");
-  expect(narrow.headingText, "and it keeps the surface's own word").toBe("聊天");
-  // Which is what buys the height back: a clipped box in the flow would keep it.
-  expect(narrow.position, "the heading's box is out of the column's flow").toBe("absolute");
+  // The label a 400 px player reads: the surface's own word, in the band the bar
+  // gave up. Both catalogues carry it (`chatPanel`: 聊天 / Chat); this is the zh one.
+  expect(narrow.clipPath, "the heading is drawn at 400x800").toBe("none");
+  expect(narrow.position, "and it is in the column's flow").toBe("static");
+  expect(narrow.headingText, "the drawn word is the surface's own").toBe("聊天");
+  expect(narrow.headerHeight, "the band has a real box").toBeGreaterThan(0);
+  expect(narrow.headingWidth, "the word has a real box").toBeGreaterThan(0);
+  expect(narrow.headingTop, "and it is on the screen, not clipped off it").toBeGreaterThanOrEqual(narrow.surfaceTop);
+  // It sits above the content, on the column's own gap: the band leads the surface.
   expect(
     narrow.contentTop,
-    `the surface's content starts at the surface now (${narrow.contentTop} vs ${narrow.surfaceTop})`,
-  ).toBe(narrow.surfaceTop);
-  expect(narrow.headerHeight, "so its 55 px box is not part of the column").toBeGreaterThan(0);
+    `the content starts under the band and its gap (${narrow.contentTop} vs ${narrow.headerBottom} + ${narrow.gap})`,
+  ).toBe(narrow.headerBottom + narrow.gap);
+  expect(
+    narrow.contentTop - narrow.surfaceTop,
+    "so the band is the first thing the surface draws",
+  ).toBe(narrow.headerHeight + narrow.gap);
 
-  // And the room it gives back, in the numbers the capture read: the scroll
-  // container now fills the region, where while the heading was drawn it was the
-  // region less the heading's box and the column's gap.
-  const narrowContentWhileDrawn = await page.evaluate(() => {
+  // The room the band spends, measured in the same mounted layout: turning the two
+  // declarations back on is the 400x800 capture's 744.
+  const narrowContentWhileClipped = await page.evaluate(() => {
     const header = document.querySelector<HTMLElement>(".surface-header")!;
     const content = document.querySelector<HTMLElement>('[data-testid="chat-surface"] .surface-content')!;
-    header.style.position = "static";
-    header.style.clipPath = "none";
-    const drawn = content.clientHeight;
+    header.style.position = "absolute";
+    header.style.clipPath = "inset(50%)";
+    const clipped = content.clientHeight;
     header.style.position = "";
     header.style.clipPath = "";
-    return drawn;
+    return clipped;
   });
-  console.log(`[defect-4 narrow-drawn] contentClientHeight while the heading is in the column: ${narrowContentWhileDrawn}`);
+  console.log(`[defect-4 narrow-clipped] contentClientHeight while the band is out of the column: ${narrowContentWhileClipped}`);
+  expect(narrowContentWhileClipped, "and what the capture read while the band was retired is 744").toBe(744);
   expect(
-    narrow.contentClientHeight,
-    `the scroll container fills the surface at 400x800 (${narrow.contentClientHeight} of ${narrow.regionHeight})`,
-  ).toBe(narrow.regionHeight);
-  expect(narrow.contentClientHeight, "which is the capture's 744").toBe(744);
-  expect(narrowContentWhileDrawn, "and what the capture read before the rule is 682").toBe(682);
-  expect(
-    narrow.contentClientHeight - narrowContentWhileDrawn,
-    "the room the heading's box and the column's gap were spending",
+    narrowContentWhileClipped - narrow.contentClientHeight,
+    "the room the band's box and the column's gap spend at 400x800",
   ).toBe(62);
 
   // The half a11y depends on: the region is still the thing named 聊天, by the
@@ -577,12 +588,10 @@ test("defect 4: the narrow window drops the heading's box and keeps the region's
   });
   const wideNamedRegions = await page.getByRole("region", { name: "聊天", exact: true }).count();
   console.log(`[defect-4 wide] ${JSON.stringify({ ...wide, namedRegions: wideNamedRegions, whileDrawn: wideContentWhileDrawn })}`);
-  // The ruling changed on 2026-10-20: the band is noise at every width, not only below 480 px.
-  // What this block asserted before - `clip-path: none`, `position: static`, content 782 - was the
-  // superseded premise, so it is corrected rather than deleted, and the floor it protects (the
-  // region's name, and the height the band was spending) stays measured from both sides.
-  expect(wide.clipPath, "a wide window no longer draws the band either").toBe("inset(50%)");
-  expect(wide.position, "so its box leaves the column").toBe("absolute");
+  // The 2026-10-20 ruling stands: at 1440x900 the bar spells the selected surface's
+  // word, so the band stays retired there and this change draws nothing new.
+  expect(wide.clipPath, "a wide window draws no band").toBe("inset(50%)");
+  expect(wide.position, "so its box stays out of the column").toBe("absolute");
   expect(wide.gap, "the column keeps its own gap for other blocks").toBeGreaterThan(0);
   expect(wideNamedRegions, "the region answers to the surface's name at the wide width too").toBe(1);
   expect(
