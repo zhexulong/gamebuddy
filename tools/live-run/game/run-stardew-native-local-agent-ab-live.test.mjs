@@ -532,14 +532,18 @@ function extractRunnerFunction(source, name, globals = {}) {
     );
   }
   const marker = `function ${name}`;
-  const start = source.indexOf(marker);
-  assert.ok(start !== -1, `runner must define ${name}`);
+  const declarationAt = source.indexOf(marker);
+  assert.ok(declarationAt !== -1, `runner must define ${name}`);
+  // The declaration's own `async` modifier is part of it: a slice that started at `function` would drop it, and the
+  // body's `await` would no longer parse inside the wrapper.
+  const start =
+    source.slice(Math.max(0, declarationAt - 6), declarationAt) === "async " ? declarationAt - 6 : declarationAt;
   // The body opens at the first `{` OUTSIDE the parameter list: a destructured
   // parameter (`function f({ a, b })`) makes the obvious "first brace after the
   // name" land inside the signature and truncate the extraction before the body.
   let parenDepth = 0;
   let bodyOpen = -1;
-  for (let index = start + marker.length; index < source.length; index += 1) {
+  for (let index = declarationAt + marker.length; index < source.length; index += 1) {
     const char = source[index];
     if (char === "(") parenDepth += 1;
     else if (char === ")") parenDepth -= 1;
@@ -861,6 +865,82 @@ test("the night watcher outlives the day turn it accompanies", () => {
   );
   // And the honest pair of outcomes still exists: a settled day with no advance_day is named at once.
   assert.match(RUNNER_SOURCE, /companion_did_not_sleep/u);
+});
+
+test("a pass-out mid-night is not the night's outcome: the watch runs on to the new day", async () => {
+  // Measured (g120): the night watch stopped on `actor_passed_out`, and the run reported `crossings 0/2` for a night
+  // the game had already crossed - `Game1.PassOutNewDay()` calls `NewDay(0f)` itself, so the player wakes on the NEXT
+  // day. The falsifier is behavioural, against the real function: a faint is not an outcome, a spent budget is.
+  const [watchNightThroughPassOut] = extractRunnerFunction(RUNNER_SOURCE, ["watchNightThroughPassOut"]);
+  const scripted = (outcomes) => {
+    const calls = [];
+    return {
+      calls,
+      watchOnce: async (timeoutMs) => {
+        calls.push(timeoutMs);
+        return outcomes[Math.min(calls.length - 1, outcomes.length - 1)];
+      },
+    };
+  };
+  const faint = {
+    crossed: false,
+    reasonCode: "actor_passed_out",
+    menus: [
+      {
+        menuType: "ShippingMenu",
+        decision: "dismiss",
+        dismissReceipt: { state: "succeeded", reasonCode: "modal_dismissed" },
+        dismissReasonCode: null,
+      },
+    ],
+  };
+  const crossed = { crossed: true, reasonCode: null, dayAfter: 7, menus: [] };
+  const { calls, watchOnce } = scripted([faint, faint, crossed]);
+  const outcome = await watchNightThroughPassOut({
+    watchOnce,
+    timeoutMs: 60_000,
+    pollIntervalMs: 0,
+    sleep: async () => {},
+  });
+  assert.equal(outcome.crossed, true, "the night the engine already crossed is a crossed night");
+  assert.equal(outcome.dayAfter, 7);
+  assert.equal(outcome.passOutObserved, true, "the record says HOW the night ended");
+  assert.equal(calls.length, 3, "the watch was re-entered while the engine held the actor, not ended on the faint");
+  // The settlement menu dismissed BEFORE the faint is part of the night's record: the baseline judges the night by it.
+  assert.deepEqual(
+    (outcome.menus ?? []).map((menu) => menu.menuType),
+    ["ShippingMenu"],
+    "a menu observed in an earlier attempt is not lost when a later one starts empty",
+  );
+  // A spent budget while the actor is still out is the named WAIT, never the faint reported as the night's outcome.
+  const exhausted = scripted([faint]);
+  let clock = 0;
+  const spent = await watchNightThroughPassOut({
+    watchOnce: exhausted.watchOnce,
+    timeoutMs: 1_000,
+    pollIntervalMs: 0,
+    now: () => clock,
+    sleep: async () => {
+      clock += 10_000;
+    },
+  });
+  assert.equal(spent.crossed, false);
+  assert.equal(spent.reasonCode, "night_not_observed:pass_out:none");
+  assert.equal(spent.passOutObserved, true);
+  // The retry is for the PASS-OUT only: a cutscene is still a hold, and it is still answered at once.
+  const cutscene = scripted([{ crossed: false, reasonCode: "actor_held_by_cutscene", menus: [] }, crossed]);
+  const held = await watchNightThroughPassOut({
+    watchOnce: cutscene.watchOnce,
+    timeoutMs: 60_000,
+    pollIntervalMs: 0,
+    sleep: async () => {},
+  });
+  assert.equal(held.reasonCode, "actor_held_by_cutscene");
+  assert.equal(held.passOutObserved, false);
+  assert.equal(cutscene.calls.length, 1, "a hold that is not the pass-out still stops the watch by name");
+  // ...and the day's record carries the cause the watch observed.
+  assert.match(RUNNER_SOURCE, /const cause = outcome\.passOutObserved === true \? "pass_out" : "sleep";/u);
+  assert.match(RUNNER_SOURCE, /record\.cause = nightCauses\.get\(record\.day\) \?\? null;/u);
 });
 
 test("a stalled Mod heartbeat is named while it is happening, not six minutes later", () => {

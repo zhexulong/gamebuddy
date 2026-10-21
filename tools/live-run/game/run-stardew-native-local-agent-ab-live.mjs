@@ -1630,6 +1630,51 @@ function deferred() {
 }
 
 /**
+ * Watch the night through the engine's pass-out, because a pass-out is a NORMAL night's end.
+ *
+ * At 2:00 AM the engine passes the farmer out and `Game1.PassOutNewDay()` (Game1.cs:10344-10347) calls `NewDay(0f)`
+ * itself, so the player wakes in bed on the NEXT day: the calendar crosses exactly as it does after a sleep. The
+ * shared watcher stops on the hold (`actor_passed_out`), because a hold is not by itself a crossing - but treating
+ * that stop as the night's OUTCOME ended a whole run on a night the game had already crossed (measured: g120,
+ * `crossings 0/2` with a day 1 that held no terminal at all, the watch's own stop published as the run's reason).
+ *
+ * So the watcher is RE-ENTERED while the engine owns the actor, against the same night budget. A budget spent while
+ * the farmer is still out is the named wait (`night_not_observed:pass_out:none`) rather than a verdict about either
+ * the night or the faint. Every other stop - a cutscene, an unclosable menu, a dead bridge - is answered at once:
+ * the retry is for the pass-out only.
+ */
+async function watchNightThroughPassOut({
+  watchOnce,
+  timeoutMs,
+  pollIntervalMs,
+  now = Date.now,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}) {
+  const deadline = now() + timeoutMs;
+  let passOutObserved = false;
+  // Menus are per ATTEMPT (each `watchOnce` is one bounded watch), and the day's record is the night's whole story: a
+  // settlement menu dismissed before the faint must not vanish because a later attempt started with an empty list.
+  const menuByType = new Map();
+  let outcome = await watchOnce(Math.max(0, deadline - now()));
+  for (;;) {
+    for (const entry of outcome.menus ?? []) menuByType.set(entry.menuType, entry);
+    if (outcome.crossed === true || outcome.reasonCode !== "actor_passed_out") break;
+    passOutObserved = true;
+    if (now() >= deadline) {
+      outcome = Object.freeze({
+        crossed: false,
+        reasonCode: "night_not_observed:pass_out:none",
+        dayAfter: outcome.dayAfter ?? null,
+      });
+      break;
+    }
+    await sleep(pollIntervalMs);
+    outcome = await watchOnce(Math.max(0, deadline - now()));
+  }
+  return Object.freeze({ ...outcome, menus: [...menuByType.values()], passOutObserved });
+}
+
+/**
  * Watch the night that the companion's own `advance_day` starts.
  *
  * Started at the SAME moment as the day's turn, because the night begins while the Agent is still blocked
@@ -1831,14 +1876,22 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       }
     },
   };
-  const outcome = await watchRollover(world, {
-    dayBefore,
+  const outcome = await watchNightThroughPassOut({
+    pollIntervalMs: MULTIDAY_POLL_INTERVAL_MS,
     timeoutMs: MULTIDAY_NIGHT_TIMEOUT_MS,
-    abort: () =>
-      bridgeDisconnections.length > 0
-        ? `night_watched_over_a_dead_bridge:${String(bridgeDisconnections[0]?.reasonCode ?? "unknown")}`
-        : null,
+    watchOnce: (remainingMs) =>
+      watchRollover(world, {
+        dayBefore,
+        timeoutMs: remainingMs,
+        abort: () =>
+          bridgeDisconnections.length > 0
+            ? `night_watched_over_a_dead_bridge:${String(bridgeDisconnections[0]?.reasonCode ?? "unknown")}`
+            : null,
+      }),
   });
+  // HOW the night ended: the engine's 2:00 AM pass-out, or the companion's own sleep. It is a CAUSE on the day's
+  // record and never a verdict - the night was watched on to the day the engine opened.
+  const cause = outcome.passOutObserved === true ? "pass_out" : "sleep";
   // The night's own terminal: the receipt of the `advance_day` the COMPANION dispatched during this window.
   const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
   const terminal = dispatched === undefined ? null : (terminalReceiptFor(factLog, dispatched.requestId) ?? null);
@@ -1847,6 +1900,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       terminal: null,
       after: await observeQuietly(),
       menus: outcome.menus,
+      cause: null,
       reasonCode: `night_never_started:${String(outcome.reasonCode ?? "companion_did_not_sleep")}`,
     });
   }
@@ -1854,6 +1908,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     terminal,
     after: await observeQuietly(),
     menus: outcome.menus,
+    cause,
     reasonCode: outcome.reasonCode ?? null,
   });
 }
@@ -2356,6 +2411,12 @@ try {
     // Lane G0: the companion runs consecutive days and ends each one itself. The loop's `dayTurn` is an
     // ordinary agent turn; its `nightWatch` is the rollover observer, because the companion is blocked inside
     // `advance_day` at exactly the moment the settlement menu is raised.
+    //
+    // HOW each night ended, by the day it ended. The loop owns the record shape, and `onDay` is the hook it offers at
+    // exactly the moment the record is published - after BOTH callbacks resolve, so this day's night watch has
+    // already answered. The record therefore says whether the ENGINE ended the night (the 2:00 AM pass-out) or the
+    // companion's own sleep, which is a cause and never a reason to stop: a pass-out starts the next day itself.
+    const nightCauses = new Map();
     const crossing = await runMultiDayLoop({
       crossNights: MULTIDAY_CROSSINGS,
       dayTurn: async (day) => {
@@ -2377,12 +2438,18 @@ try {
           settled.resolve();
         }
       },
-      nightWatch: (day) => watchNightRollover(day, { dayTurnSettled }),
-      onDay: (record) =>
+      nightWatch: async (day) => {
+        const night = await watchNightRollover(day, { dayTurnSettled });
+        nightCauses.set(day, night.cause ?? null);
+        return night;
+      },
+      onDay: (record) => {
+        record.cause = nightCauses.get(record.day) ?? null;
         console.error(
           "MULTIDAY_NIGHT",
-          JSON.stringify({ day: record.day, menus: record.menus.map((menu) => menu.menuType) }),
-        ),
+          JSON.stringify({ day: record.day, cause: record.cause, menus: record.menus.map((menu) => menu.menuType) }),
+        );
+      },
     });
     multidayOutcome = Object.freeze({
       crossings: crossing.daysCrossed,

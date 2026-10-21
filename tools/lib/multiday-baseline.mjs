@@ -18,7 +18,11 @@
  *     menu is what holds the actor when a night ends, so a run that never closed it did not cross
  *     the day, whatever else it reports;
  *   - the day after a night must still produce the companion's own farm work, which is what makes
- *     this a loop rather than one rollover.
+ *     this a loop rather than one rollover;
+ *   - a night the ENGINE ended by passing the actor out is INSIDE that scope and is recorded by its cause.
+ *     The 2:00 AM pass-out is normal play: `Game1.PassOutNewDay()` calls `NewDay(0f)` itself and the player
+ *     wakes in bed on the next day, so the calendar crosses exactly as it does after a sleep. It is reported
+ *     (`passOutNights`) rather than judged, because it is how the day ended and not whether it did.
  */
 
 /** The season index the world reported after this night, whichever of the two shapes carried it. */
@@ -203,6 +207,9 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
 
   let daysCrossed = 0;
   let shoppingMenuDismissals = 0;
+  // Nights the engine ended with a pass-out: reported next to the verdict, because it is how the day was
+  // crossed rather than whether it was, and a run whose nights were all pass-outs must be readable as such.
+  let passOutNights = 0;
   for (const [index, record] of dayRecords.entries()) {
     const where = `dayRecords[${String(index)}]`;
     if (!isPlainObject(record)) {
@@ -215,6 +222,17 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
       continue;
     }
     daysCrossed += 1;
+    // HOW the night ended: the product's own receipt first (`entered_via=native_pass_out` is what the Mod mints when
+    // the engine's pass-out pipeline took the night over), the runner's observation second. Published so a run whose
+    // nights were pass-outs is readable as such - and it is a description, never a verdict about the night.
+    const enteredVia = typeof night.facts.entered_via === "string" ? night.facts.entered_via : null;
+    const cause =
+      enteredVia === "native_pass_out"
+        ? "pass_out"
+        : enteredVia === "native_sleep_prompt"
+          ? "sleep"
+          : (record.cause ?? null);
+    if (cause === "pass_out") passOutNights += 1;
 
     // Scope, enforced rather than assumed: this corpus proves consecutive days inside one season, with no
     // festival and no profession milestone. A night that left that window is a BLOCKED result, because the
@@ -311,6 +329,7 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     state: violations.length === 0 ? "passed" : "blocked",
     daysCrossed,
     shoppingMenuDismissals,
+    passOutNights,
     violations: Object.freeze(violations),
     checkedRules: CHECKED_RULES,
   });

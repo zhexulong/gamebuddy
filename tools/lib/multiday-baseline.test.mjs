@@ -19,7 +19,7 @@ const EVIDENCE = (overrides = {}) =>
     "state=passed",
     "reason=day_advanced",
     "topology=single_player",
-    "entered_via=native_sleep_prompt",
+    `entered_via=${overrides.enteredVia ?? "native_sleep_prompt"}`,
     `saving_observed=${overrides.savingObserved ?? "true"}`,
     `saved_observed=${overrides.savedObserved ?? "true"}`,
     `day_started_observed=${overrides.dayStartedObserved ?? "true"}`,
@@ -53,6 +53,8 @@ const DAY = (overrides = {}) => ({
   terminal: overrides.terminal === null ? null : TERMINAL(overrides.terminal),
   after: overrides.after ?? { dayOfMonth: 8, timeOfDay: 610, seasonIndex: 0 },
   menus: overrides.menus ?? [MENU()],
+  // How the night ended, as the loop records it: the companion's own sleep, or the engine's 2:00 AM pass-out.
+  cause: overrides.cause ?? "sleep",
   nextDayAccomplishedActionIds: overrides.nextDayAccomplishedActionIds ?? ["harvest_crop", "cut_weeds"],
 });
 
@@ -64,11 +66,78 @@ test("a healthy two-day run passes, and the constants state the window", () => {
   assert.equal(result.state, "passed");
   assert.equal(result.daysCrossed, 2);
   assert.equal(result.shoppingMenuDismissals, 2);
+  assert.equal(result.passOutNights, 0);
   assert.equal(MINIMUM_BASELINE_DAYS, 2);
   assert.equal(MAXIMUM_BASELINE_DAYS, 3);
   assert.deepEqual([...DISMISSIBLE_ROLLOVER_MENUS], ["ShippingMenu"]);
   assert.ok(WAIT_ROLLOVER_MENUS.includes("SaveGameMenu"));
   assert.ok(result.checkedRules.length > 12);
+});
+
+test("a night the engine ended by a pass-out is a crossed night, reported by its cause", () => {
+  // A 2:00 AM pass-out is normal play: `Game1.PassOutNewDay()` calls `NewDay(0f)` itself, so the calendar
+  // crosses exactly as it does after a sleep and the receipt says `entered_via=native_pass_out`. The baseline
+  // reports HOW the night ended and must not turn that into a verdict about whether the run crossed.
+  const passedOut = assessMultiDayBaseline({
+    dayRecords: [
+      DAY({
+        cause: "pass_out",
+        terminal: {
+          state: "succeeded",
+          reasonCode: "day_advanced",
+          evidence: EVIDENCE({ enteredVia: "native_pass_out" }),
+        },
+      }),
+      DAY({ day: 2 }),
+    ],
+    daysRequested: 2,
+  });
+  assert.deepEqual(codes(passedOut), []);
+  assert.equal(passedOut.state, "passed");
+  assert.equal(passedOut.passOutNights, 1);
+  // What the baseline still asks of that night is the night's own facts - a pass-out does not excuse a
+  // missing save edge. The cause is a description, never a waiver.
+  const unresolved = assessMultiDayBaseline({
+    dayRecords: [
+      DAY({
+        cause: "pass_out",
+        terminal: {
+          state: "blocked",
+          reasonCode: "day_start_not_observed",
+          evidence: EVIDENCE({ enteredVia: "native_pass_out" }),
+        },
+      }),
+      DAY({ day: 2 }),
+    ],
+    daysRequested: 2,
+  });
+  assert.ok(codes(unresolved).some((code) => code.startsWith("night_not_advanced")));
+  assert.equal(unresolved.passOutNights, 0, "a night that did not cross is not counted as a pass-out crossing");
+});
+
+test("the night's own receipt says how it ended even when the record does not", () => {
+  // The Mod mints `entered_via` on the night's terminal, so the gate does not depend on the runner remembering to
+  // copy the cause onto the record: a night the receipt names as a pass-out is counted as one either way.
+  const fromReceipt = assessMultiDayBaseline({
+    dayRecords: [
+      {
+        ...DAY({
+          day: 1,
+          terminal: {
+            state: "succeeded",
+            reasonCode: "day_advanced",
+            evidence: EVIDENCE({ enteredVia: "native_pass_out" }),
+          },
+        }),
+        // No runner-side cause at all: the receipt is the authority.
+        cause: undefined,
+      },
+      DAY({ day: 2 }),
+    ],
+    daysRequested: 2,
+  });
+  assert.deepEqual(codes(fromReceipt), []);
+  assert.equal(fromReceipt.passOutNights, 1);
 });
 
 test("a night that did not cross reds the run, and says why", () => {
