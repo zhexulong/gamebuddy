@@ -173,6 +173,13 @@ test("arming replaces the row's own controls with the confirmation, which measur
     await page.setViewportSize(viewport);
     const where = `${viewport.width}x${viewport.height}`;
 
+    // The row's own box while it still carries its quiet controls, and the transcript column both are
+    // measured in: a confirmation has to fit inside the row, and the row inside its column.
+    const rowBefore = await page.locator('[data-handle="h2"]').boundingBox();
+    const columnBox = await page.locator("ol.message-list").boundingBox();
+    expect(rowBefore, where).not.toBeNull();
+    expect(columnBox, where).not.toBeNull();
+
     await page.click('[data-handle="h2"] [data-testid="message-rewind"]');
 
     const armed = await page.evaluate(() => window.chatProbe.rewindConfirm("h2"));
@@ -196,18 +203,30 @@ test("arming replaces the row's own controls with the confirmation, which measur
     expect(rowBox, where).not.toBeNull();
     console.log(
       `MEASURE rewind-confirm ${where}: block ${confirmBox?.width}x${confirmBox?.height} at ${confirmBox?.x} | ` +
-        `row ${rowBox?.width}x${rowBox?.height} at ${rowBox?.x} | overflow ${await horizontalOverflow(page)}`,
+        `row ${rowBox?.width}x${rowBox?.height} at ${rowBox?.x} (with its quiet controls ${rowBefore?.width}x${rowBefore?.height}) | ` +
+        `column ${columnBox?.width} | overflow ${await horizontalOverflow(page)}`,
     );
     expect(confirmBox!.width, where).toBeLessThanOrEqual(rowBox!.width + 1);
     expect(confirmBox!.height, where).toBeLessThan(200);
     expect(confirmBox!.x!, where).toBeGreaterThanOrEqual(rowBox!.x! - 1);
     expect(confirmBox!.x! + confirmBox!.width, where).toBeLessThanOrEqual(rowBox!.x! + rowBox!.width + 1);
+    // The block is as wide as the column because the column is what it is allowed: the row it sits in
+    // never stretches past the transcript it belongs to.
+    expect(rowBox!.width, where).toBeLessThanOrEqual(columnBox!.width + 1);
     // And nothing on the row pushed the page sideways.
     expect(await horizontalOverflow(page), where).toBeLessThanOrEqual(0);
 
     await page.click('[data-testid="message-rewind-confirm-no"]');
     expect(await page.evaluate(() => window.chatProbe.rewindConfirm("h2")), where).toBeNull();
     expect(await page.evaluate(() => window.chatProbe.rewindControl("h2")), where).not.toBeNull();
+    // Cancelling gives the row back at the box it had: the pair is a state of the row, not a growth of
+    // it, so nothing about the conversation moves when the player changes their mind.
+    const rowRestored = await page.locator('[data-handle="h2"]').boundingBox();
+    console.log(
+      `MEASURE rewind-confirm ${where}: row restored ${rowRestored?.width}x${rowRestored?.height} after cancel`,
+    );
+    expect(rowRestored!.width, where).toBeCloseTo(rowBefore!.width, 0);
+    expect(rowRestored!.height, where).toBeCloseTo(rowBefore!.height, 0);
   }
 
   // Cancelling sends nothing: the arm and its close are the surface's own state.
