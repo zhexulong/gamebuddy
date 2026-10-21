@@ -23,23 +23,14 @@ test("renderMacros preserves text without supported macros", () => {
 
 test("renderMacros uses empty strings for empty variables", () => {
   assert.equal(renderMacros("A {{char}} B <USER> C", { char: "", user: "" }), "A  B  C");
-  assert.equal(
-    renderMacros("A {{char}} B <USER> C", { char: undefined as never, user: null as never }),
-    "A  B  C",
-  );
+  assert.equal(renderMacros("A {{char}} B <USER> C", { char: undefined as never, user: null as never }), "A  B  C");
 });
 
 test("renderWorldBookText resolves the player reference and leaves an unknown character name unrendered", () => {
-  assert.equal(
-    renderWorldBookText("{{user}} and {{char}} farm.", { char: "Kohaku" }),
-    "the player and Kohaku farm.",
-  );
+  assert.equal(renderWorldBookText("{{user}} and {{char}} farm.", { char: "Kohaku" }), "you and Kohaku farm.");
   // No known character name: `{{char}}` stays so the caller drops the entry
   // instead of blanking it.
-  assert.equal(
-    renderWorldBookText("{{user}} and {{char}} farm.", { char: null }),
-    "the player and {{char}} farm.",
-  );
+  assert.equal(renderWorldBookText("{{user}} and {{char}} farm.", { char: null }), "you and {{char}} farm.");
 });
 
 test("hasUnrenderedMacro detects only a surviving macro", () => {
@@ -51,22 +42,39 @@ test("hasUnrenderedMacro detects only a surviving macro", () => {
 // The failure this catches: the macro table carried the English literal "the player"
 // as the player reference at every call site, so a Chinese companion's own 设定 was
 // frozen as 与the player一同从都市迁居. Nothing threw; the prose was simply wrong.
+// The word itself was wrong twice: 玩家 is a NOUN for a third party, and the shipped
+// card's own `post_history_instructions` forbids her to speak of the player in the
+// third person - she speaks TO them. So both locales use a second person pronoun and
+// `{{user}}` reads as the person being addressed.
 test("the macro table renders the player in the run's locale, not in an English constant", () => {
-  assert.equal(macroTable({ char: "琥珀", locale: "zh-CN" }).user, "玩家");
-  assert.equal(macroTable({ char: "琥珀", locale: "zh-Hant-TW" }).user, "玩家");
-  assert.equal(macroTable({ char: "Kohaku", locale: "en-US" }).user, "the player");
+  assert.equal(macroTable({ char: "琥珀", locale: "zh-CN" }).user, "你");
+  assert.equal(macroTable({ char: "琥珀", locale: "zh-Hant-TW" }).user, "你");
+  assert.equal(macroTable({ char: "Kohaku", locale: "en-US" }).user, "you");
+  assert.equal(macroTable({ char: "Kohaku" }).user, "you");
   // A name a caller actually has wins over any word.
   assert.equal(macroTable({ char: "琥珀", user: "Alex", locale: "zh-CN" }).user, "Alex");
-  assert.equal(macroTable({ char: "琥珀", user: "   ", locale: "zh-CN" }).user, "玩家");
+  assert.equal(macroTable({ char: "琥珀", user: "   ", locale: "zh-CN" }).user, "你");
+});
+
+// The defect this pins: the zh default used to be 玩家, the noun a card says only
+// when it is talking ABOUT the player - and the shipped card's own
+// `post_history_instructions` forbids exactly that third-person reference while
+// asking her to address the player as a familiar equal. Every authored field that
+// carries `{{user}}` (scenario, world book, greeting) therefore received a word the
+// card forbids. Neither default may be a noun.
+test("{{user}} resolves to the player being addressed, never to a third-person noun", () => {
+  for (const locale of ["zh-CN", "zh-Hant-TW", undefined]) {
+    const word = macroTable({ char: "琥珀", locale }).user;
+    assert.equal(/玩家|the player/u.test(word), false, `locale ${String(locale)} must not use a third-person noun`);
+  }
+  assert.equal(macroTable({ char: "琥珀", locale: "zh-CN" }).user, "你");
+  assert.equal(macroTable({ char: "Kohaku", locale: "en-US" }).user, "you");
 });
 
 test("renderWorldBookText renders the player word from the locale it is given", () => {
-  assert.equal(
-    renderWorldBookText("{{user}} and {{char}}耕田", { char: "琥珀", locale: "zh-CN" }),
-    "玩家 and 琥珀耕田",
-  );
+  assert.equal(renderWorldBookText("{{user}} and {{char}}耕田", { char: "琥珀", locale: "zh-CN" }), "你 and 琥珀耕田");
   assert.equal(
     renderWorldBookText("{{user}} and {{char}} farm.", { char: "Kohaku", locale: "en-US" }),
-    "the player and Kohaku farm.",
+    "you and Kohaku farm.",
   );
 });

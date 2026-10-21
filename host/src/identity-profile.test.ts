@@ -187,7 +187,8 @@ test("IdentityProfile rejects malformed or control-bearing content", () => {
     /invalid_identity_profile/,
   );
   assert.throws(
-    () => validateIdentityProfile({ ...DEFAULT_IDENTITY_PROFILE, examples: [{ user: "ok", companion: "bad\u0000reply" }] }),
+    () =>
+      validateIdentityProfile({ ...DEFAULT_IDENTITY_PROFILE, examples: [{ user: "ok", companion: "bad\u0000reply" }] }),
     /invalid_identity_profile/,
   );
 });
@@ -203,6 +204,47 @@ test("IdentityProfile canonicalizes a bounded reviewed persona guide", () => {
   assert.match(renderIdentityProfile(profile), /Core disposition: calm/);
   assert.match(renderIdentityProfile(profile), /GameBuddy Companion: let us slow down/);
   assert.notEqual(identityProfileHash(profile), identityProfileHash(DEFAULT_IDENTITY_PROFILE));
+});
+
+test("the examples block labels the player's turn in the run's locale, not with English boilerplate", () => {
+  // The defect this pins: every example rendered as `Player: {user}` in every
+  // locale, so the shipped card's own Chinese examples taught the model that one
+  // of its two speakers is named in a language the companion does not speak - an
+  // English speaker label inside an otherwise Chinese block. The label is now the
+  // run's own second-person reference, the same word the macros resolve `{{user}}`
+  // to; the companion's line keeps her own name (it is a name, not a word) and
+  // `<START>` stays because it is the card format's own delimiter.
+  const profile = validateIdentityProfile({
+    schemaVersion: 1,
+    profileId: "gamebuddy.companion.kohaku",
+    revision: 1,
+    identity: { name: "琥珀", role: "农场搭档", continuity: "一起照料这片农场。" },
+    examples: [{ user: "今天先做什么？", companion: "先把西边的荒地清了。" }],
+  });
+  assert.equal(
+    renderIdentityProfile(profile, "zh-CN"),
+    [
+      "[Character: 琥珀]",
+      "Role: 农场搭档",
+      "Continuity: 一起照料这片农场。",
+      "",
+      "[Dialogue Examples]",
+      "<START>",
+      "你: 今天先做什么？",
+      "琥珀: 先把西边的荒地清了。",
+    ].join("\n"),
+  );
+  // English keeps the same shape: capitalised, because the label opens its line.
+  assert.equal(
+    renderIdentityProfile(profile, "en-US").split("\n").slice(-3).join("\n"),
+    ["<START>", "You: 今天先做什么？", "琥珀: 先把西边的荒地清了。"].join("\n"),
+  );
+  // The locale reaches the block through the real prompt builder, which is the
+  // only production caller of `renderIdentityProfile`.
+  const prompt = buildChatCompanionSystemPrompt(profile, "zh-CN");
+  assert.ok(prompt.includes("<START>\n你: 今天先做什么？\n琥珀: 先把西边的荒地清了。"));
+  for (const locale of ["zh-CN", "en-US"] as const)
+    assert.doesNotMatch(renderIdentityProfile(profile, locale), /Player:/);
 });
 
 test("IdentityProfile writes reject a replaced symlink target without touching the outside sentinel", async (t) => {

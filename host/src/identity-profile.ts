@@ -141,7 +141,7 @@ export function identityProfileMetadata(profile: IdentityProfile): IdentityProfi
   });
 }
 
-export function renderIdentityProfile(profile: IdentityProfile): string {
+export function renderIdentityProfile(profile: IdentityProfile, locale?: string): string {
   const lines: string[] = [
     `[Character: ${profile.identity.name}]`,
     `Role: ${profile.identity.role}`,
@@ -157,16 +157,34 @@ export function renderIdentityProfile(profile: IdentityProfile): string {
   }
 
   if (profile.examples !== undefined && profile.examples.length > 0) {
+    const playerLabel = examplePlayerLabel(locale);
     lines.push("");
     lines.push("[Dialogue Examples]");
     for (const example of profile.examples) {
       lines.push("<START>");
-      lines.push(`Player: ${example.user}`);
+      lines.push(`${playerLabel}: ${example.user}`);
       lines.push(`${profile.identity.name}: ${example.companion}`);
     }
   }
 
   return lines.join("\n");
+}
+
+/**
+ * The label on an example's player turn.
+ *
+ * It is the same second-person reference the macros resolve `{{user}}` to
+ * (`macro-engine.ts`), capitalised because it opens its line; a label is the
+ * one place a lower-case mid-sentence word would look like a typo. It used to
+ * be the English boilerplate `Player:` in every locale, so a Chinese card's own
+ * examples reached the model as `Player: 今天先做什么？` - an English speaker
+ * label inside an otherwise Chinese block, teaching the companion that one of
+ * her two speakers is named in a language she does not speak. The companion's
+ * line keeps her own name as its label (a name, not a word) and `<START>` stays
+ * as the delimiter, because both belong to the card format itself.
+ */
+function examplePlayerLabel(locale: string | undefined): string {
+  return typeof locale === "string" && locale.toLowerCase().startsWith("zh") ? "你" : "You";
 }
 
 /**
@@ -287,7 +305,7 @@ export function buildCompanionSystemPrompt(
     surfaceBlock.length > 0 ? "" : null,
     surfaceBlock.length > 0 ? surfaceBlock : null,
     "",
-    renderIdentityProfile(profile),
+    renderIdentityProfile(profile, options.locale),
     // The card's own directive comes AFTER the floor (shared + surfaceBlock) and
     // after the identity block, so the stable Host rules stay the immutable head
     // of the Tier-1 prefix and a volatile card edit can never interleave into

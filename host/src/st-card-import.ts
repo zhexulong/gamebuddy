@@ -209,7 +209,9 @@ export function previewStCard(value: unknown, fallbackProfileId = "gamebuddy.com
  * frozen, so a card writer can use the standard ST token set without leaking raw
  * placeholders into the Tier 1 prefix. The player reference is the locale's, never the
  * English constant "the player": a Chinese card rendered into a Chinese run reads
- * 与玩家一同从都市迁居. Rendering is single-pass (renderMacros), values are re-checked by
+ * 与你一同从都市迁居, in the second person the card speaks in, because the shipped
+ * card forbids her to refer to the player as a third party. Rendering is single-pass
+ * (renderMacros), values are re-checked by
  * validateIdentityProfile at the write boundary.
  *
  * `locale` is the run's companion language. It defaults to the product's own default

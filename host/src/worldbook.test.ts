@@ -93,18 +93,16 @@ test("WorldBook query renders macros and omits an entry that cannot be rendered"
       },
     ],
   });
-  const [, query] = createWorldBookTools(
-    { metadata: worldBookMetadata(macroBook), book: macroBook },
-    undefined,
-    { char: "Kohaku" },
-  );
+  const [, query] = createWorldBookTools({ metadata: worldBookMetadata(macroBook), book: macroBook }, undefined, {
+    char: "Kohaku",
+  });
   const execute = (tool: typeof query, params: unknown) => {
     assert.ok(tool);
     return tool.execute("call", params as never, new AbortController().signal, () => {}, {} as never);
   };
   const rendered = await execute(query, { entryId: "macro" });
   const renderedEntry = JSON.parse((rendered.content[0]! as { text: string }).text).entries[0] as { content: string };
-  assert.equal(renderedEntry.content, "Kohaku and the player farm together.");
+  assert.equal(renderedEntry.content, "Kohaku and you farm together.");
   assert.doesNotMatch(renderedEntry.content, /\{\{/u);
   const omitted = await execute(query, { entryId: "broken" });
   assert.deepEqual(JSON.parse((omitted.content[0]! as { text: string }).text).entries, []);
@@ -202,8 +200,5 @@ test("WorldBook tools never echo always-on content back (S3: it already rides Ti
     "琥珀与玩家是共同开拓农场的青梅竹马合伙人。",
   );
   const viaId = await execute(query, { entryId: "kohaku-entry-1" });
-  assert.equal(
-    JSON.parse((viaId.content[0]! as { text: string }).text).entries[0].entryId,
-    "kohaku-entry-1",
-  );
+  assert.equal(JSON.parse((viaId.content[0]! as { text: string }).text).entries[0].entryId, "kohaku-entry-1");
 });

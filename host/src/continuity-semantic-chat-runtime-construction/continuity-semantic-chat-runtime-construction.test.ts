@@ -537,7 +537,7 @@ test("a {{char}} entry reaches the materialization, and an entry nothing can ren
       "the companion's own name resolves {{char}} in the entry's title",
     );
     assert.equal(
-      materialized.includes(`${companionName}与玩家共享农场。`),
+      materialized.includes(`${companionName}与你共享农场。`),
       true,
       "and in its body, beside the player reference the run's language gives",
     );
@@ -573,7 +573,7 @@ test("Chat construction renders the bound scenario's own macros into the catalog
     const content = catalog.stableSources.find((source) => source.kind === "scenario")?.content ?? "";
     const companionName = DEFAULT_IDENTITY_PROFILE.identity.name;
     assert.equal(content.includes(companionName), true, "{{char}} resolves to the companion's profile name");
-    assert.equal(content.includes("玩家"), true, "{{user}} resolves to the run's player reference");
+    assert.equal(content.includes("你"), true, "{{user}} resolves to the run's player reference");
     assert.doesNotMatch(content, /\{\{/u, "no raw macro reaches the companion's context");
   } finally {
     await value.binding.close();

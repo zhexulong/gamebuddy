@@ -26,7 +26,8 @@ test.before(async () => {
 });
 
 // The run's macro table for these fixtures: a zh companion named 琥珀, so a
-// scenario's own {{char}}/{{user}} resolve to 琥珀/玩家.
+// scenario's own {{char}}/{{user}} resolve to 琥珀/你 (the player being addressed,
+// never the third-person noun 玩家).
 const TEST_MACROS = macroTable({ char: "琥珀", locale: "zh-CN" });
 
 test.after(() => {
@@ -523,8 +524,8 @@ test("buildGameSurfaceAuthoredCatalog renders worldbook macros, drops an unrende
     { char: "Kohaku" },
   );
   const content = catalog.stableSources[0]?.content ?? "";
-  assert.match(content, /the player arrives at the valley\./);
-  assert.match(content, /Kohaku and the player share the farm\./);
+  assert.match(content, /you arrives at the valley\./);
+  assert.match(content, /Kohaku and you share the farm\./);
   // The entry the macro set cannot fully render is dropped, not published.
   assert.doesNotMatch(content, /unknown_macro/);
   assert.doesNotMatch(content, /\{\{/u);
@@ -777,7 +778,7 @@ test("the scenario's authored macros are rendered into the Chat catalog while th
     );
     const content = catalog.stableSources.find((source) => source.kind === "scenario")?.content ?? "";
     assert.equal(content.includes("琥珀"), true, "the companion's own name resolves {{char}}");
-    assert.equal(content.includes("玩家"), true, "the run's player reference resolves {{user}}");
+    assert.equal(content.includes("你"), true, "the run's player reference resolves {{user}}");
     assert.doesNotMatch(content, /\{\{/u, "no raw macro reaches the companion's context");
     // The durable record keeps the card's own macros verbatim: the absence above is
     // the rendering, not a scenario that happened to contain none.
@@ -908,7 +909,7 @@ test("buildGameSurfaceAuthoredCatalog mounts the companion's scenario as Tier 2 
   assert.equal(scenarioSource?.revision, "2");
   // Rendered through the run's macro table: never a raw `{{user}}`/`{{char}}`.
   assert.match(scenarioSource?.content ?? "", /Kohaku left the city/u);
-  assert.match(scenarioSource?.content ?? "", /beside the player\./u);
+  assert.match(scenarioSource?.content ?? "", /beside you\./u);
   assert.doesNotMatch(scenarioSource?.content ?? "", /\{\{/u);
   // The book's own stable source and the per-turn volatile layer keep their exact
   // bytes and total order keys: the scenario only ADDS a stable source.

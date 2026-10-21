@@ -38,11 +38,20 @@ export function macroTable(
 
 /**
  * The locale's own word for the player, used when nothing names them: a zh run
- * says 玩家, and every other locale keeps the English reference the card text
- * was written against.
+ * says 你, every other locale says you.
+ *
+ * This default is a SECOND PERSON pronoun, never a noun, because the macro
+ * stands for the player *being addressed* - the person the companion is
+ * speaking to in this scene - and a card's own prose says `{{user}}` wherever it
+ * would say "you" to that person. A noun (玩家, "the player") reads as a third
+ * party the companion is talking about, which is exactly what the shipped
+ * card's `post_history_instructions` forbids her to do (「严禁使用“她”等第三…」):
+ * 与玩家一同从都市迁居 told a companion to speak about the player while the
+ * card told her to speak to them. A nickname, when the player has one, still
+ * wins over any word - see `macroTable`.
  */
 function playerReferenceWord(locale: string | undefined): string {
-  return typeof locale === "string" && locale.toLowerCase().startsWith("zh") ? "玩家" : "the player";
+  return typeof locale === "string" && locale.toLowerCase().startsWith("zh") ? "你" : "you";
 }
 
 /**
