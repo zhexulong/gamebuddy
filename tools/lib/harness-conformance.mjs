@@ -308,6 +308,11 @@ const SELF_MODE_REPORT = /checks|mode\s*:/u;
  * own test" (design/research/live-run-throughput.md, Tier 5 item 11), and the suite's own run confirms it.
  */
 export const GATES_WITHOUT_FALSIFIER = Object.freeze([
+  {
+    gate: "check-ci-coverage.mjs",
+    reason:
+      "compares two inventories (gate scripts vs workflow invocation); its falsifier needs synthetic inventories, which is real work rather than a flag - recorded here so the gap is visible instead of silent",
+  },
   { gate: "check-chat-conversational-quality-gate.mjs", reason: "requires --transcript/--db run input" },
   { gate: "check-commit-staging.mjs", reason: "reads the git index; no offline rule set" },
   { gate: "check-crab-pot-output-fixture-contract.mjs", reason: "requires --contract input" },
