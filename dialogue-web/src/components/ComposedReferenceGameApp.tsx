@@ -261,6 +261,12 @@ export function ComposedReferenceGameApp() {
     let work = Promise.resolve();
     let cursor = view.session.snapshot.eventStream.cursor;
     let pendingResetCursor = false;
+    // The stream's own position, advanced by every frame this effect validates. A
+    // frame is validated against the position the frame before it left, and the
+    // reads below no longer commit between frames - so the checkpoint is carried
+    // here instead, and a burst that all arrives during one read still catches a
+    // gap. An epoch or Chat switch rebuilds this effect, so it cannot go stale.
+    let checkpoint = view.session;
 
     const closeSource = (): void => {
       eventSourceRef.current?.close();
@@ -284,7 +290,7 @@ export function ComposedReferenceGameApp() {
         let session: ReturnType<typeof createReferencePipelineSession>;
         let rebuilt = false;
         try {
-          session = current.session.applySnapshot(root.chat);
+          session = checkpoint.applySnapshot(root.chat);
         } catch (error) {
           // A committed Chat switch replaces the mounted identity itself: the new
           // snapshot cannot be reconciled with the old session, so the session is
@@ -307,13 +313,14 @@ export function ComposedReferenceGameApp() {
         // failing reconnects and re-suspends the poll within milliseconds of each
         // failure, so the recovery read - not a poll hop - is what has to unlock
         // the composer in that state.
-        commit({
-          kind: "ready",
-          root,
-          session: terminalTurn(root.chat.chat.turn) ? session.withPending(null) : session,
-          draft,
-          locale: current.locale,
-        });
+        // The checkpoint carries the stream position only: the pending record is
+        // the committed session's, which a turn-starting mutation publishes outside
+        // this effect.
+        const settled = terminalTurn(root.chat.chat.turn)
+          ? session.withPending(null)
+          : session.withPending(current.session.pending);
+        checkpoint = settled;
+        commit({ kind: "ready", root, session: settled, draft, locale: current.locale });
       } catch (error) {
         if (!disposed) commit(problemView(error, messages(localeRef.current)));
       } finally {
@@ -322,13 +329,72 @@ export function ComposedReferenceGameApp() {
         else if (!disposed && viewRef.current.kind === "ready") connect();
       }
     };
+    /**
+     * The authoritative half of a committed frame, coalesced to one pass at a time.
+     *
+     * Confirming a committed message or a turn transition costs `/state` and then
+     * the draft read that cross-checks it. Paid once per frame, a burst queued the
+     * reads faster than they resolved, so the authoritative state lagged the stream
+     * it was meant to confirm. A frame arriving while a pass is reading only marks
+     * that pass pending; the in-flight pass then runs exactly one more read, and
+     * clears the mark *before* it starts, so a frame that arrives during that read
+     * is pending too. The last frame therefore always gets a read issued after it
+     * arrived: coalescing can never become a lost update.
+     */
+    let reconciling = false;
+    let pendingReconcile = false;
+    const reconcile = async (): Promise<void> => {
+      if (reconciling) {
+        pendingReconcile = true;
+        return;
+      }
+      reconciling = true;
+      try {
+        do {
+          pendingReconcile = false;
+          if (disposed || recovering) return;
+          const current = viewRef.current;
+          if (current.kind !== "ready") return;
+          try {
+            const root = await composedApiRef.current.readState();
+            const draft = await tavernApiRef.current.readDraft();
+            const latest = viewRef.current;
+            // A recovery that started under these reads is reading the same
+            // authority with a cursor of its own; its answer supersedes this one.
+            if (disposed || recovering || latest.kind !== "ready" || root.chat.chat === null) return;
+            if (
+              draft.revision !== root.chat.chat.draft.revision ||
+              (draft.text !== null) !== root.chat.chat.draft.present
+            )
+              throw new ReferencePipelineSessionError("state_reconciliation_required");
+            const session = checkpoint.applySnapshot(root.chat);
+            setPreview(null);
+            // The authoritative turn is settled, so a pending record for it is spent
+            // - the same rule the fallback poll applies to the turns it settles. The
+            // stream is the live channel and the poll is suspended underneath it, so
+            // without this the record - and with it the composer - would survive the
+            // very settle the stream just delivered.
+            const settled = terminalTurn(root.chat.chat.turn)
+              ? session.withPending(null)
+              : session.withPending(latest.session.pending);
+            checkpoint = settled;
+            commit({ kind: "ready", root, session: settled, draft, locale: latest.locale });
+          } catch {
+            await recover(true);
+            return;
+          }
+        } while (pendingReconcile && !disposed);
+      } finally {
+        reconciling = false;
+      }
+    };
     const handleEvent = (event: BrowserEventV1, lastEventId: string): void => {
       work = work.then(async () => {
         if (disposed || recovering) return;
         try {
           const current = viewRef.current;
           if (current.kind !== "ready") return;
-          const checkpointed = current.session.applyEvent(event);
+          checkpoint = checkpoint.applyEvent(event);
           cursor = lastEventId;
           if (event.eventType === "companion.delta") {
             setPreview((existing) =>
@@ -343,28 +409,9 @@ export function ComposedReferenceGameApp() {
             return;
           }
           if (event.eventType === "message.committed" || event.eventType === "turn.state_changed") setPreview(null);
-          const root = await composedApiRef.current.readState();
-          const draft = await tavernApiRef.current.readDraft();
-          if (disposed || root.chat.chat === null) return;
-          if (
-            draft.revision !== root.chat.chat.draft.revision ||
-            (draft.text !== null) !== root.chat.chat.draft.present
-          )
-            throw new ReferencePipelineSessionError("state_reconciliation_required");
-          const session = checkpointed.applySnapshot(root.chat);
-          setPreview(null);
-          // The authoritative turn is settled, so a pending record for it is spent
-          // - the same rule the fallback poll applies to the turns it settles. The
-          // stream is the live channel and the poll is suspended underneath it, so
-          // without this the record - and with it the composer - would survive the
-          // very settle the stream just delivered.
-          commit({
-            kind: "ready",
-            root,
-            session: terminalTurn(root.chat.chat.turn) ? session.withPending(null) : session,
-            draft,
-            locale: current.locale,
-          });
+          // Not awaited: the pass owns the reads, so a frame that arrives while it
+          // runs still validates its own position here and then marks it pending.
+          void reconcile();
         } catch {
           await recover(true);
         }

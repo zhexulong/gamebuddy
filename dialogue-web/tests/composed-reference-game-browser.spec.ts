@@ -6403,6 +6403,195 @@ test("the composed conversation opens the projected event stream, previews a del
 });
 
 /**
+ * A burst of stream frames is confirmed by one authoritative read pair, not one per frame.
+ *
+ * The measured defect: `message.committed` and `turn.state_changed` each performed
+ * `GET /state` and then `GET /draft`, so a burst paid two serial round trips per
+ * frame and the queue of reads outran the stream it was confirming - the state
+ * lagged the very frames it was meant to confirm.
+ *
+ * The two directions this pins:
+ *  - N frames must not produce N state reads and N draft reads;
+ *  - the last frame's own state must still land. The first read is served the
+ *    durable state at the moment it was dispatched, which is before the final
+ *    frame exists - so only a read issued *after* that frame carries the committed
+ *    reply. A coalescer that drops its pending pass leaves the surface on the
+ *    intermediate projection forever, and the reply row never appears.
+ *
+ * A recovery during the burst would also show up here: `__streams` stays at one
+ * connection, so the frames that arrive while a read is in flight were threaded
+ * into the session's checkpoint rather than rejected as a gap.
+ */
+test("a burst of stream frames costs one read pair plus one, and the last frame's state still lands", async ({ page }) => {
+  test.setTimeout(90_000);
+  const streamEpoch = `${'E'.repeat(42)}A`;
+  const streamCursor = `${'F'.repeat(42)}A`;
+  const frames = 12;
+  const turnHandle = `${'T'.repeat(42)}A`;
+  const replyHandle = `${'R'.repeat(42)}A`;
+  const replyText = "The last frame's own state.";
+  const runningTurn = { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true };
+  const completedTurn = { handle: turnHandle, state: "completed", projectionRevision: 2, canCancel: false };
+  // The Host's durable effect of the burst: the turn is running for every frame
+  // but the last, and the last frame is what commits the companion's reply.
+  let turnRunning = false;
+  let replyCommitted = false;
+  let stateReads = 0;
+  let draftReads = 0;
+
+  const projection = () => ({
+    ...root,
+    chat: {
+      ...chat,
+      eventStream: { epoch: streamEpoch, cursor: streamCursor },
+      chat: {
+        ...chat.chat,
+        transcript: replyCommitted
+          ? [
+              ...chat.chat.transcript,
+              { handle: replyHandle, role: "companion", text: replyText, locale: "und", order: 1, revision: 2 },
+            ]
+          : chat.chat.transcript,
+        turn: replyCommitted ? completedTurn : turnRunning ? runningTurn : null,
+      },
+    },
+  });
+
+  await page.addInitScript(() => {
+    const state = window as unknown as {
+      __streams: Array<{ url: string; closed: boolean }>;
+      __streamHandlers: Array<Map<string, Array<(raw: unknown) => void>>>;
+      __emit: (index: number, type: string, data: string, id: string) => void;
+    };
+    state.__streams = [];
+    state.__streamHandlers = [];
+    class SyntheticEventSource {
+      onerror: ((event: unknown) => void) | null = null;
+      __index = -1;
+      constructor(url: string | URL) {
+        this.__index = state.__streams.length;
+        state.__streams.push({ url: String(url), closed: false });
+        state.__streamHandlers.push(new Map());
+      }
+      addEventListener(type: string, handler: (raw: unknown) => void): void {
+        const entry = state.__streamHandlers[this.__index]!;
+        entry.set(type, [...(entry.get(type) ?? []), handler]);
+      }
+      removeEventListener(type: string, handler: (raw: unknown) => void): void {
+        const entry = state.__streamHandlers[this.__index]!;
+        entry.set(type, (entry.get(type) ?? []).filter((candidate) => candidate !== handler));
+      }
+      close(): void {
+        state.__streams[this.__index]!.closed = true;
+      }
+    }
+    window.EventSource = SyntheticEventSource as unknown as typeof EventSource;
+    state.__emit = (index, type, data, id) => {
+      for (const handler of state.__streamHandlers[index]?.get(type) ?? []) handler({ data, lastEventId: id, type });
+    };
+  });
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
+  await page.route("**/api/composed-reference-game/v1/state", async (route) => {
+    stateReads += 1;
+    // Served from the durable state this read was dispatched against - captured
+    // now, so the answer cannot borrow the state of a later frame.
+    const body = projection();
+    // The burst is delivered while this read is in flight: that window is what the
+    // coalescing is about, and it is what makes the intermediate answer the one a
+    // dropped pending pass would leave on screen.
+    if (stateReads === 1) await new Promise((resolve) => setTimeout(resolve, 600));
+    await route.fulfill(jsonOk(body));
+  });
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => {
+    draftReads += 1;
+    return route.fulfill(jsonOk(draft));
+  });
+
+  const streamCount = async (): Promise<number> =>
+    await page.evaluate(() => (window as unknown as { __streams: unknown[] }).__streams.length);
+  // A tally of what the browser actually put on the wire, beside the route counts:
+  // the two must agree, so neither a route that answered without a request nor a
+  // read this surface made off the intercepted paths can hide in the numbers.
+  const statePath = "/api/composed-reference-game/v1/state";
+  const draftPath = "/api/tavern/v1/draft";
+  const wireRequests: string[] = [];
+  page.on("request", (request) => wireRequests.push(new URL(request.url()).pathname));
+  const wireCounts = (from: number) => ({
+    state: wireRequests.slice(from).filter((pathname) => pathname === statePath).length,
+    draft: wireRequests.slice(from).filter((pathname) => pathname === draftPath).length,
+  });
+  // A cursor is a canonical opaque handle, so the frames carry real ones: 43 chars
+  // whose final base64url character has its two spare bits clear.
+  const cursorSuffixes = "AEIMQUYcgkosw048";
+  const burst = (from: number, to: number): Array<{ data: string; id: string }> => {
+    const sent: Array<{ data: string; id: string }> = [];
+    for (let sequence = from; sequence <= to; sequence += 1) {
+      sent.push({
+        id: `${'H'.repeat(42)}${cursorSuffixes[sequence - 1]}`,
+        data: JSON.stringify({
+          apiVersion: 1,
+          epoch: streamEpoch,
+          sequence,
+          selectionGeneration: 1,
+          eventType: "turn.state_changed",
+          payload: sequence === frames ? completedTurn : runningTurn,
+        }),
+      });
+    }
+    return sent;
+  };
+  // One synchronous delivery: every frame of the list reaches the surface in the
+  // same task, which is the burst the defect could not keep up with.
+  const emit = async (sent: Array<{ data: string; id: string }>): Promise<void> => {
+    await page.evaluate((input: Array<{ data: string; id: string }>) => {
+      for (const item of input) {
+        (window as unknown as { __emit: (i: number, t: string, d: string, e: string) => void }).__emit(
+          0,
+          "turn.state_changed",
+          item.data,
+          item.id,
+        );
+      }
+    }, sent);
+  };
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const surface = page.getByTestId("chat-surface");
+  await expect(surface).toBeVisible();
+  await expect.poll(streamCount).toBe(1);
+  // The mount's own reads are not the burst's cost.
+  const baseline = { state: stateReads, draft: draftReads };
+  const wireBaseline = wireRequests.length;
+
+  turnRunning = true;
+  await emit(burst(1, frames - 1));
+  replyCommitted = true;
+  await emit(burst(frames, frames));
+
+  // The final frame's own state landed: the reply the intermediate projection did
+  // not have is on screen.
+  const reply = page.locator(`li[data-handle='${replyHandle}']`);
+  await expect(reply).toBeVisible();
+  await expect(reply).toContainText(replyText);
+
+  const measured = { state: stateReads - baseline.state, draft: draftReads - baseline.draft };
+  const wire = wireCounts(wireBaseline);
+  console.log(
+    `sse-coalesce: ${frames} frames -> route state=${measured.state} draft=${measured.draft}, wire state=${wire.state} draft=${wire.draft}; one pair per frame would be state=${frames} draft=${frames}`,
+  );
+  expect(measured).toEqual({ state: 2, draft: 2 });
+  expect(wire).toEqual(measured);
+  // No gap was manufactured by the frames that arrived mid-read: the burst needed
+  // no recovery and no reconnect.
+  expect(await streamCount()).toBe(1);
+  await expect(surface).not.toContainText("Unable to read chat");
+});
+
+/**
  * One player row's own shape, read from the row itself.
  *
  * It exists so the send journey can compare the optimistic row with the settled
