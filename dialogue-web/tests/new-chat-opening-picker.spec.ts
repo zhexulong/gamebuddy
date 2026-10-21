@@ -452,3 +452,75 @@ test("the player can read a whole opening before choosing it", async ({ page }) 
   await picked.click();
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("You are not alone in the house.");
 });
+
+// --- the reveal belongs to the card ------------------------------------------
+
+/**
+ * The reveal is drawn INSIDE the card it belongs to, on all four edges.
+ *
+ * The reveal used to be a sibling of the option card, so it read as an unrelated control that
+ * happened to sit under one opening. Moving it into the card's footer row is a layout claim, and a
+ * layout claim is only true where it is measured: the first shape of this fix put the reveal 80 px
+ * to the LEFT of the card's own left edge at 1440x900 - vertically inside, horizontally outside -
+ * because the card was a row and its children were laid along an axis wider than the card.
+ *
+ * What this asserts, per option and per viewport, with the whole opening expanded (the tallest and
+ * widest the card ever gets): the reveal's four insets against its own card are all >= 0, and the
+ * reveal sits below the reading area - the card's footer row, not a control beside the text.
+ */
+test("the reveal is drawn inside its own card, at 1440x900 and 400x800", async ({ page }) => {
+  await mountHost(page, {});
+  await boot(page);
+  await openChats(page);
+
+  await page.getByTestId("new-chat").click();
+  const picker = page.getByTestId("opening-picker");
+  await expect(picker).toBeVisible();
+
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 400, height: 800 },
+  ]) {
+    await page.setViewportSize(viewport);
+
+    for (let index = 0; index < OPENINGS.length; index += 1) {
+      // One card expands at a time, so this both opens the card being measured and collapses the
+      // one before it.
+      const reveal = picker.getByTestId("opening-option-expand").nth(index);
+      if ((await reveal.getAttribute("aria-expanded")) !== "true") await reveal.click();
+      await expect(picker.getByTestId("opening-option-full")).toHaveCount(1);
+
+      const measured = await page.evaluate((position) => {
+        const cards = [...document.querySelectorAll<HTMLElement>("[data-testid='opening-option-card']")];
+        const card = cards[position]!;
+        const reading = card.querySelector<HTMLElement>("[data-testid='opening-option']")!;
+        const expand = card.querySelector<HTMLElement>("[data-testid='opening-option-expand']")!;
+        const cardBox = card.getBoundingClientRect();
+        const revealBox = expand.getBoundingClientRect();
+        return {
+          card: { left: Math.round(cardBox.left), right: Math.round(cardBox.right), width: Math.round(cardBox.width) },
+          reveal: { left: Math.round(revealBox.left), right: Math.round(revealBox.right) },
+          insets: {
+            left: Math.round(revealBox.left - cardBox.left),
+            top: Math.round(revealBox.top - cardBox.top),
+            right: Math.round(cardBox.right - revealBox.right),
+            bottom: Math.round(cardBox.bottom - revealBox.bottom),
+          },
+          belowReading: revealBox.top >= reading.getBoundingClientRect().bottom - 0.5 ? 1 : 0,
+        };
+      }, index);
+
+      console.log(
+        `[reveal-in-card] ${viewport.width}x${viewport.height} option ${index} ` +
+          `card ${measured.card.left}..${measured.card.right} reveal ${measured.reveal.left}..${measured.reveal.right} ` +
+          `insets ${JSON.stringify(measured.insets)} below-reading ${measured.belowReading}`,
+      );
+
+      expect(measured.insets.left, `option ${index} reveal starts at or after its card's left edge`).toBeGreaterThanOrEqual(0);
+      expect(measured.insets.top, `option ${index} reveal starts at or after its card's top edge`).toBeGreaterThanOrEqual(0);
+      expect(measured.insets.right, `option ${index} reveal ends at or before its card's right edge`).toBeGreaterThanOrEqual(0);
+      expect(measured.insets.bottom, `option ${index} reveal ends at or before its card's bottom edge`).toBeGreaterThanOrEqual(0);
+      expect(measured.belowReading, `option ${index} reveal sits below the reading area`).toBe(1);
+    }
+  }
+});

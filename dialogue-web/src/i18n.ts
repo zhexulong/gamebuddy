@@ -102,6 +102,11 @@ const en = {
   openingPickerHint: "This Chat begins with the opening you pick.",
   openingExpand: "Read it all",
   openingCollapse: "Show less",
+  // The reveal is one of three on the same drawer, so the visible word alone cannot say which
+  // opening it opens; the name carries the card's own name. The visible word is a prefix of the
+  // name, so the spoken label still contains what the button says.
+  openingExpandName: "Read it all: {{name}}",
+  openingCollapseName: "Show less: {{name}}",
   // A created Chat whose chosen opening could not be committed: the Chat exists and
   // is durable, so the one fact to state is which opening it does start on.
   chatCreatedWithDefaultOpening:
@@ -828,6 +833,8 @@ const zh: Messages = {
   openingPickerHint: "会话将以您选择的开场白开始。",
   openingExpand: "展开全文",
   openingCollapse: "收起",
+  openingExpandName: "展开全文：{{name}}",
+  openingCollapseName: "收起：{{name}}",
   chatCreatedWithDefaultOpening: "会话已创建，但无法以您选择的开场白开始，将使用默认开场白。",
   exportChat: "导出聊天",
   renameChat: "重命名会话",

@@ -630,52 +630,75 @@ export function ChatsSurfacePanel({
               // minted once, when the set is read (`openingOptions`), so React keys by that identity
               // rather than by a loop index - the same discipline the editor rows follow.
               const preview = openingPreview(variant.text);
+              const name = openingVariantWords({ label: variant.label, index, count: openings.length }, labels);
+              const expanded = expandedOpening === variant.optionId;
+              const revealName = (expanded ? labels.openingCollapseName : labels.openingExpandName).replace(
+                "{{name}}",
+                name,
+              );
               return (
                 <div key={variant.optionId} role="listitem">
-                  <button
-                    type="button"
-                    className="opening-option"
-                    data-testid="opening-option"
-                    onClick={() => {
-                      setPickerOpen(false);
-                      createChat(index);
-                    }}
-                  >
-                    <span className="opening-option-name" data-testid="opening-option-name">
-                      {openingVariantWords({ label: variant.label, index, count: openings.length }, labels)}
-                    </span>
-                    {/* Her first spoken line, with the beat that precedes it kept as the
-                        option's own action line: the two are read in the order the
-                        transcript reads them. */}
-                    {preview.action !== null && (
-                      <MarkdownMessage className="opening-option-action" text={preview.action} />
+                  {/* One card per opening, and the card is the whole of it: the reading area is a
+                      button that commits this opening, the whole opening continues the same card's
+                      prose once it is asked for, and the reveal sits in the card's own footer row.
+                      The reveal is NOT inside the reading button - a button inside a button is not a
+                      control tree any browser honours - so the reading area opens the card's body
+                      and the footer row closes it. */}
+                  <div className="opening-option-card" data-testid="opening-option-card">
+                    <button
+                      type="button"
+                      className="opening-option"
+                      data-testid="opening-option"
+                      onClick={() => {
+                        setPickerOpen(false);
+                        createChat(index);
+                      }}
+                    >
+                      <span className="opening-option-name" data-testid="opening-option-name">
+                        {name}
+                      </span>
+                      {/* Her first spoken line, with the beat that precedes it kept as the
+                          option's own action line: the two are read in the order the
+                          transcript reads them. */}
+                      {preview.action !== null && (
+                        <MarkdownMessage className="opening-option-action" text={preview.action} />
+                      )}
+                      <MarkdownMessage
+                        className="opening-option-line"
+                        testId="opening-option-line"
+                        text={preview.spoken}
+                      />
+                    </button>
+                    {/* The card is one control, and its text is exactly what the choice turns on:
+                        one line of beat and two of speech. A real opening runs past that - the
+                        companion's own third opening is a paragraph - and a player choosing a
+                        scene they will live in should be able to read it first. */}
+                    {expanded && (
+                      <div
+                        className="opening-option-full"
+                        id={`${variant.optionId}-full`}
+                        data-testid="opening-option-full"
+                      >
+                        <MarkdownMessage text={variant.text} />
+                      </div>
                     )}
-                    <MarkdownMessage
-                      className="opening-option-line"
-                      testId="opening-option-line"
-                      text={preview.spoken}
-                    />
-                  </button>
-                  {/* The card is one control, and its text is exactly what the choice turns on:
-                      one line of beat and two of speech. A real opening runs past that - the
-                      companion's own third opening is a paragraph - and a player choosing a
-                      scene they will live in should be able to read it first. The reveal is a
-                      SIBLING of the card, not a child: the card is itself a button, and a
-                      button inside a button is not a control tree any browser will honour. */}
-                  <button
-                    type="button"
-                    className="opening-option-expand small-button"
-                    data-testid="opening-option-expand"
-                    aria-expanded={expandedOpening === variant.optionId}
-                    onClick={() => setExpandedOpening(expandedOpening === variant.optionId ? null : variant.optionId)}
-                  >
-                    {expandedOpening === variant.optionId ? labels.openingCollapse : labels.openingExpand}
-                  </button>
-                  {expandedOpening === variant.optionId && (
-                    <div className="opening-option-full" data-testid="opening-option-full">
-                      <MarkdownMessage text={variant.text} />
+                    {/* The reveal names the opening it belongs to: three cards in one drawer mean
+                        three controls whose visible word alone cannot say which one they open. */}
+                    <div className="opening-option-footer">
+                      <button
+                        type="button"
+                        className="opening-option-expand small-button"
+                        data-testid="opening-option-expand"
+                        aria-expanded={expanded}
+                        {...(expanded ? { "aria-controls": `${variant.optionId}-full` } : {})}
+                        aria-label={revealName}
+                        title={revealName}
+                        onClick={() => setExpandedOpening(expanded ? null : variant.optionId)}
+                      >
+                        {expanded ? labels.openingCollapse : labels.openingExpand}
+                      </button>
                     </div>
-                  )}
+                  </div>
                 </div>
               );
             })}

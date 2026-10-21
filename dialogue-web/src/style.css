@@ -5319,35 +5319,74 @@
     gap: var(--space-2);
   }
 
-  /* A list item holds a card plus its own reveal, and the reveal can be wider than the card's
-   text (a paragraph of prose). `min-width: 0` stops that child from setting the column's own
-   minimum width - which is what let the drawer measure 400.00003 px inside a 400 px viewport
-   (the mounted geometry test caught it) - and the column stretches its children instead. */
+  /* A list item holds one card and nothing else. `min-width: 0` stops the card from setting the
+   column's own minimum width - which is what let the drawer measure 400.00003 px inside a 400 px
+   viewport (the mounted geometry test caught it) - and the column stretches its children to the
+   drawer's measure. */
   .opening-options > * {
     display: flex;
     flex-direction: column;
     min-width: 0;
   }
 
+  /* One bordered card per opening, and the card owns all three of its rows: the reading area that
+   commits the opening, the whole opening when it is asked for, and the footer row that holds the
+   reveal. It is an explicit COLUMN, so the card's children are laid out down the card's own width
+   and none of them can be laid along a row that is wider or narrower than the card - which is what
+   put the reveal 80 px left of the card's left edge when the card was a row. `overflow: hidden`
+   keeps the footer's own rounded corners inside the card's edge. */
+  .opening-option-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 0;
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+  }
+
+  /* The card is the control the pointer is over, so the whole card answers the pointer rather
+   than only the reading area inside it. */
+  .opening-option-card:hover {
+    border-color: var(--border-strong);
+  }
+
+  /* The reading area: the card's first row, and the press that commits this opening. It draws no
+   edge of its own - the card's hairline is the edge - and keeps the 2 px of vertical border it
+   carried when it was the card (as its own transparent border) so its measured box is unchanged. */
   .opening-option {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-1);
     width: 100%;
+    min-width: 0;
     min-height: var(--touch-target-min);
     padding: var(--space-3);
     text-align: left;
-    background-color: var(--surface-raised);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    background-color: transparent;
+    border: 1px solid transparent;
     color: var(--text-primary);
     cursor: pointer;
-    transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
+    transition: background-color var(--motion-duration-fast) var(--motion-ease-out);
   }
 
   .opening-option:hover {
-    border-color: var(--border-strong);
+    background-color: var(--surface-elevated);
+  }
+
+  /* The card's footer row. It is a row of its own - the reveal is the card's one secondary action
+   and it sits under the prose rather than beside the reading area - and it starts at the card's
+   own left edge, inside the padding the three rows share. */
+  .opening-option-footer {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-3) var(--space-3);
   }
 
   .opening-option-name {
@@ -5390,29 +5429,24 @@
     margin: 0;
   }
 
-  /* The whole opening, when the player asks for it. The card is measured at about 112 px -
+  /* The whole opening, when the player asks for it. The reading area is measured at about 66 px -
    one line of beat and two of speech - which is what the choice turns on, but a real opening
    runs to a paragraph and picking one blind is picking the scene you will live in blind. The
-   reveal sits under its own card, takes the drawer's measure rather than the card's edge, and
-   reads like the transcript's prose, so reading it is the same act as reading her. */
-  .opening-option-expand {
-    align-self: flex-start;
-    max-width: 100%;
-    margin-top: var(--space-1);
-  }
-
+   reveal sits in the card's footer, and what it reveals continues the SAME card's prose below the
+   reading area, so reading it is the same act as reading her. */
   .opening-option-full {
-    max-width: var(--management-form-measure);
+    max-width: 100%;
     min-width: 0;
-    margin-top: var(--space-2);
-    padding: var(--space-3);
-    background-color: var(--surface-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    padding: 0 var(--space-3) var(--space-2);
     font-size: 13px;
     line-height: 1.7;
     color: var(--text-secondary);
     overflow-wrap: anywhere;
+  }
+
+  .opening-option-expand {
+    margin-top: 0;
+    max-width: 100%;
   }
 
   .opening-option-full > :is(p, blockquote, pre, ul, ol, hr) {
