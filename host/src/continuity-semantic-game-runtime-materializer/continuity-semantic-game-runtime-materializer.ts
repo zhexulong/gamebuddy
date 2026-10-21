@@ -35,6 +35,7 @@ import type { GameConnection } from "../game-connection.js";
 import type { RuntimeSession } from "../runtime.js";
 import { formatGameEnvironmentFacts } from "../runtime-core.internal.js";
 import { identityProfileMetadata } from "../identity-profile.js";
+import { resolveRuntimePaths } from "../runtime-identity.js";
 import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
 import { createMaterializedGameCompanionRuntime } from "../game-runtime-fixed-tools.internal.js";
 import {
@@ -899,13 +900,17 @@ async function createMaterializedGameRuntime(
       admissionProvider: createGamePresentationAdmissionProvider(turnTracker, handle.interruption),
     });
   };
-  // The player's own Game profile model is a precondition of the surface, and
+  // The player's own model configuration is a precondition of the surface, and
   // the operational gate nonce decides only whether the gameplay worker is
   // armed. A model-less Game session is not a degraded session but a dead one,
   // so the attachment builder fails closed before any runtime exists.
   const gameplayWorkerEnabled = gameOperationalGateNonceSha256 !== undefined;
+  // The player's connections live in the identity-scoped runtime directory, so the
+  // attachment reads the same record `runtime-core` resolves this runtime's provider
+  // entry and credential from - the one the Chat surface reads too.
   const runtimeAttachment = await createGameRuntimeAttachment({
     runtimeRoot,
+    agentDir: resolveRuntimePaths(identity, runtimeRoot).agentDir,
     gameplayWorkerEnabled,
     hostBindingFactory,
     ...(recoveryAttachment === undefined ? {} : { recoveryAttachment }),

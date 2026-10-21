@@ -746,8 +746,8 @@ test("production materializer source rejects legacy lifecycle, facade, store com
   );
   assert.match(
     sources[0],
-    /const runtimeAttachment = await createGameRuntimeAttachment\(\{\s*\n\s*runtimeRoot,\s*\n\s*gameplayWorkerEnabled,\s*\n\s*hostBindingFactory,\s*\n\s*\.\.\.\(recoveryAttachment === undefined \? \{\} : \{ recoveryAttachment \}\),\s*\n\s*\}\);/,
-    "every Game materialization builds its attachment unconditionally, with the player's Game model profile inside it",
+    /const runtimeAttachment = await createGameRuntimeAttachment\(\{\s*\n\s*runtimeRoot,\s*\n\s*agentDir: resolveRuntimePaths\(identity, runtimeRoot\)\.agentDir,\s*\n\s*gameplayWorkerEnabled,\s*\n\s*hostBindingFactory,\s*\n\s*\.\.\.\(recoveryAttachment === undefined \? \{\} : \{ recoveryAttachment \}\),\s*\n\s*\}\);/,
+    "every Game materialization builds its attachment unconditionally, with the player's model configuration and the connection directory both surfaces share inside it",
   );
   assert.equal(
     sources[0].includes("workerAttachment"),
