@@ -208,7 +208,7 @@ export type PiTranscriptRewindResult =
 /** Why a refused edit left the model's context exactly as it was. Each reason is a statement about
  * the entry the caller named and the session did not carry, so the caller refuses instead of
  * replacing text in an entry it cannot prove belongs to the message the player is looking at. */
-type PiTranscriptEditRefusal = "edit_target_unavailable" | "edit_target_text_mismatch";
+type PiTranscriptEditRefusal = "edit_target_unavailable";
 
 export type PiTranscriptEditResult =
   | Readonly<{
@@ -320,7 +320,7 @@ function pairTranscriptRows(
  * anchor whose words the row projection drops) is passed over instead of occupying a position, and the
  * LAST paired entry is the target. The row the player named must pair - one the model carries nothing
  * for refuses as `edit_target_unavailable` - and a paired entry whose contribution an edit cannot
- * replace refuses as `edit_target_text_mismatch`; a shape it cannot prove refuses and the caller must
+ * replace refuses; a shape it cannot prove refuses and the caller must
  * then leave the transcript unchanged.
  *
  * What it does with that proof is the vendor's append-only edit of one entry: the target keeps its
@@ -339,7 +339,9 @@ export function editPiTranscriptEntry(
   if (target === undefined || target === null) return { status: "refused", reason: "edit_target_unavailable" };
   // The contribution the entry makes now is what a revert puts back, and it is the fact the pairing
   // above cannot answer: pairing names the entry by its words, while an edit replaces its content.
-  if (target.content === null) return { status: "refused", reason: "edit_target_text_mismatch" };
+  // Unreachable in the shapes the product writes (see the union's note), but a session whose entry cannot be
+  // replaced must still refuse rather than write: the refusal is the same one - this session cannot edit it.
+  if (target.content === null) return { status: "refused", reason: "edit_target_unavailable" };
   const original = target.content;
   session.sessionManager.appendContextEdit(target.id, { content: editedContentOf(original, text) });
   session.refreshContext();
