@@ -9,6 +9,13 @@ import { createWindowsGogInstallationSource } from "./gog-source.js";
 export const STARDEW_GAME_EXECUTABLE_FILE = "Stardew Valley.exe";
 export const STARDEW_SMAPI_EXECUTABLE_FILE = "StardewModdingAPI.exe";
 
+/**
+ * The bounded refusal a launch mints when the player's game directory can start
+ * Stardew Valley by hand but carries no mod loader, so the Companion Mod can
+ * never load in it.
+ */
+export const STARDEW_MOD_LOADER_MISSING = "stardew_mod_loader_missing";
+
 type StardewGameInstallSource = "steam" | "gog" | "chosen";
 
 export type StardewGameRootProbe = Readonly<{ gameExecutable: boolean; smapi: boolean }>;
@@ -69,6 +76,24 @@ export async function probeStardewGameRoot(installRoot: string): Promise<Stardew
   } catch {
     return Object.freeze({ gameExecutable: false, smapi: false });
   }
+}
+
+/**
+ * The launch-time mod-loader requirement, read through the same probe every
+ * installation decision uses.
+ *
+ * Without `StardewModdingAPI.exe` the game starts vanilla: the Player Host would
+ * spawn into a world the Mod never joined. Refusing here, by name, is what tells
+ * the player SMAPI is missing instead of reporting an uncertain launch result
+ * after a game that cannot attach anything.
+ *
+ * A directory that reports no game executable at all is deliberately not this
+ * fact - the installation admission owns an unusable root, and claiming a
+ * missing mod loader for a path holding no game would name the wrong cause.
+ */
+export async function requireStardewModLoaderInstalled(installRoot: string): Promise<void> {
+  const probe = await probeStardewGameRoot(installRoot);
+  if (probe.gameExecutable && !probe.smapi) throw new Error(STARDEW_MOD_LOADER_MISSING);
 }
 
 function installationFrom(

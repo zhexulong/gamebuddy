@@ -6,9 +6,11 @@ import test from "node:test";
 
 import {
   STARDEW_GAME_EXECUTABLE_FILE,
+  STARDEW_MOD_LOADER_MISSING,
   STARDEW_SMAPI_EXECUTABLE_FILE,
   discoverStardewGameInstallation,
   probeStardewGameRoot,
+  requireStardewModLoaderInstalled,
   resolveStardewGameInstallation,
   type StardewGameInstallationResolverInput,
   type StardewGameRootProbe,
@@ -163,3 +165,48 @@ test("probing a missing installation reports no executables", { skip: process.pl
     smapi: false,
   });
 });
+
+/**
+ * The falsifier for the mod-loader requirement. A game directory holding only
+ * `Stardew Valley.exe` is exactly the machine the first-run review describes: the
+ * game starts, the Companion Mod never loads, and nobody told the player why. The
+ * probe must report the absence, and the refusal must name it in a bounded code,
+ * so the launch can stop there and the player can read what to install.
+ */
+test(
+  "a game directory without the mod loader is detected and refused by name",
+  { skip: process.platform !== "win32" },
+  async () => {
+    assert.equal(STARDEW_MOD_LOADER_MISSING, "stardew_mod_loader_missing");
+    const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-stardew-no-loader-"));
+    try {
+      await writeFile(join(root, STARDEW_GAME_EXECUTABLE_FILE), "game");
+      assert.deepEqual(await probeStardewGameRoot(root), { gameExecutable: true, smapi: false });
+      await assert.rejects(requireStardewModLoaderInstalled(root), { message: STARDEW_MOD_LOADER_MISSING });
+
+      await writeFile(join(root, STARDEW_SMAPI_EXECUTABLE_FILE), "smapi");
+      await requireStardewModLoaderInstalled(root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+/**
+ * The named refusal may not swallow another installation's fault: an empty or
+ * wrong directory is the installation admission's own refusal, and reporting it
+ * as a missing mod loader would send the player to install SMAPI over a game that
+ * is not there. The requirement therefore stands down when no game is present.
+ */
+test(
+  "a directory that holds no game is not refused as a missing mod loader",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-not-stardew-"));
+    try {
+      await requireStardewModLoaderInstalled(root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
