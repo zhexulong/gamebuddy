@@ -34,8 +34,9 @@
  * itself, so the composed shell's surface reports it in place.
  */
 import { Archive, Pencil, Sparkles, Trash2 } from "lucide-react";
-import { type ReactElement, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type ReactElement, useEffect, useRef, useState } from "react";
 import type { Locale, Messages } from "../i18n";
+import { useArmedConfirmation } from "./armed-confirmation";
 import { ContextDrawer } from "./ContextDrawer";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { openingVariantWords } from "./opening-variant-labels";
@@ -289,6 +290,13 @@ export function ChatsSurfacePanel({
     selectedAtArm: string;
   }> | null>(null);
   const { inline, report } = useSurfaceNotice(onNotice);
+  // The row's rename editor is the same arm-and-close pair the destructive rows use
+  // (`armed-confirmation.ts`): opening it REPLACES the pencil that was pressed with a field,
+  // so without this the page drops focus onto `<body>` the moment the pencil is clicked, and
+  // again when the editor closes under the player. The trigger is whichever pencil opened the
+  // editor - the pencils share the ref, and the editor's own mount is what re-attaches it, so
+  // it can only ever hold the one row that is being renamed.
+  const renamePair = useArmedConfirmation(editing !== null, () => setEditing(null));
 
   useEffect(() => {
     let active = true;
@@ -387,6 +395,38 @@ export function ChatsSurfacePanel({
         report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
       }
     })();
+  };
+
+  /**
+   * Closes the rename editor and gives the pencil back its focus.
+   *
+   * The module names the step `cancel` because its first user was a destructive confirmation;
+   * here it is only the close half - Escape stops there and writes nothing, and Enter closes
+   * through it and then commits the title it was asked to save.
+   */
+  const closeRename = renamePair.cancel;
+
+  const commitRename = (handle: string, title: string): void => {
+    closeRename();
+    rename(handle, title);
+  };
+
+  /**
+   * The editor's own keyboard path: Enter saves, Escape dismisses, and both give the pencil
+   * back. `stopPropagation` on the Escape is the module's, so a dismissal is not also a
+   * dismissal of the surface the row sits on.
+   */
+  const renameKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === "Escape") {
+      renamePair.onConfirmKeyDown(event);
+      return;
+    }
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    if (editing === null) return;
+    const next = editing.title.trim();
+    if (next.length > 0) commitRename(editing.handle, next);
+    else closeRename();
   };
 
   /**
@@ -693,7 +733,7 @@ export function ChatsSurfacePanel({
                 onClick={rowSelects ? () => selectChat(chat.handle) : undefined}
               >
                 {editingHere ? (
-                  <>
+                  <div data-testid="chat-rename" onKeyDown={renameKeyDown}>
                     <input
                       type="text"
                       className="form-input"
@@ -708,17 +748,17 @@ export function ChatsSurfacePanel({
                         className="small-button primary"
                         onClick={() => {
                           const next = editing.title.trim();
-                          if (next.length > 0) rename(chat.handle, next);
-                          else setEditing(null);
+                          if (next.length > 0) commitRename(chat.handle, next);
+                          else closeRename();
                         }}
                       >
                         {labels.save}
                       </button>
-                      <button type="button" className="small-button" onClick={() => setEditing(null)}>
+                      <button type="button" className="small-button" onClick={closeRename}>
                         {labels.close}
                       </button>
                     </div>
-                  </>
+                  </div>
                 ) : (
                   <>
                     <div className="chat-item-main">
@@ -748,6 +788,7 @@ export function ChatsSurfacePanel({
                         <div className="chat-item-actions">
                           {renameHere && (
                             <button
+                              ref={renamePair.triggerRef}
                               type="button"
                               className="icon-button-small"
                               title={labels.renameChat}

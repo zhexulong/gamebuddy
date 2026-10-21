@@ -176,6 +176,98 @@ test("the product Chats surface renames through chat/title and moves the convers
 });
 
 /**
+ * The row's rename editor answers the keyboard, and gives focus back.
+ *
+ * The field was inserted into the row and then only the two buttons under it could close it:
+ * Enter did nothing and Escape did nothing, so a player renaming with the keyboard had to
+ * find the pencil, open the editor, type a title and then reach for the mouse. The pencil
+ * that opened it is unmounted by the same render too, so closing the editor dropped focus
+ * onto `<body>` at both ends.
+ *
+ * The measurement is `document.activeElement` after each key, on the mounted surface: Enter
+ * saves and returns focus to the pencil, Escape dismisses without writing and returns it as
+ * well. The editor takes its keyboard path from `armed-confirmation.ts`, the module the
+ * destructive rows already use, so the focus movement is one implementation and not a copy.
+ */
+test("the Chats rename editor saves on Enter and dismisses on Escape, and each gives focus back to the pencil", async ({ page }) => {
+  const titleWrites: unknown[] = [];
+  let rootTitle: string | null = null;
+
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill(json200({ ...composedRoot, chat: { ...composedChat, chat: { ...composedChat.chat, title: rootTitle } } })),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill(json200({ ...composedRoot, chat: { ...composedChat, chat: { ...composedChat.chat, title: rootTitle } } })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        chats: [
+          {
+            handle: chatHandle,
+            title: rootTitle,
+            status: "active",
+            managementRevision: titleWrites.length === 0 ? 1 : 2,
+            isSelected: true,
+            updatedAtMs: 1_760_000_000_000,
+            preview: "The parsnips took. All of them, by the look of it.",
+          },
+        ],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/chat/title", async (route) => {
+    const body = route.request().postDataJSON() as { title: string };
+    titleWrites.push(route.request().postDataJSON());
+    rootTitle = body.title;
+    await route.fulfill(json200({ apiVersion: 1, title: rootTitle, managementRevision: 2 }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+
+  /** What the browser is holding after a key, named the way a player would recognise it. */
+  const focused = async (): Promise<Readonly<{ tag: string; name: string | null }>> =>
+    await page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      return { tag: active === null ? "none" : active.tagName.toLowerCase(), name: active?.getAttribute("aria-label") ?? null };
+    });
+  const log: Record<string, Readonly<{ tag: string; name: string | null }>> = {};
+
+  await surface.getByTitle("Rename Chat").focus();
+  await page.keyboard.press("Enter");
+  await expect(surface.locator("input.form-input")).toBeVisible();
+  log.opened = await focused();
+  await surface.locator("input.form-input").fill("A chat renamed by keyboard");
+
+  // Escape dismisses: nothing is written, and the pencil that opened the field holds focus again.
+  await page.keyboard.press("Escape");
+  await expect(surface.locator("input.form-input")).toHaveCount(0);
+  log.dismissed = await focused();
+  expect(titleWrites, "Escape writes nothing").toHaveLength(0);
+
+  // Enter saves from the same place: the write is the row's own title, and focus comes back.
+  await page.keyboard.press("Enter");
+  await expect(surface.locator("input.form-input")).toBeVisible();
+  await surface.locator("input.form-input").fill("A chat renamed by keyboard");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => titleWrites.length).toBe(1);
+  await expect(surface.locator("input.form-input")).toHaveCount(0);
+  log.saved = await focused();
+  console.log(`[rename-keys] ${JSON.stringify(log)}`);
+
+  expect(log.opened, "the editor's own field takes focus when it opens").toMatchObject({ tag: "input" });
+  expect(titleWrites[0]).toEqual({ apiVersion: 1, chatHandle, expectedManagementRevision: 1, title: "A chat renamed by keyboard" });
+  for (const step of ["dismissed", "saved"] as const)
+    expect(log[step], `${step}: focus returns to the pencil that opened the field`).toEqual({ tag: "button", name: "Rename Chat" });
+  await expect(surface.getByTestId("chat-select")).toHaveText("A chat renamed by keyboard");
+});
+
+/**
  * The composed shell's Characters surface owns the character's world book: the
  * standalone World Info peer surface is gone, so the same bind state machine -
  * read, bind with the exact opaque revision, then re-read the authoritative
