@@ -126,11 +126,16 @@ type MountOptions = Readonly<{
   root?: unknown;
   /** Answer the greeting record with the card's own openings. */
   openings?: readonly Readonly<{ label: string; text: string }>[];
+  /** The UI language this mount boots in; the fixture's default is the Chinese surface. */
+  locale?: "en" | "zh-CN";
 }>;
 
 async function mountShell(page: Page, options: MountOptions = {}): Promise<void> {
   const root = options.root ?? composedRoot();
-  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  await page.addInitScript(
+    (locale) => localStorage.setItem("gamebuddy.tavern.ui-locale", locale),
+    options.locale ?? "zh-CN",
+  );
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })));
@@ -732,6 +737,171 @@ test("the swipe switcher draws one pair of arrows, not the Host's arrows inside 
   expect(measured.buttons, "the switcher is still the two real buttons").toEqual(["上一个变体", "下一个变体"]);
 });
 
+// --- the stepper's disabled arrow (owner ruling, 2026-10-21) -------------------
+
+/**
+ * An arrow that cannot move still looks like an arrow.
+ *
+ * The stepper is the owner's bare `‹ 1/3 ›`: the glyph IS the visible control and the words live in
+ * the accessible name. What the bare form lost was the DISABLED state - `--text-disabled` on the
+ * strip's own card tone and nothing else - so an arrow at the first variant read as empty space
+ * rather than as an arrow that cannot go further.
+ *
+ * The rule the component and the sheet are held to, and the failure each assertion catches:
+ *  - the disabled arrow draws a container of its own, from the tokens the sheet already declares for
+ *    quiet controls (`--surface-panel` under the strip's `--surface-raised`, plus `--border-subtle`):
+ *    catches the tone-only state that started this, and catches a new colour invented for one arrow;
+ *  - the enabled arrow is untouched - the bare glyph on the strip, no plate, no hairline of its own:
+ *    catches the container leaking into the live state;
+ *  - the disabled state is attenuated ONCE (the tone alone, no `opacity`): catches the earlier double
+ *    dimming coming back through a fill that is composited with an opacity;
+ *  - the glyph clears 3:1 against ITS OWN container, not against the strip it used to sit on:
+ *    catches a container so close to the muted tone that "unavailable" reads as "absent";
+ *  - both arrows are the same 44 px target, so the strip's own box cannot move: catches the container
+ *    being bought with a smaller hit area;
+ *  - the names: the enabled arrow keeps 「下一个变体」 and the disabled one says WHY it cannot move.
+ */
+test("a disabled stepper arrow keeps a container, one attenuation and a name that says why", async ({ page }) => {
+  await mountShell(page, {
+    root: composedRoot({ transcript: [{ role: "companion", text: "门廊上的那盏灯还亮着。", opening: true }] }),
+  });
+
+  const measured = await page.evaluate(() => {
+    const parse = (value: string): [number, number, number, number] => {
+      const match = value.match(/rgba?\(([^)]+)\)/u);
+      if (match === null) return [0, 0, 0, 0];
+      const parts = match[1]!.split(",").map((part) => Number.parseFloat(part.trim()));
+      return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+    };
+    const channel = (value: number): number => {
+      const scaled = value / 255;
+      return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+    };
+    const luminance = (colour: readonly number[]): number =>
+      0.2126 * channel(colour[0]!) + 0.7152 * channel(colour[1]!) + 0.0722 * channel(colour[2]!);
+    const ratio = (foreground: readonly number[], background: readonly number[]): number => {
+      const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+      return (lighter! + 0.05) / (darker! + 0.05);
+    };
+    /** The opaque colour the glyph is painted on, composited exactly as the runtime contrast gate does. */
+    const container = (button: Element): number[] => {
+      const stack: [number, number, number, number][] = [];
+      for (let current: Element | null = button; current !== null; current = current.parentElement) {
+        const background = parse(getComputedStyle(current).backgroundColor);
+        stack.push(background);
+        if (background[3] >= 0.999) break;
+      }
+      let effective: number[] = [...stack[stack.length - 1]!.slice(0, 3)];
+      for (let index = stack.length - 2; index >= 0; index -= 1) {
+        const top = stack[index]!;
+        effective = [
+          top[0]! * top[3] + effective[0]! * (1 - top[3]),
+          top[1]! * top[3] + effective[1]! * (1 - top[3]),
+          top[2]! * top[3] + effective[2]! * (1 - top[3]),
+        ];
+      }
+      return effective.map((value) => Math.round(value));
+    };
+    const box = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      return { width: Math.round(rect.width), height: Math.round(rect.height) };
+    };
+    const read = (button: HTMLElement) => {
+      const style = getComputedStyle(button);
+      const fill = container(button);
+      return {
+        name: (button.getAttribute("aria-label") ?? "").trim(),
+        disabled: (button as HTMLButtonElement).disabled,
+        color: style.color,
+        backgroundColor: style.backgroundColor,
+        borderTopWidth: style.borderTopWidth,
+        borderTopColor: style.borderTopColor,
+        opacity: style.opacity,
+        box: box(button),
+        container: `rgb(${fill.join(",")})`,
+        ratio: Math.round(ratio(parse(style.color).slice(0, 3), fill) * 100) / 100,
+      };
+    };
+    const pager = document.querySelector<HTMLElement>(".swipe-controls")!;
+    const [previous, next] = [...pager.querySelectorAll<HTMLElement>(".swipe-btn")];
+    return {
+      indicator: (pager.querySelector(".swipe-indicator")?.textContent ?? "").trim(),
+      pager: box(pager),
+      stripBackground: getComputedStyle(pager).backgroundColor,
+      previous: read(previous!),
+      next: read(next!),
+    };
+  });
+  console.log(`[stepper-disabled] ${JSON.stringify(measured)}`);
+
+  const { previous, next } = measured;
+  expect(previous.disabled, "the Host's own index <= 0 precondition disables the previous arrow").toBe(true);
+  expect(next.disabled, "and the next direction stays operable").toBe(false);
+
+  // Present: the disabled arrow draws the quiet control's own box, one layer down from the strip.
+  expect(previous.backgroundColor, "the disabled arrow is not a transparent glyph any more").not.toBe(
+    "rgba(0, 0, 0, 0)",
+  );
+  expect(previous.backgroundColor, "and its plate is not the strip's own fill, which would be invisible").not.toBe(
+    measured.stripBackground,
+  );
+  expect(previous.borderTopWidth, "it carries the quiet hairline").toBe("1px");
+  expect(previous.borderTopColor, "in a colour that is actually drawn").not.toBe("rgba(0, 0, 0, 0)");
+
+  // Unavailable, and legible: the number this file's own [stepper-disabled] line printed.
+  expect(
+    previous.ratio,
+    `the disabled glyph paints ${previous.color} on ${previous.container} = ${previous.ratio}:1`,
+  ).toBeGreaterThanOrEqual(3);
+
+  // Attenuated once: the tone alone.
+  expect(Number.parseFloat(previous.opacity), "no opacity dims the disabled arrow a second time").toBe(1);
+
+  // The enabled arrow is exactly what it was: the bare glyph on the strip.
+  expect(next.backgroundColor, "the enabled arrow draws no plate").toBe("rgba(0, 0, 0, 0)");
+  expect(next.borderTopWidth, "and no hairline of its own").toBe("0px");
+
+  // The 44 px target is not what changed, so the strip's own box cannot have moved with it.
+  expect(previous.box, "the disabled arrow is the same target the enabled one is").toEqual(next.box);
+  expect(previous.box.width, "and it is still the 44 px floor").toBeGreaterThanOrEqual(44);
+  expect(previous.box.height, "in both directions").toBeGreaterThanOrEqual(44);
+
+  // The names: the live one keeps the short word, the dead one says why.
+  expect(next.name, "the enabled arrow keeps the catalogue's short name").toBe("下一个变体");
+  expect(previous.name, "the disabled arrow says which end of the set it is on").toBe(
+    "上一个变体（这已经是第一个变体）",
+  );
+});
+
+/**
+ * The same pair of names in the other catalogue.
+ *
+ * The disabled name is not a translation of the glyph but a sentence, so it is pinned per language
+ * rather than once: a catalogue that dropped it would leave the English surface with the bare
+ * 「上一个变体」 and the same silence about WHY.
+ */
+test("the disabled stepper arrow says why in the English catalogue too", async ({ page }) => {
+  await mountShell(page, {
+    locale: "en",
+    root: composedRoot({
+      transcript: [{ role: "companion", text: "The lantern over the porch is still lit.", opening: true }],
+    }),
+  });
+
+  const arrows = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>(".swipe-btn")].map((button) => ({
+      name: (button.getAttribute("aria-label") ?? "").trim(),
+      disabled: (button as HTMLButtonElement).disabled,
+    })),
+  );
+  console.log(`[stepper-disabled en] ${JSON.stringify(arrows)}`);
+
+  expect(arrows, "the English surface names both states, and only the first states its reason").toEqual([
+    { name: "Previous variant (this is the first variant)", disabled: true },
+    { name: "Next variant", disabled: false },
+  ]);
+});
+
 // --- defect 6, the narrow control strip and the player's own line (owner ruling, 2026-10-19) ---
 
 /**
@@ -800,6 +970,7 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
     };
     return {
       strip: { box: box(strip), rows: new Set(controls.map((control) => control.centre)).size, controls },
+      pager: box(strip.querySelector<HTMLElement>(".swipe-controls")!),
       short: readPlayer(playerRows[0]!),
       long: readPlayer(playerRows[1]!),
       listWidth: round(document.querySelector<HTMLElement>("ol.message-list")!.getBoundingClientRect().width),
@@ -823,6 +994,17 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
   expect(measured.strip.box.width, "the strip is inside the reply's own column").toBeLessThanOrEqual(
     measured.listWidth,
   );
+  // The strip's recorded box (`shots-final31`, 400x800) and the arithmetic the narrow block rests on
+  // (`style.css`: the pager at 136 plus three 44 px targets plus three 6 px gaps). The disabled arrow's
+  // new container may not buy itself a single pixel out of either number.
+  expect(
+    { width: measured.strip.box.width, height: measured.strip.box.height },
+    "the strip keeps the box shots-final31 recorded",
+  ).toEqual({ width: 286, height: 46 });
+  expect({ width: measured.pager.width, height: measured.pager.height }, "and the pager keeps its 136 px").toEqual({
+    width: 136,
+    height: 46,
+  });
 
   // The player's own line: as wide as the line, and no wider.
   expect(
@@ -840,6 +1022,28 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
     measured.long.bubble.width,
     `a long line still fills its body (${measured.long.bubble.width} in ${measured.long.body.width})`,
   ).toBe(measured.long.body.width);
+
+  // The same two boxes at the wide window. The arrows are the same 44 px target there (the narrow
+  // block only retires the OTHER controls' words), so the pager does not move and the strip keeps the
+  // width its own contents give it.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const wide = await page.evaluate(() => {
+    const round = (value: number) => Math.round(value);
+    const box = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      return { width: round(rect.width), height: round(rect.height) };
+    };
+    const rows = [...document.querySelectorAll<HTMLElement>("ol.message-list > li")];
+    const strip = rows[2]!.querySelector<HTMLElement>(".message-actions")!;
+    return { strip: box(strip), pager: box(strip.querySelector<HTMLElement>(".swipe-controls")!) };
+  });
+  console.log(`[defect-6 wide] ${JSON.stringify(wide)}`);
+  expect(wide.pager, "the pager is the same 136 px at 1440x900").toEqual({ width: 136, height: 46 });
+  expect(wide.strip.height, "and the strip is still one target tall").toBe(46);
+  // 403 is what this strip's contents give it on the wide window (the same pager plus the three
+  // controls wearing their words); the arrows are 44x44 on both sides of this change, so it is the
+  // same number it was before the disabled arrow grew a container.
+  expect(wide.strip.width, "and the strip keeps the width its contents give it").toBe(403);
 });
 
 // --- the prosody tag's badge --------------------------------------------------

@@ -43,6 +43,67 @@ function swipePosition(label: string): string {
 }
 
 /**
+ * One arrow of a stepper: the bare `‹`/`›` the owner's ruling keeps - the glyph is the whole visible
+ * control and the words live in the accessible name, because at 400 px the words are what wrapped the
+ * strip onto a second row.
+ *
+ * A disabled arrow's name says WHY it cannot move: the pager is on the first or the last variant, or
+ * this turn is still being generated. A name that only repeated "previous variant" would leave a screen
+ * reader with the same silence the dimmed glyph leaves on the screen.
+ */
+type SwipeArrowLabels = Readonly<{
+  swipePrevious: string;
+  swipeNext: string;
+  swipePreviousAtFirst: string;
+  swipeNextAtLast: string;
+  swipePreviousBusy: string;
+  swipeNextBusy: string;
+}>;
+
+/** Why an arrow cannot move: the turn is still being generated, or the pager is at the end it would go towards. */
+function swipeArrowName(
+  labels: SwipeArrowLabels,
+  direction: "prev" | "next",
+  state: Readonly<{ busy: boolean; atEdge: boolean }>,
+): string {
+  if (state.busy) return direction === "prev" ? labels.swipePreviousBusy : labels.swipeNextBusy;
+  if (state.atEdge) return direction === "prev" ? labels.swipePreviousAtFirst : labels.swipeNextAtLast;
+  return direction === "prev" ? labels.swipePrevious : labels.swipeNext;
+}
+
+function SwipeArrow({
+  direction,
+  busy,
+  atEdge,
+  labels,
+  onPress,
+}: Readonly<{
+  direction: "prev" | "next";
+  busy: boolean;
+  atEdge: boolean;
+  labels: SwipeArrowLabels;
+  onPress: () => void;
+}>) {
+  const name = swipeArrowName(labels, direction, { busy, atEdge });
+  return (
+    <button
+      type="button"
+      className="swipe-btn"
+      disabled={busy || atEdge}
+      onClick={onPress}
+      aria-label={name}
+      title={name}
+    >
+      {direction === "prev" ? (
+        <ChevronLeft size={14} aria-hidden="true" />
+      ) : (
+        <ChevronRight size={14} aria-hidden="true" />
+      )}
+    </button>
+  );
+}
+
+/**
  * The editor a row's strip becomes while the player is rewriting that row's words.
  *
  * It is ONE control on both sides of the conversation - the player's own message and her reply - so the
@@ -270,37 +331,36 @@ export const MessageBubble = memo(function MessageBubble({
    * list carries none while it is visible), so its caller renders it as a `<div>`.
    */
   as?: "li" | "div";
-  labels: Readonly<{
-    swipeNavigation: string;
-    swipePrevious: string;
-    swipeNext: string;
-    regenerateVariant: string;
-    openingVariantDefault: string;
-    openingVariantAlternate: string;
-    rewindHere: string;
-    rewindHereName: string;
-    rewindConfirmPrompt: string;
-    rewindConfirmYes: string;
-    rewindConfirmNo: string;
-    editMessage: string;
-    editMessageName: string;
-    editMessageField: string;
-    editMessageSave: string;
-    editMessageCancel: string;
-    /**
-     * Her reply's own edit control. Its words differ from the player's in exactly two places: the
-     * accessible name says the press changes words the model will read, and the field's label says
-     * whose words the field holds - an edit of her reply is the same operation on the other side of
-     * the exchange. The visible word is the same "Edit" either way.
-     */
-    editReplyName: string;
-    editReplyField: string;
-    deleteMessage: string;
-    deleteMessageName: string;
-    deleteConfirmPrompt: string;
-    deleteConfirmYes: string;
-    deleteConfirmNo: string;
-  }>;
+  labels: SwipeArrowLabels &
+    Readonly<{
+      swipeNavigation: string;
+      regenerateVariant: string;
+      openingVariantDefault: string;
+      openingVariantAlternate: string;
+      rewindHere: string;
+      rewindHereName: string;
+      rewindConfirmPrompt: string;
+      rewindConfirmYes: string;
+      rewindConfirmNo: string;
+      editMessage: string;
+      editMessageName: string;
+      editMessageField: string;
+      editMessageSave: string;
+      editMessageCancel: string;
+      /**
+       * Her reply's own edit control. Its words differ from the player's in exactly two places: the
+       * accessible name says the press changes words the model will read, and the field's label says
+       * whose words the field holds - an edit of her reply is the same operation on the other side of
+       * the exchange. The visible word is the same "Edit" either way.
+       */
+      editReplyName: string;
+      editReplyField: string;
+      deleteMessage: string;
+      deleteMessageName: string;
+      deleteConfirmPrompt: string;
+      deleteConfirmYes: string;
+      deleteConfirmNo: string;
+    }>;
 }) {
   const isPlayer = message.role === "player";
   const authorName = isPlayer ? playerLabel : companionName;
@@ -574,52 +634,40 @@ export const MessageBubble = memo(function MessageBubble({
                     here are what wrapped the strip to two rows at 400 px, and in a
                     narrow chat the dialogue is what the player is reading - this is
                     Tavern's own `\u2039 1/3 \u203a` for the same reason. */}
-                    <button
-                      type="button"
-                      className="swipe-btn"
-                      disabled={busy || openingChoice.index <= 0}
-                      onClick={() => onOpeningVariant?.(message.handle, "prev")}
-                      aria-label={labels.swipePrevious}
-                      title={labels.swipePrevious}
-                    >
-                      <ChevronLeft size={14} aria-hidden="true" />
-                    </button>
+                    <SwipeArrow
+                      direction="prev"
+                      busy={busy}
+                      atEdge={openingChoice.index <= 0}
+                      labels={labels}
+                      onPress={() => onOpeningVariant?.(message.handle, "prev")}
+                    />
                     <span className="swipe-indicator">{openingVariantWords(openingChoice, labels)}</span>
-                    <button
-                      type="button"
-                      className="swipe-btn"
-                      disabled={busy || openingChoice.index >= openingChoice.count - 1}
-                      onClick={() => onOpeningVariant?.(message.handle, "next")}
-                      aria-label={labels.swipeNext}
-                      title={labels.swipeNext}
-                    >
-                      <ChevronRight size={14} aria-hidden="true" />
-                    </button>
+                    <SwipeArrow
+                      direction="next"
+                      busy={busy}
+                      atEdge={openingChoice.index >= openingChoice.count - 1}
+                      labels={labels}
+                      onPress={() => onOpeningVariant?.(message.handle, "next")}
+                    />
                   </div>
                 )}
                 {!rewindArmed && swipeSet && (
                   <div className="swipe-controls" aria-label={labels.swipeNavigation}>
-                    <button
-                      type="button"
-                      className="swipe-btn"
-                      disabled={busy || !swipeSet.hasPrevious}
-                      onClick={() => onSwipe?.(message.handle, "prev")}
-                      aria-label={labels.swipePrevious}
-                      title={labels.swipePrevious}
-                    >
-                      <ChevronLeft size={14} aria-hidden="true" />
-                    </button>
+                    <SwipeArrow
+                      direction="prev"
+                      busy={busy}
+                      atEdge={!swipeSet.hasPrevious}
+                      labels={labels}
+                      onPress={() => onSwipe?.(message.handle, "prev")}
+                    />
                     <span className="swipe-indicator">{swipePosition(swipeSet.label)}</span>
-                    <button
-                      type="button"
-                      className="swipe-btn"
-                      disabled={busy || !swipeSet.hasNext}
-                      onClick={() => onSwipe?.(message.handle, "next")}
-                      aria-label={labels.swipeNext}
-                      title={labels.swipeNext}
-                    >
-                      <ChevronRight size={14} aria-hidden="true" />
-                    </button>
+                    <SwipeArrow
+                      direction="next"
+                      busy={busy}
+                      atEdge={!swipeSet.hasNext}
+                      labels={labels}
+                      onPress={() => onSwipe?.(message.handle, "next")}
+                    />
                   </div>
                 )}
                 {!rewindArmed && onRegenerate && (

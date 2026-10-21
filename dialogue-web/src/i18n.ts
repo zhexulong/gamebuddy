@@ -336,6 +336,13 @@ const en = {
   swipeNavigation: "Message variants",
   swipePrevious: "Previous variant",
   swipeNext: "Next variant",
+  // A disabled arrow still says WHY it cannot move - the pager is on the first or the last variant, or
+  // this turn is still being generated - because the bare glyph dims to a tone that reads as nothing at
+  // all. The enabled pair keeps the short word above, which is why these are keys of their own.
+  swipePreviousAtFirst: "Previous variant (this is the first variant)",
+  swipeNextAtLast: "Next variant (this is the last variant)",
+  swipePreviousBusy: "Previous variant (unavailable while a reply is being generated)",
+  swipeNextBusy: "Next variant (unavailable while a reply is being generated)",
   regenerateVariant: "Regenerate",
   // Her reply was cut off, and the player is the one who can do something about it: this line sits
   // on that reply and names the Regenerate control on the same row. It is NOT one of the failure
@@ -1036,6 +1043,12 @@ const zh: Messages = {
   swipeNavigation: "消息变体",
   swipePrevious: "上一个变体",
   swipeNext: "下一个变体",
+  // 不可用的箭头也要说出「为什么」：分页已经在这一组的第一条或最后一条，或者这一轮还在生成——裸字形
+  // 暗下去之后看起来像什么都没有，无障碍名称是它唯一还说得出口的地方。可用的那一对保持上面那两个短词。
+  swipePreviousAtFirst: "上一个变体（这已经是第一个变体）",
+  swipeNextAtLast: "下一个变体（这已经是最后一个变体）",
+  swipePreviousBusy: "上一个变体（正在生成回复，暂时不可用）",
+  swipeNextBusy: "下一个变体（正在生成回复，暂时不可用）",
   regenerateVariant: "重新生成",
   // 她的回复被截断了，而能改变这件事的是玩家：这句话就落在那条回复上，并点名同一行的「重新生成」。
   // 它不属于上面的失败文案，读起来也不像失败——回复是真实存在的、就在屏幕上，只是写了一半。

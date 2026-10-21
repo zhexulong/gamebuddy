@@ -795,6 +795,20 @@
        other muted text in this strip (`.swipe-indicator`'s `--text-secondary`)
        sits beside, and because the button keeps `cursor: not-allowed`. */
     color: var(--text-disabled);
+    /* The tone alone was not yet a state. With no container the arrow read as
+       nothing at all rather than as an unavailable one, so the disabled button
+       draws the quiet control's own box - and it is the same pair the strip and
+       every sibling in it already wear, one layer down: `--surface-panel` is the
+       surface under the strip's `--surface-raised`, and `--border-subtle` is the
+       hairline `.swipe-controls`, `.regenerate-btn`, `.rewind-btn` and
+       `.edit-btn` all draw. No new colour is introduced; there is no token named
+       for "quiet inset", and this is the closest one the sheet declares. The
+       glyph is `--text-disabled` on that well at 5.2:1, so it is dimmer than the
+       live arrow and legible as an arrow. The box stays 44x44 (`border-box` is
+       global, `min-width`/`min-height` are `--touch-target-min`), so the strip's
+       own box does not move. */
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
     cursor: not-allowed;
   }
 

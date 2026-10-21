@@ -63,6 +63,11 @@ export function Timeline({
     swipeNavigation: string;
     swipePrevious: string;
     swipeNext: string;
+    /** The same two arrows when they cannot move, stating which end of the set they are on, or the turn still being generated. */
+    swipePreviousAtFirst: string;
+    swipeNextAtLast: string;
+    swipePreviousBusy: string;
+    swipeNextBusy: string;
     regenerateVariant: string;
     /**
      * The line a reply carries when the generation that wrote it stopped at the model's length
