@@ -1,11 +1,11 @@
 // One falsifier per check: each check must be able to report its own finding when the wiring it guards is
 // broken, and must stay silent on the real checkout's good wiring.
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
-import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { preflightLiveRun } from "./live-run-preflight.mjs";
 import {
   checkExperimentalRunners,
   checkGateFalsifiers,
@@ -15,6 +15,7 @@ import {
   harnessGateNames,
   readModFixtureSources,
 } from "./harness-conformance.mjs";
+import { preflightLiveRun } from "./live-run-preflight.mjs";
 
 const toolsDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(toolsDir, "..");
@@ -98,6 +99,34 @@ test("runner check reports a runner that is not on disk", () => {
   assert.deepEqual(checkRunnerResolution({ toolsDir }), []);
 });
 
+// The property is "importing it starts nothing", so the falsifier is a runner that starts something on import - with
+// `import.meta.main` written in it, which is all the source-text form this check replaced ever looked for.
+test("runner check imports the runner and reports one that starts on import", () => {
+  const root = mkdtempSync(join(tmpdir(), "harness-runner-"));
+  try {
+    const stubTools = join(root, "tools");
+    mkdirSync(stubTools, { recursive: true });
+    const stub = "run-stub-smoke.mjs";
+    writeFileSync(
+      join(stubTools, stub),
+      '// import.meta.main is named in this comment and nowhere else\nprocess.stdout.write("session started\\n");\n',
+    );
+    const findings = checkRunnerResolution({ actionIds: ["till_soil"], resolve: () => stub, toolsDir: stubTools });
+    assert.deepEqual(
+      findings.map((entry) => entry.code),
+      ["runner_missing_cli"],
+    );
+    assert.match(findings[0].detail, /import printed: session started/u);
+
+    // The control: a runner whose CLI really is gated imports silently and passes.
+    writeFileSync(join(stubTools, stub), 'if (import.meta.main) process.stdout.write("session started\\n");\n');
+    assert.deepEqual(checkRunnerResolution({ actionIds: ["till_soil"], resolve: () => stub, toolsDir: stubTools }), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  assert.deepEqual(checkRunnerResolution({ toolsDir }), []);
+});
+
 test("experimental runner check reports a descriptor runner that is not on disk", () => {
   const findings = checkExperimentalRunners({
     runners: { absent_action: "run-stardew-native-local-player-absent.mjs" },
@@ -119,4 +148,35 @@ test("gate check reports a gate that neither self-reports nor is declared", () =
   );
 
   assert.deepEqual(checkGateFalsifiers({ gateNames: harnessGateNames(toolsDir), toolsDir }), []);
+});
+
+// The report is what the gate PRINTS, so the falsifier deletes the print while keeping the words the source-text form
+// looked for: a comment naming `checks` and `mode:` satisfies a regex and proves nothing about the run. The stub lives
+// in its own directory so it is never picked up as a real gate by `harnessGateNames`.
+test("gate check reads the report a gate prints, not the words in its source", () => {
+  const root = mkdtempSync(join(tmpdir(), "harness-gates-"));
+  try {
+    const stubTools = join(root, "tools");
+    mkdirSync(stubTools, { recursive: true });
+    const stub = "check-stub-gate.mjs";
+    writeFileSync(
+      join(stubTools, stub),
+      '// this gate prints checks and mode: in a comment, and a human line on stdout\nprocess.stdout.write("all good\\n");\n',
+    );
+    const findings = checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], toolsDir: stubTools });
+    assert.deepEqual(
+      findings.map((entry) => entry.code),
+      ["falsifier_signature_missing"],
+    );
+    assert.match(findings[0].detail, /the default run printed no self-verification report \(exit 0\)/u);
+
+    // The control: the same file, printing a report, passes - so the finding above is about the artifact.
+    writeFileSync(
+      join(stubTools, stub),
+      'const checks = [{ id: "one_rule", status: "passed" }];\nprocess.stdout.write(`${JSON.stringify({ gate: "stub/v1", status: "passed", checks })}\\n`);\n',
+    );
+    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], toolsDir: stubTools }), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

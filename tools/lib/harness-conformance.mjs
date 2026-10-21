@@ -13,36 +13,36 @@
  *                                     RIGHT code on each BAD tree it must catch.
  *   2. `checkScenarioAcceptance`    - every harness action's world is a scenario name the Mod's own
  *                                     fixture switch accepts, read from every `ModEntry.Fixtures*.cs`.
- *   3. `checkRunnerResolution`      - every action's resolved runner exists and carries `import.meta.main`.
+ *   3. `checkRunnerResolution`      - every action's resolved runner exists and imports without starting a session.
  *   4. `checkExperimentalRunners`   - every `STARDEW_EXPERIMENTAL_ACTION_RUNNERS` runner exists on disk.
- *   5. `checkGateFalsifiers`        - every `tools/check-*.mjs` gate either prints a falsifier in its rules/
- *                                     self mode or is declared in `GATES_WITHOUT_FALSIFIER` with a reason.
+ *   5. `checkGateFalsifiers`        - every `tools/check-*.mjs` gate either prints a self-verification report in its
+ *                                     own default run or is declared in `GATES_WITHOUT_FALSIFIER` with a reason.
  *
- * Check 5's classification was found by RUNNING each gate, not guessed: a gate "prints a falsifier in its
- * rules/self mode" when its default (no-argument, offline) run emits a self-verification report - a JSON
- * object carrying a per-check/per-rule outcome list (`checks`) or an explicit offline `mode` - rather than
- * only inspecting the live tree. On 2026-10-20 exactly seven gates did; the rest run offline checks whose
- * falsifier lives in their own `check-*.test.mjs` (or in a run they consume), and are named below with why.
+ * Checks 3 and 5 ask questions about what code DOES, so they run it and read the result: check 3 imports the runner,
+ * check 5 runs the gate and reads the report it prints. Reading the source text for the words `import.meta.main` or
+ * `checks` answers a different question - a comment satisfies either one - which is why neither is matched here.
  */
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { preflightLiveRun } from "./live-run-preflight.mjs";
-import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
+import { dirname, join } from "node:path";
+import process from "node:process";
 import { resolveStardewActionGateRunner } from "../resolve-stardew-action-gate-runner.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
   STARDEW_PUBLISHED_ACTION_GATES,
 } from "../stardew-action-gate-descriptors.mjs";
+import { importsWithoutStarting, preflightLiveRun } from "./live-run-preflight.mjs";
+import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
 
 const finding = (code, detail) => ({ code, detail });
 
@@ -234,12 +234,16 @@ export function checkScenarioAcceptance({
 // Check 3: each action resolves to an existing runner that refuses to start on import.
 // ---------------------------------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------------------------------
+// Check 3: each action resolves to an existing runner that starts nothing when it is imported.
+// ---------------------------------------------------------------------------------------------------
+
 export function checkRunnerResolution({
   actionIds = HARNESS_ACTIONS,
   resolve = resolveStardewActionGateRunner,
   toolsDir,
   exists = existsSync,
-  readText = (path) => readFileSync(path, "utf8"),
+  probe = importsWithoutStarting,
 } = {}) {
   const findings = [];
   for (const actionId of actionIds) {
@@ -255,9 +259,8 @@ export function checkRunnerResolution({
       findings.push(finding("runner_not_found", `${actionId} -> ${runner}`));
       continue;
     }
-    if (!/import\.meta\.main/u.test(readText(path))) {
-      findings.push(finding("runner_missing_cli", `${actionId} -> ${runner} has no import.meta.main`));
-    }
+    const imported = probe(path);
+    if (!imported.ok) findings.push(finding("runner_missing_cli", `${actionId} -> ${runner}: ${imported.detail}`));
   }
   return findings;
 }
@@ -280,13 +283,13 @@ export function checkExperimentalRunners({
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Check 5: every gate prints a falsifier in its rules/self mode, or is declared below.
+// Check 5: every gate prints a self-verification report in its own default run, or is declared below.
 // ---------------------------------------------------------------------------------------------------
 
 /**
  * Gates whose default (offline) run emits a self-verification report - a JSON object carrying a per-check
- * or per-rule outcome list - i.e. it proves its own rules can go red. Found by running every gate on
- * 2026-10-20; `checkGateFalsifiers` re-reads each one's source to confirm the self-mode report is still there.
+ * or per-rule outcome list - i.e. it enumerates the rules it can report red. Found by running every gate on
+ * 2026-10-20; `checkGateFalsifiers` runs each of them again and reads the report it prints.
  */
 export const GATES_WITH_FALSIFIER = Object.freeze([
   "check-evidence-bundle.mjs",
@@ -299,13 +302,67 @@ export const GATES_WITH_FALSIFIER = Object.freeze([
   "check-stardew-native-notice-coverage.mjs",
 ]);
 
-/** The self-mode report a `GATES_WITH_FALSIFIER` gate must still carry. */
-const SELF_MODE_REPORT = /checks|mode\s*:/u;
+/** How long a gate's default run may take before it is reported as having printed nothing. */
+const GATE_RUN_TIMEOUT_MS = 120_000;
 
 /**
- * Gates that do NOT print a falsifier in a rules/self mode. Each names why; a gate whose falsifier lives in
- * its own `check-*.test.mjs` is excused because the project rule is "the falsifier is part of the gate's
- * own test" (design/research/live-run-throughput.md, Tier 5 item 11), and the suite's own run confirms it.
+ * Run a gate the way an operator does - its own default, no-argument, offline invocation - and return what it
+ * printed. The report on stdout is the artifact this suite reads; a gate's source text is not.
+ */
+export function runGateDefault(path, { spawn = spawnSync, timeoutMs = GATE_RUN_TIMEOUT_MS } = {}) {
+  const result = spawn(process.execPath, [path], { cwd: dirname(path), encoding: "utf8", timeout: timeoutMs });
+  return {
+    timedOut: result.error?.code === "ETIMEDOUT",
+    status: result.status ?? null,
+    stdout: String(result.stdout ?? ""),
+    stderr: String(result.stderr ?? ""),
+  };
+}
+
+/**
+ * The self-verification report a gate printed, or null when it printed none.
+ *
+ * A report is a JSON object carrying the gate's own id and status plus the outcomes of the rules it enumerates:
+ * a non-empty `checks` list, or an explicit offline `mode` for a gate whose one judgement is the whole run. A
+ * gate that prints a human sentence, or nothing, has no report - whatever its source happens to mention.
+ */
+export function selfVerificationReport(stdout) {
+  const OUTCOME = new Set(["passed", "failed", "blocked"]);
+  for (const line of String(stdout).split("\n").reverse()) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (typeof parsed?.gate !== "string" || !OUTCOME.has(parsed.status)) continue;
+    if (Array.isArray(parsed.checks)) {
+      const outcomes = parsed.checks.filter((entry) => typeof entry?.id === "string" && OUTCOME.has(entry.status));
+      if (outcomes.length > 0) return { gate: parsed.gate, status: parsed.status, rules: outcomes.length };
+      continue;
+    }
+    if (typeof parsed.mode === "string" && parsed.mode.length > 0)
+      return { gate: parsed.gate, status: parsed.status, rules: 0 };
+  }
+  return null;
+}
+
+/** One line naming how a gate's default run ended, for a finding about a missing report. */
+function describeRun(result) {
+  const cause = String(result.stderr ?? "")
+    .trim()
+    .split("\n")
+    .find((line) => line.trim().length > 0);
+  const how = result.timedOut ? "timed out" : `exit ${String(result.status)}`;
+  return cause === undefined ? how : `${how}: ${cause.trim().slice(0, 200)}`;
+}
+
+/**
+ * Gates that do NOT print a self-verification report in their default run. Each names why; a gate whose falsifier
+ * lives in its own `check-*.test.mjs` is excused because the project rule is "the falsifier is part of the gate's own
+ * test" (design/research/live-run-throughput.md, Tier 5 item 11), and the suite's own run confirms it.
  */
 export const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
@@ -374,8 +431,8 @@ export function harnessGateNames(toolsDir) {
 }
 
 /**
- * Require every enumerated gate to be either a `GATES_WITH_FALSIFIER` gate (whose source still carries the
- * self-mode report) or a declared `GATES_WITHOUT_FALSIFIER` exception. A gate in neither - a new gate that
+ * Require every enumerated gate to be either a `GATES_WITH_FALSIFIER` gate (whose own default run prints a
+ * self-verification report) or a declared `GATES_WITHOUT_FALSIFIER` exception. A gate in neither - a new gate that
  * forgot both - is the finding.
  */
 export function checkGateFalsifiers({
@@ -383,7 +440,7 @@ export function checkGateFalsifiers({
   withFalsifier = GATES_WITH_FALSIFIER,
   withoutFalsifier = GATES_WITHOUT_FALSIFIER,
   toolsDir,
-  readText = (path) => readFileSync(path, "utf8"),
+  run = runGateDefault,
 } = {}) {
   const declared = new Set(withoutFalsifier.map((entry) => entry.gate));
   const withSet = new Set(withFalsifier);
@@ -396,8 +453,14 @@ export function checkGateFalsifiers({
       continue;
     }
     if (selfReports) {
-      if (!SELF_MODE_REPORT.test(readText(join(toolsDir, name)))) {
-        findings.push(finding("falsifier_signature_missing", `${name}: no self-mode report in source`));
+      const result = run(join(toolsDir, name));
+      if (selfVerificationReport(result.stdout) === null) {
+        findings.push(
+          finding(
+            "falsifier_signature_missing",
+            `${name}: the default run printed no self-verification report (${describeRun(result)})`,
+          ),
+        );
       }
       continue;
     }
