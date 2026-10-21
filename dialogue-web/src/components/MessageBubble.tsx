@@ -1,7 +1,8 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ChevronLeft, ChevronRight, LoaderCircle, Pencil, RefreshCw, Trash2, Undo2 } from "lucide-react";
+import { memo, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
+import { useArmedConfirmation } from "./armed-confirmation";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { openingVariantWords } from "./opening-variant-labels";
@@ -390,6 +391,13 @@ export const MessageBubble = memo(function MessageBubble({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [editing, pending]);
+  /**
+   * The two destructive pairs on this row, each with its own keyboard path: the control that arms
+   * one is UNMOUNTED by the press that arms it, so focus has to be moved by hand into the
+   * confirmation and back to the control on a cancel (`armed-confirmation.ts`).
+   */
+  const rewindPair = useArmedConfirmation(rewindArmed, () => onRewindCancel?.());
+  const deletePair = useArmedConfirmation(deleteArmed, () => onDeleteCancel?.());
   // Whether this message's strip has a pager at all: the strip exists for its own
   // controls, so a message with neither keeps no empty row under the bubble.
   const hasControls =
@@ -403,7 +411,7 @@ export const MessageBubble = memo(function MessageBubble({
    * rendered beside Save and Cancel is a mis-click waiting to happen.
    */
   const rewindConfirmation = rewindArmed ? (
-    <div className="message-confirm" data-testid="message-rewind-confirm">
+    <div className="message-confirm" data-testid="message-rewind-confirm" onKeyDown={rewindPair.onConfirmKeyDown}>
       <p className="message-confirm-prompt" role="status">
         {labels.rewindConfirmPrompt}
       </p>
@@ -420,10 +428,11 @@ export const MessageBubble = memo(function MessageBubble({
           {labels.rewindConfirmYes}
         </button>
         <button
+          ref={rewindPair.cancelRef}
           type="button"
           className="action-btn rewind-confirm-no"
           data-testid="message-rewind-confirm-no"
-          onClick={() => onRewindCancel?.()}
+          onClick={rewindPair.cancel}
           title={labels.rewindConfirmNo}
           aria-label={labels.rewindConfirmNo}
         >
@@ -435,6 +444,7 @@ export const MessageBubble = memo(function MessageBubble({
   const rewindControl =
     !rewindArmed && rewindPoint !== undefined ? (
       <button
+        ref={rewindPair.triggerRef}
         type="button"
         className="action-btn rewind-btn"
         data-testid="message-rewind"
@@ -517,7 +527,7 @@ export const MessageBubble = memo(function MessageBubble({
             window can retire the word and keep the control: the `aria-label` is what
             names these four, and style.css's narrow strip block is where that is
             argued and measured. */}
-        {!isPlayer && !deleteArmed && (hasControls || onRegenerate || rewindPoint !== undefined || rewindArmed) && (
+        {!(isPlayer || deleteArmed) && (hasControls || onRegenerate || rewindPoint !== undefined || rewindArmed) && (
           <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
             {/* Her editor replaces the WHOLE strip rather than joining it, on the same rule the
                 player's row follows: the pager, the variant switcher, regenerate, the rewind and the
@@ -644,6 +654,7 @@ export const MessageBubble = memo(function MessageBubble({
                 )}
                 {!rewindArmed && deletePoint !== undefined && (
                   <button
+                    ref={deletePair.triggerRef}
                     type="button"
                     className="action-btn delete-btn"
                     data-testid="message-delete"
@@ -726,6 +737,7 @@ export const MessageBubble = memo(function MessageBubble({
                 already follows that rule (it replaces the other controls rather than joining them). */}
               {!rewindArmed && deletePoint !== undefined && editor === null && (
                 <button
+                  ref={deletePair.triggerRef}
                   type="button"
                   className="action-btn delete-btn"
                   data-testid="message-delete"
@@ -750,7 +762,11 @@ export const MessageBubble = memo(function MessageBubble({
             exactly what goes - this one message, not the conversation after it. */}
         {deleteArmed && (
           <div className="message-actions">
-            <div className="message-confirm" data-testid="message-delete-confirm">
+            <div
+              className="message-confirm"
+              data-testid="message-delete-confirm"
+              onKeyDown={deletePair.onConfirmKeyDown}
+            >
               <p className="message-confirm-prompt" role="status">
                 {labels.deleteConfirmPrompt}
               </p>
@@ -767,10 +783,11 @@ export const MessageBubble = memo(function MessageBubble({
                   {labels.deleteConfirmYes}
                 </button>
                 <button
+                  ref={deletePair.cancelRef}
                   type="button"
                   className="action-btn delete-confirm-no"
                   data-testid="message-delete-confirm-no"
-                  onClick={() => onDeleteCancel?.()}
+                  onClick={deletePair.cancel}
                   title={labels.deleteConfirmNo}
                   aria-label={labels.deleteConfirmNo}
                 >

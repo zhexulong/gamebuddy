@@ -925,7 +925,12 @@
 
   /* The two destructive confirmations on a message row - the rewind's and the delete's - are ONE
      shape: the same information, the same two answers, the same 44 px floor. They differ only in the
-     words the strip renders, which is the bubble's own business. */
+     words the strip renders, which is the bubble's own business.
+
+     The affirmative is painted with the product's own destructive tokens - the `--danger` colour, its
+     40% border and its 10% wash, the same set `game-action.danger` and `small-button.danger` use - so
+     the answer that cuts the conversation away is not dressed as the quiet control beside it. The
+     cancel keeps the quiet treatment: it is the way out, not the act. */
   .rewind-confirm-yes,
   .rewind-confirm-no,
   .delete-confirm-yes,
@@ -945,9 +950,9 @@
 
   .rewind-confirm-yes,
   .delete-confirm-yes {
-    color: var(--text-primary);
-    background-color: var(--surface-raised);
-    border: 1px solid var(--border-strong);
+    color: var(--danger);
+    background-color: color-mix(in srgb, var(--danger) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
   }
 
   .rewind-confirm-no,
@@ -957,12 +962,16 @@
     border: 1px solid var(--border-subtle);
   }
 
-  .rewind-confirm-yes:hover:not(:disabled),
   .rewind-confirm-no:hover:not(:disabled),
-  .delete-confirm-yes:hover:not(:disabled),
   .delete-confirm-no:hover:not(:disabled) {
     background-color: var(--surface-hover);
     color: var(--text-primary);
+  }
+
+  .rewind-confirm-yes:hover:not(:disabled),
+  .delete-confirm-yes:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--danger) 18%, transparent);
+    border-color: var(--danger);
   }
 
   .rewind-confirm-yes:disabled,

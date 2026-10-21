@@ -320,3 +320,124 @@ test("rewinding at a player row keeps their words and drops the reply and everyt
   await expect(page.locator('[data-handle="h2"]')).toHaveCount(0);
   expect(5 - after.length).toBe(3);
 });
+
+/**
+ * The two facts a destructive confirmation owes a player who cannot see it well, or is on a keyboard:
+ * it must LOOK destructive, and it must not take their place away.
+ *
+ * Both are measured here as the browser computes them, never as a class name:
+ *
+ *  - the affirmative's own colour and background, against the quiet control it replaces and against
+ *    the `--danger` token the product paints every other destructive act with (`game-action.danger`,
+ *    `small-button.danger` in style.css);
+ *  - `document.activeElement`, by selector, at the three moments that matter: on the control before it
+ *    is pressed, immediately after the press opens the confirmation, and after it is cancelled.
+ *
+ * The same three moments are then read on the DELETE pair, which shares one stylesheet block and one
+ * keyboard path with the rewind's.
+ */
+test("the destructive answer is painted as one, and the keyboard keeps its place", async ({ page }) => {
+  await openConversation(page);
+
+  const trigger = '[data-handle="h2"] [data-testid="message-rewind"]';
+  const confirmYes = '[data-testid="message-rewind-confirm-yes"]';
+  const confirmNo = '[data-testid="message-rewind-confirm-no"]';
+
+  /** Where focus is, named by the key whose selector matches the focused element. */
+  const focused = async (selectors: Record<string, string>): Promise<string> =>
+    await page.evaluate((named: Record<string, string>) => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) return "body";
+      for (const [name, selector] of Object.entries(named)) if (active.matches(selector)) return name;
+      return `${active.tagName.toLowerCase()}.${active.className}`;
+    }, selectors);
+
+  /** The paint the browser resolves for one element: colour, background and border. */
+  const paint = async (selector: string) =>
+    await page.evaluate((value: string) => {
+      const element = document.querySelector(value);
+      if (element === null) throw new Error(`no element for ${value}`);
+      const style = getComputedStyle(element);
+      return { color: style.color, backgroundColor: style.backgroundColor, borderColor: style.borderTopColor };
+    }, selector);
+
+  /** The product's own destructive colour, resolved from the token rather than restated here. */
+  const danger = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--danger)";
+    document.body.appendChild(probe);
+    const value = getComputedStyle(probe).color;
+    probe.remove();
+    return value;
+  });
+
+  // The quiet control's own paint, read while it is still the thing on the row.
+  const quiet = await paint(trigger);
+
+  const rewindPair = { trigger, yes: confirmYes, no: confirmNo };
+  // Moment one: a keyboard player standing on the control that arms the pair. Its press is Enter,
+  // which is the same press a mouse makes - and the last moment the control itself is on the page.
+  await page.locator(trigger).focus();
+  console.log(`MEASURE destructive-confirm focus: before="${await focused(rewindPair)}"`);
+  expect(await focused(rewindPair), "the pressed control is the one that holds focus").toBe("trigger");
+  await page.keyboard.press("Enter");
+  await expect(page.locator('[data-testid="message-rewind-confirm"]')).toHaveCount(1);
+
+  // Moment two: the confirmation is open and focus went INTO it - onto its cancel answer, the safe
+  // one, not onto the button that deletes. It used to fall to <body>, because arming unmounts the very
+  // control that was pressed.
+  console.log(`MEASURE destructive-confirm focus: on open="${await focused(rewindPair)}"`);
+  expect(await focused(rewindPair), "focus enters the confirmation, on its cancel answer").toBe("no");
+
+  const answered = await paint(confirmYes);
+  const cancelPaint = await paint(confirmNo);
+  console.log(
+    `MEASURE destructive-confirm paint: quiet=${quiet.color}/${quiet.backgroundColor} ` +
+      `yes=${answered.color}/${answered.backgroundColor} no=${cancelPaint.color}/${cancelPaint.backgroundColor} ` +
+      `danger=${danger}`,
+  );
+  expect(answered.color, "the button that cuts the conversation away carries --danger").toBe(danger);
+  expect(answered.color, "and is not painted like the quiet control it replaced").not.toBe(quiet.color);
+  expect(answered.backgroundColor, "it also takes the destructive wash, not the quiet plate").not.toBe(
+    quiet.backgroundColor,
+  );
+  expect(cancelPaint.color, "the way out stays quiet: it is not the act").not.toBe(danger);
+  expect(cancelPaint.backgroundColor, "and keeps no plate of its own").toBe("rgba(0, 0, 0, 0)");
+
+  // Moment three: cancelling puts the player back on the control they pressed. The control was
+  // unmounted while the pair was open, so this is the pair's own restoration, not the browser's.
+  await page.click(confirmNo);
+  await expect(page.locator('[data-testid="message-rewind-confirm"]')).toHaveCount(0);
+  console.log(`MEASURE destructive-confirm focus: after cancel="${await focused(rewindPair)}"`);
+  expect(await focused(rewindPair), "cancel returns focus to the control that armed the pair").toBe("trigger");
+
+  // Escape is the same close, from the keyboard the confirmation now owns: it dismisses the pair and
+  // still gives the control back.
+  await page.locator(trigger).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator('[data-testid="message-rewind-confirm"]')).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-testid="message-rewind-confirm"]')).toHaveCount(0);
+  expect(await focused(rewindPair), "Escape dismisses the pair and returns focus too").toBe("trigger");
+
+  // The delete pair is the same presentation, so the same three moments are read on it: the last row
+  // offers the delete and not the rewind.
+  const deleteTrigger = '[data-handle="h4"] [data-testid="message-delete"]';
+  const deleteYes = '[data-testid="message-delete-confirm-yes"]';
+  const deleteNo = '[data-testid="message-delete-confirm-no"]';
+  const deletePair = { trigger: deleteTrigger, yes: deleteYes, no: deleteNo };
+  const quietDelete = await paint(deleteTrigger);
+  await page.click(deleteTrigger);
+  await expect(page.locator('[data-testid="message-delete-confirm"]')).toHaveCount(1);
+  expect(await focused(deletePair), "the delete confirmation takes focus too").toBe("no");
+  const deleteAnswered = await paint(deleteYes);
+  console.log(
+    `MEASURE destructive-confirm delete paint: quiet=${quietDelete.color}/${quietDelete.backgroundColor} ` +
+      `yes=${deleteAnswered.color}/${deleteAnswered.backgroundColor}`,
+  );
+  expect(deleteAnswered.color, "the delete's affirmative carries --danger too").toBe(danger);
+  expect(deleteAnswered.color, "and is not the quiet delete control's own colour").not.toBe(quietDelete.color);
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-testid="message-delete-confirm"]')).toHaveCount(0);
+  expect(await focused(deletePair), "and gives the delete control back on Escape").toBe("trigger");
+});

@@ -632,11 +632,39 @@ test("the editor fits its column at 1440x900 and at 400x800, and removing a row 
 
   // Removing a row is armed first: a bare delete beside the save control is a control a
   // player fires by accident, and her entry is not recoverable after the save.
-  await editor.locator("[data-companion-world-book-remove]").first().click();
+  //
+  // The pair also keeps the keyboard's place, at the three moments that matter: arming REPLACES the
+  // control that was pressed (`armed-confirmation.ts`), so focus has to be moved into the
+  // confirmation by hand and given back when it closes.
+  const focusedPair = async (): Promise<string> =>
+    await page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      if (active === null || active === document.body) return "body";
+      for (const state of ["remove", "remove-yes", "remove-no"])
+        if (active.hasAttribute(`data-companion-world-book-${state}`)) return state;
+      return `${active.tagName.toLowerCase()}.${active.className}`;
+    });
+
+  await editor.locator("[data-companion-world-book-remove]").first().focus();
+  expect(await focusedPair(), "before the pair opens, focus is the removal control").toBe("remove");
+  await page.keyboard.press("Enter");
   await expect(editor.locator("[data-companion-world-book-remove-yes]")).toBeVisible();
+  expect(await focusedPair(), "the confirmation takes focus, on its cancel answer").toBe("remove-no");
   await editor.locator("[data-companion-world-book-remove-no]").click();
   await expect(editor.locator("[data-companion-world-book-remove-yes]")).toHaveCount(0);
+  expect(await focusedPair(), "cancelling gives the removal control back").toBe("remove");
+  console.log(`[world-book-editor] removal focus: ${await focusedPair()}`);
   await expect(editor.locator("[data-companion-world-book-entry-draft]")).toHaveCount(3);
+
+  // Escape is the same dismissal from the keyboard, and it belongs to the pair: the surface it sits
+  // on stays open.
+  await editor.locator("[data-companion-world-book-remove]").first().focus();
+  await page.keyboard.press("Enter");
+  await expect(editor.locator("[data-companion-world-book-remove-yes]")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(editor.locator("[data-companion-world-book-remove-yes]")).toHaveCount(0);
+  expect(await focusedPair(), "Escape dismisses the pair and returns focus too").toBe("remove");
+  await expect(editor).toBeVisible();
 
   await editor.locator("[data-companion-world-book-remove]").first().click();
   await editor.locator("[data-companion-world-book-remove-yes]").click();

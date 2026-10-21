@@ -8,9 +8,10 @@ import type {
   WorldInfoStateV1,
 } from "../management-pipeline-api";
 import { problemTextWithCode, TavernProblemError } from "../management-pipeline-api";
-import type { WorldInfoSurfaceSource } from "./management-surface-panels";
+import { useArmedConfirmation } from "./armed-confirmation";
 import { CharactersPanel } from "./CharactersPanel";
-import { characterLabels, type CharacterLabels } from "./character-domain-labels";
+import { type CharacterLabels, characterLabels } from "./character-domain-labels";
+import type { WorldInfoSurfaceSource } from "./management-surface-panels";
 
 /**
  * The product's Characters surface: the character domain and the character's own
@@ -622,42 +623,14 @@ function CompanionWorldBookEditor({
           {/* The row's own removal, and only while it is armed: the confirmation is the
               row's only action until it is answered, and it never shares a line with the
               control it replaces. */}
-          {armed === entry.rowId ? (
-            <div data-companion-world-book-remove-confirm>
-              <p role="status" data-companion-world-book-remove-prompt>
-                {labels.companionWorldBookRemoveConfirm.replace("{{title}}", entry.title)}
-              </p>
-              <div className="composer-actions">
-                <button
-                  type="button"
-                  className="small-button danger"
-                  data-companion-world-book-remove-yes
-                  onClick={() => onRemove(entry.rowId)}
-                >
-                  {labels.companionWorldBookRemove}
-                </button>
-                <button
-                  type="button"
-                  className="small-button"
-                  data-companion-world-book-remove-no
-                  onClick={() => onArm(null)}
-                >
-                  {labels.worldBookCancel}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="composer-actions">
-              <button
-                type="button"
-                className="small-button"
-                data-companion-world-book-remove
-                onClick={() => onArm(entry.rowId)}
-              >
-                {labels.companionWorldBookRemove}
-              </button>
-            </div>
-          )}
+          <CompanionWorldBookEntryRemove
+            labels={labels}
+            title={entry.title}
+            armed={armed === entry.rowId}
+            onArm={() => onArm(entry.rowId)}
+            onCancel={() => onArm(null)}
+            onRemove={() => onRemove(entry.rowId)}
+          />
         </div>
       ))}
       <div className="composer-actions">
@@ -691,6 +664,66 @@ function CompanionWorldBookEditor({
         </button>
       </div>
     </section>
+  );
+}
+
+/**
+ * One entry's removal: the control that arms it, and the confirmation that replaces it.
+ *
+ * It is a component of its own because the pair owns focus refs: the editor renders one of these per
+ * authored row from inside a map, where a hook cannot be called once per row. A row's removal and the
+ * item's removal below follow ONE shape - arm, confirm, cancel - and both take their keyboard path
+ * from `useArmedConfirmation`: the trigger is unmounted by the press that arms it, so focus would
+ * otherwise fall to `<body>` on open and not come back on cancel.
+ */
+function CompanionWorldBookEntryRemove({
+  labels,
+  title,
+  armed,
+  onArm,
+  onCancel,
+  onRemove,
+}: Readonly<{
+  labels: CharacterLabels;
+  title: string;
+  armed: boolean;
+  onArm: () => void;
+  onCancel: () => void;
+  onRemove: () => void;
+}>): ReactElement {
+  const pair = useArmedConfirmation(armed, onCancel);
+  return armed ? (
+    <div data-companion-world-book-remove-confirm onKeyDown={pair.onConfirmKeyDown}>
+      <p role="status" data-companion-world-book-remove-prompt>
+        {labels.companionWorldBookRemoveConfirm.replace("{{title}}", title)}
+      </p>
+      <div className="composer-actions">
+        <button type="button" className="small-button danger" data-companion-world-book-remove-yes onClick={onRemove}>
+          {labels.companionWorldBookRemove}
+        </button>
+        <button
+          ref={pair.cancelRef}
+          type="button"
+          className="small-button"
+          data-companion-world-book-remove-no
+          onClick={pair.cancel}
+        >
+          {labels.worldBookCancel}
+        </button>
+      </div>
+    </div>
+  ) : (
+    <div className="composer-actions">
+      <button
+        ref={pair.triggerRef}
+        type="button"
+        className="small-button"
+        data-companion-world-book-remove
+        onClick={onArm}
+      >
+        {labels.companionWorldBookRemove}
+      </button>
+    </div>
   );
 }
 
@@ -1118,6 +1151,9 @@ function WorldBookItemRow({
   onRemove: (itemHandle: string) => void;
 }): ReactElement {
   const isOpen = opened !== null;
+  // The row's own removal pair, with the focus path its two states need
+  // (`armed-confirmation.ts`): the trigger is replaced by the confirmation.
+  const removal = useArmedConfirmation(isArmed, onDisarm);
   return (
     <div role="listitem" data-world-book-item={item.handle}>
       <strong>{item.title}</strong>
@@ -1147,7 +1183,7 @@ function WorldBookItemRow({
           steps aside: the confirmation is the row's only action until it is
           answered, and it never shares a line with the controls it replaces. */}
       {isArmed ? (
-        <div data-world-book-confirm>
+        <div data-world-book-confirm onKeyDown={removal.onConfirmKeyDown}>
           <p role="status" data-world-book-confirm-prompt>
             {labels.worldBookDeleteConfirm.replace("{{title}}", item.title)}
           </p>
@@ -1160,7 +1196,13 @@ function WorldBookItemRow({
             >
               {labels.worldBookDelete}
             </button>
-            <button type="button" className="small-button" data-world-book-confirm-no onClick={onDisarm}>
+            <button
+              type="button"
+              className="small-button"
+              data-world-book-confirm-no
+              ref={removal.cancelRef}
+              onClick={removal.cancel}
+            >
               {labels.worldBookCancel}
             </button>
           </div>
@@ -1186,6 +1228,7 @@ function WorldBookItemRow({
             {labels.worldBookEdit}
           </button>
           <button
+            ref={removal.triggerRef}
             type="button"
             className="small-button"
             data-world-book-delete
