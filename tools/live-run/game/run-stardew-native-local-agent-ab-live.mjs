@@ -981,6 +981,26 @@ const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
 );
 
 /**
+ * What the run's own dispatch trace says it tried (`attempted`), succeeded at (`succeeded`), and changed
+ * (`accomplished`).
+ *
+ * The verdict reads attempted and accomplished (moving, looking and re-equipping is not playing); the result publishes
+ * the same three lists under its own names. One derivation, so the verdict and the artifact cannot disagree about what
+ * the run did.
+ */
+function summarizeDispatchedActions(trace) {
+  const actionIds = (entries) => [
+    ...new Set(entries.map((entry) => entry.action).filter((action) => typeof action === "string")),
+  ];
+  const succeeded = actionIds(trace.filter((entry) => entry.state === "succeeded"));
+  return Object.freeze({
+    attempted: actionIds(trace),
+    succeeded,
+    accomplished: succeeded.filter((actionId) => !NON_ACCOMPLISHMENT_ACTIONS.has(actionId)),
+  });
+}
+
+/**
  * A scenario may deliver one player turn, or a session of them.
  * This is that one turn's machinery, extracted so every scenario shares it: admit
  * the player text, wait for the turn to settle (or for a submitted program to
@@ -2610,18 +2630,8 @@ try {
   // session cut off mid-turn is not a completed session, so it is reported as
   // `blocked` with the turn error named — findings never fail this rung, but a
   // truncated session does. Its output is still the audit either way.
-  const attemptedActionIds = [
-    ...new Set(actionTrace.map((entry) => entry.action).filter((action) => typeof action === "string")),
-  ];
-  const succeededActionIds = [
-    ...new Set(
-      actionTrace
-        .filter((entry) => entry.state === "succeeded")
-        .map((entry) => entry.action)
-        .filter((action) => typeof action === "string"),
-    ),
-  ];
-  const accomplishedActionIds = succeededActionIds.filter((actionId) => !NON_ACCOMPLISHMENT_ACTIONS.has(actionId));
+  const { attempted: attemptedActionIds, accomplished: accomplishedActionIds } =
+    summarizeDispatchedActions(actionTrace);
   // The session's own terminal record, read from the runtime root this run drove. It is what separates
   // "the companion chose not to speak" from "the turn died at the provider": before this, a real run
   // whose turn ended in `stopReason: "error"` was reported as `silent`.
@@ -2631,7 +2641,6 @@ try {
       ? Object.freeze({ observed: false, reason: "no_session_record", searched: Object.freeze(sessionSearch.searched) })
       : readAgentTurnOutcome(sessionSearch.path);
   sessionRecordPath = sessionSearch.path;
-  const toolTiming = readToolTiming(sessionRecordPath);
   const turnFailureReason = agentTurnFailureReason(agentTurnOutcome);
   const unsettledSessionTurns = sessionTurns
     .filter((entry) => entry.turn?.settled !== true)
@@ -2800,14 +2809,10 @@ try {
       ]),
     ),
   );
-  // Presence mechanisms (design stardew-companion-presence-mechanisms §1.5/§2.4),
-  // computed from facts this run already holds — no new product producer:
-  //  - chunking: every committed companion_text piece in arrival order, with
-  //    each piece's elapsed time; `firstPieceTtfbMs` is the headline TTFB the
-  //    incremental-presentation work targets (≤1s ideal).
-  //  - claims: the deterministic presence projection compares spoken promises
-  //    against the same-turn receipts and the run's visible capability face.
-  const presentation = summarizePresentationEvidence();
+  // Presence mechanisms (design stardew-companion-presence-mechanisms §1.5/§2.4), computed from facts this run
+  // already holds — no new product producer. `presentation` (the chunking evidence) is published by buildRunResult;
+  // this half is the CLAIMS projection: it compares spoken promises against the same-turn receipts and the run's
+  // visible capability face.
   const turnStartedMs = turnStartedAtMs;
   // Same-turn receipts for the claim projection come from the execution trace
   // (which carries both the Mod action id and its terminal state), never from
@@ -2843,13 +2848,9 @@ try {
     presentedSummary: presentedSummary ?? null,
     runManifestModel: personaWorldBook.model,
   });
-  const result = {
-    // The run's own window, published wherever a result is: `startedAtMs` is the runner's own phase clock, so a
-    // reader can compute the TAIL (last dispatch -> end) instead of inferring it from a bundle that may be refused.
-    startedAtMs: phaseTimings.runStartedAtMs,
-    endedAtMs: Date.now(),
-    // This run's own Mod log, archived with the lines an audit needs (see captureModLogFacts).
-    modLog: captureModLogFacts(capture?.dir ?? null),
+  // One assembly for EVERY exit path (see buildRunResult): what this path observed goes in as evidence, and the
+  // builder owns what the result publishes.
+  const result = await buildRunResult({
     // One verdict per run, ANDed from the scenario's own clause plus the shared gates. Each scenario's
     // clause is already `true` for the other scenarios, so this line stays a single readable conjunction.
     state:
@@ -2864,8 +2865,11 @@ try {
       historianRubricPassed
         ? "passed"
         : "blocked",
-    scenario: SCENARIO,
-    legacyLadder: LEGACY_LADDER,
+    capture,
+    runtimeRoot,
+    settlement: { snapshot: lastObservedSnapshot, reasonCode: null, component: null },
+    // This run's own Mod log, archived with the lines an audit needs (see captureModLogFacts).
+    modLog: captureModLogFacts(capture?.dir ?? null),
     // What the fixture config ASKED for, recorded next to what the run did. A run
     // that armed a different world (a scenario-resolution bug did exactly that) is
     // otherwise invisible in the artifact.
@@ -2877,23 +2881,8 @@ try {
     // off, which `state` alone cannot say.
     sessionVerdict,
     sessionTurnErrors,
-    // The multi-day crossing record, when the scenario crossed days: each night's own terminal and menus, the
-    // work of the day that followed it, and the baseline's judgement of the lot. Absent for every other
-    // scenario, because it is a fact about crossings and not a generic field.
-    multiday: multidayOutcome,
-    // Every submission the Agent made through the program tools, with what the Mod answered. Published on the result
-    // as well as in the bundle (where a failed run reads it), because `accepted: 0` - the companion chose batching and
-    // nothing ran through it - is the outcome a run's artifact has to be able to state.
-    programSubmissions: Object.freeze([...programSubmissions]),
     // The run's own narrative judgement, on the RESULT (the bundle carries the same object): the verdict folds it
     // in, so a caller reading `state` cannot miss it.
-    // The run's own cadence, split into the three spans that a single "gap" number conflated: the game doing the
-    // work, the agent deciding, and the dispatch-to-dispatch total. Published for EVERY scenario, because "the
-    // companion feels laggy" is a question about all of them.
-    actionCadence: summarizeActionCadence(actionTrace),
-    // Per-tool-call wall clock attributed by OWNER: `delegate_game_task` (a nested agent), a program tool, or an
-    // action dispatch. A run's "long actions" cannot be assigned to the component that should fix them without it.
-    toolTiming,
     historianRubric: Object.freeze({
       state: historianRubricOutcome?.state ?? "unmeasured",
       reasonCode: historianRubricOutcome?.reasonCode ?? null,
@@ -2912,8 +2901,6 @@ try {
     // Named when the world stopped rather than the turn finishing: the turn never settles in that case, so without
     // this the verdict could only say `turn_unsettled` and the freeze would have to be inferred from a log gap.
     worldStallReason,
-    attemptedActionIds,
-    succeededActionIds,
     // Present for every scenario; the self-directed one treats silence as its own outcome.
     spokeToPlayer,
     // The actions that actually changed the world (see NON_ACCOMPLISHMENT_ACTIONS):
@@ -2921,7 +2908,6 @@ try {
     // and reported". Published so the verdict is readable, not just its consequence.
     accomplishedActionIds,
     capabilityAudit,
-    presentation,
     presenceProjection,
     // The three assembly/content gates publish their OUTCOME vocabulary, not just a
     // boolean, so a reviewer can tell "verified" from "nobody looked".
@@ -2966,25 +2952,7 @@ try {
     bridgeFacts: factLog,
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
-  };
-  // The evidence bundle is written BEFORE the capture closes, into the same run directory: it is the
-  // contract's face of this run (including the failure dump that makes a failure re-enterable).
-  result.bundle = await writeRunBundle({
-    capture,
-    result,
-    scenario: SCENARIO,
-    runtimeRoot,
-    actionTrace,
-    settlement: { snapshot: lastObservedSnapshot, reasonCode: null, component: null },
-    historianRubric: historianRubricOutcome,
   });
-  // Close the capture: keep the runtime root's evidence, record the result
-  // JSON itself, and surface any capture failure on the result.
-  result.capture = await closeCapture(capture, runtimeRoot, result);
-  // Write the machine-readable result to a dedicated file so stdout logs (e.g.
-  // native chat ingress traces) can never corrupt JSON parsing of the result.
-  const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_${SCENARIO}-${Date.now()}.result.json`);
-  await writeFile(resultFile, JSON.stringify(result, null, 2), "utf8").catch(() => {});
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
   // A failure before the agent turn (connection, binding, materialization)
@@ -2997,17 +2965,15 @@ try {
   // exists to record. If the partial assembly fails too, that is reported as well and the run
   // still exits non-zero instead of pretending it was reportable.
   console.error(error);
-  const partialResult = {
-    // Same window on the failure path: the artefact that most needs to say where the time went is the one a run
-    // leaves behind when it did not finish.
-    startedAtMs: phaseTimings.runStartedAtMs,
-    endedAtMs: Date.now(),
+  const errorMessage = String(error instanceof Error ? error.message : error);
+  // The SAME assembly the passed path uses: a crashed run publishes the same contract, so the field a reader needs
+  // most - what was attempted, what was submitted, how the days went - cannot depend on how the run ended.
+  const result = await buildRunResult({
     state: "blocked",
-    scenario: SCENARIO,
-    legacyLadder: LEGACY_LADDER,
-    error: String(error instanceof Error ? error.message : error),
-    presentation: summarizePresentationEvidence(),
-    toolTiming: readToolTiming(sessionRecordPath),
+    error: errorMessage,
+    capture,
+    runtimeRoot,
+    settlement: { snapshot: lastObservedSnapshot, reasonCode: errorMessage, component: "runner" },
     tillReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "soil_tilled") ?? null,
     plantReceipt:
       factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "seed_planted") ?? null,
@@ -3049,21 +3015,9 @@ try {
     bridgeFacts: factLog,
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
-  };
-  partialResult.bundle = await writeRunBundle({
-    capture,
-    result: partialResult,
-    scenario: SCENARIO,
-    runtimeRoot,
-    actionTrace,
-    settlement: { snapshot: lastObservedSnapshot, reasonCode: partialResult.error, component: "runner" },
-    historianRubric: historianRubricOutcome,
   });
-  partialResult.capture = await closeCapture(capture, runtimeRoot, partialResult);
-  const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_${SCENARIO}-${Date.now()}.result.json`);
-  await writeFile(resultFile, JSON.stringify(partialResult, null, 2), "utf8").catch(() => {});
-  console.error("RUNNER_CRASH", JSON.stringify({ error: partialResult.error }));
-  console.log(JSON.stringify(partialResult, null, 2));
+  console.error("RUNNER_CRASH", JSON.stringify({ error: result.error }));
+  console.log(JSON.stringify(result, null, 2));
 } finally {
   if (voiceChild !== null) {
     voiceChild.kill("SIGTERM");
@@ -3292,6 +3246,102 @@ function bundleCrossingRecord(outcome) {
   return null;
 }
 
+/**
+ * The run's ONE result: the passed, blocked and crashed exit paths all publish through this function.
+ *
+ * Each exit used to carry its own object literal, so a field added to one was silently absent from the others:
+ * `multiday`, then `programSubmissions`, and then `attempted`, which read EMPTY on a run whose trace held 131
+ * dispatches because that run ended on the path whose literal never named it. What is published here is the run's
+ * contract; `evidence` is what the calling path could observe, spread in first so it can never override it.
+ */
+async function buildRunResult({ state, error = null, capture, runtimeRoot, settlement, ...evidence }) {
+  // Both halves of "where and when": the snapshot carries the clock and location, the execution receipt's local
+  // observation carries the pose (the snapshot has no facing). Neither can be re-read after teardown.
+  const snapshot = settlement?.snapshot ?? lastObservedSnapshot ?? lastObservedPose ?? null;
+  const pose = lastObservedPose;
+  const failure =
+    state === "passed"
+      ? null
+      : buildFailureSnapshot({
+          reasonCode: error ?? settlement?.reasonCode ?? `${SCENARIO}_blocked`,
+          component: settlement?.component ?? "runner",
+          step: actionTrace.length,
+          // Prefer the pose for tile/location (it is the actor's own last observation), falling back to the
+          // snapshot's tile when no receipt carried one.
+          snapshot:
+            pose === null
+              ? snapshot
+              : {
+                  ...snapshot,
+                  location: pose.location,
+                  tileX: pose.tileX,
+                  tileY: pose.tileY,
+                  facing: pose.facing,
+                  timeOfDay: snapshot?.timeOfDay ?? Number(pose.inGameTime),
+                },
+          atMs: Date.now(),
+        });
+  const dispatched = summarizeDispatchedActions(actionTrace);
+  const result = {
+    ...evidence,
+    // The run's own window: `startedAtMs` is the runner's own phase clock, so a reader can compute the TAIL (last
+    // dispatch -> end) instead of inferring it from a bundle that may be refused.
+    startedAtMs: phaseTimings.runStartedAtMs,
+    endedAtMs: Date.now(),
+    state,
+    ...(error === null ? {} : { error }),
+    scenario: SCENARIO,
+    legacyLadder: LEGACY_LADDER,
+    // The multi-day crossing record, when the scenario crossed days: each night's own terminal and menus, the
+    // work of the day that followed it, and the baseline's judgement of the lot. Absent for every other
+    // scenario, because it is a fact about crossings and not a generic field.
+    multiday: multidayOutcome,
+    // Every submission the Agent made through the program tools, with what the Mod answered. Published on the result
+    // as well as in the bundle (where a failed run reads it), because `accepted: 0` - the companion chose batching and
+    // nothing ran through it - is the outcome a run's artifact has to be able to state.
+    programSubmissions: Object.freeze([...programSubmissions]),
+    // The run's own cadence, split into the three spans that a single "gap" number conflated: the game doing the
+    // work, the agent deciding, and the dispatch-to-dispatch total. Published for EVERY scenario, because "the
+    // companion feels laggy" is a question about all of them.
+    actionCadence: summarizeActionCadence(actionTrace),
+    // What the run tried and what it achieved, read from its own dispatch trace. A crashed run reads the same
+    // trace, so "it did nothing" and "the artifact forgot" can never be the same answer.
+    attemptedActionIds: dispatched.attempted,
+    succeededActionIds: dispatched.succeeded,
+    // Per-tool-call wall clock attributed by OWNER: `delegate_game_task` (a nested agent), a program tool, or an
+    // action dispatch. A run's "long actions" cannot be assigned to the component that should fix them without it.
+    toolTiming: readToolTiming(sessionRecordPath),
+    // What the presentation layer did: every committed companion_text piece in arrival order with its elapsed time,
+    // so `firstPieceTtfbMs` (the headline TTFB target) survives however the run ended.
+    presentation: summarizePresentationEvidence(),
+    // The failure dump, built from the same facts the bundle publishes, so the verdict and the dump cannot disagree
+    // about why the run is red.
+    failure,
+  };
+  // The evidence bundle is written BEFORE the capture closes, into the same run directory: it is the contract's face
+  // of this run (including the failure dump that makes a failure re-enterable).
+  result.bundle = await writeRunBundle({
+    capture,
+    result,
+    scenario: SCENARIO,
+    runtimeRoot,
+    actionTrace,
+    settlement,
+    snapshot,
+    pose,
+    failure,
+    historianRubric: historianRubricOutcome,
+  });
+  // Close the capture: keep the runtime root's evidence, record the result JSON itself, and surface any capture
+  // failure on the result.
+  result.capture = await closeCapture(capture, runtimeRoot, result);
+  // Write the machine-readable result to a dedicated file so stdout logs (e.g. native chat ingress traces) can never
+  // corrupt JSON parsing of the result.
+  const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_${SCENARIO}-${Date.now()}.result.json`);
+  await writeFile(resultFile, JSON.stringify(result, null, 2), "utf8").catch(() => {});
+  return result;
+}
+
 async function writeRunBundle({
   capture,
   result,
@@ -3299,6 +3349,11 @@ async function writeRunBundle({
   runtimeRoot,
   actionTrace,
   settlement,
+  // Where and when this run last stood, and the failure dump built from it: derived ONCE in buildRunResult, so the
+  // bundle cannot judge a run whose `failure` block says something else.
+  snapshot,
+  pose,
+  failure,
   historianRubric = null,
 }) {
   // The narrative the run wrote, judged from its own captured runtime root. The CALLER judges it (the verdict needs
@@ -3306,31 +3361,6 @@ async function writeRunBundle({
   const historianRubricOutcome = historianRubric ?? judgeRunHistorianRubric(runtimeRoot);
   const verdictState = result?.state === "passed" ? "passed" : "failed";
   const failed = verdictState === "failed";
-  // Both halves of "where and when": the snapshot carries the clock and location, the execution receipt's local
-  // observation carries the pose (the snapshot has no facing). Neither can be re-read after teardown.
-  const snapshot = settlement?.snapshot ?? lastObservedSnapshot ?? lastObservedPose ?? null;
-  const pose = lastObservedPose;
-  const failure = failed
-    ? buildFailureSnapshot({
-        reasonCode: result?.error ?? settlement?.reasonCode ?? `${scenario}_blocked`,
-        component: settlement?.component ?? "runner",
-        step: actionTrace.length,
-        // Prefer the pose for tile/location (it is the actor's own last observation), falling back to the
-        // snapshot's tile when no receipt carried one.
-        snapshot:
-          pose === null
-            ? snapshot
-            : {
-                ...snapshot,
-                location: pose.location,
-                tileX: pose.tileX,
-                tileY: pose.tileY,
-                facing: pose.facing,
-                timeOfDay: snapshot?.timeOfDay ?? Number(pose.inGameTime),
-              },
-        atMs: Date.now(),
-      })
-    : null;
   const slot = snapshot?.slot ?? process.env.GAMEBUDDY_DAY_START_SLOT ?? null;
   const repro = failed
     ? buildReproPlan({

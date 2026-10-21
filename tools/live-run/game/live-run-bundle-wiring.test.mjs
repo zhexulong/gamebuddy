@@ -54,9 +54,10 @@ test("the runner writes its bundle through the shared validator, and names a ref
   // The refusal also reports WHICH facts the dump had, so a reason code is not the only clue.
   assert.match(SOURCE, /console\.error\(\s*"EVIDENCE_BUNDLE_REFUSED",\s*JSON\.stringify\(\{/);
   assert.match(SOURCE, /snapshotFields: snapshot === null \? \[\] : Object\.keys\(snapshot\)\.sort\(\),/);
-  // Both the success and the failure path publish it on the result.
+  // Both exits publish it on the result, and through the ONE assembly both use (buildRunResult): the crash path's
+  // own copy is what made "the bundle is written" a thing to remember twice.
   assert.match(SOURCE, /result\.bundle = await writeRunBundle\(\{/);
-  assert.match(SOURCE, /partialResult\.bundle = await writeRunBundle\(\{/);
+  assert.doesNotMatch(SOURCE, /partialResult/);
   // The recorded timeline count is the fact log's own length, so the on-disk file cannot disagree with the
   // manifest the validator cross-checks.
   assert.match(
@@ -67,7 +68,7 @@ test("the runner writes its bundle through the shared validator, and names a ref
 });
 
 test("the failure dump is built from the bridge's own facts and the trace's own budget", () => {
-  assert.match(SOURCE, /const failure = failed\n?\s*\? buildFailureSnapshot\(\{/);
+  assert.match(SOURCE, /const failure =\n\s*state === "passed"\n\s*\? null\n\s*: buildFailureSnapshot\(\{/);
   assert.match(
     SOURCE,
     /const repro = failed\n?\s*\? buildReproPlan\(\{[\s\S]{0,300}?slot,\n\s*scenario,\n\s*\/\/ The nights this run had already crossed[\s\S]{0,200}?crossings: multidayOutcome\?\.crossings \?\? 0,/,
@@ -134,7 +135,7 @@ test("the world snapshot and the capability face are sampled during the run, not
   assert.match(SOURCE, /settlement: \{ snapshot: lastObservedSnapshot, reasonCode: null, component: null \},/);
   assert.match(
     SOURCE,
-    /settlement: \{ snapshot: lastObservedSnapshot, reasonCode: partialResult\.error, component: "runner" \},/,
+    /settlement: \{ snapshot: lastObservedSnapshot, reasonCode: errorMessage, component: "runner" \},/,
   );
   assert.match(
     SOURCE,
@@ -229,17 +230,18 @@ test("the action cadence is split into exec, think and idle, stamped honestly", 
 test("both result paths carry the run window, so the tail is measurable even when the bundle is refused", () => {
   // The review asked where a 15-minute run's time went and the artifacts could not say: the deepest run's directory
   // held a result with no window at all (its bundle was refused, so no manifest). The TAIL - last dispatch to the
-  // end - is the number that question needs, and it must survive the failure path too.
-  // Each result literal owns its own window, checked INSIDE the literal rather than by a global count: the runner
-  // legitimately mentions the phase clock elsewhere (a run-identity record), so a count would be asserting the
-  // wrong thing and would break the day an unrelated use appears.
-  for (const marker of ["const result = {", "const partialResult = {"]) {
-    const from = SOURCE.indexOf(marker);
-    assert.ok(from > 0, `${marker} must exist`);
-    const block = SOURCE.slice(from, from + 400);
-    assert.match(block, /startedAtMs: phaseTimings\.runStartedAtMs,/u, `${marker} must carry the start`);
-    assert.match(block, /endedAtMs: Date\.now\(\),/u, `${marker} must carry the end`);
-  }
+  // end - is the number that question needs, and it must survive the failure path too, which is why the window is
+  // written ONCE in the assembly both paths use rather than once per literal.
+  const builder = SOURCE.slice(
+    SOURCE.indexOf("async function buildRunResult({"),
+    SOURCE.indexOf("async function writeRunBundle("),
+  );
+  assert.ok(builder.length > 0, "buildRunResult must exist");
+  assert.match(builder, /startedAtMs: phaseTimings\.runStartedAtMs,/u, "the result must carry the start");
+  assert.match(builder, /endedAtMs: Date\.now\(\),/u, "the result must carry the end");
+  // Both exits go through it: a window written on only one of them is the defect this test exists for.
+  const exits = SOURCE.slice(SOURCE.indexOf("\ntry {\n"), SOURCE.indexOf("\n} finally {"));
+  assert.equal((exits.match(/await buildRunResult\(\{/gu) ?? []).length, 2);
   assert.match(SOURCE, /runStartedAtMs: Date\.now\(\)/u, "the phase clock is the start the results publish");
   test("every program submission is recorded, because a shipped path that runs nothing must be visible", () => {
     // Measured 2026-10-20 by an audit of the Pi session logs: one run submitted ten programs, executed zero actions
@@ -287,10 +289,9 @@ test("a tool call's duration names its owner: nested agent, program tool, or act
   );
   assert.match(SOURCE, /byCategory\[category\] = summarizeCategoryTiming\(durations\);/);
   // 3. Published on the result, and on the failure path too: the run that crashed mid-turn is the one whose time
-  // most needs an owner.
-  const resultBlock = SOURCE.slice(SOURCE.indexOf("const result = {"), SOURCE.indexOf("const partialResult = {"));
-  assert.match(resultBlock, /^    toolTiming,$/m);
+  // most needs an owner. That is why it is published by the one assembly both exits use, not by a literal each.
   assert.match(SOURCE, /toolTiming: readToolTiming\(sessionRecordPath\),/);
+  assert.equal((SOURCE.match(/toolTiming: readToolTiming\(sessionRecordPath\),/gu) ?? []).length, 1);
   assert.match(SOURCE, /sessionRecordPath = sessionSearch\.path;/);
   // 4. Bounded. The long list is the head of a sorted list, never the whole thing.
   assert.match(SOURCE, /const TOOL_TIMING_LONGEST_LIMIT = 10;/);
@@ -312,13 +313,15 @@ test("program submissions are published on the failure path too, through the bun
   // Measured 2026-10-21: the runner recorded every `stardew_submit_action_program` call, but published the record
   // only on its progress line - so a run that ended badly, the exact case where "the companion chose batching and
   // nothing ran through it" matters most, said nothing about it. Two publications, and neither is a new mechanism:
-  // the result literal carries it (as `multiday` does on that path), and `writeRunBundle`'s OWN bundle literal carries
-  // it for EVERY result path - that is the same place `multiday` reaches a failed run, because both result literals
-  // (success/blocked and crash) build their bundle through this one function.
-  const resultBlock = SOURCE.slice(SOURCE.indexOf("const result = {"), SOURCE.indexOf("const partialResult = {"));
-  assert.ok(resultBlock.length > 0, "the success result literal must exist");
+  // the result carries it, and `writeRunBundle`'s OWN bundle literal carries it for EVERY result path - that is the
+  // same place `multiday` reaches a failed run, because both exits build their bundle through this one function.
+  const builder = SOURCE.slice(
+    SOURCE.indexOf("async function buildRunResult({"),
+    SOURCE.indexOf("async function writeRunBundle({"),
+  );
+  assert.ok(builder.length > 0, "buildRunResult must exist");
   assert.match(
-    resultBlock,
+    builder,
     /^    programSubmissions: Object\.freeze\(\[\.\.\.programSubmissions\]\),$/mu,
     "the run's own result must publish the submissions",
   );
@@ -339,8 +342,9 @@ test("program submissions are published on the failure path too, through the bun
   // Read from the run's own record, not synthesized at publication time: the array is filled by the submit hook.
   assert.match(SOURCE, /const programSubmissions = \[\];/u);
   assert.match(SOURCE, /programSubmissions\.push\(/u);
-  // The guarantee is the shared function: a publication on the success result literal alone would fail the bundle
-  // assertion above, and a failure path that stopped calling writeRunBundle would fail here.
+  // The guarantee is the shared function: a publication on one exit alone would fail the bundle assertion above, and
+  // an exit that stopped calling writeRunBundle would fail here.
   assert.match(SOURCE, /result\.bundle = await writeRunBundle\(\{/u);
-  assert.match(SOURCE, /partialResult\.bundle = await writeRunBundle\(\{/u);
+  assert.equal((SOURCE.match(/await buildRunResult\(\{/gu) ?? []).length, 2, "both exits use the one assembly");
+  assert.doesNotMatch(SOURCE, /partialResult/u);
 });

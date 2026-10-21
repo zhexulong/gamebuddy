@@ -135,8 +135,9 @@ test("the runner emits system findings as a first-class health signal", () => {
     RUNNER_SOURCE,
     /resolveLiveRunRoot\(\{ repoRoot: fileURLToPath\(new URL\("\.\.\/\.\.", import\.meta\.url\)\) \}\)/,
   );
+  // The capture is closed in the ONE assembly every exit path uses, so a run that crashed still ships its evidence.
   assert.match(RUNNER_SOURCE, /result\.capture = await closeCapture\(capture, runtimeRoot, result\);/);
-  assert.match(RUNNER_SOURCE, /partialResult\.capture = await closeCapture\(capture, runtimeRoot, partialResult\);/);
+  assert.doesNotMatch(RUNNER_SOURCE, /partialResult/);
   // Content gate: the same canonical profile the assembly gate hashes is
   // assessed for persona presence and macro residue; a hollow default card or
   // unrendered macros fails the run loudly instead of passing silently.
@@ -268,12 +269,13 @@ test("the run records chunked-presentation evidence so the presence mechanism is
   assert.match(RUNNER_SOURCE, /AGENT_PRESENTATION_PIECE/);
   assert.match(RUNNER_SOURCE, /turnStartedAtMs = Date\.now\(\)/);
   assert.match(RUNNER_SOURCE, /firstPieceTtfbMs/);
-  assert.match(RUNNER_SOURCE, /const presentation = summarizePresentationEvidence\(\)/);
+  // Computed in the ONE place a result is assembled (buildRunResult), so the crashed path reports it too: this used to
+  // be a local of the success path, and the failure literal computed it a second time.
+  assert.match(RUNNER_SOURCE, /presentation: summarizePresentationEvidence\(\),/);
+  assert.doesNotMatch(RUNNER_SOURCE, /const presentation = summarizePresentationEvidence\(\);/);
   // Recorded before the single-shot voice gate: chunk evidence must not depend
   // on voice being enabled or on a piece being the first one.
   assert.doesNotMatch(RUNNER_SOURCE, /if \(voiceStarted \|\| typeof text/);
-  // The failure path also reports presentation evidence.
-  assert.match(RUNNER_SOURCE, /presentation: summarizePresentationEvidence\(\),/);
 });
 
 test("the run computes the deterministic claim-fulfillability presence projection", () => {
@@ -342,7 +344,15 @@ test("morning_routine is a self-directed session whose output is a capability au
   // nothing, and still passed: a session that only moved/looked/equipped must not be
   // reported as a played session.
   assert.match(RUNNER_SOURCE, /const NON_ACCOMPLISHMENT_ACTIONS = Object\.freeze\(/);
-  assert.match(RUNNER_SOURCE, /accomplishedActionIds = succeededActionIds\.filter\(/);
+  // One derivation of the three lists: the verdict reads it and the result publishes it (summarizeDispatchedActions).
+  assert.match(
+    RUNNER_SOURCE,
+    /accomplished: succeeded\.filter\(\(actionId\) => !NON_ACCOMPLISHMENT_ACTIONS\.has\(actionId\)\),/,
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /const \{ attempted: attemptedActionIds, accomplished: accomplishedActionIds \} = summarizeDispatchedActions\(actionTrace\);/,
+  );
   assert.match(RUNNER_SOURCE, /: "nothing_accomplished"/);
   // Run M did 17 native actions over fifteen minutes and never said a word to the player:
   // a play session that never speaks must not pass as a companion session.
@@ -1148,4 +1158,103 @@ test("the run bundle publishes the crossing record, and one it cannot judge is r
     [],
     "the guarded record leaves the manifest writable",
   );
+});
+
+test("the runner assembles its result in exactly one place, so no exit path can lose a field", () => {
+  // Measured 2026-10-21: a run whose trace held 131 dispatches published `attempted: []`, because the result object was
+  // assembled once per exit and each literal named only what its author remembered. `multiday` and
+  // `programSubmissions` had already gone missing the same way. The published contract is what stops a repeat: these
+  // fields are published by buildRunResult and named by NO exit path.
+  const builderAt = RUNNER_SOURCE.indexOf("async function buildRunResult({");
+  const bundleAt = RUNNER_SOURCE.indexOf("async function writeRunBundle(");
+  assert.ok(builderAt > 0 && bundleAt > builderAt, "buildRunResult must exist, before the bundle it writes");
+  const builder = RUNNER_SOURCE.slice(builderAt, bundleAt);
+  // The exits: everything the run does between admitting itself and its `finally`. A field named here is a second
+  // publication - that is the shape that lost the field in the first place.
+  const exitsAt = RUNNER_SOURCE.indexOf("\ntry {\n");
+  const finallyAt = RUNNER_SOURCE.indexOf("\n} finally {");
+  assert.ok(exitsAt > 0 && finallyAt > exitsAt, "the run's try/catch must exist");
+  const exits = RUNNER_SOURCE.slice(exitsAt, finallyAt);
+  assert.equal((exits.match(/await buildRunResult\(\{/g) ?? []).length, 2, "the passed and crashed exits both use it");
+  // The one literal: from the builder's `const result = {` to its closing brace.
+  const literalAt = builder.indexOf("const result = {");
+  assert.ok(literalAt > 0, "the builder must build one result literal");
+  const literal = builder.slice(literalAt, builder.indexOf("\n  };", literalAt));
+  for (const field of [
+    "attemptedActionIds",
+    "succeededActionIds",
+    "programSubmissions",
+    "multiday",
+    "actionCadence",
+    "toolTiming",
+    "presentation",
+    "failure",
+    "startedAtMs",
+    "endedAtMs",
+  ]) {
+    const key = new RegExp(`^\\s*${field}[:,]`, "gm");
+    assert.equal((literal.match(key) ?? []).length, 1, `${field} must be published exactly once, by the builder`);
+    assert.equal((exits.match(key) ?? []).length, 0, `${field} must not be published by an exit path`);
+  }
+  // `bundle` and `capture` are assigned rather than keyed, and both assignments are the builder's own.
+  for (const field of ["bundle", "capture"]) {
+    assert.equal((builder.match(new RegExp(`result\\.${field} = await `, "g")) ?? []).length, 1);
+    assert.equal((exits.match(new RegExp(`result\\.${field} = await `, "g")) ?? []).length, 0);
+  }
+  // No second literal to drift from it: there is one in the file, and it is the builder's.
+  assert.equal((RUNNER_SOURCE.match(/const result = \{/g) ?? []).length, 1);
+  assert.equal((exits.match(/const result = \{/g) ?? []).length, 0);
+  assert.doesNotMatch(RUNNER_SOURCE, /const partialResult = \{/);
+});
+
+test("a run whose trace has dispatches publishes a non-empty attempted list", async () => {
+  // The falsifier for the field the 131-dispatch run lost: the REAL builder, evaluated against a synthetic trace, must
+  // answer with what the trace holds - on the crashed path, which is the one that published nothing.
+  const [, buildRunResult] = extractRunnerFunction(RUNNER_SOURCE, ["summarizeDispatchedActions", "buildRunResult"], {
+    NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
+    phaseTimings: { runStartedAtMs: 1, marks: {} },
+    lastObservedSnapshot: null,
+    lastObservedPose: null,
+    actionTrace: [
+      { action: "move_to_tile", state: "succeeded" },
+      { action: "harvest_crop", state: "succeeded" },
+      { action: "plant_seed", state: "rejected" },
+    ],
+    programSubmissions: [{ tool: "stardew_submit_action_program", accepted: false }],
+    multidayOutcome: { crossings: 1, dayRecords: [] },
+    SCENARIO: "morning_routine",
+    LEGACY_LADDER: null,
+    historianRubricOutcome: null,
+    sessionRecordPath: undefined,
+    summarizeActionCadence: () => ({ spans: [] }),
+    summarizePresentationEvidence: () => ({ pieces: [] }),
+    readToolTiming: () => ({ observed: false }),
+    buildFailureSnapshot: (input) => input,
+    writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
+    closeCapture: async () => ({ state: "closed" }),
+    writeFile: async () => {},
+    join: (...parts) => parts.join("/"),
+  });
+  const result = await buildRunResult({
+    state: "blocked",
+    error: "agent_turn_timeout",
+    settlement: { component: "runner" },
+  });
+  assert.deepEqual(result.attemptedActionIds, ["move_to_tile", "harvest_crop", "plant_seed"]);
+  assert.deepEqual(result.succeededActionIds, ["move_to_tile", "harvest_crop"]);
+  // The rest of the contract is published by the same call: a crashed run is not a run with less to say.
+  assert.equal(result.state, "blocked");
+  assert.equal(result.error, "agent_turn_timeout");
+  assert.equal(result.failure.reasonCode, "agent_turn_timeout");
+  assert.deepEqual(
+    result.programSubmissions,
+    [{ tool: "stardew_submit_action_program", accepted: false }],
+    "a submission that ran nothing is still published by the path that crashed",
+  );
+  assert.deepEqual(result.multiday, { crossings: 1, dayRecords: [] });
+  assert.equal(result.bundle.state, "written");
+  assert.equal(result.capture.state, "closed");
+  for (const field of ["startedAtMs", "endedAtMs", "actionCadence", "toolTiming", "presentation"]) {
+    assert.ok(Object.hasOwn(result, field), `${field} must be published`);
+  }
 });
