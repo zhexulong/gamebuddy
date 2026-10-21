@@ -6,6 +6,7 @@ import {
   persistLocale,
   resolveLocale,
 } from "../src/i18n.ts";
+import { turnFailureText } from "../src/components/turn-failure-text.ts";
 
 test("resolveLocale prioritizes stored valid preference", () => {
   const storageEn = { getItem: (key) => (key === "gamebuddy.tavern.ui-locale" ? "en" : null) };
@@ -136,4 +137,72 @@ test("every destructive confirmation answers with [verb] / 取消 in both catalo
       assert.notEqual(labels[yes], labels[no], `${locale}.${yes} collapsed into the negative's word`);
     }
   }
+});
+
+/**
+ * The first hour's two lies about a connection (OOBE review 1.2 and 2.1).
+ *
+ * 1.2: the settings banner told a player with no connection that "the assistant keeps using the
+ * built-in default connection" - *keep going, something already works*. Nothing works: the
+ * catalogue's default is the operator environment entry, whose credential is the ambient
+ * `CPA_OAI_API_KEY` and whose endpoint is a loopback port nothing in a shipped install listens on
+ * (`host/src/tavern/provider-catalog.ts`), so the sentence promised a first message that could only
+ * fail. The premise changed; the force did not: the banner still says which state the player is in
+ * and what to do about it, and it now says it about the state that is actually true - there is no
+ * default a normal install can use, and configuring one is the way forward. The provider itself is
+ * untouched: this repository's own runs reach it through the model profile.
+ *
+ * 2.1: a wrong, revoked or unserved credential reached the chat surface as
+ * "回复运行时暂不可用，请稍后再试。" - the product blaming itself and inviting a retry that fails
+ * identically. The English catalogue had already moved to the honest sentence; the Chinese one had
+ * drifted back to the generic line. The force pinned here is what a player needs from a credential
+ * refusal: name the credential and the model, point at Settings, and say a retry changes nothing.
+ */
+test("the no-connection banner sends the player to configure a connection, in both catalogues", () => {
+  const en = messages("en").connectionNoSelectionNotice;
+  const zh = messages("zh-CN").connectionNoSelectionNotice;
+
+  // What is true, and what the old sentence denied: a normal install has no default to fall back on.
+  assert.match(en, /a normal install has none/u);
+  assert.match(zh, /普通安装没有它/u);
+  // What to do, and where - in the form's own words (渠道 in Chinese, Provider in English).
+  assert.match(en, /configure a connection here/u);
+  assert.match(zh, /请在这里配置一条连接/u);
+  assert.match(en, /save and enable/u);
+  assert.match(zh, /保存并启用/u);
+  // The promise the product cannot keep, in either catalogue's own phrasing of it.
+  for (const [locale, notice] of [["en", en], ["zh-CN", zh]]) {
+    assert.doesNotMatch(notice, /keeps? using|继续使用/u, `${locale} still promises the default will answer`);
+  }
+});
+
+test("the failed-turn refusal names the credential, the model and Settings, in both catalogues", () => {
+  const readings = {
+    en: turnFailureText("runtime_unavailable", messages("en")),
+    "zh-CN": turnFailureText("runtime_unavailable", messages("zh-CN")),
+  };
+  // The three fixes the settings side offers for this exact failure (`TavernConnectionProbeFailure`:
+  // `unauthorized`, `not_found`, `unreachable`), named rather than left to the word "runtime".
+  assert.match(readings.en, /API key/u);
+  assert.match(readings["zh-CN"], /API Key/u);
+  assert.match(readings.en, /model/u);
+  assert.match(readings["zh-CN"], /模型/u);
+  // Where to fix it: the panel's own name, in each catalogue.
+  assert.match(readings.en, /Settings \(Connection and model\)/u);
+  assert.match(readings["zh-CN"], /连接与模型/u);
+  // And that a retry is not the way out, which is what the old sentence got wrong.
+  assert.match(readings.en, /fail the same way/u);
+  assert.match(readings["zh-CN"], /同样方式失败/u);
+  assert.doesNotMatch(readings.en, /not available right now/iu);
+  assert.doesNotMatch(readings["zh-CN"], /暂不可用|稍后再试/u);
+
+  // The category is this one member and no other: the four declared codes still say four things.
+  const labels = messages("en");
+  const sentences = [
+    "interrupted",
+    "no_visible_presentation",
+    "runtime_unavailable",
+    "storage_unavailable",
+  ].map((code) => turnFailureText(code, labels));
+  assert.equal(new Set(sentences).size, 4, "the four declared codes render four different sentences");
 });

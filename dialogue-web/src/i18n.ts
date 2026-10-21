@@ -75,11 +75,16 @@ const en = {
   gameLaunchFailed: "The game launch result is uncertain. The latest authoritative game state is shown.",
   stardewCabinSelection: "Stardew cabin selection",
   stardewCabinsLoading: "Loading available cabins…",
+  // The list is read once, when the page opens, and the Host serves it only while
+  // a launched game is starting up - so a launch after that read leaves it empty.
+  // Naming that mismatch is the whole point: "reload the page" alone told the
+  // player nothing about what happened or why a reload is the way forward.
   stardewCabinsUnavailable:
-    "The cabin list could not be read: the Host returned no cabin list. Reload the page and try again.",
+    "Cabins can only be read while the game you launched is starting up, and this page read them once, when it opened. Load your farm, then reload this page to pick a cabin - reloading only reopens this tab, and the game keeps running.",
   stardewCabinsAwaitingSession:
     "There is no game session to read cabins from yet. Finish steps 1 and 2 above: the cabins to confirm appear here once the companion moves in.",
-  stardewCabinsEmpty: "No cabins are currently available.",
+  stardewCabinsEmpty:
+    "This farm has no empty cabin, so your companion has nowhere to live yet. Build one at Robin's carpenter shop in the game, then reload this page to choose it.",
   stardewCabinConfirm: "Confirm cabin",
   stardewManifestAdmitted: "Cabin request admitted. Waiting for the next game setup step.",
   stardewCabinConfirmationUncertain:
@@ -186,12 +191,19 @@ const en = {
   // one of these codes on the failed turn (`BrowserTurnV1Schema.problemCode`,
   // `tavern_browser_api/v1`), and they mean four different things to the player:
   // the connection dropped mid-reply, the model answered but nothing was shown,
-  // the runtime was not up, or the write did not land. `chatFailed` is the
+  // the endpoint refused the request, or the write did not land. `chatFailed` is the
   // fallback for a code a later Host version adds, so an unknown code renders a
   // sentence rather than its own enum member.
   chatFailedInterrupted: "The connection dropped before the reply arrived. You can try again.",
   chatFailedNoVisiblePresentation: "She finished, but nothing came through. You can try again.",
-  chatFailedRuntimeUnavailable: "The reply runtime is not available right now. Try again in a moment.",
+  // The refusal category: the turn failed before any model replied. The key keeps the exact name
+  // of the code that carries it - `runtime_unavailable`, the one member the Host settles a
+  // provider rejection as - so the catalogue and the wire spell this concept once. It names the
+  // three things the player can fix on the settings side - a missing, wrong or revoked key; a
+  // model the endpoint does not serve; an endpoint that cannot be reached - because naming the
+  // product's own "runtime" pointed at nothing.
+  chatFailedRuntimeUnavailable:
+    "The reply never reached a model: the endpoint GameBuddy sends your messages to refused it — the API key is missing, wrong or revoked, the model you picked is not one that endpoint serves, or the endpoint could not be reached. Check the connection and model in Settings (Connection and model); repeating this message will fail the same way.",
   chatFailedStorageUnavailable: "The reply could not be saved. You can try again.",
 
   // Settings & System
@@ -253,7 +265,7 @@ const en = {
   connectionActiveLabel: "Active connection",
   connectionNoneActive: "No connection selected",
   connectionNoSelectionNotice:
-    "No connection has been selected. Until one is activated, the assistant keeps using the built-in default connection.",
+    "No connection is selected. The built-in default exists only in an operator environment, so a normal install has none — configure a connection here: choose a provider, enter its API Key and the model it serves, then save and enable it.",
   connectionActivationNotice:
     "Connection activated. It applies from your next conversation; one already in progress is not switched.",
   connectionProvider: "Provider",
@@ -514,6 +526,64 @@ const en = {
   problemConnectionLimitReachedTitle: "There are as many connections as GameBuddy keeps",
   problemConnectionLimitReachedDetail:
     "GameBuddy keeps a limited number of connections. Remove one before adding another.",
+  // The game surface's own refusals. The composed shell serves two contracts: the tavern
+  // `ProblemCode` above and `game_browser_api/v1`
+  // (`host/src/game-browser-contract/index.ts`), whose codes name game facts the chat's
+  // sentences cannot state - a connection generation that moved, an unconfirmed cabin handoff,
+  // a cabin choice that expired. One pair per fact, and the next step that fact asks for.
+  // `problem-code-gate.test.mjs` (`problem-code.8`/`problem-code.9`) drives every member of that
+  // union through this catalogue and pins the client's mirror to the Host's declaration, so a
+  // code added to the contract fails the gate until it has words here.
+  gameProblemUnavailableTitle: "The game did not go ahead",
+  gameProblemUnavailableDetail:
+    "GameBuddy could not carry out this step of the game. The latest authoritative game state is shown; check Game installation, then try again.",
+  // The one templated game pair. `game_unavailable` is the wrapper the Host answers with when a
+  // step of the game's own lifecycle failed, and the bounded `stardew_*` cause it registers is
+  // what says which step: without a cause, the generic sentence above is the whole truth.
+  gameProblemUnavailableCauseDetail:
+    "GameBuddy could not carry out this step of the game (registered cause {{cause}}). The latest authoritative game state is shown; check Game installation, then try again.",
+  gameProblemPrerequisitesMissingTitle: "Companion play is not ready yet",
+  gameProblemPrerequisitesMissingDetail:
+    "GameBuddy has not staged this session's game yet. Enable companion play first, then try this again.",
+  gameProblemCompatibilityTitle: "That game build is not supported",
+  gameProblemCompatibilityDetail:
+    "The Stardew Valley installation GameBuddy found is not a version it can run with. Fix the installation, then try again.",
+  gameProblemInstanceGoneTitle: "That game is gone",
+  gameProblemInstanceGoneDetail:
+    "The game instance this page named is no longer the current one - it stopped or was replaced. Reload the game page to see what is running now.",
+  gameProblemAttachmentMovedTitle: "The game connection moved",
+  gameProblemAttachmentMovedDetail:
+    "The game attached or detached since the page read it, so this action was not applied. Reload the game page to see the current connection, then try again.",
+  gameProblemNotRepeatedTitle: "That was not repeated",
+  gameProblemNotRepeatedDetail:
+    "GameBuddy could not match this to your earlier attempt, so it did not run it again. Reload the game page, then start the action again.",
+  gameProblemCabinChoiceStaleTitle: "That cabin choice expired",
+  gameProblemCabinChoiceStaleDetail:
+    "The cabin you picked is no longer one of the choices offered - the list moved, or that choice was already used. Read the cabins again and choose one.",
+  gameProblemHandoffUncertainTitle: "The cabin handoff is not confirmed",
+  gameProblemHandoffUncertainDetail:
+    "GameBuddy could not confirm which cabin was handed over, so do not confirm again. Wait for recovery, or reload the game page to see the authoritative state.",
+  gameProblemRuntimeUnavailableTitle: "The game's runtime is not available",
+  gameProblemRuntimeUnavailableDetail:
+    "The runtime that runs the game's side of this session is not running, so the action did not go on. Reload the game page, then start the game again.",
+  gameProblemStorageUnavailableTitle: "The game session could not be stored",
+  gameProblemStorageUnavailableDetail:
+    "GameBuddy could not write this session's game record, so the game session was not created. Reload the game page and try again.",
+  gameProblemEndgameSettlementTitle: "The game was not settled",
+  gameProblemEndgameSettlementDetail:
+    "The endgame request reached the game, but its settlement did not complete, so the game may still be running. Reload the game page and check before ending it again.",
+  gameProblemClosedTitle: "This game page has ended",
+  gameProblemClosedDetail:
+    "GameBuddy ended this game page, so there is nothing left to act on. Open the game again from GameBuddy.",
+  gameProblemRequestRejectedTitle: "GameBuddy could not accept that",
+  gameProblemRequestRejectedDetail:
+    "The request could not be taken as it was sent. Reload the game page and try again.",
+  gameProblemRouteUnavailableTitle: "Unable to reach the game",
+  gameProblemRouteUnavailableDetail:
+    "This GameBuddy build does not serve the game route the page asked for. Update GameBuddy or reload the page.",
+  gameProblemStateUnavailableTitle: "The game is not available right now",
+  gameProblemStateUnavailableDetail:
+    "GameBuddy could not read or settle the game's own state just now. Reload the game page to see where it stands, then try again.",
 
   // Characters (design/28 §2) — companion library + persona/scenario/greeting
   charactersTitle: "Characters",
@@ -694,7 +764,13 @@ const en = {
   gameBoardActingUnavailable: "Your companion has no way into your farm yet.",
   gameStartGuide: "Getting started together",
   gameGuideStepOneTitle: "Start Stardew",
-  gameGuideStepOneDetail: "Prepare Stardew and the companion mod.",
+  gameGuideStepOneDetail:
+    "Choose your game folder under Game installation first if it is not set yet, then do the two controls below in this order: enable companion play, then set up Stardew Valley.",
+  // What each of step 1's two controls is for. They run in one order only - the
+  // Host refuses setup before activation - and that order used to reach the
+  // player only as a refusal after they had already picked the wrong one.
+  gameActivationHint: "Gets the companion ready to play in this session.",
+  gameSetupHint: "Prepares Stardew Valley and the companion's mod.",
   gameGuideStepTwoTitle: "Load your farm",
   gameGuideStepTwoDetail: "Start the game with your companion, then load the farm you want to play.",
   gameGuideStepThreeTitle: "Your companion moves in",
@@ -816,10 +892,12 @@ const zh: Messages = {
   gameLaunchFailed: "游戏启动结果不确定；当前显示的是最新权威游戏状态。",
   stardewCabinSelection: "星露谷小屋选择",
   stardewCabinsLoading: "正在读取可用小屋…",
-  stardewCabinsUnavailable: "无法读取小屋选项：Host 没有返回小屋列表。请重新加载页面后再试。",
+  stardewCabinsUnavailable:
+    "小屋只能在启动游戏的过程中读取，而这个页面只在刚打开时读过一次。请先载入你的农场，再重新加载本页来选小屋——重新加载只是重开这个标签页，游戏不会停。",
   stardewCabinsAwaitingSession:
     "还没有可以读取小屋的游戏会话。先完成上面第 1、2 步；伴侣住进农舍后，可确认的小屋会出现在这里。",
-  stardewCabinsEmpty: "当前没有可用小屋。",
+  stardewCabinsEmpty:
+    "这个农场还没有空着的小屋，同伴还没有地方住。请去游戏里罗宾的木匠铺建一间，然后重新加载本页来选它。",
   stardewCabinConfirm: "确认小屋",
   stardewManifestAdmitted: "小屋请求已接纳，正在等待下一步游戏设置。",
   stardewCabinConfirmationUncertain: "确认结果仍在等待验证。请勿再次确认；等待恢复，或重新加载页面进行手动恢复。",
@@ -906,7 +984,9 @@ const zh: Messages = {
   // 回合失败的四种情况，见英文目录同名字段的说明。未知代码回退到 chatFailed。
   chatFailedInterrupted: "连接中断了，回复没有送达。你可以重试。",
   chatFailedNoVisiblePresentation: "她没能开口，回复没有显示出来。你可以重试。",
-  chatFailedRuntimeUnavailable: "回复运行时暂不可用，请稍后再试。",
+  // 拒绝分类：英文目录同名字段说明了承载它的 wire 代码（runtime_unavailable）和理由。
+  chatFailedRuntimeUnavailable:
+    "这条回复没有送达任何模型：GameBuddy 转发消息的端点拒绝了它——API Key 缺失、错误或已被吊销，你选的模型不是该端点提供的，或者根本连不上那个端点。请在「设置 → 连接与模型」里检查连接和模型；重复发送同一条消息只会以同样方式失败。",
   chatFailedStorageUnavailable: "回复没能保存下来。你可以重试。",
 
   // Settings & System
@@ -963,7 +1043,8 @@ const zh: Messages = {
   connectionSettings: "连接与模型",
   connectionActiveLabel: "当前连接",
   connectionNoneActive: "未选择连接",
-  connectionNoSelectionNotice: "尚未选择连接。在启用之前，助手继续使用内置默认连接。",
+  connectionNoSelectionNotice:
+    "尚未选择连接。内置默认连接只存在于运行环境中，普通安装没有它——请在这里配置一条连接：选择渠道、填写它的 API Key 和它提供的模型，然后保存并启用。",
   connectionActivationNotice: "连接已启用。从下次开始对话时生效；正在进行的会话不会被切换。",
   connectionProvider: "渠道",
   connectionRecommended: "推荐",
@@ -1171,6 +1252,49 @@ const zh: Messages = {
   problemConnectionConflictDetail: "页面读取之后连接已经变化，或者这是正在使用、无法删除的连接。请重新加载后再试。",
   problemConnectionLimitReachedTitle: "连接数量已经到上限",
   problemConnectionLimitReachedDetail: "GameBuddy 能保存的连接数量有限。请先删掉一个，再添加新的。",
+  gameProblemUnavailableTitle: "游戏没有进行下去",
+  gameProblemUnavailableDetail:
+    "GameBuddy 无法完成这一步游戏操作。下面是当前权威的游戏状态；请检查「游戏安装」，再试一次。",
+  gameProblemUnavailableCauseDetail:
+    "GameBuddy 无法完成这一步游戏操作（登记的原因：{{cause}}）。下面是当前权威的游戏状态；请检查「游戏安装」，再试一次。",
+  gameProblemPrerequisitesMissingTitle: "陪伴游览还没有准备好",
+  gameProblemPrerequisitesMissingDetail: "GameBuddy 还没有为这次会话准备好游戏。请先启用陪伴游览，再重试。",
+  gameProblemCompatibilityTitle: "这个游戏版本不受支持",
+  gameProblemCompatibilityDetail: "GameBuddy 找到的《星露谷物语》不是它能配合运行的版本。请修好这份安装，再试一次。",
+  gameProblemInstanceGoneTitle: "那个游戏已经不在了",
+  gameProblemInstanceGoneDetail:
+    "这个页面指的游戏实例已经不是当前的那个了 —— 它停止了，或被替换了。请重新加载游戏页面，看看现在运行的是哪一个。",
+  gameProblemAttachmentMovedTitle: "游戏连接已经变化",
+  gameProblemAttachmentMovedDetail:
+    "页面读取之后，游戏已经连接或断开了，所以这次操作没有被执行。请重新加载游戏页面，看清当前的连接，再试一次。",
+  gameProblemNotRepeatedTitle: "这次没有重放",
+  gameProblemNotRepeatedDetail:
+    "GameBuddy 无法把这次请求和你之前的那一次对应起来，所以没有再次执行。请重新加载游戏页面，再发起这次操作。",
+  gameProblemCabinChoiceStaleTitle: "那个小屋选择已经失效",
+  gameProblemCabinChoiceStaleDetail:
+    "你选的小屋已经不在可选的列表里了 —— 列表变了，或者那个选择已经被用掉。请重新读取小屋列表，再选一个。",
+  gameProblemHandoffUncertainTitle: "小屋的交接还没有确认",
+  gameProblemHandoffUncertainDetail:
+    "GameBuddy 无法确认交接的是哪个小屋，所以请不要再次确认。等待恢复，或重新加载游戏页面查看权威状态。",
+  gameProblemRuntimeUnavailableTitle: "游戏的运行时不可用",
+  gameProblemRuntimeUnavailableDetail:
+    "运行这次会话中游戏那一侧的运行时没有在运行，所以这次操作没有进行下去。请重新加载游戏页面，再启动游戏。",
+  gameProblemStorageUnavailableTitle: "游戏会话没能保存",
+  gameProblemStorageUnavailableDetail:
+    "GameBuddy 无法写入这次会话的游戏记录，所以游戏会话没有创建。请重新加载游戏页面，再试一次。",
+  gameProblemEndgameSettlementTitle: "游戏没有完成收尾",
+  gameProblemEndgameSettlementDetail:
+    "结束游戏的请求已经到达游戏，但收尾没有完成，游戏可能仍在运行。请重新加载游戏页面确认状态，再决定是否再次结束。",
+  gameProblemClosedTitle: "这个游戏页面已经关闭",
+  gameProblemClosedDetail: "GameBuddy 关闭了这个游戏页面，已经没有可以操作的对象了。请从 GameBuddy 重新打开游戏。",
+  gameProblemRequestRejectedTitle: "GameBuddy 无法接受这次请求",
+  gameProblemRequestRejectedDetail: "请求不能按发送的样子被接受。请重新加载游戏页面，再试一次。",
+  gameProblemRouteUnavailableTitle: "无法访问游戏",
+  gameProblemRouteUnavailableDetail:
+    "当前 GameBuddy 版本不提供该页面请求的游戏路由。请更新 GameBuddy，或重新加载页面。",
+  gameProblemStateUnavailableTitle: "游戏现在不可用",
+  gameProblemStateUnavailableDetail:
+    "GameBuddy 刚才无法读取或确认游戏自身的状态。请重新加载游戏页面，看清它现在的情况，再试一次。",
 
   // Characters (design/28 §2)
   charactersTitle: "角色",
@@ -1341,7 +1465,10 @@ const zh: Messages = {
   gameBoardActingUnavailable: "同伴还没有接到你的农场。",
   gameStartGuide: "怎么开始",
   gameGuideStepOneTitle: "启动星露谷",
-  gameGuideStepOneDetail: "先把星露谷和同伴模组准备好。",
+  gameGuideStepOneDetail:
+    "如果还没选过游戏目录，先在下方「游戏安装」里选好；然后按顺序做下面两个操作：先启用伙伴陪玩，再设置《星露谷物语》。",
+  gameActivationHint: "让伴侣为这次会话做好准备。",
+  gameSetupHint: "准备好《星露谷物语》和伴侣模组。",
   gameGuideStepTwoTitle: "载入你的农场",
   gameGuideStepTwoDetail: "和伙伴一起启动游戏，然后载入你想玩的农场。",
   gameGuideStepThreeTitle: "同伴住进农舍",

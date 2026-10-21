@@ -8,9 +8,19 @@ import type { BrowserTurnV1 } from "../reference-pipeline-api";
  * closed `problemCode` on the turn (`BrowserTurnV1Schema.problemCode`,
  * `tavern_browser_api/v1`), and its four members mean four different things to
  * the player - the connection dropped mid-reply, the model answered but nothing
- * was shown, the runtime was not up, or the reply could not be written. The
- * surface collapsed all of them into one "try again", which told the player
+ * was shown, the endpoint refused the request, or the reply could not be written.
+ * The surface collapsed all of them into one "try again", which told the player
  * nothing about what had actually happened.
+ *
+ * The refusal is `runtime_unavailable`, and that one member is why the surface
+ * needed a category rather than a better sentence: a wrong key, a revoked key, a
+ * model the endpoint does not serve and a network that cannot reach it all arrive
+ * as that same member, because it is what the Host settles a provider rejection
+ * with (`p4-provider-start-execution.ts`: a rejected `session.prompt()`). No
+ * declared code says "the endpoint refused us" more narrowly, and a turn-level
+ * "the runtime is down" does not exist - a runtime that never started ends as
+ * `not_started`, not as a failed turn - so this member's sentence names the
+ * credential, the model and the endpoint, and sends the player to Settings.
  *
  * Three rules shape the mapping:
  *  - the raw member never reaches the player. `interrupted` and
