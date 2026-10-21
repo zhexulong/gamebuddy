@@ -46,7 +46,30 @@ export class ReceiptReplayLedger {
       // rewrite. An equal revision with different content IS a rewrite of a
       // settled transition and must fail closed.
       if (receipt.revision < previous.revision) return "stale_revision_delivery";
-      if (receipt.revision === previous.revision) return "non_monotonic_revision";
+      if (receipt.revision === previous.revision) {
+        // Name BOTH sides. Three separate live runs died here with the same one-word reason, and each time the pair that
+        // collided had to be reconstructed from other artifacts - the Mod's own publish log showed 129 markers with 129
+        // distinct revisions, so the duplicate is created between the two channels that carry the same receipt (the fact
+        // stream and the response). Printing the pair makes the next occurrence self-explanatory instead of a hunt.
+        process.stderr.write(
+          `RECEIPT_REPLAY_COLLISION ${JSON.stringify({
+            executionId: receipt.executionId,
+            requestId: receipt.requestId,
+            revision: receipt.revision,
+            previous: {
+              state: previous.state,
+              reasonCode: previous.reasonCode,
+              evidenceKeys: Object.keys(previous.evidence ?? {}),
+            },
+            incoming: {
+              state: receipt.state,
+              reasonCode: receipt.reasonCode,
+              evidenceKeys: Object.keys(receipt.evidence ?? {}),
+            },
+          })}\n`,
+        );
+        return "non_monotonic_revision";
+      }
       if (TERMINAL_STATES.has(previous.state)) return "terminal_state_rewritten";
       if (!PROGRESS_STATES.has(previous.state)) return "invalid_previous_state";
     }
