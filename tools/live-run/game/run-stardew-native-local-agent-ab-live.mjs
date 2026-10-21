@@ -1008,6 +1008,45 @@ function summarizeDispatchedActions(trace) {
 }
 
 /**
+ * The session's one verdict, decided by a single control flow whose residual IS `completed`.
+ *
+ * `completed` cannot be computed beside the evidence and then published next to it: measured 2026-10-21 on three
+ * multi-day runs, `sessionVerdict: "completed"` was published while `multiday.completed` was false and the assessment
+ * said `blocked`. One run cannot both have completed and have been blocked, so the multi-day assessment is an arm of
+ * the derivation itself - while it is not `passed`, `completed` is unreachable rather than merely contradicted.
+ *
+ * Each arm names the fault it reports, so the assessment cannot mask a turn, a transport or a world that already said
+ * what went wrong; the scenario clauses then read this verdict instead of re-deciding part of it.
+ */
+function deriveSessionVerdict({
+  worldStallReason,
+  sessionTurns,
+  unsettledTurns,
+  turnFailureReason,
+  bridgeDisconnections,
+  sessionSpoken,
+  accomplishedActionIds,
+  multidayAssessment,
+}) {
+  if (worldStallReason !== null) return "world_stopped_advancing";
+  if (sessionTurns.length === 0) return "no_turns";
+  // A session cut off mid-turn is not a completed session, and the timeout is its own answer: run H passed a 609s
+  // `agent_turn_timeout` because nothing here distinguished it from a settled turn.
+  if (unsettledTurns.some((entry) => entry.error === "agent_turn_timeout")) return "turn_timeout";
+  if (unsettledTurns.length > 0) return "turn_unsettled";
+  if (turnFailureReason !== undefined) return "turn_failed";
+  // A transport that died mid-run cannot support a behaviour claim: the companion's own line may simply never have
+  // been presented, so silence would be reported for a fault in the pipe.
+  if (bridgeDisconnections.length > 0) return "bridge_disconnected";
+  // The run's own multi-day judgement, in the verdict rather than beside it. `null` means this run never made one
+  // (every scenario but `multiday_routine`), which is not a judgement either way.
+  if (multidayAssessment !== null && multidayAssessment.state !== "passed") return "multiday_routine_blocked";
+  if (!sessionSpoken) return "silent";
+  if (accomplishedActionIds.length === 0) return "nothing_accomplished";
+  return "completed";
+}
+
+/**
  * A scenario may deliver one player turn, or a session of them.
  * This is that one turn's machinery, extracted so every scenario shares it: admit
  * the player text, wait for the turn to settle (or for a submitted program to
@@ -2668,27 +2707,17 @@ try {
   const spokeToPlayer = typeof presentedSummary === "string" && presentedSummary.trim().length > 0;
   const sessionSpoken = SCENARIO !== "morning_routine" || spokeToPlayer;
 
-  const sessionVerdict =
-    worldStallReason !== null
-      ? "world_stopped_advancing"
-      : sessionTurns.length === 0
-        ? "no_turns"
-        : unsettledSessionTurns.some((entry) => entry.error === "agent_turn_timeout")
-          ? "turn_timeout"
-          : unsettledSessionTurns.length > 0
-            ? "turn_unsettled"
-            : turnFailureReason !== undefined
-              ? "turn_failed"
-              : // A transport that died mid-run cannot support a behaviour claim: the companion's own line may
-                // simply never have been presented. Without this arm the run reported `silent` - "the companion
-                // said nothing" - for a fault in the pipe (measured 2026-10-16).
-                bridgeDisconnections.length > 0
-                ? "bridge_disconnected"
-                : sessionSpoken
-                  ? accomplishedActionIds.length > 0
-                    ? "completed"
-                    : "nothing_accomplished"
-                  : "silent";
+  const sessionVerdict = deriveSessionVerdict({
+    worldStallReason,
+    sessionTurns,
+    unsettledTurns: unsettledSessionTurns,
+    turnFailureReason,
+    bridgeDisconnections,
+    sessionSpoken,
+    accomplishedActionIds,
+    // Present only for the multi-day scenario, where it is the run's own baseline judgement.
+    multidayAssessment: multidayOutcome?.assessment ?? null,
+  });
   const morningRoutinePassed =
     SCENARIO === "morning_routine"
       ? sessionTurns.length > 0 && attemptedActionIds.length > 0 && sessionVerdict === "completed"
@@ -2709,12 +2738,11 @@ try {
   // is how a run comes to pass one and red the other.
   const multidayRoutinePassed =
     SCENARIO === "multiday_routine"
-      ? // The baseline's own judgement PLUS the closing session's shape. A run whose last turn was truncated, that
-        // never spoke, or that produced nothing but the rollover is not a companion that kept playing across days -
-        // `morning_routine` already refuses a truncated session (`sessionVerdict === "completed"`), and the
-        // multi-day scenario is the one that most needs the same bar, because its baseline can be satisfied by
-        // nights alone (measured 2026-10-17: a review found a truncated multi-day run could report `passed`).
-        multidayOutcome?.assessment?.ok === true && sessionTurns.length > 0 && sessionVerdict === "completed"
+      ? // The verdict already carries the baseline's judgement (a blocked assessment cannot reach `completed`) as
+        // well as the closing session's shape - a truncated turn, silence, or nothing but the rollover is not a
+        // companion that kept playing across days. Re-deciding the assessment here would be the second decision
+        // that let a completed session publish beside a blocked baseline.
+        sessionVerdict === "completed"
       : // absence-as-pass: this clause is multiday_routine's own question; no other scenario crosses a night.
         true;
   // The audit the rung exists for: what it could do, what the system stopped, and

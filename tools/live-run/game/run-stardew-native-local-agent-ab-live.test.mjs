@@ -291,12 +291,84 @@ test("the run computes the deterministic claim-fulfillability presence projectio
   assert.match(RUNNER_SOURCE, /visibleActionIds/);
   assert.match(RUNNER_SOURCE, /presenceProjection,/);
 });
+test("a run whose multi-day assessment is blocked cannot report a completed session", () => {
+  // The falsifier, written before the change: runs of the 2026-10-21 corpus published
+  // `sessionVerdict: "completed"` while `multiday.completed` was false and the assessment said `blocked`.
+  // One run cannot both have completed and have been blocked, so the verdict is DERIVED from the
+  // assessment (one control flow, `completed` as the residual) rather than computed beside it.
+  const deriveSessionVerdict = extractRunnerFunction(RUNNER_SOURCE, "deriveSessionVerdict");
+  const healthy = {
+    worldStallReason: null,
+    sessionTurns: [{}],
+    unsettledTurns: [],
+    turnFailureReason: undefined,
+    bridgeDisconnections: [],
+    sessionSpoken: true,
+    accomplishedActionIds: ["harvest_crop"],
+    multidayAssessment: null,
+  };
+  assert.equal(deriveSessionVerdict(healthy), "completed");
+  assert.equal(deriveSessionVerdict({ ...healthy, multidayAssessment: { state: "passed", ok: true } }), "completed");
+  for (const assessment of [
+    // The exact shape the blocked corpus runs carried: no night terminal, no farm work, one crossing.
+    { ok: false, state: "blocked", violations: [{ code: "next_day_produced_no_farm_work", where: "dayRecords[0]" }] },
+    { ok: false, state: "blocked", violations: [] },
+    { ok: null, state: "unobserved" },
+  ])
+    assert.equal(
+      deriveSessionVerdict({ ...healthy, multidayAssessment: assessment }),
+      "multiday_routine_blocked",
+      `a ${String(assessment.state)} assessment must not publish a completed session`,
+    );
+  // The arms that already named a fault still win, so the assessment never masks a cause that says itself.
+  assert.equal(
+    deriveSessionVerdict({
+      ...healthy,
+      turnFailureReason: "provider_error",
+      multidayAssessment: { ok: false, state: "blocked" },
+    }),
+    "turn_failed",
+  );
+  assert.equal(
+    deriveSessionVerdict({
+      ...healthy,
+      bridgeDisconnections: [{}],
+      multidayAssessment: { ok: false, state: "blocked" },
+    }),
+    "bridge_disconnected",
+  );
+  // `completed` is minted in exactly one place, as the function's RESIDUAL: there is no second site
+  // that could decide it beside the assessment.
+  assert.equal((deriveSessionVerdict.source.match(/"completed"/gu) ?? []).length, 1);
+  assert.match(deriveSessionVerdict.source, /return "completed";\n\}$/);
+  assert.ok(
+    deriveSessionVerdict.source.indexOf('"multiday_routine_blocked"') <
+      deriveSessionVerdict.source.indexOf('"completed"'),
+    "the assessment must be read before the residual verdict is reached",
+  );
+  // The published verdict is this one derivation's return, not a chain computed beside it.
+  assert.match(RUNNER_SOURCE, /const sessionVerdict = deriveSessionVerdict\(\{/);
+  // And the scenario's own clause reads that verdict instead of re-deciding the assessment beside it.
+  const multidayClause = RUNNER_SOURCE.slice(
+    RUNNER_SOURCE.indexOf("const multidayRoutinePassed ="),
+    RUNNER_SOURCE.indexOf("const capabilityAudit ="),
+  );
+  assert.match(multidayClause, /sessionVerdict === "completed"/);
+  assert.doesNotMatch(
+    multidayClause,
+    /multidayOutcome\?\.assessment/,
+    "a second decision on the assessment is how a completed session published beside a blocked baseline",
+  );
+});
+
 test("morning_routine is a self-directed session whose output is a capability audit", () => {
   // The scenario's question is "what could the companion actually do, and where did
   // the system stop it" — so the prompt must be an OPEN goal (no tool list, no
   // coordinates, no call budget), the session must be able to span more than one
   // player turn, and the verdict must rest on a real attempt rather than on an
   // expected receipt.
+  // The one derivation the assertions below read, extracted so they test its ORDER and not one spelling of it.
+  const deriveSessionVerdictSource = extractRunnerFunction(RUNNER_SOURCE, "deriveSessionVerdict").source;
   assert.match(RUNNER_SOURCE, /morning_routine: Object\.freeze\(\{\n    zh: `现在是星露谷春季的早晨/);
   assert.match(RUNNER_SOURCE, /en: `It is a spring morning in Stardew Valley/);
   assert.match(RUNNER_SOURCE, /const SESSION_GOALS = \(process\.env\.GAMEBUDDY_AGENT_SESSION_GOALS \?\? ""\)/);
@@ -332,8 +404,8 @@ test("morning_routine is a self-directed session whose output is a capability au
   // A session cut off mid-turn must not be reported as a completed session: the first
   // real run of this rung passed on a 609s `agent_turn_timeout` while the companion had
   // emitted a 10-character fragment and never delivered its closing report.
-  assert.match(RUNNER_SOURCE, /const sessionVerdict =/);
-  assert.match(RUNNER_SOURCE, /\? "turn_timeout"/);
+  assert.match(RUNNER_SOURCE, /const sessionVerdict = deriveSessionVerdict\(\{/);
+  assert.match(deriveSessionVerdictSource, /return "turn_timeout";/);
   assert.match(RUNNER_SOURCE, /sessionVerdict === "completed"/);
   // The per-turn errors are published, and a provider failure counts as one: the turn WAS
   // delivered (so it is not `unsettled`) and produced no text (so it is not silence). A real run
@@ -351,17 +423,17 @@ test("morning_routine is a self-directed session whose output is a capability au
   );
   assert.match(
     RUNNER_SOURCE,
-    /const \{ attempted: attemptedActionIds, accomplished: accomplishedActionIds \} = summarizeDispatchedActions\(actionTrace\);/,
+    /const \{ attempted: attemptedActionIds, accomplished: accomplishedActionIds \} =\s*summarizeDispatchedActions\(actionTrace\);/,
   );
-  assert.match(RUNNER_SOURCE, /: "nothing_accomplished"/);
+  assert.match(RUNNER_SOURCE, /return "nothing_accomplished";/);
   // Run M did 17 native actions over fifteen minutes and never said a word to the player:
   // a play session that never speaks must not pass as a companion session.
   // The binding is `sessionSpoken` since a sibling commit renamed it (`ff938c3a`), and the verdict states silence as
-  // the FALLBACK arm rather than as a `?` branch. Both assertions keep their intent: the binding is declared, it is
-  // read by the verdict, and a session that never spoke is its own outcome - so this stays a test of the rule rather
-  // than of one spelling of it.
+  // the RESIDUAL arm of its one derivation rather than as a `?` branch. Both assertions keep their intent: the binding
+  // is declared, it is read by the verdict, and a session that never spoke is its own outcome - so this stays a test of
+  // the rule rather than of one spelling of it.
   assert.match(RUNNER_SOURCE, /const spokeToPlayer = typeof presentedSummary === "string"/);
-  assert.match(RUNNER_SOURCE, /: "silent";/);
+  assert.match(deriveSessionVerdictSource, /return "silent";/);
   // The run reports BOTH: what the companion said, and whether that counts for this scenario's verdict.
   assert.match(RUNNER_SOURCE, /const sessionSpoken = SCENARIO !== "morning_routine" \|\| spokeToPlayer;/);
   assert.match(RUNNER_SOURCE, /spokeToPlayer,/);
@@ -389,7 +461,11 @@ test("morning_routine is a self-directed session whose output is a capability au
   };
   // ORDER, and the order IS the fix: a failed turn is decided BEFORE silence, so a provider failure
   // can never again be reported as the companion choosing to stay quiet.
-  assert.ok(positionOf('? "turn_failed"') < positionOf(': "silent";'), "turn_failed must be decided before silent");
+  assert.ok(
+    deriveSessionVerdictSource.indexOf('return "turn_failed";') <
+      deriveSessionVerdictSource.indexOf('return "silent";'),
+    "turn_failed must be decided before silent",
+  );
   assert.ok(
     positionOf("const spokeToPlayer = typeof presentedSummary") < positionOf("const sessionVerdict ="),
     "spokeToPlayer is read by the verdict, so it must be declared first",

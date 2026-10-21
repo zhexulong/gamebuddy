@@ -159,7 +159,13 @@ test("a transport that dies mid-run is recorded, and is its own verdict", () => 
   assert.match(SOURCE, /dispatchesSoFar: actionTrace\.length,/);
   assert.match(SOURCE, /console\.error\("BRIDGE_DISCONNECTED", JSON\.stringify\(entry\)\);/);
   // The verdict arm sits before `silent`: a dead pipe explains silence, so it must not be reported as silence.
-  const verdict = SOURCE.slice(SOURCE.indexOf("const sessionVerdict ="), SOURCE.indexOf("const morningRoutinePassed"));
+  // Both are arms of ONE derivation now (the multi-day assessment joined it), so the order is read where the
+  // arms are decided rather than at the call site.
+  const verdict = SOURCE.slice(
+    SOURCE.indexOf("function deriveSessionVerdict({"),
+    SOURCE.indexOf("function runAgentTurn("),
+  );
+  assert.ok(verdict.length > 0, "the runner must decide the session verdict in one derivation");
   const disconnectedAt = verdict.indexOf('"bridge_disconnected"');
   const silentAt = verdict.indexOf('"silent"');
   assert.ok(disconnectedAt >= 0 && silentAt > disconnectedAt, "bridge_disconnected must be decided before silent");
