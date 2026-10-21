@@ -619,6 +619,22 @@ function CompanionWorldBookEditor({
             value={entry.keys}
             onChange={(event) => updateEntry(index, { ...entry, keys: event.target.value })}
           />
+          {/* The one fact about an entry that is a switch rather than a string, beside
+              the trigger words it overrides: an entry marked always with her is carried
+              whether or not the player's words match, so a player who writes her own
+              entry can say so here instead of leaving the words to decide. The draft
+              carries the value to the save, which is the only thing the Host reads. */}
+          <label className="companion-world-book-constant">
+            <input
+              id={`companion-world-book-entry-${index}-constant`}
+              className="companion-world-book-constant-box"
+              type="checkbox"
+              data-companion-world-book-entry-constant
+              checked={entry.constant}
+              onChange={(event) => updateEntry(index, { ...entry, constant: event.target.checked })}
+            />
+            <span>{labels.companionWorldBookAlwaysOn}</span>
+          </label>
           <p className="management-settings-hint">{labels.companionWorldBookEntryKeysHint}</p>{" "}
           <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-body`}>
             {labels.companionWorldBookEntryBody}

@@ -4159,6 +4159,56 @@
     border-top: 1px solid var(--border-subtle);
   }
 
+  /* The one field in her book that is a switch rather than a string: an entry marked
+   always with her is carried whether or not the player's words reach it, so the
+   control sits beside the trigger words it overrides. It was missing entirely - the
+   draft carried `constant` and the save sent it, but nothing could set it, so an
+   entry the player wrote herself could never become always-on. The row is the
+   target (the product's 44 px floor): a native checkbox is 13 px of ink and a thumb
+   cannot find that, while the box keeps its own box so it still reads as a check. */
+  .companion-world-book-constant {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--touch-target-min);
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  /* The box is painted here rather than by the browser: a native checkbox on this
+   dark card would be the one control in the product still carrying a light foreign
+   face, and its own 13 px of ink is below every floor this product declares. 20 px of
+   box inside a 44 px row, filled with the accent when it is on - so "on" is a state
+   the player sees, not one she only hears. */
+  .companion-world-book-constant-box {
+    appearance: none;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-xs);
+    background-color: var(--surface-panel);
+    cursor: pointer;
+  }
+
+  .companion-world-book-constant-box:checked {
+    background-color: var(--accent-solid);
+    border-color: var(--accent-solid);
+  }
+
+  .companion-world-book-constant-box:checked::after {
+    content: "";
+    display: block;
+    width: 5px;
+    height: 9px;
+    border-right: 2px solid var(--surface-canvas);
+    border-bottom: 2px solid var(--surface-canvas);
+    transform: translateY(-1px) rotate(45deg);
+  }
+
   /* The companion inspector's authored prose: her persona, her scenario, her
    openings and her world book's entry bodies are the same read as the world book
    panels above, so they take those exact declarations rather than a third style.

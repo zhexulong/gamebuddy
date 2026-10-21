@@ -468,6 +468,89 @@ test("editing an entry's text and trigger words sends the revision it read, and 
 });
 
 /**
+ * The one fact about an entry that is a switch rather than a string.
+ *
+ * An entry marked always with her is carried whether or not the player's words reach it,
+ * and the draft carried that flag, the save sent it and the read-side badge printed it -
+ * but no control in the editor could set it. A player who wrote her own entry could
+ * therefore never make it always-on, while a managed-library entry could say the same
+ * thing by leaving its trigger words empty.
+ *
+ * The proof is the request the surface actually sent and the list it re-rendered from the
+ * Host's own answer: a control that only painted a local check would pass a screenshot
+ * and fail here.
+ */
+test("an entry marked always with her keeps that fact through the Host round trip", async ({ page }) => {
+  const book = {
+    apiVersion: 1,
+    present: true,
+    revision: 3,
+    entries: [
+      { title: "温室", keys: ["温室"], constant: false, content: "温室的玻璃是她去年冬天换的。" },
+      { title: "洒水器", keys: ["洒水器"], constant: false, content: "洒水器是她修好的。" },
+    ],
+  };
+  await stubCharacters(page, book);
+  const sent: { expectedRevision?: number; constant?: boolean; keys?: readonly string[] }[] = [];
+  await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.fulfill(jsonOk(book));
+      return;
+    }
+    const body = JSON.parse(route.request().postData() ?? "null") as {
+      expectedRevision: number;
+      entries: readonly { title: string; keys: readonly string[]; constant: boolean; content: string }[];
+    };
+    sent.push({ expectedRevision: body.expectedRevision, constant: body.entries[0]!.constant, keys: body.entries[0]!.keys });
+    // The Host's own reply: what it kept, at the next revision.
+    await route.fulfill(jsonOk({ apiVersion: 1, present: true, revision: 4, entries: body.entries }));
+  });
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  const surface = await openCharacters(page, "角色");
+
+  const block = surface.locator("[data-companion-world-book]");
+  await block.locator("[data-companion-world-book-edit]").click();
+  const editor = block.locator("[data-companion-world-book-draft]");
+  await expect(editor).toBeVisible();
+
+  // The switch sits beside the trigger words it overrides, and its own row is the target
+  // the product gives every control - the checkbox's own 18 px of ink is not a target.
+  const constant = editor.locator("[data-companion-world-book-entry-constant]").first();
+  const row = editor.locator(".companion-world-book-constant").first();
+  await expect(constant).not.toBeChecked();
+  await expect(row).toContainText("始终随行");
+  const rowBox = await row.boundingBox();
+  expect(rowBox).not.toBeNull();
+  expect(Math.round(rowBox!.height), `the switch's own row is ${rowBox!.height}px tall`).toBeGreaterThanOrEqual(44);
+
+  await constant.check();
+  // The state is painted as well as announced: the box is the product's own surface
+  // until it is on and its accent fill after it is.
+  const onPaint = await constant.evaluate((element) => getComputedStyle(element).backgroundColor);
+  await constant.uncheck();
+  const offPaint = await constant.evaluate((element) => getComputedStyle(element).backgroundColor);
+  await constant.check();
+  expect(onPaint, `the box is ${onPaint} on and ${offPaint} off`).not.toBe(offPaint);
+  await editor.locator("[data-companion-world-book-save]").click();
+
+  // The fact the player set is the fact the Host was asked to keep, on the revision the
+  // editor was opened on, and the words she did not touch travel as they were.
+  await expect(block.locator("[data-companion-world-book-notice]")).toHaveText("已保存。");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]!.expectedRevision).toBe(3);
+  expect(sent[0]!.constant).toBe(true);
+  expect(sent[0]!.keys).toEqual(["温室"]);
+
+  // …and the list is the Host's answer: the row reads as always with her now, instead of
+  // naming words that no longer decide anything.
+  await block.locator("[data-companion-world-book-disclosure] > summary").click();
+  const rows = block.locator("[data-companion-world-book-entry]");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.first()).toContainText("始终随行");
+  await expect(rows.nth(1)).toContainText("触发词：洒水器");
+});
+
+/**
  * An edit is invisible to a conversation that is already running, and the panel says so.
  *
  * The runtime publishes its authored catalog once, at mount, so a mounted Chat keeps the
@@ -567,8 +650,9 @@ test("a save refused because the book changed says the book changed, not that it
  * The Characters surface is one column at 400x800 and six stacked sections; an editor
  * that overflows its column is what the earlier measurements in this file are about
  * (`[data-companion-world-book-list]` alone was 714 px of unwrapped trigger words). The
- * editor is three fields per row, so its own geometry is measured at both widths, and
- * after a save the list is asserted to be the book the Host returned.
+ * editor is four fields per row - a title, the trigger words, the always-with-her switch
+ * and the text - so its own geometry is measured at both widths, and after a save the list
+ * is asserted to be the book the Host returned.
  */
 test("the editor fits its column at 1440x900 and at 400x800, and removing a row needs a confirmation", async ({ page }) => {
   const entries = Array.from({ length: 3 }, (_, index) => ({
@@ -626,7 +710,7 @@ test("the editor fits its column at 1440x900 and at 400x800, and removing a row 
   ] as const) {
     expect(measured.width, `${label}: the editor has a width`).toBeGreaterThan(0);
     expect(measured.right, `${label}: the editor stays inside its viewport`).toBeLessThanOrEqual(viewport);
-    expect(measured.fields, `${label}: three fields per row`).toBe(9);
+    expect(measured.fields, `${label}: four fields per row`).toBe(12);
     expect(measured.widest, `${label}: no field is collapsed to nothing`).toBeGreaterThan(40);
   }
 
