@@ -841,3 +841,148 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
     `a long line still fills its body (${measured.long.bubble.width} in ${measured.long.body.width})`,
   ).toBe(measured.long.body.width);
 });
+
+// --- the prosody tag's badge --------------------------------------------------
+
+/**
+ * A leading `（轻声）` was printed as ordinary prose, so a stage direction read as
+ * something she said.
+ *
+ * The voice layer already treats a parenthesised group as an inline tag and performs it
+ * instead of speaking it (`dehydrateCompanionSpeech`, `INLINE_TAG_RE`,
+ * `host/src/companion-speech-dehydration.ts`), which makes the transcript the one surface
+ * that showed it as text. It now reads as what it is: the product's dim badge plate, set
+ * ahead of her speech inside the same paragraph.
+ *
+ * The assertions, and the failure each one catches:
+ *  - the plate is a plate and not a bar (inline-flex, its own two words' width): catches a
+ *    sibling block above the bubble, which the column's `stretch` paints edge to edge;
+ *  - its ink and its plate are the product's own tones, measured against the bubble:
+ *    catches a new colour for one chip, and catches a "dim" tone that dims past the floor;
+ *  - the words are MOVED, never deleted - the speech beside the badge, and the whole
+ *    sentence of a tag that appears mid-line, are quoted and compared: catches the tag
+ *    being stripped from her text (a player losing what she said) and catches the
+ *    mid-sentence parenthetical being lifted out of the middle of a sentence.
+ */
+test("a leading prosody tag reads as a badge, and her words are moved rather than deleted", async ({ page }) => {
+  const opening = "（轻声）种子我已经帮你种好啦。";
+  const midline = "种子（轻声）我已经种好了。";
+  await mountShell(page, {
+    root: composedRoot({
+      transcript: [
+        { role: "companion", text: opening },
+        { role: "player", text: "谢谢你。" },
+        { role: "companion", text: midline },
+      ],
+    }),
+  });
+
+  const measured = await page.evaluate(() => {
+    const channel = (value: number) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    const luminance = (colour: string) => {
+      const [r, g, b] = [...colour.matchAll(/[\d.]+/gu)].map((match) => Number(match[0]));
+      return 0.2126 * channel(r! / 255) + 0.7152 * channel(g! / 255) + 0.0722 * channel(b! / 255);
+    };
+    const ratio = (a: string, b: string) => {
+      const [high, low] = [luminance(a), luminance(b)].sort((left, right) => right - left);
+      return Math.round(((high! + 0.05) / (low! + 0.05)) * 100) / 100;
+    };
+    const read = (row: HTMLElement) => {
+      const bubble = row.querySelector<HTMLElement>(".message-bubble")!;
+      const badges = [...bubble.querySelectorAll<HTMLElement>("[data-mood-tag]")];
+      const speechOnly = bubble.cloneNode(true) as HTMLElement;
+      for (const badge of speechOnly.querySelectorAll("[data-mood-tag]")) badge.remove();
+      return {
+        printed: (bubble.textContent ?? "").replace(/\s+/gu, " ").trim(),
+        spoken: (speechOnly.textContent ?? "").replace(/\s+/gu, " ").trim(),
+        bubbleBackground: getComputedStyle(bubble).backgroundColor,
+        badgeCount: badges.length,
+        badge:
+          badges.length === 0
+            ? null
+            : (() => {
+                const node = badges[0]!;
+                const style = getComputedStyle(node);
+                const box = node.getBoundingClientRect();
+                return {
+                  text: (node.textContent ?? "").trim(),
+                  colour: style.color,
+                  background: style.backgroundColor,
+                  display: style.display,
+                  parent: node.parentElement?.tagName ?? null,
+                  firstChild: node.parentElement?.firstElementChild === node,
+                  width: Math.round(box.width),
+                  height: Math.round(box.height),
+                  bubbleWidth: Math.round(bubble.getBoundingClientRect().width),
+                };
+              })(),
+      };
+    };
+    const rows = [...document.querySelectorAll<HTMLElement>("ol.message-list > li")];
+    return {
+      tagged: read(rows[0]!),
+      midline: read(rows[2]!),
+      inkOnPlate: (() => {
+        const bubble = rows[0]!.querySelector<HTMLElement>(".message-bubble")!;
+        const badge = rows[0]!.querySelector<HTMLElement>("[data-mood-tag]")!;
+        const badgeStyle = getComputedStyle(badge);
+        return {
+          badgeInkOnItsPlate: ratio(badgeStyle.color, badgeStyle.backgroundColor),
+          badgeInkOnBubble: ratio(badgeStyle.color, getComputedStyle(bubble).backgroundColor),
+          plateAgainstBubble: ratio(badgeStyle.backgroundColor, getComputedStyle(bubble).backgroundColor),
+        };
+      })(),
+    };
+  });
+  console.log(`[prosody-tag] ${JSON.stringify(measured)}`);
+
+  // The tag is ahead of the speech, inside the paragraph, and it hugs its own words.
+  expect(measured.tagged.badgeCount, "the opening tag is one badge").toBe(1);
+  const badge = measured.tagged.badge!;
+  expect(badge.text, "the badge carries the direction's own words").toBe("轻声");
+  expect(badge.parent, "the badge sits inside her first prose block").toBe("P");
+  expect(badge.firstChild, "and it leads it, ahead of her speech").toBe(true);
+  expect(badge.display, "an inline plate, not a stretched row").toBe("inline-flex");
+  expect(badge.width, "the plate hugs its two words").toBeLessThan(badge.bubbleWidth);
+  expect(badge.height, "and it is one line of badge, not a bar").toBeGreaterThan(14);
+  expect(badge.height, "and it is one line of badge, not a bar").toBeLessThan(30);
+
+  // The tone: the product's badge plate on the companion bubble, its ink clear of the floor.
+  console.log(
+    `[prosody-tag] contrast ink-on-plate=${measured.inkOnPlate.badgeInkOnItsPlate}:1 ink-on-bubble=${measured.inkOnPlate.badgeInkOnBubble}:1 plate-on-bubble=${measured.inkOnPlate.plateAgainstBubble}:1`,
+  );
+  expect(badge.colour, "the dim tone is the product's own secondary ink").toBe("rgb(200, 192, 182)");
+  expect(badge.background, "and the plate is the product's own elevated card tone").toBe("rgb(40, 37, 37)");
+  // Her bubble is the Card tone and the plate is the Elevated tone above it - the same one-step
+  // lift every card in the product takes on hover. One step is what it is: 1.10:1 is a quiet
+  // edge, so the badge's shape (an 11 px nowrap plate with the product's hairline) and its
+  // smaller type carry the distinction, and the ink is what has to clear the floor.
+  expect(measured.tagged.bubbleBackground, "inside her own bubble, not another surface").toBe("rgb(32, 29, 29)");
+  expect(
+    measured.inkOnPlate.badgeInkOnItsPlate,
+    `the badge's ink clears the 4.5:1 floor on its own plate (${measured.inkOnPlate.badgeInkOnItsPlate}:1)`,
+  ).toBeGreaterThanOrEqual(4.5);
+  expect(
+    measured.inkOnPlate.badgeInkOnBubble,
+    `and it would clear it against the bubble itself (${measured.inkOnPlate.badgeInkOnBubble}:1)`,
+  ).toBeGreaterThanOrEqual(4.5);
+  expect(
+    measured.inkOnPlate.plateAgainstBubble,
+    `the plate is a step above the bubble, not the bubble (${measured.inkOnPlate.plateAgainstBubble}:1)`,
+  ).toBeGreaterThan(1.05);
+  expect(
+    measured.inkOnPlate.plateAgainstBubble,
+    "and it is the product's one-step lift, not a new colour ramp",
+  ).toBeLessThan(1.3);
+
+  // The words: the speech is exactly the sentence without the direction, and the tag's own
+  // words are on screen in the badge rather than gone.
+  expect(badge.text, "the direction's words are kept, in the badge").toBe("轻声");
+  expect(measured.tagged.printed, "nothing prints the whole parenthetical as prose").not.toContain("（轻声）");
+  expect(measured.tagged.spoken, "her speech is the sentence she says, unchanged").toBe("种子我已经帮你种好啦。");
+
+  // A tag inside the sentence is part of what she said: no badge, and not one character moved.
+  expect(measured.midline.badgeCount, "a mid-sentence parenthetical is not a badge").toBe(0);
+  expect(measured.midline.printed, "and her sentence is printed exactly as she wrote it").toBe(midline);
+  expect(measured.midline.spoken, "with nothing lifted out of the middle").toBe(midline);
+});
