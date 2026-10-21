@@ -7,6 +7,7 @@ import type { CompanionIdentity } from "../runtime.js";
 import { readWorldBook, type WorldBook } from "../worldbook.js";
 import type { TavernArtifactStore } from "./artifact-store.js";
 import { companionAvatarPath, readAvatarFile } from "./companion-avatar/index.js";
+import { readCompanionCardExtensions } from "./card-extensions.js";
 import {
   type CompanionCardExport,
   type CompanionCardFormat,
@@ -115,6 +116,7 @@ export function createCompanionCardExportService(
       const scenario = await readScenarioOrThrow(options, tavernPaths.companionRoot);
       const greetings = await readGreetingsOrThrow(options, tavernPaths.companionRoot);
       const worldBook = await readWorldBookOrThrow(runtimePaths.runtimeCwd);
+      const extensions = await readCardExtensionsOrThrow(options, tavernPaths.companionRoot);
       const records: CompanionCardRecords = {
         name,
         ...(profile?.persona === undefined ? {} : { persona: profile.persona }),
@@ -125,6 +127,7 @@ export function createCompanionCardExportService(
           ? {}
           : { openings: greetings.variants.map((variant) => Object.freeze({ text: variant.text })) }),
         worldBook,
+        ...(extensions === null ? {} : { extensions }),
       };
       const card = exportCompanionCard(records);
       if (format === "json")
@@ -208,5 +211,24 @@ async function readWorldBookOrThrow(runtimeCwd: string): Promise<WorldBook | nul
     return await readWorldBook(path);
   } catch {
     throw new Error("companion_world_book_unreadable");
+  }
+}
+
+/**
+ * The card's own `extensions` object, or `null` when she carries none.
+ *
+ * Absence is ordinary (her card wrote none) and the card carries no `extensions`
+ * field for it. A record that exists and cannot be read fails closed like every
+ * other present-but-broken companion artifact, rather than being exported as a
+ * companion who never had one.
+ */
+async function readCardExtensionsOrThrow(
+  options: Readonly<{ store: TavernArtifactStore }>,
+  companionRoot: string,
+): Promise<Readonly<Record<string, unknown>> | null> {
+  try {
+    return await readCompanionCardExtensions(options.store, companionRoot);
+  } catch {
+    throw new Error("companion_record_unreadable");
   }
 }

@@ -224,6 +224,13 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
       ? {}
       : { worldBookCandidates: Object.freeze(value.worldBookCandidates) }),
     ...(value.worldBookScanDepth === undefined ? {} : { worldBookScanDepth: value.worldBookScanDepth }),
+    // The card's open-by-design `extensions` object, carried into the persisted
+    // candidate so the confirm step can give it a home: it becomes the companion's
+    // own `card-extensions.json` at provisioning and the card export writes it
+    // back. It rides outside the reviewed-field list (like the world-book
+    // candidates) because it is not a field of hers - it is inert card data that
+    // no reader renders or executes.
+    ...(value.extensions === undefined ? {} : { extensions: value.extensions }),
   });
 }
 function reportFromDecode(

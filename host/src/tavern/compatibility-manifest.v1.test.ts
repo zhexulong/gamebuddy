@@ -18,6 +18,13 @@ test("ST-card compatibility manifest publishes the decoder's exact byte bounds",
   assert.equal(fields.system_prompt.eligibility, "profile_eligible_after_explicit_review");
   assert.equal(fields.system_prompt.maxBytes, ST_CARD_DECODER_LIMITS_V1.cardVoiceBytes);
   assert.equal(fields.extensions.decision, "accepted_typed");
+  // Its home moved: the object is preserved as the companion's own
+  // `card-extensions.json` record, not left in the staged candidate forever. It is
+  // still never a profile field and never executed, and its bound is the decoder's
+  // own JSON-text ceiling for the field.
+  assert.equal(fields.extensions.eligibility, "companion_artifact");
+  assert.equal(fields.extensions.maxBytes, ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars, 8_192);
   assert.equal(fields.creator_notes.decision, "preserved_opaque");
   assert.equal(fields.post_history_instructions.decision, "preserved_opaque");
   assert.equal(fields.regex_scripts.decision, "dropped_unsupported");
@@ -55,6 +62,11 @@ test("selected L3 contract limits profile use and interchange to the version-loc
   assert.ok(COMPATIBILITY_MANIFEST_V1.interchange.denylist.includes("pi_session"));
   assert.ok(COMPATIBILITY_MANIFEST_V1.interchange.denylist.includes("raw_st_card"));
   assert.ok(COMPATIBILITY_MANIFEST_V1.interchange.denylist.includes("session_id"));
+  // The card export is not this interchange: `extensions` rides the card between
+  // the player and the Host, and still never enters a chat/worldbook interchange
+  // payload or a profile.
+  assert.ok(COMPATIBILITY_MANIFEST_V1.interchange.denylist.includes("extensions"));
+  assert.equal(COMPATIBILITY_MANIFEST_V1.chatJsonl.extensions, "omitted_with_loss_report");
   assert.deepEqual(COMPATIBILITY_MANIFEST_V1.chatJsonl.inbound, [
     "user_name",
     "character_name",

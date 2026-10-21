@@ -729,7 +729,7 @@ function isExecutableControlField(key: string): boolean {
  * cannot be mutated back into the import, and its text is bounded by the same
  * 8192-character ceiling a reviewed candidate field carries.
  */
-const MAX_INERT_EXTENSIONS_CHARS = 8_192;
+const MAX_INERT_EXTENSIONS_CHARS = ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars;
 function readInertExtensions(value: unknown): Readonly<Record<string, unknown>> | undefined {
   if (!isRecord(value) || Object.keys(value).length === 0) return undefined;
   let text: string;

@@ -89,9 +89,16 @@ test("ST card application import persists hash-verified inert candidate/report a
     const candidateJson = JSON.parse(
       await readFile(tavernImportPath(paths, "import_01", "candidate.json"), "utf8"),
     ) as {
-      artifact: { worldBookCandidates: readonly { keys?: readonly string[] }[] };
+      artifact: {
+        worldBookCandidates: readonly { keys?: readonly string[] }[];
+        extensions?: Readonly<Record<string, unknown>>;
+      };
     };
     assert.deepEqual(candidateJson.artifact.worldBookCandidates[0]?.keys, ["harvest", "spring"]);
+    // The card's open-by-design `extensions` object is preserved to disk with the
+    // staged candidate, so the confirm step can give it a home (her own
+    // `card-extensions.json`); it is inert data and no reader executes it.
+    assert.deepEqual(candidateJson.artifact.extensions, { script: "bad" });
     assert.equal(
       result.candidate.artifact.fields.find((entry) => entry.field === "scenario")?.eligibility,
       "profile_eligible_after_explicit_review",

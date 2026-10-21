@@ -39,6 +39,13 @@ export type CharacterCandidate = ArtifactRevision &
      * absent means the Host applies its documented default depth.
      */
     worldBookScanDepth?: number;
+    /**
+     * The card's open-by-design `extensions` object, carried verbatim from the
+     * staged decode so the provisioned companion owns it as her own record
+     * (`card-extensions.json`) and the card export can write it back. Inert card
+     * data: never a profile field, never prompt input, never executed.
+     */
+    extensions?: Readonly<Record<string, unknown>>;
   }>;
 /**
  * Player-scoped library metadata. This is deliberately not an IdentityProfile
@@ -118,6 +125,18 @@ export type DialogueExamples = ArtifactRevision & Readonly<{ examplesId: string;
 type GreetingVariant = Readonly<{ variantId: string; label?: string; text: string }>;
 export type GreetingSet = ArtifactRevision &
   Readonly<{ greetingSetId: string; label?: string; variants: readonly GreetingVariant[] }>;
+/**
+ * The imported card's own open-by-design `extensions` object, kept as the
+ * companion's own record.
+ *
+ * It is card data, not prompt data: nothing renders it into a prompt, nothing
+ * executes it, and no profile field is derived from it. It exists so the facts a
+ * card author wrote for a game integration (the shipped default card's
+ * `extensions.gamebuddy.stardew`) survive both halves of the round trip - the
+ * import that keeps them and the export that writes them back.
+ */
+export type CardExtensions = ArtifactRevision &
+  Readonly<{ cardExtensionsId: string; extensions: Readonly<Record<string, unknown>> }>;
 export type WorldBookBinding = Readonly<{
   bindingId: string;
   worldBookId: string;
@@ -148,6 +167,7 @@ export type TavernArtifact =
   | Scenario
   | DialogueExamples
   | GreetingSet
+  | CardExtensions
   | ChatThread;
 
 export function validateTavernArtifact(value: unknown): TavernArtifact {
@@ -164,6 +184,7 @@ export function validateTavernArtifact(value: unknown): TavernArtifact {
   if (typeof value.scenarioId === "string") return scenario(value);
   if (typeof value.examplesId === "string") return examples(value);
   if (typeof value.greetingSetId === "string") return greetings(value);
+  if (typeof value.cardExtensionsId === "string") return cardExtensions(value);
   return fail();
 }
 function candidate(v: Record<string, unknown>): CharacterCandidate {
@@ -180,6 +201,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
       "fields",
       "worldBookCandidates",
       "worldBookScanDepth",
+      "extensions",
     ])
   )
     fail();
@@ -222,6 +244,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
             ...(x.keys === undefined ? {} : { keys: requiredWorldBookKeys(x.keys) }),
           });
         });
+  const extensions = v.extensions === undefined ? undefined : requiredInertExtensions(v.extensions);
   const candidateId = requiredId(v.candidateId);
   const sourceFormat = requiredSourceFormat(v.sourceFormat);
   const sourceVersion = requiredText(v.sourceVersion, 64);
@@ -248,6 +271,16 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
     fields: freeze(fields),
     ...(worldBookCandidates === undefined ? {} : { worldBookCandidates: freeze(worldBookCandidates) }),
     ...(worldBookScanDepth === undefined ? {} : { worldBookScanDepth: worldBookScanDepth as number }),
+    ...(extensions === undefined ? {} : { extensions }),
+  });
+}
+function cardExtensions(v: Record<string, unknown>): CardExtensions {
+  if (!only(v, ["schemaVersion", "revision", "cardExtensionsId", "extensions"])) fail();
+  return freeze({
+    schemaVersion: TAVERN_SCHEMA_VERSION,
+    revision: requiredRevision(v.revision),
+    cardExtensionsId: requiredId(v.cardExtensionsId),
+    extensions: requiredInertExtensions(v.extensions),
   });
 }
 function candidateReview(v: Record<string, unknown>): CandidateReviewRecord {
@@ -582,6 +615,33 @@ function requiredOwner(v: unknown): Scenario["owner"] {
 }
 function freeze<T>(v: T): T {
   return Object.freeze(v);
+}
+/**
+ * A card's open-by-design `extensions` object as inert JSON data.
+ *
+ * The value is JSON round-tripped and deep-frozen, so what the artifact holds is
+ * a private copy of plain JSON - no member can be a function, a class instance or
+ * a live reference back into the import. The bound here is a durability guard
+ * against blowup; the card format's own ceiling for this field belongs to the
+ * decoder (`ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars`) and is re-applied
+ * by the export, not restated here.
+ */
+const MAX_INERT_EXTENSIONS_CHARS = 65_536;
+function requiredInertExtensions(value: unknown): Readonly<Record<string, unknown>> {
+  if (!record(value) || Object.keys(value).length === 0) fail();
+  let json: string;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    fail();
+  }
+  if (json.length === 0 || json.length > MAX_INERT_EXTENSIONS_CHARS) fail();
+  return deepFreeze(JSON.parse(json) as Record<string, unknown>);
+}
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object") return value;
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+  return Object.freeze(value);
 }
 function fail(): never {
   throw new Error("invalid_tavern_artifact");

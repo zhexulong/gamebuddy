@@ -22,6 +22,13 @@ export const ST_CARD_DECODER_LIMITS_V1 = Object.freeze({
    * longer directive is refused (not truncated) and the refusal is counted.
    */
   cardVoiceBytes: 8_192,
+  /**
+   * The card's inert `extensions` object, measured on its JSON text exactly as the
+   * decoder applies it (`JSON.stringify(value).length`). Open by design, so the
+   * bound only stops a blowup; the export re-applies this same rule so a card it
+   * writes is one the decoder keeps whole.
+   */
+  cardExtensionsJsonChars: 8_192,
 });
 
 /**
@@ -115,9 +122,13 @@ export const COMPATIBILITY_MANIFEST_V1 = Object.freeze({
         // directive does not already provide.
         post_history_instructions: entry("preserved_opaque", "never_runtime", ST_CARD_DECODER_LIMITS_V1.textBytes),
         character_book: entry("accepted_typed", "candidate_only", ST_CARD_DECODER_LIMITS_V1.characterBookBytes),
-        // Open by design. Carried verbatim as bounded inert data (never executed);
-        // this is where a reviewed card's `extensions.gamebuddy.stardew` rides.
-        extensions: entry("accepted_typed", "candidate_only", 8_192),
+        // Open by design. Carried verbatim as bounded inert data (never executed)
+        // and preserved into the companion's own `card-extensions.json`, so the
+        // facts a card author wrote for a game integration
+        // (`extensions.gamebuddy.stardew`) survive the import and the export. It is
+        // still never a profile field and never prompt input - the artifact is her
+        // record, not her identity.
+        extensions: entry("accepted_typed", "companion_artifact", ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars),
         regex_scripts: entry("dropped_unsupported", "never_runtime", 0),
       }),
     }),
@@ -179,7 +190,12 @@ export const COMPATIBILITY_MANIFEST_V1 = Object.freeze({
 });
 function entry(
   decision: CompatibilityDecision,
-  eligibility: "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime",
+  eligibility:
+    | "candidate_only"
+    | "profile_eligible_after_explicit_review"
+    | "never_runtime"
+    /** Preserved as the companion's own durable artifact; never a profile field. */
+    | "companion_artifact",
   maxBytes: number,
 ) {
   return Object.freeze({ decision, eligibility, maxBytes });

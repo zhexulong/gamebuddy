@@ -37,6 +37,13 @@ export type CompanionCardRecords = Readonly<{
    * `bookOf`). `null`/absent is an ordinary state: she has no book.
    */
   worldBook?: WorldBook | null;
+  /**
+   * The card's open-by-design `extensions` object, as her own
+   * `card-extensions.json` record holds it. Absent is an ordinary state: the card
+   * she was imported from wrote none (or she was created directly), so the export
+   * writes no `extensions` field rather than an empty object.
+   */
+  extensions?: Readonly<Record<string, unknown>>;
 }>;
 
 /** One entry of a V2/V3 `character_book`, under the spec's own field names. */
@@ -75,6 +82,7 @@ type TavernCardBook = Readonly<{
  *   data.alternate_greetings<- openings[1..].text, in order
  *   data.mes_example        <- examples, as `{{user}}`/`{{char}}` blocks
  *   data.character_book     <- worldBook.entries (+ worldBook.scanDepth)
+ *   data.extensions         <- the card-extensions record, verbatim
  *
  * Two companion fields have no V2/V3 card field and are therefore NOT written:
  * `persona.expressionStyle` (the spec has no expression-style field at all) and
@@ -94,6 +102,11 @@ export type TavernCardV3 = Readonly<{
     mes_example?: string;
     system_prompt?: string;
     character_book?: TavernCardBook;
+    /**
+     * The card's own open-by-design object, written back as the companion's
+     * record holds it. It is inert data: no reader interprets or executes it.
+     */
+    extensions?: Readonly<Record<string, unknown>>;
   }>;
 }>;
 
@@ -138,6 +151,7 @@ export function buildCompanionCard(records: CompanionCardRecords): TavernCardV3 
       ...(mesExample === undefined ? {} : { mes_example: mesExample }),
       ...(records.characterVoice === undefined ? {} : { system_prompt: records.characterVoice.text }),
       ...(book === undefined ? {} : { character_book: book }),
+      ...(records.extensions === undefined ? {} : { extensions: records.extensions }),
     }),
   });
 }
@@ -183,6 +197,11 @@ export function assertCompanionCardImportable(card: TavernCardV3): void {
   if (data.mes_example !== undefined && utf8Bytes(data.mes_example) > limits.examplesBytes)
     throw new Error("companion_card_too_large");
   if (data.system_prompt !== undefined && utf8Bytes(data.system_prompt) > limits.cardVoiceBytes)
+    throw new Error("companion_card_too_large");
+  // The card's `extensions` object, bounded by the decoder's own rule for it -
+  // the length of its JSON text - so an export can never be a card whose
+  // extensions the next import silently drops.
+  if (data.extensions !== undefined && JSON.stringify(data.extensions).length > limits.cardExtensionsJsonChars)
     throw new Error("companion_card_too_large");
   const book = data.character_book;
   if (book !== undefined) {

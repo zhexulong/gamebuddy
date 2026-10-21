@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { join } from "node:path";
-import { rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
 import { readIdentityProfile } from "../identity-profile.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
@@ -24,6 +25,7 @@ import { StCardImportService } from "./st-card-import-service.js";
 import { decodeStCard } from "../st-card-import.js";
 import { pngCardFile } from "../test-support/png-card.test-support.js";
 import { companionAvatarPath, readAvatarFile } from "./companion-avatar/index.js";
+import { readCompanionCardExtensions } from "./card-extensions.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./compatibility-manifest.v1.js";
 
@@ -79,6 +81,8 @@ type ReadRecords = Readonly<{
   scenario: string | null;
   openings: readonly string[];
   worldBook: WorldBook | null;
+  /** The card's open-by-design `extensions` object, as her own record holds it. */
+  extensions: Readonly<Record<string, unknown>> | null;
 }>;
 
 async function readRecords(root: string, identity: CompanionIdentity): Promise<ReadRecords> {
@@ -103,6 +107,7 @@ async function readRecords(root: string, identity: CompanionIdentity): Promise<R
     scenario: scenario?.description ?? null,
     openings: Object.freeze(greetings?.variants.map((variant) => variant.text) ?? []),
     worldBook,
+    extensions: await readCompanionCardExtensions(store, tavernPaths.companionRoot),
   });
 }
 
@@ -204,6 +209,12 @@ test("a companion's card round-trips through the real import path to the same ef
         constant: entry.constant === true,
       }));
     assert.deepEqual(entries(secondRecords.worldBook), entries(firstRecords.worldBook));
+    // A card that wrote no `extensions` stays that way on both sides: the export
+    // writes no field for it and the second companion owns no record, rather than
+    // an empty object standing in for "she has none".
+    assert.equal(firstRecords.extensions, null);
+    assert.equal(secondRecords.extensions, null);
+    assert.equal("extensions" in (JSON.parse(exported.card) as { data: Record<string, unknown> }).data, false);
     // The values are not vacuous: the seed card really carried them.
     assert.equal(firstRecords.name, "琥珀");
     assert.equal(firstRecords.openings.length, 3);
@@ -213,6 +224,129 @@ test("a companion's card round-trips through the real import path to the same ef
       [["温室", "玻璃房"], []],
     );
     assert.equal(entries(firstRecords.worldBook)[1]?.constant, true);
+  } finally {
+    threads?.close?.();
+    await cleanupTestRoot(root);
+  }
+});
+
+/**
+ * The repo's shipped default companion card, as committed.
+ *
+ * It is the fixture this test is about: the one card in the repository that
+ * already carries game-integration facts in `extensions`
+ * (`extensions.gamebuddy.stardew` - her farmer appearance, the gifts she likes,
+ * the stamina threshold she turns cautious at).
+ */
+function shippedDefaultCardPath(): string {
+  for (const candidate of [process.cwd(), resolve(process.cwd(), ".."), resolve(process.cwd(), "..", "..")]) {
+    const path = join(candidate, "assets", "tavern", "presets", "default-companion", "card.json");
+    if (existsSync(path)) return path;
+  }
+  throw new Error("shipped_default_card_not_findable");
+}
+
+/**
+ * The acceptance for the card's open-by-design `extensions` object: what the
+ * shipped default card wrote for the game integration comes back out of her card
+ * unchanged.
+ *
+ * Those facts are not prompt material - nothing renders them - so they live where
+ * her other authored card material lives (a durable record in her own root, beside
+ * her scenario and her openings), never in the identity profile. This test holds
+ * the whole path up on the product's own functions: the real import stages and
+ * provisions her, the real export reads her records, and the exported bytes are
+ * fed back through the real import path a second time.
+ */
+test("the shipped card's game extensions survive a round trip through the companion's own record", async (t) => {
+  const cardText = await readFile(shippedDefaultCardPath(), "utf8");
+  const shippedExtensions = (JSON.parse(cardText) as { data: { extensions?: Record<string, unknown> } }).data
+    .extensions;
+  assert.ok(
+    shippedExtensions !== undefined && Object.keys(shippedExtensions).length > 0,
+    "the shipped card must carry the extensions this test is about",
+  );
+  // The fixture really is the game-integration block, not an empty object.
+  assert.ok(JSON.stringify(shippedExtensions).includes("farmer_appearance"));
+
+  const root = await canonicalTestRoot("tavern-card-export-extensions-");
+  let threads: ReturnType<typeof createChatThreadStore> | undefined;
+  try {
+    const store = new TavernArtifactStore(root);
+    const identity = {
+      playerId: "player-extensions",
+      companionId: "seed-extensions",
+      continuityId: "seed-extensions-continuity",
+    };
+    const seedPaths = resolveTavernPaths(resolveRuntimePaths(identity, root), identity);
+    const importService = new StCardImportService(store, seedPaths);
+    const staged = await importService.import("shipped_card", cardText);
+    const eligible = staged.candidate.artifact.fields
+      .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+      .map((field) => field.field);
+    await importService.recordReview("shipped_card", { reviewedFields: eligible, approvedAtMs: 1 });
+    threads = createChatThreadStore(root, "c".repeat(64));
+    const first = await provisionNewCompanion(
+      root,
+      identity.playerId,
+      staged.candidate.artifact,
+      await importService.confirmedReview("shipped_card"),
+      threads,
+    );
+    const firstRecords = await readRecords(root, first.identity);
+    // She owns the card's own object, and it is inert data: frozen, not a live
+    // reference back into the staged import.
+    assert.deepEqual(firstRecords.extensions, shippedExtensions);
+    assert.equal(Object.isFrozen(firstRecords.extensions), true);
+
+    const cardHandle = "X".repeat(43);
+    const cardOf = (records: ReadRecords, companion: typeof first) =>
+      createCompanionCardExportService({
+        store,
+        runtimeRoot: root,
+        playerId: identity.playerId,
+        resolveCompanion: async (requested) =>
+          requested === cardHandle
+            ? Object.freeze({
+                companionId: companion.identity.companionId,
+                continuityId: companion.identity.continuityId!,
+                name: records.name,
+              })
+            : null,
+      });
+    const exported = await cardOf(firstRecords, first).read(cardHandle, "json");
+    if (exported === null || exported.format !== "json") throw new Error("expected the JSON form of the card");
+    const extensionsOf = (card: string): unknown =>
+      (JSON.parse(card) as { data: { extensions?: unknown } }).data.extensions;
+    assert.deepEqual(extensionsOf(exported.card), shippedExtensions);
+
+    // Feed the card's own bytes back through the real import path.
+    const secondStage = await importService.import("shipped_round_trip", exported.card);
+    const secondEligible = secondStage.candidate.artifact.fields
+      .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+      .map((field) => field.field);
+    await importService.recordReview("shipped_round_trip", { reviewedFields: secondEligible, approvedAtMs: 2 });
+    const second = await provisionNewCompanion(
+      root,
+      identity.playerId,
+      secondStage.candidate.artifact,
+      await importService.confirmedReview("shipped_round_trip"),
+      threads,
+    );
+    const secondRecords = await readRecords(root, second.identity);
+    assert.deepEqual(secondRecords.extensions, shippedExtensions);
+
+    // The re-export carries the same extension bytes as the first export, so the
+    // round trip is a fixed point: exporting what she exported loses nothing more.
+    const exportedAgain = await cardOf(secondRecords, second).read(cardHandle, "json");
+    if (exportedAgain === null || exportedAgain.format !== "json")
+      throw new Error("expected the JSON form of the card");
+    assert.equal(JSON.stringify(extensionsOf(exportedAgain.card)), JSON.stringify(extensionsOf(exported.card)));
+
+    t.diagnostic(
+      `extensions round-trip card=${JSON.stringify(extensionsOf(exported.card)).length} chars ` +
+        `record=${JSON.stringify(firstRecords.extensions).length} chars`,
+    );
   } finally {
     threads?.close?.();
     await cleanupTestRoot(root);
@@ -296,6 +430,24 @@ test("an export refuses by name when a record will not fit the importer's own ca
   const tooLongVoice = "y".repeat(ST_CARD_DECODER_LIMITS_V1.cardVoiceBytes + 1);
   assert.throws(
     () => exportCompanionCard({ name: "Amber", characterVoice: { text: tooLongVoice, source: "player" } }),
+    /companion_card_too_large/,
+  );
+  // The card's open-by-design `extensions` object is bounded by the decoder's own
+  // rule for it - the length of its JSON text - so an export can never be a card
+  // whose extensions the next import would silently drop. The boundary itself is
+  // measured, not approximated: exactly at the bound is a card, one character more
+  // is not.
+  const extensionsAtBound = {
+    gamebuddy: "x".repeat(ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars - 16),
+  };
+  assert.equal(JSON.stringify(extensionsAtBound).length, ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars);
+  assert.doesNotThrow(() => exportCompanionCard({ name: "Amber", extensions: extensionsAtBound }));
+  assert.throws(
+    () =>
+      exportCompanionCard({
+        name: "Amber",
+        extensions: { gamebuddy: "x".repeat(ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars - 15) },
+      }),
     /companion_card_too_large/,
   );
   // The bound is the importer's own, not a second opinion: a card exactly at the

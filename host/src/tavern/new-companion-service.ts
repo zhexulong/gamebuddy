@@ -14,6 +14,7 @@ import { withPathLock } from "../path-lock.js";
 import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../runtime.js";
 import { join } from "node:path";
 import { TavernArtifactStore } from "./artifact-store.js";
+import { writeCompanionCardExtensions } from "./card-extensions.js";
 import { companionAvatarPath, writeAvatarFile } from "./companion-avatar/index.js";
 import { type ChatThreadStore, createChatThreadStore } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
@@ -56,6 +57,21 @@ export type NewCompanionProvision = Readonly<{
   companion: TavernCompanion;
   identity: CompanionIdentity;
   profile: IdentityProfile;
+}>;
+/**
+ * The reviewed card material a provisioned companion owns beside her profile.
+ *
+ * Each member is a record written through its own product-owned writer: the
+ * world book, the scenario, the greeting set, her picture, and the card's
+ * open-by-design `extensions` object. A card that wrote none of one leaves that
+ * member absent, so nothing is invented for her.
+ */
+type ProvisionedCardMaterial = Readonly<{
+  approved?: ReadonlyMap<string, string>;
+  worldBookCandidates?: CharacterCandidate["worldBookCandidates"];
+  worldBookScanDepth?: number;
+  avatar?: Uint8Array;
+  extensions?: Readonly<Record<string, unknown>>;
 }>;
 
 /**
@@ -152,10 +168,13 @@ export async function provisionNewCompanion(
     identity,
     reviewedProfile(approved, companionId, continuityId, playerId),
     threads,
-    approved,
-    candidate.worldBookCandidates,
-    candidate.worldBookScanDepth,
-    avatar,
+    Object.freeze({
+      approved,
+      ...(candidate.worldBookCandidates === undefined ? {} : { worldBookCandidates: candidate.worldBookCandidates }),
+      ...(candidate.worldBookScanDepth === undefined ? {} : { worldBookScanDepth: candidate.worldBookScanDepth }),
+      ...(avatar === undefined ? {} : { avatar }),
+      ...(candidate.extensions === undefined ? {} : { extensions: candidate.extensions }),
+    }),
   );
 }
 
@@ -164,10 +183,7 @@ async function provisionNewCompanionNamespace(
   identity: CompanionIdentity,
   profile: IdentityProfile,
   suppliedThreads?: ChatThreadStore,
-  approved?: ReadonlyMap<string, string>,
-  worldBookCandidates?: CharacterCandidate["worldBookCandidates"],
-  worldBookScanDepth?: number,
-  avatar?: Uint8Array,
+  card?: ProvisionedCardMaterial,
 ): Promise<NewCompanionProvision> {
   const paths = resolveRuntimePaths(identity, root);
   // The containment-aware lock creates and verifies each parent component
@@ -188,16 +204,16 @@ async function provisionNewCompanionNamespace(
       // m[0] lorebook_constant source, keyword entries stay queryable/volatile.
       // The thread carries only the metadata binding; the body stays at the
       // independently-audited runtime path.
-      if (worldBookCandidates !== undefined && worldBookCandidates.length > 0) {
+      if (card?.worldBookCandidates !== undefined && card.worldBookCandidates.length > 0) {
         const book: WorldBook = validateWorldBook(
           Object.freeze({
             schemaVersion: 1,
             worldBookId: `gamebuddy-worldbook-${identity.companionId}`,
             revision: 1,
             alwaysOnPremise: "",
-            ...(worldBookScanDepth === undefined ? {} : { scanDepth: worldBookScanDepth }),
+            ...(card.worldBookScanDepth === undefined ? {} : { scanDepth: card.worldBookScanDepth }),
             entries: Object.freeze(
-              worldBookCandidates.map((entry) =>
+              card.worldBookCandidates.map((entry) =>
                 Object.freeze({
                   entryId: entry.entryId,
                   title: entry.title,
@@ -226,25 +242,37 @@ async function provisionNewCompanionNamespace(
         new TavernArtifactStore(paths.root),
         tavernPaths.companionRoot,
       );
-      const scenario = approved?.get("scenario");
+      const scenario = card?.approved?.get("scenario");
       if (scenario !== undefined && scenario.trim() !== "") {
         await scenarioService.create({ name: "Default Scenario", description: scenario });
       }
-      const greetingVariants = buildGreetingVariants(approved);
+      const greetingVariants = buildGreetingVariants(card?.approved);
       if (greetingVariants.length > 0) {
         await greetingService.create({ label: "Initial Greeting", variants: greetingVariants });
       }
+      // The card's own open-by-design `extensions` object, as her own record -
+      // the same kind of authored card material her scenario and her openings are.
+      // It is deliberately not a profile field: nothing renders it and nothing
+      // executes it, and the card export writes it back so a player who exports
+      // what they imported gets the same card. A card that wrote none writes
+      // nothing, so absence stays absence rather than becoming an empty object.
+      if (card?.extensions !== undefined)
+        await writeCompanionCardExtensions(
+          new TavernArtifactStore(paths.root),
+          tavernPaths.companionRoot,
+          card.extensions,
+        );
       // The reviewed card's own picture, written where the avatar face reads it.
       // The companion's root is created here if the card carried neither a
       // scenario nor a greeting, and the write is atomic: a half-written picture
       // is never a picture the browser can fetch.
-      if (avatar !== undefined)
+      if (card?.avatar !== undefined)
         await writeAvatarFile(
           companionAvatarPath(paths.root, identity.playerId, {
             companionId: identity.companionId,
             continuityId: identity.continuityId!,
           }),
-          avatar,
+          card.avatar,
           paths.root,
         );
       const threads = suppliedThreads ?? createChatThreadStore(paths.runtimeCwd, identityKey(identity));
