@@ -35,6 +35,7 @@ import {
   type CreateChatCommandV1,
   type SelectChatCommandV1,
   TAVERN_BROWSER_API_VERSION,
+  type TavernConnectionModelCommandV1,
   type UpdateCompanionWorldBookCommandV1,
   chatListPreviewText,
 } from "../tavern/browser-contract/index.js";
@@ -61,6 +62,7 @@ import { startComposedReferenceGameStaticShellComposition } from "../tavern/comp
 import { createMemoryManagementService } from "../tavern/memory-management/memory-management.js";
 import type { MemoryManagementService } from "../tavern/memory-management/memory-management.js";
 import { createTavernConnectionService } from "../tavern/connection-service.js";
+import type { TavernConnectionService } from "../tavern/connection-service.js";
 import type { TavernManagementDialogueWebOptions } from "../tavern-management-dialogue-web.js";
 import type { TavernManagementDelegatedOptions } from "../tavern-management-dialogue-web.delegated.js";
 import {
@@ -723,10 +725,43 @@ export async function startDesktopPresentationAdmission(
       owned.push(...domainOwned);
       // The connection service owns the player's provider/model/credential
       // selection for the exact mounted Chat runtime. ADR-0010 makes a connection
-      // switch Class B: it never disturbs the running turn; the next turn reads
-      // the new selection, so this service is not wired to turn state at all.
-      const connectionService = createTavernConnectionService({
+      // switch Class B: it never disturbs the running turn. Activating a connection
+      // (or picking a different model on the active one) is the player telling this
+      // Host which model their Chat runs with, so the mounted runtime adopts it at
+      // once when it is idle; a turn that is still generating keeps its own and the
+      // next prompt adopts the selection before it begins.
+      const connectionRecords = createTavernConnectionService({
         agentDir: managementAgentDir(input.manifest, lease),
+      });
+      const adoptSelectedModel = async (): Promise<void> => {
+        try {
+          await lease.reloadModelSelection();
+        } catch (error) {
+          // The selection is durably the player's already. A runtime that cannot
+          // adopt it now keeps the model it has, and the next prompt's own reload
+          // fails closed there rather than this activation reporting a failure for
+          // a selection it did commit.
+          process.stderr.write(
+            `[connection] the mounted Chat could not adopt the selected model: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+        }
+      };
+      const connectionService: TavernConnectionService = Object.freeze({
+        read: connectionRecords.read,
+        create: connectionRecords.create,
+        test: connectionRecords.test,
+        remove: connectionRecords.remove,
+        close: connectionRecords.close,
+        async activate(connectionId: string, expectedRevision: number) {
+          const state = await connectionRecords.activate(connectionId, expectedRevision);
+          await adoptSelectedModel();
+          return state;
+        },
+        async selectModel(connectionId: string, command: TavernConnectionModelCommandV1) {
+          const state = await connectionRecords.selectModel(connectionId, command);
+          await adoptSelectedModel();
+          return state;
+        },
       });
       owned.push(connectionService);
       const management = Object.freeze({

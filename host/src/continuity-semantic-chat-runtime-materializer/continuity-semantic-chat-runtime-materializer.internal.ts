@@ -9,6 +9,7 @@ import type {
   ProductionChatRuntimeReceipt,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { RuntimeSession } from "../runtime.js";
+import type { CompanionModelConfig } from "../runtime-identity.js";
 
 /** Minimal reverse-disposal boundary; no Pi session, runtime root, or binding leaks. */
 import type { TavernAuthoredContextRuntimeCapability } from "@cortexkit/pi-magic-context/tavern";
@@ -32,6 +33,12 @@ export type MaterializedChatRuntime = Readonly<{
   runtimeSession?: RuntimeSession;
   authoredContextCapability?: TavernAuthoredContextRuntimeCapability;
   refreshAuthoredContext?: (currentCapability: TavernAuthoredContextRuntimeCapability) => Promise<TavernAuthoredContextRuntimeCapability>;
+  /**
+   * Construction-private: applies the player's current connection selection to
+   * this live session in place, resolving it through the same construction
+   * function a mount uses. Never public, never durable.
+   */
+  reloadModelSelection?: () => Promise<CompanionModelConfig>;
   /** Runtime resources only. The later coordinator owns durable terminalization and binding close. */
   close(): Promise<void>;
 }>;
@@ -43,6 +50,8 @@ export type ChatRuntimeMaterialization = ChatRuntimeDisposal &
     refreshAuthoredContext?: (
       currentCapability: TavernAuthoredContextRuntimeCapability,
     ) => Promise<TavernAuthoredContextRuntimeCapability>;
+    /** Construction-private model reload for the mounted session; never public. */
+    reloadModelSelection?: () => Promise<CompanionModelConfig>;
   }>;
 export type ChatRuntimeMaterializer = Readonly<{
   /** Construction-zone-only: consumes one callback-admitted Chat binding reservation. */
@@ -108,6 +117,7 @@ function finalizeMaterializedChatRuntime(
     ...(runtime.runtimeSession === undefined ? {} : { runtimeSession: runtime.runtimeSession }),
     ...(runtime.authoredContextCapability === undefined ? {} : { authoredContextCapability: runtime.authoredContextCapability }),
     ...(runtime.refreshAuthoredContext === undefined ? {} : { refreshAuthoredContext: runtime.refreshAuthoredContext }),
+    ...(runtime.reloadModelSelection === undefined ? {} : { reloadModelSelection: runtime.reloadModelSelection }),
     close: () => {
       if (closePromise !== undefined) return closePromise;
       let shared!: Promise<void>;

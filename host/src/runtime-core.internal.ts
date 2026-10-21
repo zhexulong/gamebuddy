@@ -560,6 +560,13 @@ export type ChatRuntimeConstructionProduct = Readonly<{
   ) => Promise<import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability>;
   /** Releases the construction's own store; consumed by the materializer's reverse disposal. */
   closeChatThreadStore: () => void;
+  /**
+   * Applies the player's current connection selection to this live session in
+   * place, resolved through the same construction function a mount uses. It
+   * leaves the conversation untouched: only the provider/model the next prompt
+   * runs with changes.
+   */
+  reloadModelSelection: () => Promise<CompanionModelConfig>;
   clearTavernNarrativeGateMarker?: () => void;
 }>;
 
@@ -585,6 +592,20 @@ export async function createChatRuntimeConstructionInternal(
     undefined,
     construction.tavernNarrativeGateNonceSha256,
   );
+  let appliedModelConfig = construction.modelConfig;
+  /**
+   * The mounted runtime's own model reload. It reads the selection the player has
+   * now, not the one the mount froze, and applies it to the live session; a
+   * selection identical to the applied one is left alone so an idle Chat reads
+   * two small files per turn instead of rewriting Pi's provider entry.
+   */
+  const reloadModelSelection = async (): Promise<CompanionModelConfig> => {
+    const { modelConfig } = await construction.resolveModelSelection();
+    if (sameModelConfig(appliedModelConfig, modelConfig)) return modelConfig;
+    await applyCompanionModelSelection(runtime.session, construction, modelConfig);
+    appliedModelConfig = modelConfig;
+    return modelConfig;
+  };
   try {
     const piSessionId = runtime.sessionManager.getSessionId();
     if (typeof piSessionId !== "string" || piSessionId.length === 0) throw new Error("pi_session_binding_unavailable");
@@ -629,6 +650,7 @@ export async function createChatRuntimeConstructionInternal(
       authoredContextCapability,
       refreshAuthoredContext,
       closeChatThreadStore: construction.closeChatThreadStore,
+      reloadModelSelection,
       ...(runtime.clearTavernNarrativeGateMarker === undefined
         ? {}
         : { clearTavernNarrativeGateMarker: runtime.clearTavernNarrativeGateMarker }),
@@ -1122,7 +1144,7 @@ export async function createRuntimeWithFixedToolsCore(
   }
 
   const sessionManager = SessionManager.continueRecent(paths.runtimeCwd, paths.sessionDir);
-  const modelRuntime = await createCompanionModelRuntime(paths, modelConfig);
+  const modelRuntime = await createCompanionModelRuntime(paths.agentDir, modelConfig);
   const model =
     modelConfig === undefined ? undefined : modelRuntime.getModel(modelConfig.provider, modelConfig.modelId);
   if (modelConfig !== undefined && model === undefined) throw new Error("companion_model_not_available");
@@ -1543,25 +1565,64 @@ async function listSessionFiles(sessionDir: string): Promise<string[]> {
  */
 
 async function createCompanionModelRuntime(
-  paths: RuntimePaths,
+  agentDir: string,
   config: CompanionModelConfig | undefined,
 ): Promise<ModelRuntime> {
-  const modelsPath = join(paths.agentDir, "models.json");
+  const modelsPath = join(agentDir, "models.json");
   // The selection decides the provider entry. An operator/environment model
   // writes the frozen `cpa-oai` block this Host has always written; a player
   // connection writes its own catalog endpoint, and the escape hatch writes the
   // endpoint the player supplied.
-  const selection = config === undefined ? null : await modelProviderEntry(paths.agentDir, config);
+  const selection = config === undefined ? null : await modelProviderEntry(agentDir, config);
   if (config !== undefined && selection === null) throw new Error("companion_model_endpoint_unavailable");
   if (selection !== null)
-    await mergeModelProviderEntry(join(paths.agentDir, "models.json"), selection.providerId, selection.entry);
+    await mergeModelProviderEntry(join(agentDir, "models.json"), selection.providerId, selection.entry);
   // Offline by default. Selecting the explicitly configured Agent model is the
   // operator's opt-in to provider networking; no request occurs merely while
   // creating or resuming the session.
   return ModelRuntime.create({
-    authPath: join(paths.agentDir, "auth.json"),
+    authPath: join(agentDir, "auth.json"),
     modelsPath,
-    modelsStorePath: join(paths.agentDir, "models-store.json"),
+    modelsStorePath: join(agentDir, "models-store.json"),
     allowModelNetwork: config !== undefined,
   });
+}
+
+function sameModelConfig(left: CompanionModelConfig, right: CompanionModelConfig): boolean {
+  return left.provider === right.provider && left.modelId === right.modelId && left.thinkingLevel === right.thinkingLevel;
+}
+
+/**
+ * Points an already-running Chat session at the player's current selection.
+ *
+ * The two setters Pi exposes for this (`setModel`, `setThinkingLevel`) append a
+ * `model_change` / `thinking_level_change` entry to the session, which would
+ * rewrite the conversation's own record for a fact that is not part of the
+ * conversation. A player's selection is not an event in the transcript, so the
+ * runtime takes the same two state assignments Pi's own model refresh takes and
+ * leaves the session's entries exactly as they were; the next prompt reads the
+ * new model, and the greeting anchor and every settled exchange keep pointing at
+ * the model that produced them.
+ */
+async function applyCompanionModelSelection(
+  session: RuntimeSessionResource,
+  construction: Readonly<{ identity: CompanionIdentity; runtimeRoot: string; surfaceSessionId: string }>,
+  config: CompanionModelConfig,
+): Promise<void> {
+  const { agentDir } = resolveRuntimePaths(
+    construction.identity,
+    construction.runtimeRoot,
+    construction.surfaceSessionId,
+  );
+  const modelRuntime = await createCompanionModelRuntime(agentDir, config);
+  const model = modelRuntime.getModel(config.provider, config.modelId);
+  if (model === undefined) throw new Error("companion_model_not_available");
+  session.agent.state.model = model;
+  // The mount forwards the player's level verbatim and Pi clamps it to what the
+  // selected model advertises (design/28 §2.3.5). The reload reaches the same
+  // state by asking the session, now pointed at the new model, which levels it
+  // accepts.
+  const requested = piThinkingLevel(config.thinkingLevel);
+  const supported = session.getAvailableThinkingLevels();
+  session.agent.state.thinkingLevel = supported.includes(requested) ? requested : (supported[0] ?? "off");
 }

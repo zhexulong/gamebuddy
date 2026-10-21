@@ -144,6 +144,17 @@ export type MountedChatBrowserProjection = Readonly<{
    */
   projectCompanionHandle(companionId: string): string;
 }>;
+/** What the mounted runtime's live session runs with, as the session itself reports it. */
+export type MountedModelSelection = Readonly<{
+  provider: string;
+  modelId: string;
+  thinkingLevel: string;
+}>;
+export type MountedModelSelectionReload = Readonly<{
+  status: "applied" | "turn_in_flight";
+  /** Read back from the live Pi session, never from the selection that was asked for. */
+  modelSelection: MountedModelSelection;
+}>;
 export type MountedChatRuntimeLease = Readonly<{
   /**
    * Browser/Host-consumer-safe runtime projection. The actual Pi session ID is
@@ -160,6 +171,15 @@ export type MountedChatRuntimeLease = Readonly<{
   abortActivePrompt(
     expected: Readonly<{ turnId: string; attemptId: string }>,
   ): Promise<"aborted" | "not_active" | "mismatch">;
+  /**
+   * Applies the player's current connection selection to this mounted runtime
+   * (design/28 §5.3): the provider/model the next prompt runs with, without
+   * touching the conversation. An idle mount takes it immediately; a mount whose
+   * turn has not reached a terminal ledger state keeps that turn and answers
+   * `turn_in_flight`, and the selection lands at the next prompt instead. Either
+   * answer reports the selection the live session actually holds.
+   */
+  reloadModelSelection(): Promise<MountedModelSelectionReload>;
   close(): Promise<void>;
 }>;
 export type SemanticChatRuntimeMountOptions = Readonly<{
@@ -214,8 +234,12 @@ type MountedChatRuntimeLeaseRecord = {
   readonly chatSurfaceSessionId: string;
   readonly selectionGeneration: number;
   readonly attemptBinding?: MountedAttemptBinding;
-  /** Live materialized runtime session for the start scope; never public. */
+  /**
+   * Live materialized runtime session for the start scope; never public.
+   */
   readonly providerRuntimeSession?: RuntimeSession;
+  /** Construction-private model reload for this exact mount; never public. */
+  readonly reloadModelSelection?: () => Promise<unknown>;
   /** Exact mounted authored catalog capability; never public or retained by callers. */
   authoredContextCapability?: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability;
   refreshAuthoredContext?: (
@@ -261,6 +285,30 @@ type MountedChatRuntimeLeaseRecord = {
   close(): Promise<void>;
 };
 const mountedChatRuntimeLeases = new WeakMap<object, MountedChatRuntimeLeaseRecord>();
+
+/**
+ * The one way a mounted runtime adopts the player's current connection
+ * selection: the materialized runtime re-reads it through the construction
+ * function a mount uses and applies it to the live Pi session. Nothing about the
+ * conversation moves - the transcript, the ledger and the session's own entries
+ * stay exactly as they are; only the provider/model the next prompt runs with
+ * changes.
+ */
+async function applyMountedModelSelection(record: MountedChatRuntimeLeaseRecord): Promise<void> {
+  const reload = record.reloadModelSelection;
+  if (reload === undefined)
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_model_selection_unavailable");
+  await reload();
+}
+
+/** The selection the live Pi session holds, read from the session rather than remembered. */
+function readMountedModelSelection(record: MountedChatRuntimeLeaseRecord): MountedModelSelection {
+  const state = record.providerRuntimeSession?.session.agent.state;
+  const model = state?.model;
+  if (state === undefined || model === undefined)
+    throw new SemanticProductionCoordinatorError("semantic_chat_runtime_model_selection_unavailable");
+  return Object.freeze({ provider: model.provider, modelId: model.id, thinkingLevel: state.thinkingLevel });
+}
 
 /**
  * Private composition capability. It is intentionally unexported: only the
@@ -771,6 +819,13 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
     const runtimeSession = mounted.providerRuntimeSession;
     if (runtimeSession === undefined)
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_provider_start_session_unavailable");
+    // Before this prompt exists: the player's connection selection is the
+    // authority for the provider/model it runs with, whether it was activated on
+    // an idle Chat (adopted at activation) or while a previous turn was still
+    // generating (that reload answered `turn_in_flight`). No prompt is streaming
+    // here, so adopting it disturbs nothing, and a selection this runtime already
+    // carries is left untouched.
+    await applyMountedModelSelection(mounted);
     const { attempt } = record.turn;
     const deadlineAtMs = Date.now() + PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS;
     const facts = Object.freeze({
@@ -3024,6 +3079,21 @@ async function createFreshChatRuntimeAuthority(
           }
           return "aborted";
         },
+        async reloadModelSelection(this: unknown): Promise<MountedModelSelectionReload> {
+          if (this !== lease || !isCurrentMountedChatRuntimeLease(lease))
+            throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
+          const leaseRecord = mountedChatRuntimeLeases.get(lease);
+          if (leaseRecord === undefined || !leaseRecord.active)
+            throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
+          // The same terminal test a mount release uses: a turn that has not
+          // reached a terminal ledger state, or a Pi prompt that is still running,
+          // keeps the runtime it started with. The selection is not lost - the
+          // next prompt adopts it before it begins.
+          if (await mountedLeaseHasTurnInFlight(leaseRecord))
+            return Object.freeze({ status: "turn_in_flight", modelSelection: readMountedModelSelection(leaseRecord) });
+          await applyMountedModelSelection(leaseRecord);
+          return Object.freeze({ status: "applied", modelSelection: readMountedModelSelection(leaseRecord) });
+        },
         close(this: unknown): Promise<void> {
           if (this !== lease || !issuedLeases.has(lease as object))
             return Promise.reject(new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected"));
@@ -3048,6 +3118,9 @@ async function createFreshChatRuntimeAuthority(
           runtimeOwner: Object.freeze({ ...record.bootstrapPermit.owner }),
         }),
         ...(runtimeSession === undefined ? {} : { providerRuntimeSession: runtimeSession }),
+        ...(record.runtime.reloadModelSelection === undefined
+          ? {}
+          : { reloadModelSelection: record.runtime.reloadModelSelection }),
         ...(record.runtime.authoredContextCapability === undefined
           ? {}
           : { authoredContextCapability: record.runtime.authoredContextCapability }),

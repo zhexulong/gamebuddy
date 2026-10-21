@@ -33,6 +33,13 @@ export type ExactChatRuntimeConstruction = Readonly<{
   modelConfig: CompanionModelConfig;
   /** Durable revision of the model selection this construction used. */
   modelProfileRevision: number;
+  /**
+   * Re-reads the very selection this mount resolved (`activeConnection ??
+   * profile`) through the same function, for a reload of the mounted runtime in
+   * place. It is not a second source of truth: a reload and a mount can never
+   * disagree about which provider/model the player selected.
+   */
+  resolveModelSelection(): Promise<ExactChatRuntimeModelSelection>;
   presentation: PresentationRuntime;
   /** Construction-owned materialization for the currently applied Chat catalog. */
   materializeStableContextForPiSession(piSessionId: string): Promise<TavernAuthoredContextCatalog>;
@@ -56,6 +63,12 @@ export type ExactChatRuntimeConstruction = Readonly<{
 
 export type ChatRuntimeConstructionOptions = Readonly<{
   tavernNarrativeGateNonceSha256?: string;
+}>;
+
+/** The provider/model/thinking level a Chat runtime runs with, and the profile revision it read. */
+export type ExactChatRuntimeModelSelection = Readonly<{
+  modelConfig: CompanionModelConfig;
+  modelProfileRevision: number;
 }>;
 
 /**
@@ -217,20 +230,14 @@ async function buildExactChatRuntimeConstruction(
   const materializeDesiredStableContextForPiSession = (piSessionId: string) =>
     materializeContextForPiSession(piSessionId, "desired");
 
-  const modelProfile = await new ModelProfileStore(join(paths.root, "settings", "model-profiles.json")).read("chat");
-  // The player's connection selection is the authority for the chat surface's
-  // provider/model/thinking level. With no active connection the frozen chat
-  // model profile is used unchanged, so a root without player connections keeps
-  // exactly the previous runtime configuration.
-  const activeConnection = await readActiveConnectionModelConfig(paths.agentDir);
-  const modelConfig = activeConnection ?? resolveModelProfileConfig(modelProfile);
-  if (modelConfig === null) throw new Error("chat_runtime_model_configuration_unavailable");
+  const { modelConfig, modelProfileRevision } = await resolveExactChatRuntimeModelSelection(paths);
   return Object.freeze({
     identity,
     runtimeRoot: execution.runtimeRoot,
     surfaceSessionId: permit.chatSurfaceSessionId,
     modelConfig,
-    modelProfileRevision: modelProfile.revision,
+    modelProfileRevision,
+    resolveModelSelection: () => resolveExactChatRuntimeModelSelection(paths),
     presentation: Object.freeze({
       profile: Object.freeze({ locale: presentationLocale, text: true, speech: null }),
       surface: "chat",
@@ -244,6 +251,24 @@ async function buildExactChatRuntimeConstruction(
       ? {}
       : { tavernNarrativeGateNonceSha256: options.tavernNarrativeGateNonceSha256 }),
   });
+}
+
+/**
+ * The one place that decides which provider/model/thinking level a Chat runtime
+ * runs with: the player's connection selection when one is active, the frozen
+ * chat model profile otherwise. A mount freezes this answer into its Pi session;
+ * activating a connection asks the same function again for the mounted runtime,
+ * so a root without player connections keeps exactly the previous configuration
+ * and a reload can never drift from what a fresh mount would use.
+ */
+async function resolveExactChatRuntimeModelSelection(
+  paths: Pick<ReturnType<typeof resolveRuntimePaths>, "agentDir" | "root">,
+): Promise<ExactChatRuntimeModelSelection> {
+  const modelProfile = await new ModelProfileStore(join(paths.root, "settings", "model-profiles.json")).read("chat");
+  const activeConnection = await readActiveConnectionModelConfig(paths.agentDir);
+  const modelConfig = activeConnection ?? resolveModelProfileConfig(modelProfile);
+  if (modelConfig === null) throw new Error("chat_runtime_model_configuration_unavailable");
+  return Object.freeze({ modelConfig, modelProfileRevision: modelProfile.revision });
 }
 
 /**
