@@ -1386,7 +1386,9 @@ export async function editMountedChatMessage(
   const editable =
     (target.role === "player" && target.kind === "player") ||
     (target.role === "companion" && (target.kind === "response" || target.kind === "opening"));
-  if (!editable) throw refuseMountedMutation("edit target-not-editable", "chat_edit_not_player_message");
+  // Unreachable by the store's own kinds: a row whose role and kind disagree is a store/product
+  // disagreement, so it fails closed as an internal fault instead of borrowing a player-facing code.
+  if (!editable) throw refuseMountedMutation("edit target-not-editable", "chat_message_not_editable");
   // The greeting is never prompted into the session as a turn, but the mount anchors it there as the
   // conversation's own first assistant message (`pi-session-greeting-anchor.internal.ts`), so that anchor
   // IS the opening row's own entry, at the entries' first position; every row after it sits at the number

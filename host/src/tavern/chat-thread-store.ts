@@ -2344,7 +2344,9 @@ export function createChatThreadStore(
         const editable =
           (target.role === "player" && target.kind === "player") ||
           (target.role === "companion" && (target.kind === "response" || target.kind === "opening"));
-        if (!editable) throw new Error("chat_edit_not_player_message");
+        // Unreachable with the kinds this table allows (`opening` | `player` | `response`): a disagreement
+        // between role and kind is an internal fault, so it does not borrow a player-facing code.
+        if (!editable) throw new Error("chat_message_not_editable");
         const ledger = current.turnLedger;
         if (ledger !== null && !isTerminalLedger(ledger)) throw new Error("chat_edit_turn_active");
         db.prepare("UPDATE tavern_messages SET text = ? WHERE thread_id = ? AND message_id = ?").run(

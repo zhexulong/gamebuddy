@@ -123,7 +123,6 @@ export function problemFor(error: unknown): Readonly<{ status: number; code: Pro
   if (message === "chat_message_revision_conflict") return { status: 409, code: "chat_message_revision_conflict" };
   if (message === "chat_rewind_opening_retained") return { status: 409, code: "chat_rewind_opening_retained" };
   if (message === "chat_rewind_turn_active") return { status: 409, code: "chat_rewind_turn_active" };
-  if (message === "chat_edit_not_player_message") return { status: 409, code: "chat_edit_not_player_message" };
   if (message === "chat_edit_turn_active") return { status: 409, code: "chat_edit_turn_active" };
   if (message === "chat_delete_opening_retained") return { status: 409, code: "chat_delete_opening_retained" };
   if (message === "chat_delete_turn_active") return { status: 409, code: "chat_delete_turn_active" };

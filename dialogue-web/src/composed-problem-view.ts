@@ -88,9 +88,6 @@ const chatRewindOpeningRetained: ProblemSentence = (labels) =>
 const chatRewindTurnActive: ProblemSentence = (labels) =>
   sentence(labels.problemChatRewindTurnActiveTitle, labels.problemChatRewindTurnActiveDetail);
 
-const chatEditNotPlayerMessage: ProblemSentence = (labels) =>
-  sentence(labels.problemChatEditNotPlayerMessageTitle, labels.problemChatEditNotPlayerMessageDetail);
-
 const chatEditTurnActive: ProblemSentence = (labels) =>
   sentence(labels.problemChatEditTurnActiveTitle, labels.problemChatEditTurnActiveDetail);
 
@@ -288,7 +285,6 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   chat_message_revision_conflict: chatMessageRevisionConflict,
   chat_rewind_opening_retained: chatRewindOpeningRetained,
   chat_rewind_turn_active: chatRewindTurnActive,
-  chat_edit_not_player_message: chatEditNotPlayerMessage,
   chat_edit_turn_active: chatEditTurnActive,
   chat_delete_opening_retained: chatDeleteOpeningRetained,
   chat_delete_turn_active: chatDeleteTurnActive,

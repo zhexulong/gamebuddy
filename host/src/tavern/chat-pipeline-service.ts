@@ -675,7 +675,10 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       const editable =
         (target.role === "player" && target.kind === "player") ||
         (target.role === "companion" && (target.kind === "response" || target.kind === "opening"));
-      if (!editable) throw mutationRefusal("chat_edit_not_player_message");
+      // Unreachable by the store's own kinds (see CHAT_MESSAGE_MUTATION_REFUSALS' note): a row whose role and
+      // kind disagree is a store/product disagreement, so it fails closed as an internal fault rather than
+      // borrowing a player-facing code for a situation the player cannot act on.
+      if (!editable) throw new Error("chat_message_not_editable");
       // A turn that is not terminal is a reply being written from the very text this edit replaces,
       // so the transcript is not allowed to change under it.
       const ledger = state.turnLedger;
@@ -940,7 +943,6 @@ const CHAT_MESSAGE_MUTATION_REFUSALS: readonly string[] = [
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
-  "chat_edit_not_player_message",
   "chat_edit_turn_active",
   "chat_delete_opening_retained",
   "chat_delete_turn_active",

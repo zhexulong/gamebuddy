@@ -1128,7 +1128,6 @@ const PROBLEM_CODES = [
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
-  "chat_edit_not_player_message",
   "chat_edit_turn_active",
   "chat_delete_opening_retained",
   "chat_delete_turn_active",

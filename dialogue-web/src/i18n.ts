@@ -411,8 +411,6 @@ const en = {
   problemChatRewindTurnActiveDetail: "Stop the reply that is in flight, then rewind.",
   // The edit's own two refusals: the row is neither the player's own words nor her reply, or a reply is
   // being written from the very text the edit would replace.
-  problemChatEditNotPlayerMessageTitle: "That message cannot be edited",
-  problemChatEditNotPlayerMessageDetail: "Only the messages you and she exchanged are yours to correct.",
   problemChatEditTurnActiveTitle: "A reply is still being written",
   problemChatEditTurnActiveDetail: "Wait for the reply to finish, then edit the message.",
   // The delete's own three refusals. The last one is not about the player's choice at all: a message
@@ -1087,8 +1085,6 @@ const zh: Messages = {
   problemChatRewindOpeningRetainedDetail: "对话开始时的那句问候不能删除。",
   problemChatRewindTurnActiveTitle: "还有一条回复正在生成",
   problemChatRewindTurnActiveDetail: "请先停止正在生成的回复，再回退。",
-  problemChatEditNotPlayerMessageTitle: "这条消息不能编辑",
-  problemChatEditNotPlayerMessageDetail: "只有你们彼此交换过的消息才可以改写。",
   problemChatEditTurnActiveTitle: "还有一条回复正在生成",
   problemChatEditTurnActiveDetail: "请等这条回复生成完成后，再编辑这条消息。",
   problemChatDeleteOpeningRetainedTitle: "这是开场问候",

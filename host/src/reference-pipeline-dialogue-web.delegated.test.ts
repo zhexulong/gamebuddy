@@ -919,17 +919,16 @@ test("delegated handler answers the reference profile's Edit route, and every re
 
     // Each refusal the Host names keeps its own code: the player is told which row the edit cannot
     // touch, not that the runtime went away.
-    for (const refusal of [
-      "chat_edit_not_player_message",
-      "chat_edit_turn_active",
-      "chat_message_not_found",
-    ] as const) {
+    // `chat_edit_not_player_message` is retired (unreachable by the store's own kinds), so the refusals
+    // this journey can still name are the two that a player can actually meet.
+    for (const refusal of ["chat_edit_turn_active", "chat_message_not_found"] as const) {
       edit.refusal = refusal;
       const refused = await editRequest(csrf, command);
       assert.equal(refused.status, 409, refusal);
       assert.equal(((await refused.json()) as { code: string }).code, refusal);
     }
-    assert.equal(recorder.edits.length, 4);
+    // one refused CSRF attempt, then one edit per refusal the journey can still name, then the successful one
+    assert.equal(recorder.edits.length, 3);
   } finally {
     await server.close();
     assert.equal(recorder.closes, 1);

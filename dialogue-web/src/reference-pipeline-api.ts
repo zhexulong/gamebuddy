@@ -388,7 +388,6 @@ export const PROBLEM_CODES = [
   // The edit's own two: the row is neither the player's own words nor her reply, or a reply is being
   // written from the very text the edit would replace. (The greeting the Chat opened on is editable
   // in place now, so the Host's contract no longer names a refusal for it.)
-  "chat_edit_not_player_message",
   "chat_edit_turn_active",
   // The delete's own three. The last is not about the point the player chose: a row whose Pi session
   // entry the Host never recorded cannot be removed on its own, and refusing by name is better than

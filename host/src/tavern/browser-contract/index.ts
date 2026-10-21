@@ -141,7 +141,6 @@ const ProblemCode = Type.Union([
   // reply, nor that opening; or a reply is being written from the very text the edit would replace. Each is
   // a fact the surface can state plainly, so no edit ever fails with "the conversation could not be
   // changed" about a message the player can see.
-  Type.Literal("chat_edit_not_player_message"),
   Type.Literal("chat_edit_turn_active"),
   // Deleting one message out of the middle of a conversation (`chat.delete`) has its own bounded
   // vocabulary, and one member of it is the whole reason the operation needed a durable record: the
@@ -1974,7 +1973,6 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
-  "chat_edit_not_player_message",
   "chat_edit_turn_active",
   "chat_delete_opening_retained",
   "chat_delete_turn_active",
