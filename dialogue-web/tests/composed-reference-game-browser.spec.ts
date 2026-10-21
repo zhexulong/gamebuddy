@@ -376,9 +376,14 @@ test("a management refusal keeps its own problem code instead of none reported",
   await page.getByRole("button", { name: "Next variant" }).click();
 
   await expect(page.getByRole("alert")).toContainText(
-    "GameBuddy reported an internal error (code chat_opening_locked).",
+    "This conversation has already started, so the greeting it opened on can no longer change.",
   );
   await expect(page.getByRole("alert")).not.toContainText("none reported");
+  // The refusal is a fact about this conversation, never a system fault. This assertion was the
+  // internal-error sentence naming `chat_opening_locked` until every member of the contract's union
+  // got its own words (`problem-code.8`); the force is kept and inverted - the code is not printed,
+  // and the reading is not "internal error".
+  await expect(page.getByRole("alert")).not.toContainText("internal error");
 });
 
 

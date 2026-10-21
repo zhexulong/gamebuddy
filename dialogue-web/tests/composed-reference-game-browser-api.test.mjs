@@ -1241,23 +1241,23 @@ async function refusedByManagement(code, retryable = false) {
 test("a management refusal keeps its own problem code instead of collapsing to none reported", async () => {
   const labels = messages("en");
 
-  // An unclassified code is named rather than replaced by an invented one.
+  // The code arrives intact and the view answers with that code's own sentence. `dialogue_busy`
+  // used to read as the internal-error line - the premise this assertion carried until every member
+  // of the contract's union got words (see `problem-code.8`), which is exactly the defect that made
+  // a normal "she is still answering" refusal look like a system fault.
   const busy = await refusedByManagement("dialogue_busy");
   assert.equal(busy.code, "dialogue_busy");
-  assert.equal(
-    composedProblemView(busy, labels).detail,
-    labels.problemInternalErrorDetail.replace("{{code}}", "dialogue_busy"),
-  );
+  assert.equal(composedProblemView(busy, labels).detail, labels.problemStillRunningDetail);
 
   // A code the view already classifies keeps its own words, not the internal-error sentence.
   const reconciliation = await refusedByManagement("state_reconciliation_required");
   assert.equal(composedProblemView(reconciliation, labels).detail, labels.problemReconciliationFailedDetail);
 
-  // `retryable` is a field the class carries and the code does not, so the retryable
-  // refusal keeps its own presentation too - a bare `code === "..."` comparison would
-  // have dropped it.
+  // `retryable` is a field the class carries and the code does not, and the code decides: a refusal
+  // the Host marks retryable still reads as its own fact, not as a generic outage line, and not as
+  // "none reported" either.
   const outage = await refusedByManagement("runtime_unavailable", true);
-  assert.equal(composedProblemView(outage, labels).detail, labels.problemTemporarilyUnavailableDetail);
+  assert.equal(composedProblemView(outage, labels).detail, labels.problemServiceUnavailableDetail);
 });
 
 test("a management protocol failure is named as a protocol failure, not as none reported", async () => {

@@ -45,6 +45,14 @@
  * here, in the gate, from the repository source root - and this gate is what holds the
  * mirrors to it.
  *
+ * `problem-code.8` adds the direction none of the above had. Naming a code is not telling the
+ * player what happened: every member of the tavern union was declared by the contract, mirrored by
+ * both clients, and fourteen of them were still rendered as "GameBuddy reported an internal
+ * error" - so a stale draft, a busy turn and an oversized avatar all reached the player as a
+ * system fault. The rule reads the union from the contract, drives each member through the real
+ * `composedProblemView` in both catalogues, and fails the internal-error sentence for any member,
+ * which is the assertion that would have caught the gap.
+ *
  * Reading a code out of a call is positional, not "any string argument": the
  * argument index comes from the callee's own parameter named `code`, so
  * `sendSseResync(response, stream, "ambiguous_cursor", generation)` - whose third
@@ -66,6 +74,9 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { composedProblemView } from "../src/composed-problem-view.ts";
+import { messages } from "../src/i18n.ts";
+import { TavernProblemError } from "../src/reference-pipeline-api.ts";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HOST = join(REPO, "host", "src");
@@ -319,7 +330,7 @@ test("problem-code.3: every client mirror is a subset of the declared set", (t) 
         failures.push(`${entry.where} mirrors undeclared turn code ${JSON.stringify(entry.value)}`);
     }
   }
-  for (const list of ["AUTHENTICATION_PROBLEM_CODES", "RECONCILIATION_PROBLEM_CODES", "ABSENT_ROUTE_PROBLEM_CODES"]) {
+  for (const list of ["GAME_ABSENT_ROUTE_PROBLEM_CODES"]) {
     for (const entry of literalsInDeclaration(join(WEB, "composed-problem-view.ts"), list)) {
       mirrored += 1;
       if (!tavern.has(entry.value) && !game.has(entry.value) && !turn.has(entry.value))
@@ -476,4 +487,75 @@ test("problem-code.7: every client mirror IS the declared set, not a stale subse
   assert.deepEqual(codeSetDrift("mutation.ts", new Set([...authority, "invented_code"]), authority), [
     'mutation.ts recognises a code no tavern route declares "invented_code"',
   ]);
+});
+
+/**
+ * A wire problem carrying one code, in the shape the client raises for a validated refusal.
+ * `retryable` is a field the class carries and the code does not, so both readings appear below.
+ */
+function problemFor(code, retryable = false) {
+  return new TavernProblemError({
+    type: "about:blank",
+    title: "Refused",
+    status: 409,
+    code,
+    requestId: "A".repeat(22),
+    retryable,
+  });
+}
+
+test("problem-code.8: every declared code reaches the player as its own sentence, never as an internal error", (t) => {
+  // The measured defect this rule exists for: the contract declared 61 codes, the view named 14,
+  // and the other 47 - `selection_conflict`, `turn_busy`, `dialogue_busy`, `connection_not_ready`,
+  // `companion_avatar_too_large`, `world_info_revision_conflict` and 41 more - arrived as
+  // "GameBuddy reported an internal error", i.e. as a system fault rather than as the business
+  // refusal they are. Declaring a code and mirroring it (problem-code.1/.7) says nothing about
+  // whether the player is told what happened; this rule is that missing direction.
+  const { tavern, transport } = authorities();
+  const declared = [...new Set([...tavern, ...transport])].sort();
+  const failures = [];
+  const families = new Map();
+  let internalReadings = 0;
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    for (const code of declared) {
+      const view = composedProblemView(problemFor(code), labels);
+      // The detail is the sentence: several families legitimately share a title ("Unable to read
+      // chat" is the heading of the internal, reconciliation, retryable and route sentences), and
+      // what told the player they had hit a system fault was the detail naming a raw code.
+      const internalDetails = [
+        labels.problemInternalErrorDetail.replace("{{code}}", code),
+        labels.problemInternalErrorCauseDetail
+          .replace("{{code}}", code)
+          .replace("{{cause}}", labels.problemInternalErrorNoCode),
+      ];
+      if (internalDetails.includes(view.detail)) internalReadings += 1;
+      if (view.kind !== "problem" || view.title.length === 0 || view.detail.length === 0)
+        failures.push(`${locale} ${code} has no sentence`);
+      // A code is contract vocabulary; the sentence may never print it back at the player.
+      if (view.title.includes(code) || view.detail.includes(code))
+        failures.push(`${locale} ${code} prints the raw code`);
+      // The sentence belongs to the code, not to the `retryable` flag beside it: the same refusal
+      // reads the same way whether or not the Host offers a retry.
+      const retried = composedProblemView(problemFor(code, true), labels);
+      if (retried.title !== view.title || retried.detail !== view.detail)
+        failures.push(`${locale} ${code} reads differently when the refusal is retryable`);
+      if (locale === "en") {
+        const sentence = `${view.title}\n${view.detail}`;
+        families.set(sentence, [...(families.get(sentence) ?? []), code]);
+      }
+    }
+  }
+  const groups = [...families.entries()].sort((left, right) => right[1].length - left[1].length);
+  for (const [, codes] of groups)
+    t.diagnostic(`problem-code.8 family (${codes.length}): ${codes.join(", ")}`);
+  t.diagnostic(
+    `problem-code.8: ${declared.length} declared code(s) through the real view in 2 catalogues, ${groups.length} sentence family/families, ${internalReadings} internal-error reading(s), ${failures.length} violation(s)`,
+  );
+  assert.equal(
+    internalReadings,
+    0,
+    "a declared code is a refusal the player can act on; showing it as an internal error is the dishonesty this rule exists for",
+  );
+  assert.deepEqual(failures, [], "every declared code must reach the player as its own sentence");
 });

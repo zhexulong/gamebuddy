@@ -335,7 +335,7 @@ const WORLD_INFO_STATES = ["none", "selected", "pending", "unavailable"] as cons
 // outside its own schema check). The set must EQUAL that union, not approximate it - a code this
 // list does not know turns a typed refusal into `TavernProtocolError` - and
 // `dialogue-web/tests/problem-code-gate.test.mjs` (`problem-code.7`) fails on any difference.
-const PROBLEM_CODES = [
+export const PROBLEM_CODES = [
   "unauthorized",
   "csrf_failed",
   "invalid_request",
@@ -428,6 +428,13 @@ const PROBLEM_CODES = [
   // Transport: the over-ceiling request body the router refuses before any route runs.
   "payload_too_large",
 ] as const;
+
+/**
+ * The declared vocabulary as one type: a table that owes the player words for a refusal annotates
+ * itself `Record<TavernProblemCode, ...>`, so a code this mirror learns (because `problem-code.7`
+ * failed until it did) is a missing entry there rather than a silent one.
+ */
+export type TavernProblemCode = (typeof PROBLEM_CODES)[number];
 
 const MESSAGE_KEYS = ["handle", "role", "text", "locale", "order", "revision"] as const;
 const TURN_KEYS = ["handle", "state", "projectionRevision", "canCancel"] as const;

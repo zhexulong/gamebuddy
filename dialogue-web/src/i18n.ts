@@ -425,6 +425,85 @@ const en = {
   problemChatDeleteBindingUnavailableTitle: "This one cannot be deleted",
   problemChatDeleteBindingUnavailableDetail:
     "GameBuddy never recorded which part of the model's memory this message is, so it cannot remove only this one. Messages sent from now on can be deleted.",
+  // The families the contract's remaining problem codes fall into - see `composed-problem-view.ts`,
+  // which maps every member of the union to one of them. A family is one fact and one next step: the
+  // ten compare-and-set refusals say what the change was based on moved, the four in-progress ones say
+  // to wait, the five "not found" ones say the thing is gone. A refusal whose meaning differs from its
+  // neighbours keeps its own pair.
+  problemRevisionConflictTitle: "This changed while you were working",
+  problemRevisionConflictDetail:
+    "The conversation moved on since the page read it, so your change was not applied. Reload the chat to see the current state, then try again.",
+  problemStillRunningTitle: "Something is still running",
+  problemStillRunningDetail:
+    "GameBuddy is still working on the last thing you asked. Wait for it to finish, then try again.",
+  problemRepeatNotMatchedTitle: "That was not repeated",
+  problemRepeatNotMatchedDetail:
+    "GameBuddy could not match this to your earlier attempt, so it did not run it again. Reload the chat and try again.",
+  problemNoSuchItemTitle: "That is not there any more",
+  problemNoSuchItemDetail:
+    "What this names is gone - it was removed or replaced. Reload the page and choose again from what is shown.",
+  problemTurnNotRunningTitle: "There is nothing to stop",
+  problemTurnNotRunningDetail: "That reply had already finished, or had not started yet, so there was nothing to stop.",
+  problemServiceUnavailableTitle: "GameBuddy is not available right now",
+  problemServiceUnavailableDetail:
+    "One of GameBuddy's own services could not be used just now, so the chat could not go on. Try again in a moment.",
+  problemStreamResyncTitle: "The live updates lost their place",
+  problemStreamResyncDetail:
+    "GameBuddy stopped receiving this chat's live updates, so the page is out of date. Reload the chat to catch up.",
+  problemRequestRejectedTitle: "GameBuddy could not accept that",
+  problemRequestRejectedDetail:
+    "The request could not be taken as it was sent. Reload the chat and try again; if it carried a file or a long text, send a smaller one.",
+  problemAuthoredContentInvalidTitle: "That text cannot be saved",
+  problemAuthoredContentInvalidDetail:
+    "What you wrote is not something GameBuddy can keep as it stands - it may be too long, or missing a field it needs. Change it and save again.",
+  problemImportFormInvalidTitle: "The import could not go on",
+  problemImportFormInvalidDetail:
+    "The details submitted for this import are not ones GameBuddy can accept. Start the import again from the file.",
+  problemCardImportRejectedTitle: "That file is not a character card",
+  problemCardImportRejectedDetail:
+    "GameBuddy could not read it as a Tavern character card. Check that it is the right file, then choose it again.",
+  problemCardTooLargeTitle: "Her records do not fit a card",
+  problemCardTooLargeDetail:
+    "A Tavern card GameBuddy can import will not hold everything saved for her, and trying again will not make it fit.",
+  problemCardImageAbsentTitle: "She has no picture to put in it",
+  problemCardImageAbsentDetail:
+    "A PNG card has to carry a picture, and she has none. Export the JSON card instead - it carries her records without one.",
+  problemAvatarRejectedTitle: "That picture was not kept",
+  problemAvatarRejectedDetail:
+    "Her picture has to be a complete PNG within GameBuddy's size limit. Choose a smaller, complete PNG.",
+  problemRecordUnreadableTitle: "Her saved record could not be read",
+  problemRecordUnreadableDetail:
+    "What GameBuddy has stored for this companion is incomplete or damaged. Nothing you change here can be saved until it is repaired.",
+  problemOpeningLockedTitle: "The opening is already set",
+  problemOpeningLockedDetail:
+    "This conversation has already started, so the greeting it opened on can no longer change. Start a new chat to open on a different one.",
+  problemOpeningNotReviewableTitle: "This chat has no openings to choose",
+  problemOpeningNotReviewableDetail:
+    "This conversation did not open on a reviewed greeting set, so there is no other opening to switch to.",
+  problemOpeningVariantGoneTitle: "That opening is gone",
+  problemOpeningVariantGoneDetail:
+    "The greeting you picked is not part of this conversation's greeting set any more. Reload the chat to see the openings it has.",
+  problemWorldBookAbsentTitle: "She has no world book yet",
+  problemWorldBookAbsentDetail:
+    "There is no world book saved for her, so this change had nothing to update. Save a new one to start it.",
+  problemWorldBookBindingPartialTitle: "The book saved, but the chats did not follow",
+  problemWorldBookBindingPartialDetail:
+    "The new version is saved, but the chats that used the previous one could not be moved onto it. Reload to see where those chats stand.",
+  problemWorldInfoTitleTakenTitle: "That title is already used",
+  problemWorldInfoTitleTakenDetail:
+    "A World Info entry already has this title. Give this one a different title and save again.",
+  problemWorldInfoInUseTitle: "A chat is still reading this",
+  problemWorldInfoInUseDetail:
+    "The conversation in use reads this World Info entry, so it cannot be deleted. Untie it from the chat first, then delete it.",
+  problemConnectionNotReadyTitle: "That connection is not ready",
+  problemConnectionNotReadyDetail:
+    "GameBuddy has not confirmed this connection answers yet. Test it, then make it the one in use.",
+  problemConnectionConflictTitle: "The connection list moved",
+  problemConnectionConflictDetail:
+    "The connections changed since the page read them, or this is the connection in use and cannot be removed. Reload and try again.",
+  problemConnectionLimitReachedTitle: "There are as many connections as GameBuddy keeps",
+  problemConnectionLimitReachedDetail:
+    "GameBuddy keeps a limited number of connections. Remove one before adding another.",
 
   // Characters (design/28 §2) — companion library + persona/scenario/greeting
   charactersTitle: "Characters",
@@ -1019,6 +1098,65 @@ const zh: Messages = {
   problemChatDeleteBindingUnavailableTitle: "这一条无法删除",
   problemChatDeleteBindingUnavailableDetail:
     "GameBuddy 没有记录这条消息在模型记忆中对应的是哪一段，因此无法只删掉这一条。从现在起发送的新消息都可以删除。",
+  problemRevisionConflictTitle: "你动手的时候它变了",
+  problemRevisionConflictDetail:
+    "页面读取之后对话已经变化，所以这次改动没有生效。请重新加载聊天，看清当前状态后再试一次。",
+  problemStillRunningTitle: "还有事情没有做完",
+  problemStillRunningDetail: "GameBuddy 还在处理你刚才的请求。请等它完成后再试。",
+  problemRepeatNotMatchedTitle: "这一次没有重复执行",
+  problemRepeatNotMatchedDetail:
+    "GameBuddy 无法确认这与刚才那次是同一个请求，因此没有再次执行。请重新加载聊天后再试一次。",
+  problemNoSuchItemTitle: "那一项已经不在了",
+  problemNoSuchItemDetail:
+    "这次操作指向的内容已经不在了——它被删除或被替换了。请重新加载页面，从当前显示的内容里重新选择。",
+  problemTurnNotRunningTitle: "没有可以停止的回复",
+  problemTurnNotRunningDetail: "那条回复已经结束，或者还没有开始，所以没有需要停止的内容。",
+  problemServiceUnavailableTitle: "GameBuddy 现在不可用",
+  problemServiceUnavailableDetail: "GameBuddy 自己的某个服务现在用不了，聊天无法继续。请稍后再试。",
+  problemStreamResyncTitle: "实时更新断开了",
+  problemStreamResyncDetail: "GameBuddy 停止接收这个聊天的实时更新，页面上的内容已经过期。请重新加载聊天以同步。",
+  problemRequestRejectedTitle: "GameBuddy 无法接受这次请求",
+  problemRequestRejectedDetail:
+    "这次请求无法按原样处理。请重新加载聊天后重试；如果它带了文件或很长的文本，请改用更小的内容。",
+  problemAuthoredContentInvalidTitle: "这段内容无法保存",
+  problemAuthoredContentInvalidDetail:
+    "你写的内容里有 GameBuddy 无法保存的部分——可能太长，或者缺少必需的字段。请修改后重新保存。",
+  problemImportFormInvalidTitle: "这次导入无法继续",
+  problemImportFormInvalidDetail: "为这次导入提交的内容 GameBuddy 无法接受。请从文件重新开始导入。",
+  problemCardImportRejectedTitle: "这个文件不是角色卡",
+  problemCardImportRejectedDetail: "GameBuddy 无法把它读成 Tavern 角色卡。请确认文件是否正确，然后重新选择。",
+  problemCardTooLargeTitle: "她的资料装不进一张卡",
+  problemCardTooLargeDetail: "一张 GameBuddy 能导入的 Tavern 角色卡放不下她的全部资料，再试一次也不会让它装得下。",
+  problemCardImageAbsentTitle: "她没有可以放进去的图片",
+  problemCardImageAbsentDetail:
+    "PNG 角色卡必须带一张图片，而她没有。请改导出 JSON 角色卡，它不需要图片就能带她的资料。",
+  problemAvatarRejectedTitle: "这张图片没有保存",
+  problemAvatarRejectedDetail:
+    "她的图片必须是一张完整的 PNG，并且在 GameBuddy 的大小限制内。请换一张更小、完整的 PNG。",
+  problemRecordUnreadableTitle: "读不出她保存的资料",
+  problemRecordUnreadableDetail:
+    "GameBuddy 为这个伙伴保存的资料不完整或已损坏。在修好之前，这里做的任何改动都无法保存。",
+  problemOpeningLockedTitle: "开场已经定下了",
+  problemOpeningLockedDetail: "这个对话已经开始，所以开场的那句问候不能再改。想换开场，请新建一个对话。",
+  problemOpeningNotReviewableTitle: "这个对话没有可选的开场",
+  problemOpeningNotReviewableDetail: "这个对话的开场不是一组可审阅的问候，所以没有别的开场可以切换。",
+  problemOpeningVariantGoneTitle: "那个开场已经不在了",
+  problemOpeningVariantGoneDetail: "你选的问候已经不在这个对话的开场集合里。请重新加载聊天，看看它现在有哪些开场。",
+  problemWorldBookAbsentTitle: "她还没有世界书",
+  problemWorldBookAbsentDetail: "她名下没有保存过世界书，所以这次改动没有可更新的内容。请先保存一版来开始。",
+  problemWorldBookBindingPartialTitle: "世界书保存了，但聊天没有跟上",
+  problemWorldBookBindingPartialDetail:
+    "新版本已经保存，但用过旧版本的聊天没能一起换过去。请重新加载，查看那些聊天的当前状态。",
+  problemWorldInfoTitleTakenTitle: "这个标题已经被用了",
+  problemWorldInfoTitleTakenDetail: "已经有一条同名标题的世界书词条。请换一个标题再保存。",
+  problemWorldInfoInUseTitle: "还有聊天在读它",
+  problemWorldInfoInUseDetail: "正在使用的那个对话还在读这条世界书词条，所以不能删除。请先在对话里解除引用，再删除。",
+  problemConnectionNotReadyTitle: "这个连接还没准备好",
+  problemConnectionNotReadyDetail: "GameBuddy 还没有确认这个连接能应答。请先测试它，再把它设为正在使用的连接。",
+  problemConnectionConflictTitle: "连接列表已经变化",
+  problemConnectionConflictDetail: "页面读取之后连接已经变化，或者这是正在使用、无法删除的连接。请重新加载后再试。",
+  problemConnectionLimitReachedTitle: "连接数量已经到上限",
+  problemConnectionLimitReachedDetail: "GameBuddy 能保存的连接数量有限。请先删掉一个，再添加新的。",
 
   // Characters (design/28 §2)
   charactersTitle: "角色",
