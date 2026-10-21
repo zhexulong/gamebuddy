@@ -67,10 +67,20 @@ export class ReceiptReplayLedger {
               evidenceKeys: Object.keys(receipt.evidence ?? {}),
             },
             // The KEYS were identical on all three occurrences, so the difference is inside the detail string.
-            detailDiff: {
-              previous: String((previous.evidence as { detail?: unknown } | undefined)?.detail ?? "").slice(0, 400),
-              incoming: String((receipt.evidence as { detail?: unknown } | undefined)?.detail ?? "").slice(0, 400),
-            },
+            // A 400-character prefix of both was IDENTICAL on two runs, which hid the difference entirely - so print
+            // the first differing offset and a window around it instead of a prefix.
+            detailDiff: (() => {
+              const a = String((previous.evidence as { detail?: unknown } | undefined)?.detail ?? "");
+              const b = String((receipt.evidence as { detail?: unknown } | undefined)?.detail ?? "");
+              let at = 0;
+              while (at < a.length && at < b.length && a[at] === b[at]) at += 1;
+              return {
+                firstDiffAt: at,
+                lengths: [a.length, b.length],
+                previous: a.slice(Math.max(0, at - 60), at + 200),
+                incoming: b.slice(Math.max(0, at - 60), at + 200),
+              };
+            })(),
           })}\n`,
         );
         return "non_monotonic_revision";
