@@ -521,7 +521,7 @@ export const StCardImportHistoryEntryV1Schema = strictObject({
 });
 export const StCardImportHistoryV1Schema = strictObject({
   apiVersion: ApiVersion,
-  entries: Type.Array(StCardImportHistoryEntryV1Schema, { maxItems: 100 }),
+  entries: Type.Array(StCardImportHistoryEntryV1Schema, {}),
 });
 
 /**
@@ -918,6 +918,11 @@ const WorldInfoBindingState = Type.Union([
  * Safe World Info binding projection for the exact mounted Chat. `revision`
  * and every item `handle` are opaque values minted by the Host binding
  * service; the browser can never decode them into a durable fact.
+ *
+ * `items` carries no count cap: the managed library's own writer bounds the catalog
+ * (`world-info-management.ts`, `MAX_ARTIFACTS`), and a contract cap below that writer
+ * would turn its legally-held excess into a refused whole-read, exactly the 100-Chat
+ * defect. A library that legitimately holds 128 items must project all of them.
  */
 export const WorldInfoStateV1Schema = strictObject({
   state: WorldInfoBindingState,
@@ -930,7 +935,6 @@ export const WorldInfoStateV1Schema = strictObject({
       selected: Type.Boolean(),
       pending: Type.Boolean(),
     }),
-    { maxItems: 100 },
   ),
 });
 /**
@@ -1018,6 +1022,30 @@ export const WorldInfoUpdateCommandV1Schema = strictObject({
     expectedRevision: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
   }),
 });
+/**
+ * `world-info.import`: one external SillyTavern/Chub lorebook file, carried whole.
+ *
+ * The file is the player's own artifact, so its interior is the importer's business, not this
+ * contract's: `lorebook` admits any JSON object and the managed library's one importer
+ * (`tavern-lorebook-importer.ts`) decides what each entry becomes. Writing that translation a
+ * second time as a wire schema is exactly what left this capability with no player path - the
+ * authored `world-info.create` shape refuses every real lorebook file, so the importer could only
+ * be reached from a test.
+ */
+export const WorldInfoImportCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  expectedRevision: OpaqueHandle,
+  lorebook: Type.Object({}, { additionalProperties: true }),
+});
+/**
+ * The import route's request-body ceiling. A lorebook is one JSON file, so the card JSON input
+ * ceiling (`ST_CARD_DECODER_LIMITS_V1.inputBytesJson`, 2 MiB) is the right magnitude - a bound that
+ * refuses every real lorebook (the dispatcher's generic 24 KiB body) makes the route a dead end,
+ * and one with no bound is not a contract. The margin covers the JSON envelope's field names; the
+ * file's own content is bounded by the strict JSON reader behind the importer.
+ */
+export const MAX_WORLD_INFO_IMPORT_BODY_BYTES = ST_CARD_DECODER_LIMITS_V1.inputBytesJson + 8_192;
 
 /**
  * Companion library entry: opaque handle plus display metadata only. No
@@ -1030,7 +1058,10 @@ export const CompanionListEntryV1Schema = strictObject({
 });
 export const CompanionListV1Schema = strictObject({
   apiVersion: ApiVersion,
-  companions: Type.Array(CompanionListEntryV1Schema, { maxItems: 100 }),
+  // No count cap: the library enumerates every extant companion artifact
+  // (`library-service.ts listCompanions`), so a cap here would blank the whole
+  // Characters read the moment a player's 101st card was imported.
+  companions: Type.Array(CompanionListEntryV1Schema),
 });
 /** Safe player-visible companion detail: name only (companion-detail boundary). */
 export const CompanionDetailV1Schema = strictObject({
@@ -1447,6 +1478,44 @@ export const ChatRetentionResultV1Schema = strictObject({
   status: Type.Union([Type.Literal("active"), Type.Literal("archived"), Type.Literal("trashed")]),
   managementRevision: Revision,
 });
+/** The whole exported chat file as text: 256 bubbles of at most 4 000 bytes, plus their JSON. */
+export const CHAT_EXPORT_JSONL_MAX_LENGTH = 1_048_576;
+/**
+ * One fact the export dropped, in the interchange's own disposition vocabulary.
+ *
+ * An exported file is a subset of the conversation - only the selected variant of each turn, no
+ * durable message identifiers - so the loss is reported beside the file rather than left for the
+ * player to discover in SillyTavern.
+ */
+export const ChatExportDispositionV1Schema = strictObject({
+  field: Type.String({ minLength: 1, maxLength: 128 }),
+  classification: Type.Union([
+    Type.Literal("accepted_typed"),
+    Type.Literal("dropped_unsupported"),
+    Type.Literal("rejected_invalid"),
+  ]),
+  reason: Type.String({ minLength: 1, maxLength: 128 }),
+});
+/**
+ * `chat.export`: one Chat's transcript as a SillyTavern chat file.
+ *
+ * `jsonl` is the file itself - the header line plus one bubble per message - so the browser saves
+ * exactly the bytes the Host's own exporter produced and never re-serializes the transcript.
+ * `canonicalHash` is that exporter's hash over the unsigned content, and `dispositions` says what
+ * the file does not carry. No durable thread/surface identifier, variant set or binding is
+ * expressible here.
+ */
+export const ChatExportV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  format: Type.Literal("tavern-interchange/v1"),
+  chatHandle: OpaqueHandle,
+  messageCount: Revision,
+  dispositions: Type.Array(ChatExportDispositionV1Schema, { maxItems: 8 }),
+  canonicalHash: Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]{64}$" }),
+  jsonl: Type.String({ minLength: 1, maxLength: CHAT_EXPORT_JSONL_MAX_LENGTH }),
+});
+/** `chat.export`'s own query: the exact Chat the browser's list handed out. */
+export const ChatExportQueryV1Schema = strictObject({ chatHandle: OpaqueHandle });
 
 export const TavernStateEventStreamV1Schema = strictObject({ epoch: OpaqueHandle, cursor: OpaqueHandle });
 
@@ -1587,8 +1656,8 @@ export const TavernStateSnapshotV1Schema = strictObject({
   }),
   csrfToken: OpaqueHandle,
   browserSession: strictObject({ expiresAtMs: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) }),
-  operations: Type.Array(TavernBrowserOperationV1Schema, { maxItems: 100 }),
-  navigation: Type.Array(NavigationItem, { maxItems: 100 }),
+  operations: Type.Array(TavernBrowserOperationV1Schema, {}),
+  navigation: Type.Array(NavigationItem, {}),
   selection: Type.Union([
     Type.Null(),
     strictObject({ chatHandle: OpaqueHandle, generation: PositiveGeneration, stateRevision: OpaqueHandle }),
@@ -2425,6 +2494,22 @@ const RouteDescriptors = Object.freeze([
     request: WorldInfoItemCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: WorldInfoStateV1Schema },
   }),
+  // The one route that serves the library's existing lorebook importer to the player. It carries
+  // a whole external file and answers with the re-projected library, exactly like `world-info.create`.
+  route({
+    routeId: "world-info.import",
+    method: "POST",
+    path: "/api/tavern/v1/world-info/import",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: WorldInfoImportCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: WorldInfoStateV1Schema },
+  }),
   route({
     routeId: "settings.voice.read",
     method: "GET",
@@ -2963,6 +3048,21 @@ const RouteDescriptors = Object.freeze([
     request: ChatRetentionCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: ChatRetentionResultV1Schema },
   }),
+  // The Chat transcript export: one Chat of this companion/continuity, named by its own handle,
+  // answered as the interchange's own SillyTavern chat file.
+  route({
+    routeId: "chat.export",
+    method: "GET",
+    path: "/api/tavern/v1/chat/export",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: ChatExportQueryV1Schema,
+    success: { status: 200, contentType: "application/json", schema: ChatExportV1Schema },
+  }),
 ]);
 
 export const TavernBrowserContractV1 = Object.freeze({
@@ -3028,6 +3128,10 @@ export const TavernBrowserContractV1 = Object.freeze({
     WorldInfoItemCommandV1Schema,
     WorldInfoCreateCommandV1Schema,
     WorldInfoUpdateCommandV1Schema,
+    WorldInfoImportCommandV1Schema,
+    ChatExportDispositionV1Schema,
+    ChatExportV1Schema,
+    ChatExportQueryV1Schema,
     CompanionListEntryV1Schema,
     CompanionListV1Schema,
     CompanionDetailV1Schema,
@@ -3153,6 +3257,10 @@ export type WorldInfoItemV1 = Static<typeof WorldInfoItemV1Schema>;
 export type WorldInfoItemCommandV1 = Static<typeof WorldInfoItemCommandV1Schema>;
 export type WorldInfoCreateCommandV1 = Static<typeof WorldInfoCreateCommandV1Schema>;
 export type WorldInfoUpdateCommandV1 = Static<typeof WorldInfoUpdateCommandV1Schema>;
+export type WorldInfoImportCommandV1 = Static<typeof WorldInfoImportCommandV1Schema>;
+export type ChatExportCommandV1 = Static<typeof ChatExportQueryV1Schema>;
+export type ChatExportDispositionV1 = Static<typeof ChatExportDispositionV1Schema>;
+export type ChatExportV1 = Static<typeof ChatExportV1Schema>;
 export type CompanionListEntryV1 = Static<typeof CompanionListEntryV1Schema>;
 export type CompanionListV1 = Static<typeof CompanionListV1Schema>;
 export type CompanionDetailV1 = Static<typeof CompanionDetailV1Schema>;
