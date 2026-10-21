@@ -11,6 +11,7 @@ import { problemTextWithCode, TavernProblemError } from "../management-pipeline-
 import { useArmedConfirmation } from "./armed-confirmation";
 import { CharactersPanel } from "./CharactersPanel";
 import { type CharacterLabels, characterLabels } from "./character-domain-labels";
+import type { InspectedCompanion } from "./CompanionInspectorDrawer";
 import type { WorldInfoSurfaceSource } from "./management-surface-panels";
 
 /**
@@ -61,6 +62,11 @@ export function CharactersSurfacePanel({
   avatarDigests: Readonly<Record<string, string>>;
   onAvatarUpdated: (handle: string, digest: string) => void;
 }): ReactElement {
+  // The companion the player is looking at: the roster row whose inspector was
+  // opened. It outlives the drawer, because the drawer is modal and the export
+  // control below it can only be pressed once it is closed - the selection is
+  // what the player was looking at, and the card export follows it.
+  const [inspected, setInspected] = useState<InspectedCompanion | null>(null);
   return (
     <>
       <CharactersPanel
@@ -69,8 +75,10 @@ export function CharactersSurfacePanel({
         locale={locale}
         avatarDigests={avatarDigests}
         onAvatarUpdated={onAvatarUpdated}
+        inspected={inspected}
+        onInspect={setInspected}
       />
-      <CompanionCardExportSection api={api} locale={locale} />
+      <CompanionCardExportSection api={api} locale={locale} inspected={inspected} />
       <CompanionWorldBookSection api={api} csrfToken={csrfToken} locale={locale} />
       <CharacterWorldBookPanel api={api} csrfToken={csrfToken} locale={locale} read={read} />
     </>
@@ -94,22 +102,34 @@ export function CharactersSurfacePanel({
  * which. The PNG card contains her own picture, so a companion without one gets her
  * own refusal rather than a silently blank or invented image.
  *
- * The companion addressed is the one in play, taken from the roster's own opaque
- * handle - the same handle every other companion read is addressed by - and the
- * route resolves any listed companion, so a later per-row entry point needs no new
- * contract. Every way the Host can refuse has its own sentence: there is no
+ * The companion addressed is the one the player is looking at: the roster row whose
+ * inspector she opened, which the drawer named and the surface remembered. Only when
+ * the player has named no companion at all - nothing inspected since the surface
+ * mounted - is her card the one in play. Both are the roster's own opaque handle -
+ * the same handle every other companion read is addressed by - and the route resolves
+ * any listed companion.
+ *
+ * The selection outlives the drawer because the drawer is modal: while it is open the
+ * backdrop stands between the player and this control, so the export she asks for is
+ * the one she presses after reading her. The control therefore follows what she was
+ * reading rather than reverting to the companion in play - reverting is what made
+ * saving an archived companion's card silently save the active one's.
+ *
+ * Every way the Host can refuse has its own sentence: there is no
  * companion to export, her records could not be read, they will not fit a card our
  * import accepts, or she has no picture for the PNG form.
  */
 function CompanionCardExportSection({
   api,
   locale,
+  inspected,
 }: {
   api: ManagementPipelineApi;
   locale: Locale;
+  inspected: InspectedCompanion | null;
 }): ReactElement | null {
   const labels = characterLabels(locale);
-  const [target, setTarget] = useState<
+  const [inPlay, setInPlay] = useState<
     Readonly<{ handle: string; name: string }> | "loading" | "absent" | "unavailable"
   >("loading");
   const [busy, setBusy] = useState(false);
@@ -122,10 +142,10 @@ function CompanionCardExportSection({
         const list = await api.listCompanions();
         if (!active) return;
         const current = list.companions.find((entry) => entry.isCurrent);
-        setTarget(current === undefined ? "absent" : { handle: current.handle, name: current.name });
+        setInPlay(current === undefined ? "absent" : { handle: current.handle, name: current.name });
       } catch {
         // A read that fails renders nothing rather than fabricating a capability.
-        if (active) setTarget("unavailable");
+        if (active) setInPlay("unavailable");
       }
     })();
     return () => {
@@ -134,7 +154,19 @@ function CompanionCardExportSection({
     // The client is the mount's own authority and is stable for the life of the surface.
   }, [api]);
 
-  if (target === "loading" || target === "unavailable") return null;
+  /**
+   * The companion this control saves.
+   *
+   * The companion the player is looking at wins; the one in play is only the
+   * fallback for a surface where nothing has been named yet. A roster read still in
+   * flight - or one that failed - names nothing, so the control is not offered on
+   * the strength of a companion it has not read; an inspection the drawer already
+   * named needs no roster read at all.
+   */
+  const target: Readonly<{ handle: string; name: string }> | "absent" | null =
+    inspected !== null ? inspected : inPlay === "loading" || inPlay === "unavailable" ? null : inPlay;
+
+  if (target === null) return null;
 
   /**
    * Saves the Host's own card bytes through the browser's download surface: one

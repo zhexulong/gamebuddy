@@ -310,10 +310,12 @@ test("the inspector shows four groups with no editor, and its one write is her p
   for (const label of controls.buttons) expect(label, "every control carries a readable name").toMatch(/\S/u);
   for (const summary of controls.summaries) expect(summary, "every disclosure is labelled").toMatch(/\S/u);
 
-  // The one exception, stated exactly: one hidden picker that takes a PNG and nothing
-  // else, named for the player, driven by the themed control beside it.
+  // The one exception, stated exactly: one hidden picker that takes the pictures a
+  // player has, named for the player, driven by the themed control beside it. The
+  // bytes that leave are still a PNG - the browser converts them (`pngBytesOfPickedPicture`),
+  // which is what the JPEG journey in `companion-avatar.spec.ts` proves on the wire.
   expect(controls.filePickers).toHaveLength(1);
-  expect(controls.filePickers[0]?.accept).toBe("image/png");
+  expect(controls.filePickers[0]?.accept).toBe("image/png,image/jpeg,image/webp");
   expect(controls.filePickers[0]?.label).toMatch(/\S/u);
 
   // The roster's own control on that row is the inspect one, and it says what it does.

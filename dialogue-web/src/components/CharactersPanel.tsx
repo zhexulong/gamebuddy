@@ -59,6 +59,8 @@ export function CharactersPanel({
   locale = "en",
   avatarDigests: ownedDigests,
   onAvatarUpdated,
+  inspected,
+  onInspect,
 }: {
   api: ManagementPipelineApi;
   csrfToken: string;
@@ -72,10 +74,21 @@ export function CharactersPanel({
    */
   avatarDigests?: Readonly<Record<string, string>>;
   onAvatarUpdated?: (handle: string, digest: string) => void;
+  /**
+   * The companion the player is looking at, owned by the surface above: the roster row whose
+   * inspector was opened. The surface owns it because the card export below this panel
+   * follows the same selection, and a drawer's own state would be gone by the time the
+   * player can reach that control.
+   */
+  inspected: InspectedCompanion | null;
+  /** Her row was pressed: this companion is what the player is looking at now. */
+  onInspect: (companion: InspectedCompanion) => void;
 }): ReactElement {
   const labels = characterLabels(locale);
   const [companionList, setCompanionList] = useState<CompanionListV1 | "loading" | "unavailable">("loading");
-  const [inspected, setInspected] = useState<InspectedCompanion | null>(null);
+  // Whether the inspector is on screen. The selection above outlives it: the drawer is
+  // modal, so the player reads a companion here and acts on her once it is closed.
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   // The picture digest each roster row was last told about, keyed by handle. The panel owns
   // it because the row this panel draws is what needs the reload key, and it must outlive the
   // drawer that learned it: an upload leaves `companion.list` untouched, so re-reading the
@@ -396,7 +409,8 @@ export function CharactersPanel({
                       aria-label={labels.companionInspect.replace("{{name}}", entry.name)}
                       onClick={(event) => {
                         inspectorOpener.current = event.currentTarget;
-                        setInspected({ handle: entry.handle, name: entry.name, isCurrent: entry.isCurrent });
+                        onInspect({ handle: entry.handle, name: entry.name, isCurrent: entry.isCurrent });
+                        setInspectorOpen(true);
                       }}
                     >
                       <CompanionAvatar
@@ -769,9 +783,9 @@ export function CharactersPanel({
           <CompanionInspectorDrawer
             api={api}
             csrfToken={csrfToken}
-            companion={inspected}
+            companion={inspectorOpen ? inspected : null}
             locale={locale}
-            onClose={() => setInspected(null)}
+            onClose={() => setInspectorOpen(false)}
             onAvatarUpdated={(handle, digest) => {
               // Report upward when the shell owns the map (the bar and the transcript re-key on it), and
               // keep a local copy either way: a panel mounted on its own still draws its own roster.

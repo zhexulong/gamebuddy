@@ -18,6 +18,8 @@ import { expect, test } from "@playwright/test";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";
+/** A second, archived companion beside the one in play: the roster row a player inspects. */
+const archivedHandle = "D".repeat(42) + "A";
 const csrfToken = "C".repeat(42) + "A";
 const expiresAtMs = 1_900_000_000_000;
 
@@ -101,7 +103,12 @@ const PNG_CARD_BYTES = Buffer.from(
 );
 
 type CardFormat = "json" | "png";
-type ExportResponse = (route: import("@playwright/test").Route, format: CardFormat) => Promise<void>;
+type ExportResponse = (
+  route: import("@playwright/test").Route,
+  format: CardFormat,
+  /** The companion handle the control addressed, read back from the exact path it sent. */
+  handle: string,
+) => Promise<void>;
 
 /** Everything the Characters surface reads once on mount, with the export route under test. */
 async function stubCharacters(
@@ -114,11 +121,31 @@ async function stubCharacters(
     route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
   );
   await page.route("**/api/tavern/v1/companions", (route) => route.fulfill(jsonOk(options.companions)));
-  // The format is named in the request, so the stub reads it back from the exact
-  // query the control sent rather than assuming one form.
+  // The format and the companion are both named in the request, so the stub reads them
+  // back from the exact request the control sent rather than assuming either. A
+  // predicate on the path (not a glob) is what keeps the format query in view.
   await page.route(
-    (url) => url.pathname === `/api/tavern/v1/companions/${handle}/card`,
-    (route) => options.onCard(route, new URL(route.request().url()).searchParams.get("format") as CardFormat),
+    (url) => url.pathname.startsWith("/api/tavern/v1/companions/") && url.pathname.endsWith("/card"),
+    (route) => {
+      const url = new URL(route.request().url());
+      const asked = url.pathname.split("/companions/")[1]!.split("/")[0]!;
+      return options.onCard(route, url.searchParams.get("format") as CardFormat, asked);
+    },
+  );
+  // The inspector's own read: the drawer the player opens beside this section.
+  await page.route(
+    (url) => url.pathname.startsWith("/api/tavern/v1/companions/") && url.pathname.endsWith("/profile"),
+    (route) =>
+      route.fulfill(
+        jsonOk({
+          apiVersion: 1,
+          name: "A companion",
+          persona: { present: false, core: null, interactionStyle: null, expressionStyle: null },
+          scenario: { present: false, name: null, description: null },
+          greetings: { present: false, label: null, variants: [] },
+          worldBook: { apiVersion: 1, present: false, revision: null, entries: [] },
+        }),
+      ),
   );
   await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, entries: [] })),
@@ -324,4 +351,67 @@ test("a roster with no companion in play says there is nothing to export", async
   await expect(section.locator("[data-companion-card-export-nothing]")).toHaveText("还没有可以导出的伙伴。");
   await expect(section.locator("[data-companion-card-export-json]")).toHaveCount(0);
   await expect(section.locator("[data-companion-card-export-png]")).toHaveCount(0);
+});
+
+/**
+ * The card this control saves is the companion the player was reading, not the one
+ * in play.
+ *
+ * The roster holds two companions: the one the run is playing and an archived one.
+ * The player opens the archived companion's inspector, reads her, closes it, and
+ * presses export. The request must name HER handle, and the file that lands must be
+ * the card the Host built from HER records - so the stub answers per companion and
+ * the assertion is on the saved file's own `data.name`. If the control reverted to
+ * the companion in play, both the request and the name in the file would be the
+ * other companion's, which is exactly the defect this journey exists for.
+ */
+test("the card export saves the companion the player inspected, not the one in play", async ({ page }) => {
+  const names: Readonly<Record<string, string>> = { [handle]: "琥珀", [archivedHandle]: "米拉" };
+  const requested: string[] = [];
+  await stubCharacters(page, {
+    companions: {
+      apiVersion: 1,
+      companions: [
+        { handle, name: "琥珀", isCurrent: true },
+        { handle: archivedHandle, name: "米拉", isCurrent: false },
+      ],
+    },
+    onCard: async (route, format, asked) => {
+      requested.push(`${asked}:${format}`);
+      await route.fulfill(
+        jsonOk({
+          apiVersion: 1,
+          format: "json",
+          spec: "chara_card_v3",
+          fileName: `${names[asked]}.json`,
+          card: JSON.stringify({ spec: "chara_card_v3", spec_version: "3.0", data: { name: names[asked] } }),
+        }),
+      );
+    },
+  });
+  const surface = await openCharacters(page);
+
+  // Before anything is inspected, the control names the companion in play.
+  const section = surface.locator("[data-companion-card-export-section]");
+  const json = section.locator("[data-companion-card-export-json]");
+  await expect(json).toHaveAttribute("aria-label", "导出 JSON 角色卡: 琥珀");
+
+  // Open the archived companion's inspector and read her.
+  await surface.locator('[data-companion-entry] [data-companion-inspect][aria-label*="米拉"]').click();
+  const drawer = page.getByTestId("companion-inspector");
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole("heading", { level: 2 })).toHaveText("米拉");
+  // The drawer owns the surface while it is open, so the player closes it to reach
+  // the control below - and the control still names her, not the companion in play.
+  await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0);
+  await expect(json).toHaveAttribute("aria-label", "导出 JSON 角色卡: 米拉");
+
+  const [download] = await Promise.all([page.waitForEvent("download"), json.click()]);
+  expect(download.suggestedFilename()).toBe("米拉.json");
+  const path = await download.path();
+  expect(path, "the download completes").not.toBeNull();
+  const saved = await import("node:fs/promises").then((fs) => fs.readFile(path!, "utf8"));
+  expect(JSON.parse(saved).data.name, "the saved card is the companion the player was reading").toBe("米拉");
+  expect(requested, "the request names the companion the player was reading").toEqual([`${archivedHandle}:json`]);
 });
