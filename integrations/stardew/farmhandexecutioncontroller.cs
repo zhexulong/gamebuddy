@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
@@ -4892,10 +4893,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             or ExecutionState.Rejected)
             this.heldMsByRequestId.Remove(published.RequestId);
         this.publishedReceiptRevisionByExecutionId[receipt.ExecutionId] = published.Revision;
-        this.monitor.Log($"[receipt-publish-marker] request={published.RequestId};state={published.State};reason={published.ReasonCode};revision={published.Revision}", LogLevel.Trace);
+        // The publish span and the marker line are the same fact: the span carries the identity the line reports,
+        // so the trace and the grep log can never disagree about which request a revision was published for.
+        Activity? publishSpan = ModTrace.StartReceiptPublish(published);
+        this.monitor.Log(ModTrace.ReceiptPublishLogLine(published), LogLevel.Trace);
         if (category is not null && !this.navigationExecutionIds.Contains(published.ExecutionId))
             this.AddPublicTrace(category, published.ExecutionId, published.RequestId);
         this.receiptPublished?.Invoke(published);
+        publishSpan?.Dispose();
         // The CALLER answers with this object, and the fact stream carries it too. Handing back the minted one instead
         // published a fact without `held_ms` while the response carried it (same revision, different content), which the
         // Host refuses as `non_monotonic_revision` - named live on 2026-10-21: same execution, same revision 266, same

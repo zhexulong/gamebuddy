@@ -170,6 +170,9 @@ public sealed partial class ModEntry : Mod
     /// </remarks>
     private void LogBlockedTickReasonOnce(string reason)
     {
+        // Every gated return passes through here, so this is where the tick gate span is opened: it names the
+        // reason the lane yielded and stays open until a later tick gets past every gate.
+        ModTrace.NoteTickGateHeld(reason);
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         bool first = !this.blockedTickReasonsLogged.TryGetValue(reason, out long last);
         if (!first && now - last < 2_000L)
@@ -184,7 +187,7 @@ public sealed partial class ModEntry : Mod
     private PathPredicateProbe? pathPredicateProbe;
 
     private long nativeLocalPlayerFixtureLastStageUnixMs;
-private long nativeLocalPlayerFixtureLastReadinessLogUnixMs;
+    private long nativeLocalPlayerFixtureLastReadinessLogUnixMs;
 private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
     // The recent step sequence, kept in memory because the LAST LINE of a frozen log is not enough: the lane runs seven
     // steps inside a millisecond, and a throttle that prints only one of them cannot say which one hung. Recorded on
@@ -194,6 +197,9 @@ private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
 
     /// <summary>A stalled-tick report the watchdog thread left for the game thread to log.</summary>
     private string? pendingStalledTickReport;
+
+    /// <summary>The run's span recorder: one Perfetto file next to the SMAPI log, flushed by its own timer thread.</summary>
+    private ModTraceRecorder? traceRecorder;
 
     // The engine's own frame counter, incremented by a Harmony postfix on `Game1.Update` and written to a file by the
     // timer below. Why a FILE and not the Mod log: during the freeze the Mod's tick is not running, so nothing inside

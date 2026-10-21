@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.BodyPrograms;
@@ -150,6 +151,13 @@ public sealed partial class ModEntry : Mod
     public override void Entry(IModHelper helper)
     {
         this.config = helper.ReadConfig<ModConfig>();
+        // One Perfetto trace per run, next to the SMAPI log. Created before anything else so the first span of a
+        // run is not missing, and owned by a timer thread that keeps flushing even when the tick stops returning.
+        this.traceRecorder = new ModTraceRecorder(
+            Constants.LogDir,
+            DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture),
+            this.Monitor);
+        this.Monitor.Log($"GameBuddy is writing its span trace to {this.traceRecorder.FilePath}.", LogLevel.Info);
         // The engine-loop probe installs unconditionally and owns its own Harmony instance: it answers whether the
         // engine's own per-frame update still runs during a freeze, so it may not be gated behind the feature it is
         // helping to debug. Its first placement was inside the native-chat ingress block, which is guarded, and the
@@ -1272,6 +1280,9 @@ public sealed partial class ModEntry : Mod
             ScreenEmbodimentState nativeLocalState = this.GetEmbodimentState();
             string? stalledReport = Interlocked.Exchange(ref this.pendingStalledTickReport, null);
         if (stalledReport is not null) this.Monitor.Log(stalledReport, LogLevel.Warn);
+        // This tick is past every gate, so a gate span opened by an earlier tick ends here - before the work it was
+        // excluding from the timeline.
+        ModTrace.NoteTickGatePassed();
         this.LogStageOnce("capability_publication");
         this.LogStageOnce("capability_publication");
         this.RefreshFarmhandCapabilityPublication(nativeLocalState, e.Ticks);
@@ -1887,6 +1898,10 @@ public sealed partial class ModEntry : Mod
                 string? correlationId = document.RootElement.TryGetProperty("correlationId", out System.Text.Json.JsonElement correlationElement)
                     && correlationElement.ValueKind == System.Text.Json.JsonValueKind.String ? correlationElement.GetString() : null;
                 string? requestType = typeElement.GetString();
+                // The dispatch span wraps everything this frame does after it was classified: the type switch, the
+                // handler call (and the execute/publish spans under it) and the response enqueue. It is created
+                // before the mailbox answers as well, because those are dispatch outcomes too.
+                using Activity? dispatchSpan = ModTrace.StartBridgeDispatch(requestType, correlationId);
                 if (requestType == "observe_request")
                     this.MonitorNativeChatIngress("navigation_observe_dequeued");
                 if (requestType == "observe_scene_request")

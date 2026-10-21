@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.Diagnostics;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 
@@ -124,9 +126,12 @@ public sealed class FarmhandActionRouter
             ledger.BindAction(request.RequestId, request.Action);
         }
 
+        using Activity? executionSpan = ModActivitySource.StartActionExecution(request, executionId);
         try
         {
             receipt = handler.Execute(request, ledger);
+            executionSpan?.SetTag("revision", receipt.Revision);
+            executionSpan?.SetTag("state", receipt.State.ToString());
             reasonCode = "accepted";
             return true;
         }
@@ -135,6 +140,7 @@ public sealed class FarmhandActionRouter
             // A handler is the native-action boundary. If it escapes after the
             // caller has durably admitted the request, the side effect may be
             // unknown and the execution must not be left pending or retried.
+            executionSpan?.SetTag("handlerException", exception.GetType().Name);
             string terminalExecutionId = executionId ?? Guid.NewGuid().ToString("N");
             receipt = ledger.RememberTerminal(
                 request.RequestId,

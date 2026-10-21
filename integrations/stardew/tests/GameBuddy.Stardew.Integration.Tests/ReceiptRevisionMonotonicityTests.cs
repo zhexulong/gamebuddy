@@ -96,9 +96,11 @@ public sealed class ReceiptRevisionMonotonicityTests
         // And the emitted object is the adjusted one, not the minted one.
         body.Should().Contain("this.receiptPublished?.Invoke(published);");
         body.Should().NotContain("this.receiptPublished?.Invoke(receipt);");
-        // The trace marker must report the PUBLISHED revision, since that is what a live diagnosis compares.
-        body.Should().Contain("revision={published.Revision}", "the logged revision must be the published one");
-        body.Should().NotContain("revision={receipt.Revision}");
+        // The trace marker must report the PUBLISHED revision, since that is what a live diagnosis compares. The
+        // line is formatted FROM the published receipt by the shared helper, which is also where the publish span
+        // takes its `requestId`/`executionId`/`revision` - so the log and the trace cannot disagree.
+        body.Should().Contain("ModTrace.ReceiptPublishLogLine(published)", "the logged revision must be the published one");
+        body.Should().NotContain("ModTrace.ReceiptPublishLogLine(receipt)");
     }
 
     [Fact]
