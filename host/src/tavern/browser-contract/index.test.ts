@@ -312,12 +312,15 @@ test("chat list is metadata-only with opaque handles and an exact active status"
     }),
     false,
   );
+  // The list is what a player's own Chat count reaches: the 101st Chat must not
+  // make the read refuse. The rows are still the same validated entry shape.
   assert.equal(
     TavernBrowserValidatorsV1.ChatListV1Schema.Check({
       ...list,
       chats: Array.from({ length: 101 }, () => list.chats[0]),
     }),
-    false,
+    true,
+    "a player's 101st Chat must not fail the whole list read",
   );
   assert.equal(TavernBrowserValidatorsV1.ChatListQueryV1Schema.Check({ apiVersion: 1, state: "active" }), true);
   assert.equal(TavernBrowserValidatorsV1.ChatListQueryV1Schema.Check({ apiVersion: 1, state: "trashed" }), false);

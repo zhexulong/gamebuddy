@@ -1693,7 +1693,13 @@ export const ChatListEntryV1Schema = strictObject({
 });
 export const ChatListV1Schema = strictObject({
   apiVersion: ApiVersion,
-  chats: Type.Array(ChatListEntryV1Schema, { maxItems: 100 }),
+  /**
+   * Every Chat of the partition. Unbounded on purpose: the list is the only way
+   * the surface reaches a Chat at all (no paging, no query), so a ceiling here
+   * would be a ceiling on how many Chats a player may own - the 101st would make
+   * the whole read refuse and blank a list that is otherwise perfectly legal.
+   */
+  chats: Type.Array(ChatListEntryV1Schema),
 });
 export const RenameChatTitleCommandV1Schema = strictObject({
   apiVersion: ApiVersion,

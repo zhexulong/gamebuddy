@@ -390,3 +390,44 @@ test("mounted management state facade rejects structural clones of a composed pr
   assert.equal((results.brandedLeaf as { ok: boolean }).ok, false);
   assert.equal((results.brandedLeaf as { error: string }).error.includes("ENOENT"), true);
 });
+
+/**
+ * A player's Chat count is their own: the list read is the only way the surface
+ * reaches a Chat (no paging, no query), so the 101st Chat must read back as a
+ * 101st row. The row shape is still fixed - `status` is still `active` and
+ * `preview` is still plain text - but the number of rows is the player's.
+ */
+test("the mounted list read returns the player's 101st Chat instead of refusing the whole list", async () => {
+  const results = await mounted(`
+    const creation = createProfileAwareChatThreadCreationCapability(store(), { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
+    for (let index = 2; index <= 101; index += 1) {
+      const suffix = String(index).padStart(3, "0");
+      await creation.createExplicit({
+        chatThreadId: "thread_" + suffix,
+        companionId: "companion_01",
+        continuityId: "continuity_01",
+        chatSurfaceSessionId: "surface_" + suffix,
+        profileId: "profile_01",
+        profileRevision: 1,
+        profileCanonicalHash: "a".repeat(64),
+        opening: { messageId: "opening_" + suffix, text: "Chat " + suffix, source: { greetingSetId: "greetings_01", sourceRevision: 2, canonicalHash: "a".repeat(64), variantId: "default_01", profileRevision: 3, scenarioRevision: null } },
+      });
+    }
+    const list = await service.listChats({ apiVersion: 1 });
+    const durableThreadCount = (await store().listThreads()).length;
+    process.stdout.write(JSON.stringify({
+      count: list.chats.length,
+      handles: list.chats.map((chat) => chat.handle),
+      durableThreadCount,
+      lastPreview: list.chats.map((chat) => chat.preview).find((preview) => preview === "Chat 101") ?? null,
+    }));
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+  assert.equal(results.durableThreadCount, 101);
+  assert.equal(results.count, 101, "the list read refused a Chat count the player reached");
+  const handles = results.handles as string[];
+  assert.equal(new Set(handles).size, 101, "two rows of the list read as the same Chat");
+  assert.equal(results.lastPreview, "Chat 101", "the 101st Chat is not in the list as its own row");
+});
