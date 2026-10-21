@@ -15,6 +15,7 @@ import {
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
 import { describeBodyHoldRefusal } from "./stardew-action-remedy.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
+import { RUN_SPAN_NAMES, type RunTrace, describeTraceFailure } from "./run-trace.js";
 import {
   type ActionRegistrationDescriptor,
   type ExecutionReceipt,
@@ -71,6 +72,7 @@ function gameActionToolFactory(
   integration: MoveCapableIntegration,
   policy: ActionPolicy | undefined,
   dispatchAdmissionFactory: IntegrationDispatchAdmissionFactory,
+  trace: RunTrace | undefined,
 ) {
   return function createGameActionTool<TSchema extends TObject>(
     definition: GameActionToolDefinition<TSchema>,
@@ -88,6 +90,7 @@ function gameActionToolFactory(
           definition.action,
           definition.toArgs(params as Static<TSchema>),
           callerRequestIds(params),
+          trace,
         ),
     });
   };
@@ -676,6 +679,7 @@ export function createStardewActionTools(
   integration: StardewBridgeConnection,
   policy: ActionPolicy | undefined,
   dispatchAdmissionFactory?: IntegrationDispatchAdmissionFactory,
+  trace?: RunTrace,
 ) {
   if (!isMoveCapable(integration) || dispatchAdmissionFactory === undefined) return [] as const;
   const state = integration.state;
@@ -685,7 +689,7 @@ export function createStardewActionTools(
   // capability snapshots or per-turn permission.
   const modRegistrations = state.catalogRegistrations ?? [];
   const tools: Array<ReturnType<typeof defineTool>> = [];
-  const makeGameActionTool = gameActionToolFactory(integration, policy, dispatchAdmissionFactory);
+  const makeGameActionTool = gameActionToolFactory(integration, policy, dispatchAdmissionFactory, trace);
   {
     // constant mount; per-action admission at execution
     tools.push(
@@ -2777,6 +2781,7 @@ async function executeGameAction(
   action: StardewActionId,
   args: Readonly<Record<string, unknown>>,
   callerIds: Readonly<{ requestId?: string; idempotencyKey?: string }>,
+  trace: RunTrace | undefined,
 ) {
   const snapshot = integration.state.snapshot;
   if (!integration.state.connected || snapshot === null) return receiptResult(null, "integration_not_ready");
@@ -2815,11 +2820,23 @@ async function executeGameAction(
   };
   const invalid = validateExecutionRequest(request, snapshot);
   if (invalid !== null) return receiptResult(null, invalid);
+  // One span per dispatch, from the Host's send decision to the answer that settles it: the same two moments the
+  // hand-built action trace stamped, so exec/think/idle stay derivable (see run-trace-cadence.ts).
+  const actionSpan = trace?.begin(RUN_SPAN_NAMES.action, { actionId: action, requestId: request.requestId });
   try {
-    return receiptResult(await executeBridge(integration, dispatchAdmissionFactory, request), null);
+    const receipt = await executeBridge(
+      integration,
+      dispatchAdmissionFactory,
+      request,
+      trace,
+      actionSpan?.spanId ?? null,
+    );
+    actionSpan?.end({ state: receipt.state, reasonCode: receipt.reasonCode });
+    return receiptResult(receipt, null);
   } catch (error) {
     const reasonCode =
       error instanceof Error ? error.message.replace(/^bridge_rejected:/, "") : "bridge_execute_failed";
+    actionSpan?.end({ state: "rejected", reasonCode });
     // Whether the native write happened is the one fact the caller needs and
     // cannot infer from a flat "not created". executeBridge tags the failure
     // with the phase it failed in, so the message can say which it was: a
@@ -2838,6 +2855,8 @@ async function executeBridge(
   integration: MoveCapableIntegration,
   dispatchAdmissionFactory: IntegrationDispatchAdmissionFactory,
   request: ExecutionRequest,
+  trace: RunTrace | undefined,
+  actionSpanId: string | null,
 ): Promise<ExecutionReceipt> {
   if (!integration.state.connected) {
     throw new Error("bridge_rejected:integration_not_ready");
@@ -2847,6 +2866,11 @@ async function executeBridge(
   }
   /* Never retain an admission in the tool closure: STOP fences the final pre-write boundary. */
   const admission = dispatchAdmissionFactory();
+  const admissionSpan = trace?.begin(
+    RUN_SPAN_NAMES.admission,
+    { actionId: request.action, requestId: request.requestId },
+    actionSpanId,
+  );
   // Register the immutable tuple before the write so a lost first receipt can
   // be queried after a fresh authenticated binding without reissuing action.
   const dispatch = {
@@ -2857,10 +2881,24 @@ async function executeBridge(
       logicalActionId: request.requestId,
       request,
     },
+    ...(admissionSpan === undefined ? {} : { traceParentId: admissionSpan.spanId }),
   };
-  await admission.observer.beforeWrite(dispatch);
   try {
-    const receipt = await integration.execute(request);
+    await admission.observer.beforeWrite(dispatch);
+  } catch (error) {
+    admissionSpan?.end({ failed: describeTraceFailure(error) });
+    throw error;
+  }
+  admissionSpan?.end({ state: "prepared" });
+  try {
+    const receipt = await (trace === undefined
+      ? integration.execute(request)
+      : trace.span(
+          RUN_SPAN_NAMES.bridgeCall,
+          { actionId: request.action, requestId: request.requestId },
+          () => integration.execute(request),
+          actionSpanId,
+        ));
     await admission.observer.bindReceipt(receipt);
     return receipt;
   } catch (error) {

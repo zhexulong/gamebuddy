@@ -3,17 +3,15 @@ import { type CompanionInterruption, createCompanionInterruption } from "./compa
 import {
   ExecutionCorrelationLedger,
   type ExecutionDispatch,
+  isTerminalExecutionState,
   type RecoverableExecutionDispatch,
 } from "./execution-correlation-ledger.js";
 import type { ExecutionWake, ExecutionWakeSource } from "./integration-launcher.js";
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
 import type { GameConnection } from "./game-connection.js";
-import type {
-  BodyNodeAdmissionChallenge,
-  BodyNodeAdmissionGrant,
-  ExecutionReceipt,
-} from "./protocol.js";
+import type { BodyNodeAdmissionChallenge, BodyNodeAdmissionGrant, ExecutionReceipt } from "./protocol.js";
 import { ReceiptReplayLedger } from "./receipt-replay.js";
+import { RUN_SPAN_NAMES, type RunTrace, type RunTraceSpanHandle } from "./run-trace.js";
 import {
   type HostNodeAdmissionRecord,
   type StardewLogicalActionRecoveryJournal,
@@ -53,9 +51,9 @@ type HostNodeAdmissionDecision =
   | Readonly<{ result: "rejected"; code: string }>
   | Readonly<{ result: "unavailable"; code: "admission_unavailable" }>;
 
-export type HostNodeAdmissionValidator = (challenge: BodyNodeAdmissionChallenge) =>
-  | HostNodeAdmissionDecision
-  | Promise<HostNodeAdmissionDecision>;
+export type HostNodeAdmissionValidator = (
+  challenge: BodyNodeAdmissionChallenge,
+) => HostNodeAdmissionDecision | Promise<HostNodeAdmissionDecision>;
 
 export type HostNodeAdmissionResult =
   | Readonly<{ result: "granted"; grant: BodyNodeAdmissionGrant }>
@@ -78,7 +76,8 @@ export class HostNodeAdmissionService {
       throw error;
     }
     if (existing?.state === "grant_issued") return Object.freeze({ result: "granted", grant: existing.grant! });
-    if (existing?.state === "admission_rejected") return Object.freeze({ result: "rejected", code: existing.rejectionCode! });
+    if (existing?.state === "admission_rejected")
+      return Object.freeze({ result: "rejected", code: existing.rejectionCode! });
     if (challenge.deadlineMs <= Date.now()) return this.#reject(challenge, "deadline_expired");
     let decision: HostNodeAdmissionDecision;
     try {
@@ -86,7 +85,8 @@ export class HostNodeAdmissionService {
     } catch {
       return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
     }
-    if (decision.result === "unavailable") return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
+    if (decision.result === "unavailable")
+      return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
     if (decision.result === "rejected") return this.#reject(challenge, decision.code);
     const grant: BodyNodeAdmissionGrant = Object.freeze({
       ...challenge,
@@ -106,7 +106,9 @@ export class HostNodeAdmissionService {
 
   async #reject(challenge: BodyNodeAdmissionChallenge, code: string): Promise<HostNodeAdmissionResult> {
     try {
-      await this.journal.recordAdmission(Object.freeze({ challenge, state: "admission_rejected", rejectionCode: code }));
+      await this.journal.recordAdmission(
+        Object.freeze({ challenge, state: "admission_rejected", rejectionCode: code }),
+      );
       return Object.freeze({ result: "rejected", code });
     } catch {
       return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
@@ -146,6 +148,8 @@ export type ActionExecutionCoordinatorOptions = Readonly<{
     scope: Readonly<Record<string, unknown>>;
     bindingIdentity: Readonly<Record<string, unknown>>;
   }>;
+  /** Optional run span recorder; absent keeps every stage untraced. */
+  trace?: RunTrace;
 }>;
 
 export function createActionExecutionCoordinator(
@@ -158,13 +162,40 @@ export function createActionExecutionCoordinator(
       (await Promise.resolve(
         connection.module.cancelExecution(connection, requestId, executionId, reasonCode),
       )) as never,
-    options.recoveryJournal === undefined ? {} : { recoveryJournal: options.recoveryJournal },
+    {
+      ...(options.recoveryJournal === undefined ? {} : { recoveryJournal: options.recoveryJournal }),
+      ...(options.trace === undefined ? {} : { trace: options.trace }),
+    },
   );
-  if (options.recoveryJournal !== undefined)
-    ledger.rehydrate(options.recoveryJournal.recoverableRecords());
+  if (options.recoveryJournal !== undefined) ledger.rehydrate(options.recoveryJournal.recoverableRecords());
   const replay = new ReceiptReplayLedger();
 
+  // `bridge.call` ends when the execute response returns; the Mod keeps working after that. The Mod's own execution
+  // window is therefore the first progress receipt to the terminal one, recorded where every receipt is admitted.
+  const openModExecutions = new Map<string, RunTraceSpanHandle>();
+  const traceModExecution = (receipt: ExecutionReceipt): void => {
+    if (options.trace === undefined) return;
+    if (isTerminalExecutionState(receipt.state)) {
+      const open = openModExecutions.get(receipt.requestId);
+      if (open === undefined) return;
+      openModExecutions.delete(receipt.requestId);
+      open.end({ state: receipt.state, reasonCode: receipt.reasonCode, executionId: receipt.executionId });
+      return;
+    }
+    if (openModExecutions.has(receipt.requestId)) return;
+    openModExecutions.set(
+      receipt.requestId,
+      options.trace.begin(RUN_SPAN_NAMES.modExecute, {
+        actionId: receipt.actionId,
+        requestId: receipt.requestId,
+        executionId: receipt.executionId,
+        state: receipt.state,
+      }),
+    );
+  };
+
   const receiveReceipt = (receipt: ExecutionReceipt): void | Promise<void> => {
+    traceModExecution(receipt);
     // The bridge resolves an execution_request with the same receipt that its
     // fact route already delivered synchronously. That byte-identical
     // transition is an idempotent re-delivery, not an order violation; the

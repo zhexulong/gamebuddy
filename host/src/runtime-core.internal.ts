@@ -46,6 +46,7 @@ import type { GameConnection } from "./game-connection.js";
 import type { PresentationRuntime } from "./presentation.js";
 import type { ExecutionReceipt, Snapshot } from "./protocol.js";
 import { actionRegistryRevision, writeOrVerifyRunManifest } from "./run-manifest.js";
+import { type RunTrace } from "./run-trace.js";
 import {
   type ExactReceiptRecoveryPort,
   type ReceiptRecoveryOutcome,
@@ -467,6 +468,8 @@ export type RuntimeSession = Readonly<{
   gameplaySubagent?: GameplayTaskSubagent;
   /** Runtime-local STOP authority; never durable or adapter-owned. */
   interruption?: CompanionInterruption;
+  /** This run's span recorder; absent on surfaces that trace nothing. */
+  runTrace?: RunTrace;
   /** Requests exact ledger cancellation for a synchronously sealed old epoch. */
   cancelIntegrationEpoch?: (epoch: number, reasonCode: string) => Promise<void>;
   /** Closes runtime action admission and awaits cancellation of every owned request. */
@@ -538,6 +541,19 @@ function gateIntegrationTool(tool: ToolDefinition, connection: GameConnection): 
         throw new Error("integration_not_ready");
       return tool.execute(toolCallId, params, signal, onUpdate, ctx);
     },
+  };
+}
+
+/**
+ * One span per mounted tool call, attributed by the owner that made the Agent wait. `toolTiming` used to derive the
+ * same three owners from the Pi session record; a span carries the category directly.
+ */
+function tracedTool(tool: ToolDefinition, trace: RunTrace, category: string | undefined): ToolDefinition {
+  const attributes = category === undefined ? { tool: tool.name } : { tool: tool.name, category };
+  return {
+    ...tool,
+    execute: async (toolCallId, params, signal, onUpdate, ctx) =>
+      await trace.span(tool.name, attributes, () => tool.execute(toolCallId, params, signal, onUpdate, ctx)),
   };
 }
 
@@ -1158,6 +1174,7 @@ export async function createRuntimeWithFixedToolsCore(
   );
   if (fixedTools.length > 0 && runtimeSurface !== "game") throw new Error("fixed_runtime_tools_require_game_surface");
   const companionStatus = createCompanionStatusTool(integration);
+  const runTrace = actionExecutionOptions.trace;
   const dispatchController =
     integration === undefined ? undefined : createRuntimeDispatchController(integration, actionExecutionOptions);
   // One private supervisor per game runtime. It is retained by closure so an
@@ -1180,6 +1197,7 @@ export async function createRuntimeWithFixedToolsCore(
           knowledge: integration.knowledge,
           ...(integration.gameVersion === undefined ? {} : { gameVersion: integration.gameVersion }),
           policy: mountedPolicy,
+          ...(runTrace === undefined ? {} : { trace: runTrace }),
           ...(dispatchController === undefined
             ? {}
             : { dispatchAdmissionFactory: () => dispatchController.createAdmission() }),
@@ -1237,7 +1255,21 @@ export async function createRuntimeWithFixedToolsCore(
     (name) => !fixedToolNames.includes(name) || mountedFixedToolNames.has(name),
   );
   const customTools =
-    runtimeSurface === "chat" ? [] : [companionStatus, ...fixedTools, ...integrationTools, ...worldBookTools];
+    runtimeSurface === "chat"
+      ? []
+      : [companionStatus, ...fixedTools, ...integrationTools, ...worldBookTools].map((tool) =>
+          runTrace === undefined
+            ? tool
+            : tracedTool(
+                tool,
+                runTrace,
+                fixedToolNames.includes(tool.name)
+                  ? "program_tool"
+                  : integration !== undefined && integration.module.actionIdForToolName(tool.name) !== null
+                    ? "action_dispatch"
+                    : undefined,
+              ),
+        );
   if (new Set(allowedToolNames).size !== allowedToolNames.length) throw new Error("runtime_tool_name_collision");
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"];
   try {
@@ -1430,6 +1462,7 @@ export async function createRuntimeWithFixedToolsCore(
             bindIntegrationReceipt: (receipt: ExecutionReceipt) => dispatchController.receiveReceipt(receipt),
             recoverStardewExecutionReceipts: (port) => receiptRecoverySupervisor!.recoverFromFreshBinding(port),
           }),
+      ...(runTrace === undefined ? {} : { runTrace }),
       ...(clearTavernNarrativeGateMarker === undefined ? {} : { clearTavernNarrativeGateMarker }),
       ...(reportTavernNarrativeGateRuntime === undefined ? {} : { reportTavernNarrativeGateRuntime }),
       ...(clearGameOperationalGateMarker === undefined ? {} : { clearGameOperationalGateMarker }),
@@ -1589,7 +1622,9 @@ async function createCompanionModelRuntime(
 }
 
 function sameModelConfig(left: CompanionModelConfig, right: CompanionModelConfig): boolean {
-  return left.provider === right.provider && left.modelId === right.modelId && left.thinkingLevel === right.thinkingLevel;
+  return (
+    left.provider === right.provider && left.modelId === right.modelId && left.thinkingLevel === right.thinkingLevel
+  );
 }
 
 /**

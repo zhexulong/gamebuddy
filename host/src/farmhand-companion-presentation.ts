@@ -1,5 +1,6 @@
 import type { CompanionInterruption, InterruptionSnapshot } from "./companion-interruption.js";
 import type { CompanionTextPort, GameCompanionTextExpression, PresentationCommitAdmission } from "./presentation.js";
+import { RUN_SPAN_NAMES, type RunTrace } from "./run-trace.js";
 import type { StopSystemNotice } from "./system-notices.js";
 
 /** Adapter-owned narrow surface needed for Farmhand native text presentation. */
@@ -75,6 +76,7 @@ export function createFarmhandCompanionPresentationPort(
   bridge: FarmhandPresentationBridge,
   epochAdmission: FarmhandPresentationEpochAdmission,
   onTextPresented?: (text: string, locale: string) => void,
+  trace?: RunTrace,
 ): CompanionTextPort {
   return Object.freeze({
     async present(expression: GameCompanionTextExpression, admission: PresentationCommitAdmission): Promise<void> {
@@ -101,14 +103,34 @@ export function createFarmhandCompanionPresentationPort(
       // mimicked into its reply is removed here, once, for both the bubble and the
       // companion-language hook.
       const text = stripMagicContextSelfTag(expression.text);
-      await bridge.presentCompanionText({
-        expressionId: expression.expressionId,
-        sourceEventId: expression.sourceEventId,
-        text,
-        locale: expression.locale,
-        expectedRevision: snapshot.revision,
-        presentationEpoch: epoch.epoch,
-      });
+      // One span per player-visible commit: its end is the moment the bubble landed, which is what the run's
+      // presentation evidence used to record by hand.
+      await (trace === undefined
+        ? bridge.presentCompanionText({
+            expressionId: expression.expressionId,
+            sourceEventId: expression.sourceEventId,
+            text,
+            locale: expression.locale,
+            expectedRevision: snapshot.revision,
+            presentationEpoch: epoch.epoch,
+          })
+        : trace.span(
+            RUN_SPAN_NAMES.present,
+            {
+              expressionId: expression.expressionId,
+              sourceEventId: expression.sourceEventId,
+              locale: expression.locale,
+            },
+            () =>
+              bridge.presentCompanionText({
+                expressionId: expression.expressionId,
+                sourceEventId: expression.sourceEventId,
+                text,
+                locale: expression.locale,
+                expectedRevision: snapshot.revision,
+                presentationEpoch: epoch.epoch,
+              }),
+          ));
       // Fire-and-forget companion-language hook (e.g. streaming TTS). A
       // throwing listener must never fail a presentation that already landed.
       if (onTextPresented !== undefined) {

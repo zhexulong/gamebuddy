@@ -1,4 +1,5 @@
 import type { ExecutionReceipt, ExecutionRequest, ExecutionState } from "./protocol.js";
+import { RUN_SPAN_NAMES, type RunTrace } from "./run-trace.js";
 import type {
   StardewLogicalActionRecoveryJournal,
   StardewLogicalActionRecoveryRecord,
@@ -14,6 +15,8 @@ export type ExecutionDispatch = ExecutionCorrelationOwner &
     requestId: string;
     /** Original immutable key, retained only for exact read-only receipt recovery. */
     idempotencyKey?: string;
+    /** Trace nesting only: never journaled, never durable, never authority. */
+    traceParentId?: string;
     /** Optional complete request material for the private Stardew recovery journal. */
     recoveryMaterial?: Readonly<{
       logicalActionId: string;
@@ -100,6 +103,7 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
   readonly #maxTombstones: number;
   readonly #sendCancel: ExecutionCancelSender;
   readonly #recoveryJournal: StardewLogicalActionRecoveryJournal | undefined;
+  readonly #trace: RunTrace | undefined;
   readonly #preparingRequestIds = new Set<string>();
 
   constructor(
@@ -107,10 +111,12 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
     options: Readonly<{
       maxTombstones?: number;
       recoveryJournal?: StardewLogicalActionRecoveryJournal;
+      trace?: RunTrace;
     }> = {},
   ) {
     this.#sendCancel = sendCancel;
     this.#recoveryJournal = options.recoveryJournal;
+    this.#trace = options.trace;
     this.#maxTombstones = options.maxTombstones ?? 256;
     if (!Number.isSafeInteger(this.#maxTombstones) || this.#maxTombstones < 1)
       throw new Error("invalid_execution_correlation_tombstone_limit");
@@ -135,8 +141,7 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
     this.#preparingRequestIds.add(dispatch.requestId);
     const record = {
       logicalActionId: material.logicalActionId,
-      dispatchOrdinal:
-        material.dispatchOrdinal ?? this.#recoveryJournal.allocateDispatchOrdinal(),
+      dispatchOrdinal: material.dispatchOrdinal ?? this.#recoveryJournal.allocateDispatchOrdinal(),
       ownerId: dispatch.ownerId,
       epoch: dispatch.epoch,
       requestId: dispatch.requestId,
@@ -147,11 +152,23 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
       expectedRevision: material.request.expectedRevision,
       deadlineMs: material.request.deadlineMs,
       ...(material.scope === undefined ? {} : { scope: material.scope }),
-      ...(material.bindingIdentity === undefined
-        ? {}
-        : { bindingIdentity: material.bindingIdentity }),
+      ...(material.bindingIdentity === undefined ? {} : { bindingIdentity: material.bindingIdentity }),
     };
-    return this.#recoveryJournal.prepare(record).then(
+    const journal = this.#recoveryJournal;
+    const prepared =
+      this.#trace === undefined
+        ? journal.prepare(record)
+        : this.#trace.span(
+            RUN_SPAN_NAMES.journalWrite,
+            {
+              logicalActionId: record.logicalActionId,
+              requestId: dispatch.requestId,
+              actionId: record.actionId,
+            },
+            () => journal.prepare(record),
+            dispatch.traceParentId ?? null,
+          );
+    return prepared.then(
       () => {
         this.#preparingRequestIds.delete(dispatch.requestId);
         this.#insert({
@@ -180,8 +197,7 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
       material === undefined || this.#recoveryJournal === undefined
         ? null
         : this.#recoveryJournal.record(material.logicalActionId);
-    if (journalRecord?.state === "recovery_required")
-      throw new Error("execution_correlation_recovery_required");
+    if (journalRecord?.state === "recovery_required") throw new Error("execution_correlation_recovery_required");
     if (material !== undefined && material.request.action !== receipt.actionId)
       throw new Error("execution_correlation_action_mismatch");
     correlation.executionId = receipt.executionId;
@@ -231,15 +247,16 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
     correlation.uncertain = true;
     const material = correlation.recoveryMaterial;
     if (this.#recoveryJournal === undefined || material === undefined) return;
-    return this.#recoveryJournal.markSentUnknown(material.logicalActionId).then(
-      () => this.#recoveryJournal!.markRecoveryPending(material.logicalActionId),
-    ).then(
-      () => undefined,
-      (error) => {
-        correlation.uncertain = false;
-        throw error;
-      },
-    );
+    return this.#recoveryJournal
+      .markSentUnknown(material.logicalActionId)
+      .then(() => this.#recoveryJournal!.markRecoveryPending(material.logicalActionId))
+      .then(
+        () => undefined,
+        (error) => {
+          correlation.uncertain = false;
+          throw error;
+        },
+      );
   }
 
   /**
