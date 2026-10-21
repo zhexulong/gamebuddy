@@ -206,8 +206,8 @@ const mountPreamble = `
   /**
    * One complete turn whose Pi side carries the intermediate tool-use commentary a real agent loop
    * leaves on the path: the prompt, the assistant message that only reports the step, and the final
-   * reply. The transcript has no row for the commentary, so the entries after it do not line up with
-   * the rows - which is exactly the shape an edit's positional proof must refuse rather than rewrite.
+   * reply. The transcript has no row for the commentary, so a proof that counts entries instead of
+   * pairing them reads the row after it one entry early.
    */
   async function driveTurnWithToolRow(fx, responseId, promptText, commentaryText, replyText) {
     return internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
@@ -1320,10 +1320,10 @@ test(
  *
  * Every refusal is named and none of them touched either authority: an unknown handle, a row that is
  * no longer at the position the browser read, a stale selection generation, a reply still being written,
- * a row the session itself cannot prove (Pi's own prompt there carries different words), and the tool
- * row - the intermediate tool-use entry a real agent loop leaves on the path, which the transcript has
- * no row for: the edit of the row AFTER it refuses rather than rewriting the commentary's own words,
- * while the row before it still lands.
+ * and a row the session itself cannot prove (Pi's own prompt there carries different words) - which
+ * refuses as ITS OWN row, while the rows after it stay editable. The tool row is the last shape: the
+ * intermediate tool-use commentary a real agent loop leaves on the path, which the transcript has no
+ * row for. Both rows around it land on their own entries, and the commentary keeps its words.
  */
 test(
   "an edit reaches the durable transcript and the session a mount re-reads, and every refusal keeps its name",
@@ -1394,8 +1394,8 @@ test(
   const heldState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
   const refusedTurnActive = await attempt({ messageHandle: handleOf(afterState.messages[1].messageId), expectedOrder: 1 });
   // The same turn completes, but Pi's own prompt for it carries different words than the transcript's
-  // row: the session cannot prove the entry at that position is the message named, so the edit
-  // refuses rather than replacing the words of an entry it cannot identify.
+  // row: no entry contributes the words that row names, so the edit refuses rather than replacing the
+  // words of an entry it cannot identify - and the refusal is that row's alone.
   await driveTurnWithSessionPair(fx, "reply_03", "Words the model was actually given.", "Third synthetic reply.");
   const provenState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
   const modelBeforeUnproven = await modelTexts();
@@ -1403,23 +1403,26 @@ test(
   const modelAfterRefusals = await modelTexts();
   const settled = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
   // The tool row: a turn whose Pi side carries the intermediate tool-use commentary a real agent loop
-  // leaves on the path. The transcript has no row for it, so the entry the NEXT row would be read at is
-  // that commentary - the row before it still lands, and the row after it refuses rather than rewriting
-  // words the player never wrote.
+  // leaves on the path. The transcript has no row for it, so an ordinal among the entries carrying text
+  // counted it and read the row after it one entry early. The pairing passes over every entry no row
+  // names: both rows around the commentary land on their own entries, and the commentary keeps the words
+  // the model reads as its step.
   const fourthText = "A fourth line the player keeps.";
   const fourth = await service.submitAfterResponseCommit(commandFor(fx, { text: fourthText, expectedDraftRevision: 3 }), "editfouraaaaaaaaaaaaaa", async () => undefined);
   await waitFor(() => startCalls === 4);
   await driveTurnWithToolRow(fx, "reply_04", fourthText, "Checking the shelf by the door.", "Fourth synthetic reply.");
   const toolState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
   const landedBeforeToolRow = await run(async () => service.edit({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(toolState.messages[7].messageId), expectedOrder: 7, text: "A fourth line the player keeps, corrected." }));
-  const refusedToolRow = await run(async () => service.edit({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(toolState.messages[8].messageId), expectedOrder: 8, text: "Fourth synthetic reply, corrected." }));
+  const landedAfterToolRow = await run(async () => service.edit({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(toolState.messages[8].messageId), expectedOrder: 8, text: "Fourth synthetic reply, corrected." }));
+  const modelAfterToolRow = await modelTexts();
   const finalState = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
   await service.close();
   await fx.lease.close();
   await fx.authority.close();
   process.stdout.write(JSON.stringify({
-    first, second, third, fourth, edited, editedReply, editedOpening, landedBeforeToolRow, refusedToolRow,
+    first, second, third, fourth, edited, editedReply, editedOpening, landedBeforeToolRow, landedAfterToolRow,
     modelBefore, modelAfter, modelAfterReply, modelAfterOpening, modelBeforeUnproven, modelAfterRefusals,
+    modelAfterToolRow,
     refusedUnknown, refusedOrder, refusedGeneration, refusedTurnActive, refusedUnproven,
     beforeTexts: beforeState.messages.map((message) => message.text),
     afterTexts: afterState.messages.map((message) => message.text),
@@ -1605,10 +1608,9 @@ test(
     assert.equal(settledAfterRefusals.length, 7);
 
     // The tool row: the transcript has no row for the intermediate tool-use commentary the turn's Pi
-    // side carries, so the entry the reply after it would be read at IS that commentary. The edit of
-    // the row BEFORE it still lands - only what follows a tool row moves - and the edit of the row
-    // AFTER it refuses rather than rewriting words the player never wrote. The refusal moved nothing:
-    // the row after it still carries the reply that was committed.
+    // side carries, so an ordinal among the entries carrying text named THAT commentary for the row
+    // after it. The pairing passes over every entry no row names: both rows around the commentary land,
+    // and the model's own path shows the two edited entries with the commentary still between them.
     assert.deepEqual(output.toolTexts, [
       output.openingEditedText,
       "Synthetic player request, corrected.",
@@ -1623,11 +1625,24 @@ test(
     const landed = output.landedBeforeToolRow as { ok: boolean; value?: { message: { text: string } } };
     assert.equal(landed.ok, true, JSON.stringify(output.landedBeforeToolRow));
     assert.equal(landed.value?.message.text, "A fourth line the player keeps, corrected.");
-    assert.match(named(output.refusedToolRow), /chat_pipeline_service_unavailable/);
+    const landedAfter = output.landedAfterToolRow as {
+      ok: boolean;
+      value?: { message: { text: string; order: number; role: string } };
+    };
+    assert.equal(landedAfter.ok, true, JSON.stringify(output.landedAfterToolRow));
+    assert.equal(landedAfter.value?.message.text, "Fourth synthetic reply, corrected.");
+    assert.equal(landedAfter.value?.message.order, 8);
+    assert.equal(landedAfter.value?.message.role, "companion");
+    assert.deepEqual(output.modelAfterToolRow, [
+      ...(output.modelAfterRefusals as string[]),
+      "A fourth line the player keeps, corrected.",
+      "Checking the shelf by the door.",
+      "Fourth synthetic reply, corrected.",
+    ]);
     assert.deepEqual(output.finalTexts, [
       ...(output.toolTexts as string[]).slice(0, 7),
       "A fourth line the player keeps, corrected.",
-      "Fourth synthetic reply.",
+      "Fourth synthetic reply, corrected.",
     ]);
   },
 );

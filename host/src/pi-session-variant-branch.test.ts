@@ -31,6 +31,7 @@ const THIRD_PROMPT_TEXT = "I asked the driver where this one goes.";
 const EDITED_EARLIER_PROMPT_TEXT = "The early bus pulled out as I reached the stop.";
 const HOST_SYSTEM_PROMPT = "You are the companion in this scene; speak only for yourself.";
 const TOOL_COMMENTARY = "Checking the shelf by the door.";
+const DIVERGED_PROMPT_TEXT = "Words the model was actually given, not the row the store kept.";
 
 type Fixture = Readonly<{
   root: string;
@@ -782,6 +783,53 @@ test("an edit passes over an intermediate tool-use commentary and reaches the ro
       ["assistant", [{ type: "text", text: SECOND_REGENERATED_REPLY }]],
     ]);
     assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore + 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * A row the session carries nothing for refuses as its own row, not as every row after it. A turn whose
+ * Pi prompt carried words the mounted transcript row does not is exactly that shape in the product - the
+ * runner's prompt and the row the store committed disagreed - and the conversation's later rows have to
+ * stay editable, while the row that disagrees refuses rather than being guessed at.
+ */
+test("an unprovable row refuses as its own row and leaves the rows after it editable", async () => {
+  const fixture = await createSession("gamebuddy-transcript-edit-diverged-row-", [FIRST_REPLY]);
+  appendPrompt(fixture.sessionManager, DIVERGED_PROMPT_TEXT);
+  appendReply(fixture.sessionManager, REGENERATED_REPLY);
+  fixture.session.refreshContext();
+  try {
+    const entriesBefore = fixture.sessionManager.getEntryCount();
+    // The row the session does not carry: its own edit refuses and writes nothing.
+    const refused = editPiTranscriptEntry(
+      fixture.session,
+      [drop("player", THIRD_PROMPT_TEXT)],
+      EDITED_EARLIER_PROMPT_TEXT,
+    );
+    assert.equal(refused.status, "refused");
+    if (refused.status === "refused") assert.equal(refused.reason, "edit_target_unavailable");
+    assert.equal(fixture.sessionManager.getEntryCount(), entriesBefore);
+
+    // The row AFTER it still lands: the rows the session does carry pair in order, and the row it does
+    // not carry advances nothing.
+    const edited = editPiTranscriptEntry(
+      fixture.session,
+      [
+        drop("player", PROMPT_TEXT),
+        drop("companion", FIRST_REPLY),
+        drop("player", THIRD_PROMPT_TEXT),
+        drop("companion", REGENERATED_REPLY),
+      ],
+      SECOND_REGENERATED_REPLY,
+    );
+    assert.equal(edited.status, "edited", JSON.stringify(edited));
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: DIVERGED_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REGENERATED_REPLY }]],
+    ]);
   } finally {
     await fixture.close();
   }

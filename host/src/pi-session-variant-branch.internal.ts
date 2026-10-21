@@ -255,22 +255,31 @@ function modelCarriedRows(session: PiVariantBranchSession): readonly PiModelCarr
 
 /**
  * Pairs every transcript row with the entry that carries it: the next entry contributing exactly that
- * row's text in that row's role, over the entries between them that no row names. `null` when some row
- * has no carrier after the rows before it, which is what makes the pairing a proof of the whole prefix -
- * two rows of the same words are told apart by the order they stand in, never by a count of entries.
+ * row's words in that row's role, over the entries between them that no row names. One slot per row,
+ * `null` where the session carries nothing for that row.
+ *
+ * A row the session carries nothing for consumes no entry, because one disagreement in the middle of a
+ * conversation - a turn whose Pi prompt carried words its transcript row does not, which is refused as
+ * its own row - must not accuse every row after it. The rows that do pair keep their order, which is
+ * what tells two rows of the same words apart, and the row the player named is the one the caller reads.
  */
 function pairTranscriptRows(
   entries: readonly PiModelCarriedRow[],
   rows: readonly PiTranscriptMessage[],
-): readonly PiModelCarriedRow[] | null {
-  const paired: PiModelCarriedRow[] = [];
+): readonly (PiModelCarriedRow | null)[] {
+  const paired: (PiModelCarriedRow | null)[] = [];
   let cursor = 0;
   for (const row of rows) {
+    const start = cursor;
     while (cursor < entries.length && (entries[cursor]!.role !== row.role || entries[cursor]!.text !== row.text)) {
       cursor += 1;
     }
     const entry = entries[cursor];
-    if (entry === undefined) return null;
+    if (entry === undefined) {
+      cursor = start;
+      paired.push(null);
+      continue;
+    }
     paired.push(entry);
     cursor += 1;
   }
@@ -286,10 +295,10 @@ function pairTranscriptRows(
  * is paired with the next entry that contributes exactly that row's words in that row's role - so an
  * entry no row names (the Host's own system prompt, an intermediate tool-use commentary, a greeting
  * anchor whose words the row projection drops) is passed over instead of occupying a position, and the
- * LAST paired entry is the target. A row the model carries nothing for refuses as
- * `edit_target_unavailable`, and a paired entry whose content an edit cannot replace refuses as
- * `edit_target_text_mismatch`; a shape it cannot prove refuses and the caller must then leave the
- * transcript unchanged.
+ * LAST paired entry is the target. The row the player named must pair - one the model carries nothing
+ * for refuses as `edit_target_unavailable` - and a paired entry whose content an edit cannot replace
+ * refuses as `edit_target_text_mismatch`; a shape it cannot prove refuses and the caller must then leave
+ * the transcript unchanged.
  *
  * What it does with that proof is the vendor's append-only edit of one entry: the target keeps its
  * place on the active path, the entries after it stay on it, and only its contribution changes. The
@@ -303,8 +312,8 @@ export function editPiTranscriptEntry(
   text: string,
 ): PiTranscriptEditResult {
   const paired = pairTranscriptRows(modelCarriedRows(session), rows);
-  const target = paired?.[paired.length - 1];
-  if (target === undefined) return { status: "refused", reason: "edit_target_unavailable" };
+  const target = paired[paired.length - 1];
+  if (target === undefined || target === null) return { status: "refused", reason: "edit_target_unavailable" };
   // The entry's own current content is what a revert puts back: only a player or a reply message
   // carries the transcript's text for its role, and those are exactly the messages a context edit
   // replaces. An entry that carries none is an entry whose content no edit can replace.
