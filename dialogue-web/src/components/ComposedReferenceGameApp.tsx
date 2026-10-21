@@ -1097,14 +1097,19 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
-   * The mounted conversation's own retention transition removed it from the active
-   * list. The shell owns the selection, so it moves the mount off the dead thread
-   * rather than leaving the live cursor on a Chat the list no longer holds: it
-   * switches to the next available Chat through the same `chat.select` route the
-   * Chats surface offers and adopts the authoritative read, which restarts the
-   * cursor on the survivor. A removal that leaves no other active Chat - or a
-   * switch the mounted turn refuses - has nothing to move to, so the live stream is
-   * closed instead of being left reading the dead thread.
+   * The mounted conversation's own retention transition removed it and the active list
+   * still holds another Chat. The shell owns the selection, so it moves the mount off the
+   * dead thread rather than leaving the live cursor on a Chat the list no longer holds: it
+   * switches to the next available Chat through the same `chat.select` route the Chats
+   * surface offers and adopts the authoritative read, which restarts the cursor on the
+   * survivor.
+   *
+   * The emptied list does not reach here: the Chats panel's removal seam applies the
+   * owner's rule and creates a Chat through its own New Chat path before it reports, so
+   * the shell is never asked to move to a Chat that does not exist. What remains here is
+   * the residual case where this shell's own list read disagrees with that decision, or
+   * the mounted turn refuses the switch: there is nothing to move to, so the live stream
+   * is closed instead of being left reading the dead thread.
    */
   const handleCurrentChatRemoved = (removedHandle: string): void => {
     const current = viewRef.current;

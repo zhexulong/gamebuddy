@@ -976,8 +976,8 @@ test("the armed Chats row puts the confirmation on its own line and hides the ro
  *    not re-subscribed: catches a cursor left on the archived conversation;
  *  - the old subscription was closed: catches a repaired mount that leaks the dead
  *    stream;
- *  - with no other active Chat, nothing is selected and the live stream is closed
- *    rather than left reading the dead thread.
+ *  - no Chat was created: a removal that leaves another active Chat switches to it
+ *    instead, and never makes one.
  */
 test("archiving the active chat moves the shell to the next chat and restarts the live cursor", async ({ page }) => {
   const deadHandle = chatHandle;
@@ -986,6 +986,7 @@ test("archiving the active chat moves the shell to the next chat and restarts th
   const deadCursor = `${"F".repeat(42)}A`;
   const liveCursor = `${"G".repeat(42)}A`;
   const selects: unknown[] = [];
+  const creations: unknown[] = [];
   let archived = false;
   let selected = deadHandle;
   let cursor = deadCursor;
@@ -1036,6 +1037,12 @@ test("archiving the active chat moves the shell to the next chat and restarts th
       }),
     ),
   );
+  await page.route("**/api/tavern/v1/chats", (route) => {
+    // A removal that leaves another active Chat must not create one.
+    if (route.request().method() !== "POST") return route.fallback();
+    creations.push(route.request().postDataJSON());
+    return route.fulfill(json200({ apiVersion: 1, chats: [] }));
+  });
   await page.route(`**/api/tavern/v1/chats/${deadHandle}/archive`, (route) => {
     archived = true;
     return route.fulfill(json200({ apiVersion: 1, handle: deadHandle, status: "archived", managementRevision: 2 }));
@@ -1067,6 +1074,7 @@ test("archiving the active chat moves the shell to the next chat and restarts th
   // The top level's selection moved to the next available Chat.
   await expect.poll(() => selects.length).toBe(1);
   expect(selects[0]).toEqual({ apiVersion: 1, selectionGeneration: 1, chatHandle: survivorHandle });
+  expect(creations, "a removal that left another active Chat created one").toEqual([]);
   const survivor = surface.getByTestId("chat-item").filter({ hasText: "The survivor" });
   await expect(survivor).toHaveAttribute("data-selected", "true");
 
@@ -1079,78 +1087,208 @@ test("archiving the active chat moves the shell to the next chat and restarts th
 });
 
 /**
- * The same removal with no other active Chat: there is nothing to move to, so the
- * shell must not invent a selection and must not keep reading the dead thread.
+ * One removal that EMPTIES the active list, staged over the product shell's own routes.
+ *
+ * The owner's rule: a removal that leaves the companion with no active Chat creates one,
+ * through the same path the New Chat control uses (`chat.create`, the Host's own opening),
+ * switches to it through the shell's own selection route, and lands the player in it -
+ * `chat === null` never reaches the client.
+ *
+ * The counted requests are the proof: exactly one creation, exactly one selection naming
+ * the created Chat, and the projection the shell reads afterwards is the new Chat's own.
  */
-test("archiving the last active chat stops the live stream instead of leaving it on the dead thread", async ({ page }) => {
+async function stageEmptyingRemoval(page: Page, operation: "archive" | "trash") {
+  const removedHandle = chatHandle;
+  const newHandle = `${"H".repeat(42)}A`;
+  const openingHandle = `${"J".repeat(42)}A`;
+  const playerHandle = `${"P".repeat(42)}A`;
+  const turnHandle = `${"T".repeat(42)}A`;
+  const openingText = "*She pushes the kettle off the burner.*\nIt's raining again. Come in before the lane floods.";
+  const creations: unknown[] = [];
   const selects: unknown[] = [];
-  let archived = false;
-  const streamEpoch = `${'S'.repeat(42)}A`;
-  const deadCursor = `${"F".repeat(42)}A`;
+  const sends: unknown[] = [];
+  let removed = false;
+  let created = false;
+  let switched = false;
+  let sent = false;
 
-  const projection = () => ({
-    ...composedRoot,
-    chat: { ...composedChat, eventStream: { epoch: streamEpoch, cursor: deadCursor } },
-  });
+  // The created Chat's one durable row: its opening. Unlocked, because the player has
+  // not spoken yet - the opening of a Chat nobody has written into is still a choice.
+  const openingRow = {
+    handle: openingHandle,
+    role: "companion",
+    text: openingText,
+    locale: "und",
+    order: 0,
+    revision: 1,
+    openingVariant: { variantId: `${"V".repeat(42)}A`, index: 0, count: 2, label: "Default", locked: false },
+  };
+  const playerRow = {
+    handle: playerHandle,
+    role: "player",
+    text: "I'll take the tea.",
+    locale: "und",
+    order: 1,
+    revision: 1,
+  };
+  const mountedEntry = {
+    handle: removedHandle,
+    title: "The only one",
+    status: "active" as const,
+    managementRevision: 1,
+    isSelected: true,
+    updatedAtMs: 1_760_000_000_000,
+    preview: "The parsnips took.",
+  };
+  const newEntry = {
+    handle: newHandle,
+    title: null,
+    status: "active" as const,
+    managementRevision: 1,
+    isSelected: false,
+    updatedAtMs: 1_760_000_086_400,
+    preview: "It's raining again. Come in before the lane floods.",
+  };
 
-  await page.addInitScript(() => {
-    const state = window as unknown as { __streams: Array<{ url: string; closed: boolean }> };
-    state.__streams = [];
-    class SyntheticEventSource {
-      onerror: ((event: unknown) => void) | null = null;
-      __index = -1;
-      constructor(url: string | URL) {
-        this.__index = state.__streams.length;
-        state.__streams.push({ url: String(url), closed: false });
-      }
-      addEventListener(): void {}
-      removeEventListener(): void {}
-      close(): void {
-        state.__streams[this.__index]!.closed = true;
-      }
-    }
-    window.EventSource = SyntheticEventSource as unknown as typeof EventSource;
-  });
+  // The mounted Chat only moves once the switch committed: before that the composed root is
+  // the Chat the removal takes away.
+  const projection = () =>
+    switched
+      ? {
+          ...composedRoot,
+          chat: {
+            ...composedChat,
+            operations: [
+              {
+                operationId: "chat.submit",
+                labelKey: "tavern.operation.submit",
+                availability: "available",
+                routeId: "chat.submit",
+              },
+            ],
+            selection: { chatHandle: newHandle, generation: 2, stateRevision: newHandle },
+            chat: {
+              ...composedChat.chat,
+              transcript: sent ? [openingRow, playerRow] : [openingRow],
+              draft: { revision: 0, present: false },
+              turn: sent ? { handle: turnHandle, state: "completed", projectionRevision: 1, canCancel: false } : null,
+            },
+          },
+        }
+      : composedRoot;
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(projection())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(projection())));
-  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill(json200(switched ? { apiVersion: 1, revision: 0, text: null } : composedDraft)),
+  );
   await page.route("**/api/tavern/v1/chats?*", (route) =>
     route.fulfill(
-      json200({
-        apiVersion: 1,
-        chats: archived
-          ? []
-          : [{ handle: chatHandle, title: "The only one", status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took." }],
-      }),
+      json200({ apiVersion: 1, chats: removed ? (created ? [newEntry] : []) : [mountedEntry] }),
     ),
   );
-  await page.route(`**/api/tavern/v1/chats/${chatHandle}/archive`, (route) => {
-    archived = true;
-    return route.fulfill(json200({ apiVersion: 1, handle: chatHandle, status: "archived", managementRevision: 2 }));
+  await page.route("**/api/tavern/v1/chats", (route) => {
+    // The list read of this same URL is the other handler's; only the creation is counted.
+    if (route.request().method() !== "POST") return route.fallback();
+    creations.push(route.request().postDataJSON());
+    created = true;
+    return route.fulfill(json200({ apiVersion: 1, chat: newEntry, opening: openingText }));
+  });
+  await page.route(`**/api/tavern/v1/chats/${removedHandle}/${operation}`, (route) => {
+    removed = true;
+    return route.fulfill(
+      json200({
+        apiVersion: 1,
+        handle: removedHandle,
+        status: operation === "archive" ? "archived" : "trashed",
+        managementRevision: 2,
+      }),
+    );
   });
   await page.route("**/api/tavern/v1/chat/select", (route) => {
     selects.push(route.request().postDataJSON());
+    switched = true;
     return route.fulfill(json200({ apiVersion: 1, status: "switched" }));
   });
+  await page.route("**/api/tavern/v1/messages", (route) => {
+    sends.push(route.request().postDataJSON());
+    sent = true;
+    return route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        disposition: "accepted",
+        message: playerRow,
+        turn: { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true },
+      }),
+    });
+  });
+  await page.route("**/api/tavern/v1/message-submission-status", (route) =>
+    route.fulfill(json200({ apiVersion: 1, disposition: "terminal" })),
+  );
 
-  const streamState = async (): Promise<Array<{ url: string; closed: boolean }>> =>
-    await page.evaluate(() => (window as unknown as { __streams: Array<{ url: string; closed: boolean }> }).__streams);
+  return { removedHandle, newHandle, openingText, creations, selects, sends };
+}
 
-  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
-  const surface = page.getByTestId("chats-surface");
-  await expect(surface).toBeVisible();
-  await expect.poll(streamState).toHaveLength(1);
+/**
+ * The same removal with no other active Chat left - the owner's rule. Archiving (and,
+ * below, trashing) the last Chat must leave the player in a NEW Chat: created by the New
+ * Chat control's own command and opening, selected through the shell's own switch, with a
+ * transcript that is exactly its opening row - still swipeable, because nobody has spoken.
+ *
+ * The defect this replaced: the removal closed the live stream and stopped there, so the
+ * shell kept a session whose Chat was gone - a blank conversation with nothing to write to
+ * and a composer wired to a thread the active list no longer held.
+ */
+for (const operation of ["archive", "trash"] as const) {
+  test(`${operation === "archive" ? "archiving" : "trashing"} the last active Chat creates one and lands the player in it`, async ({ page }) => {
+    const fixture = await stageEmptyingRemoval(page, operation);
 
-  const only = surface.getByTestId("chat-item").first();
-  await only.getByRole("button", { name: "Archive", exact: true }).click();
-  await only.getByTestId("chat-retention-confirm-yes").click();
+    await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+    const chats = page.getByTestId("chats-surface");
+    await expect(chats).toBeVisible();
 
-  await expect(surface.getByText("No saved chats yet.")).toBeVisible();
-  expect(selects, "a selection was invented with no active Chat to move to").toEqual([]);
-  await expect.poll(async () => (await streamState())[0]?.closed).toBe(true);
-  expect(await streamState()).toHaveLength(1);
-});
+    const only = chats.getByTestId("chat-item").first();
+    await only.getByRole("button", { name: operation === "archive" ? "Archive" : "Trash", exact: true }).click();
+    await only.getByTestId("chat-retention-confirm-yes").click();
+
+    // One creation, from the New Chat control's own command and generation.
+    await expect.poll(() => fixture.creations.length).toBe(1);
+    expect(fixture.creations[0]).toEqual({ apiVersion: 1, selectionGeneration: 1 });
+
+    // One selection, naming the Chat that creation returned, through the shell's own route.
+    await expect.poll(() => fixture.selects.length).toBe(1);
+    expect(fixture.selects[0]).toEqual({
+      apiVersion: 1,
+      selectionGeneration: 1,
+      chatHandle: fixture.newHandle,
+    });
+
+    // The player landed in it: the shell moved the region to the conversation.
+    const conversation = page.getByTestId("chat-surface");
+    await expect(conversation).toBeVisible();
+    await expect(page.getByTestId("chats-surface")).toHaveCount(0);
+    await expect(page.locator(".problem-view")).toHaveCount(0);
+    await expect(page.locator(".error-banner")).toHaveCount(0);
+
+    // Its transcript is exactly its opening row ...
+    await expect(conversation.locator(".message-list > li")).toHaveCount(1);
+    const opening = conversation.locator(".message.companion").first();
+    await expect(opening).toContainText("It's raining again. Come in before the lane floods.");
+    // ... and that opening is still swipeable, because the player has not spoken yet.
+    await expect(opening.locator(".swipe-indicator")).toHaveText("Default 1/2");
+    await expect(opening.locator(".swipe-btn")).toHaveCount(2);
+
+    // A send from the new Chat succeeds, and the conversation is the new one's.
+    await conversation.locator(".composer-textarea").fill("I'll take the tea.");
+    await conversation.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(() => fixture.sends.length).toBe(1);
+    await expect(conversation.locator(".message-list > li")).toHaveCount(2);
+    await expect(conversation.locator(".message-list > li", { hasText: "I'll take the tea." })).toHaveCount(1);
+    await expect(page.locator(".problem-view")).toHaveCount(0);
+  });
+}
 
 
 /**

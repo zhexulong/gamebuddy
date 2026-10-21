@@ -195,7 +195,8 @@ function chatRowStamp(updatedAtMs: number, labels: Messages, nowMs: number): str
  * cleaning up history never means switching into each Chat first, and a target that is
  * not the mounted row leaves the mounted conversation - and its live stream - exactly as
  * it is. Only a transition of the MOUNTED row moves the shell, through
- * `onCurrentChatRemoved` (see the row's own note).
+ * `onCurrentChatRemoved` (see the row's own note) - or, when the removal emptied the
+ * active list, through the New Chat creation `applyChatRemoval` performs (see its note).
  */
 export function ChatsSurfacePanel({
   api,
@@ -352,12 +353,20 @@ export function ChatsSurfacePanel({
       setConfirmation(null);
   }, [confirmation, list, currentChatHandle]);
 
-  const reread = async (): Promise<void> => {
+  /**
+   * Re-reads the authoritative active list and hands it back to the caller that asked.
+   * `null` is the read that failed: the projection is then the error state, and no
+   * caller may treat an unreadable list as an empty one - the empty list is the fact
+   * `applyChatRemoval` acts on.
+   */
+  const reread = async (): Promise<readonly ChatListEntry[] | null> => {
     try {
       const read = await api.listChats();
       setList(read.chats);
+      return read.chats;
     } catch {
       setList("error");
+      return null;
     }
   };
 
@@ -443,38 +452,36 @@ export function ChatsSurfacePanel({
    * generation of that mount, and a settled switch is what mounts this Chat and mints its
    * generation - so the shell, holding the fresh read, is the only caller that can name it.
    */
-  const createChat = (openingTargetIndex?: number): void => {
+  const createChat = async (openingTargetIndex?: number): Promise<void> => {
     if (creating) return;
     setCreating(true);
-    void (async () => {
-      try {
-        const result = await api.createChat({ apiVersion: 1, selectionGeneration }, csrfToken);
-        setCreated(result.opening === null ? null : { opening: result.opening });
-        await reread();
-        // The created Chat's own handle, from the Host's own read-back - never an
-        // identity composed here.
-        const selected = await requestSelection(result.chat.handle, openingTargetIndex);
-        // The Chat is durable in every outcome; what a chosen opening adds is a second thing that
-        // can fail, and it fails alone: the Chat exists on the default opening, and that is what
-        // the player is told instead of a generic failure.
-        const unset = selected === "in_flight" && openingTargetIndex !== undefined;
-        report({
-          kind: unset ? "failure" : "success",
-          text: unset
-            ? labels.chatCreatedWithDefaultOpening
-            : selected === "in_flight"
-              ? labels.chatSelectTurnNotAbortable
-              : labels.success,
-        });
-      } catch (error) {
-        // A rejection may still hide a committed creation, so the authoritative
-        // list is re-read BEFORE the failure is reported.
-        await reread();
-        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
-      } finally {
-        setCreating(false);
-      }
-    })();
+    try {
+      const result = await api.createChat({ apiVersion: 1, selectionGeneration }, csrfToken);
+      setCreated(result.opening === null ? null : { opening: result.opening });
+      await reread();
+      // The created Chat's own handle, from the Host's own read-back - never an
+      // identity composed here.
+      const selected = await requestSelection(result.chat.handle, openingTargetIndex);
+      // The Chat is durable in every outcome; what a chosen opening adds is a second thing that
+      // can fail, and it fails alone: the Chat exists on the default opening, and that is what
+      // the player is told instead of a generic failure.
+      const unset = selected === "in_flight" && openingTargetIndex !== undefined;
+      report({
+        kind: unset ? "failure" : "success",
+        text: unset
+          ? labels.chatCreatedWithDefaultOpening
+          : selected === "in_flight"
+            ? labels.chatSelectTurnNotAbortable
+            : labels.success,
+      });
+    } catch (error) {
+      // A rejection may still hide a committed creation, so the authoritative
+      // list is re-read BEFORE the failure is reported.
+      await reread();
+      report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
+    } finally {
+      setCreating(false);
+    }
   };
 
   /**
@@ -538,7 +545,28 @@ export function ChatsSurfacePanel({
     })();
   };
 
-  const transition = (handle: string, operation: "archive" | "trash"): void => {
+  /**
+   * THE REMOVAL SEAM: the one place a Chat removal is applied, and the one place the
+   * owner's rule about an emptied active list lives.
+   *
+   * Today two removals funnel through this function - `archive` and `trash` - and they
+   * differ only in the operation it sends. A physical delete, when the product grows one,
+   * belongs to this same function: it inherits the rule below by being a removal here,
+   * not by adding a second branch beside the archive's.
+   *
+   * The owner's rule: a removal that leaves the companion with ZERO active Chats creates
+   * one, because `chat === null` may never reach the client - with nothing mounted there
+   * is no conversation to write to and no surface to stand on. The Chat it creates is the
+   * New Chat control's own creation (`createChat`: the same `chat.create` command, the
+   * Host's own greeting as the opening) and the switch that lands the player in it is that
+   * control's own (`requestSelection` -> `onChatSwitched`), so a removal never gains a
+   * second writer and never names an opening itself. A removal that leaves another active
+   * Chat is unchanged: the shell moves its selection to a survivor (`onCurrentChatRemoved`).
+   *
+   * The decision is taken from the active list the Host serves after the removal, never
+   * from which operation produced it.
+   */
+  const applyChatRemoval = (handle: string, operation: "archive" | "trash"): void => {
     const entry = chatListRows(list).find((chat) => chat.handle === handle);
     if (entry === undefined) {
       report({ kind: "failure", text: labels.chatRetentionFailed });
@@ -548,11 +576,19 @@ export function ChatsSurfacePanel({
       try {
         await api.transitionChatLifecycle(handle, operation, entry.managementRevision, csrfToken);
         // The transition removed the chat from the active list (metadata-only
-        // mutation), so reconcile against the durable list.
-        await reread();
-        // When the removed chat WAS the mounted one, the shell's selection no
-        // longer names a chat the list holds: the mount owns the selection and the
-        // live cursor, so it is told before its stream is left on a dead thread.
+        // mutation), so reconcile against the durable list it left behind.
+        const remaining = await reread();
+        if (remaining !== null && remaining.length === 0) {
+          // The owner's rule (see this seam's note): the companion has no active Chat
+          // left, so one is created through the New Chat control's own path, which also
+          // lands the player in it. It reports that outcome itself.
+          await createChat();
+          return;
+        }
+        // When the removed chat WAS the mounted one, the shell's selection no longer
+        // names a chat the list holds: the mount owns the selection and the live cursor,
+        // so it is told to move to a survivor. An unreadable list is that same report -
+        // the shell re-reads the list itself and decides on what it sees.
         if (handle === currentChatHandle) onCurrentChatRemoved?.(handle);
         report({ kind: "success", text: labels.success });
       } catch (error) {
@@ -604,7 +640,7 @@ export function ChatsSurfacePanel({
             className="small-button"
             data-testid="new-chat"
             onClick={() => {
-              if (openings === null) createChat();
+              if (openings === null) void createChat();
               else setPickerOpen(true);
             }}
             disabled={creating}
@@ -651,7 +687,7 @@ export function ChatsSurfacePanel({
                       data-testid="opening-option"
                       onClick={() => {
                         setPickerOpen(false);
-                        createChat(index);
+                        void createChat(index);
                       }}
                     >
                       <span className="opening-option-name" data-testid="opening-option-name">
@@ -889,7 +925,7 @@ export function ChatsSurfacePanel({
                             onClick={() => {
                               const { handle, operation } = confirmation;
                               setConfirmation(null);
-                              transition(handle, operation);
+                              applyChatRemoval(handle, operation);
                             }}
                           >
                             {confirmation.operation === "archive"
