@@ -90,6 +90,9 @@ jobs:
       # fails. It was added in b9650bd9 behind a formatter step that was repo-wide red until
       # e90da3b2, so its first real execution (run 38582152926) is where the 87 errors were seen.
       - run: pnpm lint
+      # The second half of the frontend lint pair. It ran nowhere until the CI coverage gate named
+      # it: only `quality:check`, which no job runs, held it.
+      - run: pnpm lint:ast-grep
       - run: pnpm check:host-module-graph
       - run: pnpm check:dialogue-web-boundaries
       - run: pnpm test:dialogue-web-boundaries
@@ -103,6 +106,11 @@ jobs:
       - run: pnpm test:host-diagnostic-output
       - run: pnpm check:test-store-teardown
       - run: pnpm test:test-store-teardown
+      # Both read Host sources through the workspace's own TypeScript compiler
+      # (host/scripts/production-artifact.mjs), so they need this job's install and belong here
+      # rather than in the install-free `gates` job. Neither ran anywhere before the CI coverage gate.
+      - run: pnpm check:host-game-physical-seam
+      - run: pnpm check:live-run-failure-dump
       - run: pnpm typecheck
       # `pnpm typecheck` reads the working tree, so it cannot see a commit that only compiles
       # because another lane's uncommitted work is present. This checks the commit itself.
@@ -196,6 +204,26 @@ jobs:
         timeout-minutes: 45
         env:
           GAMEBUDDY_DESKTOP_TEST_GENERATION_ROOT: ${{ runner.temp }}/desktop-launcher-generation
+
+  # Which gates run, and which do not, is DERIVED from package.json on every run by
+  # `tools/check-ci-coverage.mjs` - not written out here. Every `check:*` / `audit:*` / `lint*` /
+  # `typecheck*` / `report:*` script that no other job names lands in this job's `--run` set, so a
+  # new gate is live in CI by being named like one. The job installs nothing on purpose: the set it
+  # runs reads sources. A gate that needs the installed workspace, the game, the decompiled tree,
+  # the `design/` mount or a built generation is named with its reason (and its measurement) in
+  # that file, and its verdict fails if such an entry goes stale - runs in a workflow anyway, or is
+  # no longer a script. Splitting the gates off the `host` job keeps them out of its 43-step serial
+  # chain, where a red step early hides everything behind it.
+  gates:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.13.0
+      - run: node tools/check-ci-coverage.mjs
+      - run: node tools/check-ci-coverage.mjs --run
 
   voice-gateway:
     runs-on: windows-latest

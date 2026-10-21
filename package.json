@@ -131,6 +131,7 @@
     "test:chat-conversational-quality-gate": "node --test tools/check-chat-conversational-quality-gate.test.mjs",
     "test:chat-live-audit": "node --test tools/live-run/chat/run-chat-live-audit.test.mjs tools/live-run/core/companion-experience.test.mjs tools/live-run/core/browser-evidence.test.mjs tools/live-run/core/capture-text.test.mjs",
     "test:chat-run-audit": "node --test tools/lib/chat-run-audit.test.mjs tools/audit-chat-live-run.test.mjs",
+    "test:ci-coverage": "node --test tools/check-ci-coverage.test.mjs",
     "test:ci-snapshot": "node --test tools/ci-snapshot.test.mjs",
     "test:compare-chat-live-runs": "node --test tools/compare-chat-live-runs.test.mjs",
     "test:complexity-gate": "node --test tools/scripts/check-file-complexity-gate.test.mjs",
