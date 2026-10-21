@@ -200,6 +200,20 @@ export type CharacterLabels = Readonly<{
   worldBookDetailFailed: string;
 
   /**
+   * The lorebook file import: a raw SillyTavern/Chub world book the player picked, carried whole to
+   * the library's own importer. Each way the file can refuse is its own sentence - it is not JSON, it
+   * is too large, or the Host would not keep what it held - so the player looks at the right fault.
+   */
+  worldBookImport: string;
+  worldBookImportHint: string;
+  worldBookImportFileLabel: string;
+  worldBookImportBusy: string;
+  worldBookImportImported: string;
+  worldBookImportInvalid: string;
+  worldBookImportTooLarge: string;
+  worldBookImportFailed: string;
+
+  /**
    * The companion's OWN world book, which is a different thing from the list
    * above: it is what her card carried and what she always has with her.
    */
@@ -446,6 +460,16 @@ const en: CharacterLabels = Object.freeze({
   worldBookDeleteFailed: "The world book could not be deleted.",
   worldBookDetailFailed: "Its own text could not be read.",
 
+  worldBookImport: "Import a lorebook file",
+  worldBookImportHint:
+    "Add a SillyTavern world book, a Chub lorebook, or the world book built into a character card, to the library. The file is read in your browser; the Host's own importer translates its entries, and a book it cannot read is refused rather than half-added.",
+  worldBookImportFileLabel: "Lorebook file",
+  worldBookImportBusy: "Importing…",
+  worldBookImportImported: "Imported this world book into your library. Its entries are now in the list above.",
+  worldBookImportInvalid: "That file is not a readable world book (JSON).",
+  worldBookImportTooLarge: "That file is too large to import (limit 2 MB).",
+  worldBookImportFailed: "The world book could not be imported.",
+
   companionWorldBookTitle: "Your companion's own world book",
   companionWorldBookHint:
     "The world book her card carried, kept here with her. An entry is used when your own words match one of its trigger words, unless it is marked as always on.",
@@ -668,6 +692,16 @@ const zh: CharacterLabels = Object.freeze({
   worldBookSaveFailed: "无法保存这本世界书。",
   worldBookDeleteFailed: "无法删除这本世界书。",
   worldBookDetailFailed: "无法读取它的内容。",
+
+  worldBookImport: "导入世界书文件",
+  worldBookImportHint:
+    "把 SillyTavern 世界书、Chub lorebook，或角色卡自带的世界书加入书库。文件在你的浏览器中读取；由 Host 自带的导入器转换其中的词条，读不了的世界书会被拒绝，而不是只加进去一半。",
+  worldBookImportFileLabel: "世界书文件",
+  worldBookImportBusy: "正在导入…",
+  worldBookImportImported: "已把这本世界书导入到你的书库，它的词条已在上面列表中。",
+  worldBookImportInvalid: "该文件不是可读取的世界书（JSON）。",
+  worldBookImportTooLarge: "该文件过大，无法导入（上限 2 MB）。",
+  worldBookImportFailed: "无法导入这本世界书。",
 
   companionWorldBookTitle: "伴侣自己的世界书",
   companionWorldBookHint:
