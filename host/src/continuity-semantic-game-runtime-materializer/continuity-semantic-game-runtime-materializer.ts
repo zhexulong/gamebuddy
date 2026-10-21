@@ -66,6 +66,8 @@ type BodyProgramPort = ReturnType<typeof materializeAuthenticatedStardewLaunchPo
 type BodyProgramConsumer = object;
 type BodyProgramConsumerRecord = { port: BodyProgramPort; available: boolean; active: number; drained?: () => void };
 const bodyProgramConsumers = new WeakMap<BodyProgramConsumer, BodyProgramConsumerRecord>();
+/** The program's two readers: they answer only for a program a submission recorded. */
+const programReaderToolNames = Object.freeze(["stardew_action_program_status", "stardew_action_program_events"]);
 
 /**
  * Companion presentation locale used when no frontend-set language preference
@@ -83,6 +85,7 @@ function createBodyProgramTools(
   connection: GameConnection,
   mountedPolicy: IntegrationActionPolicy,
   retainedPolicyIdentity: FarmhandPolicyIdentity,
+  revealReaders: () => void,
 ): readonly ToolDefinition[] {
   const invoke = async <TResult>(
     request: Record<string, unknown>,
@@ -122,12 +125,19 @@ function createBodyProgramTools(
         // `bindings` keys mean - and never said what the tool was FOR. Across every live run the companion submitted
         // no program at all (zero `AGENT_PROGRAM_SUBMIT`), while it used the ~104 flat action tools one at a time.
         description:
-          "Submit a multi-step plan of game actions in ONE call: the Mod validates the whole plan, then runs each node natively once its predecessors' receipts are in, advancing the successors itself - so several steps cost one turn instead of one turn per step. Prefer it over several separate action calls whenever you already know the steps. Node actionIds must be actions currently advertised to you; an unknown one is rejected before anything runs. A refused candidate is bounded and side-effect free (no journal, claim, grant, execution or receipt) and returns diagnostics to fix. Nodes carry no deadline: the Mod derives each action's execution budget from its descriptor-owned watchdog at admission time, so never invent or submit a clock value. bindings keys are consumer argument names, not fact names; keep the bound argument in arguments with its literal canonical value and point factReference at the producer node/fact. Do not use type json_pointer. Example: node machine_inspect declares the fact machine_target_id, and node machine_load binds {expectedTargetId:{nodeId:machine_inspect,factName:machine_target_id}}.",
+          'Submit a multi-step plan of game actions in ONE call: the Mod validates the whole plan, then runs each node natively once its predecessors\' receipts are in, advancing the successors itself - so several steps cost one turn instead of one turn per step. Prefer it over several separate action calls whenever you already know the steps. Node actionIds must be actions currently advertised to you; an unknown one is rejected before anything runs. A refused candidate is bounded and side-effect free (no journal, claim, grant, execution or receipt) and returns diagnostics to fix. Nodes carry no deadline: the Mod derives each action\'s execution budget from its descriptor-owned watchdog at admission time, so never invent or submit a clock value. Every node carries all five fields, each argument is {type, canonicalValue} with type string|integer|boolean, and bindings map a CONSUMER ARGUMENT NAME to {nodeId, factName} of a fact an earlier node declares - keep the bound argument in arguments too, with its observed literal value. A move, an inspection and the load that binds the inspected machine, in the accepted shape; copy it and replace the values: {"programId":"farm_morning","nodes":[{"nodeId":"walk_to_keg","actionId":"move_to_tile","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"}},"dependsOn":[],"bindings":{}},{"nodeId":"inspect_keg","actionId":"machine_inspect","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"},"expectedTargetId":{"type":"string","canonicalValue":"machine_keg_20_12"}},"dependsOn":["walk_to_keg"],"bindings":{}},{"nodeId":"load_keg","actionId":"machine_load","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"},"slot":{"type":"integer","canonicalValue":"3"},"expectedQualifiedItemId":{"type":"string","canonicalValue":"(O)433"},"expectedTargetId":{"type":"string","canonicalValue":"machine_keg_20_12"}},"dependsOn":["inspect_keg"],"bindings":{"expectedTargetId":{"nodeId":"inspect_keg","factName":"machine_target_id"}}}]}',
         parameters: bodyProgramToolParameters(name),
         execute: async (_toolCallId, params) => {
           if (!isBodyProgramCandidateRequest(params)) throw new Error("invalid_body_program_tool_arguments");
           assertFreshBodyProgramPreflight(connection, mountedPolicy, retainedPolicyIdentity, params);
-          return invoke(params, validateBodyProgramCandidateRequest, validateResult, (port) => call(port, params));
+          const result = await invoke(params, validateBodyProgramCandidateRequest, validateResult, (port) =>
+            call(port, params),
+          );
+          // Only a recorded program gives the readers anything to answer; a rejected candidate leaves none.
+          const details: unknown = result.details;
+          const code = isRecord(details) ? details.code : undefined;
+          if (code === "accepted" || code === "idempotent") revealReaders();
+          return result;
         },
       }),
     );
@@ -143,6 +153,10 @@ function createBodyProgramTools(
         // reading this list could not tell what any of the three was for).
         description:
           "Read a submitted plan's state: per-node progress and the authoritative outcome so far. Use it after submitting a plan to see which node ran, which is still waiting, and why a plan stopped.",
+        // Mounted only once a submission has been recorded (see mountProgramReadersAfterSubmission); until then it can
+        // only be read as empty, and two always-empty readers are what an agent polls instead of submitting the plan at
+        // all.
+        defaultActive: false,
         parameters: bodyProgramToolParameters("stardew_action_program_status"),
         execute: async (_toolCallId, params) => {
           if (!isBodyProgramStatusRequest(params)) throw new Error("invalid_body_program_tool_arguments");
@@ -157,6 +171,8 @@ function createBodyProgramTools(
         // Same defect as `_status`, and this one is the plan's own event log.
         description:
           "Read one page of a submitted plan's event log: a bounded record per node transition, so a running plan can be followed without resubmitting or re-planning it. Page with cursor + pageSize; the returned cursor continues the read.",
+        // Same disclosure rule as `_status`: no program, no event log.
+        defaultActive: false,
         parameters: bodyProgramToolParameters("stardew_action_program_events"),
         execute: async (_toolCallId, params) => {
           if (!isBodyProgramEventsRequest(params)) throw new Error("invalid_body_program_tool_arguments");
@@ -170,9 +186,11 @@ function createBodyProgramTools(
 function isBodyProgramCandidateRequest(value: unknown): value is BodyProgramCandidateRequest {
   return isRecord(value) && validateBodyProgramCandidateRequest(value) === null;
 }
+
 function isBodyProgramStatusRequest(value: unknown): value is BodyProgramStatusRequest {
   return isRecord(value) && validateStatusRequest(value) === null;
 }
+
 function isBodyProgramEventsRequest(value: unknown): value is BodyProgramEventsRequest {
   return isRecord(value) && validateEventsRequest(value) === null;
 }
@@ -253,6 +271,21 @@ function createBodyProgramToolCloser(consumer: BodyProgramConsumer): () => Promi
         record.drained = resolve;
       });
     bodyProgramConsumers.delete(consumer);
+  };
+}
+
+/**
+ * The mounting decision for the two program readers, in one place: `defaultActive: false` keeps them out of the
+ * mounted set until a submission is recorded, and this is the only way in. Progressive disclosure may only reduce
+ * the current context and never grants or revokes a permission (design/architecture/game-action-model.md,
+ * 发布和可见性), so the readers are added to whatever is already mounted and never mount an action or a capability.
+ */
+function mountProgramReadersAfterSubmission(session: RuntimeSession["session"]): () => void {
+  let revealed = false;
+  return () => {
+    if (revealed) return;
+    revealed = true;
+    session.setActiveToolsByName([...session.getActiveToolNames(), ...programReaderToolNames]);
   };
 }
 
@@ -482,16 +515,28 @@ export function createHostGameRuntimeMaterializer(
         // manifests from 10:41-11:15 carry the three program tools, every manifest from 13:06 on carries none, and the
         // Mod's own log for the later runs says the routes are live). The marker lands in the run log next to the
         // harness's own, so "the companion did not batch" can be told apart from "it was never offered the tool".
+        // The two readers are deferred, so the marker also says how far the offer went.
         process.stderr.write(
-          `BODY_PROGRAM_MOUNT ${JSON.stringify({ unavailableReason: bodyProgramUnavailableReason, mounted: bodyProgramMounted })}\n`,
+          `BODY_PROGRAM_MOUNT ${JSON.stringify({
+            unavailableReason: bodyProgramUnavailableReason,
+            mounted: bodyProgramMounted,
+            readers: bodyProgramMounted ? "after_first_submission" : null,
+          })}\n`,
         );
         if (bodyProgramMounted)
           bodyProgramConsumers.set(bodyProgramConsumer, { port: ports.bodyProgram, available: true, active: 0 });
         const closeFixedTools = bodyProgramMounted ? createBodyProgramToolCloser(bodyProgramConsumer) : async () => {};
         // Resolve exactly once for this construction; closures and adapter tools
         // share this same object while live state remains freshly read per call.
+        let revealProgramReaders = (): void => {};
         const fixedTools = bodyProgramMounted
-          ? createBodyProgramTools(bodyProgramConsumer, execution.connection, mountedPolicy, retainedPolicyIdentity)
+          ? createBodyProgramTools(
+              bodyProgramConsumer,
+              execution.connection,
+              mountedPolicy,
+              retainedPolicyIdentity,
+              () => revealProgramReaders(),
+            )
           : Object.freeze([]);
         const recovery = readStardewRecoveryBindingContext(recoveryContext);
         let constructed: Readonly<{
@@ -532,6 +577,7 @@ export function createHostGameRuntimeMaterializer(
           throw error;
         }
         const runtime = constructed.runtime;
+        if (bodyProgramMounted) revealProgramReaders = mountProgramReadersAfterSubmission(runtime.session);
         await runtime.recoverStardewExecutionReceipts?.(
           Object.freeze({
             scope: recovery.identity,

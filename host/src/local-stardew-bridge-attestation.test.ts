@@ -27,7 +27,13 @@ import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 import type { GameConnection } from "./game-connection.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
-import type { BridgeMessage, ExecutionReceipt, Scope, Snapshot } from "./protocol.js";
+import {
+  validateBodyProgramCandidateRequest,
+  type BridgeMessage,
+  type ExecutionReceipt,
+  type Scope,
+  type Snapshot,
+} from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 const testAdapter = STARDEW_GAME_INTEGRATION_ADAPTER;
@@ -60,29 +66,36 @@ test.after(() => {
   bindWindowsStaleLockReclaimer(undefined);
 });
 
-async function receiptBackedBinding(launch: import("./integration-launcher.js").IntegrationLaunchHandle): Promise<GameRuntimeBinding> {
+async function receiptBackedBinding(
+  launch: import("./integration-launcher.js").IntegrationLaunchHandle,
+): Promise<GameRuntimeBinding> {
   const root = await mkdtemp(join(tmpdir(), "stardew-s4c-admission-"));
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
   const manifestPath = join(root, "manifest.json");
-  await writeFile(manifestPath, JSON.stringify({
-    schemaVersion: 2,
-    topology: "independent_chat_and_game_surfaces",
-    runtimeRoot,
-    principal: Object.freeze({
-      continuityId: "continuity_attestation",
-      companionId: scope.companionId,
-      playerId: "player_attestation",
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 2,
+      topology: "independent_chat_and_game_surfaces",
+      runtimeRoot,
+      principal: Object.freeze({
+        continuityId: "continuity_attestation",
+        companionId: scope.companionId,
+        playerId: "player_attestation",
+      }),
+      bootstrapOperationId: "bootstrap_attestation",
+      authorityGeneration: 1,
     }),
-    bootstrapOperationId: "bootstrap_attestation",
-    authorityGeneration: 1,
-  }));
-  return createGameRuntimeBindingFromReceiptBackedLaunch(Object.freeze({
-    manifest: await loadHostDeploymentManifest(manifestPath),
-    launcher: STARDEW_INTEGRATION_LAUNCHER,
-    launch,
-    expectedWorld: Object.freeze({ saveId: scope.saveId, worldId: scope.worldId }),
-  }));
+  );
+  return createGameRuntimeBindingFromReceiptBackedLaunch(
+    Object.freeze({
+      manifest: await loadHostDeploymentManifest(manifestPath),
+      launcher: STARDEW_INTEGRATION_LAUNCHER,
+      launch,
+      expectedWorld: Object.freeze({ saveId: scope.saveId, worldId: scope.worldId }),
+    }),
+  );
 }
 
 function enterPermit(execution: GameRuntimeBindingExecution) {
@@ -112,7 +125,7 @@ function frame(value: unknown): Buffer {
 
 async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) =>
-    server.close((error) => error === undefined ? resolve() : reject(error)),
+    server.close((error) => (error === undefined ? resolve() : reject(error))),
   );
 }
 
@@ -125,7 +138,9 @@ async function withHelloAck<T>(
   const pipeName = `gamebuddy_farmhand_attestation_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   let peer: Socket | undefined;
   let resolvePeerClosed!: () => void;
-  const peerClosed = new Promise<void>((resolve) => { resolvePeerClosed = resolve; });
+  const peerClosed = new Promise<void>((resolve) => {
+    resolvePeerClosed = resolve;
+  });
   const server = createServer((socket) => {
     peer = socket;
     socket.once("close", resolvePeerClosed);
@@ -139,83 +154,127 @@ async function withHelloAck<T>(
         buffer = buffer.subarray(4 + length);
         if (onRequest?.(request, socket) === true) continue;
         if (request.type === "hello")
-          socket.write(frame({
-            ...request,
-            messageId: "mod_hello_attestation",
-            type: "hello_ack",
-            payload: {
-               sessionId: "session_attestation",
-               capabilities: ["move_to_tile"],
-               catalogRevision: 1,
-               policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
-               enabledActionIds: ["move_to_tile"],
-              presentationLocale: "en-US",
-              registrations: [{
-                actionId: "move_to_tile",
-                familyId: "movement_navigation",
-                identityVersion: 1,
-                lifecycle: "published",
-                kind: "execution",
-              }],
-              runtimeRole,
-              launchGeneration,
-            },
-          }));
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_hello_attestation",
+              type: "hello_ack",
+              payload: {
+                sessionId: "session_attestation",
+                capabilities: ["move_to_tile"],
+                catalogRevision: 1,
+                policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
+                enabledActionIds: ["move_to_tile"],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole,
+                launchGeneration,
+              },
+            }),
+          );
         else if (request.type === "observe_request")
-          socket.write(frame({
-            ...request,
-            messageId: "mod_snapshot_attestation",
-            type: "snapshot",
-            payload: {
-              revision: 1,
-              location: "Farm",
-              tile: { x: 5, y: 8 },
-              stamina: 250,
-              exhausted: false,
-              health: 100,
-              actionable: true,
-              capabilities: ["move_to_tile"],
-              catalogRevision: 1,
-              enabledActionIds: ["move_to_tile"],
-              presentationLocale: "en-US",
-              weather: "sunny",
-              timeOfDay: 600,
-              dayOfMonth: 1,
-              seasonIndex: 0,
-              year: 1,
-              activeExecution: null,
-            },
-          }));
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_snapshot_attestation",
+              type: "snapshot",
+              payload: {
+                revision: 1,
+                location: "Farm",
+                tile: { x: 5, y: 8 },
+                stamina: 250,
+                exhausted: false,
+                health: 100,
+                actionable: true,
+                capabilities: ["move_to_tile"],
+                catalogRevision: 1,
+                enabledActionIds: ["move_to_tile"],
+                presentationLocale: "en-US",
+                weather: "sunny",
+                timeOfDay: 600,
+                dayOfMonth: 1,
+                seasonIndex: 0,
+                year: 1,
+                activeExecution: null,
+              },
+            }),
+          );
         else if (request.type === "program_submit")
-          socket.write(frame({
-            ...request,
-            messageId: "mod_program_submit_attestation",
-            type: "program_submit_result",
-            payload: { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics: [{ severity: "error", code: "policy_denied", nodeId: null, path: "program", message: "policy_denied" }] }, snapshot: null },
-          }));
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_program_submit_attestation",
+              type: "program_submit_result",
+              payload: {
+                code: "rejected",
+                verification: {
+                  accepted: false,
+                  catalogRevision: 1,
+                  diagnostics: [
+                    {
+                      severity: "error",
+                      code: "policy_denied",
+                      nodeId: null,
+                      path: "program",
+                      message: "policy_denied",
+                    },
+                  ],
+                },
+                snapshot: null,
+              },
+            }),
+          );
         else if (request.type === "program_status")
-          socket.write(frame({
-            ...request,
-            messageId: "mod_program_status_attestation",
-            type: "program_status_result",
-            payload: {
-              code: "found",
-              snapshot: { programId: request.payload.programId, state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] },
-            },
-          }));
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_program_status_attestation",
+              type: "program_status_result",
+              payload: {
+                code: "found",
+                snapshot: {
+                  programId: request.payload.programId,
+                  state: "active",
+                  catalogRevision: 1,
+                  stopEpoch: 0,
+                  eventHighWater: 0,
+                  nodes: [],
+                },
+              },
+            }),
+          );
         else if (request.type === "program_events")
-          socket.write(frame({
-            ...request,
-            messageId: "mod_program_events_attestation",
-            type: "program_events_result",
-            payload: {
-              programId: request.payload.programId,
-              code: "found",
-              nextCursor: request.payload.cursor + 1,
-              highWater: request.payload.cursor + 1,
-              events: [{ cursor: request.payload.cursor + 1, programId: request.payload.programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }],
-            },
-          }));
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_program_events_attestation",
+              type: "program_events_result",
+              payload: {
+                programId: request.payload.programId,
+                code: "found",
+                nextCursor: request.payload.cursor + 1,
+                highWater: request.payload.cursor + 1,
+                events: [
+                  {
+                    cursor: request.payload.cursor + 1,
+                    programId: request.payload.programId,
+                    kind: "accepted",
+                    catalogRevision: 1,
+                    nodeId: null,
+                    nodeAttempt: null,
+                  },
+                ],
+              },
+            }),
+          );
       }
     });
   });
@@ -232,15 +291,24 @@ async function withHelloAck<T>(
 
 test("formal Farmhand bridge produces the existing receipt-backed Stardew launch handle", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
+    const client = await LocalStardewBridgeClient.connectFarmhand(
+      scope,
+      pipeName,
+      token,
+      generation,
+      Date.now() + 5_000,
+      testAdapter,
+    );
     const identity = Object.freeze({
-       playerId: "browser_player_01",
-       companionId: scope.companionId,
-       continuityId: "continuity_attestation_01",
-       saveId: scope.saveId,
+      playerId: "browser_player_01",
+      companionId: scope.companionId,
+      continuityId: "continuity_attestation_01",
+      saveId: scope.saveId,
       worldId: scope.worldId,
     });
-    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity, { module: STARDEW_GAME_INTEGRATION_ADAPTER });
+    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity, {
+      module: STARDEW_GAME_INTEGRATION_ADAPTER,
+    });
     assertReceiptBackedLaunch(STARDEW_INTEGRATION_LAUNCHER, launch, identity);
     assert.equal(launch.connection.module.actorId(launch.connection), scope.playerId);
     assert.notEqual(launch.connection.module.actorId(launch.connection), identity.playerId);
@@ -273,39 +341,63 @@ test("formal Farmhand bridge produces the existing receipt-backed Stardew launch
 
 test("S4c body-program admission expires with its factory callback and rejects forgery", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
-    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({
-       playerId: "player_attestation",
-       companionId: scope.companionId,
-       continuityId,
-       saveId: scope.saveId,
-      worldId: scope.worldId,
-    }), { module: STARDEW_GAME_INTEGRATION_ADAPTER });
+    const client = await LocalStardewBridgeClient.connectFarmhand(
+      scope,
+      pipeName,
+      token,
+      generation,
+      Date.now() + 5_000,
+      testAdapter,
+    );
+    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+      client,
+      Object.freeze({
+        playerId: "player_attestation",
+        companionId: scope.companionId,
+        continuityId,
+        saveId: scope.saveId,
+        worldId: scope.worldId,
+      }),
+      { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+    );
     const binding = await receiptBackedBinding(launch);
     let retainedExecution!: GameRuntimeBindingExecution;
     let retainedAdmission!: OpaqueS4cMaterializationAdmission;
     try {
-      await binding.executeWithBinding((token) => withConsumedBindingExecution(token, (execution) =>
-        materializeExactEnter(
-          reserveGameRuntimeMaterialization(execution),
-          enterPermit(execution),
-          async (current, admission) => {
-            retainedExecution = current;
-            retainedAdmission = admission;
-            assert.throws(
-              () => materializeAuthenticatedStardewLaunchPorts(current, Object.freeze({}) as OpaqueS4cMaterializationAdmission),
-              /s4c_materialization_admission_rejected/,
-            );
-            const ports = materializeAuthenticatedStardewLaunchPorts(current, admission);
-            assert.deepEqual(Object.keys(ports).sort(), ["bodyProgram", "presentation"]);
-            assert.deepEqual(
-              await ports.bodyProgram.status({ programId: "program_01" }),
-              { code: "found", snapshot: { programId: "program_01", state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } },
-            );
-            return Object.freeze({ session: Object.freeze({ dispose: () => undefined }) });
-          },
+      await binding.executeWithBinding((token) =>
+        withConsumedBindingExecution(token, (execution) =>
+          materializeExactEnter(
+            reserveGameRuntimeMaterialization(execution),
+            enterPermit(execution),
+            async (current, admission) => {
+              retainedExecution = current;
+              retainedAdmission = admission;
+              assert.throws(
+                () =>
+                  materializeAuthenticatedStardewLaunchPorts(
+                    current,
+                    Object.freeze({}) as OpaqueS4cMaterializationAdmission,
+                  ),
+                /s4c_materialization_admission_rejected/,
+              );
+              const ports = materializeAuthenticatedStardewLaunchPorts(current, admission);
+              assert.deepEqual(Object.keys(ports).sort(), ["bodyProgram", "presentation"]);
+              assert.deepEqual(await ports.bodyProgram.status({ programId: "program_01" }), {
+                code: "found",
+                snapshot: {
+                  programId: "program_01",
+                  state: "active",
+                  catalogRevision: 1,
+                  stopEpoch: 0,
+                  eventHighWater: 0,
+                  nodes: [],
+                },
+              });
+              return Object.freeze({ session: Object.freeze({ dispose: () => undefined }) });
+            },
+          ),
         ),
-      ));
+      );
       assert.throws(
         () => materializeAuthenticatedStardewLaunchPorts(retainedExecution, retainedAdmission),
         /s4c_materialization_admission_rejected/,
@@ -316,55 +408,274 @@ test("S4c body-program admission expires with its factory callback and rejects f
   });
 });
 
-test("actual attested pipe materializes exactly three fixed body-program tools and preserves their command semantics", async () => {
+test("actual attested pipe mounts only the program submit tool until a submission is recorded, and its copy example is an accepted-shape plan", async () => {
   const requests: BridgeMessage[] = [];
-  await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
-    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({
-      playerId: "player_attestation", companionId: scope.companionId, continuityId, saveId: scope.saveId, worldId: scope.worldId,
-    }), { module: STARDEW_GAME_INTEGRATION_ADAPTER });
-    const binding = await receiptBackedBinding(launch);
-    let materialized: Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>> | undefined;
-    try {
-      materialized = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) =>
-        createHostGameRuntimeMaterializer().materializeEnter(
-          reserveGameRuntimeMaterialization(execution), enterPermit(execution),
-        ),
-      ));
-      const tools = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools;
-      const fixedToolNames = tools.map((tool) => tool.name).filter((name) =>
-        ["stardew_submit_action_program", "stardew_action_program_status", "stardew_action_program_events"].includes(name),
-      ).sort();
-      assert.deepEqual(fixedToolNames, [
-        "stardew_action_program_events", "stardew_action_program_status",
-        "stardew_submit_action_program",
-      ]);
-      const execute = async (name: string, params: Record<string, unknown>) => {
-        const tool = tools.find((current) => current.name === name);
-        assert.ok(tool, `missing ${name}`);
-        return await tool.execute("body-program-test", params, new AbortController().signal, () => undefined);
-      };
-      const candidate = Object.freeze({ programId: "program_01", nodes: [{
-        nodeId: "node_01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {},
-      }] });
-      const submitted = await execute("stardew_submit_action_program", candidate);
-      const status = await execute("stardew_action_program_status", { programId: "program_01" });
-      const events = await execute("stardew_action_program_events", { programId: "program_01", cursor: 7, pageSize: 1 });
-      for (const result of [submitted, status, events])
-        assert.deepEqual(JSON.parse((result.content[0] as { text: string }).text), result.details);
-      assert.deepEqual(submitted.details, { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics: [{ severity: "error", code: "policy_denied", nodeId: null, path: "program", message: "policy_denied" }] }, snapshot: null });
-      assert.deepEqual(status.details, { code: "found", snapshot: { programId: "program_01", state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } });
-      assert.deepEqual(events.details, { programId: "program_01", code: "found", nextCursor: 8, highWater: 8, events: [{ cursor: 8, programId: "program_01", kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }] });
-      assert.deepEqual(requests.filter((request) => request.type.startsWith("program_")).map((request) => request.type), [
-        "program_submit", "program_status", "program_events",
-      ]);
-      await assert.rejects(() => execute("stardew_submit_action_program", { programId: "bad id", nodes: [] }), /invalid_body_program_tool_arguments/);
-      assert.equal(requests.filter((request) => request.type === "program_submit").length, 1);
-    } finally {
-      await materialized?.close();
-      await binding.close();
-    }
-  }, (request) => { requests.push(request); });
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        client,
+        Object.freeze({
+          playerId: "player_attestation",
+          companionId: scope.companionId,
+          continuityId,
+          saveId: scope.saveId,
+          worldId: scope.worldId,
+        }),
+        { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+      );
+      const binding = await receiptBackedBinding(launch);
+      let materialized:
+        | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+        | undefined;
+      try {
+        materialized = await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        );
+        const tools = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools;
+        const fixedToolNames = tools
+          .map((tool) => tool.name)
+          .filter((name) =>
+            [
+              "stardew_submit_action_program",
+              "stardew_action_program_status",
+              "stardew_action_program_events",
+            ].includes(name),
+          )
+          .sort();
+        // The two readers answer only for a program that exists, so nothing is mounted for them yet.
+        assert.deepEqual(fixedToolNames, ["stardew_submit_action_program"]);
+        const execute = async (name: string, params: Record<string, unknown>) => {
+          const tool = tools.find((current) => current.name === name);
+          assert.ok(tool, `missing ${name}`);
+          return await tool.execute("body-program-test", params, new AbortController().signal, () => undefined);
+        };
+        // The copyable example is read off the mounted tool, so the description cannot drift from the accepted shape.
+        const submit = tools.find((current) => current.name === "stardew_submit_action_program");
+        assert.ok(submit);
+        const example = JSON.parse(submit.description.slice(submit.description.lastIndexOf('{"programId"')));
+        assert.equal(
+          validateBodyProgramCandidateRequest(example),
+          null,
+          "the example must be a plan the validator accepts",
+        );
+        type ExampleNode = {
+          nodeId: string;
+          actionId: string;
+          arguments: Record<string, Record<string, string>>;
+          dependsOn: readonly string[];
+          bindings: Record<string, Record<string, string>>;
+        };
+        const exampleNodes = example.nodes as readonly ExampleNode[];
+        assert.deepEqual(
+          exampleNodes.map((node) => node.actionId),
+          ["move_to_tile", "machine_inspect", "machine_load"],
+        );
+        assert.deepEqual(
+          exampleNodes.map((node) => Object.keys(node).sort()),
+          exampleNodes.map(() => ["actionId", "arguments", "bindings", "dependsOn", "nodeId"]),
+          "isBodyProgramNode names exactly these five fields on every node",
+        );
+        const [move, inspect, load] = exampleNodes;
+        assert.deepEqual(Object.keys(move!.arguments).sort(), ["x", "y"], "move_to_tile declares x and y");
+        for (const argument of Object.values(move!.arguments))
+          assert.deepEqual(
+            Object.keys(argument).sort(),
+            ["canonicalValue", "type"],
+            "a scalar argument is {type, canonicalValue}",
+          );
+        assert.deepEqual(
+          Object.keys(load!.arguments).sort(),
+          ["expectedQualifiedItemId", "expectedTargetId", "slot", "x", "y"],
+          "machine_load declares exactly these five arguments",
+        );
+        assert.deepEqual(load!.dependsOn, [inspect!.nodeId], "the load waits for the inspection it binds");
+        assert.deepEqual(load!.bindings, {
+          expectedTargetId: { nodeId: inspect!.nodeId, factName: "machine_target_id" },
+        });
+        const candidate = Object.freeze({
+          programId: "program_01",
+          nodes: [
+            {
+              nodeId: "node_01",
+              actionId: "move_to_tile",
+              arguments: {},
+              dependsOn: [],
+              bindings: {},
+            },
+          ],
+        });
+        const submitted = await execute("stardew_submit_action_program", candidate);
+        assert.deepEqual(JSON.parse((submitted.content[0] as { text: string }).text), submitted.details);
+        assert.deepEqual(submitted.details, {
+          code: "rejected",
+          verification: {
+            accepted: false,
+            catalogRevision: 1,
+            diagnostics: [
+              { severity: "error", code: "policy_denied", nodeId: null, path: "program", message: "policy_denied" },
+            ],
+          },
+          snapshot: null,
+        });
+        assert.deepEqual(
+          requests.filter((request) => request.type.startsWith("program_")).map((request) => request.type),
+          ["program_submit"],
+        );
+        await assert.rejects(
+          () => execute("stardew_submit_action_program", { programId: "bad id", nodes: [] }),
+          /invalid_body_program_tool_arguments/,
+        );
+        assert.equal(requests.filter((request) => request.type === "program_submit").length, 1);
+      } finally {
+        await materialized?.close();
+        await binding.close();
+      }
+    },
+    (request) => {
+      requests.push(request);
+    },
+  );
+});
+
+test("program readers mount only once a submission is recorded, because before that they can only be read as empty", async () => {
+  const requests: BridgeMessage[] = [];
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        client,
+        Object.freeze({
+          playerId: "player_attestation",
+          companionId: scope.companionId,
+          continuityId,
+          saveId: scope.saveId,
+          worldId: scope.worldId,
+        }),
+        { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+      );
+      const binding = await receiptBackedBinding(launch);
+      let materialized:
+        | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+        | undefined;
+      try {
+        materialized = await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        );
+        const mounted = () =>
+          observeMaterializedProductionRuntimeForTest(materialized!).session.agent.state.tools.map((tool) => tool.name);
+        const execute = async (name: string, params: Record<string, unknown>) => {
+          const tool = observeMaterializedProductionRuntimeForTest(materialized!).session.agent.state.tools.find(
+            (current) => current.name === name,
+          );
+          assert.ok(tool, `missing ${name}`);
+          const result = await tool.execute("reader-mount", params, new AbortController().signal, () => undefined);
+          return result.details as { code?: string };
+        };
+        assert.ok(mounted().includes("stardew_submit_action_program"));
+        assert.equal(mounted().includes("stardew_action_program_status"), false);
+        assert.equal(mounted().includes("stardew_action_program_events"), false);
+        // A refused candidate records nothing, so it mounts nothing to read.
+        const plan = (programId: string) => ({
+          programId,
+          nodes: [
+            {
+              nodeId: "node_01",
+              actionId: "move_to_tile",
+              arguments: {},
+              dependsOn: [],
+              bindings: {},
+            },
+          ],
+        });
+        assert.equal((await execute("stardew_submit_action_program", plan("not_recorded"))).code, "rejected");
+        assert.equal(mounted().includes("stardew_action_program_status"), false);
+        assert.equal(mounted().includes("stardew_action_program_events"), false);
+        assert.equal((await execute("stardew_submit_action_program", plan("farm_morning"))).code, "accepted");
+        assert.ok(mounted().includes("stardew_action_program_status"));
+        assert.ok(mounted().includes("stardew_action_program_events"));
+        assert.equal((await execute("stardew_action_program_status", { programId: "farm_morning" })).code, "found");
+        assert.deepEqual(
+          requests.filter((request) => request.type.startsWith("program_")).map((request) => request.type),
+          ["program_submit", "program_submit", "program_status"],
+        );
+      } finally {
+        await materialized?.close();
+        await binding.close();
+      }
+    },
+    (request, socket) => {
+      requests.push(request);
+      if (request.type !== "program_submit") return;
+      const accepted = request.payload.programId === "farm_morning";
+      socket.write(
+        frame({
+          ...request,
+          messageId: "mod_program_submit_reader_mount",
+          type: "program_submit_result",
+          payload: accepted
+            ? {
+                code: "accepted",
+                verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+                snapshot: {
+                  programId: request.payload.programId,
+                  state: "active",
+                  catalogRevision: 1,
+                  stopEpoch: 0,
+                  eventHighWater: 0,
+                  nodes: [],
+                },
+              }
+            : {
+                code: "rejected",
+                verification: {
+                  accepted: false,
+                  catalogRevision: 1,
+                  diagnostics: [
+                    {
+                      severity: "error",
+                      code: "policy_denied",
+                      nodeId: null,
+                      path: "program",
+                      message: "policy_denied",
+                    },
+                  ],
+                },
+                snapshot: null,
+              },
+        }),
+      );
+      return true;
+    },
+  );
 });
 
 test("attested fixed body-program closures recheck restrictive live policy without emitting a program frame", async () => {
@@ -372,133 +683,294 @@ test("attested fixed body-program closures recheck restrictive live policy witho
   let socket!: Socket;
   let catalogUpdatePublished = false;
   let resolveCatalogRefreshRequested!: () => void;
-  const catalogRefreshRequested = new Promise<void>((resolve) => { resolveCatalogRefreshRequested = resolve; });
-  await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
-    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({
-      playerId: "player_attestation", companionId: scope.companionId, continuityId, saveId: scope.saveId, worldId: scope.worldId,
-    }), { module: STARDEW_GAME_INTEGRATION_ADAPTER });
-    const binding = await receiptBackedBinding(launch);
-    let materialized: Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>> | undefined;
-    try {
-      materialized = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) =>
-        createHostGameRuntimeMaterializer().materializeEnter(reserveGameRuntimeMaterialization(execution), enterPermit(execution)),
-      ));
-      const tools = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools;
-      const submit = tools.find((current) => current.name === "stardew_submit_action_program");
-      const status = tools.find((current) => current.name === "stardew_action_program_status");
-      const events = tools.find((current) => current.name === "stardew_action_program_events");
-      const verify = tools.find((current) => current.name === "stardew_verify_action_program");
-      assert.ok(submit);
-      assert.ok(status);
-      assert.ok(events);
-      assert.equal(verify, undefined);
-      catalogUpdatePublished = true;
-      socket.write(frame({
-        protocolVersion: 1, messageId: "catalog_update_attestation", correlationId: "catalog_update_attestation",
-        timestampMs: Date.now(), scope, type: "catalog_update", payload: { catalogRevision: 1, policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 }, enabledActionIds: ["move_to_tile"] },
-      } satisfies BridgeMessage));
-      await catalogRefreshRequested;
-       for (let attempt = 0; attempt < 20 && client.state.snapshot?.revision !== 2; attempt++)
-        await delay(5);
-       assert.equal(client.state.catalogRevision, 1);
-        assert.deepEqual(client.state.enabledActionIds, ["move_to_tile"]);
-       assert.equal(client.state.snapshot?.catalogRevision, 1);
-       await until(() => client.state.snapshot?.revision === 2, "successor_snapshot_not_admitted");
-       const successorState = STARDEW_GAME_INTEGRATION_ADAPTER.readState(launch.connection);
-       assert.equal(successorState.catalogRevision, 1);
-       assert.equal(successorState.capabilityRevision, 2);
-       assert.deepEqual(successorState.policyIdentity, {
-         value: "abcdef0123456789abcdef0123456789",
-         capabilityRevision: 2,
-       });
-        await assert.rejects(
-         () => submit.execute("policy_recheck_submit", { programId: "program_02", nodes: [{ nodeId: "node_02", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }] }, new AbortController().signal, () => undefined),
-         /body_program_preflight_rejected/,
-        );
-      assert.equal(requests.filter((request) => request.type === "program_submit").length, 0);
-    } finally {
-      await materialized?.close();
-      await binding.close();
-    }
-  }, (request, currentSocket) => {
-    requests.push(request);
-    socket = currentSocket;
-    if (catalogUpdatePublished && request.type === "observe_request") {
-      currentSocket.write(frame({
-        ...request,
-        messageId: "mod_catalog_refresh_attestation",
-        type: "snapshot",
-        payload: {
-          revision: 2,
-          location: "Farm",
-          tile: { x: 5, y: 8 },
-          stamina: 250,
-          exhausted: false,
-          health: 100,
-          actionable: true,
-          capabilities: ["move_to_tile"],
-           catalogRevision: 1,
-            enabledActionIds: ["move_to_tile"],
-           presentationLocale: "en-US",
-           timeOfDay: 600,
-           dayOfMonth: 1,
-           seasonIndex: 0,
-           year: 1,
-          activeExecution: null,
-        },
-      }));
-      resolveCatalogRefreshRequested();
-      return true;
-    }
+  const catalogRefreshRequested = new Promise<void>((resolve) => {
+    resolveCatalogRefreshRequested = resolve;
   });
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        client,
+        Object.freeze({
+          playerId: "player_attestation",
+          companionId: scope.companionId,
+          continuityId,
+          saveId: scope.saveId,
+          worldId: scope.worldId,
+        }),
+        { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+      );
+      const binding = await receiptBackedBinding(launch);
+      let materialized:
+        | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+        | undefined;
+      try {
+        materialized = await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        );
+        const tools = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools;
+        const submit = tools.find((current) => current.name === "stardew_submit_action_program");
+        const verify = tools.find((current) => current.name === "stardew_verify_action_program");
+        assert.ok(submit);
+        assert.equal(verify, undefined);
+        catalogUpdatePublished = true;
+        socket.write(
+          frame({
+            protocolVersion: 1,
+            messageId: "catalog_update_attestation",
+            correlationId: "catalog_update_attestation",
+            timestampMs: Date.now(),
+            scope,
+            type: "catalog_update",
+            payload: {
+              catalogRevision: 1,
+              policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 },
+              enabledActionIds: ["move_to_tile"],
+            },
+          } satisfies BridgeMessage),
+        );
+        await catalogRefreshRequested;
+        for (let attempt = 0; attempt < 20 && client.state.snapshot?.revision !== 2; attempt++) await delay(5);
+        assert.equal(client.state.catalogRevision, 1);
+        assert.deepEqual(client.state.enabledActionIds, ["move_to_tile"]);
+        assert.equal(client.state.snapshot?.catalogRevision, 1);
+        await until(() => client.state.snapshot?.revision === 2, "successor_snapshot_not_admitted");
+        const successorState = STARDEW_GAME_INTEGRATION_ADAPTER.readState(launch.connection);
+        assert.equal(successorState.catalogRevision, 1);
+        assert.equal(successorState.capabilityRevision, 2);
+        assert.deepEqual(successorState.policyIdentity, {
+          value: "abcdef0123456789abcdef0123456789",
+          capabilityRevision: 2,
+        });
+        await assert.rejects(
+          () =>
+            submit.execute(
+              "policy_recheck_submit",
+              {
+                programId: "program_02",
+                nodes: [{ nodeId: "node_02", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }],
+              },
+              new AbortController().signal,
+              () => undefined,
+            ),
+          /body_program_preflight_rejected/,
+        );
+        assert.equal(requests.filter((request) => request.type === "program_submit").length, 0);
+      } finally {
+        await materialized?.close();
+        await binding.close();
+      }
+    },
+    (request, currentSocket) => {
+      requests.push(request);
+      socket = currentSocket;
+      if (catalogUpdatePublished && request.type === "observe_request") {
+        currentSocket.write(
+          frame({
+            ...request,
+            messageId: "mod_catalog_refresh_attestation",
+            type: "snapshot",
+            payload: {
+              revision: 2,
+              location: "Farm",
+              tile: { x: 5, y: 8 },
+              stamina: 250,
+              exhausted: false,
+              health: 100,
+              actionable: true,
+              capabilities: ["move_to_tile"],
+              catalogRevision: 1,
+              enabledActionIds: ["move_to_tile"],
+              presentationLocale: "en-US",
+              timeOfDay: 600,
+              dayOfMonth: 1,
+              seasonIndex: 0,
+              year: 1,
+              activeExecution: null,
+            },
+          }),
+        );
+        resolveCatalogRefreshRequested();
+        return true;
+      }
+    },
+  );
 });
 
 test("attested status and events each emit one frame without preflight, cursor cache, or auto-page", async () => {
   const requests: BridgeMessage[] = [];
-  await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
-    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({ playerId: "player_attestation", companionId: scope.companionId, continuityId, saveId: scope.saveId, worldId: scope.worldId }), { module: STARDEW_GAME_INTEGRATION_ADAPTER });
-    const binding = await receiptBackedBinding(launch);
-    let materialized: Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>> | undefined;
-    try {
-      materialized = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) => createHostGameRuntimeMaterializer().materializeEnter(reserveGameRuntimeMaterialization(execution), enterPermit(execution))));
-       const tools = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools;
-       const observeRequestsAtMaterialization = requests.filter((request) => request.type === "observe_request").length;
-       const execute = (name: string, params: Record<string, unknown>) => tools.find((tool) => tool.name === name)!.execute("single_frame", params, new AbortController().signal, () => undefined);
-       await execute("stardew_action_program_status", { programId: "program_03" });
-      await execute("stardew_action_program_events", { programId: "program_03", cursor: 11, pageSize: 1 });
-      assert.deepEqual(requests.filter((request) => request.type.startsWith("program_")).map((request) => request.type), ["program_status", "program_events"]);
-       assert.equal(requests.filter((request) => request.type === "observe_request").length, observeRequestsAtMaterialization);
-    } finally {
-      await materialized?.close();
-      await binding.close();
-    }
-  }, (request) => { requests.push(request); });
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        client,
+        Object.freeze({
+          playerId: "player_attestation",
+          companionId: scope.companionId,
+          continuityId,
+          saveId: scope.saveId,
+          worldId: scope.worldId,
+        }),
+        { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+      );
+      const binding = await receiptBackedBinding(launch);
+      let materialized:
+        | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+        | undefined;
+      try {
+        materialized = await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        );
+        const mounted = () => observeMaterializedProductionRuntimeForTest(materialized!).session.agent.state.tools;
+        const observeRequestsAtMaterialization = requests.filter(
+          (request) => request.type === "observe_request",
+        ).length;
+        const execute = (name: string, params: Record<string, unknown>) =>
+          mounted()
+            .find((tool) => tool.name === name)!
+            .execute("single_frame", params, new AbortController().signal, () => undefined);
+        // The readers are mounted by the first recorded program, so one accepted submission comes first.
+        await execute("stardew_submit_action_program", {
+          programId: "program_03",
+          nodes: [{ nodeId: "node_03", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }],
+        });
+        await execute("stardew_action_program_status", { programId: "program_03" });
+        await execute("stardew_action_program_events", { programId: "program_03", cursor: 11, pageSize: 1 });
+        assert.deepEqual(
+          requests.filter((request) => request.type.startsWith("program_")).map((request) => request.type),
+          ["program_submit", "program_status", "program_events"],
+        );
+        assert.equal(
+          requests.filter((request) => request.type === "observe_request").length,
+          observeRequestsAtMaterialization,
+        );
+      } finally {
+        await materialized?.close();
+        await binding.close();
+      }
+    },
+    (request, socket) => {
+      requests.push(request);
+      if (request.type !== "program_submit") return;
+      socket.write(
+        frame({
+          ...request,
+          messageId: "mod_program_submit_one_frame",
+          type: "program_submit_result",
+          payload: {
+            code: "accepted",
+            verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+            snapshot: {
+              programId: request.payload.programId,
+              state: "active",
+              catalogRevision: 1,
+              stopEpoch: 0,
+              eventHighWater: 0,
+              nodes: [],
+            },
+          },
+        }),
+      );
+      return true;
+    },
+  );
 });
 
 test("attested submit timeout emits exactly one program frame and is not retried", { timeout: 15_000 }, async () => {
   const requests: BridgeMessage[] = [];
-  await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 10_000, testAdapter);
-    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({ playerId: "player_attestation", companionId: scope.companionId, continuityId, saveId: scope.saveId, worldId: scope.worldId }), { module: STARDEW_GAME_INTEGRATION_ADAPTER });
-    const binding = await receiptBackedBinding(launch);
-    let materialized: Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>> | undefined;
-    try {
-      materialized = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) => createHostGameRuntimeMaterializer().materializeEnter(reserveGameRuntimeMaterialization(execution), enterPermit(execution))));
-      const submit = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools.find((tool) => tool.name === "stardew_submit_action_program")!;
-      await assert.rejects(() => submit.execute("submit_timeout", { programId: "program_04", nodes: [{ nodeId: "node_04", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }] }, new AbortController().signal, () => undefined), /bridge_response_timeout/);
-      assert.equal(requests.filter((request) => request.type === "program_submit").length, 1);
-    } finally {
-      await materialized?.close();
-      await binding.close();
-    }
-  }, (request) => {
-    requests.push(request);
-    // Withhold only the submit response; the default fixture path remains
-    // available for every other request and transport cleanup.
-    return request.type === "program_submit";
-  });
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 10_000,
+        testAdapter,
+      );
+      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        client,
+        Object.freeze({
+          playerId: "player_attestation",
+          companionId: scope.companionId,
+          continuityId,
+          saveId: scope.saveId,
+          worldId: scope.worldId,
+        }),
+        { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+      );
+      const binding = await receiptBackedBinding(launch);
+      let materialized:
+        | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+        | undefined;
+      try {
+        materialized = await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        );
+        const submit = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools.find(
+          (tool) => tool.name === "stardew_submit_action_program",
+        )!;
+        await assert.rejects(
+          () =>
+            submit.execute(
+              "submit_timeout",
+              {
+                programId: "program_04",
+                nodes: [{ nodeId: "node_04", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }],
+              },
+              new AbortController().signal,
+              () => undefined,
+            ),
+          /bridge_response_timeout/,
+        );
+        assert.equal(requests.filter((request) => request.type === "program_submit").length, 1);
+      } finally {
+        await materialized?.close();
+        await binding.close();
+      }
+    },
+    (request) => {
+      requests.push(request);
+      // Withhold only the submit response; the default fixture path remains
+      // available for every other request and transport cleanup.
+      return request.type === "program_submit";
+    },
+  );
 });
 
 test("attested fixed closure drains the held request before revocation", async () => {
@@ -506,46 +978,151 @@ test("attested fixed closure drains the held request before revocation", async (
   let heldStatus: BridgeMessage | undefined;
   let heldSocket: Socket | undefined;
   let resolveStatusSent!: () => void;
-  const statusSent = new Promise<void>((resolve) => { resolveStatusSent = resolve; });
-  await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
-    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, Object.freeze({ playerId: "player_attestation", companionId: scope.companionId, continuityId, saveId: scope.saveId, worldId: scope.worldId }), { module: STARDEW_GAME_INTEGRATION_ADAPTER });
-    const binding = await receiptBackedBinding(launch);
-    let materialized: Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>> | undefined;
-    try {
-      materialized = await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) => createHostGameRuntimeMaterializer().materializeEnter(reserveGameRuntimeMaterialization(execution), enterPermit(execution))));
-      const runtime = observeMaterializedProductionRuntimeForTest(materialized);
-      const status = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_action_program_status")!;
-        const started = status.execute("draining_status", { programId: "program_05" }, new AbortController().signal, () => undefined);
+  const statusSent = new Promise<void>((resolve) => {
+    resolveStatusSent = resolve;
+  });
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        client,
+        Object.freeze({
+          playerId: "player_attestation",
+          companionId: scope.companionId,
+          continuityId,
+          saveId: scope.saveId,
+          worldId: scope.worldId,
+        }),
+        { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+      );
+      const binding = await receiptBackedBinding(launch);
+      let materialized:
+        | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+        | undefined;
+      try {
+        materialized = await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        );
+        const runtime = observeMaterializedProductionRuntimeForTest(materialized);
+        // The readers exist only after a recorded program, so the drain case records one first.
+        const submit = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_submit_action_program")!;
+        await submit.execute(
+          "drain_reveal",
+          {
+            programId: "program_05",
+            nodes: [{ nodeId: "node_05", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }],
+          },
+          new AbortController().signal,
+          () => undefined,
+        );
+        const status = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_action_program_status")!;
+        const started = status.execute(
+          "draining_status",
+          { programId: "program_05" },
+          new AbortController().signal,
+          () => undefined,
+        );
         await Promise.race([
           statusSent,
-          delay(1_000).then(() => { throw new Error("status_request_not_observed"); }),
+          delay(1_000).then(() => {
+            throw new Error("status_request_not_observed");
+          }),
         ]);
         const closing = materialized.close();
-       await assert.rejects(() => status.execute("revoked_status", { programId: "program_05" }, new AbortController().signal, () => undefined), /action_program_runtime_unavailable/);
-      assert.equal(requests.filter((request) => request.type === "program_status").length, 1);
-      assert.ok(heldStatus);
-      heldSocket!.write(frame({ ...heldStatus, messageId: "status_drain_attestation", type: "program_status_result", payload: { code: "found", snapshot: { programId: "program_05", state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } } }));
-      await started;
-      await closing;
-      assert.throws(() => observeMaterializedProductionRuntimeForTest(materialized!), /materialized_runtime_test_observation_unavailable/);
-    } finally {
-      await materialized?.close();
-      await binding.close();
-    }
-  }, (request, socket) => {
-    requests.push(request);
-    if (request.type === "program_status") {
-      heldStatus = request;
-      heldSocket = socket;
-      resolveStatusSent();
-      return true;
-    }
-  });
+        await assert.rejects(
+          () =>
+            status.execute(
+              "revoked_status",
+              { programId: "program_05" },
+              new AbortController().signal,
+              () => undefined,
+            ),
+          /action_program_runtime_unavailable/,
+        );
+        assert.equal(requests.filter((request) => request.type === "program_status").length, 1);
+        assert.ok(heldStatus);
+        heldSocket!.write(
+          frame({
+            ...heldStatus,
+            messageId: "status_drain_attestation",
+            type: "program_status_result",
+            payload: {
+              code: "found",
+              snapshot: {
+                programId: "program_05",
+                state: "active",
+                catalogRevision: 1,
+                stopEpoch: 0,
+                eventHighWater: 0,
+                nodes: [],
+              },
+            },
+          }),
+        );
+        await started;
+        await closing;
+        assert.throws(
+          () => observeMaterializedProductionRuntimeForTest(materialized!),
+          /materialized_runtime_test_observation_unavailable/,
+        );
+      } finally {
+        await materialized?.close();
+        await binding.close();
+      }
+    },
+    (request, socket) => {
+      requests.push(request);
+      if (request.type === "program_submit") {
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_program_submit_drain_reveal",
+            type: "program_submit_result",
+            payload: {
+              code: "accepted",
+              verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+              snapshot: {
+                programId: request.payload.programId,
+                state: "active",
+                catalogRevision: 1,
+                stopEpoch: 0,
+                eventHighWater: 0,
+                nodes: [],
+              },
+            },
+          }),
+        );
+        return true;
+      }
+      if (request.type === "program_status") {
+        heldStatus = request;
+        heldSocket = socket;
+        resolveStatusSent();
+        return true;
+      }
+    },
+  );
 });
 
 test("authenticated launch association has a lexical owner and generic handles expose no mutation escape hatch", async () => {
-  const source = await readFile(new URL("./stardew-integration-launcher-body-program.internal.js", import.meta.url), "utf8");
+  const source = await readFile(
+    new URL("./stardew-integration-launcher-body-program.internal.js", import.meta.url),
+    "utf8",
+  );
   assert.match(source, /const authenticatedStardewLaunchRecords = new WeakMap/);
   assert.match(source, /function associateAuthenticatedStardewLaunch\(/);
   assert.doesNotMatch(source, /export\s+(?:const|let|var)\s+authenticatedStardewLaunchRecords/);
@@ -563,7 +1140,10 @@ test("connection registrar and mint WeakMap stay lexical to the launcher produce
   assert.doesNotMatch(facadeSource, /authenticatedStardewConnections/);
   assert.doesNotMatch(facadeSource, /assertAuthenticatedStardewConnection/);
   assert.doesNotMatch(facadeSource, /isAuthenticatedStardewConnectionLive/);
-  const producerSource = await readFile(new URL("./stardew-integration-launcher-body-program.internal.js", import.meta.url), "utf8");
+  const producerSource = await readFile(
+    new URL("./stardew-integration-launcher-body-program.internal.js", import.meta.url),
+    "utf8",
+  );
   assert.match(producerSource, /const authenticatedStardewConnections = new WeakMap/);
   assert.match(producerSource, /function registerAuthenticatedStardewConnection\(/);
   assert.doesNotMatch(producerSource, /export\s+(?:async\s+)?function\s+registerAuthenticatedStardewConnection/);
@@ -599,9 +1179,21 @@ test("authenticated Stardew launch-handle producer rejects a forged bridge befor
 
 test("authenticated Stardew launch-handle producer closes an exact client on identity mismatch", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName, peerClosed) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
+    const client = await LocalStardewBridgeClient.connectFarmhand(
+      scope,
+      pipeName,
+      token,
+      generation,
+      Date.now() + 5_000,
+      testAdapter,
+    );
     await assert.rejects(
-      () => createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, { ...scope, companionId: "foreign_companion" }, { module: STARDEW_GAME_INTEGRATION_ADAPTER }),
+      () =>
+        createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+          client,
+          { ...scope, companionId: "foreign_companion" },
+          { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+        ),
       /stardew_bridge_identity_scope_mismatch/,
     );
     await peerClosed;
@@ -615,7 +1207,15 @@ for (const mismatch of ["role", "generation"] as const) {
       mismatch === "generation" ? "different-generation" : null,
       async (pipeName, peerClosed) => {
         await assert.rejects(
-          () => LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter),
+          () =>
+            LocalStardewBridgeClient.connectFarmhand(
+              scope,
+              pipeName,
+              token,
+              generation,
+              Date.now() + 5_000,
+              testAdapter,
+            ),
           /bridge_runtime_attestation_mismatch/,
         );
         await peerClosed;
@@ -626,46 +1226,54 @@ for (const mismatch of ["role", "generation"] as const) {
 
 test("formal Farmhand bridge rejects an invalid expected generation before pipe access", async () => {
   await assert.rejects(
-    () => LocalStardewBridgeClient.connectFarmhand(
-      scope,
-      "unused-valid-pipe-name",
-      token,
-      "invalid generation",
-      Date.now() + 5_000,
-      testAdapter,
-    ),
+    () =>
+      LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        "unused-valid-pipe-name",
+        token,
+        "invalid generation",
+        Date.now() + 5_000,
+        testAdapter,
+      ),
     /invalid_bridge_launch_generation/,
   );
 });
 
-test("formal Farmhand bridge closes the exact transport when hello misses its deadline", { timeout: 5_000 }, async () => {
-  const pipeName = `gamebuddy_farmhand_deadline_${process.pid}_${Date.now()}`;
-  let peer: Socket | undefined;
-  let resolvePeerClosed!: () => void;
-  const peerClosed = new Promise<void>((resolve) => { resolvePeerClosed = resolve; });
-  const server = createServer((socket) => {
-    peer = socket;
-    socket.on("data", () => undefined);
-    socket.once("end", resolvePeerClosed);
-    socket.once("close", resolvePeerClosed);
-  });
-  await new Promise<void>((resolve, reject) =>
-    server.listen(`\\\\.\\pipe\\${pipeName}`, resolve).once("error", reject),
-  );
-  try {
-    await assert.rejects(
-      () => LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 50, testAdapter),
-      /bridge_connect_deadline_exceeded/,
+test(
+  "formal Farmhand bridge closes the exact transport when hello misses its deadline",
+  { timeout: 5_000 },
+  async () => {
+    const pipeName = `gamebuddy_farmhand_deadline_${process.pid}_${Date.now()}`;
+    let peer: Socket | undefined;
+    let resolvePeerClosed!: () => void;
+    const peerClosed = new Promise<void>((resolve) => {
+      resolvePeerClosed = resolve;
+    });
+    const server = createServer((socket) => {
+      peer = socket;
+      socket.on("data", () => undefined);
+      socket.once("end", resolvePeerClosed);
+      socket.once("close", resolvePeerClosed);
+    });
+    await new Promise<void>((resolve, reject) =>
+      server.listen(`\\\\.\\pipe\\${pipeName}`, resolve).once("error", reject),
     );
-    await Promise.race([
-      peerClosed,
-      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("peer_close_timeout")), 1_000)),
-    ]);
-  } finally {
-    peer?.destroy();
-    server.close();
-  }
-});
+    try {
+      await assert.rejects(
+        () =>
+          LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 50, testAdapter),
+        /bridge_connect_deadline_exceeded/,
+      );
+      await Promise.race([
+        peerClosed,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("peer_close_timeout")), 1_000)),
+      ]);
+    } finally {
+      peer?.destroy();
+      server.close();
+    }
+  },
+);
 
 /** The launch producer mints exactly one authenticated wrapper for this bridge. */
 async function attestedLaunch(client: LocalStardewBridgeClient) {
@@ -717,7 +1325,14 @@ function snapshotFrame(payload: Snapshot): Buffer {
 
 test("exact authentication admits only the minted launch connection and rejects structural copies, forged scopes, and revoked handles", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
+    const client = await LocalStardewBridgeClient.connectFarmhand(
+      scope,
+      pipeName,
+      token,
+      generation,
+      Date.now() + 5_000,
+      testAdapter,
+    );
     const launch = await attestedLaunch(client);
     try {
       const real = launch.connection;
@@ -793,156 +1408,219 @@ test("exact authenticated launch handle projects a Mod receipt through readState
     },
   };
   let socket!: Socket;
-  await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
-    const launch = await attestedLaunch(client);
-    try {
-      // Push the genuine Mod receipt over the same authenticated pipe the
-      // launcher used; latestReceipt then mirrors a real delivered fact.
-      socket.write(receiptFrame(receipt));
-      await until(() => client.state.latestReceipt !== null, "mod_receipt_not_delivered");
-      const view = STARDEW_GAME_INTEGRATION_ADAPTER.readState(launch.connection);
-      assert.equal(view.connected, true);
-      assert.equal(view.sessionId, "session_attestation");
-      assert.equal(view.capabilityRevision, 1);
-      assert.deepEqual(view.enabledActionIds, ["move_to_tile"]);
-      assert.deepEqual(view.registrations, [{
-        actionId: "move_to_tile",
-        familyId: "movement_navigation",
-        identityVersion: 1,
-        lifecycle: "published",
-        kind: "execution",
-      }]);
-      // The bridge synchronizes the admitted snapshot's monotonic revision to a
-      // newer Mod receipt revision (see "local Stardew bridge advances the
-      // admitted snapshot revision on an unsolicited execution receipt"); the
-      // world fields still describe the pre-action moment.
-      assert.equal(view.snapshotRevision, 7);
-      assert.equal(view.latestReceipt?.actionId, receipt.actionId);
-      assert.equal(view.latestReceipt?.requestId, receipt.requestId);
-      assert.equal(view.latestReceipt?.executionId, receipt.executionId);
-      assert.equal(view.latestReceipt?.state, receipt.state);
-      assert.equal(view.latestReceipt?.reasonCode, receipt.reasonCode);
-      // The Mod revision is preserved exactly; the adapter never renumbers it.
-      assert.equal(view.latestReceipt?.revision, 7);
-      // Evidence passes through untouched; the adapter neither repairs nor infers it.
-      assert.deepEqual(view.latestReceipt?.evidence, receipt.evidence);
-      assert.equal(
-        view.latestReceipt?.evidence?.detail,
-        "location=Farm;target=crop_abcdef0123456789;tile=38,18;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
       );
-      // Save/world identity is bound to the authenticated scope and verified
-      // through assertIdentityBinding; readState never re-exposes it.
-      for (const forbidden of ["saveId", "worldId", "playerId", "companionId", "sessionBinding", "attachmentGeneration"])
-        assert.equal(Object.hasOwn(view, forbidden), false, forbidden);
-    } finally {
-      launch.close();
-    }
-  }, (_request, currentSocket) => { socket = currentSocket; });
+      const launch = await attestedLaunch(client);
+      try {
+        // Push the genuine Mod receipt over the same authenticated pipe the
+        // launcher used; latestReceipt then mirrors a real delivered fact.
+        socket.write(receiptFrame(receipt));
+        await until(() => client.state.latestReceipt !== null, "mod_receipt_not_delivered");
+        const view = STARDEW_GAME_INTEGRATION_ADAPTER.readState(launch.connection);
+        assert.equal(view.connected, true);
+        assert.equal(view.sessionId, "session_attestation");
+        assert.equal(view.capabilityRevision, 1);
+        assert.deepEqual(view.enabledActionIds, ["move_to_tile"]);
+        assert.deepEqual(view.registrations, [
+          {
+            actionId: "move_to_tile",
+            familyId: "movement_navigation",
+            identityVersion: 1,
+            lifecycle: "published",
+            kind: "execution",
+          },
+        ]);
+        // The bridge synchronizes the admitted snapshot's monotonic revision to a
+        // newer Mod receipt revision (see "local Stardew bridge advances the
+        // admitted snapshot revision on an unsolicited execution receipt"); the
+        // world fields still describe the pre-action moment.
+        assert.equal(view.snapshotRevision, 7);
+        assert.equal(view.latestReceipt?.actionId, receipt.actionId);
+        assert.equal(view.latestReceipt?.requestId, receipt.requestId);
+        assert.equal(view.latestReceipt?.executionId, receipt.executionId);
+        assert.equal(view.latestReceipt?.state, receipt.state);
+        assert.equal(view.latestReceipt?.reasonCode, receipt.reasonCode);
+        // The Mod revision is preserved exactly; the adapter never renumbers it.
+        assert.equal(view.latestReceipt?.revision, 7);
+        // Evidence passes through untouched; the adapter neither repairs nor infers it.
+        assert.deepEqual(view.latestReceipt?.evidence, receipt.evidence);
+        assert.equal(
+          view.latestReceipt?.evidence?.detail,
+          "location=Farm;target=crop_abcdef0123456789;tile=38,18;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+        );
+        // Save/world identity is bound to the authenticated scope and verified
+        // through assertIdentityBinding; readState never re-exposes it.
+        for (const forbidden of [
+          "saveId",
+          "worldId",
+          "playerId",
+          "companionId",
+          "sessionBinding",
+          "attachmentGeneration",
+        ])
+          assert.equal(Object.hasOwn(view, forbidden), false, forbidden);
+      } finally {
+        launch.close();
+      }
+    },
+    (_request, currentSocket) => {
+      socket = currentSocket;
+    },
+  );
 });
 
 test("exact authenticated launch handle keeps catalog capabilityRevision independent from snapshot revision", async () => {
   let socket!: Socket;
-  await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
-    const launch = await attestedLaunch(client);
-    try {
-      const initial = STARDEW_GAME_INTEGRATION_ADAPTER.readState(launch.connection);
-      assert.equal(initial.capabilityRevision, 1);
-      assert.equal(initial.snapshotRevision, 1);
-      assert.deepEqual(initial.enabledActionIds, ["move_to_tile"]);
-      // A fresh Mod snapshot advances the world observation without publishing a
-      // new catalog: snapshotRevision moves, capabilityRevision does not.
-      socket.write(snapshotFrame({
-        revision: 2,
-        location: "Farm",
-        tile: { x: 6, y: 9 },
-        stamina: 240,
-        exhausted: false,
-        health: 100,
-        actionable: true,
-        capabilities: ["move_to_tile"],
-        catalogRevision: 1,
-        enabledActionIds: ["move_to_tile"],
-        presentationLocale: "en-US",
-        weather: "sunny",
-        timeOfDay: 600,
-        dayOfMonth: 1,
-        seasonIndex: 0,
-        year: 1,
-        activeExecution: null,
-      }));
-      await until(() => client.state.snapshot?.revision === 2, "second_snapshot_not_admitted");
-      const advanced = STARDEW_GAME_INTEGRATION_ADAPTER.readState(launch.connection);
-      assert.equal(advanced.snapshotRevision, 2);
-      assert.equal(advanced.capabilityRevision, 1);
-      assert.notEqual(advanced.capabilityRevision, advanced.snapshotRevision);
-    } finally {
-      launch.close();
-    }
-  }, (_request, currentSocket) => { socket = currentSocket; });
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await attestedLaunch(client);
+      try {
+        const initial = STARDEW_GAME_INTEGRATION_ADAPTER.readState(launch.connection);
+        assert.equal(initial.capabilityRevision, 1);
+        assert.equal(initial.snapshotRevision, 1);
+        assert.deepEqual(initial.enabledActionIds, ["move_to_tile"]);
+        // A fresh Mod snapshot advances the world observation without publishing a
+        // new catalog: snapshotRevision moves, capabilityRevision does not.
+        socket.write(
+          snapshotFrame({
+            revision: 2,
+            location: "Farm",
+            tile: { x: 6, y: 9 },
+            stamina: 240,
+            exhausted: false,
+            health: 100,
+            actionable: true,
+            capabilities: ["move_to_tile"],
+            catalogRevision: 1,
+            enabledActionIds: ["move_to_tile"],
+            presentationLocale: "en-US",
+            weather: "sunny",
+            timeOfDay: 600,
+            dayOfMonth: 1,
+            seasonIndex: 0,
+            year: 1,
+            activeExecution: null,
+          }),
+        );
+        await until(() => client.state.snapshot?.revision === 2, "second_snapshot_not_admitted");
+        const advanced = STARDEW_GAME_INTEGRATION_ADAPTER.readState(launch.connection);
+        assert.equal(advanced.snapshotRevision, 2);
+        assert.equal(advanced.capabilityRevision, 1);
+        assert.notEqual(advanced.capabilityRevision, advanced.snapshotRevision);
+      } finally {
+        launch.close();
+      }
+    },
+    (_request, currentSocket) => {
+      socket = currentSocket;
+    },
+  );
 });
 
 test("exact authenticated launch handle projects an in-flight snapshot execution without synthesizing a receipt", async () => {
   let socket!: Socket;
-  await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
-    const launch = await attestedLaunch(client);
-    try {
-      socket.write(snapshotFrame({
-        revision: 2,
-        location: "Farm",
-        tile: { x: 5, y: 8 },
-        stamina: 250,
-        exhausted: false,
-        health: 100,
-        actionable: true,
-        capabilities: ["move_to_tile"],
-        catalogRevision: 1,
-        enabledActionIds: ["move_to_tile"],
-        presentationLocale: "en-US",
-        weather: "sunny",
-        timeOfDay: 600,
-        dayOfMonth: 1,
-        seasonIndex: 0,
-        year: 1,
-        activeExecution: {
-          executionId: "exec_active_01",
-          requestId: "req_active_01",
-          action: "move_to_tile",
-          state: "accepted",
-          reasonCode: "started",
-          evidence: null,
-        },
-      }));
-      await until(() => client.state.snapshot?.revision === 2, "active_snapshot_not_admitted");
-      const view = STARDEW_GAME_INTEGRATION_ADAPTER.readState(launch.connection);
-      // The in-flight snapshot fact must not be projected as a terminal receipt.
-      assert.equal(view.latestReceipt, null);
-      // The active execution identity is projected from the snapshot, untouched.
-      assert.deepEqual(view.activeExecution, {
-        actionId: "move_to_tile",
-        requestId: "req_active_01",
-        executionId: "exec_active_01",
-        state: "accepted",
-      });
-      // An in-flight snapshot cannot become an authoritative completion on its own.
-      assert.equal(
-        STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-          "move_to_tile",
-          { state: "accepted", reasonCode: "started", evidence: null },
-        ),
-        false,
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
       );
-    } finally {
-      launch.close();
-    }
-  }, (_request, currentSocket) => { socket = currentSocket; });
+      const launch = await attestedLaunch(client);
+      try {
+        socket.write(
+          snapshotFrame({
+            revision: 2,
+            location: "Farm",
+            tile: { x: 5, y: 8 },
+            stamina: 250,
+            exhausted: false,
+            health: 100,
+            actionable: true,
+            capabilities: ["move_to_tile"],
+            catalogRevision: 1,
+            enabledActionIds: ["move_to_tile"],
+            presentationLocale: "en-US",
+            weather: "sunny",
+            timeOfDay: 600,
+            dayOfMonth: 1,
+            seasonIndex: 0,
+            year: 1,
+            activeExecution: {
+              executionId: "exec_active_01",
+              requestId: "req_active_01",
+              action: "move_to_tile",
+              state: "accepted",
+              reasonCode: "started",
+              evidence: null,
+            },
+          }),
+        );
+        await until(() => client.state.snapshot?.revision === 2, "active_snapshot_not_admitted");
+        const view = STARDEW_GAME_INTEGRATION_ADAPTER.readState(launch.connection);
+        // The in-flight snapshot fact must not be projected as a terminal receipt.
+        assert.equal(view.latestReceipt, null);
+        // The active execution identity is projected from the snapshot, untouched.
+        assert.deepEqual(view.activeExecution, {
+          actionId: "move_to_tile",
+          requestId: "req_active_01",
+          executionId: "exec_active_01",
+          state: "accepted",
+        });
+        // An in-flight snapshot cannot become an authoritative completion on its own.
+        assert.equal(
+          STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("move_to_tile", {
+            state: "accepted",
+            reasonCode: "started",
+            evidence: null,
+          }),
+          false,
+        );
+      } finally {
+        launch.close();
+      }
+    },
+    (_request, currentSocket) => {
+      socket = currentSocket;
+    },
+  );
 });
 
 test("exact authenticated launch handle enforces the exact save/world/companion identity binding", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
+    const client = await LocalStardewBridgeClient.connectFarmhand(
+      scope,
+      pipeName,
+      token,
+      generation,
+      Date.now() + 5_000,
+      testAdapter,
+    );
     const launch = await attestedLaunch(client);
     try {
       assert.doesNotThrow(() =>
@@ -964,7 +1642,8 @@ test("exact authenticated launch handle enforces the exact save/world/companion 
         );
       // Omitting the Stardew save/world identity never binds this adapter.
       assert.throws(
-        () => STARDEW_GAME_INTEGRATION_ADAPTER.assertIdentityBinding(launch.connection, { companionId: scope.companionId }),
+        () =>
+          STARDEW_GAME_INTEGRATION_ADAPTER.assertIdentityBinding(launch.connection, { companionId: scope.companionId }),
         /integration_identity_binding_mismatch/,
       );
     } finally {
@@ -975,7 +1654,14 @@ test("exact authenticated launch handle enforces the exact save/world/companion 
 
 test("exact authenticated launch handle projects a redacted adapter-neutral world scope", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
+    const client = await LocalStardewBridgeClient.connectFarmhand(
+      scope,
+      pipeName,
+      token,
+      generation,
+      Date.now() + 5_000,
+      testAdapter,
+    );
     const launch = await attestedLaunch(client);
     try {
       const projected = STARDEW_GAME_INTEGRATION_ADAPTER.worldScope(launch.connection);
@@ -995,7 +1681,14 @@ test("exact authenticated launch handle projects a redacted adapter-neutral worl
 
 test("exact authenticated launch handle projects the embodied actor and never the Host identity playerId", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
+    const client = await LocalStardewBridgeClient.connectFarmhand(
+      scope,
+      pipeName,
+      token,
+      generation,
+      Date.now() + 5_000,
+      testAdapter,
+    );
     const launch = await attestedLaunch(client);
     try {
       // The actor is the authenticated connection player, never the Host
@@ -1010,7 +1703,14 @@ test("exact authenticated launch handle projects the embodied actor and never th
 
 test("exact authenticated launch handle drives status and toolset materialization from the live gate", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
+    const client = await LocalStardewBridgeClient.connectFarmhand(
+      scope,
+      pipeName,
+      token,
+      generation,
+      Date.now() + 5_000,
+      testAdapter,
+    );
     const launch = await attestedLaunch(client);
     try {
       assert.deepEqual(STARDEW_GAME_INTEGRATION_ADAPTER.status(launch.connection), {
@@ -1035,116 +1735,164 @@ test("exact authenticated launch handle drives status and toolset materializatio
 test("invalidated execution receipt immediately closes launcher-owned preview and materializer projections", async () => {
   let socket!: Socket;
   const requests: BridgeMessage[] = [];
-  await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
-    const launch = await attestedLaunch(client);
-    const binding = await receiptBackedBinding(launch);
-    try {
-      // Both launcher-owned projections admit while the execution is live.
-      assert.ok(getAuthenticatedStardewPresentationPortForPreview(launch));
-      await binding.executeWithBinding((bindingToken) => withConsumedBindingExecution(bindingToken, (execution) =>
-        materializeExactEnter(
-          reserveGameRuntimeMaterialization(execution),
-          enterPermit(execution),
-          async (current, admission) => {
-            const ports = materializeAuthenticatedStardewLaunchPorts(current, admission);
-            assert.deepEqual(Object.keys(ports).sort(), ["bodyProgram", "presentation"]);
-            assert.deepEqual(
-              await ports.bodyProgram.status({ programId: "program_invalidated_before" }),
-              { code: "found", snapshot: { programId: "program_invalidated_before", state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } },
-            );
-            const statusFramesBeforeInvalidation = requests.filter((request) => request.type === "program_status").length;
-            // A Mod invalidated receipt closes the launcher-owned record used by
-            // preview/materializer immediately; the native mutation is not
-            // replayed, retried, or closed (the pipe stays connected).
-            socket.write(receiptFrame({
-              executionId: "exec_invalidated_01",
-              requestId: "req_invalidated_01",
-              actionId: "move_to_tile",
-              state: "invalidated",
-              reasonCode: "reason_invalidated",
-              revision: 3,
-              evidence: null,
-            }));
-            await until(() => client.state.latestReceipt?.state === "invalidated", "invalidated_receipt_not_delivered");
-            assert.equal(client.state.connected, true);
-            // The gate stays OPEN: an invalidated receipt freezes the launcher-owned program/presentation
-            // records (asserted just below), but it must not forbid ordinary action dispatch - otherwise the
-            // action that resolves the interruption is refused by the gate the interruption closed, and the Agent
-            // is trapped by construction (ladder 6 tried `dismiss_modal` five times and got integration_not_ready).
-            assert.equal(launch.connection.executionGate?.executable, true);
-            assert.throws(
-              () => materializeAuthenticatedStardewLaunchPorts(current, admission),
-              /authenticated_stardew_launch_ports_required/,
-            );
-            assert.throws(
-              () => getAuthenticatedStardewPresentationPortForPreview(launch),
-              /authenticated_stardew_presentation_port_required/,
-            );
-            // Already-retained launcher-owned PROGRAM projection fails closed (the record is unusable for new
-            // work), but the PRESENTATION projection stays live: the companion speaks through this same object,
-            // and silencing it on an execution invalidation killed a real ladder-6 run while it tried to speak.
-            await assert.rejects(
-              async () => { await ports.bodyProgram.status({ programId: "program_invalidated_after" }); },
-              /stardew_launcher_ports_not_live/,
-            );
-            assert.ok(
-              ports.presentation.state.snapshot !== undefined || ports.presentation.state.snapshot === null,
-              "the live presentation port must keep working after an execution invalidation",
-            );
-            // No program frame reached the live native pipe after invalidation.
-            assert.equal(
-              requests.filter((request) => request.type === "program_status").length,
-              statusFramesBeforeInvalidation,
-            );
-            return Object.freeze({ session: Object.freeze({ dispose: () => undefined }) });
-          },
-        ),
-      ));
-    } finally {
-      await binding.close();
-    }
-  }, (request, currentSocket) => { requests.push(request); socket = currentSocket; });
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await attestedLaunch(client);
+      const binding = await receiptBackedBinding(launch);
+      try {
+        // Both launcher-owned projections admit while the execution is live.
+        assert.ok(getAuthenticatedStardewPresentationPortForPreview(launch));
+        await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            materializeExactEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+              async (current, admission) => {
+                const ports = materializeAuthenticatedStardewLaunchPorts(current, admission);
+                assert.deepEqual(Object.keys(ports).sort(), ["bodyProgram", "presentation"]);
+                assert.deepEqual(await ports.bodyProgram.status({ programId: "program_invalidated_before" }), {
+                  code: "found",
+                  snapshot: {
+                    programId: "program_invalidated_before",
+                    state: "active",
+                    catalogRevision: 1,
+                    stopEpoch: 0,
+                    eventHighWater: 0,
+                    nodes: [],
+                  },
+                });
+                const statusFramesBeforeInvalidation = requests.filter(
+                  (request) => request.type === "program_status",
+                ).length;
+                // A Mod invalidated receipt closes the launcher-owned record used by
+                // preview/materializer immediately; the native mutation is not
+                // replayed, retried, or closed (the pipe stays connected).
+                socket.write(
+                  receiptFrame({
+                    executionId: "exec_invalidated_01",
+                    requestId: "req_invalidated_01",
+                    actionId: "move_to_tile",
+                    state: "invalidated",
+                    reasonCode: "reason_invalidated",
+                    revision: 3,
+                    evidence: null,
+                  }),
+                );
+                await until(
+                  () => client.state.latestReceipt?.state === "invalidated",
+                  "invalidated_receipt_not_delivered",
+                );
+                assert.equal(client.state.connected, true);
+                // The gate stays OPEN: an invalidated receipt freezes the launcher-owned program/presentation
+                // records (asserted just below), but it must not forbid ordinary action dispatch - otherwise the
+                // action that resolves the interruption is refused by the gate the interruption closed, and the Agent
+                // is trapped by construction (ladder 6 tried `dismiss_modal` five times and got integration_not_ready).
+                assert.equal(launch.connection.executionGate?.executable, true);
+                assert.throws(
+                  () => materializeAuthenticatedStardewLaunchPorts(current, admission),
+                  /authenticated_stardew_launch_ports_required/,
+                );
+                assert.throws(
+                  () => getAuthenticatedStardewPresentationPortForPreview(launch),
+                  /authenticated_stardew_presentation_port_required/,
+                );
+                // Already-retained launcher-owned PROGRAM projection fails closed (the record is unusable for new
+                // work), but the PRESENTATION projection stays live: the companion speaks through this same object,
+                // and silencing it on an execution invalidation killed a real ladder-6 run while it tried to speak.
+                await assert.rejects(async () => {
+                  await ports.bodyProgram.status({ programId: "program_invalidated_after" });
+                }, /stardew_launcher_ports_not_live/);
+                assert.ok(
+                  ports.presentation.state.snapshot !== undefined || ports.presentation.state.snapshot === null,
+                  "the live presentation port must keep working after an execution invalidation",
+                );
+                // No program frame reached the live native pipe after invalidation.
+                assert.equal(
+                  requests.filter((request) => request.type === "program_status").length,
+                  statusFramesBeforeInvalidation,
+                );
+                return Object.freeze({ session: Object.freeze({ dispose: () => undefined }) });
+              },
+            ),
+          ),
+        );
+      } finally {
+        await binding.close();
+      }
+    },
+    (request, currentSocket) => {
+      requests.push(request);
+      socket = currentSocket;
+    },
+  );
 });
 
 test("authenticated bridge rejects unsolicited hello_ack by unknown correlation", async () => {
   let socket!: Socket;
-  await withHelloAck("farmhand_client", generation, async (pipeName, peerClosed) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000, testAdapter);
-    try {
-      socket.write(frame({
-        protocolVersion: 1,
-        messageId: "unsolicited_hello_ack",
-        correlationId: "unknown_hello_correlation",
-        timestampMs: Date.now(),
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName, peerClosed) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
         scope,
-        type: "hello_ack",
-        payload: {
-          sessionId: "session_unsolicited",
-          capabilities: ["move_to_tile"],
-          catalogRevision: 1,
-          policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 },
-          enabledActionIds: ["move_to_tile"],
-          presentationLocale: "en-US",
-          registrations: [{
-            actionId: "move_to_tile",
-            familyId: "movement_navigation",
-            identityVersion: 1,
-            lifecycle: "published",
-            kind: "execution",
-          }],
-          runtimeRole: "farmhand_client",
-          launchGeneration: generation,
-        },
-      } satisfies BridgeMessage));
-      await Promise.race([
-        peerClosed,
-        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("peer_close_timeout")), 1_000)),
-      ]);
-      assert.equal(client.state.connected, false);
-      assert.equal(client.state.latestReasonCode, "unexpected_hello_ack");
-    } finally {
-      client.close();
-    }
-  }, (_request, currentSocket) => { socket = currentSocket; });
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      try {
+        socket.write(
+          frame({
+            protocolVersion: 1,
+            messageId: "unsolicited_hello_ack",
+            correlationId: "unknown_hello_correlation",
+            timestampMs: Date.now(),
+            scope,
+            type: "hello_ack",
+            payload: {
+              sessionId: "session_unsolicited",
+              capabilities: ["move_to_tile"],
+              catalogRevision: 1,
+              policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 },
+              enabledActionIds: ["move_to_tile"],
+              presentationLocale: "en-US",
+              registrations: [
+                {
+                  actionId: "move_to_tile",
+                  familyId: "movement_navigation",
+                  identityVersion: 1,
+                  lifecycle: "published",
+                  kind: "execution",
+                },
+              ],
+              runtimeRole: "farmhand_client",
+              launchGeneration: generation,
+            },
+          } satisfies BridgeMessage),
+        );
+        await Promise.race([
+          peerClosed,
+          new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("peer_close_timeout")), 1_000)),
+        ]);
+        assert.equal(client.state.connected, false);
+        assert.equal(client.state.latestReasonCode, "unexpected_hello_ack");
+      } finally {
+        client.close();
+      }
+    },
+    (_request, currentSocket) => {
+      socket = currentSocket;
+    },
+  );
 });
