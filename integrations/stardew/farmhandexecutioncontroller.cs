@@ -4852,6 +4852,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // receipt passes through on its way out. The comparison is against what was PUBLISHED, not against the
         // mint-time mirror, so a legitimate redelivery of one transition can still be byte-identical - which is
         // what the Host's own idempotent path expects - while a genuinely new transition is always strictly higher.
+        // The hold annotation is applied to `receipt` BEFORE anything is stored or published. It used to be added
+        // after the first `Remember`, so the store could keep an un-annotated copy while the publish path sent the
+        // annotated one: a later redelivery of that stored copy then differed from its own predecessor by exactly
+        // `;held_ms=<n>` at the SAME revision, which the Host refuses as `non_monotonic_revision` (named live on
+        // 2026-10-21 by `firstDiffAt=390`, lengths [402, 390] - the twelve characters were the whole difference, and
+        // the refusal closed the bridge at 747 s of a run that had already crossed its first night).
+        if (this.heldMsByRequestId.TryGetValue(receipt.RequestId, out long heldMs))
+            receipt = receipt with
+            {
+                Evidence = string.IsNullOrEmpty(receipt.Evidence) ? $"held_ms={heldMs}" : $"{receipt.Evidence};held_ms={heldMs}",
+            };
+        // Store the annotated copy even when the revision needs no bump: otherwise the store keeps whatever the caller
+        // remembered before calling this funnel, and a later redelivery of that stored copy would differ from what
+        // was published by exactly the annotation.
+        this.Remember(receipt);
         LocalExecutionReceipt published = receipt;
         this.publishedReceiptRevisionByExecutionId.TryGetValue(receipt.ExecutionId, out long publishedRevision);
         if (publishedRevision != 0 && receipt.Revision <= publishedRevision)
@@ -4870,14 +4885,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // the Host must refuse, and a refused fact is a fatal transport fault (measured 2026-10-20, run g112attrib:
         // 402 s in, the bridge closed and the night never happened). Every copy of this request's receipts therefore
         // carries the same annotation; the entry is cleared when the execution settles.
-        if (this.heldMsByRequestId.TryGetValue(receipt.RequestId, out long heldMs))
-        {
-            published = published with
-            {
-                Evidence = string.IsNullOrEmpty(published.Evidence) ? $"held_ms={heldMs}" : $"{published.Evidence};held_ms={heldMs}",
-            };
-            this.Remember(published);
-        }
+        // (`held_ms` was folded into `receipt` above, before the store saw it.)
         // The annotation has been carried by every copy of this request's receipts; a settled execution cannot publish
         // again, so the entry can go.
         if (published.State is ExecutionState.Succeeded or ExecutionState.Failed or ExecutionState.Cancelled
