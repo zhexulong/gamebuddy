@@ -66,6 +66,11 @@ export class ReceiptReplayLedger {
               reasonCode: receipt.reasonCode,
               evidenceKeys: Object.keys(receipt.evidence ?? {}),
             },
+            // The KEYS were identical on all three occurrences, so the difference is inside the detail string.
+            detailDiff: {
+              previous: String((previous.evidence as { detail?: unknown } | undefined)?.detail ?? "").slice(0, 400),
+              incoming: String((receipt.evidence as { detail?: unknown } | undefined)?.detail ?? "").slice(0, 400),
+            },
           })}\n`,
         );
         return "non_monotonic_revision";
