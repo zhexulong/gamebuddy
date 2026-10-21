@@ -57,11 +57,21 @@ export function CharactersPanel({
   api,
   csrfToken,
   locale = "en",
+  avatarDigests: ownedDigests,
+  onAvatarUpdated,
 }: {
   api: ManagementPipelineApi;
   csrfToken: string;
   labels?: Messages;
   locale?: Locale;
+  /**
+   * The picture digest each companion was last handed, keyed by handle, and the upload that teaches
+   * a new one. The shell owns the map because the bar and the transcript draw the same companion and
+   * must re-key their image with it too; a caller that passes neither gets this panel's own state,
+   * which is what a spec mounting the panel alone needs.
+   */
+  avatarDigests?: Readonly<Record<string, string>>;
+  onAvatarUpdated?: (handle: string, digest: string) => void;
 }): ReactElement {
   const labels = characterLabels(locale);
   const [companionList, setCompanionList] = useState<CompanionListV1 | "loading" | "unavailable">("loading");
@@ -70,7 +80,9 @@ export function CharactersPanel({
   // it because the row this panel draws is what needs the reload key, and it must outlive the
   // drawer that learned it: an upload leaves `companion.list` untouched, so re-reading the
   // roster carries no digest to replace this one with (only the upload's own reply does).
-  const [avatarDigests, setAvatarDigests] = useState<Readonly<Record<string, string>>>({});
+  const [ownDigests, setOwnDigests] = useState<Readonly<Record<string, string>>>({});
+  // The shell's map wins when it has one: it is the owner, and the bar and the transcript read it too.
+  const avatarDigests = ownedDigests ?? ownDigests;
   // The roster row that opened the inspector; the drawer gives focus back to it on
   // close (the shell's own focus-restoration idiom).
   const inspectorOpener = useRef<HTMLElement | null>(null);
@@ -760,7 +772,12 @@ export function CharactersPanel({
             companion={inspected}
             locale={locale}
             onClose={() => setInspected(null)}
-            onAvatarUpdated={(handle, digest) => setAvatarDigests((current) => ({ ...current, [handle]: digest }))}
+            onAvatarUpdated={(handle, digest) => {
+              // Report upward when the shell owns the map (the bar and the transcript re-key on it), and
+              // keep a local copy either way: a panel mounted on its own still draws its own roster.
+              setOwnDigests((current) => ({ ...current, [handle]: digest }));
+              onAvatarUpdated?.(handle, digest);
+            }}
             restoreFocusTo={inspectorOpener}
           />
         </>

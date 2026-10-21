@@ -17,6 +17,7 @@ export function Timeline({
   transcript,
   companionName,
   companionHandle,
+  companionDigest,
   chatTitle,
   labels,
   preview = null,
@@ -41,6 +42,13 @@ export function Timeline({
   companionName: string;
   /** The mounted companion's own roster handle: how her picture is addressed. */
   companionHandle: string | null;
+  /**
+   * The digest of the picture the player last gave her, when the shell knows one: it is her rows'
+   * avatar reload key, so an upload shows at once in the conversation rather than only after a
+   * reload (`CompanionAvatar.digest`). `pendingPlayerMessage` has no such prop: that row is the
+   * player's own, and it draws a monogram.
+   */
+  companionDigest?: string;
   chatTitle: string | null;
   labels: {
     chatTranscript: string;
@@ -340,6 +348,7 @@ export function Timeline({
               message={message}
               companionName={companionName}
               companionHandle={companionHandle}
+              companionDigest={companionDigest}
               playerLabel={labels.you}
               labels={labels}
               pending={pending !== null && pending.handle === message.handle ? pending.kind : null}
@@ -373,6 +382,7 @@ export function Timeline({
               })}
               companionName={companionName}
               companionHandle={companionHandle}
+              companionDigest={companionDigest}
               playerLabel={labels.you}
               labels={labels}
               streaming

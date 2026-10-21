@@ -156,6 +156,19 @@ export function ComposedReferenceGameApp() {
   const chatEntryRef = useRef<HTMLButtonElement>(null);
   const chatsEntryRef = useRef<HTMLButtonElement>(null);
   const charactersEntryRef = useRef<HTMLButtonElement>(null);
+
+  /**
+   * The picture each companion was last given, as the upload's own reply reported it.
+   *
+   * One owner, three readers: the bar, the transcript and the roster all draw her with
+   * `CompanionAvatar`, whose `digest` keys the image element so a new picture is fetched
+   * instead of served from the browser's cache. Without this the drawer and the roster
+   * updated and everything else kept the old picture until a reload.
+   */
+  const [avatarDigests, setAvatarDigests] = useState<Readonly<Record<string, string>>>({});
+  const handleAvatarUpdated = useCallback((handle: string, digest: string) => {
+    setAvatarDigests((previous) => (previous[handle] === digest ? previous : { ...previous, [handle]: digest }));
+  }, []);
   const settingsEntryRef = useRef<HTMLButtonElement>(null);
   const memoryEntryRef = useRef<HTMLButtonElement>(null);
   const modelPopoutEntryRef = useRef<HTMLButtonElement>(null);
@@ -1203,6 +1216,7 @@ export function ComposedReferenceGameApp() {
             brandLabel={labels().appName}
             companionName={view.session.snapshot.chat.companion.name}
             companionHandle={view.session.snapshot.chat.companion.handle}
+            companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
             statusLabel={turnInFlight ? labels().generating : labels().online}
             statusTone={turnInFlight ? "progress" : "idle"}
             entries={[
@@ -1274,6 +1288,7 @@ export function ComposedReferenceGameApp() {
                 preview={preview}
                 companionName={view.session.snapshot.chat.companion.name}
                 companionHandle={view.session.snapshot.chat.companion.handle}
+                companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
                 chatTitle={view.session.snapshot.chat.title}
                 labels={labels()}
                 pending={chatMutation}
@@ -1359,6 +1374,8 @@ export function ComposedReferenceGameApp() {
                 labels={labels()}
                 locale={view.locale}
                 read={readProductWorldInfo}
+                avatarDigests={avatarDigests}
+                onAvatarUpdated={handleAvatarUpdated}
                 restoreFocusTo={charactersEntryRef}
               />
             )}

@@ -52,6 +52,13 @@ export type AppBarProps = Readonly<{
    * conversation. `null` for a bar with no companion at all.
    */
   companionHandle: string | null;
+  /**
+   * The digest of the picture the player last gave her, when the shell knows one: the reload key her
+   * avatar needs so a new picture appears without a reload (`CompanionAvatar.digest`). The bar is one
+   * of the places a player looks right after an upload, so it takes the same fact the roster and the
+   * transcript are handed.
+   */
+  companionDigest?: string;
   /** Localized status word: online, or the turn state while one is in flight. */
   statusLabel: string;
   /** `progress` adds the pulsing accent dot a running turn already implies. */
@@ -72,6 +79,7 @@ export function AppBar({
   brandLabel,
   companionName,
   companionHandle,
+  companionDigest,
   statusLabel,
   statusTone = "idle",
   entries,
@@ -156,7 +164,7 @@ export function AppBar({
       </div>
 
       <div className="app-bar-companion">
-        <CompanionAvatar handle={companionHandle} name={avatarName} className="avatar-small" />
+        <CompanionAvatar handle={companionHandle} name={avatarName} className="avatar-small" digest={companionDigest} />
         <span className="app-bar-title">{companionName}</span>
         {/* One polite live region announces the connection/turn status once
             (design/26 §7.3); `role="status"` is that region. The word is a child

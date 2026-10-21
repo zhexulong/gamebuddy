@@ -152,6 +152,7 @@ export const MessageBubble = memo(function MessageBubble({
   message,
   companionName,
   companionHandle,
+  companionDigest,
   playerLabel,
   onSwipe,
   onRegenerate,
@@ -177,6 +178,14 @@ export const MessageBubble = memo(function MessageBubble({
   companionName: string;
   /** The mounted companion's own roster handle: how her picture is addressed. */
   companionHandle: string | null;
+  /**
+   * The digest of the picture the player last gave her, when the shell knows one - the reload key
+   * `CompanionAvatar` needs to replace the bytes behind her one URL. It is handed down from the same
+   * place the app bar and the roster are handed it, because an upload writes the file her face serves
+   * and leaves every read (`companion.list`, the transcript) untouched: nothing about this row can be
+   * re-read to learn that a newer picture exists.
+   */
+  companionDigest?: string;
   playerLabel: string;
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate?: (messageHandle: string) => void;
@@ -483,7 +492,12 @@ export const MessageBubble = memo(function MessageBubble({
           companion's side carries her real picture when the Host has one;
           everything else about the element - size, plate, `aria-hidden` - is the
           monogram it already was. */}
-      <CompanionAvatar handle={isPlayer ? null : companionHandle} name={authorName} className="avatar-small" />
+      <CompanionAvatar
+        handle={isPlayer ? null : companionHandle}
+        name={authorName}
+        className="avatar-small"
+        digest={companionDigest}
+      />
       <div className="message-body">
         {/* The author line belongs to the companion only. The player's own
             monogram already sits at the row's edge, so printing the same name

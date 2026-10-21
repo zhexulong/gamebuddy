@@ -20,6 +20,8 @@ export function CharactersSurface({
   labels,
   locale,
   read,
+  avatarDigests,
+  onAvatarUpdated,
   restoreFocusTo,
 }: {
   api: ManagementPipelineApi;
@@ -27,6 +29,15 @@ export function CharactersSurface({
   labels: Messages;
   locale: Locale;
   read: () => Promise<WorldInfoSurfaceSource>;
+  /**
+   * The picture digest each companion was last handed, keyed by handle: the roster rows' avatar
+   * reload key. It belongs to the shell, not to this surface, because an upload here must also be
+   * the picture the app bar and the transcript draw once the player leaves (see
+   * `ComposedReferenceGameApp`).
+   */
+  avatarDigests: Readonly<Record<string, string>>;
+  /** An upload's own answer, told to whoever owns `avatarDigests`. */
+  onAvatarUpdated: (handle: string, digest: string) => void;
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   return (
@@ -36,7 +47,14 @@ export function CharactersSurface({
       icon={Users}
       restoreFocusTo={restoreFocusTo}
     >
-      <CharactersSurfacePanel api={api} csrfToken={csrfToken} locale={locale} read={read} />
+      <CharactersSurfacePanel
+        api={api}
+        csrfToken={csrfToken}
+        locale={locale}
+        read={read}
+        avatarDigests={avatarDigests}
+        onAvatarUpdated={onAvatarUpdated}
+      />
     </SurfaceView>
   );
 }

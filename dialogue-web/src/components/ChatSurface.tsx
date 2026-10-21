@@ -20,6 +20,7 @@ export function ChatSurface({
   preview,
   companionName,
   companionHandle,
+  companionDigest,
   chatTitle,
   labels,
   pending,
@@ -54,6 +55,13 @@ export function ChatSurface({
   companionName: string;
   /** The mounted companion's own roster handle: how her picture is addressed. */
   companionHandle: string | null;
+  /**
+   * The digest of the picture the player last gave her, when the shell knows one: her rows' avatar
+   * reloads under it, so a picture the player just uploaded is the one on the transcript (see
+   * `CompanionAvatar.digest`). Every row here belongs to the one mounted companion, so it is one
+   * value rather than a map.
+   */
+  companionDigest?: string;
   chatTitle: string | null;
   labels: Messages;
   /** The chat mutation in flight and the message it belongs to, if any. */
@@ -110,6 +118,7 @@ export function ChatSurface({
         preview={preview}
         companionName={companionName}
         companionHandle={companionHandle}
+        companionDigest={companionDigest}
         chatTitle={chatTitle}
         labels={labels}
         pending={pending}

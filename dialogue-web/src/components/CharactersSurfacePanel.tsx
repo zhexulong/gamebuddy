@@ -50,15 +50,26 @@ export function CharactersSurfacePanel({
   csrfToken,
   locale,
   read,
+  avatarDigests,
+  onAvatarUpdated,
 }: {
   api: ManagementPipelineApi;
   csrfToken: string;
   locale: Locale;
   read: () => Promise<WorldInfoSurfaceSource>;
+  /** The picture digest each companion was last handed, and the upload that teaches it one. */
+  avatarDigests: Readonly<Record<string, string>>;
+  onAvatarUpdated: (handle: string, digest: string) => void;
 }): ReactElement {
   return (
     <>
-      <CharactersPanel api={api} csrfToken={csrfToken} locale={locale} />
+      <CharactersPanel
+        api={api}
+        csrfToken={csrfToken}
+        locale={locale}
+        avatarDigests={avatarDigests}
+        onAvatarUpdated={onAvatarUpdated}
+      />
       <CompanionCardExportSection api={api} locale={locale} />
       <CompanionWorldBookSection api={api} csrfToken={csrfToken} locale={locale} />
       <CharacterWorldBookPanel api={api} csrfToken={csrfToken} locale={locale} read={read} />
