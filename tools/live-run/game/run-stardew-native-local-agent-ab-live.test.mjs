@@ -63,13 +63,22 @@ test("the runner reads the run manifest under the same Game session path the run
   assert.match(RUNNER_SOURCE, /gameSessionId,/);
 });
 
-test("a disposable runtime root is the explicit fallback and is the only path that writes a model profile", () => {
+test("a model profile is filled only where one is missing, never overwritten", () => {
   assert.match(RUNNER_SOURCE, /const usesDisposableRoot = !usesConfiguredRuntimeRoot;/);
-  // The gate and the write, in that order, without pinning how the formatter wraps the call.
-  const disposableGate = RUNNER_SOURCE.indexOf("if (usesDisposableRoot)");
-  const profileWrite = RUNNER_SOURCE.indexOf('"model-profiles.json"');
-  assert.ok(disposableGate >= 0 && profileWrite > disposableGate, "only a disposable root writes a model profile");
-  assert.ok(RUNNER_SOURCE.slice(disposableGate, profileWrite).includes("await writeFile"), "the gate guards the write");
+  // The gate is now "the root has no profile", not "the root is disposable": a configured root without one used to
+  // fall through to the Host's default model, which is not in the runtime's own catalog, and the run died with
+  // `provider_error:404 model_not_found` while its manifest said `deepseek-v4-flash` (measured 2026-10-21). Filling a
+  // gap is safe; overwriting an operator's choice would not be, so the gate must READ before it writes.
+  const gapGate = RUNNER_SOURCE.indexOf("if (!hasModelProfile)");
+  const profileRead = RUNNER_SOURCE.indexOf("const hasModelProfile");
+  assert.ok(profileRead >= 0 && gapGate > profileRead, "the profile is READ before anything is decided");
+  // The write is pinned as a pair with its gate, because the path literal itself now appears earlier (in the constant
+  // that the gate reads), so a character-position comparison cannot express "the gate precedes the write".
+  assert.match(
+    RUNNER_SOURCE,
+    /if \(!hasModelProfile\)\s*await writeFile\(\s*modelProfilePath/,
+    "the write goes to the path that was read",
+  );
 });
 
 test("the runner enforces a companion-interaction gate on every speaking scenario", () => {

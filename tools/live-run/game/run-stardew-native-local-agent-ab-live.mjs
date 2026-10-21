@@ -2102,12 +2102,22 @@ if (!personaMounted.ok) throw new Error(`live_run_persona_not_mounted:${personaM
 process.stderr.write(
   `[run] persona mounted: ${String(personaMounted.name)} (profile ${String(personaMounted.profileName)}, ${personaMounted.worldBookEntries} world-book entries, ${personaMounted.macroTokens} authored tokens, opening ${personaMounted.greeting === null ? "absent" : `${personaMounted.greeting.variants} variants`}) from ${provisionedPersona.identity.dir}\n`,
 );
-// The model profile is configuration, not a script constant: an existing
-// product profile is reused as-is; only a disposable root gets the local
-// development profile so the Agent turn can run at all.
-if (usesDisposableRoot)
+// The model profile is configuration, not a script constant: an existing profile is reused AS IS, and a root that has
+// none gets the local development model.
+//
+// It used to be written only for a DISPOSABLE root, so a configured root without a profile fell through to the Host's own
+// default model - which is not in this runtime's own catalog: the run then died with `provider_error:404
+// model_not_found`, while its manifest and its catalogs both said `deepseek-v4-flash` (measured 2026-10-21, run
+// g114journal). Filling a GAP is safe and is not the same as overwriting an operator's choice; a root that has a profile
+// keeps it untouched.
+const modelProfilePath = join(runtimeRoot, "settings", "model-profiles.json");
+const hasModelProfile = await readFile(modelProfilePath, "utf8").then(
+  () => true,
+  () => false,
+);
+if (!hasModelProfile)
   await writeFile(
-    join(runtimeRoot, "settings", "model-profiles.json"),
+    modelProfilePath,
     JSON.stringify({
       schemaVersion: 1,
       chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
