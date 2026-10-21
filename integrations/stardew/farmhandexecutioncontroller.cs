@@ -1014,8 +1014,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         LocalExecutionReceipt receipt = new(held.ExecutionId, requestId, ExecutionState.Rejected, holdCode, this.revision, holdEvidence, ActionId: held.ActionId);
         this.Remember(receipt);
-        this.AddTrace(receipt);
-        return receipt;
+        LocalExecutionReceipt published = this.AddTrace(receipt);
+        return published;
     }
 
     /// <summary>
@@ -4738,12 +4738,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         string? boundActionId = this.actionIdsByRequestId.TryGetValue(requestId, out string? action) ? action : null;
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence, ActionId: boundActionId, Observation: observation);
         this.Remember(receipt);
-        this.AddTrace(receipt);
+        LocalExecutionReceipt published = this.AddTrace(receipt);
         // Immediate native actions own no continuing controller/animation, so
         // their receipt is followed by the same centralized release check.
         if (state is ExecutionState.Succeeded or ExecutionState.Cancelled or ExecutionState.Invalidated or ExecutionState.Failed or ExecutionState.Expired or ExecutionState.Uncertain)
             this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
+        return published;
     }
 
     private void Remember(LocalExecutionReceipt receipt)
@@ -4791,7 +4791,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return annotated;
     }
 
-    private void AddTrace(LocalExecutionReceipt receipt)
+    private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt)
     {
         if (receipt.ActionId is null && this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? persistedReceipt))
             receipt = persistedReceipt;
@@ -4829,13 +4829,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 {
                     this.durabilityFailuresByRequestId.Add(receipt.RequestId);
                     this.monitor.Log($"[receipt-durability-marker] request={receipt.RequestId};state={receipt.State};reason={receipt.ReasonCode};code={result.Code}", LogLevel.Trace);
-                    return;
+                    return receipt;
                 }
                 this.monitor.Log($"[receipt-durability-marker] request={receipt.RequestId};state={receipt.State};reason={receipt.ReasonCode};code={result.Code};ignored=observational", LogLevel.Trace);
             }
         }
         if (this.durabilityFailuresByRequestId.Contains(receipt.RequestId))
-            return;
+            return receipt;
         // ONE delivery funnel, so the published revision is strictly monotonic PER EXECUTION.
         //
         // The Host audits receipt order and refuses a same-revision transition whose content differs
@@ -4888,6 +4888,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (category is not null && !this.navigationExecutionIds.Contains(published.ExecutionId))
             this.AddPublicTrace(category, published.ExecutionId, published.RequestId);
         this.receiptPublished?.Invoke(published);
+        // The CALLER answers with this object, and the fact stream carries it too. Handing back the minted one instead
+        // published a fact without `held_ms` while the response carried it (same revision, different content), which the
+        // Host refuses as `non_monotonic_revision` - named live on 2026-10-21: same execution, same revision 266, same
+        // state and reason, different evidence.
+        return published;
     }
 
     /// <summary>

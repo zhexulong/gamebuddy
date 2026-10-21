@@ -37,13 +37,27 @@ public sealed class ReceiptRevisionMonotonicityTests
     private static string PublishFunnelBody()
     {
         string source = ReadExecutionController();
-        int start = source.IndexOf("private void AddTrace(LocalExecutionReceipt receipt)", StringComparison.Ordinal);
+        // The funnel RETURNS the receipt it published, so the caller answers with the same bytes the fact stream carries.
+        int start = source.IndexOf("private LocalExecutionReceipt AddTrace(LocalExecutionReceipt receipt)", StringComparison.Ordinal);
         start.Should().BeGreaterThan(0, "the delivery funnel must exist");
         // The WHOLE method, not up to any one marker inside it: the publish and the trace line are both part of
         // the funnel and their order is what the assertions below are about.
         int end = source.IndexOf("\n    }\n", start, StringComparison.Ordinal);
         end.Should().BeGreaterThan(start);
         return source[start..end];
+    }
+
+    [Fact]
+    public void TheFunnelHandsBackTheReceiptItPublished()
+    {
+        // The caller answers with this object and the fact stream carries it, so handing back the MINTED receipt
+        // published a fact without `held_ms` while the response carried it - same revision, different content, which
+        // the Host refuses as `non_monotonic_revision` (named live 2026-10-21: same execution, revision 266, same
+        // state and reason, different evidence).
+        PublishFunnelBody().Should().EndWith("return published;", "the funnel hands back what it published");
+        // The durability-failure early returns keep answering with the minted receipt on purpose: nothing was
+        // published on that path, so there is no published copy to hand back.
+        PublishFunnelBody().Should().Contain("if (ModEntry.IsUnconfirmedTerminal(receipt.State))");
     }
 
     [Fact]
