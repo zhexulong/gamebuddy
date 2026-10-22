@@ -4709,7 +4709,12 @@
 
   .game-group-secondary .game-fact dt {
     font-size: 11px;
-    color: var(--text-disabled);
+    /* These are field labels - live text a player reads ("连接", "实例") - and they
+       read `--text-disabled` at 5.57:1, the same mistake the section headings had:
+       the token is named for text the player cannot use. Same treatment as the
+       headings in this initiative: 12 px, and the secondary tone rather than the
+       disabled one. */
+    color: var(--text-secondary);
   }
 
   /* ==========================================================================
