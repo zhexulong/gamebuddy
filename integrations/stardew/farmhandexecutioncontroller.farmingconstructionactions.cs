@@ -114,30 +114,53 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crop_target_unavailable", $"target={targetX},{targetY}");
         if (!string.Equals(BuildCropTargetId(location, targetX, targetY, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crop_target_changed", $"target={targetX},{targetY}");
-        if (Game1.player.CurrentTool is not WateringCan wateringCan)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped", null);
-        if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty", null);
+        if (!TrySelectDeclaredTool(Game1.player, "water_crop", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, null);
+        try
+        {
+            if (selection.Tool is not WateringCan wateringCan)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty", null);
 
-        LocalCropWateringSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, dirt.crop.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown", this.revision, requestedDeadlineMs);
-        bool beforeWatered = dirt.isWatered();
-        int beforeWater = wateringCan.WaterLeft;
-        float staminaBefore = Game1.player.Stamina;
-        UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        // WateringCan covers power with toolPower.Value (tap => 0), so a basic
-        // can tap costs 2*(0+1) - Farming*0.1 = 2 - Farming*0.1.
-        float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
-        bool afterWatered = dirt.isWatered();
-        bool waterConsumed = wateringCan.IsBottomless || wateringCan.WaterLeft < beforeWater || Game1.player.hasWateringCanEnchantment;
-        ExecutionState state = !beforeWatered && afterWatered ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-        string reasonCode = state == ExecutionState.Succeeded ? "crop_watered" : "crop_water_postcondition_unavailable";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
-            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};before_watered={beforeWatered.ToString().ToLowerInvariant()};after_watered={afterWatered.ToString().ToLowerInvariant()};water_before={beforeWater};water_after={wateringCan.WaterLeft};water_consumed={waterConsumed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        return receipt;
+            LocalCropWateringSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, dirt.crop.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown", this.revision, requestedDeadlineMs);
+            bool beforeWatered = dirt.isWatered();
+            int beforeWater = wateringCan.WaterLeft;
+            float staminaBefore = Game1.player.Stamina;
+            UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            // WateringCan covers power with toolPower.Value (tap => 0), so a basic
+            // can tap costs 2*(0+1) - Farming*0.1 = 2 - Farming*0.1.
+            float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
+            bool afterWatered = dirt.isWatered();
+            bool waterConsumed = wateringCan.IsBottomless || wateringCan.WaterLeft < beforeWater || Game1.player.hasWateringCanEnchantment;
+            ExecutionState state = !beforeWatered && afterWatered ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            string reasonCode = state == ExecutionState.Succeeded ? "crop_watered" : "crop_water_postcondition_unavailable";
+            LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
+                ToolActionEvidence.Compose(ToolActionEvidence.WaterCrop, new Dictionary<string, string>
+                {
+                    ["location"] = specification.Location,
+                    ["target"] = expectedTargetId,
+                    ["tile"] = $"{targetX.ToString(CultureInfo.InvariantCulture)},{targetY.ToString(CultureInfo.InvariantCulture)}",
+                    ["before_watered"] = beforeWatered.ToString().ToLowerInvariant(),
+                    ["after_watered"] = afterWatered.ToString().ToLowerInvariant(),
+                    ["water_before"] = beforeWater.ToString(CultureInfo.InvariantCulture),
+                    ["water_after"] = wateringCan.WaterLeft.ToString(CultureInfo.InvariantCulture),
+                    ["water_consumed"] = waterConsumed.ToString().ToLowerInvariant(),
+                    ["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture),
+                    ["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture),
+                    ["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture),
+                    ["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture),
+                }));
+            this.Remember(receipt);
+            this.AddTrace(receipt);
+            return receipt;
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
     }
 
     /// <summary>Native crop harvest limited to ready, ordinary Grab crops.</summary>

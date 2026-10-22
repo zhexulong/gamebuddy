@@ -19,10 +19,10 @@ public enum FarmhandResourceTemplateValue
     AnyUpgrade = 2,
 
     /// <summary>
-    /// `tool:&lt;category&gt;`: only the level-0 (basic) tool of that category satisfies the claim. Some handlers
-    /// refuse an upgraded tool by name (`basic_pickaxe_not_equipped_in_requested_slot`), so "any axe" would be
-    /// a wrong promise: the surface must be able to say "the basic one".
-    /// </summary>
+    /// `tool:&lt;category&gt;`: only the level-0 (basic) tool of that category satisfies the claim. The handlers select
+    /// the tool their claim names, so an upgraded one is refused by name
+    /// (`tool_upgrade_insufficient:&lt;category&gt;:&lt;need&gt;:&lt;have&gt;`) rather than silently used: "any axe" would be
+    /// a wrong promise.</summary>
     BasicOnly = 3,
 }
 public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null);
@@ -186,8 +186,8 @@ public static class FarmhandActionCatalog
         E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, PickupForage()), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, TargetItem()),
-        // water_crop drives the actor's own WateringCan: the handler refuses by name
-        // (`watering_can_not_equipped`) when the current tool is not one, so the can is an unconditional requirement.
+        // water_crop drives the actor's own WateringCan: the handler selects the can its claim names before watering
+        // (`tool_not_owned:watering_can` when the pack holds none), so the can is an unconditional requirement.
         // Which can is NOT declared: the handler accepts any upgrade level (its `watering_can_empty` refusal is about
         // the can's water, runtime state a planner cannot read from the surface).
         E("water_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, TargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade)), E("plant_seed", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget()), E("fertilize_tile", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget()),
@@ -229,8 +229,8 @@ public static class FarmhandActionCatalog
         E("chest_retrieve", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
         E("chop_stump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.LiveVerified),
         E("plant_sapling", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
-        // Scythe actions: the handler requires the actor's own scythe to be the current tool
-        // (`scythe_not_equipped_in_requested_slot` otherwise). A scythe has no upgrade ladder, so "any" is exact.
+        // Scythe actions: the handler selects the actor's own scythe before swinging, from the `tool:scythe` claim
+        // below. A scythe has no upgrade ladder, so "any" is exact.
         E("cut_weeds", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade), FarmhandActionLifecycle.LiveVerified),
         E("cut_grass", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade), FarmhandActionLifecycle.LiveVerified),
         E("clear_cask", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "cask_cleared", "Cask.performToolAction"), FarmhandActionLifecycle.LiveVerified),

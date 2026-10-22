@@ -14,11 +14,12 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// and which slot really holds which tool.
 ///
 /// <para>
-/// Why this exists: <c>cut_weeds</c>, <c>break_rock_source</c>, <c>chop_tree_source</c> and <c>water_crop</c> take a
-/// <c>slot</c> that the handlers require to EQUAL <c>Game1.player.CurrentToolIndex</c> and to hold the exact tool
-/// (<c>farmhandexecutioncontroller.resourcetoolactions.cs:26/103/167</c>). The number could not be judged statically,
-/// so a live run guessed and came back with <c>basic_pickaxe_not_equipped_in_requested_slot</c> and
-/// <c>invalid_tool_selector</c> receipts. The Mod knows the answer, so it publishes it.
+/// Why this exists: a live run that had to hand a tool action a <c>slot</c> guessed the number and came back with
+/// <c>basic_pickaxe_not_equipped_in_requested_slot</c> and <c>invalid_tool_selector</c> receipts. The actions whose own
+/// registration claims a tool (<c>cut_weeds</c>, <c>cut_grass</c>, <c>break_rock_source</c>, <c>water_crop</c>) now select
+/// that tool themselves and ignore the number; the ones that still require it to EQUAL <c>Game1.player.CurrentToolIndex</c>
+/// and to hold the exact tool (<c>farmhandexecutioncontroller.resourcetoolactions.cs</c>) are why the Mod publishes which
+/// slot holds which tool instead of leaving the caller to guess.
 /// </para>
 ///
 /// <para>

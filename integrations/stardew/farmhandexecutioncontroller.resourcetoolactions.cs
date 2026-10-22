@@ -100,7 +100,8 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe pickaxe || !ReferenceEquals(Game1.player.CurrentTool, pickaxe) || pickaxe.UpgradeLevel != 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
+        if (ResolveDeclaredTool(Game1.player.Items, "break_rock_source").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock) || !NativeItemPredicates.IsOneHitBreakableStone(rock) || !string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={targetX},{targetY}");
@@ -125,29 +126,54 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Executes break_rock_source against the current world, re-validating the tool
-    /// and the target because an approach leg may have taken several ticks. Shared by
-    /// the in-range path and the post-approach path so the two cannot drift.
+    /// Executes break_rock_source against the current world, re-validating the target because an approach leg may have
+    /// taken several ticks. The tool is not the caller's to name: the action's own registration claims
+    /// `tool:pickaxe` with `BasicOnly`, so this selects the basic pickaxe it needs and restores the actor's own
+    /// selection afterwards. Shared by the in-range path and the post-approach path so the two cannot drift.
     /// </summary>
     private LocalExecutionReceipt ExecuteBreakRockSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe pickaxe || !ReferenceEquals(Game1.player.CurrentTool, pickaxe) || pickaxe.UpgradeLevel != 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock) || !NativeItemPredicates.IsOneHitBreakableStone(rock) || !string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={targetX},{targetY}");
-        int before = rock.MinutesUntilReady;
-        float staminaBefore = Game1.player.Stamina;
-        UseNativeToolOnTile(pickaxe, location, targetX, targetY, Game1.player, staminaBefore);
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        // Pickaxe covers power with who.toolPower.Value before deducting; a plain
-        // tap holds toolPower at 0 (pressUseToolButton resets it), so a basic
-        // pickaxe tap costs 2*(0+1) - Mining*0.1 = 2 - Mining*0.1.
-        float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
-        bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterRock);
-        bool succeeded = removed;
-        string evidence = $"target={expectedTargetId};tool=pickaxe;slot={slot};qualified_item_id={rock.QualifiedItemId};durability_before={before};durability_after={(removed ? "removed" : afterRock!.MinutesUntilReady.ToString(CultureInfo.InvariantCulture))};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "rock_source_broken" : "rock_source_postcondition_unavailable", evidence);
+        if (!TrySelectDeclaredTool(Game1.player, "break_rock_source", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
+        try
+        {
+            if (selection.Tool is not Pickaxe pickaxe)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            GameLocation location = Game1.player.currentLocation;
+            Vector2 tile = new(targetX, targetY);
+            if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock) || !NativeItemPredicates.IsOneHitBreakableStone(rock) || !string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={targetX},{targetY}");
+            int before = rock.MinutesUntilReady;
+            float staminaBefore = Game1.player.Stamina;
+            UseNativeToolOnTile(pickaxe, location, targetX, targetY, Game1.player, staminaBefore);
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            // Pickaxe covers power with who.toolPower.Value before deducting; a plain
+            // tap holds toolPower at 0 (pressUseToolButton resets it), so a basic
+            // pickaxe tap costs 2*(0+1) - Mining*0.1 = 2 - Mining*0.1.
+            float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
+            bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterRock);
+            bool succeeded = removed;
+            string evidence = ToolActionEvidence.Compose(ToolActionEvidence.BreakRockSource, new Dictionary<string, string>
+            {
+                ["target"] = expectedTargetId,
+                ["tool"] = "pickaxe",
+                // The slot the action used is the one the selection put in hand, never the number the request carried.
+                ["slot"] = selection.Slot.ToString(CultureInfo.InvariantCulture),
+                ["qualified_item_id"] = rock.QualifiedItemId,
+                ["durability_before"] = before.ToString(CultureInfo.InvariantCulture),
+                ["durability_after"] = removed ? "removed" : afterRock!.MinutesUntilReady.ToString(CultureInfo.InvariantCulture),
+                ["removed"] = removed.ToString().ToLowerInvariant(),
+                ["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture),
+                ["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture),
+                ["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture),
+                ["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture),
+            });
+            return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "rock_source_broken" : "rock_source_postcondition_unavailable", evidence);
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
     }
 
     /// <summary>One native Basic Pickaxe use removes exactly one fresh adjacent empty ground HoeDirt; crops, IndoorPots, drops, and collection are outside this action.</summary>
@@ -483,6 +509,112 @@ internal sealed partial class ExecutionManager
     };
 
     /// <summary>
+    /// The tool one action's own registration declares: the category from `tool:&lt;category&gt;` and the upgrade tier
+    /// from that claim's value. Reading it from the registration rather than from a table in the handler is what keeps
+    /// "which tool" a published fact - `cut_weeds` needs the scythe because its registration claims one, not because
+    /// this file remembers it.
+    /// </summary>
+    private static FarmhandActionResourceTemplateClaim? DeclaredToolClaim(string actionId)
+    {
+        FarmhandActionRegistration? registration = FarmhandActionCatalog.Registrations
+            .FirstOrDefault(candidate => string.Equals(candidate.ActionId, actionId, StringComparison.Ordinal));
+        return registration?.Descriptor?.ResourceTemplate
+            .FirstOrDefault(claim => claim.Key.StartsWith("tool:", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The upgrade-level range one claim value permits: `BasicOnly` is exactly the basic tool (the native handlers
+    /// refuse an upgraded one by name), and every other word - `AnyUpgrade` today - is every level. A word this Mod
+    /// does not know says nothing about level, which is the same reading the Host publishes for the claim.
+    /// </summary>
+    private static (int Minimum, int Maximum) DeclaredToolUpgradeBounds(FarmhandResourceTemplateValue requirement) =>
+        requirement switch
+        {
+            FarmhandResourceTemplateValue.BasicOnly => (0, 0),
+            _ => (0, int.MaxValue),
+        };
+
+    /// <summary>
+    /// Resolves one action's declared tool against the pack it is GIVEN: the slot whose tool satisfies the claim, or the
+    /// NAMED reason nothing does. It reads the pack and never the held tool - holding an axe is not a reason a scythe
+    /// action cannot run - and it mutates nothing, so a test can ask the same question with a synthetic pack.
+    /// </summary>
+    private static DeclaredToolResolution ResolveDeclaredTool(IList<Item?> items, string actionId)
+    {
+        FarmhandActionResourceTemplateClaim? claim = DeclaredToolClaim(actionId);
+        if (claim is null)
+            return new DeclaredToolResolution(string.Empty, -1, $"tool_requirement_undeclared:{actionId}");
+        string category = claim.Key["tool:".Length..];
+        (int minimum, int maximum) = DeclaredToolUpgradeBounds(claim.Value);
+        int bestSlot = -1;
+        int bestLevel = -1;
+        int ownedLevel = -1;
+        for (int slot = 0; slot < items.Count; slot++)
+        {
+            if (items[slot] is not Tool tool || !MatchesToolCategory(tool, category))
+                continue;
+            ownedLevel = Math.Max(ownedLevel, tool.UpgradeLevel);
+            // The claim's tier decides which owned tool satisfies it; among those, the best one wins and ties go to the
+            // smallest slot, which is the same ranking equip_tool resolves a category with.
+            if (tool.UpgradeLevel < minimum || tool.UpgradeLevel > maximum)
+                continue;
+            if (tool.UpgradeLevel > bestLevel || (tool.UpgradeLevel == bestLevel && (bestSlot < 0 || slot < bestSlot)))
+            {
+                bestSlot = slot;
+                bestLevel = tool.UpgradeLevel;
+            }
+        }
+        if (bestSlot >= 0)
+            return new DeclaredToolResolution(category, bestSlot, null);
+        if (ownedLevel < 0)
+            return new DeclaredToolResolution(category, -1, $"tool_not_owned:{category}");
+        // Owned, but not at a level the claim permits: `need` is the claim's own floor and `have` the best owned one.
+        return new DeclaredToolResolution(
+            category,
+            -1,
+            $"tool_upgrade_insufficient:{category}:{minimum.ToString(CultureInfo.InvariantCulture)}:{ownedLevel.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    /// <summary>
+    /// Takes the tool the action's registration declares as the actor's current INPUT, and saves the index that was
+    /// held. Equipping in Stardew is input selection, not an action: `Farmer.CurrentTool` is `Items[CurrentToolIndex] as
+    /// Tool`, so the native building-chest load already does exactly this - save `CurrentToolIndex`, hold the slot for
+    /// the call, restore it afterwards (farmhandexecutioncontroller.buildingchestactions.cs:246-270). It spends no
+    /// stamina, advances no time and mutates no world state, so its only failures are the pack's own.
+    /// </summary>
+    private static bool TrySelectDeclaredTool(
+        Farmer farmer,
+        string actionId,
+        out DeclaredToolSelection selection,
+        out string refusalCode)
+    {
+        selection = default;
+        refusalCode = string.Empty;
+        DeclaredToolResolution resolution = ResolveDeclaredTool(farmer.Items, actionId);
+        if (resolution.RefusalCode is not null)
+        {
+            refusalCode = resolution.RefusalCode;
+            return false;
+        }
+        Tool tool = (Tool)farmer.Items[resolution.Slot]!;
+        int previousSlot = farmer.CurrentToolIndex;
+        farmer.CurrentToolIndex = resolution.Slot;
+        // The switch's own postcondition: a handler must never swing whatever the switch left in hand.
+        if (!ReferenceEquals(farmer.CurrentTool, tool))
+        {
+            farmer.CurrentToolIndex = previousSlot;
+            refusalCode = $"tool_not_selected:{resolution.Category}";
+            return false;
+        }
+        selection = new DeclaredToolSelection(tool, resolution.Category, resolution.Slot, previousSlot);
+        return true;
+    }
+
+    /// <summary>Puts the actor's own tool selection back: every exit after a selection restores it exactly once.</summary>
+    private static void RestoreToolSelection(Farmer farmer, DeclaredToolSelection selection) =>
+        farmer.CurrentToolIndex = selection.PreviousSlot;
+
+    /// <summary>
     /// Chop exactly one TerrainFeature Tree stump (stump.Value == true) with an
     /// equipped Axe of any upgrade level. ResourceClump stumps (600/602) are
     /// NOT this action's targets: they belong exclusively to clear_debris, per
@@ -605,8 +737,10 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon probeWeapon || !probeWeapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, probeWeapon))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
+        // Ask before walking: a pack that cannot satisfy the action's claim is refused now rather than after an approach
+        // leg the action could never finish.
+        if (ResolveDeclaredTool(Game1.player.Items, "cut_weeds").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? probeWeed) || !probeWeed.IsWeeds()
@@ -652,8 +786,8 @@ internal sealed partial class ExecutionManager
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon probeWeapon || !probeWeapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, probeWeapon))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
+        if (ResolveDeclaredTool(Game1.player.Items, "cut_grass").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? probeFeature) || probeFeature is not StardewValley.TerrainFeatures.Grass probeGrass
@@ -678,134 +812,191 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Executes cut_grass against the current world, re-validating the tool and the
-    /// target because an approach leg may have taken several ticks. Shared by the
-    /// in-range path and the post-approach path so the two cannot drift.
+    /// Executes cut_grass against the current world, re-validating the target because an approach leg may have taken
+    /// several ticks. The tool is not the caller's to name: the action's own registration claims `tool:scythe`, so this
+    /// selects the scythe it needs and restores the actor's own selection afterwards. Shared by the in-range path and
+    /// the post-approach path so the two cannot drift.
     /// </summary>
     private LocalExecutionReceipt ExecuteCutGrass(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon weapon || !weapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, weapon))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Grass grass
-            || !string.Equals(BuildGrassTargetId(location, targetX, targetY, grass), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "grass_target_changed", $"target={targetX},{targetY}");
-
-        int weedsBefore = grass.numberOfWeeds.Value;
-        int grassType = grass.grassType.Value;
-        float staminaBefore = Game1.player.Stamina;
-        // A grass tuft usually holds 4 weeds; each native swing deducts 1 (basic
-        // scythe (W)47), 2 ((W)53) or 4 ((W)66), and only the final swing that
-        // crosses zero runs TryDropItemsOnCut and returns true. Keep swinging the
-        // same equipped scythe on the same tuft until it is removed, the bounded
-        // safety cap is reached, or the tuft leaves an unhandled state. Every swing
-        // runs the native grass path (sound, shake, sprites, deductions).
-        const int maximumSwingCount = 8;
-        int swingCount = 0;
-        bool removed = false;
-        while (!removed && swingCount < maximumSwingCount)
+        if (!TrySelectDeclaredTool(Game1.player, "cut_grass", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
+        try
         {
-            bool cut = grass.performToolAction(weapon, 0, tile);
-            swingCount++;
-            if (cut)
+            if (selection.Tool is not MeleeWeapon weapon)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            GameLocation location = Game1.player.currentLocation;
+            Vector2 tile = new(targetX, targetY);
+            if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Grass grass
+                || !string.Equals(BuildGrassTargetId(location, targetX, targetY, grass), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "grass_target_changed", $"target={targetX},{targetY}");
+
+            int weedsBefore = grass.numberOfWeeds.Value;
+            int grassType = grass.grassType.Value;
+            float staminaBefore = Game1.player.Stamina;
+            // A grass tuft usually holds 4 weeds; each native swing deducts 1 (basic
+            // scythe (W)47), 2 ((W)53) or 4 ((W)66), and only the final swing that
+            // crosses zero runs TryDropItemsOnCut and returns true. Keep swinging the
+            // same equipped scythe on the same tuft until it is removed, the bounded
+            // safety cap is reached, or the tuft leaves an unhandled state. Every swing
+            // runs the native grass path (sound, shake, sprites, deductions).
+            const int maximumSwingCount = 8;
+            int swingCount = 0;
+            bool removed = false;
+            while (!removed && swingCount < maximumSwingCount)
             {
-                location.terrainFeatures.Remove(tile);
-                removed = true;
+                bool cut = grass.performToolAction(weapon, 0, tile);
+                swingCount++;
+                if (cut)
+                {
+                    location.terrainFeatures.Remove(tile);
+                    removed = true;
+                }
+                else
+                {
+                    removed = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
+                        || !ReferenceEquals(afterFeature, grass);
+                }
             }
-            else
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            // The scythe is a MeleeWeapon: no native code path deducts stamina for a
+            // melee swing (only Axe/Hoe/Pickaxe/WateringCan/MilkPail/Shears do), so the
+            // expected embodied cost is exactly zero, same as cut_weeds.
+            float expectedStaminaCost = 0f;
+            // Hay accounting is deliberately NOT recomputed here. This used to call
+            // GameLocation.StoreHayInAnySilo to "observe" the cut — but that method is a
+            // WRITE (GameLocation.cs:16511 does currentLocation.tryToAddHay(count) and
+            // increments piecesOfHay), and the native cut already stored the hay inside
+            // Grass.TryDropItemsOnCut (Grass.cs:489). Calling it again added 1-2 hay to a
+            // silo on every successful cut — and added it even when the native probability
+            // roll did not — silently polluting durable world state.
+            //
+            // The outcome of that roll is not observable from here without re-deriving it,
+            // so the receipt reports only what actually changed and is true: the tuft is
+            // gone (and the evidence key below says exactly that).
+            string evidence = ToolActionEvidence.Compose(ToolActionEvidence.CutGrass, new Dictionary<string, string>
             {
-                removed = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
-                    || !ReferenceEquals(afterFeature, grass);
-            }
+                ["target"] = expectedTargetId,
+                ["type"] = "grass",
+                ["tool"] = "scythe",
+                ["grass_type"] = grassType.ToString(CultureInfo.InvariantCulture),
+                ["weeds_before"] = weedsBefore.ToString(CultureInfo.InvariantCulture),
+                ["weeds_after"] = removed
+                    ? "removed"
+                    : location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? remainingFeature) && remainingFeature is StardewValley.TerrainFeatures.Grass remainingGrass
+                        ? remainingGrass.numberOfWeeds.Value.ToString(CultureInfo.InvariantCulture)
+                        : "missing",
+                ["swings"] = swingCount.ToString(CultureInfo.InvariantCulture),
+                ["removed"] = removed.ToString().ToLowerInvariant(),
+                ["tuft_removed"] = removed.ToString().ToLowerInvariant(),
+                ["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture),
+                ["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture),
+                ["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture),
+                ["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture),
+            });
+            return removed
+                ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "grass_cut", evidence)
+                : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "grass_cut_postcondition_unavailable", evidence);
         }
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        // The scythe is a MeleeWeapon: no native code path deducts stamina for a
-        // melee swing (only Axe/Hoe/Pickaxe/WateringCan/MilkPail/Shears do), so the
-        // expected embodied cost is exactly zero, same as cut_weeds.
-        float expectedStaminaCost = 0f;
-        // Hay accounting is deliberately NOT recomputed here. This used to call
-        // GameLocation.StoreHayInAnySilo to "observe" the cut — but that method is a
-        // WRITE (GameLocation.cs:16511 does currentLocation.tryToAddHay(count) and
-        // increments piecesOfHay), and the native cut already stored the hay inside
-        // Grass.TryDropItemsOnCut (Grass.cs:489). Calling it again added 1-2 hay to a
-        // silo on every successful cut — and added it even when the native probability
-        // roll did not — silently polluting durable world state.
-        //
-        // The outcome of that roll is not observable from here without re-deriving it,
-        // so the receipt reports only what actually changed and is true: the tuft is
-        // gone (and the evidence key below says exactly that).
-        string evidence = $"target={expectedTargetId};type=grass;tool=scythe;grass_type={grassType};weeds_before={weedsBefore};weeds_after={(removed ? "removed" : location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? remainingFeature) && remainingFeature is StardewValley.TerrainFeatures.Grass remainingGrass ? remainingGrass.numberOfWeeds.Value.ToString(CultureInfo.InvariantCulture) : "missing")};swings={swingCount};removed={removed.ToString().ToLowerInvariant()};tuft_removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-        return removed
-            ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "grass_cut", evidence)
-            : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "grass_cut_postcondition_unavailable", evidence);
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
     }
 
     /// <summary>
-    /// Executes cut_weeds against the current world, re-validating the tool and the
-    /// target because an approach leg may have taken several ticks. Shared by the
-    /// in-range path and the post-approach path so the two cannot drift.
+    /// Executes cut_weeds against the current world, re-validating the target because an approach leg may have taken
+    /// several ticks. The tool is not the caller's to name: the action's own registration claims `tool:scythe`, so this
+    /// selects the scythe it needs and restores the actor's own selection afterwards. Shared by the in-range path and
+    /// the post-approach path so the two cannot drift.
     /// </summary>
     private LocalExecutionReceipt ExecuteCutWeeds(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon weapon || !weapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, weapon))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? weed) || !weed.IsWeeds()
-            || !string.Equals(BuildWeedTargetId(location, targetX, targetY, weed), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "weed_target_changed", $"target={targetX},{targetY}");
-
-        int healthBefore = weed.MinutesUntilReady;
-        float staminaBefore = Game1.player.Stamina;
-        // A common weed (O)313 carries 2 health and the basic scythe (W)47
-        // deals exactly 1 damage per native swing (Object.performToolAction
-        // weeds branch: damage = 1, only a non-basic scythe deals 2). One
-        // swing therefore never triggers native cutWeed; keep swinging the
-        // same equipped scythe on the same object until it is removed, the
-        // bounded safety cap is reached, or the weed leaves an unhandled
-        // state. Every swing runs the native damage/debris path.
-        const int maximumSwingCount = 8;
-        int swingCount = 0;
-        bool handled = false;
-        bool removed = false;
-        while (!removed && swingCount < maximumSwingCount)
+        if (!TrySelectDeclaredTool(Game1.player, "cut_weeds", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
+        try
         {
-            // Native Object.performToolAction weeds branch decrements the
-            // weed health only while shakeTimer <= 0 and then arms that 200ms
-            // cooldown; the scythe caller (MeleeWeapon.DoFunction AoE sweep)
-            // also removes the object from the map only when the action
-            // returns true. Mirror both halves of that native swing here:
-            // reset the shake cooldown as if the next swing started after it
-            // elapsed, call the same native action, and remove the map entry
-            // exactly when the native action reports the weed was cut.
-            weed.shakeTimer = 0;
-            bool cut = weed.performToolAction(weapon);
-            swingCount++;
-            if (cut)
+            if (selection.Tool is not MeleeWeapon weapon)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            GameLocation location = Game1.player.currentLocation;
+            Vector2 tile = new(targetX, targetY);
+            if (!location.objects.TryGetValue(tile, out StardewValley.Object? weed) || !weed.IsWeeds()
+                || !string.Equals(BuildWeedTargetId(location, targetX, targetY, weed), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "weed_target_changed", $"target={targetX},{targetY}");
+
+            int healthBefore = weed.MinutesUntilReady;
+            float staminaBefore = Game1.player.Stamina;
+            // A common weed (O)313 carries 2 health and the basic scythe (W)47
+            // deals exactly 1 damage per native swing (Object.performToolAction
+            // weeds branch: damage = 1, only a non-basic scythe deals 2). One
+            // swing therefore never triggers native cutWeed; keep swinging the
+            // same equipped scythe on the same object until it is removed, the
+            // bounded safety cap is reached, or the weed leaves an unhandled
+            // state. Every swing runs the native damage/debris path.
+            const int maximumSwingCount = 8;
+            int swingCount = 0;
+            bool handled = false;
+            bool removed = false;
+            while (!removed && swingCount < maximumSwingCount)
             {
-                handled = true;
-                location.objects.Remove(tile);
-                removed = true;
+                // Native Object.performToolAction weeds branch decrements the
+                // weed health only while shakeTimer <= 0 and then arms that 200ms
+                // cooldown; the scythe caller (MeleeWeapon.DoFunction AoE sweep)
+                // also removes the object from the map only when the action
+                // returns true. Mirror both halves of that native swing here:
+                // reset the shake cooldown as if the next swing started after it
+                // elapsed, call the same native action, and remove the map entry
+                // exactly when the native action reports the weed was cut.
+                weed.shakeTimer = 0;
+                bool cut = weed.performToolAction(weapon);
+                swingCount++;
+                if (cut)
+                {
+                    handled = true;
+                    location.objects.Remove(tile);
+                    removed = true;
+                }
+                else
+                {
+                    removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterWeed)
+                        || !ReferenceEquals(afterWeed, weed);
+                }
             }
-            else
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            // The scythe is a MeleeWeapon: no native code path deducts stamina for
+            // a melee swing (only Axe/Hoe/Pickaxe/WateringCan/MilkPail/Shears do),
+            // so the expected embodied cost is exactly zero. Reporting it as an
+            // explicit zero is the fact the Agent needs ("this family is free").
+            float expectedStaminaCost = 0f;
+            string evidence = ToolActionEvidence.Compose(ToolActionEvidence.CutWeeds, new Dictionary<string, string>
             {
-                removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterWeed)
-                    || !ReferenceEquals(afterWeed, weed);
-            }
+                ["target"] = expectedTargetId,
+                ["type"] = "weed",
+                ["tool"] = "scythe",
+                ["qualified_item_id"] = weed.QualifiedItemId,
+                ["health_before"] = healthBefore.ToString(CultureInfo.InvariantCulture),
+                ["health_after"] = removed
+                    ? "removed"
+                    : location.objects.TryGetValue(tile, out StardewValley.Object? remainingWeed) && remainingWeed is not null
+                        ? remainingWeed.MinutesUntilReady.ToString(CultureInfo.InvariantCulture)
+                        : "missing",
+                ["swings"] = swingCount.ToString(CultureInfo.InvariantCulture),
+                ["removed"] = removed.ToString().ToLowerInvariant(),
+                ["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture),
+                ["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture),
+                ["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture),
+                ["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture),
+            });
+            if (handled && removed)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "weeds_cut", evidence);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "weed_cut_postcondition_unavailable", evidence);
         }
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        // The scythe is a MeleeWeapon: no native code path deducts stamina for
-        // a melee swing (only Axe/Hoe/Pickaxe/WateringCan/MilkPail/Shears do),
-        // so the expected embodied cost is exactly zero. Reporting it as an
-        // explicit zero is the fact the Agent needs ("this family is free").
-        float expectedStaminaCost = 0f;
-        string evidence = $"target={expectedTargetId};type=weed;tool=scythe;qualified_item_id={weed.QualifiedItemId};health_before={healthBefore};health_after={(removed ? "removed" : location.objects.TryGetValue(tile, out StardewValley.Object? remainingWeed) && remainingWeed is not null ? remainingWeed.MinutesUntilReady.ToString(CultureInfo.InvariantCulture) : "missing")};swings={swingCount};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-        if (handled && removed)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "weeds_cut", evidence);
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "weed_cut_postcondition_unavailable", evidence);
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
     }
 
     private static int ItemRankForWeapon(Tool item)
@@ -960,4 +1151,55 @@ internal sealed partial class ExecutionManager
         _ = specification.Execute(specification.ExecutionId, specification.RequestId);
     }
 
+}
+
+/// <summary>What one action's pack answers for its declared tool, before anything is switched.</summary>
+internal readonly record struct DeclaredToolResolution(string Category, int Slot, string? RefusalCode);
+
+/// <summary>
+/// The actor's tool selection while one action runs: the tool taken, the category it satisfies, and the index it
+/// replaced, which is what every exit restores.
+/// </summary>
+internal readonly record struct DeclaredToolSelection(Tool Tool, string Category, int Slot, int PreviousSlot);
+
+/// <summary>
+/// The receipt-detail key set of each tool action, stated ONCE per action.
+///
+/// The Host pins every one of these sets EXACTLY (`host/src/stardew-game-integration-adapter.ts`: the `cut_weeds` and
+/// `cut_grass` branches, `hasWaterCropCompletionEvidence`, `hasBreakRockSourceCompletionEvidence`), so a success with
+/// an unexpected key is a success the Host does not recognise. That is why the selection facts a handler now owns are
+/// NOT keys yet: this list is where the paired change lands, in one place, together with the Host reader.
+/// </summary>
+internal static class ToolActionEvidence
+{
+    internal static readonly IReadOnlyList<string> CutWeeds = Array.AsReadOnly(new[]
+    {
+        "target", "type", "tool", "qualified_item_id", "health_before", "health_after", "swings", "removed",
+        "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost",
+    });
+
+    internal static readonly IReadOnlyList<string> CutGrass = Array.AsReadOnly(new[]
+    {
+        "target", "type", "tool", "grass_type", "weeds_before", "weeds_after", "swings", "removed", "tuft_removed",
+        "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost",
+    });
+
+    internal static readonly IReadOnlyList<string> BreakRockSource = Array.AsReadOnly(new[]
+    {
+        "target", "tool", "slot", "qualified_item_id", "durability_before", "durability_after", "removed",
+        "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost",
+    });
+
+    internal static readonly IReadOnlyList<string> WaterCrop = Array.AsReadOnly(new[]
+    {
+        "location", "target", "tile", "before_watered", "after_watered", "water_before", "water_after",
+        "water_consumed", "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost",
+    });
+
+    /// <summary>
+    /// One receipt detail from a key list and its values, in the LIST's order: the list is the contract, so a key that
+    /// has no value fails here instead of reaching the wire as a half-built detail.
+    /// </summary>
+    internal static string Compose(IReadOnlyList<string> keys, IReadOnlyDictionary<string, string> values) =>
+        string.Join(";", keys.Select(key => $"{key}={values[key]}"));
 }
