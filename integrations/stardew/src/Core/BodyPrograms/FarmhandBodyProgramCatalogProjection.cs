@@ -127,13 +127,13 @@ public static class FarmhandBodyProgramCatalogProjection
         List<BodyProgramResourceTemplateClaim> resources = new();
         foreach (FarmhandActionResourceTemplateValueProjection claim in source.ResourceTemplate.Claims)
         {
-            if (claim.Value != nameof(FarmhandResourceTemplateValue.ScopePlayer))
+            if (!TryMapResourceClaim(claim.Value, out BodyProgramResourceTemplateValue mapped))
             {
-                code = "resource_mapping_blocked";
+                code = $"resource_mapping_blocked:{claim.Key}";
                 message = $"Resource claim '{claim.Key}' has no authoritative Body Program template semantics.";
                 return false;
             }
-            resources.Add(new(claim.Key, BodyProgramResourceTemplateValue.ScopePlayer));
+            resources.Add(new(claim.Key, mapped));
         }
 
         descriptor = new BodyProgramActionDescriptor(
@@ -145,6 +145,27 @@ public static class FarmhandBodyProgramCatalogProjection
             new BodyProgramActionMetadata(source.Lifecycle, source.Kind, source.Effect, source.Postcondition.Name),
             WatchdogMs: source.WatchdogMs);
         return true;
+    }
+
+    /// <summary>
+    /// Translates one Mod-owned claim VALUE into its Body Program twin. The set is closed in both directions and a
+    /// value outside it is refused by name, but it is a TRANSLATION and not a filter: the Mod publishes the tool an
+    /// action requires as a `tool:&lt;category&gt;` claim (the category is in the claim KEY, the upgrade-level
+    /// requirement is the value), so refusing `AnyUpgrade`/`BasicOnly` here would put every tool-family action
+    /// (cut_weeds, cut_grass, break_rock_source, water_crop) outside the Body Program catalog altogether.
+    /// </summary>
+    private static bool TryMapResourceClaim(string value, out BodyProgramResourceTemplateValue mapped)
+    {
+        mapped = value switch
+        {
+            nameof(FarmhandResourceTemplateValue.ScopePlayer) => BodyProgramResourceTemplateValue.ScopePlayer,
+            nameof(FarmhandResourceTemplateValue.AnyUpgrade) => BodyProgramResourceTemplateValue.ToolAnyUpgrade,
+            nameof(FarmhandResourceTemplateValue.BasicOnly) => BodyProgramResourceTemplateValue.ToolBasicOnly,
+            _ => default,
+        };
+        return value is nameof(FarmhandResourceTemplateValue.ScopePlayer)
+            or nameof(FarmhandResourceTemplateValue.AnyUpgrade)
+            or nameof(FarmhandResourceTemplateValue.BasicOnly);
     }
 
     private static bool TryMapInput(string type, out BodyProgramArgumentKind kind)

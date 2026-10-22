@@ -94,6 +94,53 @@ public sealed class FarmhandBodyProgramCatalogProjectionTests
     }
 
     [Fact]
+    public void ToolClaimProjectsWithItsUpgradeLevelRequirement()
+    {
+        // The Mod publishes the tool an action requires as a `tool:<category>` resource claim (value = upgrade level);
+        // a surface that declares one must project normally, or every tool-family action stays outside the catalog.
+        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create(
+            Artifact(42, new FarmhandActionDescriptorProjection(
+                "weed_clear_probe", 3, "live_verified", "execution",
+                new Dictionary<string, FarmhandActionArgumentSchema>(),
+                new Dictionary<string, string>(),
+                new FarmhandActionResourceTemplate(new[]
+                {
+                    new FarmhandActionResourceTemplateValueProjection("embodied_actor", "ScopePlayer"),
+                    new FarmhandActionResourceTemplateValueProjection("tool:scythe", "AnyUpgrade"),
+                    new FarmhandActionResourceTemplateValueProjection("tool:pickaxe", "BasicOnly"),
+                }), "write",
+                new FarmhandActionPostcondition("native_action_postcondition"))));
+
+        result.IsPublished.Should().BeTrue();
+        result.Rejections.Should().NotContain(rejection => rejection.ActionId == "weed_clear_probe");
+        result.Catalog!.TryGetAction("weed_clear_probe", out BodyProgramActionDescriptor? action).Should().BeTrue();
+        action!.ResourceTemplate.Should().Equal(
+            new BodyProgramResourceTemplateClaim("embodied_actor", BodyProgramResourceTemplateValue.ScopePlayer),
+            new BodyProgramResourceTemplateClaim("tool:scythe", BodyProgramResourceTemplateValue.ToolAnyUpgrade),
+            new BodyProgramResourceTemplateClaim("tool:pickaxe", BodyProgramResourceTemplateValue.ToolBasicOnly));
+    }
+
+    [Fact]
+    public void UnmappableResourceClaimIsStillRefusedByName()
+    {
+        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create(
+            Artifact(42, new FarmhandActionDescriptorProjection(
+                "future_claim", 3, "published", "execution",
+                new Dictionary<string, FarmhandActionArgumentSchema>(),
+                new Dictionary<string, string>(),
+                new FarmhandActionResourceTemplate(new[]
+                {
+                    new FarmhandActionResourceTemplateValueProjection("tool:hoe", "SomeFutureWord"),
+                }), "write",
+                new FarmhandActionPostcondition("native_action_postcondition"))));
+
+        result.Status.Should().Be(FarmhandBodyProgramCatalogProjectionStatus.Blocked);
+        result.Rejections.Should().ContainSingle(rejection =>
+            rejection.ActionId == "future_claim"
+            && rejection.Code == "resource_mapping_blocked:tool:hoe");
+    }
+
+    [Fact]
     public void DisallowedLifecycleIsRefusedByActionNameAndLifecycle()
     {
         FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create(

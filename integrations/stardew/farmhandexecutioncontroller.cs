@@ -2268,7 +2268,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 .ToArray(),
             advertisedCapabilities.Contains("enter_exit", StringComparer.Ordinal) ? DiscoverDoorTargets(player) : null,
             advertisedCapabilities.Contains("till_soil", StringComparer.Ordinal) ? DiscoverSoilTiles(player) : null,
-            DiscoverToolSlots(player),
+            DiscoverToolSlots(player.Items),
             advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? DiscoverWateringCanFacts(player) : null,
             advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? DiscoverRefillWateringCanTargets(player) : null,
             advertisedCapabilities.Contains("pickup_forage", StringComparer.Ordinal) ? DiscoverForageTargets(player) : null,
@@ -2385,7 +2385,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             MuseumRewardTargets: advertisedCapabilities.Contains("claim_museum_reward", StringComparer.Ordinal) ? DiscoverMuseumRewardTargets(player) : null,
             // The chest-repaint lane: the chests this actor can name right now, each with the colour it
             // already carries, published only while the action is itself advertised.
-            ColorTargets: advertisedCapabilities.Contains("color_placed_object", StringComparer.Ordinal) ? DiscoverColorTargets(player) : null
+            ColorTargets: advertisedCapabilities.Contains("color_placed_object", StringComparer.Ordinal) ? DiscoverColorTargets(player) : null,
+            // The slot the tool-family actions' `slot` argument must name, and the slot's occupant whatever it is.
+            CurrentToolSlot: player.CurrentToolIndex,
+            CurrentToolSlotItem: DescribeSlotItem(player.Items, player.CurrentToolIndex)
         );
     }
 
@@ -3431,13 +3434,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return result;
     }
 
-    private static IReadOnlyList<BridgeToolSlot> DiscoverToolSlots(Farmer player)
+    private static IReadOnlyList<BridgeToolSlot> DiscoverToolSlots(IList<Item?> items)
     {
-        return player.Items
-            .Select((item, slot) => (item, slot))
-            .Where(entry => entry.item is Tool)
-            .Select(entry => new BridgeToolSlot(entry.slot, DescribeTool(entry.item as Tool) ?? "tool"))
-            .ToArray();
+        List<BridgeToolSlot> slots = new();
+        for (int slot = 0; slot < items.Count; slot++)
+        {
+            if (items[slot] is not Tool tool) continue;
+            slots.Add(new BridgeToolSlot(slot, DescribeTool(tool) ?? "tool", tool.UpgradeLevel));
+        }
+
+        return slots;
     }
 
     private static string BuildFeedTroughTargetId(AnimalHouse location, int slot, int x, int y, int hayStack)
@@ -4958,6 +4964,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     private static string? DescribeTool(Tool? tool) => tool is null ? null : tool.QualifiedItemId ?? tool.Name;
+
+    /// <summary>
+    /// The item identity one inventory slot holds, whatever its KIND - the honest counterpart to
+    /// <see cref="DescribeTool"/>. A slot holding seeds reports the seeds, so an absent `currentTool` beside a
+    /// present identity reads as "holding something that is not a tool", and only an EMPTY slot reports null.
+    /// </summary>
+    private static string? DescribeSlotItem(IList<Item?> items, int slot) =>
+        slot >= 0 && slot < items.Count ? items[slot]?.QualifiedItemId : null;
 
     private static bool IsFiniteTile(Vector2 tile) => float.IsFinite(tile.X) && float.IsFinite(tile.Y);
 

@@ -328,7 +328,7 @@ public static class BridgeProtocol
         if (claims.ValueKind != JsonValueKind.Object || claims.EnumerateObject().Count() > 16) return false;
         Dictionary<string, string> resources = new(StringComparer.Ordinal);
         foreach (var pair in claims.EnumerateObject())
-            if (!IsOpaqueId(pair.Name) || !ReadOpaqueString(pair.Value, out string? claim) || !resources.TryAdd(pair.Name, claim!)) return false;
+            if (!BodyProgramValidation.IsResourceClaimKey(pair.Name) || !ReadResourceClaimValue(pair.Value, out string? claim) || !resources.TryAdd(pair.Name, claim!)) return false;
         var identity = new BodyProgramPolicyIdentity(policyValue!, capabilityRevision);
         if (!grant)
         {
@@ -1107,6 +1107,16 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     }
 
     private static bool ReadOpaqueString(JsonElement value, out string? result) { result = value.ValueKind == JsonValueKind.String ? value.GetString() : null; return IsOpaqueId(result); }
+    /// <summary>
+    /// A derived resource claim's VALUE is either an opaque id (a scoped player, an action identity) or the resource
+    /// identity the Mod published verbatim (`tool:scythe`). The namespaced shape is admitted here and nowhere else,
+    /// so widening it cannot loosen any other opaque-id field.
+    /// </summary>
+    private static bool ReadResourceClaimValue(JsonElement value, out string? result)
+    {
+        result = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        return IsOpaqueId(result) || BodyProgramValidation.IsResourceClaimKey(result);
+    }
     private static bool ReadPlayerText(JsonElement value, out string? result) { result = value.ValueKind == JsonValueKind.String ? value.GetString() : null; return result is { Length: >= 1 and <= 128 } && result.Trim().Length > 0 && result == result.TrimStart() && result == result.TrimEnd() && result.Normalize(System.Text.NormalizationForm.FormC) == result; }
     private static bool ReadNavigationRef(JsonElement value, out string? result) { result = value.ValueKind == JsonValueKind.String ? value.GetString() : null; return result is not null && result.StartsWith("dr1_", StringComparison.Ordinal) && result.Length == 26; }
     private static bool IsBoundedString(string? value, int maximum) => value is not null && value.Length <= maximum;

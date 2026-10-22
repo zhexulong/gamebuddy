@@ -170,7 +170,7 @@ public static class BodyProgramJournalPersistence
                 || !node.AttemptPolicyIdentity.Equals(journalPolicy) || node.ClaimOwnership is null || node.ClaimOwnership.Count != descriptor.DerivedResourceClaims.Count
                 || !BodyProgramValidation.IsValidDerivedDeadlineMs(node.DerivedDeadlineMs)
                 || !descriptor.DerivedResourceClaims.Keys.OrderBy(key => key, StringComparer.Ordinal).SequenceEqual(node.ClaimOwnership.Keys.OrderBy(key => key, StringComparer.Ordinal), StringComparer.Ordinal)
-                || node.ClaimOwnership.Any(pair => !BodyProgramValidation.IsIdentifier(pair.Key) || !Enum.IsDefined(pair.Value) || !IsClaimOwnershipValidForState(node.State, pair.Value))
+                || node.ClaimOwnership.Any(pair => !BodyProgramValidation.IsResourceClaimKey(pair.Key) || !Enum.IsDefined(pair.Value) || !IsClaimOwnershipValidForState(node.State, pair.Value))
                 || node.CanonicalBoundArguments.Count != descriptor.CanonicalArguments.Count
                 || !descriptor.CanonicalArguments.Keys.OrderBy(key => key, StringComparer.Ordinal).SequenceEqual(node.CanonicalBoundArguments.Keys.OrderBy(key => key, StringComparer.Ordinal), StringComparer.Ordinal)
                 || node.CanonicalBoundArguments.Any(pair => !BodyProgramValidation.IsIdentifier(pair.Key) || pair.Value is null || !BodyProgramValidation.IsValidCanonicalValue(pair.Value, pair.Value.Kind)
@@ -329,7 +329,7 @@ public static class BodyProgramJournalPersistence
             && node.CanonicalArguments.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value is not null && BodyProgramValidation.IsValidCanonicalValue(pair.Value, pair.Value.Kind))
             && node.DependsOn.All(BodyProgramValidation.IsIdentifier) && node.DependsOn.Distinct(StringComparer.Ordinal).Count() == node.DependsOn.Count
             && node.Bindings.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value is not null && BodyProgramValidation.IsIdentifier(pair.Value.ProducerNodeId) && BodyProgramValidation.IsIdentifier(pair.Value.FactName))
-            && node.DerivedResourceClaims.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value is { Length: <= 4096 }))
+            && node.DerivedResourceClaims.All(pair => BodyProgramValidation.IsResourceClaimKey(pair.Key) && pair.Value is { Length: <= 4096 }))
         && program.Nodes.Select(node => node.NodeId).Distinct(StringComparer.Ordinal).Count() == program.Nodes.Count;
 
     internal static bool MatchesCatalogProgram(BodyProgramJournalState state, BodyProgramActionCatalog catalog, BridgeScope scope) => state.Programs.All(program => MatchesCatalog(program, catalog, scope));
@@ -637,7 +637,7 @@ public static class BodyProgramJournalPersistence
         Dictionary<string, BodyProgramClaimOwnershipState> result = new(StringComparer.Ordinal);
         foreach (JsonProperty property in value.EnumerateObject())
         {
-            if (!BodyProgramValidation.IsIdentifier(property.Name) || !ReadEnum<BodyProgramClaimOwnershipState>(property.Value, out BodyProgramClaimOwnershipState status)
+            if (!BodyProgramValidation.IsResourceClaimKey(property.Name) || !ReadEnum<BodyProgramClaimOwnershipState>(property.Value, out BodyProgramClaimOwnershipState status)
                 || !result.TryAdd(property.Name, status)) return false;
         }
         ownership = new ReadOnlyDictionary<string, BodyProgramClaimOwnershipState>(result); return true;
@@ -655,11 +655,22 @@ public static class BodyProgramJournalPersistence
         return value.ValueKind == JsonValueKind.Null || BodyProgramValidation.IsOpaqueDiagnostic(result);
     }
 
+    /// <summary>
+    /// The derived-resource-claim map is the one string map whose keys are resource identities, not argument names:
+    /// a `tool:scythe` subject is a legal key and must survive a round trip through the journal unchanged, so the
+    /// key rule here is <see cref="BodyProgramValidation.IsResourceClaimKey"/> and not the bare identifier rule.
+    /// </summary>
     private static bool ReadStringMap(JsonElement value, out IReadOnlyDictionary<string, string>? map)
     {
         map = null;
-        if (!ReadMap(value, ReadString, out Dictionary<string, string>? result)) return false;
-        map = new ReadOnlyDictionary<string, string>(result!); return true;
+        if (value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Count() > 32) return false;
+        Dictionary<string, string> result = new(StringComparer.Ordinal);
+        foreach (JsonProperty property in value.EnumerateObject())
+        {
+            if (!BodyProgramValidation.IsResourceClaimKey(property.Name) || !ReadString(property.Value, out string? item) || item is null
+                || !result.TryAdd(property.Name, item)) return false;
+        }
+        map = new ReadOnlyDictionary<string, string>(result); return true;
     }
 
     private static bool ReadBindings(JsonElement value, out IReadOnlyDictionary<string, ActionProgramBinding>? bindings)
@@ -674,18 +685,6 @@ public static class BodyProgramJournalPersistence
                 || !result.TryAdd(property.Name, new(producer!, fact!))) return false;
         }
         bindings = new ReadOnlyDictionary<string, ActionProgramBinding>(result); return true;
-    }
-
-    private static bool ReadMap<T>(JsonElement value, Reader<T> reader, out Dictionary<string, T>? map)
-    {
-        map = null;
-        if (value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Count() > 32) return false;
-        Dictionary<string, T> result = new(StringComparer.Ordinal);
-        foreach (JsonProperty property in value.EnumerateObject())
-        {
-            if (!BodyProgramValidation.IsIdentifier(property.Name) || !reader(property.Value, out T? item) || item is null || !result.TryAdd(property.Name, item)) return false;
-        }
-        map = result; return true;
     }
 
     private static bool ReadString(JsonElement value, out string? result)

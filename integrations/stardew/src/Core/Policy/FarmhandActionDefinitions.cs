@@ -4,9 +4,32 @@ public enum FarmhandActionLifecycle { Published, LiveVerified, Experimental }
 public static class FarmhandActionLifecycleWire { public static string ToWireValue(this FarmhandActionLifecycle lifecycle) => lifecycle switch { FarmhandActionLifecycle.Published => "published", FarmhandActionLifecycle.LiveVerified => "live_verified", FarmhandActionLifecycle.Experimental => "experimental", _ => throw new ArgumentOutOfRangeException(nameof(lifecycle)) }; }
 public enum FarmhandOperationKind { Execution, ReadOnly }
 public static class FarmhandOperationKindWire { public static string ToWireValue(this FarmhandOperationKind kind) => kind switch { FarmhandOperationKind.Execution => "execution", FarmhandOperationKind.ReadOnly => "read_only", _ => throw new ArgumentOutOfRangeException(nameof(kind)) }; }
-public enum FarmhandResourceTemplateValue { ScopePlayer = 1 }
+/// <summary>
+/// The symbolic value half of a <see cref="FarmhandActionResourceTemplateClaim"/>. It says what the claim
+/// materializes to, never a live identity: the Mod re-derives that on the game thread.
+/// </summary>
+public enum FarmhandResourceTemplateValue
+{
+    /// <summary>`embodied_actor`: the current scoped player.</summary>
+    ScopePlayer = 1,
+
+    /// <summary>
+    /// `tool:&lt;category&gt;`: any upgrade level of that tool category satisfies the claim (minimum level 0).
+    /// </summary>
+    AnyUpgrade = 2,
+
+    /// <summary>
+    /// `tool:&lt;category&gt;`: only the level-0 (basic) tool of that category satisfies the claim. Some handlers
+    /// refuse an upgraded tool by name (`basic_pickaxe_not_equipped_in_requested_slot`), so "any axe" would be
+    /// a wrong promise: the surface must be able to say "the basic one".
+    /// </summary>
+    BasicOnly = 3,
+}
 public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null);
-/// <summary>Mod-owned symbolic resource claim; ScopePlayer materializes embodied_actor to the current scoped player.</summary>
+/// <summary>Mod-owned symbolic resource claim; ScopePlayer materializes embodied_actor to the current scoped player.
+/// A `tool:&lt;category&gt;` key is the SAME shape with a different subject: the tool that category names, which the
+/// handler requires to be the current tool, and whose value half is the upgrade-level requirement
+/// (<see cref="FarmhandResourceTemplateValue.AnyUpgrade"/> / <see cref="FarmhandResourceTemplateValue.BasicOnly"/>).</summary>
 public sealed record FarmhandActionResourceTemplateClaim(string Key, FarmhandResourceTemplateValue Value);
 /// <summary>Action-specific typed binding metadata owned exclusively by Mod registration.</summary>
 public sealed record FarmhandActionObservationBindingDescriptor(string Type, int Version, bool Required, IReadOnlyList<string> RequiredProperties);
@@ -85,6 +108,20 @@ public static class FarmhandActionCatalog
         new FarmhandActionResourceTemplateClaim("embodied_actor", FarmhandResourceTemplateValue.ScopePlayer),
     });
 
+    /// <summary>
+    /// The SAME claim shape as <see cref="EmbodiedActorResource"/>, with the TOOL the handler requires the actor to be
+    /// holding as its subject: `tool:&lt;category&gt;` plus the upgrade-level requirement that handler enforces. It is a
+    /// resource claim and not a new descriptor field because it names a native resource the action needs; the one
+    /// fact the Host cannot derive from the world and therefore could not plan around (it used to guess, then eat a
+    /// `*_not_equipped_in_requested_slot` refusal). Category vocabulary is <see cref="FarmhandActionCatalog.ToolEnum"/>,
+    /// the same one `equip_tool` selects on, so a planner can satisfy the claim with the action it already has.
+    /// </summary>
+    private static IReadOnlyList<FarmhandActionResourceTemplateClaim> ToolResource(string category, FarmhandResourceTemplateValue upgrade) => Array.AsReadOnly(new[]
+    {
+        new FarmhandActionResourceTemplateClaim("embodied_actor", FarmhandResourceTemplateValue.ScopePlayer),
+        new FarmhandActionResourceTemplateClaim($"tool:{category}", upgrade),
+    });
+
     /// <summary>Descriptor-owned static watchdog for ordinary short actions</summary>
     /// (hang protection, not ETA; watchdog authority decision 2026-09-20).</summary>
     public const long DefaultWatchdogMs = 60_000;
@@ -149,7 +186,11 @@ public static class FarmhandActionCatalog
         E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, PickupForage()), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, TargetItem()),
-        E("water_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, Target()), E("plant_seed", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget()), E("fertilize_tile", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget()),
+        // water_crop drives the actor's own WateringCan: the handler refuses by name
+        // (`watering_can_not_equipped`) when the current tool is not one, so the can is an unconditional requirement.
+        // Which can is NOT declared: the handler accepts any upgrade level (its `watering_can_empty` refusal is about
+        // the can's water, runtime state a planner cannot read from the surface).
+        E("water_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, TargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade)), E("plant_seed", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget()), E("fertilize_tile", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget()),
         E("machine_inspect", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, MachineInspect()), E("machine_load", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget("(O)433")), E("machine_collect_output", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, Target()),
         E("collect_animal_product", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotTarget()), E("feed_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotTarget()), E("use_item", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "native_action_postcondition", ("slot","integer"),("expectedQualifiedItemId","string"))),
         E("harvest_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, TargetItem()), E("place_wood_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)322")), E("place_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)710")), E("bait_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)685")),
@@ -157,7 +198,8 @@ public static class FarmhandActionCatalog
         E("place_owned_object", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "owned_object_placed", "Object.placementAction"), FarmhandActionLifecycle.LiveVerified),
         E("remove_placed_item", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "placed_item_removed", "Object.performRemoveAction"), FarmhandActionLifecycle.LiveVerified),
         E("break_container_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "container_source_broken", "BreakableContainer.performToolAction"), FarmhandActionLifecycle.LiveVerified),
-        E("chop_tree_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("break_rock_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget()), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()),
+        E("chop_tree_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), // basic_pickaxe only: the handler refuses an upgraded pickaxe by name, so this is BasicOnly and not AnyUpgrade.
+        E("break_rock_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.BasicOnly)), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget()), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()),
         R("inspect_world_map", "world_navigation"), R("find_destination", "world_navigation"), R("observe_scene", "world_perception"),
         E("navigate_to_destination", "world_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(
             new[] { new FarmhandActionArgument("destination", "destination_selector") },
@@ -187,8 +229,10 @@ public static class FarmhandActionCatalog
         E("chest_retrieve", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
         E("chop_stump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.LiveVerified),
         E("plant_sapling", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
-        E("cut_weeds", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.LiveVerified),
-        E("cut_grass", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(), FarmhandActionLifecycle.LiveVerified),
+        // Scythe actions: the handler requires the actor's own scythe to be the current tool
+        // (`scythe_not_equipped_in_requested_slot` otherwise). A scythe has no upgrade ladder, so "any" is exact.
+        E("cut_weeds", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade), FarmhandActionLifecycle.LiveVerified),
+        E("cut_grass", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade), FarmhandActionLifecycle.LiveVerified),
         E("clear_cask", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "cask_cleared", "Cask.performToolAction"), FarmhandActionLifecycle.LiveVerified),
         E("dress_mannequin", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "mannequin_dressed", "Mannequin.performObjectDropInAction"), FarmhandActionLifecycle.LiveVerified),
         E("set_sign_display", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "sign_display_set", "Sign.checkForAction"), FarmhandActionLifecycle.LiveVerified),
@@ -381,6 +425,10 @@ public static class FarmhandActionCatalog
     private static FarmhandActionRegistration R(string id, string family) => new(id, family, 1, FarmhandActionLifecycle.Published, FarmhandOperationKind.ReadOnly, null, A(null, Array.Empty<FarmhandActionResourceTemplateClaim>(), "observation_complete"));
     private static FarmhandActionDescriptor A(IReadOnlyDictionary<string,string>? facts = null, IReadOnlyList<FarmhandActionResourceTemplateClaim>? resources = null, string postcondition = "native_action_postcondition", params (string,string)[] args) => new(args.Select(x => new FarmhandActionArgument(x.Item1,x.Item2)).ToArray(), facts ?? new Dictionary<string,string>(), resources ?? EmbodiedActorResource, resources is { Count: 0 } ? "read" : "write", postcondition);
     private static FarmhandActionDescriptor Target() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));
+
+    private static FarmhandActionDescriptor TargetWith(string toolCategory, FarmhandResourceTemplateValue toolUpgrade) => A(null, ToolResource(toolCategory, toolUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));
+
+    private static FarmhandActionDescriptor SlotTargetWith(string toolCategory, FarmhandResourceTemplateValue toolUpgrade) => A(null, ToolResource(toolCategory, toolUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("slot","integer"),("expectedTargetId","string"));
     private static FarmhandActionDescriptor TargetItem() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedQualifiedItemId","string"),("expectedTargetId","string"));
     private static FarmhandActionDescriptor PickupForage() => new(
         new[]

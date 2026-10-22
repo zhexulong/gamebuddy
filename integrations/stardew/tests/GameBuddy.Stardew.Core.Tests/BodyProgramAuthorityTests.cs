@@ -507,6 +507,44 @@ public sealed class BodyProgramAuthorityTests
         verification.CatalogRevision.Should().Be(catalog.Revision);
     }
 
+    /// <summary>
+    /// The whole path, not just the projection: a program node for the tool-family `cut_weeds` must verify, derive a
+    /// `tool:scythe` resource claim VERBATIM, submit, durably persist through the journal's own round trip, and reopen
+    /// intact. Before the tool claim was translated the projection refused the action outright; before the derived
+    /// claim and the journal key rule were taught the namespaced shape it verified and then THREW on submit, which is
+    /// the "looks registered, cannot be called" defect this test exists to keep closed.
+    /// </summary>
+    [Fact]
+    public void ProjectedWeedNodeVerifiesDerivesPersistsAndReopensWithItsToolClaim()
+    {
+        BodyProgramActionCatalog catalog = FarmhandBodyProgramCatalogProjection.Create().Catalog!;
+        ActionProgramCandidate candidate = new("weed_clear_a", new[]
+        {
+            new ActionProgramCandidateNode("first", "cut_weeds", WeedArguments(), Array.Empty<string>(), Bindings()),
+        });
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store, catalog: catalog);
+
+        BodyProgramVerificationReport verification = authority.Verify(candidate);
+        verification.Accepted.Should().BeTrue();
+
+        BodyProgramSubmitResult submitted = authority.Submit(candidate);
+        submitted.Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        store.Value.Should().NotBeNull();
+
+        // The derived value is the SAME string the surface declares - no re-spelling, no second vocabulary - and it
+        // survives the journal's decode because the namespaced key shape is the one the claim map admits.
+        BodyProgramJournalPersistence.TryDecode(store.Value!, catalog, Scope(), out BodyProgramJournalState? decoded).Should().BeTrue();
+        decoded!.Programs.Single().Program.Nodes.Single().DerivedResourceClaims.Should().Contain("tool:scythe", "tool:scythe");
+
+        store.Set(store.Value!);
+        OpenBodyProgramJournalAuthority reopened = Open(store, catalog: catalog);
+        // A program with pending work fences to RecoveryRequired on reopen - that is the ordinary restart state, not a
+        // refusal. What this asserts is that the journal DOES decode and reopen it at all, key and value intact.
+        reopened.OpenStatus.Should().NotBe(BodyProgramJournalOpenStatus.Corrupt);
+        reopened.Snapshot.Programs.Single().Program.Nodes.Single().DerivedResourceClaims.Should().Contain("tool:scythe", "tool:scythe");
+    }
+
     [Fact]
     public void ProjectedWeedNodeWithoutItsToolSlotIsRefusedByActionNameAndMissingArgument()
     {

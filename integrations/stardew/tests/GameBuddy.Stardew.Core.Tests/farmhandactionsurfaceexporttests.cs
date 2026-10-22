@@ -136,6 +136,45 @@ public sealed class FarmhandActionSurfaceExportTests
             MatchesFrozenIdentifier(action.ActionId));
     }
 
+    /// <summary>
+    /// The committed surface artifact is a DERIVED product of the Mod catalog, and this reads the FILE rather than
+    /// the catalog that emits it: the separation is the point, because a tool claim present in the definitions but
+    /// absent from the regenerated artifact is invisible to every consumer downstream of the file.
+    /// </summary>
+    [Fact]
+    public void GeneratedSurfaceArtifactCarriesTheToolClaimsTheModDeclares()
+    {
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(GeneratedSurfaceArtifactPath()));
+        Dictionary<string, (string Category, string Upgrade)> expected = new(StringComparer.Ordinal)
+        {
+            ["cut_weeds"] = ("scythe", "AnyUpgrade"),
+            ["cut_grass"] = ("scythe", "AnyUpgrade"),
+            ["break_rock_source"] = ("pickaxe", "BasicOnly"),
+            ["water_crop"] = ("watering_can", "AnyUpgrade"),
+        };
+
+        foreach ((string actionId, (string category, string upgrade)) in expected)
+        {
+            JsonElement claims = document.RootElement.GetProperty("actions").EnumerateArray()
+                .Single(action => action.GetProperty("actionId").GetString() == actionId)
+                .GetProperty("resourceTemplate").GetProperty("claims");
+            claims.EnumerateArray().Should().Contain(claim =>
+                claim.GetProperty("key").GetString() == $"tool:{category}"
+                && claim.GetProperty("value").GetString() == upgrade,
+                $"{actionId} must publish the exact tool claim its handler enforces");
+        }
+    }
+
+    private static string GeneratedSurfaceArtifactPath()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "AGENTS.md")))
+            directory = directory.Parent;
+        if (directory is null)
+            throw new InvalidOperationException("repository root not found");
+        return Path.Combine(directory.FullName, "integrations", "stardew", "action-development", "contracts", "generated", "action-surface.v1.json");
+    }
+
     private static bool MatchesFrozenIdentifier(string value) =>
         value.Length is >= 2 and <= FarmhandActionSurfacePublication.MaximumIdentityLength
         && value[0] is >= 'a' and <= 'z'

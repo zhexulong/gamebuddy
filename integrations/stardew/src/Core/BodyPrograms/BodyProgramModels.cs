@@ -233,19 +233,29 @@ internal static class BodyProgramValidation
     internal static bool IsValidDerivedDeadlineMs(long? value) => value is not null and > 0 and <= MaximumJavaScriptSafeInteger;
     internal static bool IsIdentifier(string? value) => value is { Length: >= 1 and <= 128 } && value.All(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c is '_' or '-');
     /// <summary>
-    /// A resource-claim key: an ordinary identifier or a `tool:&lt;category&gt;` subject. The colon is the one
-    /// separator the canonical claim vocabulary needs (the Mod publishes `tool:scythe`, `tool:pickaxe`, ... exactly
-    /// as the Mod-owned claim key) and it is admitted here, not by widening <see cref="IsIdentifier"/>, because the
-    /// same identifier rule guards program/node/request identities that must never carry one.
+    /// A resource-claim key: one or more lowercase identifier segments joined by `:`, so `embodied_actor` and
+    /// `tool:scythe` are the same shape and a future subject (`inventory:seed_maker`) needs no new rule. The colon is
+    /// admitted here and not by widening <see cref="IsIdentifier"/>, because that rule also guards program, node,
+    /// request and argument identities that must never carry one. Anything outside the shape is refused, never
+    /// silently normalized: the key IS the resource identity the journal conflicts on, so a re-spelled key would
+    /// collide two resources that are not the same.
     /// </summary>
     internal static bool IsResourceClaimKey(string? value)
     {
         if (value is null || value.Length > 128) return false;
-        if (IsIdentifier(value)) return true;
-        const string toolPrefix = "tool:";
-        return value.Length > toolPrefix.Length
-            && value.StartsWith(toolPrefix, StringComparison.Ordinal)
-            && IsIdentifier(value.Substring(toolPrefix.Length));
+        int segmentStart = 0;
+        for (int index = 0; index <= value.Length; index++)
+        {
+            if (index != value.Length && value[index] != ':') continue;
+            if (index == segmentStart) return false;
+            for (int position = segmentStart; position < index; position++)
+            {
+                char character = value[position];
+                if (!((character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '_')) return false;
+            }
+            segmentStart = index + 1;
+        }
+        return true;
     }
     internal static bool IsValidExecutionBinding(NodeExecutionBinding? value) => value is not null
         && IsIdentifier(value.ProgramId) && IsIdentifier(value.NodeId) && value.NodeAttempt > 0
