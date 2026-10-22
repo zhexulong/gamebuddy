@@ -55,10 +55,10 @@
  *
  * Reporting shape: one summary line, then violations grouped by class and
  * ranked by "a player reaches it and it fails badly". Every violation carries
- * `path:line`. A class that reports by *kind* (today only `hygiene`, whose 400
- * findings are 399 instances of one pattern) prints one line per kind with its
- * count and at most ten of its sites, because a list of 399 identical
- * complaints is a report nobody reads; `--verbose` (or `--all-findings`) prints
+ * `path:line`. A class that reports by *kind* (today only `hygiene`, whose
+ * findings are all instances of one pattern) prints one line per kind with its
+ * count and at most ten of its sites, because a list of identical complaints is
+ * a report nobody reads; `--verbose` (or `--all-findings`) prints
  * every site, and `--json` carries every site either way. Aggregation is a
  * reading aid, never a smaller total: the counts are the counts that were
  * found. `--only=<class>` runs one class; `--json` emits the same facts as
@@ -1615,10 +1615,10 @@ const COMMENTED_CODE =
 /**
  * The readings `hygiene` reports, each with what a count of it means.
  *
- * 399 of this tree's 400 findings are one pattern, and the owner cannot act on a list that long: either the pattern
- * is accepted wholesale (and the rule is withdrawn) or it is one defect with a mechanical sweep, and neither is a
- * decision about a line. So each kind carries its own reading, every site stays a finding, and the report prints the
- * count with a bounded sample instead of 399 lines.
+ * Every finding this class reports today is one pattern, and the owner cannot act on a list that long: either the
+ * pattern is accepted wholesale (and the rule is withdrawn) or it is one defect with a mechanical sweep, and neither
+ * is a decision about a line. So each kind carries its own reading, every site stays a finding, and the report prints
+ * the count with a bounded sample instead of every line.
  *
  * `decision` is a broad pattern one ruling settles; `defect` is a site that is wrong on its own terms.
  */
@@ -1626,7 +1626,7 @@ const HYGIENE_KINDS = Object.freeze([
   {
     id: "test-only export",
     readsAs: "decision",
-    note: "every finding is the same pattern - a Host module exports a production path whose only importer is a test - so one ruling settles all of them: accept test-only exports wholesale (and withdraw the rule) or treat the pattern as one defect and sweep it mechanically; editing 399 sites one at a time is not the fix",
+    note: "every finding is the same pattern - a Host export no production code reaches: the modules that import it are tests, resolved through re-export barrels, and the module that declares it never names it - so one ruling settles all of them (move the helper to a test-support module, or drop the export); editing sites one at a time is not the fix",
   },
   {
     id: "commented-out code",
@@ -1640,29 +1640,204 @@ const HYGIENE_KINDS = Object.freeze([
   },
 ]);
 
-/** Exported symbols of a Host module, with the line that exports them. */
-function exportedSymbols(sources, file) {
+/**
+ * One module's export surface, read the way an importer sees it: the names it declares, the names it aliases
+ * from another module (`export { a } from`, and `export { a }` of a binding it imported), the modules whose
+ * whole surface it repeats (`export * from`), and what it imports (so a local `export { a }` list resolves to
+ * the module that declares `a`).
+ */
+function moduleSurface(sources, file) {
   const sourceFile = sources.source(file);
-  const found = [];
+  const surface = { declared: new Map(), aliases: new Map(), stars: [], imports: new Map() };
   for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const clause = statement.importClause;
+    if (clause === undefined || clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings))
+      continue;
+    for (const element of clause.namedBindings.elements)
+      surface.imports.set(element.name.text, {
+        specifier: statement.moduleSpecifier.text,
+        inner: (element.propertyName ?? element.name).text,
+      });
+  }
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      const named =
+        statement.exportClause !== undefined && ts.isNamedExports(statement.exportClause)
+          ? statement.exportClause.elements
+          : null;
+      if (statement.moduleSpecifier === undefined) {
+        for (const element of named ?? []) {
+          const imported = surface.imports.get(element.name.text);
+          if (imported === undefined) surface.declared.set(element.name.text, statement);
+          else surface.aliases.set(element.name.text, imported);
+        }
+        continue;
+      }
+      if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
+      const specifier = statement.moduleSpecifier.text;
+      if (named === null) {
+        if (statement.exportClause === undefined) surface.stars.push(specifier);
+        continue;
+      }
+      for (const element of named)
+        surface.aliases.set(element.name.text, {
+          specifier,
+          inner: (element.propertyName ?? element.name).text,
+        });
+      continue;
+    }
     const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
-    const exported = modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false;
-    if (!exported) continue;
-    const record = (name) => found.push({ name, where: at(sources.root, statement, sourceFile, file) });
-    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) record(statement.name.text);
-    if (ts.isClassDeclaration(statement) && statement.name !== undefined) record(statement.name.text);
+    if (!(modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false)) continue;
+    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined)
+      surface.declared.set(statement.name.text, statement);
+    if (ts.isClassDeclaration(statement) && statement.name !== undefined)
+      surface.declared.set(statement.name.text, statement);
     if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement) || ts.isEnumDeclaration(statement))
-      record(statement.name.text);
+      surface.declared.set(statement.name.text, statement);
     if (ts.isVariableStatement(statement))
       for (const declaration of statement.declarationList.declarations)
-        if (ts.isIdentifier(declaration.name)) record(declaration.name.text);
-    if (
-      ts.isExportDeclaration(statement) &&
-      statement.exportClause !== undefined &&
-      ts.isNamedExports(statement.exportClause)
-    )
-      for (const element of statement.exportClause.elements) record(element.name.text);
+        if (ts.isIdentifier(declaration.name)) surface.declared.set(declaration.name.text, statement);
   }
+  return surface;
+}
+
+/** The audited module a relative specifier names, or null when it names nothing the audit parses. */
+function resolveSpecifier(surfaces, from, specifier) {
+  if (!specifier.startsWith(".")) return null;
+  const base = resolve(dirname(from), specifier);
+  for (const candidate of [
+    base.replace(/\.js$/u, ".ts"),
+    base.replace(/\.js$/u, ".tsx"),
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, "index.ts"),
+    join(base, "index.tsx"),
+  ])
+    if (surfaces.has(candidate)) return candidate;
+  return null;
+}
+
+/** Every name a module exposes to an importer, its star re-exports included. */
+function exposedNames(surfaces, file, seen = new Set()) {
+  if (seen.has(file)) return [];
+  seen.add(file);
+  const surface = surfaces.get(file);
+  const names = [...surface.declared.keys(), ...surface.aliases.keys()];
+  for (const specifier of surface.stars) {
+    const target = resolveSpecifier(surfaces, file, specifier);
+    if (target !== null) names.push(...exposedNames(surfaces, target, seen));
+  }
+  return names;
+}
+
+/** The module that declares what `file` exposes as `name`, following re-export barrels to the origin. */
+function declaringModule(surfaces, file, name, seen = new Set()) {
+  const key = `${file}#${name}`;
+  if (seen.has(key)) return null;
+  seen.add(key);
+  const surface = surfaces.get(file);
+  if (surface === undefined) return null;
+  if (surface.declared.has(name)) return file;
+  const alias = surface.aliases.get(name);
+  if (alias !== undefined) {
+    const target = resolveSpecifier(surfaces, file, alias.specifier);
+    return target === null ? null : declaringModule(surfaces, target, alias.inner, seen);
+  }
+  for (const specifier of surface.stars) {
+    const target = resolveSpecifier(surfaces, file, specifier);
+    if (target === null) continue;
+    const found = declaringModule(surfaces, target, name, seen);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * Every reference to an export, keyed by the module that declares it.
+ *
+ * A reference is an import that names it, a namespace import or dynamic import of the module that exposes it,
+ * or a type-position `import("…").Name`. A re-export is not one: a barrel is transparent, so a consumer of
+ * the barrel is recorded against the module that declares the symbol, which is what makes a test that imports
+ * through a facade read as a test consumer.
+ */
+function exportConsumers(sources, files, surfaces) {
+  const consumers = new Map();
+  const record = (declarer, name, from) => {
+    if (declarer === null) return;
+    const key = `${declarer}#${name}`;
+    if (!consumers.has(key)) consumers.set(key, new Set());
+    consumers.get(key).add(from);
+  };
+  const recordSurface = (target, from) => {
+    for (const name of exposedNames(surfaces, target)) record(declaringModule(surfaces, target, name), name, from);
+  };
+  for (const file of files) {
+    walk(sources.source(file), (node) => {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+        const target = resolveSpecifier(surfaces, file, node.moduleSpecifier.text);
+        if (target === null || node.importClause === undefined) return;
+        const clause = node.importClause;
+        if (clause.name !== undefined) record(declaringModule(surfaces, target, "default"), "default", file);
+        if (clause.namedBindings === undefined) return;
+        if (ts.isNamespaceImport(clause.namedBindings)) {
+          recordSurface(target, file);
+          return;
+        }
+        for (const element of clause.namedBindings.elements) {
+          const imported = (element.propertyName ?? element.name).text;
+          record(declaringModule(surfaces, target, imported), imported, file);
+        }
+        return;
+      }
+      if (
+        ts.isImportTypeNode(node) &&
+        ts.isLiteralTypeNode(node.argument) &&
+        ts.isStringLiteral(node.argument.literal) &&
+        node.qualifier !== undefined &&
+        ts.isIdentifier(node.qualifier)
+      ) {
+        const target = resolveSpecifier(surfaces, file, node.argument.literal.text);
+        const name = node.qualifier.text;
+        if (target !== null) record(declaringModule(surfaces, target, name), name, file);
+        return;
+      }
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        const argument = node.arguments[0];
+        if (argument === undefined || !ts.isStringLiteral(argument)) return;
+        const target = resolveSpecifier(surfaces, file, argument.text);
+        if (target !== null) recordSurface(target, file);
+      }
+    });
+  }
+  return consumers;
+}
+
+/**
+ * Whether `name` is used inside the module that declares it, anywhere other than the declaration itself.
+ *
+ * A name-level reading with no scope model, so a shadowing local of the same name would read as a use. It is
+ * asked only to withhold a finding - a module that names its own export ships it - so the approximation can
+ * cost a missed finding, never a reported one.
+ */
+function referencedInModule(sources, file, name, declaration) {
+  let found = false;
+  const isName = (node) => {
+    const parent = node.parent;
+    if (parent === undefined) return true;
+    if (parent.name === node) return true;
+    if (ts.isQualifiedName(parent) && parent.right === node) return true;
+    if (ts.isImportSpecifier(parent) || ts.isExportSpecifier(parent) || ts.isImportClause(parent)) return true;
+    return false;
+  };
+  const within = (node) => {
+    for (let current = node; current !== undefined; current = current.parent) if (current === declaration) return true;
+    return false;
+  };
+  walk(sources.source(file), (node) => {
+    if (found || !ts.isIdentifier(node) || node.text !== name || isName(node) || within(node)) return;
+    found = true;
+  });
   return found;
 }
 
@@ -1694,41 +1869,28 @@ function runHygiene(sources) {
     }
   }
 
-  // An export whose only importers are tests is a production path a test keeps
-  // alive: nothing ships it, and deleting the test would expose it as dead.
-  const importers = new Map();
-  for (const file of [
-    ...hostFiles,
-    ...webFiles,
-    ...sources.allFiles(sources.path(...HOST), sources.path(...WEB)).filter((candidate) => TEST_PATH.test(candidate)),
-  ]) {
-    const sourceFile = sources.source(file);
-    walk(sourceFile, (node) => {
-      if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier)) return;
-      if (!node.moduleSpecifier.text.startsWith(".")) return;
-      const clause = node.importClause;
-      if (clause === undefined) return;
-      const names = [];
-      if (clause.name !== undefined) names.push("default");
-      if (clause.namedBindings !== undefined && ts.isNamedImports(clause.namedBindings))
-        for (const element of clause.namedBindings.elements) names.push((element.propertyName ?? element.name).text);
-      for (const name of names) importers.set(name, [...(importers.get(name) ?? []), file]);
-    });
-  }
+  // An export whose only readers are tests is a production path a test keeps alive: nothing ships it, and
+  // deleting the test would expose it as dead. The reading is resolved rather than name-matched, because an
+  // export reached through a barrel, or used by its own module, is a production path whatever a test does.
+  const audited = sources.allFiles(sources.path(...HOST), sources.path(...WEB));
+  const surfaces = new Map(audited.map((file) => [file, moduleSurface(sources, file)]));
+  const consumers = exportConsumers(sources, audited, surfaces);
   let testOnly = 0;
   let examinedExports = 0;
   for (const file of hostFiles) {
-    for (const symbol of exportedSymbols(sources, file)) {
-      const users = importers.get(symbol.name) ?? [];
+    const sourceFile = sources.source(file);
+    for (const [name, declaration] of surfaces.get(file).declared) {
+      const users = [...(consumers.get(`${file}#${name}`) ?? [])].filter((user) => user !== file);
       if (users.length === 0) continue;
       examinedExports += 1;
-      if (!users.every((user) => TEST_PATH.test(user))) continue;
+      if (users.some((user) => !TEST_PATH.test(user))) continue;
+      if (referencedInModule(sources, file, name, declaration)) continue;
       testOnly += 1;
       violations.push({
         rank: 4,
         kind: "test-only export",
-        where: symbol.where,
-        message: `${symbol.name} is exported and only a test imports it (${users.map((user) => relativeTo(sources.root, user)).join(", ")}); it is a production path with no production consumer`,
+        where: at(sources.root, declaration, sourceFile, file),
+        message: `${name} is exported and only a test reaches it (${users.map((user) => relativeTo(sources.root, user)).join(", ")}); no production code names it`,
       });
     }
   }
@@ -1737,7 +1899,7 @@ function runHygiene(sources) {
     count: violations.filter((violation) => violation.kind === kind.id).length,
   }));
   notes.push(
-    `hygiene: ${violations.length} finding(s) in ${kinds.filter((kind) => kind.count > 0).length} kind(s) across ${hostFiles.length + webFiles.length} source file(s); ${examinedExports} imported export(s) examined, ${testOnly} imported only by a test`,
+    `hygiene: ${violations.length} finding(s) in ${kinds.filter((kind) => kind.count > 0).length} kind(s) across ${hostFiles.length + webFiles.length} source file(s); ${examinedExports} imported export(s) examined, ${testOnly} reached only from tests`,
   );
   for (const kind of kinds) notes.push(`hygiene: ${kind.id} (${kind.count}) reads as a ${kind.readsAs}: ${kind.note}`);
   return { declared: hostFiles.length + webFiles.length, violations, notes };
@@ -1859,10 +2021,16 @@ function runDelegated(sources, gate) {
  * for a rule that cannot read its own fixture - such a rule would be a broken gate, and every rule here is proved
  * clean-then-red-then-clean on the scratch tree before it is trusted.
  *
- * `hygiene` is the member, and the argument is its own note: 399 of its 400 findings are one pattern, a Host export
- * whose only importer is a test, which one ruling settles - accept it wholesale and withdraw the rule, or treat it
- * as one defect and sweep it mechanically. The 400th is an individual dead line. Until that ruling exists the class
- * reports by kind with counts and a bounded sample, and it does not block.
+ * `hygiene` is the member, and the argument is its own note: every one of its 152 findings is one pattern, a Host
+ * export no production code reaches, which one ruling settles - accept it wholesale and withdraw the rule, or treat
+ * it as one defect and sweep it mechanically. Until that ruling exists the class reports by kind with counts and a
+ * bounded sample, and it does not block.
+ *
+ * That count only became a reading when the importer detection was resolved rather than name-matched: an export
+ * reached through a re-export barrel, or named by its own module, used to be reported as test-only, so the number
+ * described the scan instead of the tree. The class now resolves each relative specifier to the module it names,
+ * follows re-export barrels to the module that declares a symbol, and counts a module's own use of its export;
+ * its own test proves both directions (a production-only importer stays green, a test-only importer goes red).
  *
  * `read-path` left this list when the rule learned the namespaced schema reference the product writes (`e9efd15e`):
  * its fixture now resolves the site, goes red on a projection bounded above the schema it validates against, and
