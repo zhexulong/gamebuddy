@@ -48,7 +48,7 @@ try {
     pipeName: config.PipeName,
     bridgeToken: config.BridgeToken,
     runtimeRoot,
-    modelConfig: { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+    modelConfig: { provider: "cpa-oai", modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
   });
   await waitForBootstrap(connected.runtime.session, 120_000);
   phases.push(await runTurn(connected, firstPrompt, "initial"));
@@ -61,7 +61,7 @@ try {
       pipeName: config.PipeName,
       bridgeToken: config.BridgeToken,
       runtimeRoot,
-      modelConfig: { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+      modelConfig: { provider: "cpa-oai", modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
     },
     30_000,
   );
@@ -79,7 +79,7 @@ try {
     JSON.stringify({
       state: passed ? "passed" : "blocked",
       provider: "cpa-oai",
-      model: "deepseek-v4-flash",
+      model: "deepseek-v4.1-flash",
       thinkingLevel: "high",
       identity: {
         saveId: identity.saveId,
@@ -102,7 +102,7 @@ try {
       state: "blocked",
       reasonCode: redact(error instanceof Error ? error.message : String(error)),
       provider: "cpa-oai",
-      model: "deepseek-v4-flash",
+      model: "deepseek-v4.1-flash",
       thinkingLevel: "high",
       phases,
     }),

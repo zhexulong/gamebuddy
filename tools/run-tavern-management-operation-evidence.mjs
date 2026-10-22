@@ -700,14 +700,14 @@ async function exerciseOperations(origin, client) {
     const state = await sendJson(origin, client, "POST", `/api/tavern/v1/settings/connections/${connectionId}/model`, {
       apiVersion: 1,
       expectedRevision: revision,
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-v4.1-flash",
       thinkingLevel: "high",
     });
     const record = Array.isArray(state?.connections)
       ? state.connections.find((entry) => entry?.connectionId === connectionId)
       : undefined;
     if (record === undefined) throw new Error("connection_model_record_missing");
-    if (record.modelId !== "deepseek-v4-flash" || record.thinkingLevel !== "high")
+    if (record.modelId !== "deepseek-v4.1-flash" || record.thinkingLevel !== "high")
       throw new Error("connection_model_not_applied");
     if (!Number.isInteger(state.revision) || state.revision <= revision)
       throw new Error("connection_model_revision_unadvanced");

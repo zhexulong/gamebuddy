@@ -3,8 +3,8 @@
  * GameBuddy Tavern Message Tree & Swipe Branching End-to-End Live Run
  *
  * Validates the complete user workflow:
- * 1. Submit Player Message -> Real DeepSeek V4 Flash Streaming -> Variant 1 Committed (1/1)
- * 2. Click "Regenerate" -> Real DeepSeek V4 Flash Alternative Generation -> Variant 2 Committed (2/2)
+ * 1. Submit Player Message -> Real DeepSeek V4.1 Flash Streaming -> Variant 1 Committed (1/1)
+ * 2. Click "Regenerate" -> Real DeepSeek V4.1 Flash Alternative Generation -> Variant 2 Committed (2/2)
  * 3. Swipe Navigation -> Switch back to Variant 1 (1/2) -> Switch forward to Variant 2 (2/2)
  * 4. Branch Continuation -> Send follow-up on Variant 2 -> Context-aware response verification
  */
@@ -16,7 +16,7 @@ import { join } from "node:path";
 
 const API_BASE = process.env.CPA_OAI_BASE_URL || "http://127.0.0.1:8317/v1";
 const API_KEY = process.env.CPA_OAI_API_KEY || "cpa";
-const MODEL = process.env.CPA_OAI_MODEL || "deepseek-v4-flash";
+const MODEL = process.env.CPA_OAI_MODEL || "deepseek-v4.1-flash";
 
 const SYSTEM_PROMPT = `
 你叫阿比盖尔（Abigail），是星露谷物语中玩家的常驻伴侣与冒险搭档。
@@ -76,7 +76,13 @@ function createLiveTestStore() {
         text,
         swipes: [text],
         activeSwipeIndex: 0,
-        swipeInfo: { currentIndex: 0, totalSwipes: 1, label: formatSwipeLabel(0, 1), hasPrevious: false, hasNext: false }
+        swipeInfo: {
+          currentIndex: 0,
+          totalSwipes: 1,
+          label: formatSwipeLabel(0, 1),
+          hasPrevious: false,
+          hasNext: false,
+        },
       };
     },
     appendSwipeVariant(messageId, newText) {
@@ -102,7 +108,7 @@ function createLiveTestStore() {
           label: formatSwipeLabel(nextIndex, swipes.length),
           hasPrevious: nextIndex > 0,
           hasNext: nextIndex < swipes.length - 1,
-        }
+        },
       };
     },
     selectSwipe(messageId, selection) {
@@ -136,44 +142,49 @@ function createLiveTestStore() {
           label: formatSwipeLabel(nextIdx, swipes.length),
           hasPrevious: nextIdx > 0,
           hasNext: nextIdx < swipes.length - 1,
-        }
+        },
       };
     },
     getTranscript(threadId) {
       const rows = db.prepare("SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at_ms ASC").all(threadId);
       return rows.map((r, order) => {
         const swipes = JSON.parse(r.swipes_json);
-        const swipeInfo = r.role === "companion" && swipes.length > 1 ? {
-          currentIndex: r.active_swipe_index,
-          totalSwipes: swipes.length,
-          label: formatSwipeLabel(r.active_swipe_index, swipes.length),
-          hasPrevious: r.active_swipe_index > 0,
-          hasNext: r.active_swipe_index < swipes.length - 1,
-        } : (r.role === "companion" ? {
-          currentIndex: 0,
-          totalSwipes: 1,
-          label: "◀ 1/1 ▶",
-          hasPrevious: false,
-          hasNext: false
-        } : undefined);
+        const swipeInfo =
+          r.role === "companion" && swipes.length > 1
+            ? {
+                currentIndex: r.active_swipe_index,
+                totalSwipes: swipes.length,
+                label: formatSwipeLabel(r.active_swipe_index, swipes.length),
+                hasPrevious: r.active_swipe_index > 0,
+                hasNext: r.active_swipe_index < swipes.length - 1,
+              }
+            : r.role === "companion"
+              ? {
+                  currentIndex: 0,
+                  totalSwipes: 1,
+                  label: "◀ 1/1 ▶",
+                  hasPrevious: false,
+                  hasNext: false,
+                }
+              : undefined;
 
         return {
           handle: r.id,
           role: r.role,
           text: r.text,
           order,
-          swipeInfo
+          swipeInfo,
         };
       });
     },
     close() {
       db.close();
       rmSync(tempDir, { recursive: true, force: true });
-    }
+    },
   };
 }
 
-// Call DeepSeek V4 Flash with Streaming Token Readout and retry on upstream network hiccups
+// Call DeepSeek V4.1 Flash with Streaming Token Readout and retry on upstream network hiccups
 async function callDeepSeekStream(messages, onChunk, maxRetries = 3) {
   let attempt = 0;
   while (attempt < maxRetries) {
@@ -188,14 +199,11 @@ async function callDeepSeekStream(messages, onChunk, maxRetries = 3) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${API_KEY}`,
+          Authorization: `Bearer ${API_KEY}`,
         },
         body: JSON.stringify({
           model: MODEL,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            ...messages
-          ],
+          messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
           stream: true,
           thinking: { type: "enabled" },
           reasoning_effort: "high",
@@ -206,7 +214,9 @@ async function callDeepSeekStream(messages, onChunk, maxRetries = 3) {
       if (!response.ok) {
         const err = await response.text();
         if (response.status >= 500 && attempt < maxRetries) {
-          console.log(`⚠️ [Warning]: Upstream HTTP ${response.status}, retrying in 2s (Attempt ${attempt}/${maxRetries})...`);
+          console.log(
+            `⚠️ [Warning]: Upstream HTTP ${response.status}, retrying in 2s (Attempt ${attempt}/${maxRetries})...`,
+          );
           await new Promise((r) => setTimeout(r, 2000));
           continue;
         }
@@ -257,7 +267,7 @@ async function callDeepSeekStream(messages, onChunk, maxRetries = 3) {
       return {
         reasoning: reasoningText.trim(),
         content: contentText.trim(),
-        metrics: { ttft, totalTime, contentTokens: contentText.length }
+        metrics: { ttft, totalTime, contentTokens: contentText.length },
       };
     } catch (e) {
       if (attempt < maxRetries) {
@@ -290,21 +300,20 @@ async function runLiveVerification() {
     console.log(`👤 玩家: "${playerMsg1Text}"`);
 
     const playerNode1 = store.addPlayerMessage(threadId, playerMsg1Text);
-    
+
     process.stdout.write("💭 [Abigail 潜意识思考]: ");
-    const resp1 = await callDeepSeekStream(
-      [{ role: "user", content: playerMsg1Text }],
-      (chunk) => {
-        if (chunk.type === "reasoning") process.stdout.write(chunk.text);
-      }
-    );
+    const resp1 = await callDeepSeekStream([{ role: "user", content: playerMsg1Text }], (chunk) => {
+      if (chunk.type === "reasoning") process.stdout.write(chunk.text);
+    });
     console.log("\n");
 
     console.log(`💬 [Abigail 台词]: ${resp1.content}`);
     console.log(`⚡ [性能]: TTFT = ${resp1.metrics.ttft}ms | Total = ${resp1.metrics.totalTime}ms\n`);
 
     const compNode1 = store.addCompanionResponse(threadId, resp1.content, playerNode1.id);
-    console.log(`📊 [Swipe 状态]: ${compNode1.swipeInfo.label} (Total: ${compNode1.swipeInfo.totalSwipes}, Current: ${compNode1.swipeInfo.currentIndex + 1})`);
+    console.log(
+      `📊 [Swipe 状态]: ${compNode1.swipeInfo.label} (Total: ${compNode1.swipeInfo.totalSwipes}, Current: ${compNode1.swipeInfo.currentIndex + 1})`,
+    );
     console.log("✅ Step 1 Verified: Variant 1 successfully generated and committed.\n");
 
     // -------------------------------------------------------------------------
@@ -316,20 +325,21 @@ async function runLiveVerification() {
     console.log(`🖱️ [Action]: chat.regenerate on message handle: ${compNode1.id}`);
 
     process.stdout.write("💭 [Abigail 重新思考 (Variant 2)]: ");
-    const resp2 = await callDeepSeekStream(
-      [{ role: "user", content: playerMsg1Text }],
-      (chunk) => {
-        if (chunk.type === "reasoning") process.stdout.write(chunk.text);
-      }
-    );
+    const resp2 = await callDeepSeekStream([{ role: "user", content: playerMsg1Text }], (chunk) => {
+      if (chunk.type === "reasoning") process.stdout.write(chunk.text);
+    });
     console.log("\n");
 
     console.log(`💬 [Abigail 台词 (Variant 2)]: ${resp2.content}`);
     console.log(`⚡ [性能]: TTFT = ${resp2.metrics.ttft}ms | Total = ${resp2.metrics.totalTime}ms\n`);
 
     const updatedNodeWithVariant2 = store.appendSwipeVariant(compNode1.id, resp2.content);
-    console.log(`📊 [Swipe 状态]: ${updatedNodeWithVariant2.swipeInfo.label} (Total: ${updatedNodeWithVariant2.swipeInfo.totalSwipes}, Current: ${updatedNodeWithVariant2.swipeInfo.currentIndex + 1})`);
-    console.log(`🔍 [差异校验]: Variant 1 与 Variant 2 内容是否独立? -> ${resp1.content !== resp2.content ? "✅ 独立且多样化" : "❌ 重复"}`);
+    console.log(
+      `📊 [Swipe 状态]: ${updatedNodeWithVariant2.swipeInfo.label} (Total: ${updatedNodeWithVariant2.swipeInfo.totalSwipes}, Current: ${updatedNodeWithVariant2.swipeInfo.currentIndex + 1})`,
+    );
+    console.log(
+      `🔍 [差异校验]: Variant 1 与 Variant 2 内容是否独立? -> ${resp1.content !== resp2.content ? "✅ 独立且多样化" : "❌ 重复"}`,
+    );
     console.log("✅ Step 2 Verified: Alternative swipe variant successfully created.\n");
 
     // -------------------------------------------------------------------------
@@ -338,7 +348,7 @@ async function runLiveVerification() {
     console.log("--------------------------------------------------------------------------------");
     console.log("📍 [Step 3] Swipe Navigation: Switch between ◀ 1/2 ▶ and ◀ 2/2 ▶");
     console.log("--------------------------------------------------------------------------------");
-    
+
     console.log("🖱️ [Action]: Player clicks '◀' (Previous Swipe)");
     const swipePrev = store.selectSwipe(compNode1.id, { direction: "prev" });
     console.log(`📊 [Swipe 状态]: ${swipePrev.swipeInfo.label} (Active Index: ${swipePrev.activeSwipeIndex})`);
@@ -372,12 +382,9 @@ async function runLiveVerification() {
     ];
 
     process.stdout.write("💭 [Abigail 潜意识思考 (Branch 2 Follow-up)]: ");
-    const resp3 = await callDeepSeekStream(
-      activeHistory,
-      (chunk) => {
-        if (chunk.type === "reasoning") process.stdout.write(chunk.text);
-      }
-    );
+    const resp3 = await callDeepSeekStream(activeHistory, (chunk) => {
+      if (chunk.type === "reasoning") process.stdout.write(chunk.text);
+    });
     console.log("\n");
 
     console.log(`💬 [Abigail 台词]: ${resp3.content}`);

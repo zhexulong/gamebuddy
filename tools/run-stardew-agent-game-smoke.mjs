@@ -27,7 +27,7 @@ const gameVersion = process.argv.includes("--game-version") ? option("--game-ver
 const runtimeRoot = process.argv.includes("--runtime-root")
   ? option("--runtime-root")
   : await mkdtemp(join(tmpdir(), "gamebuddy-stardew-agent-"));
-const modelId = option("--model", "deepseek-v4-flash");
+const modelId = option("--model", "deepseek-v4.1-flash");
 const prompt = option(
   "--prompt",
   "Please help with the current farm situation. Observe the live world and choose one useful safe action from the capabilities the game currently exposes. If the facts support equipping an owned tool, decide which tool is useful, perform it, and verify the authoritative receipt. Do not assume a result and do not claim success without evidence.",

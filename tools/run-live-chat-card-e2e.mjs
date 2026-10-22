@@ -2,7 +2,7 @@
 /**
  * GameBuddy End-to-End Chat Character Card Live Run & Behavioral/Quality Gates Suite
  *
- * Validates real-world character card ingestion and multi-turn live chat against DeepSeek V4 Flash:
+ * Validates real-world character card ingestion and multi-turn live chat against DeepSeek V4.1 Flash:
  * - Gate 1: Ingress & Scenario/WorldBook Isolation Gate
  * - Gate 2: Persona Fidelity & Natural Voice Gate
  * - Gate 3: Anti-Leak & Presentation Pure Content Gate
@@ -18,7 +18,7 @@ import { join } from "node:path";
 
 const API_BASE = process.env.CPA_OAI_BASE_URL || "http://127.0.0.1:8317/v1";
 const API_KEY = process.env.CPA_OAI_API_KEY || "cpa";
-const MODEL = process.env.CPA_OAI_MODEL || "deepseek-v4-flash";
+const MODEL = process.env.CPA_OAI_MODEL || "deepseek-v4.1-flash";
 const CARD_PATH = "E:/Downloads/类脑/糯米姬 (0724).json";
 
 console.log("================================================================================");
@@ -59,7 +59,9 @@ try {
 const maidEntry = rawCardData.entries?.["1"]?.content || "";
 const cultivatorEntry = rawCardData.entries?.["3"]?.content || "";
 
-console.log(`Loaded character card entries: Maid (${maidEntry.length} chars), Cultivator (${cultivatorEntry.length} chars)\n`);
+console.log(
+  `Loaded character card entries: Maid (${maidEntry.length} chars), Cultivator (${cultivatorEntry.length} chars)\n`,
+);
 
 // Ingest through GameBuddy Host Pipeline (previewStCard -> candidateToIdentityProfile)
 const preview = previewStCard({
@@ -67,10 +69,13 @@ const preview = previewStCard({
   data: {
     name: "糯米姬",
     description: "落魄的异世界贵族遗民，半不死人体质，外冷内热，毒舌傲娇的女仆长。",
-    personality: "外表高冷傲然、嘴硬心软、毒舌吐槽役，内心极度忠诚；喜欢毛茸茸的小动物，在毛茸茸生物面前会流露出真实的温柔；全能家政。",
+    personality:
+      "外表高冷傲然、嘴硬心软、毒舌吐槽役，内心极度忠诚；喜欢毛茸茸的小动物，在毛茸茸生物面前会流露出真实的温柔；全能家政。",
     scenario: "【酒馆场景】：糯米姬作为贴身专属女仆，正在房间内为主人整理散落的书籍与红茶。窗外下着微雨。",
-    first_mes: "……啊啦，主人，您终于舍得从被窝里爬起来了？红茶已经为您重新温过三遍了，再不喝掉的话，我可就要当成废弃物倒掉了哦。",
-    mes_example: "{{user}}: 糯米姬，今天早餐吃什么？\n{{char}}: 哼……冰箱里只剩下一些普通鸡蛋和吐司了。勉为其难给您做了一份溏心蛋三明治，可别嫌弃。",
+    first_mes:
+      "……啊啦，主人，您终于舍得从被窝里爬起来了？红茶已经为您重新温过三遍了，再不喝掉的话，我可就要当成废弃物倒掉了哦。",
+    mes_example:
+      "{{user}}: 糯米姬，今天早餐吃什么？\n{{char}}: 哼……冰箱里只剩下一些普通鸡蛋和吐司了。勉为其难给您做了一份溏心蛋三明治，可别嫌弃。",
   },
 });
 
@@ -84,14 +89,23 @@ const gameSystemPrompt = buildGameCompanionSystemPrompt(profile);
 
 // Negative Isolation & Purity Check
 const gameExcludesScenario = !gameSystemPrompt.includes("酒馆场景") && !gameSystemPrompt.includes("整理散落的书籍");
-const baseProfilePure = !profile.identity.continuity.includes("酒馆场景") && !profile.identity.continuity.includes("星露谷");
-const chatHasPurePersona = chatSystemPrompt.includes("[Character: 糯米姬]") && !chatSystemPrompt.includes("gamebuddy_companion_identity");
+const baseProfilePure =
+  !profile.identity.continuity.includes("酒馆场景") && !profile.identity.continuity.includes("星露谷");
+const chatHasPurePersona =
+  chatSystemPrompt.includes("[Character: 糯米姬]") && !chatSystemPrompt.includes("gamebuddy_companion_identity");
 
-recordGate("Gate-1", "Input Ingress & Multi-Game Scenario Isolation", gameExcludesScenario && baseProfilePure && chatHasPurePersona, {
-  "Base Profile Purity": baseProfilePure ? "100% Pure (Multi-Game Ready)" : "Polluted",
-  "Chat System Prompt Standard": chatHasPurePersona ? "SillyTavern/Liyuan Canonical RP Prompt" : "Defensive/Boilerplate Leak",
-  "Game Surface Isolation": gameExcludesScenario ? "100% Physically Excluded" : "LEAKED into Game System Prompt",
-});
+recordGate(
+  "Gate-1",
+  "Input Ingress & Multi-Game Scenario Isolation",
+  gameExcludesScenario && baseProfilePure && chatHasPurePersona,
+  {
+    "Base Profile Purity": baseProfilePure ? "100% Pure (Multi-Game Ready)" : "Polluted",
+    "Chat System Prompt Standard": chatHasPurePersona
+      ? "SillyTavern/Liyuan Canonical RP Prompt"
+      : "Defensive/Boilerplate Leak",
+    "Game Surface Isolation": gameExcludesScenario ? "100% Physically Excluded" : "LEAKED into Game System Prompt",
+  },
+);
 
 // --- 2. Live LLM Streaming Helper with Retry and Timing ---
 async function streamCompletionWithRetry(messages, maxRetries = 4) {
@@ -101,7 +115,7 @@ async function streamCompletionWithRetry(messages, maxRetries = 4) {
     } catch (err) {
       console.warn(`[Stream Attempt ${attempt}/${maxRetries} Failed]: ${err.message}`);
       if (attempt === maxRetries) throw err;
-      await new Promise(r => setTimeout(r, 2000 * attempt));
+      await new Promise((r) => setTimeout(r, 2000 * attempt));
     }
   }
 }
@@ -230,14 +244,12 @@ function getMsg(id) {
  * - Tier 3 & 4 (m[1] + raw tail): Verified transcript history along active DAG branch + current user input
  */
 function assembleChatContext({ profile, scenario, greeting, history = [], currentUserInput }) {
-  const messages = [
-    { role: "system", content: buildChatCompanionSystemPrompt(profile) }
-  ];
+  const messages = [{ role: "system", content: buildChatCompanionSystemPrompt(profile) }];
 
   if (scenario) {
     messages.push({
       role: "system",
-      content: `[Current Scenario: ${scenario}]`
+      content: `[Current Scenario: ${scenario}]`,
     });
   }
 
@@ -248,7 +260,7 @@ function assembleChatContext({ profile, scenario, greeting, history = [], curren
   for (const msg of history) {
     messages.push({
       role: msg.role === "companion" ? "assistant" : "user",
-      content: msg.text
+      content: msg.text,
     });
   }
 
@@ -269,15 +281,22 @@ function assembleChatContext({ profile, scenario, greeting, history = [], curren
  * 5. DAG lineage integrity (history turns exactly match branch path).
  * 6. Content boundedness (UTF-8 bytes < 32KB, no null/undefined/leak markers).
  */
-function verifyModelInputContext(messages, { expectedProfile, expectedScenario, expectedBranch, expectedHistoryCount = 0 }) {
+function verifyModelInputContext(
+  messages,
+  { expectedProfile, expectedScenario, expectedBranch, expectedHistoryCount = 0 },
+) {
   const systemPromptExpected = buildChatCompanionSystemPrompt(expectedProfile);
-  
+
   const checks = {
     validArray: Array.isArray(messages) && messages.length >= 3,
     systemPromptExact: messages[0]?.role === "system" && messages[0]?.content === systemPromptExpected,
-    noRoboticBoilerplate: !messages[0]?.content.includes("GameBuddy Companion Host") && !messages[0]?.content.includes("gamebuddy_companion_identity"),
-    noScenarioInSystemPrompt: !messages[0]?.content.includes("酒馆场景") && !messages[0]?.content.includes(expectedScenario),
-    scenarioMountedInContext: messages[1]?.role === "system" && messages[1]?.content === `[Current Scenario: ${expectedScenario}]`,
+    noRoboticBoilerplate:
+      !messages[0]?.content.includes("GameBuddy Companion Host") &&
+      !messages[0]?.content.includes("gamebuddy_companion_identity"),
+    noScenarioInSystemPrompt:
+      !messages[0]?.content.includes("酒馆场景") && !messages[0]?.content.includes(expectedScenario),
+    scenarioMountedInContext:
+      messages[1]?.role === "system" && messages[1]?.content === `[Current Scenario: ${expectedScenario}]`,
     greetingMounted: messages[2]?.role === "assistant" && messages[2]?.content.length > 0,
     validAlternation: true,
     branchLineageConsistent: true,
@@ -286,7 +305,7 @@ function verifyModelInputContext(messages, { expectedProfile, expectedScenario, 
 
   const dialogueTurns = messages.slice(3);
   for (let i = 0; i < dialogueTurns.length; i++) {
-    const expectedRole = (i % 2 === 0) ? "user" : "assistant";
+    const expectedRole = i % 2 === 0 ? "user" : "assistant";
     if (dialogueTurns[i].role !== expectedRole) {
       checks.validAlternation = false;
     }
@@ -321,7 +340,7 @@ const ANTI_LEAK_PATTERNS = [
   /\[System Instruction/i,
   /```json/i,
   /<think>/i,
-  /作为一个人工智能/
+  /作为一个人工智能/,
 ];
 
 function verifyAntiLeak(text) {
@@ -381,21 +400,21 @@ async function runLiveEvaluation() {
   recordGate("Gate-2.1", "Turn 1 Persona & Natural Tone", personaCheck1, {
     "Response Length": `${response1.text.length} chars`,
     "Tone Fidelity": "High (Maintains maid/tsundere voice)",
-    "Preview": `${response1.text.slice(0, 45)}...`
+    Preview: `${response1.text.slice(0, 45)}...`,
   });
 
   recordGate("Gate-3.1", "Turn 1 Anti-Leak & Presentation Purity", leakCheck1.clean, {
     "Pseudo-Tool Leak": "0%",
     "System Tag Leak": "0%",
     "JSON/Code Leak": "0%",
-    "Reasoning Leak into Content": response1.text.includes(response1.reasoningText.slice(0, 20)) ? "Leaked" : "0%"
+    "Reasoning Leak into Content": response1.text.includes(response1.reasoningText.slice(0, 20)) ? "Leaked" : "0%",
   });
 
   recordGate("Gate-6.1", "Turn 1 Streaming SLA & Latency", response1.contentTTFT < 30000, {
     "Stream Initial TTFT": `${response1.streamTTFT} ms`,
     "Content First Token TTFT": `${response1.contentTTFT} ms (Target < 30s for cloud reasoning model)`,
     "Total Duration": `${response1.totalDuration} ms`,
-    "Chunks Streamed": `${response1.chunkCount} chunks`
+    "Chunks Streamed": `${response1.chunkCount} chunks`,
   });
 
   // --- Turn 2: Player Interaction with Specific Item (Context & Continuity Test) ---
@@ -436,11 +455,16 @@ async function runLiveEvaluation() {
   const leakCheck2 = verifyAntiLeak(response2.text);
   const mentionsCatOrFluffy = /猫|毛茸茸|可爱|碰|摸|爪|小东西|蠢|小家伙|耳朵|抱|哼|药|伤|拿|包扎/.test(response2.text);
 
-  recordGate("Gate-4.1", "Turn 2 Context Continuity & Specific Trait Ingress", mentionsCatOrFluffy && leakCheck2.clean, {
-    "Context Grounding": "Accurately recognized player's cat offer",
-    "Card Trait Ingress": "Triggered special weakness/fondness for fluffy animals",
-    "Preview": `${response2.text.slice(0, 45)}...`
-  });
+  recordGate(
+    "Gate-4.1",
+    "Turn 2 Context Continuity & Specific Trait Ingress",
+    mentionsCatOrFluffy && leakCheck2.clean,
+    {
+      "Context Grounding": "Accurately recognized player's cat offer",
+      "Card Trait Ingress": "Triggered special weakness/fondness for fluffy animals",
+      Preview: `${response2.text.slice(0, 45)}...`,
+    },
+  );
 
   // --- Turn 3: Swipe / Regenerate Alternative Generation on Turn 2 ---
   console.log(`[Turn 3 - Swipe Variant Generation (Regenerate Turn 2 Response)]`);
@@ -483,7 +507,7 @@ async function runLiveEvaluation() {
   recordGate("Gate-5.1", "Swipe Alternative Generation & DAG Tree Integrity", isDistinctVariant && swipeNavWorks, {
     "Total Swipes Recorded": `${updatedSwipes.length} variants stored in SQLite WAL`,
     "Active Swipe Index": "1 (Variant 2 active)",
-    "Distinct Creative Output": isDistinctVariant ? "True" : "False"
+    "Distinct Creative Output": isDistinctVariant ? "True" : "False",
   });
 
   // --- Turn 4: Follow-up on Variant 2 Branch ---
@@ -529,7 +553,7 @@ async function runLiveEvaluation() {
   recordGate("Gate-4.2", "Turn 4 Branch Continuation Grounding", branchContinuity, {
     "Branch Parent ID": "msg_4 (Variant 2)",
     "Continuity Status": "Seamlessly advanced conversation on active branch",
-    "Preview": `${response4.text.slice(0, 45)}...`
+    Preview: `${response4.text.slice(0, 45)}...`,
   });
 
   // --- Clean up Temp DB ---
@@ -543,7 +567,7 @@ async function runLiveEvaluation() {
   console.log("                  E2E BEHAVIORAL & QUALITY GATES SUMMARY REPORT                 ");
   console.log("================================================================================");
   const totalGates = gateResults.length;
-  const passedGates = gateResults.filter(g => g.passed).length;
+  const passedGates = gateResults.filter((g) => g.passed).length;
   console.log(`Total Gates Evaluated : ${totalGates}`);
   console.log(`Passed Gates          : ${passedGates} / ${totalGates}`);
   console.log(`Pass Rate             : ${((passedGates / totalGates) * 100).toFixed(1)}%\n`);
@@ -560,7 +584,7 @@ async function runLiveEvaluation() {
   }
 }
 
-runLiveEvaluation().catch(err => {
+runLiveEvaluation().catch((err) => {
   console.error("Live Evaluation Fatal Error:", err);
   process.exit(1);
 });

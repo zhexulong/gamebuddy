@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 const repo = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const DEFAULT_FIXTURE = "tools/fixtures/historian-prompt-ab/voice-change.json";
 const BASE_URL = process.env.GAMEBUDDY_CPA_OAI_BASE_URL ?? "http://127.0.0.1:8317/v1";
-const MODEL = process.env.GAMEBUDDY_GRADER_MODEL ?? "deepseek-v4-flash";
+const MODEL = process.env.GAMEBUDDY_GRADER_MODEL ?? "deepseek-v4.1-flash";
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback) => {

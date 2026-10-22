@@ -2435,8 +2435,8 @@ if (!hasModelProfile)
     modelProfilePath,
     JSON.stringify({
       schemaVersion: 1,
-      chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
-      game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+      chat: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
+      game: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
     }),
   );
 const manifestPath = join(root, "manifest.json");
