@@ -459,6 +459,89 @@ test("plan_shape answers a whole family, and a selector that names nothing with 
 });
 
 /**
+ * The companion used to guess the tool (`scythe` for weeds, `pickaxe` for rocks) and the slot from tool order, and got
+ * ``cut_weeds`` right by luck and ``break_rock_source`` wrong. So the shape answer carries the tool the surface itself
+ * declares - for every action, never omitted - and never invents one for an action whose surface is silent.
+ */
+test("plan_shape reports the tool the surface declares, and tool_requirement_undeclared when it declares none", () => {
+  const withClaims = (actionId: string, claims: readonly Readonly<{ key: string; value: string }>[]) =>
+    Object.freeze({
+      actionId,
+      familyId: "resource_gathering",
+      identityVersion: 1,
+      lifecycle: "live_verified" as const,
+      kind: "execution" as const,
+      descriptor: Object.freeze({
+        argumentSchema: {
+          x: { type: "integer" },
+          y: { type: "integer" },
+          slot: { type: "integer" },
+          expectedTargetId: { type: "string" },
+        },
+        resourceTemplate: Object.freeze({ claims: Object.freeze(claims.map((claim) => Object.freeze(claim))) }),
+      }),
+    });
+  const actions = planActionsFromRegistrations([
+    // The Mod's own two words for the level half of a `tool:<category>` claim, verbatim from its claim value.
+    withClaims("cut_weeds", [
+      { key: "embodied_actor", value: "ScopePlayer" },
+      { key: "tool:scythe", value: "AnyUpgrade" },
+    ]),
+    withClaims("break_rock_source", [
+      { key: "embodied_actor", value: "ScopePlayer" },
+      { key: "tool:pickaxe", value: "BasicOnly" },
+    ]),
+    // Declares its embodied actor and nothing about a tool: the surface is silent, and the answer says so by name.
+    withClaims("chop_tree_source", [{ key: "embodied_actor", value: "ScopePlayer" }]),
+    // A word the Host cannot translate is passed through as declared rather than dropped or guessed at.
+    withClaims("dig_artifact_spot", [{ key: "tool:hoe", value: "SomeFutureWord" }]),
+  ]);
+
+  const shapeOf = (actionId: string) => {
+    const shape = planShape(actions, { actionId });
+    assert.ok(shape.ok, `${actionId} is plannable`);
+    return shape.actions[0]!.toolRequirement;
+  };
+  assert.deepEqual(shapeOf("cut_weeds"), {
+    declared: true,
+    category: "scythe",
+    upgradeRequirement: "AnyUpgrade",
+    minimumUpgradeLevel: 0,
+    maximumUpgradeLevel: null,
+  });
+  // "the basic one": the Mod refuses an upgraded pickaxe by name, so a bare `minimumUpgradeLevel` would be a lie.
+  assert.deepEqual(shapeOf("break_rock_source"), {
+    declared: true,
+    category: "pickaxe",
+    upgradeRequirement: "BasicOnly",
+    minimumUpgradeLevel: 0,
+    maximumUpgradeLevel: 0,
+  });
+  assert.deepEqual(shapeOf("chop_tree_source"), { declared: false, reasonCode: "tool_requirement_undeclared" });
+  assert.deepEqual(shapeOf("dig_artifact_spot"), {
+    declared: true,
+    category: "hoe",
+    upgradeRequirement: "SomeFutureWord",
+    minimumUpgradeLevel: null,
+    maximumUpgradeLevel: null,
+  });
+
+  // The tool is read off claims only: no category is ever fabricated from an action id, on the artifact's own
+  // vocabulary too - today's surface declares `embodied_actor` and no tool, so even the scythe action says undeclared.
+  const cutWeedsOnTheArtifact = planShape(ACTIONS, { actionId: "cut_weeds" });
+  assert.ok(cutWeedsOnTheArtifact.ok);
+  assert.deepEqual(cutWeedsOnTheArtifact.actions[0]!.toolRequirement, {
+    declared: false,
+    reasonCode: "tool_requirement_undeclared",
+  });
+  for (const action of ACTIONS) {
+    assert.ok("toolRequirement" in action, `${action.actionId} carries the field rather than omitting it`);
+    if (action.toolRequirement.declared) assert.ok(action.toolRequirement.category.length > 0);
+    else assert.equal(action.toolRequirement.reasonCode, "tool_requirement_undeclared");
+  }
+});
+
+/**
  * "Is the scythe equipped" cannot be judged statically and the slot index cannot be guessed: the Mod publishes the held
  * tool and the pack's tool slots, so a script reads both from the snapshot it was handed instead of inventing a slot.
  */

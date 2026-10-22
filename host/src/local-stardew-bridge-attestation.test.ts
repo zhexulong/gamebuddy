@@ -22,7 +22,7 @@ import {
   type OpaqueS4cMaterializationAdmission,
 } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.internal.js";
 import { loadHostDeploymentManifest } from "./deployment-manifest.js";
-import { planActionsFromRegistrations, planProgramId } from "./body-program-script.js";
+import { PLAN_TOOL_SLOT_MEANING, planActionsFromRegistrations, planProgramId } from "./body-program-script.js";
 import { createHostGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import { observeMaterializedProductionRuntimeForTest } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.js";
 import { assertReceiptBackedLaunch } from "./integration-launcher.js";
@@ -743,6 +743,7 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
             { name: "x", type: "integer" },
             { name: "y", type: "integer" },
           ],
+          resourceClaims: [],
         });
         // ...and the same declaration is reachable without writing a script, for one action or a whole family.
         assert.deepEqual(await execute("stardew_plan_shape", { actionId: "move_to_tile" }), {
@@ -757,8 +758,13 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
               ],
               outputFacts: [],
               resourceClaims: [],
+              // This bridge published no tool claim for the action, so the answer says the surface is silent rather
+              // than leaving the field out and letting the companion read silence as "no tool involved".
+              toolRequirement: { declared: false, reasonCode: "tool_requirement_undeclared" },
             },
           ],
+          // What a `slot` argument holds, answered once per shape rather than left to tool order.
+          toolSlotMeaning: PLAN_TOOL_SLOT_MEANING,
         });
         assert.deepEqual(await execute("stardew_plan_shape", { family: "brewing" }), {
           reasonCode: "plan_shape_unknown_family:brewing",

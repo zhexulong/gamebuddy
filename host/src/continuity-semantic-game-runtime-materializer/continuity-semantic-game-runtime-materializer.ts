@@ -4,6 +4,7 @@ import { resolveCompanionLocale, type CompanionLocale } from "../settings/player
 import {
   compilePlanScript,
   legalPlanActionIds,
+  PLAN_TOOL_SLOT_MEANING,
   planActionsFromRegistrations,
   planProgramId,
   planShape,
@@ -243,7 +244,7 @@ function createBodyProgramTools(
         // The per-action tools that used to carry a generated schema are gone, so this is where their shapes live now:
         // one read-only answer per action (or per family) instead of ninety-five schemas in every context.
         description:
-          "Read what a plan step must supply for one action, or for every plannable action of one family: the argument names with their types and, where the Mod declares a closed set, its values, plus the resource the action claims and the output facts a later step can bind. Read-only, so it changes nothing; ask it when you are unsure what builder.<actionId> takes instead of guessing and being refused. It also says where equipment comes from: the surface declares a tool per TARGET, not per action, so a tool step is `builder.equipFor(<actionId>, <target>)` - pass the target you are about to act on and it writes the equip step and answers the slot to name, or refuses by name when only the Mod's handler knows the tool.",
+          "Read what a plan step must supply for one action, or for every plannable action of one family: the argument names with their types and, where the Mod declares a closed set, its values, plus the resource the action claims and the output facts a later step can bind. Read-only, so it changes nothing; ask it when you are unsure what builder.<actionId> takes instead of guessing and being refused. It also answers equipment: `toolRequirement` is the tool the surface declares the action needs (`category`, the surface's own `upgradeRequirement` word and the upgrade-level range that satisfies it) or `tool_requirement_undeclared` when the surface says nothing about a tool for it, and `toolSlotMeaning` says what a `slot` argument holds. A tool step is `builder.equipFor(<actionId>, <target>)` - pass the target you are about to act on and it writes the equip step and answers the slot to name, or refuses by name when only the Mod's handler knows the tool.",
         parameters: planShapeParameters(),
         execute: async (_toolCallId, params) => {
           const shape = planShape(readPlanActions(connection), readPlanShapeRequest(params));
@@ -253,7 +254,7 @@ function createBodyProgramTools(
               ...(shape.legalActionIds === undefined ? {} : { legalActionIds: shape.legalActionIds }),
               ...(shape.legalFamilies === undefined ? {} : { legalFamilies: shape.legalFamilies }),
             });
-          return planDetails({ actions: shape.actions });
+          return planDetails({ actions: shape.actions, toolSlotMeaning: PLAN_TOOL_SLOT_MEANING });
         },
       }),
     ),
@@ -375,7 +376,7 @@ function planToolParameters() {
       script: Type.String({
         minLength: 1,
         maxLength: 8192,
-        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\`, \`x\` and \`y\` except doorTargets (sourceX, sourceY, targetX, targetY), foodTargets (slot, qualifiedItemId) and warpItemTargets (slot, qualifiedItemId, destination). \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. A \`slot\` argument on a tool action is a TOOL slot: the index a tool occupies in \`snapshot.toolSlots\`, never a backpack index and never the current tool - the Mod refuses a slot that is not the equipped tool's (\`invalid_tool_selector\`, \`*_not_equipped_in_requested_slot\`), so read it instead of deriving it. \`equip_tool\` takes a semantic category from its own closed set (\`{ tool: "scythe" }\`), never a slot. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it reads the tool the target itself declares (debrisTargets and animalProductTargets carry \`toolKind\`, \`slot\` and \`requiredUpgradeLevel\`), writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. An action whose tool only the Mod's handler knows (\`cut_weeds\` needs the scythe) is refused by name together with the arguments and claims the surface does declare for it - a guessed tool is a failed hit. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
+        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\`, \`x\` and \`y\` except doorTargets (sourceX, sourceY, targetX, targetY), foodTargets (slot, qualifiedItemId) and warpItemTargets (slot, qualifiedItemId, destination). \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
       }),
     },
     { additionalProperties: false },

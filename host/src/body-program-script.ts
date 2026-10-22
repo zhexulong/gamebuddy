@@ -22,6 +22,29 @@ import { isNonNegativeSafeInteger, isOpaqueId, isTileCoordinate } from "./protoc
 export type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: readonly string[] }>;
 
 /**
+ * The tool one action must be holding, as the surface itself declares it, or the surface's silence.
+ *
+ * The Mod publishes the tool as a resource claim - key `tool:<category>`, value its own word for the upgrade-level
+ * requirement (`AnyUpgrade` / `BasicOnly`, the enum the Mod declares; `claim.Value.ToString()` is what reaches the
+ * wire). So the answer is read off the claim and never inferred from an action id: `cut_weeds` needing the scythe is
+ * the surface's fact, not a table in the Host. `declared: false` is NOT "no tool needed" - it is the surface saying
+ * nothing about a tool for that action, which the companion is told by name (`tool_requirement_undeclared`) instead of
+ * being left to guess a slot from tool order.
+ */
+export type PublishedPlanToolRequirement =
+  | Readonly<{
+      declared: true;
+      category: string;
+      /** The surface's own word for the level requirement, verbatim, so an unknown value still reads as declared. */
+      upgradeRequirement: string;
+      /** Lowest upgrade level that satisfies the claim, or `null` when the surface's word says nothing about level. */
+      minimumUpgradeLevel: number | null;
+      /** Highest upgrade level that satisfies the claim - `0` for a basic-tool-only claim - or `null` when unbounded. */
+      maximumUpgradeLevel: number | null;
+    }>
+  | Readonly<{ declared: false; reasonCode: "tool_requirement_undeclared" }>;
+
+/**
  * One action as the Mod published it for Body Programs: the id, the family it belongs to, and everything a script or a
  * program must supply or can read back. Every field is the Mod's own declaration, so a refusal or a shape answer cannot
  * describe an action differently from the surface the Mod actually enforces.
@@ -33,7 +56,18 @@ export type PublishedPlanAction = Readonly<{
   arguments: readonly PlanArgumentShape[];
   outputFacts: readonly Readonly<{ name: string; type: string }>[];
   resourceClaims: readonly Readonly<{ key: string; value: string }>[];
+  /** The tool the surface requires for this action, or the surface's silence - never a Host-side guess. */
+  toolRequirement: PublishedPlanToolRequirement;
 }>;
+
+/**
+ * What a `slot` argument on a tool action means, in the companion's terms.
+ *
+ * Written down because the wrong reading of `slot` is invisible until the Mod refuses the hit: `cut_weeds` takes the
+ * scythe's slot, not the scythe's place in a tool order the companion has to recall.
+ */
+export const PLAN_TOOL_SLOT_MEANING =
+  "A `slot` argument on a tool action is a TOOL slot: the index that tool occupies in `snapshot.toolSlots`, never a backpack index and never derived from tool order, and `snapshot.currentToolSlot` is the slot of the tool the farmer is holding now.";
 
 type PlanNode = BodyProgramCandidateRequest["nodes"][number];
 type PlanArgument = PlanNode["arguments"][string];
@@ -158,6 +192,7 @@ export function planActionsFromRegistrations(
         arguments: Object.freeze(declared),
         outputFacts: Object.freeze(declaredOutputFactsOf(registration)),
         resourceClaims: Object.freeze(declaredResourceClaimsOf(registration)),
+        toolRequirement: declaredToolRequirementOf(registration),
       }),
     );
   }
@@ -205,6 +240,47 @@ function declaredResourceClaimsOf(
   const template = registration.descriptor?.resourceTemplate;
   if (template === undefined || typeof template === "string") return [];
   return template.claims.map((claim) => Object.freeze({ key: claim.key, value: claim.value }));
+}
+
+/** The resource claims here are published under a `tool:` key prefix; the Host only ever reads that prefix. */
+const TOOL_CLAIM_PREFIX = "tool:";
+
+/**
+ * The upgrade-level words the Mod's claim value carries today (`FarmhandResourceTemplateValue` / its Body Program
+ * twin). Kept as a lookup of the two the Host can translate into a level range; any other word is passed through
+ * verbatim rather than guessed at.
+ */
+const TOOL_UPGRADE_LEVELS: Readonly<
+  Record<string, Readonly<{ minimumUpgradeLevel: number; maximumUpgradeLevel: number | null }>>
+> = Object.freeze({
+  AnyUpgrade: Object.freeze({ minimumUpgradeLevel: 0, maximumUpgradeLevel: null }),
+  BasicOnly: Object.freeze({ minimumUpgradeLevel: 0, maximumUpgradeLevel: 0 }),
+});
+
+/**
+ * Reads the tool an action requires straight off its published resource claims.
+ *
+ * Two slices can land in either order: today the surface may declare only `embodied_actor`, and the `tool:<category>`
+ * claims arrive with the Mod's own change. So an action with no such claim answers `tool_requirement_undeclared` -
+ * the field is always present, so the companion can tell "the surface does not say" from a tool it was told about,
+ * and the Host never fabricates a category from an action id.
+ */
+function declaredToolRequirementOf(registration: ActionRegistration): PublishedPlanToolRequirement {
+  const claims = declaredResourceClaimsOf(registration);
+  const claim = claims.find(
+    (candidate) =>
+      candidate.key.startsWith(TOOL_CLAIM_PREFIX) && candidate.key.slice(TOOL_CLAIM_PREFIX.length).trim().length > 0,
+  );
+  if (claim === undefined)
+    return Object.freeze({ declared: false as const, reasonCode: "tool_requirement_undeclared" as const });
+  const levels = TOOL_UPGRADE_LEVELS[claim.value];
+  return Object.freeze({
+    declared: true as const,
+    category: claim.key.slice(TOOL_CLAIM_PREFIX.length).trim(),
+    upgradeRequirement: claim.value,
+    minimumUpgradeLevel: levels?.minimumUpgradeLevel ?? null,
+    maximumUpgradeLevel: levels?.maximumUpgradeLevel ?? null,
+  });
 }
 
 /**
