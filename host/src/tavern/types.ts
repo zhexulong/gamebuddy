@@ -32,6 +32,15 @@ export type CharacterCandidate = ArtifactRevision &
        * so a keyword-gated entry is unreachable without them.
        */
       keys?: readonly string[];
+      /**
+       * The card's own secondary trigger words (`secondary_keys`), applied through
+       * `selectiveLogic` once `keys` matched. They ride the reviewed candidate into
+       * `worldbook.json` for the same reason `keys` do: the selector's four modes
+       * need them, and an entry that lost them selects where its author excluded it.
+       */
+      secondaryKeys?: readonly string[];
+      /** The card's `selectiveLogic`: 0 AND ANY, 1 NOT ALL, 2 NOT ANY, 3 AND ALL. */
+      selectiveLogic?: 0 | 1 | 2 | 3;
     }>[];
     /**
      * The card's own `character_book.scan_depth`, when it declared one. It rides
@@ -49,9 +58,10 @@ export type CharacterCandidate = ArtifactRevision &
     /**
      * The card's standard `post_history_instructions`, carried verbatim from the
      * staged decode so the provisioned companion owns it as her own record
-     * (`post-history-instructions.json`) beside her scenario and her openings. It
-     * is stored, bounded, and otherwise unread: no reader renders it, and it is
-     * never a profile field.
+     * (`post-history-instructions.json`) beside her scenario and her openings. The
+     * Chat materialization publishes it as the catalogue's `postHistoryInstructions`,
+     * rendered after the transcript rather than into the cached prefix. Never a
+     * profile field.
      */
     postHistoryInstructions?: string;
   }>;
@@ -240,7 +250,18 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
       : array(v.worldBookCandidates, 128).map((x) => {
           if (
             !record(x) ||
-            !only(x, ["entryId", "title", "content", "scope", "provenance", "tokenBudget", "constant", "keys"])
+            !only(x, [
+              "entryId",
+              "title",
+              "content",
+              "scope",
+              "provenance",
+              "tokenBudget",
+              "constant",
+              "keys",
+              "secondaryKeys",
+              "selectiveLogic",
+            ])
           )
             fail();
           const scope = x.scope;
@@ -263,6 +284,8 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
             tokenBudget: tokenBudget as "small" | "medium",
             ...(x.constant === undefined ? {} : { constant: requiredConstant(x.constant) }),
             ...(x.keys === undefined ? {} : { keys: requiredWorldBookKeys(x.keys) }),
+            ...(x.secondaryKeys === undefined ? {} : { secondaryKeys: requiredWorldBookKeys(x.secondaryKeys) }),
+            ...(x.selectiveLogic === undefined ? {} : { selectiveLogic: requiredSelectiveLogic(x.selectiveLogic) }),
           });
         });
   const extensions = v.extensions === undefined ? undefined : requiredInertExtensions(v.extensions);
@@ -696,4 +719,9 @@ function requiredWorldBookKeys(v: unknown): readonly string[] {
   if (!Array.isArray(v) || v.length === 0 || v.length > 16) fail();
   if (!v.every((key) => typeof key === "string" && key.trim().length > 0 && key.length <= 64)) fail();
   return freeze([...v] as string[]);
+}
+/** SillyTavern's four selection modes, the only values the selector applies. */
+function requiredSelectiveLogic(v: unknown): 0 | 1 | 2 | 3 {
+  if (v !== 0 && v !== 1 && v !== 2 && v !== 3) fail();
+  return v;
 }

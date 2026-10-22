@@ -16,6 +16,12 @@ export const STARDEW_SMAPI_EXECUTABLE_FILE = "StardewModdingAPI.exe";
  */
 export const STARDEW_MOD_LOADER_MISSING = "stardew_mod_loader_missing";
 
+/**
+ * The bounded refusal a chosen folder mints when it holds no Stardew Valley executable
+ * at all - the wrong folder, not a broken search.
+ */
+export const STARDEW_NOT_A_STARDEW_INSTALL = "stardew_not_a_stardew_install";
+
 type StardewGameInstallSource = "steam" | "gog" | "chosen";
 
 export type StardewGameRootProbe = Readonly<{ gameExecutable: boolean; smapi: boolean }>;
@@ -94,6 +100,27 @@ export async function probeStardewGameRoot(installRoot: string): Promise<Stardew
 export async function requireStardewModLoaderInstalled(installRoot: string): Promise<void> {
   const probe = await probeStardewGameRoot(installRoot);
   if (probe.gameExecutable && !probe.smapi) throw new Error(STARDEW_MOD_LOADER_MISSING);
+}
+
+/**
+ * The other half of the same admission: a folder the player chose that holds no game
+ * at all.
+ *
+ * `probeStardewGameRoot` reports both executables as absent whenever a read fails, which
+ * is right for an installation *decision* and wrong for a refusal that names a cause: a
+ * folder on a slow or unreadable volume is not "not a Stardew folder". So absence here
+ * means the read completed and found nothing - `ENOENT`/`ENOTDIR` - while any other
+ * failure means this process could not look, and is left to the caller's unnamed
+ * refusal.
+ */
+export async function requireStardewGameInstalled(installRoot: string): Promise<void> {
+  try {
+    await lstat(win32.join(installRoot, STARDEW_GAME_EXECUTABLE_FILE));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+    throw new Error(STARDEW_NOT_A_STARDEW_INSTALL, { cause: error });
+  }
 }
 
 function installationFrom(

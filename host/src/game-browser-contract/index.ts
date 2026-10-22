@@ -340,6 +340,10 @@ export const GameDiscoveryActionCommandV1Schema = strictObject({ apiVersion: Api
  * holds Stardew Valley and no mod loader, so the Companion Mod can never load in
  * it. It is a distinct outcome because the search itself succeeded - reporting it
  * as `unavailable` read to the player as a failed search.
+ *
+ * `not_stardew_installation` is the other: the chosen folder holds no Stardew Valley
+ * executable at all, so registering it can only fail later. It is distinct for the same
+ * reason - `unavailable` says nothing about the folder the player just picked.
  */
 export const GameDiscoveryMutationResultV1Schema = Type.Union([
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("accepted") }),
@@ -347,6 +351,7 @@ export const GameDiscoveryMutationResultV1Schema = Type.Union([
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("cancelled") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("unavailable") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("mod_loader_missing") }),
+  strictObject({ apiVersion: ApiVersion, status: Type.Literal("not_stardew_installation") }),
 ]);
 export type GameDiscoveryMutationResultV1 = Static<typeof GameDiscoveryMutationResultV1Schema>;
 

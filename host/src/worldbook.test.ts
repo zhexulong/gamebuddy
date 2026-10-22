@@ -108,6 +108,33 @@ test("WorldBook query renders macros and omits an entry that cannot be rendered"
   assert.deepEqual(JSON.parse((omitted.content[0]! as { text: string }).text).entries, []);
 });
 
+test("a world-book entry carries the card's secondary selection gate and refuses a malformed one", () => {
+  // The durable record is where an imported card's selection rule has to live: the
+  // per-turn selector reads the entry through this file, so a field this validator does
+  // not carry is a rule the companion can never honour.
+  const gated = validateWorldBook({
+    ...book,
+    entries: [{ ...book.entries[0], secondaryKeys: ["tea", "porch"], selectiveLogic: 0 }],
+  });
+  assert.deepEqual(gated.entries[0]?.secondaryKeys, ["tea", "porch"]);
+  assert.equal(gated.entries[0]?.selectiveLogic, 0);
+  // A gate with no word in it, a blank word, or a mode outside SillyTavern's four is
+  // refused rather than degraded to "no gate": an entry silently widened that way
+  // selects in exactly the situations its author excluded.
+  for (const secondaryKeys of [[], [""], [123]]) {
+    assert.throws(
+      () => validateWorldBook({ ...book, entries: [{ ...book.entries[0], secondaryKeys }] }),
+      /invalid_worldbook/,
+    );
+  }
+  for (const selectiveLogic of [4, -1, 1.5]) {
+    assert.throws(
+      () => validateWorldBook({ ...book, entries: [{ ...book.entries[0], selectiveLogic }] }),
+      /invalid_worldbook/,
+    );
+  }
+});
+
 test("WorldBook rejects scope drift and duplicate entries", () => {
   assert.throws(() => validateWorldBook({ ...book, entries: [...book.entries, book.entries[0]] }), /invalid_worldbook/);
   assert.throws(

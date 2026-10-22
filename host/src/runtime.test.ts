@@ -827,6 +827,125 @@ test("public Game runtime cannot mount Body Program tools while the internal mat
   }
 });
 
+test("a Game surface that declares the plan action surface mounts no per-action tool, and a surface without it keeps them", async () => {
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-plan-surface-actions-"));
+  const tool = (name: string) =>
+    Object.freeze(
+      defineTool({
+        name,
+        label: name,
+        description: name,
+        parameters: Type.Object({}),
+        execute: async () => ({ content: [], details: {} }),
+      }),
+    );
+  const policy = Object.freeze({ policyVersion: 1 as const, deniedActions: [], deniedFamilies: [] });
+  const connection = {
+    scope: Object.freeze({ integrationId: "test-arcade" }),
+    executionGate: { executable: true },
+    state: Object.freeze({}),
+    module: {
+      descriptor: Object.freeze({ integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" }),
+      actionCatalog: createIntegrationActionCatalog([{ actionId: "activate_console" }]),
+      defaultPolicy: policy,
+      parsePolicy: (value: unknown) => value as typeof policy,
+      actorId: () => identity.playerId,
+      assertIdentityBinding: () => undefined,
+      worldScope: () => null,
+      // `arcade_activate_console` is the adapter's own action tool; `arcade_stop_console` deliberately is not an
+      // action (the real surface's `stardew_stop_action` has the same standing), so it is not the plan tool's to
+      // replace.
+      createToolSet: () => ({
+        observation: [tool("arcade_observe")],
+        actions: [tool("arcade_activate_console"), tool("arcade_stop_console")],
+        knowledge: [],
+      }),
+      knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }),
+      status: () => ({
+        connected: true,
+        capabilities: ["activate_console"],
+        capabilityRevision: 1,
+        snapshotRevision: 1,
+        latestReceiptState: null,
+        latestReasonCode: null,
+      }),
+      readState: () => ({
+        connected: true,
+        sessionId: "session_01",
+        capabilities: ["activate_console"],
+        registrations: [
+          {
+            actionId: "activate_console",
+            familyId: "arcade",
+            identityVersion: 1,
+            lifecycle: "published" as const,
+            kind: "execution" as const,
+          },
+        ],
+        capabilityRevision: 1,
+        snapshotRevision: 1,
+        activeExecution: null,
+        latestReceipt: null,
+        latestReasonCode: null,
+      }),
+      cancelExecution: () => "not_supported",
+      parseReceipt: () => null,
+      actionIdForToolName: (name: string) => (name === "arcade_activate_console" ? "activate_console" : null),
+      isCancellationTool: () => false,
+    },
+  } as unknown as GameConnection;
+  const options = {
+    gameplaySubagentEnabled: false,
+    disableMagicContextMemory: true as const,
+    hostBindingFactory: () => undefined,
+  };
+  const flatRuntime = await createGameCompanionRuntime(
+    identity,
+    join(root, "flat"),
+    connection,
+    "game_flat_01",
+    undefined,
+    undefined,
+    options,
+  );
+  const planRuntime = await createMaterializedGameCompanionRuntime(
+    identity,
+    join(root, "plan"),
+    connection,
+    "game_plan_01",
+    undefined,
+    undefined,
+    options,
+    Object.freeze({
+      fixedTools: Object.freeze([tool("stardew_plan_work")]),
+      planActionSurface: true as const,
+      resolvedPolicy: policy,
+    }),
+  );
+  try {
+    const flat = flatRuntime.session.agent.state.tools.map((entry) => entry.name).sort();
+    assert.deepEqual(
+      flat,
+      ["arcade_activate_console", "arcade_observe", "arcade_stop_console", "companion_status"].sort(),
+    );
+    const planned = planRuntime.session.agent.state.tools.map((entry) => entry.name).sort();
+    // The declared plan action surface replaces exactly the tools the adapter publishes as actions, and nothing else:
+    // the observation, the stop tool (which is not an action) and the fixed program tool all stay mounted.
+    assert.deepEqual(
+      planned,
+      ["arcade_observe", "arcade_stop_console", "companion_status", "stardew_plan_work"].sort(),
+    );
+    assert.deepEqual(
+      planned.filter((name) => connection.module.actionIdForToolName(name) !== null),
+      [],
+      "no mounted tool is a per-action tool",
+    );
+  } finally {
+    flatRuntime.session.dispose();
+    planRuntime.session.dispose();
+  }
+});
+
 test("fixed Game tools fail closed unless frozen, unique, and non-colliding", async () => {
   const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-fixed-tool-rejections-"));
   const tool = defineTool({
@@ -1318,7 +1437,7 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
   );
 });
 
-test("runtime materializes the optional gameplay subagent without exposing its tools to the parent by default", async () => {
+test("runtime composes the optional gameplay subagent but never mounts its delegation tool on a game session", async () => {
   const offlineRoot = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-gameplay-subagent-offline-"));
   const delegatedRoot = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-gameplay-subagent-enabled-"));
   const config = GAMEPLAY_SUBAGENT_MODEL_CONFIG;
@@ -1356,7 +1475,13 @@ test("runtime materializes the optional gameplay subagent without exposing its t
         assert.deepEqual(manifest.gameplaySubagentModel, config);
         assert.equal(
           delegated.session.agent.state.tools.some((tool) => tool.name === "delegate_game_task"),
+          false,
+          "a runtime with a live game session attached never mounts the delegation channel",
+        );
+        assert.equal(
+          delegated.session.agent.state.tools.some((tool) => tool.name === "companion_status"),
           true,
+          "only the delegation channel is withheld",
         );
         assert.deepEqual(
           delegated.session.agent.state.tools

@@ -14,6 +14,7 @@ import type { BodyNodeAdmissionChallenge } from "./protocol.js";
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { GameConnection } from "./game-connection.js";
 import type { ExecutionReceipt, ExecutionState } from "./protocol.js";
+import { RUN_SPAN_NAMES, createRunTrace, type RunTrace } from "./run-trace.js";
 
 function receipt(overrides: Partial<ExecutionReceipt> = {}): ExecutionReceipt {
   return {
@@ -30,16 +31,24 @@ function receipt(overrides: Partial<ExecutionReceipt> = {}): ExecutionReceipt {
 
 function challenge(overrides: Partial<BodyNodeAdmissionChallenge> = {}): BodyNodeAdmissionChallenge {
   return {
-    programId: "program_01", nodeId: "node_source", nodeAttempt: 1, admissionAttempt: 1,
-    stopEpoch: 4, catalogRevision: 11, policyIdentity: { value: "mod-policy_01", capabilityRevision: 7 },
+    programId: "program_01",
+    nodeId: "node_source",
+    nodeAttempt: 1,
+    admissionAttempt: 1,
+    stopEpoch: 4,
+    catalogRevision: 11,
+    policyIdentity: { value: "mod-policy_01", capabilityRevision: 7 },
     actionId: "move_to_tile",
     canonicalBoundArgs: { x: { type: "integer", canonicalValue: "1" }, y: { type: "integer", canonicalValue: "2" } },
-    derivedResourceClaims: { actor: "embodied_actor" }, deadlineMs: Date.now() + 10_000, ...overrides,
+    derivedResourceClaims: { actor: "embodied_actor" },
+    deadlineMs: Date.now() + 10_000,
+    ...overrides,
   };
 }
 
 function coordinatorFixture(
   cancelCalls: string[][],
+  trace?: RunTrace,
 ): Readonly<{ coordinator: ActionExecutionCoordinator; cancelCalls: string[][] }> {
   const base: GameIntegrationAdapter = {
     descriptor: Object.freeze({
@@ -89,7 +98,10 @@ function coordinatorFixture(
     },
     state: { connected: true },
   };
-  return { coordinator: createActionExecutionCoordinator(connection), cancelCalls };
+  return {
+    coordinator: createActionExecutionCoordinator(connection, trace === undefined ? {} : { trace }),
+    cancelCalls,
+  };
 }
 
 test("one exact-node admission state machine grants controller-named source and successor nodes without rewriting them", async () => {
@@ -97,7 +109,7 @@ test("one exact-node admission state machine grants controller-named source and 
   const seen: BodyNodeAdmissionChallenge[] = [];
   const service = new HostNodeAdmissionService(journal, (item) => {
     seen.push(item);
-     return { result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01" };
+    return { result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01" };
   });
   const source = challenge();
   const successor = challenge({ nodeId: "node_successor" });
@@ -117,14 +129,15 @@ test("node admission binds grants to opaque Mod policy identity and rejects mism
   const service = new HostNodeAdmissionService(journal, (_item) => ({
     result: "granted",
     attachmentGeneration: "attachment_01",
-     policyRevision: "host-policy_01",
+    policyRevision: "host-policy_01",
   }));
   const issued = await service.admit(challenge());
   assert.equal(issued.result, "granted");
-   if (issued.result === "granted") assert.deepEqual(issued.grant.policyIdentity, { value: "mod-policy_01", capabilityRevision: 7 });
+  if (issued.result === "granted")
+    assert.deepEqual(issued.grant.policyIdentity, { value: "mod-policy_01", capabilityRevision: 7 });
 
   // Same node lineage but a substituted Mod identity cannot replay its earlier grant.
-   const substituted = challenge({ policyIdentity: { value: "mod-policy_02", capabilityRevision: 7 } });
+  const substituted = challenge({ policyIdentity: { value: "mod-policy_02", capabilityRevision: 7 } });
   assert.throws(() => journal.admissionRecord(substituted), /node_admission_challenge_mismatch/);
   assert.deepEqual(await service.admit(substituted), { result: "rejected", code: "policy_identity_mismatch" });
 });
@@ -132,19 +145,32 @@ test("node admission binds grants to opaque Mod policy identity and rejects mism
 test("node admission journals before reply and treats write loss, response loss, and validator loss as unavailable", async () => {
   const item = challenge();
   const lostWrite = new HostNodeAdmissionService(
-    new StardewLogicalActionRecoveryJournal({ write: () => { throw new Error("disk"); } }),
-     () => ({ result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01" }),
+    new StardewLogicalActionRecoveryJournal({
+      write: () => {
+        throw new Error("disk");
+      },
+    }),
+    () => ({ result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01" }),
   );
   assert.deepEqual(await lostWrite.admit(item), { result: "unavailable", code: "admission_unavailable" });
 
   const journal = new StardewLogicalActionRecoveryJournal();
-   const service = new HostNodeAdmissionService(journal, () => ({ result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01" }));
+  const service = new HostNodeAdmissionService(journal, () => ({
+    result: "granted",
+    attachmentGeneration: "attachment_01",
+    policyRevision: "policy_01",
+  }));
   const issued = await service.admit(item);
   assert.equal(issued.result, "granted");
   // A lost response is replayed from durable grant correlation, not recomputed.
   assert.deepEqual(await service.admit(item), issued);
-  const unavailable = new HostNodeAdmissionService(journal, () => { throw new Error("bridge_lost"); });
-  assert.deepEqual(await unavailable.admit(challenge({ admissionAttempt: 2 })), { result: "unavailable", code: "admission_unavailable" });
+  const unavailable = new HostNodeAdmissionService(journal, () => {
+    throw new Error("bridge_lost");
+  });
+  assert.deepEqual(await unavailable.admit(challenge({ admissionAttempt: 2 })), {
+    result: "unavailable",
+    code: "admission_unavailable",
+  });
 
   const decisionUnavailable = new HostNodeAdmissionService(journal, () => ({
     result: "unavailable",
@@ -158,21 +184,37 @@ test("node admission journals before reply and treats write loss, response loss,
 
 test("node admission deterministically rejects deadline, STOP, catalog, and policy vetoes without calling execute", async () => {
   const journal = new StardewLogicalActionRecoveryJournal();
-   const service = new HostNodeAdmissionService(journal, (item) => {
-     if (item.stopEpoch !== 4) return { result: "rejected", code: "stop_epoch_closed" };
-     if (item.catalogRevision !== 11) return { result: "rejected", code: "catalog_revision_mismatch" };
+  const service = new HostNodeAdmissionService(journal, (item) => {
+    if (item.stopEpoch !== 4) return { result: "rejected", code: "stop_epoch_closed" };
+    if (item.catalogRevision !== 11) return { result: "rejected", code: "catalog_revision_mismatch" };
     return { result: "rejected", code: "policy_denied" };
   });
-  assert.deepEqual(await service.admit(challenge({ deadlineMs: Date.now() - 1 })), { result: "rejected", code: "deadline_expired" });
-  assert.deepEqual(await service.admit(challenge({ admissionAttempt: 2, stopEpoch: 5 })), { result: "rejected", code: "stop_epoch_closed" });
-  assert.deepEqual(await service.admit(challenge({ admissionAttempt: 3, catalogRevision: 12 })), { result: "rejected", code: "catalog_revision_mismatch" });
-  assert.deepEqual(await service.admit(challenge({ admissionAttempt: 4 })), { result: "rejected", code: "policy_denied" });
+  assert.deepEqual(await service.admit(challenge({ deadlineMs: Date.now() - 1 })), {
+    result: "rejected",
+    code: "deadline_expired",
+  });
+  assert.deepEqual(await service.admit(challenge({ admissionAttempt: 2, stopEpoch: 5 })), {
+    result: "rejected",
+    code: "stop_epoch_closed",
+  });
+  assert.deepEqual(await service.admit(challenge({ admissionAttempt: 3, catalogRevision: 12 })), {
+    result: "rejected",
+    code: "catalog_revision_mismatch",
+  });
+  assert.deepEqual(await service.admit(challenge({ admissionAttempt: 4 })), {
+    result: "rejected",
+    code: "policy_denied",
+  });
 });
 
 test("Host admission grants preserve independent catalog and Mod capability revisions", async () => {
   const journal = new StardewLogicalActionRecoveryJournal();
   const item = challenge({ catalogRevision: 19, policyIdentity: { value: "mod-policy_02", capabilityRevision: 3 } });
-  const service = new HostNodeAdmissionService(journal, () => ({ result: "granted", attachmentGeneration: "attachment_02", policyRevision: "host-policy_02" }));
+  const service = new HostNodeAdmissionService(journal, () => ({
+    result: "granted",
+    attachmentGeneration: "attachment_02",
+    policyRevision: "host-policy_02",
+  }));
   const admitted = await service.admit(item);
   assert.equal(admitted.result, "granted");
   if (admitted.result === "granted") {
@@ -258,15 +300,10 @@ test("coordinator admission observer fences synchronous ledger admission when ST
     requestId: "request_01",
   });
   const interruption = coordinator.interrupt("runtime_stopped");
-  await assert.rejects(
-    Promise.resolve(result),
-    /stale_interruption_admission/,
-  );
+  await assert.rejects(Promise.resolve(result), /stale_interruption_admission/);
   // The interrupted pre-write registration still owns the STOP barrier. A
   // terminal Mod fact concludes that barrier without permitting a native write.
-  coordinator.receiveReceipt(
-    receipt({ state: "rejected", reasonCode: "runtime_stopped" }),
-  );
+  coordinator.receiveReceipt(receipt({ state: "rejected", reasonCode: "runtime_stopped" }));
   await interruption;
 });
 
@@ -458,4 +495,27 @@ test("coordinator wake helper lookup and normalization remain launcher-compatibl
     kind: "invalidated",
     reasonCode: "pipe_closed",
   });
+});
+
+test("the Mod execution window is one span from the first progress receipt to the terminal one", async () => {
+  const trace = createRunTrace("run_mod_execution");
+  const { coordinator } = coordinatorFixture([], trace);
+  const admission = coordinator.createAdmission();
+  await admission.observer.beforeWrite({ ...admission.owner, requestId: "request_01" });
+
+  // The execute response arrives while the Mod is still working: the span is open, not settled.
+  coordinator.receiveReceipt(receipt({ state: "accepted", revision: 1 }));
+  const [open] = trace.spans();
+  assert.equal(open!.name, RUN_SPAN_NAMES.modExecute);
+  assert.equal(open!.endMs, null);
+  assert.equal(open!.attributes.state, "accepted");
+
+  coordinator.receiveReceipt(
+    receipt({ state: "succeeded", revision: 2, reasonCode: "target_reached", evidence: { detail: "ok" } }),
+  );
+  const spans = trace.spans();
+  assert.equal(spans.length, 1);
+  assert.equal(spans[0]!.attributes.state, "succeeded");
+  assert.equal(spans[0]!.attributes.reasonCode, "target_reached");
+  assert.ok(spans[0]!.endMs !== null);
 });

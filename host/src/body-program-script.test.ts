@@ -526,18 +526,32 @@ test("plan_shape reports the tool the surface declares, and tool_requirement_und
     maximumUpgradeLevel: null,
   });
 
-  // The tool is read off claims only: no category is ever fabricated from an action id, on the artifact's own
-  // vocabulary too - today's surface declares `embodied_actor` and no tool, so even the scythe action says undeclared.
-  const cutWeedsOnTheArtifact = planShape(ACTIONS, { actionId: "cut_weeds" });
-  assert.ok(cutWeedsOnTheArtifact.ok);
-  assert.deepEqual(cutWeedsOnTheArtifact.actions[0]!.toolRequirement, {
-    declared: false,
-    reasonCode: "tool_requirement_undeclared",
-  });
+  // The tool is read off claims only: no category is ever fabricated from an action id. On the artifact's own
+  // vocabulary each action answers with the `tool:<category>` claim it publishes, and the one that publishes none
+  // answers `tool_requirement_undeclared` - the requirement is read from the surface, never invented from an action id.
+  assert.ok(
+    ACTIONS.some((action) => action.toolRequirement.declared),
+    "the surface declares a tool on some action",
+  );
+  assert.ok(
+    ACTIONS.some((action) => !action.toolRequirement.declared),
+    "the surface is silent about a tool on some action",
+  );
   for (const action of ACTIONS) {
     assert.ok("toolRequirement" in action, `${action.actionId} carries the field rather than omitting it`);
-    if (action.toolRequirement.declared) assert.ok(action.toolRequirement.category.length > 0);
-    else assert.equal(action.toolRequirement.reasonCode, "tool_requirement_undeclared");
+    const claim = surfaceClaims(action.actionId).find((candidate) => candidate.key.startsWith("tool:"));
+    if (claim === undefined) {
+      assert.deepEqual(
+        action.toolRequirement,
+        { declared: false, reasonCode: "tool_requirement_undeclared" },
+        `${action.actionId} publishes no tool claim, so the answer is the surface's silence`,
+      );
+      continue;
+    }
+    const requirement = action.toolRequirement;
+    assert.ok(requirement.declared, `${action.actionId} publishes ${claim.key}`);
+    assert.equal(requirement.category, claim.key.slice("tool:".length));
+    assert.equal(requirement.upgradeRequirement, claim.value);
   }
 });
 
@@ -546,6 +560,8 @@ test("plan_shape reports the tool the surface declares, and tool_requirement_und
  * tool and the pack's tool slots, so a script reads both from the snapshot it was handed instead of inventing a slot.
  */
 test("a script reads the held tool and its slot from the snapshot instead of guessing a slot index", () => {
+  // The surface's claim says WHICH tool (`tool:scythe`); the slot stays the actor's own state, read here from the
+  // snapshot. Nothing is emitted on the plan for the requirement: the builder writes the call the script wrote.
   const nodes = nodesOf(
     compile(
       `
@@ -558,9 +574,14 @@ builder.cut_weeds({ x: snapshot.tile.x, y: snapshot.tile.y, slot: slot.slot, exp
     ),
   );
   assert.deepEqual(nodes[0]!.arguments.slot, { type: "integer", canonicalValue: "3" });
+  // One node for one call: declaring the tool is what the surface does, and it is not a step of its own.
+  assert.deepEqual(
+    nodes.map((node) => node.actionId),
+    ["cut_weeds"],
+  );
 });
 
-/** A live ResourceClump target: the ONE place the published surface declares the tool an action needs. */
+/** A live ResourceClump target: where the surface lets the TARGET itself name the tool a hit needs. */
 function debris(targetId: string, slot: number, toolKind: string) {
   return { targetId, slot, toolKind, requiredUpgradeLevel: 0, x: 11, y: 12, parentSheetIndex: 600, health: 2 };
 }

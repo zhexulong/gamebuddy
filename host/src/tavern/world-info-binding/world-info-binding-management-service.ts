@@ -83,6 +83,17 @@ export type WorldInfoUpdateCommandV1 = Readonly<{
   item: UpdateWorldInfoRequest;
 }>;
 /**
+ * One external lorebook file imported into the managed library. `lorebook` is the file's own JSON
+ * object: the library's single importer (`importTavernLorebook`) owns what each entry becomes, so
+ * this command deliberately carries no authored shape of its own.
+ */
+export type WorldInfoImportCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  expectedRevision: string;
+  lorebook: unknown;
+}>;
+/**
  * Host-owned management service for the mounted tavern_management World Info
  * lane. The read/bind half exposes only browser-safe opaque facts: no store,
  * resolver, mapping, root, lease, source title lookup, timestamp or canonical
@@ -94,6 +105,14 @@ export type WorldInfoBindingManagementService = Readonly<{
   setBinding(command: SetWorldInfoBindingCommandV1): Promise<WorldInfoStateV1>;
   detail(command: WorldInfoItemCommandV1): Promise<PublicWorldInfoProjection | null>;
   create(command: WorldInfoCreateCommandV1): Promise<WorldInfoStateV1>;
+  /**
+   * Imports one external SillyTavern/Chub lorebook file through the library's own importer and
+   * answers with the re-projected library, so the browser gets handles for the new item. OPTIONAL:
+   * it is the lorebook-import route's only consumer, so a mount that serves every other World Info
+   * route but not this one leaves it absent and the route fails closed (404) rather than widening
+   * every service stub in the repository.
+   */
+  importLorebook?(command: WorldInfoImportCommandV1): Promise<WorldInfoStateV1>;
   update(command: WorldInfoUpdateCommandV1): Promise<WorldInfoStateV1>;
   delete(command: WorldInfoItemCommandV1): Promise<WorldInfoStateV1>;
   close(): Promise<void>;
@@ -324,6 +343,31 @@ export function createWorldInfoBindingManagementService(
   };
 
   /**
+   * Imports one external lorebook file. The file's interior is the importer's business: the
+   * library's `import()` is the one translation from an ST/Chub/character_book payload to an
+   * authored item, and this method exists so the player can reach it without a second one.
+   */
+  const importLorebook = async (command: WorldInfoImportCommandV1): Promise<WorldInfoStateV1> => {
+    assertOpen();
+    validateProjectionCommand(command);
+    if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+    const importIntoLibrary = repository.import;
+    if (importIntoLibrary === undefined) throw unavailable();
+    const projection = currentProjection;
+    if (projection === null || projection.revisionHandle !== command.expectedRevision) throw conflict();
+    if (command.lorebook === null || typeof command.lorebook !== "object" || Array.isArray(command.lorebook))
+      throw new Error("invalid_request");
+    try {
+      const state = await currentThreadState();
+      await importIntoLibrary.call(repository, command.lorebook);
+      assertLeaseAfterDurableRead();
+      return await projectFrom(state);
+    } catch (error) {
+      throw rethrowLibraryError(error);
+    }
+  };
+
+  /**
    * Replaces one exact library item's content. `item.expectedRevision` is the
    * library's own CAS revision. Renaming an item the mounted Chat is bound to is
    * refused, because a managed binding resolves the item by its public title.
@@ -377,6 +421,7 @@ export function createWorldInfoBindingManagementService(
     setBinding,
     detail,
     create,
+    importLorebook,
     update,
     delete: remove,
     async close(): Promise<void> {

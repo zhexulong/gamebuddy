@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import test from "node:test";
-import { identityProfileMetadata } from "../identity-profile.js";
+import { identityProfileMetadata, renderIdentityProfile } from "../identity-profile.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
-import { resolveRuntimePaths } from "../runtime.js";
+import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
+import { macroTable } from "./macro-engine.js";
 import { provisionNewCompanion } from "./new-companion-service.js";
 import { StCardImportService } from "./st-card-import-service.js";
 import { resolveTavernPaths, tavernImportPath } from "./tavern-paths.js";
@@ -336,3 +339,149 @@ test("a companion provisioned from a card with first_mes and no mes_example open
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
+
+/**
+ * The reviewed card's own picture of the player.
+ *
+ * `{{user}}` is the card format's macro for the player *being addressed*, so it
+ * belongs to the run, not to an identity partition. This path used to render it —
+ * and everything else it renders — with the player's opaque partition id
+ * (`player_01` in every fixture), so a card that wrote the macro in her
+ * `description` froze `与player_01一同…` into her Tier-1 persona and then repeated
+ * it to the model on every turn. Her opening was not rendered at all, so the
+ * literal `{{user}}` shipped as the conversation's first line.
+ *
+ * Both now go through the one player-reference rule the compiled preset path
+ * uses (`macroTable`), which yields the run's word for the player. The asserted
+ * text is the whole persona and the whole opening, not a substring: a nested
+ * literal is exactly what a second rendering rule would leave behind.
+ */
+test("a reviewed card's {{user}} reaches her persona and her opening as the run's player reference, never the partition id", async () => {
+  const root = await canonicalTestRoot("tavern-st-import-player-reference-");
+  let threads: ReturnType<typeof createChatThreadStore> | undefined;
+  // The partition id the defect froze: an opaque `player_<n>`, never a name.
+  const partition = { ...identity, playerId: "player_01" };
+  try {
+    const paths = resolveTavernPaths({ root } as never, partition);
+    const service = new StCardImportService(new TavernArtifactStore(root), paths);
+    const imported = await service.import(
+      "import_player_reference",
+      JSON.stringify({
+        spec: "chara_card_v3",
+        data: {
+          name: "Macro Companion",
+          description: "清晨{{user}}还没醒，她就把热水烧上了。",
+          first_mes: "*把粗瓷杯搁在桌沿*\n“{{user}}，水烧好了，趁热喝。”",
+        },
+      }),
+    );
+    await service.recordReview("import_player_reference", {
+      reviewedFields: ["name", "persona_core", "first_greeting"],
+      approvedAtMs: 3,
+    });
+    threads = createChatThreadStore(root, "import-player-reference");
+    const provisioned = await provisionNewCompanion(
+      root,
+      partition.playerId,
+      imported.candidate.artifact,
+      await service.confirmedReview("import_player_reference"),
+      threads,
+    );
+    // Her persona: the text the model reads on every turn.
+    assert.equal(provisioned.profile.persona?.core, "清晨你还没醒，她就把热水烧上了。");
+    // The reference is chosen in ONE place, and provisioning now goes through it.
+    // The rule it holds is `macroTable`'s: a run that NAMES the player keeps that
+    // name (the more specific fact), and only a nameless run falls to the
+    // locale's pronoun. Nothing in the reviewed path can bypass that, because the
+    // path no longer builds a table of its own.
+    assert.equal(macroTable({ char: "Macro Companion", user: "阿岚", locale: "zh-CN" }).user, "阿岚");
+    // Her opening: the greeting record's only variant, and the Chat's Message 0.
+    const runtimePaths = resolveRuntimePaths(provisioned.identity, root);
+    const tavernPaths = resolveTavernPaths(runtimePaths, provisioned.identity);
+    const store = new TavernArtifactStore(root);
+    const greeting = await createGreetingManagementService(store, tavernPaths.companionRoot).read();
+    assert.deepEqual(
+      greeting?.variants.map((variant) => variant.text),
+      ["*把粗瓷杯搁在桌沿*\n“你，水烧好了，趁热喝。”"],
+    );
+    // The durable profile is what every later turn reads, so the partition id may
+    // not appear in it in any field.
+    assert.doesNotMatch(
+      await readFile(join(root, "contexts", identityKey(provisioned.identity), "identity-profile.json"), "utf8"),
+      /player_/u,
+    );
+    const library = createTavernLibraryService(tavernPaths, store, threads, {
+      async readExact() {
+        return identityProfileMetadata(provisioned.profile);
+      },
+    });
+    const chat = await library.createNewChat({
+      chatThreadId: "thread-player-reference",
+      chatSurfaceSessionId: "surface-player-reference",
+    });
+    assert.equal(chat.messages[0]?.kind, "opening");
+    assert.equal(chat.messages[0]?.text, "*把粗瓷杯搁在桌沿*\n“你，水烧好了，趁热喝。”");
+  } finally {
+    threads?.close?.();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+/**
+ * The SHIPPED default card, imported through the reviewed path.
+ *
+ * A fresh root seeds this card through the compiled preset, so the reviewed
+ * import path is the second half of the same card's truth. It carries
+ * `{{user}}`/`{{char}}` in its `mes_example`, and every reviewed field of her
+ * profile is asserted here to be free of the partition id — the defect this
+ * suite holds out — while her own words stay exactly her card's.
+ */
+test("the shipped default card imports with no partition id in her persona and the run's word above her example lines", async () => {
+  const root = await canonicalTestRoot("tavern-st-import-shipped-card-");
+  let threads: ReturnType<typeof createChatThreadStore> | undefined;
+  const partition = { ...identity, playerId: "player_01" };
+  try {
+    const cardText = await readFile(join(reviewedPresetDirectory(), "card.json"), "utf8");
+    const service = new StCardImportService(
+      new TavernArtifactStore(root),
+      resolveTavernPaths({ root } as never, partition),
+    );
+    const imported = await service.import("import_shipped", cardText);
+    const eligible = imported.candidate.artifact.fields
+      .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+      .map((field) => field.field);
+    await service.recordReview("import_shipped", { reviewedFields: eligible, approvedAtMs: 4 });
+    threads = createChatThreadStore(root, "import-shipped");
+    const provisioned = await provisionNewCompanion(
+      root,
+      partition.playerId,
+      imported.candidate.artifact,
+      await service.confirmedReview("import_shipped"),
+      threads,
+    );
+    // Her card's own prose, verbatim, and no macro left standing.
+    assert.ok(provisioned.profile.persona?.core?.includes("一同从都市迁居星露谷"));
+    assert.equal(provisioned.profile.identity.name, "琥珀");
+    assert.doesNotMatch(
+      await readFile(join(root, "contexts", identityKey(provisioned.identity), "identity-profile.json"), "utf8"),
+      /player_/u,
+    );
+    // The prompt block the model reads: her card's examples, above the run's own
+    // word for the player (the same word `{{user}}` resolves to).
+    const rendered = renderIdentityProfile(provisioned.profile, "zh-CN");
+    assert.match(rendered, /你: 早啊，琥珀。/u);
+    assert.doesNotMatch(rendered, /\{\{/u);
+  } finally {
+    threads?.close?.();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+/** The reviewed preset's own directory, found the way the drift gate finds it. */
+function reviewedPresetDirectory(): string {
+  for (const candidate of [process.cwd(), resolve(process.cwd(), ".."), resolve(process.cwd(), "..", "..")]) {
+    if (existsSync(join(candidate, "assets", "tavern", "presets", "default-companion", "card.json")))
+      return join(candidate, "assets", "tavern", "presets", "default-companion");
+  }
+  throw new Error("reviewed_preset_card_not_findable");
+}

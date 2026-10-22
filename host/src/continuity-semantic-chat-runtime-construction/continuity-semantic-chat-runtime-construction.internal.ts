@@ -423,6 +423,10 @@ async function resolveBoundWorldBookSource(
               // The card's own trigger words ride along; without them the volatile selection can only ever match the
               // author-facing title, which a player does not say.
               ...(entry.keys === undefined || entry.keys.length === 0 ? {} : { keys: entry.keys }),
+              // And so does its secondary gate: `keys` alone narrows an authored rule down to
+              // "any of these words", which selects the entry where the card excluded it.
+              ...(entry.secondaryKeys === undefined ? {} : { secondaryKeys: entry.secondaryKeys }),
+              ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
             }),
           ];
     });

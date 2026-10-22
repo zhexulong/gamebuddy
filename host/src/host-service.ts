@@ -5,6 +5,7 @@ import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-at
 import type { CompanionLoop, NativeGameCompanionContent, NativeGameContentPresenter } from "./companion-loop.js";
 import type { CompanionTurnOutcome, WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
+import { NativeNoticeLedger } from "./native-notice-fact.js";
 import type {
   CompanionTextPort,
   GameCompanionTextExpression,
@@ -312,6 +313,8 @@ export class CompanionHostService {
    * transcript (see `companion-arrival-fact.ts`).
    */
   #arrivalSaid = false;
+  /** The notice identities this session has already delivered (see `native-notice-fact.ts`). */
+  readonly #nativeNotices = new NativeNoticeLedger();
   #stopVoice: ((reasonCode: string) => Promise<unknown>) | undefined;
   #presentStopSystemNotice: ((notice: StopSystemNotice, noticeId: string) => Promise<void>) | undefined;
   #activePiBatch: Readonly<{ sourceEventId: string; batchId: string }> | undefined;
@@ -762,10 +765,15 @@ export class CompanionHostService {
     // local transport transition and have it confused with Host lifecycle.
     if (fact.source === "host_local_transport") throw new Error("adapter_transport_source_reserved");
     try {
+      // The snapshot is also where the world day and the presentation locale of a native notice are read.
+      if (fact.kind === "snapshot") this.#nativeNotices.observeSnapshot(fact.payload);
       // The attach's own snapshot is the world clock's first live reading for this session, so the
       // arrival fact is minted here - before the snapshot itself, which the pump holds as latest state
       // and never turns into a turn on its own.
       if (this.#attached && fact.kind === "snapshot") this.#sayArrivalOnce(fact.payload);
+      // A native notice is its own fact, admitted whatever the execution that carried it is doing: a
+      // companion waiting between plans has nothing outstanding, which is exactly when the clock matters.
+      if (fact.kind === "execution_receipt") this.#admitNativeNotices(fact);
       this.loop.pump.enqueueFact(fact);
     } catch (error) {
       if (!isEventPumpOverflow(error)) throw error;
@@ -792,6 +800,12 @@ export class CompanionHostService {
     if (arrival === undefined) return;
     this.#arrivalSaid = true;
     this.loop.pump.enqueueFact(arrival);
+  }
+
+  /** Admits this receipt's unseen native notices onto the same session-level pump as every other fact. */
+  #admitNativeNotices(fact: WorldFact): void {
+    const notices = this.#nativeNotices.admit(fact.payload as ExecutionReceipt, fact.occurredAtMs ?? Date.now());
+    for (const notice of notices) this.loop.pump.enqueueFact(notice);
   }
 
   #publishStopObservationIfExact(stopId: string): void {

@@ -524,9 +524,15 @@ function canonicalPresentationSource(batch: SerializedBatch): string | undefined
  * reading. It is the one proactive turn the product owes the player at arrival, so it must open the same
  * presentation lease every other proactive turn does, or her greeting would reach the model and never
  * reach the chat.
+ *
+ * `native_notice` is the Host's too (`native-notice-fact.ts`): the game itself said something about the hour
+ * ("It's getting late...") and the companion may answer it out loud. It rides the same lease for the same
+ * reason - a reply that reaches the model but not the chat is a decision the player never sees.
  */
 function isSalientSensoryKind(kind: string | undefined): boolean {
-  return kind === "day_started" || kind === "time_milestone" || kind === "companion_arrival";
+  return (
+    kind === "day_started" || kind === "time_milestone" || kind === "companion_arrival" || kind === "native_notice"
+  );
 }
 
 function isOpaqueSource(value: unknown): value is string {

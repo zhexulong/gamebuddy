@@ -463,9 +463,9 @@ test("one activation record reaches the Chat construction and the Game materiali
       new RegExp(LIBRARY_CONSTANT_SUMMARY, "u"),
       "the shared content is the activated revision's own rendering, not an empty agreement",
     );
-    assert.equal(
-      (JSON.parse(chatManaged.content) as { publicTitle?: string }).publicTitle,
-      LIBRARY_TITLE,
+    assert.match(
+      chatManaged.content,
+      new RegExp(`^## ${LIBRARY_TITLE}$`, "mu"),
       "the shared content names the activated item",
     );
 
@@ -632,9 +632,9 @@ test("with nothing activated a conversation without a thread binding carries no 
       new RegExp(LIBRARY_CONSTANT_SUMMARY, "u"),
       "layer 2 (override): the continuity activation does not join the thread's binding",
     );
-    assert.equal(
-      (JSON.parse(chatManaged.content) as { publicTitle?: string }).publicTitle,
-      SIBLING_TITLE,
+    assert.match(
+      chatManaged.content,
+      new RegExp(`^## ${SIBLING_TITLE}$`, "mu"),
       "the thread's binding, not the activation, names the managed item",
     );
 

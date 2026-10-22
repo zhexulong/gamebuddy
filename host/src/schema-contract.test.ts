@@ -67,13 +67,12 @@ test("language-neutral schema accepts all production presentation and system-not
         sourceEventId: "source_01",
         text: "Hello",
         locale: "en-US",
-        expectedRevision: 0,
         presentationEpoch: 0,
       },
     },
     {
       type: "companion_presentation_receipt",
-      payload: { expressionId: "expression_01", revision: 0, presentationEpoch: 0 },
+      payload: { expressionId: "expression_01", presentationEpoch: 0 },
     },
     {
       type: "system_notice_request",
@@ -101,7 +100,6 @@ test("language-neutral schema accepts all production presentation and system-not
         sourceEventId: "source_01",
         text: "Hello",
         locale: "en-US",
-        expectedRevision: 0,
         presentationEpoch: 0,
         extra: true,
       },
@@ -180,10 +178,7 @@ test("language-neutral schema and Host share closed shapes for every published s
   // green. The old snake_case tokens below (`missing_required_key`,
   // `unexpected_keys`) come from the generic key helper, not from a field, so the
   // negative lookahead keeps only the field tokens.
-  const protocolSource = await readFile(
-    fileURLToPath(new URL("../../host/src/protocol.ts", import.meta.url)),
-    "utf8",
-  );
+  const protocolSource = await readFile(fileURLToPath(new URL("../../host/src/protocol.ts", import.meta.url)), "utf8");
   const schemaDocument = JSON.parse(
     await readFile(fileURLToPath(new URL("../../protocol/bridge-v1.schema.json", import.meta.url)), "utf8"),
   ) as { $defs: { snapshot: { properties: Record<string, unknown> } } };
@@ -205,8 +200,21 @@ test("language-neutral schema and Host share closed shapes for every published s
     ["toolSlots", { slot: 1, label: "Axe" }],
     ["wateringCanFacts", { slot: 2, qualifiedItemId: "(T)WateringCan", label: "Watering Can", water: 40, max: 40 }],
     ["refillWateringCanTargets", { targetId: "refill_deadbeef", x: 10, y: 12 }],
-    ["forageTargets", { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)16", displayName: "Wild Horseradish", stack: 1 }],
-    ["itemTargets", { targetId: "item_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 }],
+    [
+      "forageTargets",
+      {
+        targetId: "forage_deadbeef",
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)16",
+        displayName: "Wild Horseradish",
+        stack: 1,
+      },
+    ],
+    [
+      "itemTargets",
+      { targetId: "item_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 },
+    ],
     ["cropTargets", { targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24", displayName: "Parsnip" }],
     [
       "harvestTargets",
@@ -220,11 +228,32 @@ test("language-neutral schema and Host share closed shapes for every published s
         regrowsAfterHarvest: false,
       },
     ],
-    ["seedTargets", { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds" }],
-    ["fertilizerTargets", { targetId: "fertilizer_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)368", displayName: "Quality Fertilizer" }],
+    [
+      "seedTargets",
+      { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds" },
+    ],
+    [
+      "fertilizerTargets",
+      {
+        targetId: "fertilizer_deadbeef",
+        slot: 2,
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)368",
+        displayName: "Quality Fertilizer",
+      },
+    ],
     [
       "woodFenceTargets",
-      { targetId: "fence_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)322", displayName: "Wood Fence" },
+      {
+        targetId: "fence_deadbeef",
+        location: "Farm",
+        slot: 2,
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)322",
+        displayName: "Wood Fence",
+      },
     ],
     [
       "woodFenceResultTargets",
@@ -244,7 +273,15 @@ test("language-neutral schema and Host share closed shapes for every published s
     ],
     [
       "crabPotTargets",
-      { targetId: "crab_pot_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)710", displayName: "Crab Pot" },
+      {
+        targetId: "crab_pot_deadbeef",
+        location: "Farm",
+        slot: 2,
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)710",
+        displayName: "Crab Pot",
+      },
     ],
     [
       "crabPotResultTargets",
@@ -307,12 +344,27 @@ test("language-neutral schema and Host share closed shapes for every published s
     ],
     [
       "rockSourceTargets",
-      { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)2", displayName: "Stone", health: 1 },
+      {
+        targetId: "rock_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)2",
+        displayName: "Stone",
+        health: 1,
+      },
     ],
     ["clearHoeDirtTargets", { targetId: "dirt_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true }],
     [
       "artifactSpotTargets",
-      { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590", displayName: "Artifact Spot" },
+      {
+        targetId: "artifact_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)590",
+        displayName: "Artifact Spot",
+      },
     ],
     [
       "artifactSpotResultTargets",
@@ -373,7 +425,10 @@ test("language-neutral schema and Host share closed shapes for every published s
         giftsThisWeek: 0,
       },
     ],
-    ["petTargets", { targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 1, pettedToday: false, stationary: true }],
+    [
+      "petTargets",
+      { targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 1, pettedToday: false, stationary: true },
+    ],
     [
       "animalProductTargets",
       {
@@ -390,11 +445,20 @@ test("language-neutral schema and Host share closed shapes for every published s
     ],
     ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 2, x: 10, y: 12, hayStack: 1 }],
     ["inventoryItemFacts", { slot: 2, qualifiedItemId: "(O)184", displayName: "Milk", stack: 1 }],
-    ["foodTargets", { slot: 2, qualifiedItemId: "(O)216", displayName: "Bread", stack: 1, edibility: 20, isDrink: false }],
+    [
+      "foodTargets",
+      { slot: 2, qualifiedItemId: "(O)216", displayName: "Bread", stack: 1, edibility: 20, isDrink: false },
+    ],
     ["craftingRecipeTargets", { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true }],
     ["cookingRecipeTargets", { targetId: "Fried_Egg", displayName: "Fried Egg", ingredientsAvailable: false }],
-    ["cookingStationTargets", { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" }],
-    ["cookingStationTargets", { targetId: "cooking_station_0123456789abcdef", location: "Farm", x: 4, y: 5, stationKind: "cookout_kit" }],
+    [
+      "cookingStationTargets",
+      { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" },
+    ],
+    [
+      "cookingStationTargets",
+      { targetId: "cooking_station_0123456789abcdef", location: "Farm", x: 4, y: 5, stationKind: "cookout_kit" },
+    ],
     // The seven families below were live on the wire and validated by the Host
     // before the language-neutral schema declared them, so a promotion message
     // carrying one could not be admitted by the schema leg at all.
@@ -406,10 +470,7 @@ test("language-neutral schema and Host share closed shapes for every published s
       "treeSaplingTargets",
       { targetId: "tree_sapling_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)309", displayName: "Acorn" },
     ],
-    [
-      "weedTargets",
-      { targetId: "weed_deadbeef", location: "Farm", x: 10, y: 12, health: 2 },
-    ],
+    ["weedTargets", { targetId: "weed_deadbeef", location: "Farm", x: 10, y: 12, health: 2 }],
     [
       "scytheCropTargets",
       {
@@ -432,14 +493,30 @@ test("language-neutral schema and Host share closed shapes for every published s
     ],
     [
       "shippingBinTargets",
-      { targetId: "shipping_bin_0123456789abcdef", x: 71, y: 14, slot: 2, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 1 },
+      {
+        targetId: "shipping_bin_0123456789abcdef",
+        x: 71,
+        y: 14,
+        slot: 2,
+        qualifiedItemId: "(O)24",
+        displayName: "Parsnip",
+        stack: 1,
+      },
     ],
     // The remaining published families. `tailoringTargets` and `farmBuildingTargets`
     // carry a `kind` union; `tailoringTargets` also carries the two optional garment
     // members the bridge omits rather than nulls.
     [
       "fishPondTargets",
-      { targetId: "fish_pond_deadbeef", location: "Farm", x: 10, y: 12, buildingType: "(BC)FishPond", occupants: 1, fishType: "(O)145" },
+      {
+        targetId: "fish_pond_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        buildingType: "(BC)FishPond",
+        occupants: 1,
+        fishType: "(O)145",
+      },
     ],
     [
       "farmBuildingTargets",
@@ -477,10 +554,7 @@ test("language-neutral schema and Host share closed shapes for every published s
     ],
   ];
   for (const [field] of targets)
-    assert.ok(
-      hostSnapshotFields.includes(field),
-      `sample ${field} is not a snapshot field the Host diagnoses`,
-    );
+    assert.ok(hostSnapshotFields.includes(field), `sample ${field} is not a snapshot field the Host diagnoses`);
   for (const [field, target] of targets) {
     const payload = { ...(snapshot.payload as Record<string, unknown>), [field]: [target] };
     assert.equal(validate({ ...snapshot, payload }), true, `${field}: ${JSON.stringify(validate.errors)}`);
@@ -767,7 +841,14 @@ test("language-neutral schema validates exact dig_artifact_spot request argument
       year: 1,
       weather: "sunny",
       artifactSpotTargets: [
-        { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590", displayName: "Artifact Spot" },
+        {
+          targetId: "artifact_spot_deadbeef",
+          location: "Farm",
+          x: 10,
+          y: 12,
+          qualifiedItemId: "(O)590",
+          displayName: "Artifact Spot",
+        },
       ],
     },
   };
@@ -782,7 +863,14 @@ test("language-neutral schema validates exact dig_artifact_spot request argument
       payload: {
         ...(snapshot.payload as Record<string, unknown>),
         artifactSpotTargets: [
-          { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)SeedSpot", displayName: "Artifact Spot" },
+          {
+            targetId: "artifact_spot_deadbeef",
+            location: "Farm",
+            x: 10,
+            y: 12,
+            qualifiedItemId: "(O)SeedSpot",
+            displayName: "Artifact Spot",
+          },
         ],
       },
     }),
@@ -1082,7 +1170,6 @@ test("language-neutral schema rejects malformed and retired typed payloads", asy
   );
 });
 
-
 test("language-neutral schema validates exact navigate_to_destination execution selectors", async () => {
   const validate = await schemaValidator();
   const [message] = (await fixture("golden-sequence.json")).messages;
@@ -1130,11 +1217,16 @@ test("language-neutral schema validates exact navigate_to_destination execution 
     );
 
   assert.equal(
-    validate({ ...request, payload: { ...request.payload, args: { destination: { kind: "label", label: "Town" }, destinationRef: "dr1_deadbeef" } } }),
+    validate({
+      ...request,
+      payload: {
+        ...request.payload,
+        args: { destination: { kind: "label", label: "Town" }, destinationRef: "dr1_deadbeef" },
+      },
+    }),
     false,
   );
 });
-
 
 test("language-neutral schema validates exact ride_minecart request arguments", async () => {
   const validate = await schemaValidator();
@@ -1174,9 +1266,15 @@ test("language-neutral schema closes body-node admission challenge and grant fra
   const [base] = (await fixture("golden-sequence.json")).messages as readonly Record<string, unknown>[];
   assert.ok(base !== undefined, "golden-sequence.json must carry a first message");
   const challenge = {
-    programId: "program_01", nodeId: "node_01", nodeAttempt: 1, admissionAttempt: 1,
-    stopEpoch: 0, catalogRevision: 1, policyIdentity: { value: "policy:01", capabilityRevision: 1 },
-    actionId: "navigate", deadlineMs: 9007199254740991,
+    programId: "program_01",
+    nodeId: "node_01",
+    nodeAttempt: 1,
+    admissionAttempt: 1,
+    stopEpoch: 0,
+    catalogRevision: 1,
+    policyIdentity: { value: "policy:01", capabilityRevision: 1 },
+    actionId: "navigate",
+    deadlineMs: 9007199254740991,
     canonicalBoundArgs: {
       count: { type: "integer", canonicalValue: "9223372036854775807" },
       text: { type: "string", canonicalValue: "Farm" },
@@ -1186,13 +1284,27 @@ test("language-neutral schema closes body-node admission challenge and grant fra
     },
     derivedResourceClaims: { actor: "farmhand_01" },
   };
-  const binding = { programId: challenge.programId, nodeId: challenge.nodeId, nodeAttempt: 1,
-    requestId: "request_01", idempotencyKey: "idempotency_01", executionId: "execution_01" };
-  const grant = { ...challenge, grantId: "grant_01", attachmentGeneration: "attachment:01",
-    policyRevision: "revision:01", executionBinding: binding };
+  const binding = {
+    programId: challenge.programId,
+    nodeId: challenge.nodeId,
+    nodeAttempt: 1,
+    requestId: "request_01",
+    idempotencyKey: "idempotency_01",
+    executionId: "execution_01",
+  };
+  const grant = {
+    ...challenge,
+    grantId: "grant_01",
+    attachmentGeneration: "attachment:01",
+    policyRevision: "revision:01",
+    executionBinding: binding,
+  };
   const frame = (payload: unknown, type = "body_node_admission_challenge") => ({ ...base, type, payload });
-  for (const message of [frame(challenge), frame(grant, "body_node_admission_grant"),
-    frame({ ...grant, executionBinding: null }, "body_node_admission_grant")]) {
+  for (const message of [
+    frame(challenge),
+    frame(grant, "body_node_admission_grant"),
+    frame({ ...grant, executionBinding: null }, "body_node_admission_grant"),
+  ]) {
     assert.equal(validate(message), true, JSON.stringify(validate.errors));
     const record = message as Record<string, unknown>;
     for (const key of Object.keys(record)) {
@@ -1201,12 +1313,21 @@ test("language-neutral schema closes body-node admission challenge and grant fra
       assert.equal(validate(missing), false, `missing envelope ${key}`);
     }
     assert.equal(validate({ ...message, extra: true }), false);
-    for (const [key, value] of Object.entries({ protocolVersion: 2, messageId: "!", correlationId: "!",
-      timestampMs: 1.5, scope: { ...(base.scope as object), extra: true }, payload: [] })) {
+    for (const [key, value] of Object.entries({
+      protocolVersion: 2,
+      messageId: "!",
+      correlationId: "!",
+      timestampMs: 1.5,
+      scope: { ...(base.scope as object), extra: true },
+      payload: [],
+    })) {
       assert.equal(validate({ ...message, [key]: value }), false, `invalid envelope ${key}`);
     }
   }
-  for (const [payload, type] of [[challenge, "body_node_admission_challenge"], [grant, "body_node_admission_grant"]] as const) {
+  for (const [payload, type] of [
+    [challenge, "body_node_admission_challenge"],
+    [grant, "body_node_admission_grant"],
+  ] as const) {
     for (const key of Object.keys(payload)) {
       const missing: Record<string, unknown> = { ...payload };
       delete missing[key];
@@ -1216,29 +1337,56 @@ test("language-neutral schema closes body-node admission challenge and grant fra
   }
   assert.equal(validate(frame(grant)), false, "grant is not a challenge");
   assert.equal(validate(frame(challenge, "body_node_admission_grant")), false, "challenge is not a grant");
-  assert.equal(validate(frame({ ...challenge,
-    nodeAttempt: 2147483647, admissionAttempt: 2147483647,
-    canonicalBoundArgs: Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "" }])),
-    derivedResourceClaims: Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`claim_${i}`, "actor"])),
-  })), true, JSON.stringify(validate.errors));
+  assert.equal(
+    validate(
+      frame({
+        ...challenge,
+        nodeAttempt: 2147483647,
+        admissionAttempt: 2147483647,
+        canonicalBoundArgs: Object.fromEntries(
+          Array.from({ length: 32 }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "" }]),
+        ),
+        derivedResourceClaims: Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`claim_${i}`, "actor"])),
+      }),
+    ),
+    true,
+    JSON.stringify(validate.errors),
+  );
   const badChallenges = [
-    { nodeAttempt: 0 }, { admissionAttempt: 2147483648 }, { stopEpoch: -1 },
-    { catalogRevision: 9007199254740992 }, { deadlineMs: 0 }, { deadlineMs: 9007199254740992 },
-    { policyIdentity: { value: "policy" } }, { policyIdentity: { ...challenge.policyIdentity, extra: true } },
+    { nodeAttempt: 0 },
+    { admissionAttempt: 2147483648 },
+    { stopEpoch: -1 },
+    { catalogRevision: 9007199254740992 },
+    { deadlineMs: 0 },
+    { deadlineMs: 9007199254740992 },
+    { policyIdentity: { value: "policy" } },
+    { policyIdentity: { ...challenge.policyIdentity, extra: true } },
     { policyIdentity: { value: "x".repeat(4097), capabilityRevision: 0 } },
     { policyIdentity: { value: "bad\u0085policy", capabilityRevision: 0 } },
     { policyIdentity: { value: "policy", capabilityRevision: 9007199254740992 } },
-    { canonicalBoundArgs: Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`arg_${i}`, challenge.canonicalBoundArgs.text])) },
+    {
+      canonicalBoundArgs: Object.fromEntries(
+        Array.from({ length: 33 }, (_, i) => [`arg_${i}`, challenge.canonicalBoundArgs.text]),
+      ),
+    },
     { canonicalBoundArgs: { "bad key": challenge.canonicalBoundArgs.text } },
     { derivedResourceClaims: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`claim_${i}`, "actor"])) },
-    { derivedResourceClaims: { "bad key": "actor" } }, { derivedResourceClaims: { actor: 1 } },
+    { derivedResourceClaims: { "bad key": "actor" } },
+    { derivedResourceClaims: { actor: 1 } },
   ];
   for (const patch of badChallenges) {
     assert.equal(validate(frame({ ...challenge, ...patch })), false, JSON.stringify(patch));
     assert.equal(validate(frame({ ...grant, ...patch }, "body_node_admission_grant")), false, JSON.stringify(patch));
   }
-  for (const executionBinding of [undefined, {}, { ...binding, extra: true }, { ...binding, nodeAttempt: 0 },
-    { ...binding, requestId: "!" }, { ...binding, executionId: null }, { ...binding, idempotencyKey: 1 }]) {
+  for (const executionBinding of [
+    undefined,
+    {},
+    { ...binding, extra: true },
+    { ...binding, nodeAttempt: 0 },
+    { ...binding, requestId: "!" },
+    { ...binding, executionId: null },
+    { ...binding, idempotencyKey: 1 },
+  ]) {
     assert.equal(validate(frame({ ...grant, executionBinding }, "body_node_admission_grant")), false);
   }
   for (const key of ["attachmentGeneration", "policyRevision"]) {
@@ -1253,25 +1401,41 @@ test("language-neutral schema closes body-node admission challenge and grant fra
     { type: "destination_selector", destination: { kind: "label", label: " " } },
     { type: "destination_selector", destination: { kind: "label", label: "x".repeat(129) } },
     { type: "destination_selector", destination: { kind: "ref", ref: `dr1_${"A".repeat(21)}B` } },
-    { type: "string", canonicalValue: "x".repeat(513) }, { type: "string" },
-    { type: "string", canonicalValue: "ok", extra: true }, { type: "boolean", canonicalValue: true },
+    { type: "string", canonicalValue: "x".repeat(513) },
+    { type: "string" },
+    { type: "string", canonicalValue: "ok", extra: true },
+    { type: "boolean", canonicalValue: true },
     { type: "boolean", canonicalValue: "False" },
-  ]) assert.equal(validate(canonicalFrame(value)), false, JSON.stringify(value));
+  ])
+    assert.equal(validate(canonicalFrame(value)), false, JSON.stringify(value));
   for (const canonicalValue of ["0", "-1", "9223372036854775807", "-9223372036854775808"]) {
     assert.equal(validate(canonicalFrame({ type: "integer", canonicalValue })), true, canonicalValue);
   }
-  for (const canonicalValue of ["-0", "+1", "01", "1.0", "1e3", "1\n", "9223372036854775808", "-9223372036854775809", 9007199254740992]) {
+  for (const canonicalValue of [
+    "-0",
+    "+1",
+    "01",
+    "1.0",
+    "1e3",
+    "1\n",
+    "9223372036854775808",
+    "-9223372036854775809",
+    9007199254740992,
+  ]) {
     assert.equal(validate(canonicalFrame({ type: "integer", canonicalValue })), false, String(canonicalValue));
   }
   // Exercise every decimal boundary in the Int64 regex against the native BigInt range oracle.
   for (let digits = 0n; digits < 20n; digits++) {
     const step = 10n ** digits;
     for (const limit of [9223372036854775807n, 9223372036854775808n]) {
-      const boundary = limit / step * step;
+      const boundary = (limit / step) * step;
       for (const candidate of [boundary - 1n, boundary, boundary + 1n]) {
         for (const integer of [candidate, -candidate]) {
-          assert.equal(validate(canonicalFrame({ type: "integer", canonicalValue: String(integer) })),
-            integer >= -9223372036854775808n && integer <= 9223372036854775807n, String(integer));
+          assert.equal(
+            validate(canonicalFrame({ type: "integer", canonicalValue: String(integer) })),
+            integer >= -9223372036854775808n && integer <= 9223372036854775807n,
+            String(integer),
+          );
         }
       }
     }
@@ -1295,10 +1459,7 @@ type SchemaNode = Record<string, unknown>;
 /** Array members the Host validates outside `SNAPSHOT_FAMILY_RULES`: its two capability lists. Their
  * entries are bare identifiers rather than discovered world targets, and their entry bound is still
  * left to the frame limit, so they are named here rather than silently skipped. */
-const SNAPSHOT_ARRAYS_OUTSIDE_THE_FAMILY_TABLE: readonly string[] = Object.freeze([
-  "capabilities",
-  "enabledActionIds",
-]);
+const SNAPSHOT_ARRAYS_OUTSIDE_THE_FAMILY_TABLE: readonly string[] = Object.freeze(["capabilities", "enabledActionIds"]);
 
 /** Families where the Host is STRICTER than the schema: the language-neutral contract admits an
  * instance the Host would refuse, which is the failure class that once disconnected the bridge.
@@ -1334,7 +1495,10 @@ function dereference(defs: Record<string, SchemaNode>, node: SchemaNode): Schema
 
 /** A witness for the bounded character-class patterns the snapshot families use. */
 function patternWitness(pattern: string): string {
-  const body = pattern.replace(/^\^/, "").replace(/\$$/, "").replace(/\(\?!\[\\s\\S\]\)$/, "");
+  const body = pattern
+    .replace(/^\^/, "")
+    .replace(/\$$/, "")
+    .replace(/\(\?!\[\\s\\S\]\)$/, "");
   const sampleOf = (charClass: string): string => {
     if (charClass.includes("0-9")) return "7";
     if (charClass.includes("a-f")) return "a";
@@ -1529,7 +1693,10 @@ test("the Host refuses a snapshot family entry the schema's shape does not allow
     const sample = generateSchemaValue(defs, family.items as SchemaNode);
     const maxItems = caps.get(field);
     if (maxItems !== undefined) {
-      const message = snapshotWith(field, Array.from({ length: maxItems + 1 }, () => sample));
+      const message = snapshotWith(
+        field,
+        Array.from({ length: maxItems + 1 }, () => sample),
+      );
       assert.equal(
         validateBridgeMessage(message, schemaContractScope),
         "invalid_snapshot",

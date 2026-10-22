@@ -3260,7 +3260,21 @@ export type WorldInfoUpdateCommandV1 = Static<typeof WorldInfoUpdateCommandV1Sch
 export type WorldInfoImportCommandV1 = Static<typeof WorldInfoImportCommandV1Schema>;
 export type ChatExportCommandV1 = Static<typeof ChatExportQueryV1Schema>;
 export type ChatExportDispositionV1 = Static<typeof ChatExportDispositionV1Schema>;
-export type ChatExportV1 = Static<typeof ChatExportV1Schema>;
+/**
+ * The export's own wire type is HAND-WRITTEN rather than `Static` of its schema, for the same reason
+ * the world book's is: the producer freezes the disposition list, so the type says `readonly` rather
+ * than describe a mutable array it never returns. The schema stays the validator the dispatcher
+ * checks every reply against.
+ */
+export type ChatExportV1 = Readonly<{
+  apiVersion: typeof TAVERN_BROWSER_API_VERSION;
+  format: "tavern-interchange/v1";
+  chatHandle: string;
+  messageCount: number;
+  dispositions: readonly ChatExportDispositionV1[];
+  canonicalHash: string;
+  jsonl: string;
+}>;
 export type CompanionListEntryV1 = Static<typeof CompanionListEntryV1Schema>;
 export type CompanionListV1 = Static<typeof CompanionListV1Schema>;
 export type CompanionDetailV1 = Static<typeof CompanionDetailV1Schema>;

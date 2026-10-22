@@ -51,6 +51,8 @@ export type RuntimeDisposal = Readonly<{
   operationalGateEvidence?: GameOperationalGateEvidenceProjection;
   /** Durable recovery journal is drained only after prompt/receipt transitions settle. */
   closeRecoveryJournal?: () => Promise<void>;
+  /** Writes the run's span export after every other stage has settled or been torn down. */
+  flushRunTrace?: () => Promise<void>;
   /** Construction-private fixed-tool revocation/drain, before Pi disposal. */
   closeFixedTools?: () => Promise<void>;
   /** Clears the Game-surface authored m[0] materialization before Pi disposal. */
@@ -89,9 +91,7 @@ type S4cMaterializationAdmissionRecord = Readonly<{
 
 const s4cMaterializationAdmissions = new WeakMap<object, S4cMaterializationAdmissionRecord>();
 
-function mintS4cMaterializationAdmission(
-  execution: GameRuntimeBindingExecution,
-): OpaqueS4cMaterializationAdmission {
+function mintS4cMaterializationAdmission(execution: GameRuntimeBindingExecution): OpaqueS4cMaterializationAdmission {
   const admission = Object.freeze(Object.create(null)) as OpaqueS4cMaterializationAdmission;
   s4cMaterializationAdmissions.set(admission, { execution, active: { value: true } });
   return admission;
@@ -125,10 +125,10 @@ export async function materializeExactEnter(
   reservation: ReservedGameRuntimeMaterialization,
   permit: ProductionGamePermit,
   factory: (
-     execution: GameRuntimeBindingExecution,
-     admission: OpaqueS4cMaterializationAdmission,
-   ) => Promise<RuntimeDisposal>,
-  ): Promise<MaterializedGameRuntime> {
+    execution: GameRuntimeBindingExecution,
+    admission: OpaqueS4cMaterializationAdmission,
+  ) => Promise<RuntimeDisposal>,
+): Promise<MaterializedGameRuntime> {
   const execution = consumeReservedGameRuntimeMaterialization(reservation);
   let runtime: RuntimeDisposal | undefined;
   let finalized = false;
@@ -175,14 +175,11 @@ function finalizeMaterializedGameRuntime(
           ...(runtime.connected.nextOperationalGateEvidence === undefined
             ? {}
             : {
-                nextOperationalGateEvidence:
-                  runtime.connected.nextOperationalGateEvidence,
+                nextOperationalGateEvidence: runtime.connected.nextOperationalGateEvidence,
               }),
           markClosing: runtime.connected.markClosing,
           activateIngress: runtime.connected.activateIngress,
-          dispatchPromptDefinedTask: createPromptDefinedTaskDispatcher(
-            runtime.gameplaySubagent,
-          ),
+          dispatchPromptDefinedTask: createPromptDefinedTaskDispatcher(runtime.gameplaySubagent),
           cancelPromptDefinedTask: () => runtime.gameplaySubagent?.dispose(),
         });
   let state: "live" | "tearing_down" | "closed" = "live";
@@ -227,10 +224,8 @@ function createPromptDefinedTaskDispatcher(
   worker: RuntimeDisposal["gameplaySubagent"],
 ): (task: string) => Promise<void> {
   return async (task: string): Promise<void> => {
-    if (!isCanonicalPromptDefinedTask(task))
-      throw new Error("invalid_gameplay_task");
-    if (worker === undefined || typeof worker.run !== "function")
-      throw new Error("gameplay_task_dispatch_unavailable");
+    if (!isCanonicalPromptDefinedTask(task)) throw new Error("invalid_gameplay_task");
+    if (worker === undefined || typeof worker.run !== "function") throw new Error("gameplay_task_dispatch_unavailable");
     await worker.run(task);
   };
 }
@@ -301,23 +296,28 @@ async function closeMaterializedRuntime(runtime: RuntimeDisposal): Promise<void>
   // the request already admitted has completed, so the transport it still needs
   // is not closed underneath it (attested fixed closure drains the held request
   // before revocation).
-   try {
-     await runtime.closeFixedTools?.();
-   } catch (error) {
-     errors.push(error);
-   }
+  try {
+    await runtime.closeFixedTools?.();
+  } catch (error) {
+    errors.push(error);
+  }
   attempt(() => runtime.connected?.host.close());
   attempt(() => runtime.gameplaySubagent?.dispose());
   attempt(() => runtime.operationalGateEvidence?.close());
-   attempt(() => runtime.clearGameOperationalGateMarker?.());
-   try {
-     await runtime.clearAuthoredContext?.();
-   } catch (error) {
-     errors.push(error);
-   }
-   attempt(() => runtime.session.dispose());
+  attempt(() => runtime.clearGameOperationalGateMarker?.());
+  try {
+    await runtime.clearAuthoredContext?.();
+  } catch (error) {
+    errors.push(error);
+  }
+  attempt(() => runtime.session.dispose());
   try {
     await runtime.closeRecoveryJournal?.();
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await runtime.flushRunTrace?.();
   } catch (error) {
     errors.push(error);
   }
@@ -343,10 +343,12 @@ function assertRuntimeDisposal(value: unknown): asserts value is RuntimeDisposal
           typeof (value as RuntimeDisposal).gameplaySubagent!.run !== "function"))) ||
     ((value as RuntimeDisposal).clearGameOperationalGateMarker !== undefined &&
       typeof (value as RuntimeDisposal).clearGameOperationalGateMarker !== "function") ||
-     ((value as RuntimeDisposal).closeFixedTools !== undefined &&
-       typeof (value as RuntimeDisposal).closeFixedTools !== "function") ||
-     ((value as RuntimeDisposal).operationalGateEvidence !== undefined &&
-       (typeof (value as RuntimeDisposal).operationalGateEvidence !== "object" ||
+    ((value as RuntimeDisposal).closeFixedTools !== undefined &&
+      typeof (value as RuntimeDisposal).closeFixedTools !== "function") ||
+    ((value as RuntimeDisposal).flushRunTrace !== undefined &&
+      typeof (value as RuntimeDisposal).flushRunTrace !== "function") ||
+    ((value as RuntimeDisposal).operationalGateEvidence !== undefined &&
+      (typeof (value as RuntimeDisposal).operationalGateEvidence !== "object" ||
         typeof (value as RuntimeDisposal).operationalGateEvidence!.next !== "function" ||
         typeof (value as RuntimeDisposal).operationalGateEvidence!.close !== "function"))
   ) {

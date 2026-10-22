@@ -36,7 +36,7 @@ const fakeRegistrations = Object.freeze([
     identityVersion: 1,
     lifecycle: "planned" as const,
     kind: "execution" as const,
-  }
+  },
 ]);
 
 const fakeCatalog = createIntegrationActionCatalog(
@@ -62,8 +62,7 @@ function fakeModule(): GameIntegrationAdapter {
   const activateConsole = defineTool({
     name: "arcade_activate_console",
     label: "Activate arcade console",
-    description:
-      "Receipt-backed fixture action used only to verify the Host module seam.",
+    description: "Receipt-backed fixture action used only to verify the Host module seam.",
     parameters: Type.Object({
       consoleId: Type.String({ minLength: 1, maxLength: 32 }),
     }),
@@ -95,20 +94,15 @@ function fakeModule(): GameIntegrationAdapter {
       deniedFamilies: Object.freeze([]),
     }),
     parsePolicy: (value: unknown) => {
-      if (typeof value !== "object" || value === null)
-        throw new Error("invalid_test_arcade_policy");
+      if (typeof value !== "object" || value === null) throw new Error("invalid_test_arcade_policy");
       return value as never;
     },
     actorId: (connection) => {
-      if (connection.scope.integrationId !== "test-arcade")
-        throw new Error("integration_identity_binding_mismatch");
+      if (connection.scope.integrationId !== "test-arcade") throw new Error("integration_identity_binding_mismatch");
       return "arcade_actor_01";
     },
     assertIdentityBinding: (connection, identity) => {
-      if (
-        connection.scope.integrationId !== "test-arcade" ||
-        identity.companionId.length === 0
-      )
+      if (connection.scope.integrationId !== "test-arcade" || identity.companionId.length === 0)
         throw new Error("integration_identity_binding_mismatch");
     },
     worldScope: () => null,
@@ -124,9 +118,7 @@ function fakeModule(): GameIntegrationAdapter {
       );
       return {
         observation: [inspectZone],
-        actions: visible.some((entry) => entry.actionId === "activate_console")
-          ? [activateConsole]
-          : [],
+        actions: visible.some((entry) => entry.actionId === "activate_console") ? [activateConsole] : [],
         knowledge: [],
       };
     },
@@ -176,9 +168,7 @@ function fakeModule(): GameIntegrationAdapter {
       )
         return null;
       try {
-        const receipt = JSON.parse(
-          (details as { receiptJson: string }).receiptJson,
-        ) as Record<string, unknown>;
+        const receipt = JSON.parse((details as { receiptJson: string }).receiptJson) as Record<string, unknown>;
         return typeof receipt.requestId === "string" &&
           typeof receipt.executionId === "string" &&
           typeof receipt.state === "string" &&
@@ -189,12 +179,9 @@ function fakeModule(): GameIntegrationAdapter {
               actionId: "activate_console",
               state: receipt.state,
               reasonCode: receipt.reasonCode,
-              revision:
-                typeof receipt.revision === "number" ? receipt.revision : null,
+              revision: typeof receipt.revision === "number" ? receipt.revision : null,
               evidence:
-                typeof receipt.evidence === "object" &&
-                receipt.evidence !== null &&
-                !Array.isArray(receipt.evidence)
+                typeof receipt.evidence === "object" && receipt.evidence !== null && !Array.isArray(receipt.evidence)
                   ? (receipt.evidence as Record<string, unknown>)
                   : null,
             }
@@ -203,10 +190,8 @@ function fakeModule(): GameIntegrationAdapter {
         return null;
       }
     },
-    actionIdForToolName: (toolName: string) =>
-      toolName === "arcade_activate_console" ? "activate_console" : null,
-    isCancellationTool: (toolName: string) =>
-      toolName === "arcade_cancel_execution",
+    actionIdForToolName: (toolName: string) => (toolName === "arcade_activate_console" ? "activate_console" : null),
+    isCancellationTool: (toolName: string) => toolName === "arcade_cancel_execution",
   });
 }
 
@@ -214,25 +199,13 @@ test("integration action catalog is deterministic, capability gated, and fail cl
   assert.equal(fakeCatalog.entries.length, 3);
   assert.equal(
     fakeCatalog.revision,
-    createIntegrationActionCatalog(
-      fakeCatalog.entries,
-      fakeCatalog.hasCompletionEvidence,
-    ).revision,
+    createIntegrationActionCatalog(fakeCatalog.entries, fakeCatalog.hasCompletionEvidence).revision,
   );
   assert.deepEqual(
-    fakeCatalog
-      .visibleActions(fakeRegistrations, ["inspect_zone", "planned_action"])
-      .map((entry) => entry.actionId),
+    fakeCatalog.visibleActions(fakeRegistrations, ["inspect_zone", "planned_action"]).map((entry) => entry.actionId),
     [],
   );
-  assert.deepEqual(
-    fakeCatalog.searchVisibleActions(
-      fakeRegistrations,
-      ["inspect_zone"],
-      "console",
-    ),
-    [],
-  );
+  assert.deepEqual(fakeCatalog.searchVisibleActions(fakeRegistrations, ["inspect_zone"], "console"), []);
   assert.deepEqual(
     fakeCatalog
       .visibleActions(fakeRegistrations, ["inspect_zone", "activate_console"], {
@@ -265,13 +238,9 @@ test("catalog rejects duplicate and malformed action descriptors", () => {
   const descriptor = {
     actionId: "same",
   };
+  assert.throws(() => createIntegrationActionCatalog([descriptor, descriptor]), /duplicate_integration_action/);
   assert.throws(
-    () => createIntegrationActionCatalog([descriptor, descriptor]),
-    /duplicate_integration_action/,
-  );
-  assert.throws(
-    () =>
-      createIntegrationActionCatalog([{ ...descriptor, actionId: "bad id" }]),
+    () => createIntegrationActionCatalog([{ ...descriptor, actionId: "bad id" }]),
     /invalid_integration_action_catalog/,
   );
 });
@@ -279,48 +248,25 @@ test("catalog rejects duplicate and malformed action descriptors", () => {
 test("module descriptor must match the connection integration identity", () => {
   const module = fakeModule();
   assert.doesNotThrow(() => assertIntegrationAdapter(module, "test-arcade"));
+  assert.throws(() => assertIntegrationAdapter(module, "stardew"), /integration_adapter_scope_mismatch/);
   assert.throws(
-    () => assertIntegrationAdapter(module, "stardew"),
+    () => assertIntegrationAdapter({ ...module, parsePolicy: undefined } as never, "test-arcade"),
     /integration_adapter_scope_mismatch/,
   );
   assert.throws(
-    () =>
-      assertIntegrationAdapter(
-        { ...module, parsePolicy: undefined } as never,
-        "test-arcade",
-      ),
+    () => assertIntegrationAdapter({ ...module, knowledgeMetadata: undefined } as never, "test-arcade"),
     /integration_adapter_scope_mismatch/,
   );
   assert.throws(
-    () =>
-      assertIntegrationAdapter(
-        { ...module, knowledgeMetadata: undefined } as never,
-        "test-arcade",
-      ),
+    () => assertIntegrationAdapter({ ...module, status: undefined } as never, "test-arcade"),
     /integration_adapter_scope_mismatch/,
   );
   assert.throws(
-    () =>
-      assertIntegrationAdapter(
-        { ...module, status: undefined } as never,
-        "test-arcade",
-      ),
+    () => assertIntegrationAdapter({ ...module, actorId: undefined } as never, "test-arcade"),
     /integration_adapter_scope_mismatch/,
   );
   assert.throws(
-    () =>
-      assertIntegrationAdapter(
-        { ...module, actorId: undefined } as never,
-        "test-arcade",
-      ),
-    /integration_adapter_scope_mismatch/,
-  );
-  assert.throws(
-    () =>
-      assertIntegrationAdapter(
-        { ...module, assertIdentityBinding: undefined } as never,
-        "test-arcade",
-      ),
+    () => assertIntegrationAdapter({ ...module, assertIdentityBinding: undefined } as never, "test-arcade"),
     /integration_adapter_scope_mismatch/,
   );
   assert.throws(
@@ -358,7 +304,7 @@ test("module tools require their owning module and scope identity", () => {
           identityVersion: 1,
           lifecycle: "published",
           kind: "execution",
-        }
+        },
       ],
       snapshot: null,
       latestReceipt: null,
@@ -411,10 +357,7 @@ test("fake second-game module owns its tools and does not expose Stardew tools",
     module,
   };
   const conformance = assertIntegrationAdapterConformance(module, connection);
-  assert.deepEqual(conformance.toolNames, [
-    "arcade_activate_console",
-    "arcade_inspect_zone",
-  ]);
+  assert.deepEqual(conformance.toolNames, ["arcade_activate_console", "arcade_inspect_zone"]);
   const tools = module.createToolSet({ connection });
   assert.deepEqual(
     tools.observation.map((tool) => tool.name),
@@ -478,126 +421,91 @@ test("Stardew refill completion evidence requires exact, internally consistent s
     },
   } as const;
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "refill_watering_can",
-      valid,
-    ),
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("refill_watering_can", valid),
     true,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "refill_watering_can",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;water_after=40",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("refill_watering_can", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;water_after=40",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "refill_watering_can",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;unexpected=value",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("refill_watering_can", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;unexpected=value",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "refill_watering_can",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=not_a_number;water_max=40",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("refill_watering_can", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=not_a_number;water_max=40",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "refill_watering_can",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=40;water_after=40;water_max=40",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("refill_watering_can", {
+      ...valid,
+      evidence: {
+        detail: "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=40;water_after=40;water_max=40",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "refill_watering_can",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=39;water_max=40",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("refill_watering_can", {
+      ...valid,
+      evidence: {
+        detail: "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=39;water_max=40",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "refill_watering_can",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=none;slot=-1;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("refill_watering_can", {
+      ...valid,
+      evidence: {
+        detail: "target=none;slot=-1;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "refill_watering_can",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=watering can refill;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("refill_watering_can", {
+      ...valid,
+      evidence: {
+        detail: "target=watering can refill;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "refill_watering_can",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=watering.can/refill;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("refill_watering_can", {
+      ...valid,
+      evidence: {
+        detail: "target=watering.can/refill;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "refill_watering_can",
-      {
-        ...valid,
-        evidence: {
-          detail: `target=${"a".repeat(129)};slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40`,
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("refill_watering_can", {
+      ...valid,
+      evidence: {
+        detail: `target=${"a".repeat(129)};slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40`,
       },
-    ),
+    }),
     false,
   );
 });
@@ -611,54 +519,39 @@ test("Stardew clear-hoedirt completion evidence requires exact removal fields", 
         "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
     },
   } as const;
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("clear_hoedirt", valid), true);
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "clear_hoedirt",
-      valid,
-    ),
-    true,
-  );
-  assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "clear_hoedirt",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;extra=true",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("clear_hoedirt", {
+      ...valid,
+      evidence: {
+        detail:
+          "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;extra=true",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "clear_hoedirt",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=true;removed=true",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("clear_hoedirt", {
+      ...valid,
+      evidence: {
+        detail:
+          "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=true;removed=true",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "clear_hoedirt",
-      { ...valid, state: "failed" },
-    ),
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("clear_hoedirt", {
+      ...valid,
+      state: "failed",
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "clear_hoedirt",
-      {
-        ...valid,
-        reasonCode: "wrong_reason",
-      },
-    ),
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("clear_hoedirt", {
+      ...valid,
+      reasonCode: "wrong_reason",
+    }),
     false,
   );
 });
@@ -672,63 +565,45 @@ test("Stardew chop-tree-source completion evidence requires exact terminal sourc
         "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
     },
   } as const;
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree_source", valid), true);
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "chop_tree_source",
-      valid,
-    ),
-    true,
-  );
-  assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "chop_tree_source",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;drop=(O)388",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree_source", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;drop=(O)388",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "chop_tree_source",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=4;stump_before=false;stump_after=true;source_transformed=true",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree_source", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=4;stump_before=false;stump_after=true;source_transformed=true",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "chop_tree_source",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;tree=Oak",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree_source", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;tree=Oak",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "chop_tree_source",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=tree chop;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree_source", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=tree chop;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true",
       },
-    ),
+    }),
     false,
   );
 });
@@ -739,53 +614,38 @@ test("Stardew break-rock-source completion evidence requires exact source-only r
     reasonCode: "rock_source_broken",
     evidence: {
       detail:
-        "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+        "target=rock_source_1234;tool=pickaxe;tool_selected=pickaxe;slot=4;tool_before=axe;slot_before=0;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
     },
   } as const;
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", valid), true);
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "break_rock_source",
-      valid,
-    ),
-    true,
-  );
-  assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "break_rock_source",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;drop=(O)390",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;drop=(O)390",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "break_rock_source",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=rock source;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=rock source;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true",
       },
-    ),
+    }),
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(
-      "break_rock_source",
-      {
-        ...valid,
-        evidence: {
-          detail:
-            "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=1;removed=false",
-        },
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=1;removed=false",
       },
-    ),
+    }),
     false,
   );
 });
@@ -794,9 +654,6 @@ test("Stardew and fake adapter inventories remain isolated", () => {
   const module = fakeModule();
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.descriptor.integrationId, "stardew");
   assert.equal(module.descriptor.integrationId, "test-arcade");
-  assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasAdapter("activate_console"),
-    false,
-  );
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasAdapter("activate_console"), false);
   assert.equal(module.actionCatalog.hasAdapter("move_to_tile"), false);
 });

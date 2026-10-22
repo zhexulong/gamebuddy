@@ -7,9 +7,11 @@ import test from "node:test";
 import {
   STARDEW_GAME_EXECUTABLE_FILE,
   STARDEW_MOD_LOADER_MISSING,
+  STARDEW_NOT_A_STARDEW_INSTALL,
   STARDEW_SMAPI_EXECUTABLE_FILE,
   discoverStardewGameInstallation,
   probeStardewGameRoot,
+  requireStardewGameInstalled,
   requireStardewModLoaderInstalled,
   resolveStardewGameInstallation,
   type StardewGameInstallationResolverInput,
@@ -210,3 +212,41 @@ test(
     }
   },
 );
+/**
+ * The falsifier for "this folder is not Stardew". The comment above says the mod-loader
+ * requirement stands down when no game is present - which left the wrong folder with no
+ * name at all, so the panel reported it as a search that could not run. The refusal is its
+ * own bounded code, and it may only claim what the read actually found: absence.
+ */
+test(
+  "a directory holding no game is refused by its own bounded name",
+  { skip: process.platform !== "win32" },
+  async () => {
+    assert.equal(STARDEW_NOT_A_STARDEW_INSTALL, "stardew_not_a_stardew_install");
+    const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wrong-folder-"));
+    try {
+      await assert.rejects(requireStardewGameInstalled(root), { message: STARDEW_NOT_A_STARDEW_INSTALL });
+      // A folder that does not exist is the same fact: there is no game there.
+      await assert.rejects(requireStardewGameInstalled(join(root, "missing")), {
+        message: STARDEW_NOT_A_STARDEW_INSTALL,
+      });
+      // The game is there (with or without SMAPI): this refusal stands down.
+      await writeFile(join(root, STARDEW_GAME_EXECUTABLE_FILE), "game");
+      await requireStardewGameInstalled(root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+/**
+ * The other half of the same boundary: absence is a read that COMPLETED. A path this
+ * process cannot look at is not a folder without a game in it - the caller keeps its
+ * unnamed `unavailable` refusal rather than telling the player to pick another folder
+ * when the disk (or a permission) is what failed.
+ */
+test("a path that cannot be read is not reported as a folder without a game", async () => {
+  await assert.rejects(requireStardewGameInstalled("C:\\gamebuddy\u0000unreadable"), (error: unknown) => {
+    return error instanceof Error && error.message !== STARDEW_NOT_A_STARDEW_INSTALL;
+  });
+});

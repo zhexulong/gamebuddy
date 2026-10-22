@@ -582,6 +582,9 @@ function createTavernManagementDomains(
       review,
       libraryThreads,
       await stCardImportService.stagedAvatar(importId),
+      // The card's own prose is rendered at provisioning, so it is rendered in
+      // the run's language: `{{user}}` is the run's word for the player.
+      await resolveCompanionLocale(manifest.runtimeRoot),
     );
     await stCardImportHistoryService.record({
       importId,
@@ -936,9 +939,10 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
     "readDraft",
     "saveDraft",
     "discardDraft",
+    "exportChat",
   ],
   memoryService: ["read", "mutate"],
-  worldInfoService: ["read", "setBinding", "detail", "create", "update", "delete"],
+  worldInfoService: ["read", "setBinding", "detail", "create", "importLorebook", "update", "delete"],
   connectionService: ["read", "create", "test", "activate", "selectModel", "remove"],
   libraryService: ["listCompanions"],
   companionVoiceService: ["read", "update"],
@@ -1066,6 +1070,12 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       // same canonical order: the one write in this group, and the one that takes a
       // hand-made companion off the monogram.
       "companion.avatar.update",
+      // Lorebook import follows the avatar group in that same canonical order: the route that
+      // serves the managed library's existing importer to the player.
+      "world-info.import",
+      // The Chat transcript export is last in that same order: one Chat's own transcript as a
+      // SillyTavern chat file.
+      "chat.export",
     ],
     operationIds: [
       "draft.save",

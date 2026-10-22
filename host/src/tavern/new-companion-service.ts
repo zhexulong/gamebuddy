@@ -19,8 +19,9 @@ import { companionAvatarPath, writeAvatarFile } from "./companion-avatar/index.j
 import { type ChatThreadStore, createChatThreadStore } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
-import { renderMacros } from "./macro-engine.js";
+import { type MacroTable, macroTable, renderMacros } from "./macro-engine.js";
 import { writeCompanionPostHistoryInstructions } from "./post-history-instructions.js";
+import { DEFAULT_COMPANION_LOCALE, type CompanionLocale } from "../settings/player-preference-store.js";
 import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import type { CharacterCandidate, TavernCompanion } from "./types.js";
@@ -69,6 +70,8 @@ export type NewCompanionProvision = Readonly<{
  */
 type ProvisionedCardMaterial = Readonly<{
   approved?: ReadonlyMap<string, string>;
+  /** The card's openings, macro-rendered with her reviewed name and the run's locale. */
+  greetings?: readonly Readonly<{ label: string; text: string }>[];
   worldBookCandidates?: CharacterCandidate["worldBookCandidates"];
   worldBookScanDepth?: number;
   avatar?: Uint8Array;
@@ -150,6 +153,14 @@ export async function provisionNewCompanion(
    * which the player was told about at stage time.
    */
   avatar?: Uint8Array,
+  /**
+   * The run's companion language, the one authority every authored-text render
+   * in the Host reads (`resolveCompanionLocale`). A reviewed card's macros need
+   * it for the same reason the compiled preset path does: `{{user}}` is the
+   * player *being addressed*, and the run's own word for them is what her
+   * persona and her opening must say.
+   */
+  locale: CompanionLocale = DEFAULT_COMPANION_LOCALE,
 ): Promise<NewCompanionProvision> {
   // Validation is deliberately performed before any namespace or profile exists.
   if (
@@ -166,13 +177,15 @@ export async function provisionNewCompanion(
   const companionId = `companion-${randomUUID()}`;
   const continuityId = `continuity-${randomUUID()}`;
   const identity: CompanionIdentity = Object.freeze({ playerId, companionId, continuityId });
+  const profile = reviewedProfile(approved, companionId, continuityId, locale);
   return provisionNewCompanionNamespace(
     root,
     identity,
-    reviewedProfile(approved, companionId, continuityId, playerId),
+    profile,
     threads,
     Object.freeze({
       approved,
+      greetings: buildGreetingVariants(approved, macroTable({ char: profile.identity.name, locale })),
       ...(candidate.worldBookCandidates === undefined ? {} : { worldBookCandidates: candidate.worldBookCandidates }),
       ...(candidate.worldBookScanDepth === undefined ? {} : { worldBookScanDepth: candidate.worldBookScanDepth }),
       ...(avatar === undefined ? {} : { avatar }),
@@ -229,6 +242,11 @@ async function provisionNewCompanionNamespace(
                   tokenBudget: entry.tokenBudget,
                   ...(entry.constant === undefined ? {} : { constant: entry.constant }),
                   ...(entry.keys === undefined ? {} : { keys: entry.keys }),
+                  // The card's secondary gate and its logic are part of the book the companion
+                  // carries: a provisioning that copied only `keys` would persist a book whose
+                  // entries select where the card said they should not.
+                  ...(entry.secondaryKeys === undefined ? {} : { secondaryKeys: entry.secondaryKeys }),
+                  ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
                 }),
               ),
             ),
@@ -252,9 +270,8 @@ async function provisionNewCompanionNamespace(
       if (scenario !== undefined && scenario.trim() !== "") {
         await scenarioService.create({ name: "Default Scenario", description: scenario });
       }
-      const greetingVariants = buildGreetingVariants(card?.approved);
-      if (greetingVariants.length > 0) {
-        await greetingService.create({ label: "Initial Greeting", variants: greetingVariants });
+      if (card?.greetings !== undefined && card.greetings.length > 0) {
+        await greetingService.create({ label: "Initial Greeting", variants: card.greetings });
       }
       // The card's own open-by-design `extensions` object, as her own record -
       // the same kind of authored card material her scenario and her openings are.
@@ -326,20 +343,25 @@ async function provisionNewCompanionNamespace(
  * are persisted on the greeting record and never published as a context source.
  */
 function buildGreetingVariants(
-  approved: ReadonlyMap<string, string> | undefined,
+  approved: ReadonlyMap<string, string>,
+  macros: MacroTable,
 ): readonly Readonly<{ label: string; text: string }>[] {
-  if (approved === undefined) return Object.freeze([]);
+  // An opening is the card's own prose exactly as a persona line is, so it is
+  // rendered through the same table: a card that writes `{{user}}` in her
+  // `first_mes` must not ship the placeholder - or a partition id - as the
+  // conversation's own first line.
+  const render = (value: string): string => renderMacros(value, macros);
   const variants: Readonly<{ label: string; text: string }>[] = [];
   const firstGreeting = approved.get("first_greeting");
   if (firstGreeting !== undefined && firstGreeting.trim() !== "")
-    variants.push(Object.freeze({ label: "Default", text: firstGreeting }));
+    variants.push(Object.freeze({ label: "Default", text: render(firstGreeting) }));
   const alternates = [...approved.entries()]
     .filter(([field]) => /^alternate_greeting_\d+$/u.test(field))
     .sort(([left], [right]) => left.localeCompare(right, "en", { numeric: true }));
   for (const [field, text] of alternates) {
     if (text.trim() === "") continue;
     const order = Number(field.slice("alternate_greeting_".length));
-    variants.push(Object.freeze({ label: `Alternate ${order}`, text }));
+    variants.push(Object.freeze({ label: `Alternate ${order}`, text: render(text) }));
   }
   return Object.freeze(variants);
 }
@@ -357,25 +379,38 @@ function directProfile(name: string, companionId: string, continuityId: string):
   });
 }
 
+/**
+ * The companion's reviewed name: the card's own when the player approved it,
+ * otherwise the default. It never applies silently, and it is bounded like every
+ * other identity field. One decision, because her name is also the `{{char}}`
+ * every piece of her reviewed card prose renders through.
+ */
+function reviewedName(fields: ReadonlyMap<string, string>): string {
+  const reviewed = fields.get("name")?.trim();
+  return reviewed === undefined || reviewed.length === 0
+    ? DEFAULT_IDENTITY_PROFILE.identity.name
+    : reviewed.slice(0, 128);
+}
+
 function reviewedProfile(
   fields: ReadonlyMap<string, string>,
   companionId: string,
   continuityId: string,
-  playerId: string,
+  locale: CompanionLocale,
 ): IdentityProfile {
   const base = DEFAULT_IDENTITY_PROFILE;
-  // The card's own name is a reviewed field: a player who approves it gets the
-  // companion they imported; declining it keeps the default. It never applies
-  // silently, and it is bounded like every other identity field.
-  const reviewedName = fields.get("name")?.trim();
-  const name =
-    reviewedName === undefined || reviewedName.length === 0 ? base.identity.name : reviewedName.slice(0, 128);
+  const name = reviewedName(fields);
   const identity = Object.freeze({
     ...base.identity,
     name,
     continuity: `Host-owned continuity ${continuityId}; ${base.identity.continuity}`,
   });
-  const macros = Object.freeze({ char: name, user: playerId ?? "Player" });
+  // The one player-reference decision (`macroTable`) and the one rendering call,
+  // exactly as the compiled preset path (`candidateToIdentityProfile`) does them.
+  // This path used to build its own table with the player's opaque partition id
+  // (`player_01`), so a card that wrote `{{user}}` once froze that id into her
+  // Tier-1 persona and repeated it to the model on every turn.
+  const macros = macroTable({ char: name, locale });
   const render = (value: string): string => renderMacros(value, macros);
   const core = fields.get("persona_core");
   const interactionStyle = fields.get("persona_interaction_style");

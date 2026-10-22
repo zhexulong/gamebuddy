@@ -173,12 +173,23 @@ test("New Companion renders macros inside reviewed examples and writes them into
     });
     const threadStore = createChatThreadStore(root, "d".repeat(64));
     try {
-      const created = await provisionNewCompanion(root, "player", examplesCandidate, review, threadStore);
-      // Examples survive review, are macro-rendered ({{char}}→name, {{user}}→player)
-      // and land in the IdentityProfile so renderIdentityProfile can teach from them.
+      // The run's own language decides `{{user}}` (the real mount passes what
+      // `resolveCompanionLocale` reads); an English run says `you`.
+      const created = await provisionNewCompanion(
+        root,
+        "player",
+        examplesCandidate,
+        review,
+        threadStore,
+        undefined,
+        "en-US",
+      );
+      // Examples survive review, are macro-rendered ({{char}}→name, {{user}}→the
+      // run's word for the player) and land in the IdentityProfile so
+      // renderIdentityProfile can teach from them.
       assert.deepEqual(created.profile.examples, [
         { user: "Want to play?", companion: "GameBuddy Companion is always up for it." },
-        { user: "player tired?", companion: "A little, but stay with me." },
+        { user: "you tired?", companion: "A little, but stay with me." },
       ]);
       assert.equal(identityProfileHash(created.profile), identityProfileHash(created.profile));
     } finally {
@@ -224,11 +235,19 @@ test("New Companion maps the reviewed persona and renders card macros determinis
     // own it, so the test closes it before the root is removed.
     const threadStore = createChatThreadStore(root, "b".repeat(64));
     try {
-      const created = await provisionNewCompanion(root, "player", personaCandidate, review, threadStore);
+      const created = await provisionNewCompanion(
+        root,
+        "player",
+        personaCandidate,
+        review,
+        threadStore,
+        undefined,
+        "en-US",
+      );
       assert.deepEqual(created.profile.persona, {
-        core: "GameBuddy Companion is calm when player needs help.",
-        interactionStyle: "Listen to player before answering.",
-        expressionStyle: "GameBuddy Companion speaks clearly to player.",
+        core: "GameBuddy Companion is calm when you needs help.",
+        interactionStyle: "Listen to you before answering.",
+        expressionStyle: "GameBuddy Companion speaks clearly to you.",
       });
       assert.equal(
         identityProfileHash(created.profile),

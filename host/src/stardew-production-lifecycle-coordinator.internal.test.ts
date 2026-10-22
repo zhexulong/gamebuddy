@@ -2627,6 +2627,114 @@ test("an installation holding the game but no mod loader is named, not reported 
   });
 });
 
+/**
+ * The other selection refusal a player can cause: they picked a folder that holds no
+ * game. It is not a failed search and not an unavailable registration - the search was
+ * fine and the folder was simply wrong - so both routes into registration name it, and
+ * the registration itself is untouched.
+ *
+ * The boundary is part of the same test: a folder this process cannot read is NOT this
+ * fact, and a lifecycle that is closing names no cause about the folder at all. Both keep
+ * the unnamed `unavailable` outcome rather than telling a player to pick a different
+ * folder when the disk was what failed.
+ */
+test("a folder holding no game is refused by its own name, and every other refusal unchanged", async () => {
+  await withWindowsPlatform(async () => {
+    const installParent = await canonicalTemporaryRoot("gamebuddy-wrong-folder-");
+    temporaryRoots.push(installParent);
+    const wrongRoot = join(installParent, "My Pictures");
+    await mkdir(wrongRoot, { recursive: true });
+    const provider: StardewInstallationDiscoveryProvider = Object.freeze({
+      discover: async () => ({
+        candidates: [
+          {
+            candidateId: "candidate-01",
+            source: "known-location" as const,
+            label: "Stardew Valley",
+            displayPath: "Detected installation (path hidden)",
+            location: "C: · Steam",
+            status: "admission_required" as const,
+          },
+        ],
+        diagnostics: [] as const,
+      }),
+      confirm: (candidateId: string) => {
+        assert.equal(candidateId, "candidate-01");
+        return wrongRoot;
+      },
+      reset: () => undefined,
+    });
+    const fixture = await createFixture({
+      overrides: {
+        installationDiscoveryOverlay: provider,
+        selectStardewFolder: async () => ({ status: "selected" as const, path: wrongRoot }),
+      },
+    });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      const registrationBefore = await readStardewInstallationRegistration(fixture.runtimeRoot);
+      assert.deepEqual(
+        await fixture.coordinator.activationOwner.confirmInstallation(
+          fixture.broker.issue("discovery_confirm"),
+          "candidate-01",
+        ),
+        { status: "not_stardew_installation" },
+      );
+      assert.deepEqual(
+        await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("discovery_picker")),
+        { status: "not_stardew_installation" },
+      );
+      assert.deepEqual(await readStardewInstallationRegistration(fixture.runtimeRoot), registrationBefore);
+      assert.equal(fixture.freshRegistrationAdmissionCount(), 0);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("an unreadable or closing installation selection keeps the unnamed unavailable outcome", async () => {
+  await withWindowsPlatform(async () => {
+    // A path this process cannot look at: the read never completes, so no cause about the
+    // folder can be named.
+    const unreadable = "C:\\gamebuddy\u0000unreadable";
+    const unreadableFixture = await createFixture({
+      overrides: {
+        selectStardewFolder: async () => ({ status: "selected" as const, path: unreadable }),
+      },
+    });
+    try {
+      assert.deepEqual(
+        await unreadableFixture.coordinator.activationOwner.openInstallationPicker(
+          unreadableFixture.broker.issue("discovery_picker"),
+        ),
+        { status: "unavailable" },
+      );
+    } finally {
+      await unreadableFixture.coordinator.close();
+      await unreadableFixture.broker.close();
+    }
+
+    const closingFixture = await createFixture({
+      overrides: {
+        selectStardewFolder: async () => ({ status: "cancelled" as const }),
+      },
+    });
+    await closingFixture.coordinator.activationOwner.activate(closingFixture.broker.issue());
+    await closingFixture.coordinator.close();
+    try {
+      assert.deepEqual(
+        await closingFixture.coordinator.activationOwner.openInstallationPicker(
+          closingFixture.broker.issue("discovery_picker"),
+        ),
+        { status: "unavailable" },
+      );
+    } finally {
+      await closingFixture.broker.close();
+    }
+  });
+});
+
 test("manual installation picker cancellation and failure preserve registration without creating an active attempt", async () => {
   await withWindowsPlatform(async () => {
     for (const pickerResult of [{ status: "cancelled" as const }, new Error("picker_failure")]) {

@@ -325,6 +325,11 @@ function authoredEntries(
       // The worldbook validator refuses an empty key list, so "no trigger words" is an
       // absent field - the same shape the card import writes for a keyless entry.
       ...(keys.length === 0 ? {} : { keys }),
+      // The card's selection gate is metadata the projection never showed, so a row the
+      // player did not touch keeps it: an edit that dropped it would rewrite the author's
+      // rule into "any of these words".
+      ...(carried?.secondaryKeys === undefined ? {} : { secondaryKeys: carried.secondaryKeys }),
+      ...(carried?.selectiveLogic === undefined ? {} : { selectiveLogic: carried.selectiveLogic }),
       ...(carried?.integrationId === undefined ? {} : { integrationId: carried.integrationId }),
       ...(carried?.saveId === undefined ? {} : { saveId: carried.saveId }),
       ...(carried?.worldId === undefined ? {} : { worldId: carried.worldId }),

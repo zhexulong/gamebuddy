@@ -1920,7 +1920,7 @@ test("exact authenticated launch handle projects a Mod receipt through readState
     revision: 7,
     evidence: {
       detail:
-        "location=Farm;target=crop_abcdef0123456789;tile=38,18;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+        "location=Farm;target=crop_abcdef0123456789;tile=38,18;tool_selected=watering_can;slot=2;tool_before=axe;slot_before=0;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
     },
   };
   let socket!: Socket;
@@ -1972,7 +1972,7 @@ test("exact authenticated launch handle projects a Mod receipt through readState
         assert.deepEqual(view.latestReceipt?.evidence, receipt.evidence);
         assert.equal(
           view.latestReceipt?.evidence?.detail,
-          "location=Farm;target=crop_abcdef0123456789;tile=38,18;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+          "location=Farm;target=crop_abcdef0123456789;tile=38,18;tool_selected=watering_can;slot=2;tool_before=axe;slot_before=0;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
         );
         // Save/world identity is bound to the authenticated scope and verified
         // through assertIdentityBinding; readState never re-exposes it.

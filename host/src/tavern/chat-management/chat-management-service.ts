@@ -3,9 +3,12 @@ import {
   type MountedChatRuntimeLease,
 } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../../deployment-manifest.js";
+import { readIdentityProfile } from "../../identity-profile.js";
 import { identityKey, resolveRuntimePaths } from "../../runtime.js";
 import {
   type BrowserDraftV1,
+  type ChatExportCommandV1,
+  type ChatExportV1,
   type ChatListEntryV1,
   type ChatListQueryV1,
   type ChatListV1,
@@ -37,7 +40,9 @@ export type ChatRetentionServiceCommand = Readonly<{
 import { type ChatThread, createChatThreadStore, ExactThreadSurfaceMismatchError } from "../chat-thread-store.js";
 import { createChatTitleManagementService } from "./chat-title-management.js";
 import { TavernArtifactStore } from "../artifact-store.js";
+import { exportSafeChat, isRepresentableChatHeaderName } from "../interchange.js";
 import { commitGreetingOpeningVariant, isTavernArtifactUnreadable } from "../library-service.js";
+import { createPersonaManagementService } from "../persona-management/persona-management.js";
 import { resolveTavernPaths } from "../tavern-paths.js";
 
 /**
@@ -73,6 +78,15 @@ export type ChatManagementService = Readonly<{
   saveDraft(command: SaveDraftCommandV1): Promise<BrowserDraftV1>;
   /** Discards the exact mounted Chat draft through durable revision CAS. */
   discardDraft(command: DiscardDraftCommandV1): Promise<BrowserDraftV1>;
+  /**
+   * Exports one Chat of this companion/continuity as a SillyTavern chat file. The Chat is named by
+   * the handle the list handed out - it need not be the mounted one - and the file is the bytes the
+   * interchange's own exporter produced, never a re-serialization of the transcript here. OPTIONAL:
+   * it is the chat-export route's only consumer, so a mount that serves every other Chat route but
+   * not this one leaves it absent and the route fails closed (404) rather than widening every
+   * service stub in the repository.
+   */
+  exportChat?(command: ChatExportCommandV1): Promise<ChatExportV1>;
   /** Rejects new work and drains admitted dispatches before resolving. */
   close(): Promise<void>;
 }>;
@@ -104,10 +118,9 @@ export function createChatManagementService(options: ChatManagementServiceOption
 
   const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
   const artifactStore = new TavernArtifactStore(manifest.runtimeRoot);
-  const tavernPaths = resolveTavernPaths(
-    resolveRuntimePaths(manifest.principal, manifest.runtimeRoot, lease.chatSurfaceSessionId),
-    manifest.principal,
-  );
+  const runtimePaths = resolveRuntimePaths(manifest.principal, manifest.runtimeRoot, lease.chatSurfaceSessionId);
+  const tavernPaths = resolveTavernPaths(runtimePaths, manifest.principal);
+  const personaService = createPersonaManagementService(artifactStore, tavernPaths.playerRoot);
   const renameThreadTitle = store.renameThreadTitle;
   const listThreads = store.listThreads;
   const listThreadLastMessages = store.listThreadLastMessages;
@@ -337,6 +350,51 @@ export function createChatManagementService(options: ChatManagementServiceOption
     }
   };
 
+  /**
+   * Exports one Chat's transcript. The two display names the file's header carries are the ones
+   * this product already owns - the player's persona and the mounted companion's own name - and
+   * a name that cannot be read falls back to the exporter's own default rather than inventing one.
+   */
+  const exportNames = async (): Promise<Readonly<{ userName?: string; characterName?: string }>> => {
+    const persona = await personaService.read().catch(() => null);
+    const character = await readIdentityProfile(runtimePaths.identityProfilePath)
+      .then((profile) => profile.identity.name)
+      .catch(() => null);
+    // A name the file's header cannot carry (its own byte bound is UTF-8, the product's is
+    // characters) is left to the format's default: the file still carries every message, and a
+    // failed export over a label would lose all of them.
+    return Object.freeze({
+      ...(persona === null || !isRepresentableChatHeaderName(persona.name) ? {} : { userName: persona.name }),
+      ...(character === null || !isRepresentableChatHeaderName(character) ? {} : { characterName: character }),
+    });
+  };
+
+  const exportChat = async (command: ChatExportCommandV1): Promise<ChatExportV1> => {
+    assertOpen();
+    validateExportCommand(command);
+    if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+    try {
+      const target = await resolveChatTarget(command.chatHandle);
+      assertLeaseAfterDurableRead();
+      const state = await store.resumeThread(target.chatThreadId, target.chatSurfaceSessionId);
+      assertLeaseAfterDurableRead();
+      const exported = exportSafeChat(target.chatThreadId, state.messages, await exportNames());
+      const result: ChatExportV1 = Object.freeze({
+        apiVersion: TAVERN_BROWSER_API_VERSION,
+        format: exported.format,
+        chatHandle: command.chatHandle,
+        messageCount: exported.messages.length,
+        dispositions: exported.dispositions,
+        canonicalHash: exported.canonicalHash,
+        jsonl: exported.jsonl,
+      });
+      if (!TavernBrowserValidatorsV1.ChatExportV1Schema.Check(result)) throw unavailable();
+      return result;
+    } catch (error) {
+      throw rethrowExportError(error);
+    }
+  };
+
   return Object.freeze({
     listChats,
     renameChatTitle,
@@ -345,6 +403,7 @@ export function createChatManagementService(options: ChatManagementServiceOption
     readDraft,
     saveDraft,
     discardDraft,
+    exportChat,
     async close(): Promise<void> {
       closed = true;
       store.close?.();
@@ -457,6 +516,21 @@ function rethrowDraftError(error: unknown): Error {
   if (error.message === "chat_thread_lifecycle_not_active") return new Error("chat_management_service_unavailable");
   if (isStorageError(error)) return storageUnavailable();
   return unavailable();
+}
+
+function rethrowExportError(error: unknown): Error {
+  if (!(error instanceof Error)) return unavailable();
+  // A handle that names no Chat of this partition is the same bounded 404 the retention routes
+  // answer, rather than a conflict about a selection the request never made.
+  if (error.message === "chat_not_found") return error;
+  if (error instanceof ExactThreadSurfaceMismatchError) return selectionConflict();
+  if (isStorageError(error)) return storageUnavailable();
+  return unavailable();
+}
+
+function validateExportCommand(command: ChatExportCommandV1): void {
+  if (command === null || typeof command !== "object" || Array.isArray(command)) throw unavailable();
+  if (typeof command.chatHandle !== "string") throw unavailable();
 }
 
 function rethrowRenameError(error: unknown): Error {

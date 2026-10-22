@@ -152,6 +152,12 @@ test("Game installation discovery contract is redacted and exact", () => {
     Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "mod_loader_missing" }),
     true,
   );
+  // The wrong folder is its own outcome too: a player who picked a folder holding no
+  // game must not be told the search failed.
+  assert.equal(
+    Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "not_stardew_installation" }),
+    true,
+  );
   assert.equal(
     Compile(GameDiscoveryMutationResultV1Schema).Check({
       apiVersion: 1,

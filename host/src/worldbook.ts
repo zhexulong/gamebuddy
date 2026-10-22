@@ -44,6 +44,21 @@ export type WorldBookEntry = Readonly<{
    * make a keyword-gated entry reachable when the player actually says the word.
    */
   keys?: readonly string[];
+  /**
+   * The card's own SECONDARY trigger words (`character_book.entries[].secondary_keys`).
+   *
+   * They never select an entry on their own: the per-turn volatile selection applies
+   * them through `selectiveLogic` once `keys` has matched, which is what a card means
+   * by "only in this mood, only with this other word said".
+   */
+  secondaryKeys?: readonly string[];
+  /**
+   * The card's own `selectiveLogic` for the secondary trigger words, SillyTavern's four
+   * modes: 0 = AND ANY, 1 = NOT ALL, 2 = NOT ANY, 3 = AND ALL. Absent means the
+   * documented default (0) when `secondaryKeys` is present, and nothing at all when it
+   * is not.
+   */
+  selectiveLogic?: 0 | 1 | 2 | 3;
   integrationId?: string;
   saveId?: string;
   worldId?: string;
@@ -91,7 +106,8 @@ export function validateWorldBook(value: unknown): WorldBook {
     !isPositiveInt(value.revision) ||
     // The premise may be empty: a card-worldbook with no global premise is a
     // legal book — the constant entries carry the always-on background.
-    typeof value.alwaysOnPremise !== "string" || value.alwaysOnPremise.length > 1_024 ||
+    typeof value.alwaysOnPremise !== "string" ||
+    value.alwaysOnPremise.length > 1_024 ||
     /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value.alwaysOnPremise) ||
     (value.scanDepth !== undefined &&
       (!Number.isSafeInteger(value.scanDepth) ||
@@ -231,7 +247,15 @@ function validateEntry(value: unknown): WorldBookEntry {
     (value.keys !== undefined &&
       (!Array.isArray(value.keys) ||
         value.keys.length === 0 ||
-        value.keys.some((key: unknown) => typeof key !== "string" || key.trim().length === 0 || key.length > 64)))
+        value.keys.some((key: unknown) => typeof key !== "string" || key.trim().length === 0 || key.length > 64))) ||
+    (value.secondaryKeys !== undefined &&
+      (!Array.isArray(value.secondaryKeys) ||
+        value.secondaryKeys.length === 0 ||
+        value.secondaryKeys.some(
+          (key: unknown) => typeof key !== "string" || key.trim().length === 0 || key.length > 64,
+        ))) ||
+    (value.selectiveLogic !== undefined &&
+      (!Number.isSafeInteger(value.selectiveLogic) || value.selectiveLogic < 0 || value.selectiveLogic > 3))
   )
     throw new Error("invalid_worldbook");
   const worldScoped = value.scope === "world";
@@ -262,6 +286,19 @@ function validateEntry(value: unknown): WorldBookEntry {
           ),
         }
       : {}),
+    // The card's own selection logic survives the same projection for the same reason:
+    // a book that kept the primary words and lost the secondary ones would select an
+    // entry in situations its author explicitly excluded.
+    ...(Array.isArray(value.secondaryKeys)
+      ? {
+          secondaryKeys: Object.freeze(
+            value.secondaryKeys
+              .filter((key): key is string => typeof key === "string" && key.trim().length > 0 && key.length <= 64)
+              .slice(0, 16),
+          ),
+        }
+      : {}),
+    ...(value.selectiveLogic === undefined ? {} : { selectiveLogic: value.selectiveLogic as 0 | 1 | 2 | 3 }),
     ...(value.integrationId === undefined ? {} : { integrationId: value.integrationId }),
     ...(value.saveId === undefined ? {} : { saveId: value.saveId }),
     ...(value.worldId === undefined ? {} : { worldId: value.worldId }),

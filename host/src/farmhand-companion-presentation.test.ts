@@ -78,9 +78,41 @@ test("Farmhand presentation port binds expression and Host epoch to typed bridge
     sourceEventId: "source_02",
     text: "我在这里。",
     locale: "zh-CN",
-    expectedRevision: 7,
     presentationEpoch: 0,
   });
+});
+
+test("a presentation sent late in a long turn succeeds although the world revision moved", async () => {
+  const interruption = createCompanionInterruption();
+  const epoch = createFarmhandPresentationEpochAdmission(interruption);
+  // The live shape: the turn opens on revision 63, eight tool selections publish eight receipts
+  // (only the settled ones reach the Host, and a saturated outbound queue drops even those), and the
+  // closing line is committed at revision 68. The request may not claim the revision it read at turn
+  // start; the Mod's own revision had moved past it, and that was the whole refusal.
+  const bridge = {
+    state: { snapshot: { revision: 63 } },
+    requests: [] as Record<string, unknown>[],
+    async presentCompanionText(request: Record<string, unknown>) {
+      this.requests.push(request);
+    },
+  };
+  const port = createFarmhandCompanionPresentationPort(bridge as never, epoch);
+  const first = bridge.state.snapshot.revision;
+  bridge.state = { snapshot: { revision: 68 } };
+  await port.present(
+    {
+      surface: "game",
+      expressionId: "expression_late",
+      sessionId: "session_late",
+      sourceEventId: "source_late",
+      text: "干完了，天黑就回屋。",
+      locale: "zh-CN",
+    },
+    hostAdmission(),
+  );
+  assert.equal(first, 63);
+  assert.equal("expectedRevision" in (bridge.requests[0] ?? {}), false);
+  assert.equal(bridge.requests[0]?.presentationEpoch, 0);
 });
 
 test("Farmhand system notice presenter binds fixed copy without relying on a cached bridge revision", async () => {

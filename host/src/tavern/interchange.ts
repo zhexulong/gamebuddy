@@ -51,6 +51,16 @@ export type SafeWorldBook = Readonly<{
 export type SafeChatExportOptions = Readonly<{ userName?: string; characterName?: string }>;
 
 /**
+ * True when `value` is a name this interchange's own header can carry (1..128 UTF-8 bytes, no
+ * control characters). Exported so an exporter caller that already holds a longer display name - a
+ * CJK persona name passes the product's 128-CHARACTER bound but exceeds 128 bytes - can leave the
+ * field to the format's default instead of failing the whole export over a label.
+ */
+export function isRepresentableChatHeaderName(value: unknown): value is string {
+  return name(value);
+}
+
+/**
  * Produces ST-recognized header and bubble records only. `threadId` is retained
  * for call-site compatibility but is never serialized: ChatThread bindings and
  * all message/variant identifiers are deliberately outside this interchange.

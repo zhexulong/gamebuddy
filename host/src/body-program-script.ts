@@ -260,10 +260,9 @@ const TOOL_UPGRADE_LEVELS: Readonly<
 /**
  * Reads the tool an action requires straight off its published resource claims.
  *
- * Two slices can land in either order: today the surface may declare only `embodied_actor`, and the `tool:<category>`
- * claims arrive with the Mod's own change. So an action with no such claim answers `tool_requirement_undeclared` -
- * the field is always present, so the companion can tell "the surface does not say" from a tool it was told about,
- * and the Host never fabricates a category from an action id.
+ * An action whose claim list carries no `tool:<category>` answers `tool_requirement_undeclared` - the field is always
+ * present, so the companion can tell "the surface does not say" from a tool it was told about, and the Host never
+ * fabricates a category from an action id.
  */
 function declaredToolRequirementOf(registration: ActionRegistration): PublishedPlanToolRequirement {
   const claims = declaredResourceClaimsOf(registration);
@@ -473,11 +472,11 @@ function createPlanBuilder(
  * Writes the equip step an action's own target declares, immediately before that action, and answers the tool slot the
  * action must name.
  *
- * The published surface names a tool in exactly one place: a target entry's own `toolKind` and `slot`, on the families
- * a tool is held for - `debrisTargets` and `animalProductTargets`. So the requirement is read from the target the
- * script is about to act on, and never inferred from an action id. An action whose tool lives only in the Mod's
- * handler (`cut_weeds` needs the scythe, `break_rock_source` the basic pickaxe) is refused BY NAME, together with the
- * arguments and claims the surface does declare for it, because a guessed tool is a guaranteed failed hit.
+ * The tool an action needs is published at two grains: an action-wide `tool:<category>` claim (read into
+ * `toolRequirement`, and selected by the Mod at dispatch), and - on the families where the target itself decides - a
+ * target entry's own `toolKind` and `slot` (`debrisTargets`, `animalProductTargets`), which is what this helper reads.
+ * An action whose tool lives only in the Mod's handler is refused BY NAME, together with the arguments and claims the
+ * surface does declare for it, because a guessed tool is a guaranteed failed hit.
  */
 function equipForAction(
   actions: readonly PublishedPlanAction[],

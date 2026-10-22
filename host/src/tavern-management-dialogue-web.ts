@@ -34,6 +34,7 @@ import {
   isComposedTavernProfile,
   MAX_COMPANION_AVATAR_UPLOAD_BODY_BYTES,
   MAX_ST_CARD_IMPORT_BODY_BYTES,
+  MAX_WORLD_INFO_IMPORT_BODY_BYTES,
   type MemoryMutationCommandV1,
   type MemoryReadV1,
   type PersonaUpdateCommandV1,
@@ -68,6 +69,7 @@ import {
   type TavernVoicePreferenceV1,
   type TavernVoiceDevicesV1,
   type WorldInfoCreateCommandV1,
+  type WorldInfoImportCommandV1,
   type WorldInfoItemCommandV1,
   type WorldInfoStateV1,
   type WorldInfoUpdateCommandV1,
@@ -266,6 +268,21 @@ const MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES = ["companion.card.export"] as con
  * the Host cannot serve.
  */
 const MANAGEMENT_COMPANION_AVATAR_ROUTES = ["companion.avatar.update"] as const;
+/**
+ * Optional lorebook-import extension: only a profile that declares this route mounts
+ * `POST /api/tavern/v1/world-info/import`, the one route that serves the managed library's existing
+ * SillyTavern/Chub lorebook importer to the player. It appends after the avatar group in the same
+ * frozen canonical order, and like every other option a profile that advertises it without the
+ * bound World Info service fails closed at composition.
+ */
+const MANAGEMENT_WORLD_INFO_IMPORT_ROUTES = ["world-info.import"] as const;
+/**
+ * Optional Chat-export extension: only a profile that declares this route mounts
+ * `GET /api/tavern/v1/chat/export`, one Chat's transcript as the interchange's own SillyTavern
+ * chat file. It appends last in the same frozen canonical order, and like every other option a
+ * profile that advertises it without the bound export member fails closed at composition.
+ */
+const MANAGEMENT_CHAT_EXPORT_ROUTES = ["chat.export"] as const;
 const bootstrapRequestValidator = Compile(
   (TavernBrowserContractV1.routes.find((route) => route.routeId === "bootstrap")! as { request: TSchema }).request,
 );
@@ -280,6 +297,8 @@ const worldInfoBindValidator = Compile(TavernBrowserContractV1.schemas.SetWorldI
 const worldInfoItemValidator = Compile(TavernBrowserContractV1.schemas.WorldInfoItemCommandV1Schema);
 const worldInfoCreateValidator = Compile(TavernBrowserContractV1.schemas.WorldInfoCreateCommandV1Schema);
 const worldInfoUpdateValidator = Compile(TavernBrowserContractV1.schemas.WorldInfoUpdateCommandV1Schema);
+const worldInfoImportValidator = Compile(TavernBrowserContractV1.schemas.WorldInfoImportCommandV1Schema);
+const chatExportQueryValidator = Compile(TavernBrowserContractV1.schemas.ChatExportQueryV1Schema);
 const memoryMutationValidator = Compile(TavernBrowserContractV1.schemas.MemoryMutationCommandV1Schema);
 const connectionCreateValidator = Compile(TavernBrowserContractV1.schemas.TavernConnectionCreateCommandV1Schema);
 const connectionRevisionValidator = Compile(TavernBrowserContractV1.schemas.TavernConnectionRevisionCommandV1Schema);
@@ -697,7 +716,9 @@ export function createTavernManagementDialogueWebRequestHandler(
   // injected; a profile that advertises either route without the bound
   // service fails closed before any dispatch.
   if (
-    (profile.routeIds.includes("world-info.read") || profile.routeIds.includes("world-info.bind")) &&
+    (profile.routeIds.includes("world-info.read") ||
+      profile.routeIds.includes("world-info.bind") ||
+      profile.routeIds.includes("world-info.import")) &&
     worldInfoService === undefined
   )
     throw new Error("tavern_management_composition_unavailable");
@@ -1126,6 +1147,21 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("world_info_binding_service_unavailable");
         return sendJson(response, 200, worldInfo);
       }
+      if (request.method === "POST" && url.pathname === "/api/tavern/v1/world-info/import") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (!profile.routeIds.includes("world-info.import") || worldInfoService?.importLorebook === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_WORLD_INFO_IMPORT_BODY_BYTES);
+        if (!worldInfoImportValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const worldInfo = await worldInfoService.importLorebook(body as WorldInfoImportCommandV1);
+        if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
+          throw new Error("world_info_binding_service_unavailable");
+        return sendJson(response, 200, worldInfo);
+      }
       if (request.method === "DELETE" && url.pathname === "/api/tavern/v1/world-info/item") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const session = admitRequest(request, origin);
@@ -1179,6 +1215,24 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!TavernBrowserValidatorsV1.BrowserDraftV1Schema.Check(draft))
           throw new Error("chat_management_service_unavailable");
         return sendJson(response, 200, draft);
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/chat/export") {
+        if (await hasRequestBody(request)) return sendProblem(response, 400, "invalid_request");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (!profile.routeIds.includes("chat.export") || managementService?.exportChat === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const queryValue: Record<string, string> = {};
+        const seen = new Set<string>();
+        for (const [key, value] of url.searchParams) {
+          if (seen.has(key) || key !== "chatHandle") return sendProblem(response, 400, "invalid_request");
+          seen.add(key);
+          queryValue[key] = value;
+        }
+        if (!chatExportQueryValidator.Check(queryValue)) return sendProblem(response, 400, "invalid_request");
+        const exported = await managementService.exportChat({ chatHandle: queryValue.chatHandle! });
+        if (!TavernBrowserValidatorsV1.ChatExportV1Schema.Check(exported))
+          throw new Error("chat_management_service_unavailable");
+        return sendJson(response, 200, exported);
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/chats") {
         if (await hasRequestBody(request)) return sendProblem(response, 400, "invalid_request");
@@ -1666,20 +1720,19 @@ export function createTavernManagementDialogueWebRequestHandler(
           if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
           if (!profile.routeIds.includes("character.import.read"))
             return sendProblem(response, 404, "profile_operation_unavailable");
-          let imported;
-          try {
-            imported = await stCardImportService?.read(importId);
-          } catch {
-            return sendProblem(response, 404, "character_import_not_found");
-          }
+          const imported = await stCardImportService?.read(importId);
           if (imported === undefined) return sendProblem(response, 404, "profile_operation_unavailable");
+          // `null` is an ordinary state - this import has not been reviewed yet. A
+          // review record that exists and will not read back is not that state: it
+          // reaches the boundary as the Host's own failure instead of reading as
+          // "not reviewed".
           let review: Readonly<{
             artifact: Readonly<{ reviewedFields: readonly string[]; approvedAtMs: number }>;
           }> | null = null;
           try {
             review = (await stCardImportService?.readReview(importId)) ?? null;
-          } catch {
-            review = null; // not reviewed yet is the honest state
+          } catch (error) {
+            if (!(error instanceof Error) || error.message !== "st_card_import_review_missing") throw error;
           }
           const result: StCardImportReadResultV1 = Object.freeze({
             apiVersion: TAVERN_BROWSER_API_VERSION,
@@ -1742,10 +1795,14 @@ export function createTavernManagementDialogueWebRequestHandler(
         let staged;
         try {
           staged = await stCardImportService.import(importId, card);
-        } catch {
-          // Invalid / rejected cards never persist and never get an importId
-          // beyond this request; the player sees the decode problem directly.
-          return sendProblem(response, 422, "st_card_import_rejected");
+        } catch (error) {
+          // Invalid / rejected cards never persist and never get an importId beyond
+          // this request; the player sees the decode problem directly. Only the
+          // decoder's own refusal is about the file that was picked - a stage whose
+          // write failed behind it keeps its own error and is not blamed on the card.
+          if (error instanceof Error && error.message === "st_card_import_rejected")
+            return sendProblem(response, 422, "st_card_import_rejected");
+          throw error;
         }
         const result: StCardImportStageResultV1 = Object.freeze({
           apiVersion: TAVERN_BROWSER_API_VERSION,
@@ -1796,15 +1853,10 @@ export function createTavernManagementDialogueWebRequestHandler(
           const body = await readJsonBody(request, MAX_BODY_BYTES);
           if (!reviewStCardImportValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
           const command = body as ReviewStCardImportCommandV1;
-          let review;
-          try {
-            review = await stCardImportService.recordReview(importReviewRoute, {
-              reviewedFields: command.reviewedFields,
-              approvedAtMs: command.approvedAtMs,
-            });
-          } catch {
-            return sendProblem(response, 409, "character_import_review_invalid");
-          }
+          const review = await stCardImportService.recordReview(importReviewRoute, {
+            reviewedFields: command.reviewedFields,
+            approvedAtMs: command.approvedAtMs,
+          });
           const result: StCardImportReviewResultV1 = Object.freeze({
             apiVersion: TAVERN_BROWSER_API_VERSION,
             importId: importReviewRoute,
@@ -1835,12 +1887,7 @@ export function createTavernManagementDialogueWebRequestHandler(
             return sendProblem(response, 404, "profile_operation_unavailable");
           const body = await readJsonBody(request, MAX_BODY_BYTES);
           if (!confirmStCardImportValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
-          let confirmed;
-          try {
-            confirmed = await confirmStCardImport(importConfirmRoute);
-          } catch {
-            return sendProblem(response, 409, "character_import_confirm_invalid");
-          }
+          const confirmed = await confirmStCardImport(importConfirmRoute);
           const result = Object.freeze({
             apiVersion: TAVERN_BROWSER_API_VERSION,
             name: confirmed.name,
@@ -2259,8 +2306,9 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
   // revision. A profile may declare any subset of the optional groups, and only
   // them, in the frozen canonical order: core, output devices, language,
   // connections, model profiles, companions/personas/retention, card import,
-  // new-chat opening, new chat, chat selection, World Info authoring, companion
-  // profile, card export, companion avatar. A partially applied group, an undeclared
+  //  new-chat opening, new chat, chat selection, World Info authoring, companion
+  //  profile, card export, companion avatar, lorebook import, chat export. A partially applied
+  //  group, an undeclared
   // route or a reordered list fails closed, so no route is mounted that this
   // dispatcher cannot serve.
   const coreRoutes = withMemory
@@ -2287,6 +2335,8 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_COMPANION_PROFILE_ROUTES,
     MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES,
     MANAGEMENT_COMPANION_AVATAR_ROUTES,
+    MANAGEMENT_WORLD_INFO_IMPORT_ROUTES,
+    MANAGEMENT_CHAT_EXPORT_ROUTES,
   ] as const;
   const operationGroups = [
     coreOperations,
@@ -2638,6 +2688,21 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
     return { status: 503, code: "storage_unavailable" };
   if (message === "memory_mutation_conflict" || message === "memory_projection_conflict")
     return { status: 409, code: "state_reconciliation_required" };
+  // The reviewed-card import, in both directions. An id that stages nothing, a review the
+  // candidate's own fields refuse, and a confirm whose review was never recorded (or does not
+  // match the candidate) are facts about the request itself, and the three codes below say
+  // which one. Everything else the import path can throw - a store that failed, a record that
+  // is present and will not read back, a provision that failed behind a valid review - is the
+  // Host's own failure and is answered by the service/storage codes below, never by these.
+  if (message === "st_card_import_not_found") return { status: 404, code: "character_import_not_found" };
+  if (message === "invalid_new_companion_review") return { status: 409, code: "character_import_review_invalid" };
+  if (message === "st_card_import_review_missing" || message === "new_companion_review_required")
+    return { status: 409, code: "character_import_confirm_invalid" };
+  // A staged import or a review that is present and does not read back is a durable
+  // data-integrity fact of the same kind as every other unreadable tavern record.
+  if (message === "invalid_st_card_import" || message === "invalid_st_card_review")
+    return { status: 503, code: "companion_record_unreadable" };
+  if (message === "character_import_service_unavailable") return { status: 503, code: "runtime_unavailable" };
   if (message === "invalid_request") return { status: 400, code: "invalid_request" };
   if (/storage|sqlite|eio|enoent/i.test(message)) return { status: 503, code: "storage_unavailable" };
   if (/runtime|lease|mount/i.test(message)) return { status: 503, code: "runtime_unavailable" };

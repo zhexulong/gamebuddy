@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type {
-  ExecutionCorrelationOwner,
-  ExecutionDispatchObserver,
-} from "./execution-correlation-ledger.js";
+import type { ExecutionCorrelationOwner, ExecutionDispatchObserver } from "./execution-correlation-ledger.js";
 import type { FarmhandPolicyIdentity } from "./protocol.js";
 import type { GameConnection } from "./game-connection.js";
 
@@ -21,8 +18,7 @@ export type IntegrationWorldScope = Readonly<{
   worldId: string;
 }>;
 
-type IntegrationActionLifecycle =
-  "published" | "live_verified" | "experimental" | "diagnostic" | "planned";
+type IntegrationActionLifecycle = "published" | "live_verified" | "experimental" | "diagnostic" | "planned";
 
 /** The common deny-by-exception policy shape. Each adapter owns its parser. */
 export type IntegrationActionPolicy = Readonly<{
@@ -31,12 +27,11 @@ export type IntegrationActionPolicy = Readonly<{
   deniedFamilies: readonly string[];
 }>;
 
-export const DEFAULT_INTEGRATION_ACTION_POLICY: IntegrationActionPolicy =
-  Object.freeze({
-    policyVersion: 1,
-    deniedActions: Object.freeze([]),
-    deniedFamilies: Object.freeze([]),
-  });
+export const DEFAULT_INTEGRATION_ACTION_POLICY: IntegrationActionPolicy = Object.freeze({
+  policyVersion: 1,
+  deniedActions: Object.freeze([]),
+  deniedFamilies: Object.freeze([]),
+});
 
 /** A adapter-neutral terminal/non-terminal execution receipt projection. */
 export type IntegrationExecutionReceipt = Readonly<{
@@ -99,8 +94,7 @@ export type IntegrationActionRegistration = Readonly<{
   kind?: "execution" | "read_only";
 }>;
 
-type IntegrationVisibleAction = IntegrationActionAdapter &
-  IntegrationActionRegistration;
+type IntegrationVisibleAction = IntegrationActionAdapter & IntegrationActionRegistration;
 
 export type IntegrationReceiptEvidence = Readonly<{
   state: string;
@@ -113,11 +107,7 @@ export type IntegrationDispatchAdmission = Readonly<{
   observer: ExecutionDispatchObserver;
   owner: ExecutionCorrelationOwner;
   /** Ledger-only exact cancel facade; it rejects unknown owner/request/execution tuples. */
-  cancelExact(
-    requestId: string,
-    executionId: string,
-    reasonCode: string,
-  ): Promise<unknown>;
+  cancelExact(requestId: string, executionId: string, reasonCode: string): Promise<unknown>;
 }>;
 
 export type IntegrationToolContext = Readonly<{
@@ -128,6 +118,8 @@ export type IntegrationToolContext = Readonly<{
   knowledge?: unknown;
   gameVersion?: string;
   policy?: IntegrationActionPolicy;
+  /** Optional run span recorder for this surface's action path. */
+  trace?: import("./run-trace.js").RunTrace;
 }>;
 
 type IntegrationToolSet = Readonly<{
@@ -175,10 +167,7 @@ export type IntegrationActionCatalog = Readonly<{
     query: string,
     policy?: IntegrationActionPolicy,
   ): readonly IntegrationVisibleAction[];
-  hasCompletionEvidence(
-    actionId: string,
-    receipt: IntegrationReceiptEvidence,
-  ): boolean;
+  hasCompletionEvidence(actionId: string, receipt: IntegrationReceiptEvidence): boolean;
 }>;
 
 export type GameIntegrationAdapter = Readonly<{
@@ -194,10 +183,7 @@ export type GameIntegrationAdapter = Readonly<{
   /** Return the adapter-authenticated embodied actor for this connection. */
   actorId(connection: GameConnection): string;
   /** Reject a connection that does not match the Host-owned companion/world identity. */
-  assertIdentityBinding(
-    connection: GameConnection,
-    identity: IntegrationIdentityBinding,
-  ): void;
+  assertIdentityBinding(connection: GameConnection, identity: IntegrationIdentityBinding): void;
   /** Return the optional current-world key for Host-owned WorldBook filtering. */
   worldScope(connection: GameConnection): IntegrationWorldScope | null;
   /** Materialize only tools backed by this adapter's validated connection. */
@@ -215,12 +201,7 @@ export type GameIntegrationAdapter = Readonly<{
   /** Project only bounded status fields for the player-facing Host status tool. */
   status(connection: GameConnection): IntegrationStatusDetails;
   /** Request cancellation through the adapter; the adapter/remote game remains authoritative. */
-  cancelExecution(
-    connection: GameConnection,
-    requestId: string,
-    executionId: string,
-    reasonCode: string,
-  ): unknown;
+  cancelExecution(connection: GameConnection, requestId: string, executionId: string, reasonCode: string): unknown;
   /** Parse this adapter's action-tool result into a receipt without trusting model text. */
   parseReceipt(details: unknown): IntegrationExecutionReceipt | null;
   /** Map adapter-owned tool names back to action IDs for Host budgets/receipts. */
@@ -232,12 +213,7 @@ export type GameIntegrationAdapter = Readonly<{
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 const TOOL_NAME_PREFIX = /^[a-z][a-z0-9_-]{0,31}_$/;
 const VERSION = /^[A-Za-z0-9_.-]{1,64}$/;
-const LIFECYCLES = new Set<IntegrationActionLifecycle>([
-  "published",
-  "experimental",
-  "diagnostic",
-  "planned",
-]);
+const LIFECYCLES = new Set<IntegrationActionLifecycle>(["published", "experimental", "diagnostic", "planned"]);
 
 /**
  * Build the Host-local concrete adapter inventory for one integration. It can
@@ -245,28 +221,20 @@ const LIFECYCLES = new Set<IntegrationActionLifecycle>([
  */
 export function createIntegrationActionCatalog(
   entries: readonly IntegrationActionAdapter[],
-  hasCompletionEvidence: (
-    actionId: string,
-    receipt: IntegrationReceiptEvidence,
-  ) => boolean = () => false,
+  hasCompletionEvidence: (actionId: string, receipt: IntegrationReceiptEvidence) => boolean = () => false,
 ): IntegrationActionCatalog {
-  if (!Array.isArray(entries) || entries.length > 512)
-    throw new Error("invalid_integration_action_catalog");
+  if (!Array.isArray(entries) || entries.length > 512) throw new Error("invalid_integration_action_catalog");
   const normalized = entries.map((entry) => {
-    if (!isRecord(entry) || !isIdentifier(entry.actionId))
-      throw new Error("invalid_integration_action_catalog");
+    if (!isRecord(entry) || !isIdentifier(entry.actionId)) throw new Error("invalid_integration_action_catalog");
     return Object.freeze({ actionId: entry.actionId });
   });
   const actionIds = new Set<string>();
   for (const entry of normalized) {
-    if (actionIds.has(entry.actionId))
-      throw new Error("duplicate_integration_action");
+    if (actionIds.has(entry.actionId)) throw new Error("duplicate_integration_action");
     actionIds.add(entry.actionId);
   }
   const frozenEntries = Object.freeze(normalized);
-  const revision = createHash("sha256")
-    .update(JSON.stringify(frozenEntries))
-    .digest("hex");
+  const revision = createHash("sha256").update(JSON.stringify(frozenEntries)).digest("hex");
   const visible = (
     registrations: readonly IntegrationActionRegistration[],
     capabilities: readonly string[],
@@ -305,9 +273,7 @@ export function createIntegrationActionCatalog(
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (normalizedQuery.length === 0) return available;
     return available.filter((entry) =>
-      `${entry.actionId} ${entry.familyId}`
-        .toLocaleLowerCase()
-        .includes(normalizedQuery),
+      `${entry.actionId} ${entry.familyId}`.toLocaleLowerCase().includes(normalizedQuery),
     );
   };
   return Object.freeze({
@@ -316,17 +282,12 @@ export function createIntegrationActionCatalog(
     hasAdapter: (actionId: string) => actionIds.has(actionId),
     visibleActions: visible,
     searchVisibleActions: search,
-    hasCompletionEvidence: (
-      actionId: string,
-      receipt: IntegrationReceiptEvidence,
-    ) => hasCompletionEvidence(actionId, receipt),
+    hasCompletionEvidence: (actionId: string, receipt: IntegrationReceiptEvidence) =>
+      hasCompletionEvidence(actionId, receipt),
   });
 }
 
-export function assertIntegrationAdapter(
-  adapter: GameIntegrationAdapter,
-  integrationId: string,
-): void {
+export function assertIntegrationAdapter(adapter: GameIntegrationAdapter, integrationId: string): void {
   if (
     !isRecord(adapter) ||
     !isRecord(adapter.descriptor) ||
@@ -369,11 +330,7 @@ export function assertIntegrationAdapter(
       throw new Error("integration_adapter_catalog_revision_mismatch");
     }
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message === "integration_adapter_catalog_revision_mismatch"
-    )
-      throw error;
+    if (error instanceof Error && error.message === "integration_adapter_catalog_revision_mismatch") throw error;
     throw new Error("integration_adapter_scope_mismatch");
   }
 }
@@ -387,18 +344,15 @@ export function assertIntegrationAdapterConformance(
   adapter: GameIntegrationAdapter,
   connection: GameConnection,
 ): IntegrationModuleConformance {
-  if (
-    connection.module !== adapter ||
-    connection.scope.integrationId !== adapter.descriptor.integrationId
-  ) {
+  if (connection.module !== adapter || connection.scope.integrationId !== adapter.descriptor.integrationId) {
     throw new Error("integration_adapter_scope_mismatch");
   }
   assertIntegrationAdapter(adapter, connection.scope.integrationId);
-    const tools = adapter.createToolSet({
-      connection,
-      knowledge: connection.knowledge,
-      ...(connection.gameVersion === undefined ? {} : { gameVersion: connection.gameVersion }),
-    });
+  const tools = adapter.createToolSet({
+    connection,
+    knowledge: connection.knowledge,
+    ...(connection.gameVersion === undefined ? {} : { gameVersion: connection.gameVersion }),
+  });
   const status = adapter.status(connection);
   if (
     !Array.isArray(status.capabilities) ||
@@ -408,12 +362,9 @@ export function assertIntegrationAdapterConformance(
     throw new Error("integration_status_view_invalid");
   }
   const toolGroups = [tools.observation, tools.actions, tools.knowledge];
-  if (!toolGroups.every((group) => Array.isArray(group)))
-    throw new Error("integration_tool_set_invalid");
+  if (!toolGroups.every((group) => Array.isArray(group))) throw new Error("integration_tool_set_invalid");
   const names = toolGroups.flat().map((tool) => tool.name);
-  const actionIds = new Set(
-    adapter.actionCatalog.entries.map((entry) => entry.actionId),
-  );
+  const actionIds = new Set(adapter.actionCatalog.entries.map((entry) => entry.actionId));
   for (const name of names) {
     if (
       typeof name !== "string" ||
@@ -424,19 +375,12 @@ export function assertIntegrationAdapterConformance(
       throw new Error("integration_tool_namespace_invalid");
     }
     const actionId = adapter.actionIdForToolName(name);
-    if (
-      actionId !== null &&
-      (!actionIds.has(actionId) || !adapter.actionCatalog.hasAdapter(actionId))
-    )
+    if (actionId !== null && (!actionIds.has(actionId) || !adapter.actionCatalog.hasAdapter(actionId)))
       throw new Error("integration_tool_action_unregistered");
   }
-  if (new Set(names).size !== names.length)
-    throw new Error("duplicate_integration_tool");
+  if (new Set(names).size !== names.length) throw new Error("duplicate_integration_tool");
   const state = adapter.readState(connection);
-  if (
-    !Array.isArray(state.capabilities) ||
-    (state.activeExecution !== null && !isRecord(state.activeExecution))
-  ) {
+  if (!Array.isArray(state.capabilities) || (state.activeExecution !== null && !isRecord(state.activeExecution))) {
     throw new Error("integration_state_view_invalid");
   }
   return Object.freeze({
@@ -454,15 +398,10 @@ function isToolNamePrefix(value: unknown): value is string {
 }
 
 function isLifecycle(value: unknown): value is IntegrationActionLifecycle {
-  return (
-    typeof value === "string" &&
-    LIFECYCLES.has(value as IntegrationActionLifecycle)
-  );
+  return typeof value === "string" && LIFECYCLES.has(value as IntegrationActionLifecycle);
 }
 
-function isRegistration(
-  value: unknown,
-): value is IntegrationActionRegistration {
+function isRegistration(value: unknown): value is IntegrationActionRegistration {
   return (
     isRecord(value) &&
     isIdentifier(value.actionId) &&

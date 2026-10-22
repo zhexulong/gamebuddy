@@ -1237,7 +1237,7 @@ test("published break_rock_source mounts only from a live Mod capability and for
         revision: 4,
         evidence: {
           detail:
-            "target=rock_source_01;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+            "target=rock_source_01;tool=pickaxe;tool_selected=pickaxe;slot=4;tool_before=axe;slot_before=0;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
         },
       };
     },
