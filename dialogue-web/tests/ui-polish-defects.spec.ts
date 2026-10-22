@@ -426,10 +426,13 @@ test("defect 1: the CJK beat drops the faux italic without gaining weight", asyn
  * card tone (`#201d1d`) the author line can also sit on. After: all three read
  * `--text-secondary` (`#c8c0b6`) at 10.92:1 on the canvas and 9.30:1 on the card.
  *
- * The assertion is the identity the change is: each control's own computed
- * colour is the product's secondary tone, and never the disabled one. It is
- * read through the same `sampleContrast` the contrast gate uses, so a later
- * re-tune of either token moves both readings together.
+ * The assertion is the identity the change is: the two captions' own computed
+ * colour is the product's secondary tone, and never the disabled one. The section
+ * heading is the same guarantee but a layer up - defect 8 gives a section heading
+ * the product's heading tone (`--text-primary`) so it outranks the body under it,
+ * and what this test holds for it is unchanged: the live token, read through the
+ * same `sampleContrast` the contrast gate uses, so a later re-tune of either token
+ * moves both readings together.
  */
 test("the author line, a section heading and the suggestion caption read the live tone, not the disabled one", async ({ page }) => {
   await mountShell(page, {
@@ -470,21 +473,30 @@ test("the author line, a section heading and the suggestion caption read the liv
       probe.remove();
       return value;
     };
-    return { secondary: read("--text-secondary"), disabled: read("--text-disabled") };
+    return { primary: read("--text-primary"), secondary: read("--text-secondary"), disabled: read("--text-disabled") };
   });
   console.log(
     `[live-text-tone] ${JSON.stringify({ author, caption, headings, tokens })}`,
   );
 
-  expect(tokens.secondary, "the two tokens are the ones the change is between").not.toBe(tokens.disabled);
+  expect(tokens.secondary, "the two tones the captions sat between are not the same").not.toBe(tokens.disabled);
+  expect(tokens.primary, "and the heading's tone is a third, brighter one").not.toBe(tokens.secondary);
   for (const reading of [author, caption, ...headings]) {
     expect(reading, "every one of the three is on screen").toMatchObject({ found: true });
     expect(
       reading.color,
       `${reading.selector} reads ${reading.color} on ${reading.background}, ${reading.ratio}:1`,
-    ).toBe(tokens.secondary);
-    expect(reading.color, "and never the token named for text the player cannot use").not.toBe(tokens.disabled);
+    ).not.toBe(tokens.disabled);
     expect(reading.ratio, `${reading.selector} clears the 4.5:1 body-text floor`).toBeGreaterThanOrEqual(4.5);
+  }
+  for (const reading of [author, caption]) {
+    expect(reading.color, `${reading.selector} reads the live secondary tone`).toBe(tokens.secondary);
+  }
+  for (const reading of headings) {
+    expect(
+      reading.color,
+      `${reading.selector} reads the product's heading tone, so it outranks the body it introduces`,
+    ).toBe(tokens.primary);
   }
 });
 
@@ -1135,4 +1147,168 @@ test("creating a Chat lands in it, with its own opening already read", async ({ 
   await expect(chat.locator(".message-list")).toContainText(opening);
   // …and the move was the Host's own selection of the handle it minted.
   await expect.poll(() => selected).toBe(createdHandle);
+});
+
+// --- defect 8 ----------------------------------------------------------------
+
+/**
+ * A Game section heading outranks the body it introduces.
+ *
+ * The failure this pins: after the first pass unified the two heading classes they
+ * both read 12px/600/`--text-secondary`, which is *below* the body each one heads.
+ * Measured at 400x800 from `99-game-400x800.png`: `下一步` (y≈490) sat above
+ * `启动星露谷` (y≈513) at 13px/600/`#f5f0e8` - the group's own name was smaller and
+ * greyer than the step it introduced. The same held under the capability board's
+ * lead sentence (13px/400/secondary), under `会话`'s fact values (13px/500/primary)
+ * and above the cabin choice's name (14px).
+ *
+ * The rule asserted is the hierarchy, not the numbers: every section heading on
+ * the surface strictly outranks every text element inside its own section, by size
+ * first, then weight, then the product's three text tokens. That order is why the
+ * fix needs no new colour and no `text-transform: uppercase` - a heading cannot be
+ * made to outrank a 14 px body by capitals, which CJK does not render.
+ *
+ * Both directions are measured: `stretch` - here, the pre-fix declarations, put
+ * back through an unlayered style rule - has to make the same assertions fail.
+ */
+async function measureGameSectionHeadings(page: Page) {
+  return await page.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>('[data-testid="game-surface"]');
+    if (surface === null) return null;
+    // The three text tokens, resolved to the colours they compute to, so a reading
+    // is compared as a rank rather than as an rgb string.
+    const TOKENS = ["--text-primary", "--text-secondary", "--text-disabled"] as const;
+    const byColour: Record<string, string> = {};
+    for (const name of TOKENS) {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${name})`;
+      document.body.appendChild(probe);
+      byColour[getComputedStyle(probe).color] = name;
+      probe.remove();
+    }
+    const RANK: Record<string, number> = { "--text-primary": 3, "--text-secondary": 2, "--text-disabled": 1 };
+    const read = (node: Element) => {
+      const style = getComputedStyle(node);
+      const colour = byColour[style.color] ?? style.color;
+      return {
+        text: (node.textContent ?? "").replace(/\s+/gu, " ").trim().slice(0, 24),
+        size: Number.parseFloat(style.fontSize),
+        weight: Number.parseInt(style.fontWeight, 10) || 400,
+        colour,
+        colourRank: RANK[colour] ?? 0,
+        letterSpacing: style.letterSpacing,
+      };
+    };
+    // The section headings the surface has: the drawer's own groups and the
+    // capability board, the installation panel and the cabin handoff's sub-panel.
+    const sections = [
+      ...surface.querySelectorAll<HTMLElement>(
+        ".game-capability-board, .game-installation-panel, .game-group, .game-subpanel",
+      ),
+    ];
+    return sections.flatMap((section) => {
+      const heading = section.querySelector<HTMLElement>(
+        ":scope > .game-group-title, :scope > .section-subtitle",
+      );
+      if (heading === null) return [];
+      // The body it introduces: every text-bearing element inside the section that
+      // is not itself a heading. A nested heading is a level of its own (the guide's
+      // step titles, the cabin handoff's own subtitle), not body text.
+      const bodies = [...section.querySelectorAll("*")]
+        .filter((node) => node !== heading && !/^H[1-6]$/u.test(node.tagName))
+        .filter((node) => node.getClientRects().length > 0)
+        .filter((node) =>
+          [...node.childNodes].some(
+            (child) => child.nodeType === Node.TEXT_NODE && (child.textContent ?? "").trim().length > 0,
+          ),
+        )
+        .map(read);
+      return [{ id: heading.id === "" ? heading.textContent : heading.id, heading: read(heading), bodies }];
+    });
+  });
+}
+
+type SectionReading = Readonly<{
+  id: string;
+  heading: Readonly<{ text: string; size: number; weight: number; colour: string; colourRank: number }>;
+  bodies: readonly Readonly<{ text: string; size: number; weight: number; colour: string; colourRank: number }>[];
+}>;
+
+type TextReading = SectionReading["heading"];
+
+const describeReading = (reading: TextReading): string =>
+  `${JSON.stringify(reading.text)} ${reading.size}px/${reading.weight}/${reading.colour}`;
+
+/** Size first, then weight, then the tone: the order a reader ranks type in. */
+function outranks(heading: TextReading, body: TextReading): boolean {
+  if (heading.size !== body.size) return heading.size > body.size;
+  if (heading.weight !== body.weight) return heading.weight > body.weight;
+  return heading.colourRank > body.colourRank;
+}
+
+/** Every place a section heading fails to outrank a body inside its own section. */
+function inversions(sections: readonly SectionReading[]): string[] {
+  return sections.flatMap((section) =>
+    section.bodies
+      .filter((body) => !outranks(section.heading, body))
+      .map((body) => `${describeReading(section.heading)} is not above ${describeReading(body)}`),
+  );
+}
+
+test("defect 8: a Game section heading outranks the body it introduces, at 1440 and 400", async ({ page }) => {
+  await mountShell(page, { locale: "zh-CN" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: "游戏", exact: true }).click();
+  await expect(page.getByTestId("game-surface")).toBeVisible();
+  // The sections under test are the ones whose reads have to settle first.
+  await expect(page.locator(".game-capability-board .game-group-title")).toBeVisible();
+  await expect(page.locator(".section-subtitle").first()).toBeVisible();
+  await expect(page.locator("[data-guide-step]").first()).toBeVisible();
+
+  const measured: Record<string, Awaited<ReturnType<typeof measureGameSectionHeadings>>> = {};
+  for (const viewport of [
+    { width: 1440, height: 900, label: "1440x900" },
+    { width: 400, height: 800, label: "400x800" },
+  ] as const) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await expect(page.locator(".game-group-title").first()).toBeVisible();
+    const sections = await measureGameSectionHeadings(page);
+    console.log(`[defect-8 sections @${viewport.label}] ${JSON.stringify(sections)}`);
+    measured[viewport.label] = sections;
+    expect(sections, `the Game surface renders its sections at ${viewport.label}`).not.toBeNull();
+    expect(
+      sections!.length,
+      `every section heading on the surface is measured at ${viewport.label}`,
+    ).toBeGreaterThanOrEqual(4);
+
+    // One treatment: every section heading on the surface is the same size, the
+    // same weight and the same tone - a surface does not have two kinds of section.
+    const treatments = [
+      ...new Set(sections!.map((section) => `${section.heading.size}/${section.heading.weight}/${section.heading.colour}`)),
+    ];
+    expect(
+      treatments,
+      `one treatment for every section heading (${sections!.map((section) => `${section.id}: ${describeReading(section.heading)}`).join("; ")})`,
+    ).toHaveLength(1);
+
+    // …and each one outranks the body it introduces, everywhere inside its section.
+    expect(
+      inversions(sections!),
+      `no section heading is outranked by its own body at ${viewport.label} (${sections!.map((section) => `${section.id}: ${describeReading(section.heading)}`).join("; ")})`,
+    ).toEqual([]);
+  }
+
+  // Sensitivity proof, measured through the same probe: the pre-fix declarations
+  // (12px/600/`--text-secondary` with caps and eyebrow tracking) are what the
+  // review found, so putting them back has to reproduce the inversion. The injected
+  // rule is unlayered, so it wins over the layered stylesheet.
+  const before = await page.addStyleTag({
+    content:
+      ".game-group-title, .section-subtitle { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); }\n",
+  });
+  const reverted = await measureGameSectionHeadings(page);
+  console.log(`[defect-8 sections @400x800, pre-fix injected] ${JSON.stringify(reverted)}`);
+  await before.evaluate((node) => node.remove());
+  expect(reverted, "the Game surface renders with the pre-fix headings injected").not.toBeNull();
+  expect(inversions(reverted!), "the pre-fix declarations are what the assertion above catches").not.toEqual([]);
 });

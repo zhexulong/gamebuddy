@@ -1721,16 +1721,29 @@
     color: var(--text-secondary);
   }
 
+  /* A section's own heading ("Stardew cabin selection", "Game installation").
+
+   It read `--text-disabled` (`#90877e`, 5.57:1 on the canvas) - the token named
+   for text the player cannot use - and then `--text-secondary` at 12 px, which
+   still put it *below* the body it heads: measured in the mounted shell at
+   400x800, `下一步` was 12px/600/`#c8c0b6` over `启用伙伴陪玩` at
+   13px/500/`#f5f0e8`, and over a cabin choice's name at 14 px - smaller than its
+   own controls and greyer than their labels.
+
+   15px/600/`--text-primary` is not a new step: it is the treatment the product
+   already gives a section heading (`.management-settings-section h2`), with the
+   0.01em tracking `.surface-header h2` uses, so the Game surface's sections read
+   at the same level as every other surface's. It outranks every body on that
+   surface on size alone (the largest is 14 px), so the hierarchy does not rest on
+   a 100-weight delta - and not on `text-transform: uppercase` either, which an
+   eyebrow can use and CJK cannot: this is a heading, not an eyebrow, so the caps
+   and their 0.08em tracking are gone with it. */
   .section-subtitle {
     margin: 16px 0 8px;
-    font-size: 12px;
+    font-size: 15px;
     font-weight: 600;
-    /* A section's own heading inside a surface ("Stardew cabin selection",
-       "Game installation") is live player-facing text. It read
-       `--text-disabled` (`#90877e`, 5.57:1 on the canvas) - a token named for
-       text the player cannot use; `--text-secondary` measures 10.92:1 there. */
-    color: var(--text-secondary);
-    text-transform: uppercase;
+    letter-spacing: 0.01em;
+    color: var(--text-primary);
   }
 
   .companion-list-item {
@@ -2433,19 +2446,18 @@
     gap: 12px;
   }
 
+  /* One treatment for every section heading on this surface, and the same one
+   `.section-subtitle` above uses - see its declaration for the measurement. Both
+   were 12px/600/`--text-secondary` after the first pass (they had been 11px in
+   `--text-disabled` before that), which still left a group heading *below* its
+   own children: `下一步` at 12/600/secondary over a 13/600/primary step title, a
+   13/500/primary fact value and a 14px cabin choice. */
   .game-group-title {
     margin: 0;
-    font-size: 12px;
+    font-size: 15px;
     font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    /* A section's own heading is live player-facing text, exactly like
-       `.section-subtitle` above - and it used to be the *smallest and faintest*
-       type on the page (11px/700 in `--text-disabled`, paler than the 13-14px body
-       it introduced, which made the hierarchy read backwards). The two headings now
-       share one treatment: same size, same weight, same token. `--text-disabled` is
-       for text the player cannot use, and a heading is not that. */
-    color: var(--text-secondary);
+    letter-spacing: 0.01em;
+    color: var(--text-primary);
   }
 
   .game-panel-empty {
@@ -5130,18 +5142,22 @@
    transcript, and the grid is the surface's own: it packs the cards the surface
    already had and falls back to one column the moment the room is gone.
 
-   A row's cards share the row's track height - the grid's own default, so this
-   rule deliberately sets no `align-items`. Measured at 1440x900 with
-   `align-items: start`: the second row's track was 739 px while the Persona and
-   scenario cards in it were 386 px and 329 px, which left 353 px and 410 px of
-   bare canvas above the row's own bottom edge on a surface whose grid gap is
-   12 px - two thirds of the row ending nowhere near its neighbours. Stretched,
-   every card in a row ends on that bottom edge (largest residual gap 0), and the
-   single-column narrow layout is unaffected: one card, one row, no neighbour to
-   disagree with. */
+   Every card is as tall as its own content (`align-items: start`), not as tall
+   as the row. A grid's default is `stretch`, which puts the row's tallest card on
+   every card in it: measured at 1440x900, the second row's track was 739 px, and
+   the persona and scenario cards in it ended their content at y=773 and y=716
+   against a card bottom of 1139 - 353 px and 410 px of empty *card* below the
+   last control, inside a border that then reads as content the card does not
+   have (the design review's shots read 306 px and 364 px on a 730 px card: the
+   same defect, a slightly shorter row). Stretching does not remove that space,
+   it only moves it inside the border and manufactures a card around it; the
+   leftover belongs to the row, as canvas between this row and the next. The top
+   line is unaffected - the cards still all start on their row's top edge - and
+   the single-column narrow layout is unchanged because one card is one row. */
   [data-characters-panel] {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
+    align-items: start;
   }
 
   .card-import-report {

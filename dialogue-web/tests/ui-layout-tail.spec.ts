@@ -117,6 +117,11 @@ async function stubShell(
       jsonOk({
         apiVersion: 1,
         present: true,
+        // The revision the book is CASed on. The mirror validates the read exactly,
+        // and a fixture without it is rejected whole - the section then renders
+        // nothing at all, which is what this stub did before the field was added
+        // here: the disclosure below was simply absent from the DOM.
+        revision: 1,
         // The shipped default companion's own book: seven keyed entries, which
         // is what the audit's surface carried.
         entries: Array.from({ length: 7 }, (_, index) => ({
@@ -178,10 +183,11 @@ async function stubShell(
 }
 
 /**
- * The Characters grid's own geometry: every card's box, grouped into the rows
- * the grid actually placed them in. A row's track is as tall as its tallest
- * card, so the dead space a short card leaves is `rowBottom - cardBottom` - the
- * number the audit quoted as 348 px and 405 px.
+ * The Characters grid's own geometry: every card's box, plus how much of that box
+ * is empty card - the distance from the card's own last child (and that child's
+ * margin) down to its inner bottom edge. A card whose content is its own height
+ * reports `slack` 0; a card stretched to its row's tallest neighbour reports
+ * exactly the height it does not fill.
  */
 async function measureCharactersGrid(page: Page) {
   return await page.evaluate(() => {
@@ -189,47 +195,54 @@ async function measureCharactersGrid(page: Page) {
     if (panel === null) return null;
     const style = getComputedStyle(panel);
     const round = (value: number) => Math.round(value);
+    const px = (value: string) => Number.parseFloat(value) || 0;
     const columns = style.gridTemplateColumns.split(/\s+/u).filter((value) => value.length > 0);
     const cards = [...panel.children].map((child) => {
-      const box = child.getBoundingClientRect();
+      const card = child as HTMLElement;
+      const box = card.getBoundingClientRect();
+      const own = getComputedStyle(card);
+      const last = card.lastElementChild;
+      const lastBox = last === null ? null : last.getBoundingClientRect();
+      const contentBottom =
+        lastBox === null ? box.bottom : lastBox.bottom + px(getComputedStyle(last!).marginBottom);
+      const innerBottom = box.bottom - px(own.paddingBottom) - px(own.borderBottomWidth);
       return {
-        label: child.getAttribute("aria-label") ?? child.tagName.toLowerCase(),
+        label: card.getAttribute("aria-label") ?? card.tagName.toLowerCase(),
         left: round(box.left),
         top: round(box.top),
         width: round(box.width),
         height: round(box.height),
         bottom: round(box.bottom),
+        contentBottom: round(contentBottom),
+        slack: round(innerBottom - contentBottom),
       };
     });
     const rowTops = [...new Set(cards.map((card) => card.top))].sort((left, right) => left - right);
     const rows = rowTops.map((top) => {
       const inRow = cards.filter((card) => card.top === top);
-      const bottom = Math.max(...inRow.map((card) => card.bottom));
       return {
         top,
-        bottom,
-        height: bottom - top,
-        cards: inRow.map((card) => ({
-          label: card.label,
-          height: card.height,
-          deadGap: bottom - card.bottom,
-        })),
+        cardCount: inRow.length,
+        bottoms: inRow.map((card) => card.bottom),
+        cards: inRow.map((card) => `${card.label}: ${card.contentBottom}->${card.bottom} (${card.slack} px)`),
       };
     });
     return {
       display: style.display,
+      alignItems: style.alignItems,
       columnCount: columns.length,
-      columnGap: round(Number.parseFloat(style.columnGap) || 0),
-      rowGap: round(Number.parseFloat(style.rowGap) || 0),
+      columnGap: round(px(style.columnGap)),
+      rowGap: round(px(style.rowGap)),
       panelScrollHeight: panel.scrollHeight,
       cardCount: cards.length,
       rows,
-      largestDeadGap: Math.max(0, ...rows.flatMap((row) => row.cards.map((card) => card.deadGap))),
+      cards,
+      largestSlack: Math.max(0, ...cards.map((card) => card.slack)),
     };
   });
 }
 
-test("item 1: one row's cards end on one line, and the trigger list is folded by default", async ({ page }) => {
+test("item 1: a card is as tall as its own content, and the trigger list is folded by default", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await stubShell(page);
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=characters`);
@@ -274,13 +287,44 @@ test("item 1: one row's cards end on one line, and the trigger list is folded by
   expect(await disclosure.locator("[data-companion-world-book-entry]").first().isVisible(), "a folded row is hidden")
     .toBe(false);
 
-  // The target: a card's bottom edge is at its row's bottom edge, to within the
-  // grid's own gap. Before the fix at 1440x900 the second row's short cards
-  // measured 382 px and 325 px against a 730 px track (dead gaps 348 / 405).
+  // The target: a card's box is its own content, not its row's tallest neighbour.
+  // Before the change the grid's default `stretch` made every card in the second
+  // row 730 px tall, while the persona and scenario cards' content ended at
+  // y=824 and y=766 against a card bottom of 1130 - 306 px and 364 px of empty
+  // card below their last control. The allowance is 1 px: the box is the content
+  // plus the card's own 12 px padding and 1 px border, and nothing else.
   expect(grid!.columnCount, "1440 leaves room for three columns").toBe(3);
-  expect(grid!.largestDeadGap, `no card leaves a gap larger than the ${grid!.rowGap} px grid gap`).toBeLessThanOrEqual(
-    grid!.rowGap,
-  );
+  expect(
+    grid!.largestSlack,
+    `every card ends within 1 px of its own content: ${JSON.stringify(grid!.rows)}`,
+  ).toBeLessThanOrEqual(1);
+
+  // Sensitivity proof, measured through the same probe: the pre-fix `stretch` is
+  // what padded a short card to its row's tallest neighbour. The injected rule is
+  // unlayered, so it wins over the layered stylesheet.
+  const stretch = await page.addStyleTag({
+    content: "[data-characters-panel] { align-items: stretch; }\n",
+  });
+  const stretched = await measureCharactersGrid(page);
+  console.log(`[item-1 characters @1440, stretch injected] ${JSON.stringify(stretched)}`);
+  await stretch.evaluate((node) => node.remove());
+  expect(stretched, "the Characters surface renders with `stretch` injected").not.toBeNull();
+  expect(
+    stretched!.largestSlack,
+    `stretch pads the short cards to the row's tallest again (${JSON.stringify(stretched!.rows)}); the assertion above is what sees it`,
+  ).toBeGreaterThan(100);
+
+  // …and the same holds in the one-column layout, where every card is its own row.
+  await page.setViewportSize({ width: 400, height: 800 });
+  const narrow = await measureCharactersGrid(page);
+  console.log(`[item-1 characters @400] ${JSON.stringify(narrow)}`);
+  expect(narrow, "the Characters surface renders at 400").not.toBeNull();
+  expect(narrow!.columnCount, "400 is one column").toBe(1);
+  expect(narrow!.cardCount, "every card is still mounted").toBe(grid!.cardCount);
+  expect(
+    narrow!.largestSlack,
+    `at 400 every card is its own content too: ${JSON.stringify(narrow!.rows)}`,
+  ).toBeLessThanOrEqual(1);
 });
 
 /**
