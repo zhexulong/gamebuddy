@@ -168,6 +168,82 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
   });
 
   /**
+   * The line under the installation's name speaks the player's language.
+   *
+   * The panel used to print what the Host mints: `known-location` as the source
+   * chip and `Detected installation (path hidden)` as its note, in English, on a
+   * Chinese surface (`host/src/games/stardew/provider.ts` mints the second). The
+   * failure this catches: a wire member a player cannot read, in either language,
+   * and - for a source this build has no sentence for - a panel that would rather
+   * print the member than say the one thing it knows.
+   */
+  test("the installation line reads in the player's language, never the wire", async ({ page }) => {
+    // One candidate the scan declares, one source the contract's schema allows but
+    // this build names nothing for (`source` is a bounded string, not a closed
+    // union: `GameCandidateV1Schema`).
+    const undeclaredSource = {
+      apiVersion: 1,
+      candidates: [
+        { candidateId, source: "known-location", label: "Stardew Valley", hint: "Detected installation (path hidden)", status: "admission_required" },
+        { candidateId: candidateStatusId, source: "gog-galaxy", label: "Stardew Valley", hint: null, status: "admission_required" },
+      ],
+      diagnostics: [],
+    };
+    const RAW = ["known-location", "gog-galaxy", "steam-registry", "steam-vdf", "admission_required", "Detected installation"];
+    // The shared `panel()` helper finds the panel by its English accessible name, so
+    // this test locates it by its own class instead: it has to look at the same panel
+    // in two languages.
+    const setup = page.locator(".game-installation-panel");
+    const rendered = async (): Promise<{ sources: string[]; hints: (string | null)[]; rawHits: string[] }> => {
+      const facts = await page.evaluate(() => {
+        const node = document.querySelector<HTMLElement>(".game-installation-panel");
+        return {
+          sources: [...(node?.querySelectorAll(".installation-source") ?? [])].map((chip) => (chip.textContent ?? "").trim()),
+          hints: [...(node?.querySelectorAll(".installation-hint") ?? [])].map((note) => (note.textContent ?? "").trim()),
+          text: node?.innerText ?? "",
+        };
+      });
+      return { sources: facts.sources, hints: facts.hints, rawHits: RAW.filter((member) => facts.text.includes(member)) };
+    };
+
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    // The Chinese pass reloads, and a reload reads the mounted shell's own routes
+    // again instead of the bootstrap alone.
+    await mountGameDrawerRoutes(page);
+    await page.route(DRAFT_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })));
+    await page.route(DISCOVERY_ROUTE, (route) => route.fulfill(jsonOk(undeclaredSource)));
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
+    await expect(setup).toHaveAttribute("data-state", "candidates");
+    const english = await rendered();
+    console.log(`[install-words] en: ${JSON.stringify(english)}`);
+    expect(english.sources, "each declared source reads as its own sentence").toEqual([
+      "Found in a common install folder",
+      "Found on this computer",
+    ]);
+    expect(english.hints, "the redacted path is stated, not quoted").toEqual(["Its folder path is hidden."]);
+    expect(english.rawHits, "no wire member reaches the player in English").toEqual([]);
+
+    // The same reply on the product's Chinese surface: the locale is the shell's
+    // own preference (`resolveLocale`/`persistLocale`), set before the reload.
+    await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+    await page.reload();
+    const entry = page.getByRole("button", { name: "游戏", exact: true });
+    await expect(entry).toBeVisible();
+    if (!(await setup.isVisible())) await entry.click();
+    await expect(setup).toHaveAttribute("aria-label", "游戏安装设置");
+    await expect(setup).toHaveAttribute("data-state", "candidates");
+    const chinese = await rendered();
+    console.log(`[install-words] zh: ${JSON.stringify(chinese)}`);
+    expect(chinese.sources, "the same sentences in the player's other language").toEqual([
+      "在常见的安装位置找到",
+      "已在这台电脑上找到",
+    ]);
+    expect(chinese.hints, "the note is Chinese too").toEqual(["安装路径不显示。"]);
+    expect(chinese.rawHits, "no wire member reaches the player in Chinese").toEqual([]);
+  });
+
+  /**
    * The other half of the same dead end: `选择游戏文件夹` used to render only in the
    * retryable states, so a player whose candidate could not be confirmed had no way
    * forward at all. It is the other route to the same admission, so it is offered in
@@ -244,17 +320,30 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     expect(offered.sentence).toBe("We found possible installations. Choose one to connect.");
     const rows = panel(page).locator(".installation-candidate");
     await expect(rows).toHaveCount(3);
+    // This assertion used to read the row's visible text as the wire member, which
+    // is exactly what the product no longer does: the member the Host minted stays
+    // the row's own attribution (`data-source`), and the words beside the name are
+    // the panel's sentence for it. The force is unchanged - three rows, attributed
+    // to the three sources the scan reported, with the refused one's confirm off -
+    // and the sentence each source must read is now pinned too.
     const gates = await rows.evaluateAll((nodes) =>
       nodes.map((node) => ({
-        source: node.querySelector(".installation-source")?.textContent?.trim() ?? "",
+        source: node.querySelector(".installation-source")?.getAttribute("data-source") ?? "",
+        spoken: node.querySelector(".installation-source")?.textContent?.trim() ?? "",
+        hint: node.querySelector(".installation-hint")?.textContent?.trim() ?? null,
         confirmDisabled: node.querySelector("button")?.disabled ?? null,
       })),
     );
     console.log(`[install-unblock] candidate rows: ${JSON.stringify(gates)}`);
     expect(gates, "the statuses that name an offered candidate are confirmable; the refused one is not").toEqual([
-      { source: "steam-registry", confirmDisabled: false },
-      { source: "known-location", confirmDisabled: false },
-      { source: "steam-vdf", confirmDisabled: true },
+      { source: "steam-registry", spoken: "Found via Steam", hint: null, confirmDisabled: false },
+      {
+        source: "known-location",
+        spoken: "Found in a common install folder",
+        hint: "Its folder path is hidden.",
+        confirmDisabled: false,
+      },
+      { source: "steam-vdf", spoken: "Found in a Steam library folder", hint: null, confirmDisabled: true },
     ]);
 
     // 3. confirming - the confirmation is outstanding.

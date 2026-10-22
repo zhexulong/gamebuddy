@@ -239,6 +239,42 @@ export function installationStateLabel(labels: Messages, state: InstallationDisc
 }
 
 /**
+ * Where the scan found one installation, as player text.
+ *
+ * `source` is the discovery session's own vocabulary - `steam-registry |
+ * steam-vdf | known-location` (`host/src/windows-stardew-installation-discovery/
+ * internal.ts`) - and design/104 §10 forbids rendering a wire member as player
+ * text, which is what the panel did with it. A value this build has no sentence
+ * for still describes a candidate the Host published, so it reads as the plain
+ * fact that it was found rather than as the member.
+ */
+export function installationSourceLabel(labels: Messages, source: string): string {
+  switch (source) {
+    case "steam-registry":
+      return labels.gameInstallationSourceSteamRegistry;
+    case "steam-vdf":
+      return labels.gameInstallationSourceSteamVdf;
+    case "known-location":
+      return labels.gameInstallationSourceKnownLocation;
+    default:
+      return labels.gameInstallationSourceOther;
+  }
+}
+
+/**
+ * The candidate's own note, as player text.
+ *
+ * The Host's projection publishes exactly one note or none - the redacted path
+ * notice (`host/src/games/stardew/provider.ts`, `projectDiscoveryReadResult`) -
+ * and every other display path it read is collapsed to `null`. So a note is the
+ * fact that the path the scan used is not shown, and the panel says that in the
+ * player's language instead of repeating the Host's English sentence.
+ */
+export function installationHintLabel(labels: Messages, hint: string | null): string | null {
+  return hint === null ? null : labels.gameInstallationHintPathHidden;
+}
+
+/**
  * The companion capability board: what the composed Game projection publishes
  * about the companion, as readable cards.
  *

@@ -729,6 +729,19 @@ const en = {
   gameInstallationConfirm: "Confirm",
   gameInstallationChooseFolder: "Choose game folder",
   gameInstallationFindAgain: "Find again",
+  // Where the scan found an installation, one sentence per source the discovery
+  // session declares (`steam-registry | steam-vdf | known-location`,
+  // `host/src/windows-stardew-installation-discovery/internal.ts`). The last entry
+  // is the honest stand-in for a source this build has no sentence for: the Host
+  // published a candidate, so "it was found" is true whatever produced it, while
+  // the wire's own member is never player text (design/104 §10).
+  gameInstallationSourceSteamRegistry: "Found via Steam",
+  gameInstallationSourceSteamVdf: "Found in a Steam library folder",
+  gameInstallationSourceKnownLocation: "Found in a common install folder",
+  gameInstallationSourceOther: "Found on this computer",
+  // The Host redacts the installation's path and says so in its own English
+  // (`host/src/games/stardew/provider.ts`); the panel states that fact itself.
+  gameInstallationHintPathHidden: "Its folder path is hidden.",
 
   // Game data disclosure. The dump is what the composed state route publishes
   // (`game.state.read`); the contract's separate `game.instances.read` and
@@ -1432,6 +1445,11 @@ const zh: Messages = {
   gameInstallationConfirm: "确认",
   gameInstallationChooseFolder: "选择游戏文件夹",
   gameInstallationFindAgain: "重新查找",
+  gameInstallationSourceSteamRegistry: "通过 Steam 找到",
+  gameInstallationSourceSteamVdf: "在 Steam 库文件夹中找到",
+  gameInstallationSourceKnownLocation: "在常见的安装位置找到",
+  gameInstallationSourceOther: "已在这台电脑上找到",
+  gameInstallationHintPathHidden: "安装路径不显示。",
 
   gameDiagnostics: "游戏数据与诊断",
   gameDiagnosticsPublished: "由 Host 发布，只读：实例与会话投影。",

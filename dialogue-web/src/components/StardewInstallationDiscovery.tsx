@@ -8,6 +8,8 @@ import { observedProblemCode } from "../composed-problem-view";
 import {
   installationDiscoveryFailureState,
   installationDiscoveryState,
+  installationHintLabel,
+  installationSourceLabel,
   installationStateLabel,
   type InstallationDiscoveryState,
 } from "../game-presentation";
@@ -200,8 +202,14 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
           {discovery.candidates.map(({ candidateId, label, source, hint, status }) => (
             <li className="installation-candidate" key={candidateId}>
               <span className="installation-candidate-label">{label}</span>
-              <span className="installation-source">{source}</span>
-              {hint && <small className="installation-hint">{hint}</small>}
+              {/* The wire member stays as the row's own attribution (`data-source`),
+                  and the words beside the name are the player's language: a source
+                  the panel has no sentence for reads as "found on this computer"
+                  rather than as the member the Host minted. */}
+              <span className="installation-source" data-source={source}>
+                {installationSourceLabel(labels, source)}
+              </span>
+              {hint !== null && <small className="installation-hint">{installationHintLabel(labels, hint)}</small>}
               <button
                 type="button"
                 className="game-action"
