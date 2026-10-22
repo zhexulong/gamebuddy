@@ -44,11 +44,11 @@ export const ST_CARD_DECODER_LIMITS_V1 = Object.freeze({
  * IdentityProfile patch. Only the listed persona fields may be copied into a
  * newly provisioned profile after a durable field-level review. World Book
  * entries remain candidates: this subset does not import, bind, or execute
- * them. Version-locked `tavern-interchange/v1` accepts and exports only inert
- * WorldBook public background records and the ST-recognized player-visible Chat
- * JSONL subset (`user_name`, `character_name`, empty safe header metadata, and
- * selected `name`/`is_user`/`is_system`/`send_date`/`mes` bubbles). It excludes
- * raw ST fields, Pi/session data, ids, swipes, branches, and bindings.
+ * them. Version-locked `tavern-interchange/v1` is export-only and carries only
+ * inert WorldBook public background records and the ST-recognized player-visible
+ * Chat JSONL subset (`user_name`, `character_name`, empty safe header metadata,
+ * and selected `name`/`is_user`/`is_system`/`send_date`/`mes` bubbles). It
+ * excludes raw ST fields, Pi/session data, ids, swipes, branches, and bindings.
  */
 const SELECTED_L3_PROFILE_CONTRACT_V1 = Object.freeze({
   candidateOnly: Object.freeze(["name", "scenario", "first_mes", "first_message", "mes_example", "character_book"]),
@@ -65,7 +65,6 @@ export const COMPATIBILITY_MANIFEST_V1 = Object.freeze({
   id: "compatibility_manifest_v1",
   interchange: Object.freeze({
     format: "tavern-interchange/v1",
-    inbound: Object.freeze(["worldbook_public_background", "chat_player_visible_jsonl"]),
     outbound: Object.freeze(["worldbook_public_background", "chat_player_visible_jsonl"]),
     denylist: Object.freeze([
       "raw_st_card",
@@ -152,16 +151,6 @@ export const COMPATIBILITY_MANIFEST_V1 = Object.freeze({
     status: "supported_safe_subset",
     reference: "STSEM-CHAT-001",
     schema: "SillyTavern Chat JSONL header + message records",
-    inbound: Object.freeze([
-      "user_name",
-      "character_name",
-      "chat_metadata(empty)",
-      "name",
-      "is_user",
-      "is_system(false)",
-      "send_date",
-      "mes",
-    ]),
     outbound: Object.freeze([
       "user_name",
       "character_name",
@@ -173,7 +162,6 @@ export const COMPATIBILITY_MANIFEST_V1 = Object.freeze({
       "mes",
     ]),
     selectedVariantPolicy: "only_selected_materialized_bubble; swipes_and_variant_ids_dropped",
-    reimport: "player_visible_round_trip_only_inert_unbound",
     extensions: "omitted_with_loss_report",
     unsupported: Object.freeze([
       "ids",

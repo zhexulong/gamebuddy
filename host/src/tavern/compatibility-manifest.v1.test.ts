@@ -61,7 +61,11 @@ test("selected L3 contract limits profile use and interchange to the version-loc
     "tavern-interchange-v1_st-jsonl-player-visible-selected-bubbles_only",
   );
   assert.equal(COMPATIBILITY_MANIFEST_V1.interchange.format, "tavern-interchange/v1");
-  assert.deepEqual(COMPATIBILITY_MANIFEST_V1.interchange.inbound, [
+  // Export-only, and it must stay that way until an importer ships: the product has
+  // no route, service or decoder that accepts either payload back, so the manifest
+  // declares no inbound direction for the interchange to promise.
+  assert.equal("inbound" in COMPATIBILITY_MANIFEST_V1.interchange, false);
+  assert.deepEqual(COMPATIBILITY_MANIFEST_V1.interchange.outbound, [
     "worldbook_public_background",
     "chat_player_visible_jsonl",
   ]);
@@ -73,7 +77,13 @@ test("selected L3 contract limits profile use and interchange to the version-loc
   // payload or a profile.
   assert.ok(COMPATIBILITY_MANIFEST_V1.interchange.denylist.includes("extensions"));
   assert.equal(COMPATIBILITY_MANIFEST_V1.chatJsonl.extensions, "omitted_with_loss_report");
-  assert.deepEqual(COMPATIBILITY_MANIFEST_V1.chatJsonl.inbound, [
+  assert.equal(COMPATIBILITY_MANIFEST_V1.chatJsonl.status, "supported_safe_subset");
+  // The chat file is a one-way export: nothing accepts it back, so no inbound field
+  // set and no re-import round trip is declared. The field list stays pinned - on the
+  // direction that exists.
+  assert.equal("inbound" in COMPATIBILITY_MANIFEST_V1.chatJsonl, false);
+  assert.equal("reimport" in COMPATIBILITY_MANIFEST_V1.chatJsonl, false);
+  assert.deepEqual(COMPATIBILITY_MANIFEST_V1.chatJsonl.outbound, [
     "user_name",
     "character_name",
     "chat_metadata(empty)",
@@ -83,8 +93,6 @@ test("selected L3 contract limits profile use and interchange to the version-loc
     "send_date",
     "mes",
   ]);
-  assert.equal(COMPATIBILITY_MANIFEST_V1.chatJsonl.status, "supported_safe_subset");
-  assert.equal(COMPATIBILITY_MANIFEST_V1.chatJsonl.reimport, "player_visible_round_trip_only_inert_unbound");
   assert.equal(
     COMPATIBILITY_MANIFEST_V1.chatJsonl.selectedVariantPolicy,
     "only_selected_materialized_bubble; swipes_and_variant_ids_dropped",
