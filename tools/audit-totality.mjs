@@ -1591,7 +1591,7 @@ function runPromises(sources) {
 const SUPPRESSION =
   /(?:@ts-(?:ignore|expect-error|nocheck)\b|\beslint-disable(?:-next-line|-line)?\b|\boxlint-disable\b|\bbiome-ignore\b|\bprettier-ignore\b|\bstylelint-disable(?:-next-line|-line)?\b|\b(?:c8|istanbul) ignore\b|\bNOLINT\b)/u;
 const COMMENTED_CODE =
-  /^\s*\/\/\s*(?:const|let|var|return|if|for|while|await|import|export|function|class|throw|switch|case)\b.*[;){]$/u;
+  /^\s*\/\/\s*(?:const|let|var|return|if|for|while|await|import|export|function|class|throw|switch|case)\b.*(?:[;{}]|=>)\s*$/u;
 
 /**
  * The readings `hygiene` reports, each with what a count of it means.
