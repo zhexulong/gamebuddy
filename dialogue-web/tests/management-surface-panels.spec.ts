@@ -594,6 +594,10 @@ test("the product Characters surface shows a world book bind made after a messag
  */
 test("the Chats row's archive cannot fire without its confirmation step", async ({ page }) => {
   const archives: unknown[] = [];
+  // Two active Chats, so this journey is only about the arm-then-confirm shape. Archiving the LAST
+  // Chat has its own rule (a successor is created and mounted first), which is a different subject
+  // and a different journey - keeping one Chat here would test that rule by accident.
+  const otherHandle = `${"E".repeat(42)}A`;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
   );
@@ -606,7 +610,10 @@ test("the Chats row's archive cannot fire without its confirmation step", async 
       contentType: "application/json",
       body: JSON.stringify({
         apiVersion: 1,
-        chats: [{ handle: chatHandle, title: null, status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." }],
+        chats: [
+          { handle: chatHandle, title: null, status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: "The parsnips took. All of them, by the look of it." },
+          { handle: otherHandle, title: null, status: "active", managementRevision: 1, isSelected: false, updatedAtMs: 1_759_000_000_000, preview: "Morning, then. Kettle is on." },
+        ],
       }),
     }),
   );
@@ -623,7 +630,7 @@ test("the Chats row's archive cannot fire without its confirmation step", async 
   const surface = page.getByTestId("chats-surface");
   await expect(surface).toBeVisible();
 
-  await surface.getByRole("button", { name: "Archive", exact: true }).click();
+  await surface.getByRole("button", { name: "Archive", exact: true }).first().click();
   await expect(surface.getByTestId("chat-retention-confirm")).toBeVisible();
   expect(archives.length, "the destructive action fired before it was confirmed").toBe(0);
 

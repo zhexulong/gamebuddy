@@ -479,8 +479,8 @@ export function ChatsSurfacePanel({
    * generation of that mount, and a settled switch is what mounts this Chat and mints its
    * generation - so the shell, holding the fresh read, is the only caller that can name it.
    */
-  const createChat = async (openingTargetIndex?: number): Promise<void> => {
-    if (creating) return;
+  const createChat = async (openingTargetIndex?: number): Promise<boolean> => {
+    if (creating) return false;
     setCreating(true);
     try {
       const result = await api.createChat({ apiVersion: 1, selectionGeneration }, csrfToken);
@@ -501,11 +501,13 @@ export function ChatsSurfacePanel({
             ? labels.chatSelectTurnNotAbortable
             : labels.success,
       });
+      return true;
     } catch (error) {
       // A rejection may still hide a committed creation, so the authoritative
       // list is re-read BEFORE the failure is reported.
       await reread();
       report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
+      return false;
     } finally {
       setCreating(false);
     }
@@ -601,22 +603,36 @@ export function ChatsSurfacePanel({
     }
     void (async () => {
       try {
+        // Owner's rule (2026-10-21): the active list never reaches zero. When this removal would
+        // empty it, the successor is created and mounted **first** - the store refuses a lifecycle
+        // transition on the mounted selection, and a crash between the two steps must not leave a
+        // root with no active Chat (which the store then calls corrupt on the next start).
+        const emptiesTheList = chatListRows(list).length === 1;
+        const successorMounted = emptiesTheList ? await createChat() : false;
+        if (emptiesTheList && !successorMounted) {
+          // The successor could not be created or mounted, so removing now would empty the list:
+          // the removal is refused instead, and the player keeps the Chat they have.
+          report({ kind: "failure", text: labels.chatRetentionFailed });
+          return;
+        }
         await api.transitionChatLifecycle(handle, operation, entry.managementRevision, csrfToken);
         // The transition removed the chat from the active list (metadata-only
         // mutation), so reconcile against the durable list it left behind.
         const remaining = await reread();
         if (remaining !== null && remaining.length === 0) {
-          // The owner's rule (see this seam's note): the companion has no active Chat
-          // left, so one is created through the New Chat control's own path, which also
-          // lands the player in it. It reports that outcome itself.
-          await createChat();
+          // The successor was created and mounted before this removal, so an empty list here means the
+          // read disagrees with what the Host just committed. Creating a second Chat would hide that;
+          // the player is told, and the shell's own re-read decides what to show.
+          report({ kind: "failure", text: labels.chatRetentionFailed });
           return;
         }
         // When the removed chat WAS the mounted one, the shell's selection no longer
         // names a chat the list holds: the mount owns the selection and the live cursor,
         // so it is told to move to a survivor. An unreadable list is that same report -
-        // the shell re-reads the list itself and decides on what it sees.
-        if (handle === currentChatHandle) onCurrentChatRemoved?.(handle);
+        // the shell re-reads the list itself and decides on what it sees. A removal that
+        // first created and mounted a successor has already moved the player, so the shell
+        // must not be asked to move again.
+        if (!successorMounted && handle === currentChatHandle) onCurrentChatRemoved?.(handle);
         report({ kind: "success", text: labels.success });
       } catch (error) {
         await reread();
