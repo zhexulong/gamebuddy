@@ -1,4 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
 import {
@@ -16,6 +21,8 @@ import {
 } from "./st-card-import.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
+import { selectAuthoredContextVolatileSourceRefs } from "./tavern/chat-thread-store.js";
+import { readWorldBook, validateWorldBook, writeWorldBook } from "./worldbook.js";
 import fc from "fast-check";
 
 function pngWithChara(json: string, keyword = "chara", paddingBytes = 0): Uint8Array {
@@ -1274,4 +1281,103 @@ test("without <START> the block boundary is the next speaker turn, so every turn
     { user: "一", companion: "甲" },
     { user: "二", companion: "乙" },
   ]);
+});
+
+// --- the card's own secondary selection gate --------------------------------
+
+/** The shipped reviewed card, read from whichever root the suite was started in. */
+async function shippedPresetCard(): Promise<unknown> {
+  for (const root of [process.cwd(), resolve(process.cwd(), ".."), resolve(process.cwd(), "..", "..")]) {
+    const path = join(root, "assets", "tavern", "presets", "default-companion", "card.json");
+    if (existsSync(path)) return JSON.parse(await readFile(path, "utf8"));
+  }
+  throw new Error("reviewed_preset_card_not_findable");
+}
+
+/**
+ * The card's own secondary selection gate used to be read and then dropped:
+ * `extractCharacterBook` carried `keys` alone and the durable entry had no field for
+ * the rest, so a card that wrote `secondary_keys` + `selectiveLogic` ("only when this
+ * other word is also said") reached the per-turn selector as a plain keyword entry.
+ * The selector implements all four SillyTavern modes; no imported entry could ask for
+ * one, and the entry therefore selected in exactly the situations its author excluded.
+ *
+ * The journey is the product's own, step by step: card text -> import candidates ->
+ * the durable `worldbook.json` the companion is provisioned with -> the selector's
+ * contract. Every step calls the real function; nothing is re-implemented here.
+ */
+test("an imported card's secondary trigger words and selective logic survive the durable book and select by that logic", async () => {
+  // The shipped reviewed card declares no gate, so it must come through exactly as
+  // before: its own trigger words, and no field its card never wrote.
+  const shipped = previewStCard(await shippedPresetCard());
+  assert.equal(shipped.worldBookCandidates.length, 7);
+  assert.deepEqual(shipped.worldBookCandidates[0]?.keys, ["农场", "开拓", "伙伴", "约定"]);
+  for (const entry of shipped.worldBookCandidates) {
+    assert.equal(Object.hasOwn(entry, "secondaryKeys"), false, `${entry.entryId} grew a gate its card never wrote`);
+    assert.equal(Object.hasOwn(entry, "selectiveLogic"), false, `${entry.entryId} grew a mode its card never wrote`);
+  }
+
+  // A card that DOES gate its entry on a second word, in SillyTavern's AND ANY mode.
+  const fixture = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "Gate",
+      description: "calm",
+      character_book: {
+        entries: [
+          {
+            comment: "Rainy afternoons",
+            content: "下雨时她把茶壶一直温在炉子上。",
+            keys: ["下雨"],
+            secondary_keys: ["茶", "门廊"],
+            selectiveLogic: 0,
+          },
+        ],
+      },
+    },
+  });
+  const imported = fixture.worldBookCandidates[0]!;
+  assert.deepEqual(imported.secondaryKeys, ["茶", "门廊"]);
+  assert.equal(imported.selectiveLogic, 0);
+
+  // The durable record, read back from disk the way the companion's runtime reads it.
+  const dir = await mkdtemp(join(tmpdir(), "st-card-secondary-"));
+  try {
+    const path = join(dir, "worldbook.json");
+    await writeWorldBook(
+      path,
+      validateWorldBook({
+        schemaVersion: 1,
+        worldBookId: "worldbook_secondary_gate",
+        revision: 1,
+        alwaysOnPremise: "",
+        entries: fixture.worldBookCandidates,
+      }),
+    );
+    const entry = (await readWorldBook(path)).entries[0]!;
+    assert.deepEqual(entry.secondaryKeys, ["茶", "门廊"]);
+    assert.equal(entry.selectiveLogic, 0);
+
+    // The selector's own contract, fed the entry the book actually holds.
+    const selectorCandidate = Object.freeze({
+      sourceId: "st-st-v3-1",
+      kind: "lorebook_entry" as const,
+      revision: "1",
+      canonicalHash: createHash("sha256").update(entry.content, "utf8").digest("hex"),
+      content: entry.content,
+      budgetTokens: Math.ceil(entry.content.length / 4),
+      totalOrderKey: "0001",
+      provenance: "tavern-world-book-entry/st-st-v3-1/revision/1/canonical/book",
+      selectionKeys: entry.keys!,
+      secondaryKeys: entry.secondaryKeys!,
+      selectiveLogic: entry.selectiveLogic!,
+    });
+    const selects = (text: string): boolean =>
+      selectAuthoredContextVolatileSourceRefs(text, "", [selectorCandidate]).refs.length === 1;
+    assert.equal(selects("外面下雨了"), false, "the primary word alone is not enough under AND ANY");
+    assert.equal(selects("外面下雨了，进来喝口茶"), true, "one secondary word satisfies AND ANY");
+    assert.equal(selects("下雨天坐在门廊上"), true, "and so does the other secondary word");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

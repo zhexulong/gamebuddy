@@ -570,9 +570,20 @@ function playableKeys(value: unknown): Readonly<{ keys: readonly string[]; dropp
   // makes a keyword-gated entry unreachable, so the count is reported.
   return Object.freeze({ keys, dropped: usable.length - keys.length });
 }
-/** The keys one world-book entry carries. A cap, not a schema limit. */
+/** The card's keys one world-book entry carries. A cap, not a schema limit. */
 const MAX_WORLDBOOK_KEYS = 16;
 const MAX_WORLDBOOK_KEY_CHARS = 64;
+
+/**
+ * The card's `selectiveLogic`, SillyTavern's four modes for the secondary keys
+ * (0 = AND ANY, 1 = NOT ALL, 2 = NOT ANY, 3 = AND ALL), or nothing when the card
+ * declared none - the selector then applies its own documented default.
+ */
+function readSelectiveLogic(value: unknown): 0 | 1 | 2 | 3 | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 3
+    ? (value as 0 | 1 | 2 | 3)
+    : undefined;
+}
 
 function extractCharacterBook(
   value: unknown,
@@ -603,8 +614,15 @@ function extractCharacterBook(
   let unreadableContent = 0;
   let unrenderableContent = 0;
   let truncatedKeys = 0;
+  let truncatedSecondaryKeys = 0;
   entries.forEach((raw, index) => {
     if (!isRecord(raw)) return;
+    // The card's own `enabled: false` is the author saying "this entry does not
+    // ship". Honouring it is not a loss - nothing the card wanted is dropped - so
+    // nothing is recorded against it; shipping it would import a setting the
+    // author switched off, and a keyword-gated entry would then fire on its own
+    // trigger words and ride into her context.
+    if (raw.enabled === false) return;
     const content = boundedMultilineText(raw.content, ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes);
     if (content === undefined) {
       // Content the card DID write but this import cannot read: beyond the
@@ -637,6 +655,13 @@ function extractCharacterBook(
     // (the field stays absent) rather than as a malformed entry.
     const { keys, dropped } = playableKeys(raw.keys);
     truncatedKeys += dropped;
+    // The card's SECONDARY trigger words and the logic that combines them. Reading only
+    // `keys` and dropping these made an authored "only when this other word is also said"
+    // rule unreachable: the selector implements all four modes, but no imported entry
+    // ever reached it with a secondary gate.
+    const { keys: secondaryKeys, dropped: droppedSecondaryKeys } = playableKeys(raw.secondary_keys);
+    truncatedSecondaryKeys += droppedSecondaryKeys;
+    const selectiveLogic = readSelectiveLogic(raw.selectiveLogic);
     candidates.push(
       Object.freeze({
         entryId: `st-${format}-${index + 1}`,
@@ -652,12 +677,15 @@ function extractCharacterBook(
         // entries (constant false) stay behind the lookup tools.
         ...(raw.constant === true ? { constant: true } : {}),
         ...(keys.length === 0 ? {} : { keys }),
+        ...(secondaryKeys.length === 0 ? {} : { secondaryKeys }),
+        ...(selectiveLogic === undefined ? {} : { selectiveLogic }),
       }),
     );
   });
   losses.record("character_book.entries", "worldbook_entry_content_unreadable", unreadableContent);
   losses.record("character_book.entries", "unrenderable_worldbook_entry", unrenderableContent);
   losses.record("character_book.keys", "worldbook_keys_truncated", truncatedKeys);
+  losses.record("character_book.secondary_keys", "worldbook_keys_truncated", truncatedSecondaryKeys);
   return Object.freeze({
     entries: Object.freeze(candidates),
     ...(scanDepth === undefined ? {} : { scanDepth }),
