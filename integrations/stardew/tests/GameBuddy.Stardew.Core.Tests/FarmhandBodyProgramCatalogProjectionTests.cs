@@ -70,12 +70,44 @@ public sealed class FarmhandBodyProgramCatalogProjectionTests
     }
 
     [Fact]
-    public void ReadOnlyAndExperimentalRegistrationsRemainOutsideExecutionCatalog()
+    public void ReadOnlyAndNonAdmittedRegistrationsRemainOutsideExecutionCatalog()
     {
         FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create();
 
         result.Rejections.Should().Contain(rejection => rejection.ActionId == "inspect_world_map" && rejection.Code == "read_only_not_execution");
-        result.Rejections.Should().Contain(rejection => rejection.ActionId == "clear_debris" && rejection.Code == "lifecycle_not_published");
+        result.Rejections.Should().NotContain(rejection => rejection.ActionId == "clear_debris");
+    }
+
+    [Fact]
+    public void LiveVerifiedRegistrationIsAProgramNodeWithoutBeingPromoted()
+    {
+        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create();
+
+        result.Rejections.Should().NotContain(rejection => rejection.ActionId == "cut_weeds");
+        result.Catalog!.TryGetAction("cut_weeds", out BodyProgramActionDescriptor? cutWeeds).Should().BeTrue();
+        // The projected node carries the registration's own lifecycle: live_verified is admitted to
+        // programs and is still not a publication.
+        cutWeeds!.Metadata.Should().Be(new BodyProgramActionMetadata("live_verified", "execution", "write", "native_action_postcondition"));
+        cutWeeds.Arguments.Should().Contain(new BodyProgramArgumentDescriptor("slot", BodyProgramArgumentKind.Integer));
+        FarmhandActionCatalog.Registrations.Single(registration => registration.ActionId == "cut_weeds")
+            .Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
+    }
+
+    [Fact]
+    public void DisallowedLifecycleIsRefusedByActionNameAndLifecycle()
+    {
+        FarmhandBodyProgramCatalogProjectionResult result = FarmhandBodyProgramCatalogProjection.Create(
+            Artifact(42, new FarmhandActionDescriptorProjection(
+                "experimental_clear", 3, "experimental", "execution",
+                new Dictionary<string, FarmhandActionArgumentSchema>(),
+                new Dictionary<string, string>(),
+                new FarmhandActionResourceTemplate(Array.Empty<FarmhandActionResourceTemplateValueProjection>()), "write",
+                new FarmhandActionPostcondition("native_action_postcondition"))));
+
+        result.Status.Should().Be(FarmhandBodyProgramCatalogProjectionStatus.Blocked);
+        result.Rejections.Should().ContainSingle(rejection =>
+            rejection.ActionId == "experimental_clear"
+            && rejection.Code == "lifecycle_not_allowed:experimental_clear:experimental");
     }
 
     [Theory]

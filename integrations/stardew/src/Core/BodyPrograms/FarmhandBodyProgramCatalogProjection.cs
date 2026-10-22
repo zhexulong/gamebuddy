@@ -89,10 +89,15 @@ public static class FarmhandBodyProgramCatalogProjection
         code = null;
         message = null;
 
-        if (source.Lifecycle != FarmhandActionLifecycle.Published.ToWireValue())
+        // Live-verified is an admission, not a draft: the action really ran on the target game
+        // version and produced a native receipt, so it may be a program node exactly as a published
+        // one may. The refusal names the action and its lifecycle, because a caller that only hears
+        // "not published" cannot tell which node to drop or send as a single action instead.
+        if (source.Lifecycle != FarmhandActionLifecycle.Published.ToWireValue()
+            && source.Lifecycle != FarmhandActionLifecycle.LiveVerified.ToWireValue())
         {
-            code = "lifecycle_not_published";
-            message = "Only published registrations can be projected.";
+            code = $"lifecycle_not_allowed:{source.ActionId}:{source.Lifecycle}";
+            message = $"'{source.ActionId}' is {source.Lifecycle}; only published or live-verified execution actions can be a Body Program node.";
             return false;
         }
         List<BodyProgramArgumentDescriptor> arguments = new();

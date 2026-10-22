@@ -493,6 +493,72 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
+    public void ProjectedLiveVerifiedWeedNodeProgramIsAcceptedWithItsToolSlot()
+    {
+        BodyProgramActionCatalog catalog = FarmhandBodyProgramCatalogProjection.Create().Catalog!;
+        ActionProgramCandidate candidate = new("weed_clear_a", new[]
+        {
+            new ActionProgramCandidateNode("first", "cut_weeds", WeedArguments(), Array.Empty<string>(), Bindings()),
+        });
+
+        BodyProgramVerificationReport verification = Open(catalog: catalog).Verify(candidate);
+
+        verification.Accepted.Should().BeTrue();
+        verification.CatalogRevision.Should().Be(catalog.Revision);
+    }
+
+    [Fact]
+    public void ProjectedWeedNodeWithoutItsToolSlotIsRefusedByActionNameAndMissingArgument()
+    {
+        BodyProgramActionCatalog catalog = FarmhandBodyProgramCatalogProjection.Create().Catalog!;
+        ActionProgramCandidate candidate = new("weed_clear_a", new[]
+        {
+            new ActionProgramCandidateNode("first", "cut_weeds", WeedArguments(withSlot: false), Array.Empty<string>(), Bindings()),
+        });
+
+        BodyProgramVerificationReport verification = Open(catalog: catalog).Verify(candidate);
+
+        verification.Accepted.Should().BeFalse();
+        BodyProgramDiagnostic diagnostic = verification.Diagnostics.Should().ContainSingle().Subject;
+        diagnostic.Code.Should().Be("invalid_arguments:cut_weeds");
+        diagnostic.NodeId.Should().Be("first");
+        diagnostic.Message.Should().Contain("slot");
+        BridgeProtocol.IsReasonCode(diagnostic.Code).Should().BeTrue();
+    }
+
+    [Fact]
+    public void CandidateVerifierNamesTheActionThatCannotBeGrouped()
+    {
+        ActionProgramCandidate candidate = new("program", new[]
+        {
+            new ActionProgramCandidateNode("first", "cut_weeds", WeedArguments(), Array.Empty<string>(), Bindings()),
+        });
+
+        BodyProgramVerificationReport verification = Open().Verify(candidate);
+
+        verification.Accepted.Should().BeFalse();
+        BodyProgramDiagnostic diagnostic = verification.Diagnostics.Single(item => item.Code == "unknown_action:cut_weeds");
+        diagnostic.NodeId.Should().Be("first");
+        diagnostic.Message.Should().Contain("single action");
+        BridgeProtocol.IsReasonCode(diagnostic.Code).Should().BeTrue();
+    }
+
+    [Fact]
+    public void VerifierKeepsAnUnwireableActionIdOutOfTheReasonCode()
+    {
+        ActionProgramCandidate candidate = new("program", new[]
+        {
+            new ActionProgramCandidateNode("first", "Cut_Weeds", WeedArguments(), Array.Empty<string>(), Bindings()),
+        });
+
+        BodyProgramVerificationReport verification = Open().Verify(candidate);
+
+        BodyProgramDiagnostic diagnostic = verification.Diagnostics.Single(item => item.Code == "unknown_action");
+        diagnostic.Message.Should().Contain("Cut_Weeds");
+        BridgeProtocol.IsReasonCode(diagnostic.Code).Should().BeTrue();
+    }
+
+    [Fact]
     public void ReopenRejectsPersistedDuplicateDependencyId()
     {
         var store = new MemoryStore();
@@ -1449,6 +1515,18 @@ public sealed class BodyProgramAuthorityTests
     private static BridgeScope Scope() => new("stardew", "save", "world", "player", "companion");
     private static IReadOnlyDictionary<string, ActionProgramBinding> Bindings(params object[] values) => values.Chunk(2).ToDictionary(pair => (string)pair[0], pair => (ActionProgramBinding)pair[1], StringComparer.Ordinal);
     private static IReadOnlyDictionary<string, BodyProgramRuntimeValue> RuntimeMap(string key, long value) => new Dictionary<string, BodyProgramRuntimeValue>(StringComparer.Ordinal) { [key] = new("integer", value.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
+    /// <summary>The declared arguments of the projected `cut_weeds` descriptor; `slot` is the equipped scythe's.</summary>
+    private static IReadOnlyDictionary<string, BodyProgramRuntimeValue> WeedArguments(bool withSlot = true)
+    {
+        Dictionary<string, BodyProgramRuntimeValue> arguments = new(StringComparer.Ordinal)
+        {
+            ["x"] = new("integer", "20"),
+            ["y"] = new("integer", "12"),
+            ["expectedTargetId"] = new("string", "weed_20_12"),
+        };
+        if (withSlot) arguments["slot"] = new("integer", "1");
+        return arguments;
+    }
     private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalMap(string key, long value) => new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal) { [key] = new(BodyProgramArgumentKind.Integer, value.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
     private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalBooleanMap(string key, bool value) => new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal) { [key] = new(BodyProgramArgumentKind.Boolean, value ? "true" : "false") };
     private static IReadOnlyDictionary<string, string> Claims(string key, string value) => new Dictionary<string, string>(StringComparer.Ordinal) { [key] = value };
