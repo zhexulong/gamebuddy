@@ -691,3 +691,64 @@ test("a player with no persona publishes the same catalog it did before personas
     await release({ ...(chat === undefined ? {} : { first: chat }), threads: fixture.threads, root: fixture.root });
   }
 });
+
+/**
+ * A persona is authored text, and authored text goes through the run's macro table.
+ *
+ * The description is the one field a player writes about themselves, so `{{user}}` is
+ * exactly a placeholder they may reach for. It renders through the SAME table the
+ * scenario and the world book do - never published raw - and a macro the run's table
+ * cannot resolve is refused by name, because a bound stable source cannot be dropped the
+ * way an optional world book entry can.
+ */
+test("a persona's macros render through the run's table, and an unresolvable one is refused", async () => {
+  const fixture = await twoChats();
+  const personas = createPersonaManagementService(fixture.artifacts, fixture.tavernPaths.playerRoot);
+  const THIRD = Object.freeze({
+    chatThreadId: `chat-${"3".repeat(16)}`,
+    chatSurfaceSessionId: `surface-${"3".repeat(16)}`,
+  });
+  let second: PreparedChat | undefined;
+  let third: PreparedChat | undefined;
+  try {
+    await personas.create({
+      name: PERSONA.name,
+      description: "SENTINEL-MACRO-PERSONA: {{user}} 春天在河谷认识 {{char}}，那年 {{user}} 刚满二十。",
+    });
+    await fixture.library.createNewChat({ ...SECOND });
+    second = await constructChat(fixture, SECOND);
+    const catalog = await second.prepared.materializeDesiredStableContextForPiSession("pi_persona_macro");
+    const published = catalog.stableSources.find((source) => source.kind === "persona")?.content ?? "";
+    assert.equal(
+      published.includes("SENTINEL-MACRO-PERSONA"),
+      true,
+      `the description must reach the model; got ${published}`,
+    );
+    assert.equal(published.includes("{{"), false, "no placeholder may be published as authored context");
+    assert.equal(
+      published.includes("你 春天在河谷认识 琥珀，那年 你 刚满二十。"),
+      true,
+      `{{user}} is the run's player reference and {{char}} the companion's own name; got ${published}`,
+    );
+
+    await personas.update({
+      expectedRevision: 1,
+      name: PERSONA.name,
+      description: "SENTINEL-MACRO-PERSONA: {{an_unresolvable_macro}}",
+    });
+    await fixture.library.createNewChat({ ...THIRD });
+    third = await constructChat(fixture, THIRD);
+    await assert.rejects(
+      third.prepared.materializeDesiredStableContextForPiSession("pi_persona_bad_macro"),
+      /chat_runtime_exact_content_unavailable/,
+      "a persona macro the run's table cannot resolve must fail the turn closed, never leak",
+    );
+  } finally {
+    await release({
+      ...(second === undefined ? {} : { first: second }),
+      ...(third === undefined ? {} : { second: third }),
+      threads: fixture.threads,
+      root: fixture.root,
+    });
+  }
+});

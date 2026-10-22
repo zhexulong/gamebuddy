@@ -154,20 +154,22 @@ export async function materializeTavernAuthoredContextCatalog(
     if (!valid) throw new Error("tavern_stable_context_source_mismatch");
     const content =
       selected.kind === "persona"
-        ? canonicalJson({
-            name: (artifact as UserPersona).name,
-            ...((artifact as UserPersona).description === undefined
-              ? {}
-              : { description: (artifact as UserPersona).description }),
-          })
+        ? personaStableContent(artifact as UserPersona, macros)
         : selected.kind === "scenario"
           ? renderMacros((artifact as Scenario).text, macros)
           : canonicalJson({ blocks: (artifact as DialogueExamples).blocks });
-    // A scenario is one bound stable source, so unlike a world book entry it cannot
-    // be dropped. An authored macro the run's table cannot resolve still must not be
-    // published as the companion's context, exactly as the Game surface refuses one.
-    if (selected.kind === "scenario" && hasUnrenderedMacro(content))
-      throw new Error("tavern_stable_context_unrendered_scenario_macro");
+    // A scenario and a persona are each ONE bound stable source, so unlike a world book
+    // entry neither can be dropped. An authored macro the run's table cannot resolve still
+    // must not be published as the companion's context, exactly as the Game surface refuses
+    // one. The persona's fields arrive already bounded by the artifact contract at authoring
+    // time (`persona-management.ts`: 128 for the name, 4_096 for the description), so the
+    // render is bounded by the same discipline as every other authored field.
+    if (selected.kind !== "dialogue_examples" && hasUnrenderedMacro(content))
+      throw new Error(
+        selected.kind === "persona"
+          ? "tavern_stable_context_unrendered_persona_macro"
+          : "tavern_stable_context_unrendered_scenario_macro",
+      );
     sources.push(
       source(
         selected.kind,
@@ -360,6 +362,19 @@ function deriveStableWorldInfoContent(sourceValue: TavernWorldInfoSource): strin
     ? constants
     : boundedWorldInfoOverview(overview);
 }
+/**
+ * The player's own side of the scene, as authored: her name and the answer to
+ * 「你希望伙伴如何认识你」. Both fields are bounded by the artifact contract at authoring
+ * time, and both render through the run's macro table, so `{{user}}`/`{{char}}` in a
+ * description resolve instead of reaching the model as placeholders.
+ */
+function personaStableContent(persona: UserPersona, macros: MacroTable): string {
+  return canonicalJson({
+    name: renderMacros(persona.name, macros),
+    ...(persona.description === undefined ? {} : { description: renderMacros(persona.description, macros) }),
+  });
+}
+
 function boundedWorldInfoOverview(content: string): string {
   const maxCharacters = TAVERN_STABLE_CONTEXT_MAX_TOKENS * 4;
   return content.length <= maxCharacters ? content : content.slice(0, maxCharacters).trim();
