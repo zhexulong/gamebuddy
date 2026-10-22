@@ -135,6 +135,9 @@ internal sealed partial class ExecutionManager
     {
         if (!TrySelectDeclaredTool(Game1.player, "break_rock_source", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
+        Dictionary<string, string> evidence = ToolActionEvidence.SelectionFacts(selection);
+        ExecutionState state;
+        string reasonCode;
         try
         {
             if (selection.Tool is not Pickaxe pickaxe)
@@ -152,28 +155,25 @@ internal sealed partial class ExecutionManager
             // pickaxe tap costs 2*(0+1) - Mining*0.1 = 2 - Mining*0.1.
             float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
             bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterRock);
-            bool succeeded = removed;
-            string evidence = ToolActionEvidence.Compose(ToolActionEvidence.BreakRockSource, new Dictionary<string, string>
-            {
-                ["target"] = expectedTargetId,
-                ["tool"] = "pickaxe",
-                // The slot the action used is the one the selection put in hand, never the number the request carried.
-                ["slot"] = selection.Slot.ToString(CultureInfo.InvariantCulture),
-                ["qualified_item_id"] = rock.QualifiedItemId,
-                ["durability_before"] = before.ToString(CultureInfo.InvariantCulture),
-                ["durability_after"] = removed ? "removed" : afterRock!.MinutesUntilReady.ToString(CultureInfo.InvariantCulture),
-                ["removed"] = removed.ToString().ToLowerInvariant(),
-                ["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture),
-                ["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture),
-                ["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture),
-                ["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture),
-            });
-            return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "rock_source_broken" : "rock_source_postcondition_unavailable", evidence);
+            evidence["target"] = expectedTargetId;
+            evidence["tool"] = "pickaxe";
+            evidence["qualified_item_id"] = rock.QualifiedItemId;
+            evidence["durability_before"] = before.ToString(CultureInfo.InvariantCulture);
+            evidence["durability_after"] = removed ? "removed" : afterRock!.MinutesUntilReady.ToString(CultureInfo.InvariantCulture);
+            evidence["removed"] = removed.ToString().ToLowerInvariant();
+            evidence["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
+            state = removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = removed ? "rock_source_broken" : "rock_source_postcondition_unavailable";
         }
         finally
         {
             RestoreToolSelection(Game1.player, selection);
+            evidence["tool_restored"] = DescribeToolCategory(Game1.player.CurrentTool);
         }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, ToolActionEvidence.Compose(ToolActionEvidence.BreakRockSource, evidence));
     }
 
     /// <summary>One native Basic Pickaxe use removes exactly one fresh adjacent empty ground HoeDirt; crops, IndoorPots, drops, and collection are outside this action.</summary>
@@ -598,6 +598,7 @@ internal sealed partial class ExecutionManager
         }
         Tool tool = (Tool)farmer.Items[resolution.Slot]!;
         int previousSlot = farmer.CurrentToolIndex;
+        Tool? previousTool = previousSlot >= 0 && previousSlot < farmer.Items.Count ? farmer.Items[previousSlot] as Tool : null;
         farmer.CurrentToolIndex = resolution.Slot;
         // The switch's own postcondition: a handler must never swing whatever the switch left in hand.
         if (!ReferenceEquals(farmer.CurrentTool, tool))
@@ -606,13 +607,35 @@ internal sealed partial class ExecutionManager
             refusalCode = $"tool_not_selected:{resolution.Category}";
             return false;
         }
-        selection = new DeclaredToolSelection(tool, resolution.Category, resolution.Slot, previousSlot);
+        selection = new DeclaredToolSelection(tool, resolution.Category, resolution.Slot, previousSlot, previousTool);
         return true;
     }
 
     /// <summary>Puts the actor's own tool selection back: every exit after a selection restores it exactly once.</summary>
     private static void RestoreToolSelection(Farmer farmer, DeclaredToolSelection selection) =>
         farmer.CurrentToolIndex = selection.PreviousSlot;
+
+    /// <summary>
+    /// The category of whatever the actor is holding, in the vocabulary <see cref="FarmhandActionCatalog.ToolEnum"/> and
+    /// <see cref="MatchesToolCategory"/> share, or `none` when the held item is not one of them. The inverse of
+    /// <see cref="MatchesToolCategory"/>, so a receipt names the tool with the same word the claim that needs it does - a
+    /// scythe is a MeleeWeapon, so it is tested before `weapon`.
+    /// </summary>
+    internal static string DescribeToolCategory(Tool? tool) => tool switch
+    {
+        null => "none",
+        Axe => "axe",
+        Pickaxe => "pickaxe",
+        Hoe => "hoe",
+        WateringCan => "watering_can",
+        FishingRod => "fishing_rod",
+        Shears => "shears",
+        MilkPail => "milk_pail",
+        Pan => "pan",
+        MeleeWeapon weapon when weapon.isScythe() => "scythe",
+        MeleeWeapon or Slingshot => "weapon",
+        _ => "none",
+    };
 
     /// <summary>
     /// Chop exactly one TerrainFeature Tree stump (stump.Value == true) with an
@@ -821,6 +844,9 @@ internal sealed partial class ExecutionManager
     {
         if (!TrySelectDeclaredTool(Game1.player, "cut_grass", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
+        Dictionary<string, string> evidence = ToolActionEvidence.SelectionFacts(selection);
+        ExecutionState state;
+        string reasonCode;
         try
         {
             if (selection.Tool is not MeleeWeapon weapon)
@@ -875,34 +901,32 @@ internal sealed partial class ExecutionManager
             // The outcome of that roll is not observable from here without re-deriving it,
             // so the receipt reports only what actually changed and is true: the tuft is
             // gone (and the evidence key below says exactly that).
-            string evidence = ToolActionEvidence.Compose(ToolActionEvidence.CutGrass, new Dictionary<string, string>
-            {
-                ["target"] = expectedTargetId,
-                ["type"] = "grass",
-                ["tool"] = "scythe",
-                ["grass_type"] = grassType.ToString(CultureInfo.InvariantCulture),
-                ["weeds_before"] = weedsBefore.ToString(CultureInfo.InvariantCulture),
-                ["weeds_after"] = removed
-                    ? "removed"
-                    : location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? remainingFeature) && remainingFeature is StardewValley.TerrainFeatures.Grass remainingGrass
-                        ? remainingGrass.numberOfWeeds.Value.ToString(CultureInfo.InvariantCulture)
-                        : "missing",
-                ["swings"] = swingCount.ToString(CultureInfo.InvariantCulture),
-                ["removed"] = removed.ToString().ToLowerInvariant(),
-                ["tuft_removed"] = removed.ToString().ToLowerInvariant(),
-                ["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture),
-                ["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture),
-                ["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture),
-                ["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture),
-            });
-            return removed
-                ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "grass_cut", evidence)
-                : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "grass_cut_postcondition_unavailable", evidence);
+            evidence["target"] = expectedTargetId;
+            evidence["type"] = "grass";
+            evidence["tool"] = "scythe";
+            evidence["grass_type"] = grassType.ToString(CultureInfo.InvariantCulture);
+            evidence["weeds_before"] = weedsBefore.ToString(CultureInfo.InvariantCulture);
+            evidence["weeds_after"] = removed
+                ? "removed"
+                : location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? remainingFeature) && remainingFeature is StardewValley.TerrainFeatures.Grass remainingGrass
+                    ? remainingGrass.numberOfWeeds.Value.ToString(CultureInfo.InvariantCulture)
+                    : "missing";
+            evidence["swings"] = swingCount.ToString(CultureInfo.InvariantCulture);
+            evidence["removed"] = removed.ToString().ToLowerInvariant();
+            evidence["tuft_removed"] = removed.ToString().ToLowerInvariant();
+            evidence["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
+            state = removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = removed ? "grass_cut" : "grass_cut_postcondition_unavailable";
         }
         finally
         {
             RestoreToolSelection(Game1.player, selection);
+            evidence["tool_restored"] = DescribeToolCategory(Game1.player.CurrentTool);
         }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, ToolActionEvidence.Compose(ToolActionEvidence.CutGrass, evidence));
     }
 
     /// <summary>
@@ -915,6 +939,9 @@ internal sealed partial class ExecutionManager
     {
         if (!TrySelectDeclaredTool(Game1.player, "cut_weeds", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
+        Dictionary<string, string> evidence = ToolActionEvidence.SelectionFacts(selection);
+        ExecutionState state;
+        string reasonCode;
         try
         {
             if (selection.Tool is not MeleeWeapon weapon)
@@ -970,33 +997,31 @@ internal sealed partial class ExecutionManager
             // so the expected embodied cost is exactly zero. Reporting it as an
             // explicit zero is the fact the Agent needs ("this family is free").
             float expectedStaminaCost = 0f;
-            string evidence = ToolActionEvidence.Compose(ToolActionEvidence.CutWeeds, new Dictionary<string, string>
-            {
-                ["target"] = expectedTargetId,
-                ["type"] = "weed",
-                ["tool"] = "scythe",
-                ["qualified_item_id"] = weed.QualifiedItemId,
-                ["health_before"] = healthBefore.ToString(CultureInfo.InvariantCulture),
-                ["health_after"] = removed
-                    ? "removed"
-                    : location.objects.TryGetValue(tile, out StardewValley.Object? remainingWeed) && remainingWeed is not null
-                        ? remainingWeed.MinutesUntilReady.ToString(CultureInfo.InvariantCulture)
-                        : "missing",
-                ["swings"] = swingCount.ToString(CultureInfo.InvariantCulture),
-                ["removed"] = removed.ToString().ToLowerInvariant(),
-                ["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture),
-                ["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture),
-                ["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture),
-                ["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture),
-            });
-            if (handled && removed)
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "weeds_cut", evidence);
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "weed_cut_postcondition_unavailable", evidence);
+            evidence["target"] = expectedTargetId;
+            evidence["type"] = "weed";
+            evidence["tool"] = "scythe";
+            evidence["qualified_item_id"] = weed.QualifiedItemId;
+            evidence["health_before"] = healthBefore.ToString(CultureInfo.InvariantCulture);
+            evidence["health_after"] = removed
+                ? "removed"
+                : location.objects.TryGetValue(tile, out StardewValley.Object? remainingWeed) && remainingWeed is not null
+                    ? remainingWeed.MinutesUntilReady.ToString(CultureInfo.InvariantCulture)
+                    : "missing";
+            evidence["swings"] = swingCount.ToString(CultureInfo.InvariantCulture);
+            evidence["removed"] = removed.ToString().ToLowerInvariant();
+            evidence["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
+            state = handled && removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = handled && removed ? "weeds_cut" : "weed_cut_postcondition_unavailable";
         }
         finally
         {
             RestoreToolSelection(Game1.player, selection);
+            evidence["tool_restored"] = DescribeToolCategory(Game1.player.CurrentTool);
         }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, ToolActionEvidence.Compose(ToolActionEvidence.CutWeeds, evidence));
     }
 
     private static int ItemRankForWeapon(Tool item)
@@ -1157,44 +1182,64 @@ internal sealed partial class ExecutionManager
 internal readonly record struct DeclaredToolResolution(string Category, int Slot, string? RefusalCode);
 
 /// <summary>
-/// The actor's tool selection while one action runs: the tool taken, the category it satisfies, and the index it
-/// replaced, which is what every exit restores.
+/// The actor's tool selection while one action runs: the tool taken, the category it satisfies, the index it
+/// replaced, and the tool that index held - which is what every exit restores and what the receipt reports.
 /// </summary>
-internal readonly record struct DeclaredToolSelection(Tool Tool, string Category, int Slot, int PreviousSlot);
+internal readonly record struct DeclaredToolSelection(Tool Tool, string Category, int Slot, int PreviousSlot, Tool? PreviousTool);
 
 /// <summary>
 /// The receipt-detail key set of each tool action, stated ONCE per action.
 ///
 /// The Host pins every one of these sets EXACTLY (`host/src/stardew-game-integration-adapter.ts`: the `cut_weeds` and
 /// `cut_grass` branches, `hasWaterCropCompletionEvidence`, `hasBreakRockSourceCompletionEvidence`), so a success with
-/// an unexpected key is a success the Host does not recognise. That is why the selection facts a handler now owns are
-/// NOT keys yet: this list is where the paired change lands, in one place, together with the Host reader.
+/// an unexpected key - or without one - is a success the Host does not recognise.
+///
+/// The tool-selection keys are written by the side that performs the fact: `ToolActionEvidence.SelectionFacts` states
+/// what the handler took while that tool is in hand, and `tool_restored` is written only after
+/// `RestoreToolSelection` has actually run. A run that dies between the two emits no `tool_restored` rather than
+/// claiming a restore it did not perform.
 /// </summary>
 internal static class ToolActionEvidence
 {
     internal static readonly IReadOnlyList<string> CutWeeds = Array.AsReadOnly(new[]
     {
-        "target", "type", "tool", "qualified_item_id", "health_before", "health_after", "swings", "removed",
-        "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost",
+        "target", "type", "tool", "tool_selected", "slot", "tool_before", "slot_before", "qualified_item_id",
+        "health_before", "health_after", "swings", "removed", "stamina_before", "stamina_after", "stamina_delta",
+        "expected_stamina_cost", "tool_restored",
     });
 
     internal static readonly IReadOnlyList<string> CutGrass = Array.AsReadOnly(new[]
     {
-        "target", "type", "tool", "grass_type", "weeds_before", "weeds_after", "swings", "removed", "tuft_removed",
-        "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost",
+        "target", "type", "tool", "tool_selected", "slot", "tool_before", "slot_before", "grass_type",
+        "weeds_before", "weeds_after", "swings", "removed", "tuft_removed", "stamina_before", "stamina_after",
+        "stamina_delta", "expected_stamina_cost", "tool_restored",
     });
 
     internal static readonly IReadOnlyList<string> BreakRockSource = Array.AsReadOnly(new[]
     {
-        "target", "tool", "slot", "qualified_item_id", "durability_before", "durability_after", "removed",
-        "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost",
+        "target", "tool", "tool_selected", "slot", "tool_before", "slot_before", "qualified_item_id",
+        "durability_before", "durability_after", "removed", "stamina_before", "stamina_after", "stamina_delta",
+        "expected_stamina_cost", "tool_restored",
     });
 
     internal static readonly IReadOnlyList<string> WaterCrop = Array.AsReadOnly(new[]
     {
-        "location", "target", "tile", "before_watered", "after_watered", "water_before", "water_after",
-        "water_consumed", "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost",
+        "location", "target", "tile", "tool_selected", "slot", "tool_before", "slot_before", "before_watered",
+        "after_watered", "water_before", "water_after", "water_consumed", "stamina_before", "stamina_after",
+        "stamina_delta", "expected_stamina_cost", "tool_restored",
     });
+
+    /// <summary>
+    /// The selection half of one action's detail: the tool the handler took, the slot it came from, and the tool and
+    /// slot it displaced. `slot` is the one the SELECTION put in hand, never the number a request carried.
+    /// </summary>
+    internal static Dictionary<string, string> SelectionFacts(DeclaredToolSelection selection) => new()
+    {
+        ["tool_selected"] = selection.Category,
+        ["slot"] = selection.Slot.ToString(CultureInfo.InvariantCulture),
+        ["tool_before"] = ExecutionManager.DescribeToolCategory(selection.PreviousTool),
+        ["slot_before"] = selection.PreviousSlot.ToString(CultureInfo.InvariantCulture),
+    };
 
     /// <summary>
     /// One receipt detail from a key list and its values, in the LIST's order: the list is the contract, so a key that

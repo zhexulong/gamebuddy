@@ -166,22 +166,95 @@ public sealed class DeclaredToolSelectionTests
             HostEvidenceKeys(adapter, "function hasBreakRockSourceCompletionEvidence(", "if (Object.keys(evidence).length"));
         ToolActionEvidence.WaterCrop.Should().BeEquivalentTo(
             HostEvidenceKeys(adapter, "function hasWaterCropCompletionEvidence(", "if (Object.keys(evidence).length"));
+    }
 
+    [Fact]
+    public void TheComposedReceiptStatesTheSelectionAndThenTheRestoreItActuallyPerformed()
+    {
         // The composer emits the list's own keys in the list's order, so a key without a value cannot reach the wire.
-        ToolActionEvidence.Compose(ToolActionEvidence.BreakRockSource, new Dictionary<string, string>
+        DeclaredToolSelection selection = new(Pickaxe(upgradeLevel: 0), "pickaxe", 3, 0, Axe(upgradeLevel: 0));
+        Dictionary<string, string> values = ToolActionEvidence.SelectionFacts(selection);
+        values.Should().BeEquivalentTo(new Dictionary<string, string>
         {
-            ["target"] = "rock_01",
-            ["tool"] = "pickaxe",
+            ["tool_selected"] = "pickaxe",
             ["slot"] = "3",
-            ["qualified_item_id"] = "(O)2",
-            ["durability_before"] = "1",
-            ["durability_after"] = "removed",
-            ["removed"] = "true",
-            ["stamina_before"] = "100",
-            ["stamina_after"] = "98",
-            ["stamina_delta"] = "-2",
-            ["expected_stamina_cost"] = "2",
-        }).Should().Be("target=rock_01;tool=pickaxe;slot=3;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2");
+            ["tool_before"] = "axe",
+            ["slot_before"] = "0",
+        });
+        values["target"] = "rock_01";
+        values["tool"] = "pickaxe";
+        values["qualified_item_id"] = "(O)2";
+        values["durability_before"] = "1";
+        values["durability_after"] = "removed";
+        values["removed"] = "true";
+        values["stamina_before"] = "100";
+        values["stamina_after"] = "98";
+        values["stamina_delta"] = "-2";
+        values["expected_stamina_cost"] = "2";
+        // A run that has not restored yet cannot mint the receipt: the key has no value until the finally writes it.
+        bool restored;
+        try
+        {
+            _ = ToolActionEvidence.Compose(ToolActionEvidence.BreakRockSource, values);
+            restored = true;
+        }
+        catch (KeyNotFoundException)
+        {
+            restored = false;
+        }
+        restored.Should().BeFalse("the restore fact cannot be claimed before the restore has run");
+
+        values["tool_restored"] = "axe";
+        ToolActionEvidence.Compose(ToolActionEvidence.BreakRockSource, values).Should().Be(
+            "target=rock_01;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=axe;slot_before=0;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe");
+    }
+
+    [Fact]
+    public void TheToolAFactNamesIsThePublishedCategoryOfTheToolActuallyHeld()
+    {
+        // The Host reads `tool_selected`/`tool_before`/`tool_restored` as one word from the vocabulary an action's own
+        // claim uses, so the namer has to agree with the matcher that decides ownership - including that a scythe is a
+        // MeleeWeapon and must not be reported as `weapon`.
+        foreach ((string category, Tool tool) in new (string, Tool)[]
+        {
+            ("axe", Axe(upgradeLevel: 0)),
+            ("pickaxe", Pickaxe(upgradeLevel: 0)),
+            ("hoe", Hoe()),
+            ("watering_can", WateringCan()),
+            ("scythe", Scythe()),
+            ("weapon", Sword()),
+        })
+        {
+            FarmhandActionCatalog.ToolEnum.Should().Contain(category);
+            ToolCategory(tool).Should().Be(category);
+        }
+
+        ToolCategory(null).Should().Be("none", "nothing held is the one literal the Host accepts for absent");
+    }
+
+    [Fact]
+    public void EveryToolActionComposesItsReceiptAfterTheRestoreSoTheRestoreFactIsTrue()
+    {
+        // `tool_restored` may only be written after the finally has put the actor's selection back, and the receipt is
+        // composed after that - so the key can never describe a restore that has not happened. Reordering either half
+        // fails here rather than shipping a receipt that asserts an unperformed restore.
+        foreach ((string actionId, string file, string signature, string keyList) in new[]
+        {
+            ("cut_weeds", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutWeeds(", "CutWeeds"),
+            ("cut_grass", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutGrass(", "CutGrass"),
+            ("break_rock_source", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRockSource(", "BreakRockSource"),
+            ("water_crop", FarmingConstructionActions, "public LocalExecutionReceipt RequestLocalWaterCrop(", "WaterCrop"),
+        })
+        {
+            string body = MethodBody(Read(file), signature);
+            int restore = body.IndexOf("RestoreToolSelection(Game1.player, selection)", StringComparison.Ordinal);
+            int restoredFact = body.IndexOf("evidence[\"tool_restored\"]", StringComparison.Ordinal);
+            int compose = body.IndexOf($"ToolActionEvidence.Compose(ToolActionEvidence.{keyList}, evidence)", StringComparison.Ordinal);
+
+            restore.Should().BeGreaterThan(0, $"{actionId} restores the actor's own selection");
+            restoredFact.Should().BeGreaterThan(restore, $"{actionId} states the restore only after performing it");
+            compose.Should().BeGreaterThan(restoredFact, $"{actionId} composes the receipt once the restore fact exists");
+        }
     }
 
     // ---- helpers -------------------------------------------------------------
@@ -236,8 +309,18 @@ public sealed class DeclaredToolSelectionTests
 
     private static WateringCan WateringCan() => SeedTool<WateringCan>("(T)WateringCan", 0);
 
+    private static Hoe Hoe() => SeedTool<Hoe>("(T)Hoe", 0);
+
     /// <summary>A scythe is a MeleeWeapon whose own id says so (`MeleeWeapon.isScythe`), never the type alone.</summary>
     private static MeleeWeapon Scythe() => SeedTool<MeleeWeapon>("(W)47", 0);
+
+    /// <summary>An ordinary sword: a MeleeWeapon the selection vocabulary calls `weapon`, not `scythe`.</summary>
+    private static MeleeWeapon Sword() => SeedTool<MeleeWeapon>("(W)4", 0);
+
+    private static string ToolCategory(Tool? tool) =>
+        (string)typeof(ExecutionManager)
+            .GetMethod("DescribeToolCategory", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, new object?[] { tool })!;
 
     private static string MethodBody(string source, string signature)
     {

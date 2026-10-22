@@ -116,6 +116,9 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crop_target_changed", $"target={targetX},{targetY}");
         if (!TrySelectDeclaredTool(Game1.player, "water_crop", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, null);
+        Dictionary<string, string> evidence = ToolActionEvidence.SelectionFacts(selection);
+        ExecutionState state;
+        string reasonCode;
         try
         {
             if (selection.Tool is not WateringCan wateringCan)
@@ -135,32 +138,31 @@ internal sealed partial class ExecutionManager
             float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
             bool afterWatered = dirt.isWatered();
             bool waterConsumed = wateringCan.IsBottomless || wateringCan.WaterLeft < beforeWater || Game1.player.hasWateringCanEnchantment;
-            ExecutionState state = !beforeWatered && afterWatered ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            string reasonCode = state == ExecutionState.Succeeded ? "crop_watered" : "crop_water_postcondition_unavailable";
-            LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
-                ToolActionEvidence.Compose(ToolActionEvidence.WaterCrop, new Dictionary<string, string>
-                {
-                    ["location"] = specification.Location,
-                    ["target"] = expectedTargetId,
-                    ["tile"] = $"{targetX.ToString(CultureInfo.InvariantCulture)},{targetY.ToString(CultureInfo.InvariantCulture)}",
-                    ["before_watered"] = beforeWatered.ToString().ToLowerInvariant(),
-                    ["after_watered"] = afterWatered.ToString().ToLowerInvariant(),
-                    ["water_before"] = beforeWater.ToString(CultureInfo.InvariantCulture),
-                    ["water_after"] = wateringCan.WaterLeft.ToString(CultureInfo.InvariantCulture),
-                    ["water_consumed"] = waterConsumed.ToString().ToLowerInvariant(),
-                    ["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture),
-                    ["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture),
-                    ["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture),
-                    ["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture),
-                }));
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            return receipt;
+            evidence["location"] = specification.Location;
+            evidence["target"] = expectedTargetId;
+            evidence["tile"] = $"{targetX.ToString(CultureInfo.InvariantCulture)},{targetY.ToString(CultureInfo.InvariantCulture)}";
+            evidence["before_watered"] = beforeWatered.ToString().ToLowerInvariant();
+            evidence["after_watered"] = afterWatered.ToString().ToLowerInvariant();
+            evidence["water_before"] = beforeWater.ToString(CultureInfo.InvariantCulture);
+            evidence["water_after"] = wateringCan.WaterLeft.ToString(CultureInfo.InvariantCulture);
+            evidence["water_consumed"] = waterConsumed.ToString().ToLowerInvariant();
+            evidence["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
+            state = !beforeWatered && afterWatered ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = state == ExecutionState.Succeeded ? "crop_watered" : "crop_water_postcondition_unavailable";
         }
         finally
         {
             RestoreToolSelection(Game1.player, selection);
+            evidence["tool_restored"] = DescribeToolCategory(Game1.player.CurrentTool);
         }
+        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
+            ToolActionEvidence.Compose(ToolActionEvidence.WaterCrop, evidence));
+        this.Remember(receipt);
+        this.AddTrace(receipt);
+        return receipt;
     }
 
     /// <summary>Native crop harvest limited to ready, ordinary Grab crops.</summary>

@@ -72,6 +72,7 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       gameVersion: mountedGameVersion,
       policy,
       dispatchAdmissionFactory,
+      trace,
     }: IntegrationToolContext) => {
       const mountedPolicy = (policy ?? DEFAULT_ACTION_POLICY) as ActionPolicy;
       const integration = assertAuthenticatedStardewConnection(connection);
@@ -95,7 +96,7 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
         actions:
           !executable || dispatchAdmissionFactory === undefined
             ? []
-            : createStardewActionTools(integration, mountedPolicy, dispatchAdmissionFactory),
+            : createStardewActionTools(integration, mountedPolicy, dispatchAdmissionFactory, trace),
         knowledge,
       });
     },
@@ -1767,8 +1768,9 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
         )
       );
     case "cut_weeds":
-      // farmhandexecutioncontroller.resourcetoolactions.cs:806-807: the native weed branch
-      // reported the cut AND the map entry left the world.
+      // farmhandexecutioncontroller.resourcetoolactions.cs ExecuteCutWeeds: the native weed branch reported the cut
+      // AND the map entry left the world; the handler selected the scythe its own registration claims and put the
+      // actor's selection back, which is the only place `tool_restored` is written.
       return (
         receipt.reasonCode === "weeds_cut" &&
         exactEvidence(
@@ -1777,6 +1779,10 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             "target",
             "type",
             "tool",
+            "tool_selected",
+            "slot",
+            "tool_before",
+            "slot_before",
             "qualified_item_id",
             "health_before",
             "health_after",
@@ -1786,11 +1792,13 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             "stamina_after",
             "stamina_delta",
             "expected_stamina_cost",
+            "tool_restored",
           ],
           (e) =>
             hasOpaqueIdEvidenceValue(e.target) &&
             e.type === "weed" &&
             e.tool === "scythe" &&
+            hasToolSelectionEvidence(e, "scythe") &&
             hasOpaqueEvidenceValue(e.qualified_item_id) &&
             integerEvidenceValue(e.health_before) !== null &&
             hasBoundedNonemptyEvidenceValue(e.health_after) &&
@@ -1800,9 +1808,9 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
         )
       );
     case "cut_grass":
-      // farmhandexecutioncontroller.resourcetoolactions.cs:740-742: the tuft is gone from the
-      // terrain layer. The hay roll inside Grass.TryDropItemsOnCut is deliberately not
-      // re-derived (the producer records only what actually changed).
+      // farmhandexecutioncontroller.resourcetoolactions.cs ExecuteCutGrass: the tuft is gone from the terrain layer,
+      // with the same select-then-restore facts as cut_weeds. The hay roll inside Grass.TryDropItemsOnCut is
+      // deliberately not re-derived (the producer records only what actually changed).
       return (
         receipt.reasonCode === "grass_cut" &&
         exactEvidence(
@@ -1811,6 +1819,10 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             "target",
             "type",
             "tool",
+            "tool_selected",
+            "slot",
+            "tool_before",
+            "slot_before",
             "grass_type",
             "weeds_before",
             "weeds_after",
@@ -1821,11 +1833,13 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             "stamina_after",
             "stamina_delta",
             "expected_stamina_cost",
+            "tool_restored",
           ],
           (e) =>
             hasOpaqueIdEvidenceValue(e.target) &&
             e.type === "grass" &&
             e.tool === "scythe" &&
+            hasToolSelectionEvidence(e, "scythe") &&
             integerEvidenceValue(e.grass_type) !== null &&
             integerEvidenceValue(e.weeds_before) !== null &&
             hasBoundedNonemptyEvidenceValue(e.weeds_after) &&
@@ -2772,6 +2786,10 @@ function hasWaterCropCompletionEvidence(detail: string): boolean {
     "location",
     "target",
     "tile",
+    "tool_selected",
+    "slot",
+    "tool_before",
+    "slot_before",
     "before_watered",
     "after_watered",
     "water_before",
@@ -2781,6 +2799,7 @@ function hasWaterCropCompletionEvidence(detail: string): boolean {
     "stamina_after",
     "stamina_delta",
     "expected_stamina_cost",
+    "tool_restored",
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
@@ -2791,6 +2810,7 @@ function hasWaterCropCompletionEvidence(detail: string): boolean {
     evidence.location !== "none" &&
     hasOpaqueIdEvidenceValue(evidence.target) &&
     hasTileEvidenceValue(evidence.tile) &&
+    hasToolSelectionEvidence(evidence, "watering_can") &&
     evidence.before_watered === "false" &&
     evidence.after_watered === "true" &&
     before !== null &&
@@ -2945,7 +2965,10 @@ function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
   const expectedKeys = [
     "target",
     "tool",
+    "tool_selected",
     "slot",
+    "tool_before",
+    "slot_before",
     "qualified_item_id",
     "durability_before",
     "durability_after",
@@ -2954,13 +2977,14 @@ function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
     "stamina_after",
     "stamina_delta",
     "expected_stamina_cost",
+    "tool_restored",
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
   return (
     hasOpaqueIdEvidenceValue(evidence.target) &&
     evidence.tool === "pickaxe" &&
-    validSlot(evidence.slot) &&
+    hasToolSelectionEvidence(evidence, "pickaxe") &&
     evidence.qualified_item_id === "(O)2" &&
     evidence.durability_before === "1" &&
     evidence.durability_after === "removed" &&
@@ -3691,6 +3715,24 @@ function hasBoundedNonemptyEvidenceValue(value: string | undefined): value is st
 /** `none` is an explicit producer literal only for the absent equipped tool. */
 function isToolSelectionBeforeValue(value: string | undefined): value is string {
   return value === "none" || hasOpaqueEvidenceValue(value);
+}
+
+/**
+ * The tool-selection half of a tool action, which the Mod states from the side that performed each fact: the tool its
+ * own registration claimed (`tool_selected`, equals the category the action drives), the slot that tool came from, the
+ * tool and slot the actor held beforehand, and `tool_restored` - written only after the handler put the actor's own
+ * selection back, so it must name what the actor held before. A receipt missing either half, or claiming a restore
+ * that leaves a different tool in hand, is not a completed action.
+ */
+function hasToolSelectionEvidence(evidence: Readonly<Record<string, string>>, selectedCategory: string): boolean {
+  return (
+    evidence.tool_selected === selectedCategory &&
+    validSlot(evidence.slot) &&
+    isToolSelectionBeforeValue(evidence.tool_before) &&
+    validSlot(evidence.slot_before) &&
+    isToolSelectionBeforeValue(evidence.tool_restored) &&
+    evidence.tool_restored === evidence.tool_before
+  );
 }
 
 function hasTileEvidenceValue(value: string | undefined): boolean {
