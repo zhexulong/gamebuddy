@@ -622,35 +622,51 @@ function findAgentSessionJsonl(root, identity) {
 /**
  * A per-tool-call duration only answers "why was this run slow" when it names WHO made the Agent wait.
  *
- * `actionTrace` timestamps the bridge call and nothing else, so it cannot see the other two owners of agent wall
- * clock. An audit of a real run read its 533 s over 19 "long actions" as bridge latency, while the same audit
- * named `delegate_game_task` - a nested agent - separately: the execute response had returned and the tool result
- * landed 5-60 s later, which is not a shape the bridge can produce. Optimising the journal for a tail that belongs
- * to a nested agent, or vice versa, is the cost of not separating them. These are three different owners with
- * three different fixes, so every agent tool call is attributed here by name.
+ * `actionTrace` timestamps the bridge call and nothing else, so it cannot see the other owners of agent wall clock. An
+ * audit of a real run read its 533 s over 19 "long actions" as bridge latency, while the same audit named
+ * `delegate_game_task` - a nested agent - separately: the execute response had returned and the tool result landed
+ * 5-60 s later, which is not a shape the bridge can produce. Optimising the journal for a tail that belongs to a nested
+ * agent, or vice versa, is the cost of not separating them. These are different owners with different fixes, so every
+ * agent tool call is attributed here by the NAME OF THE TOOL ACTUALLY CALLED.
+ *
+ * One category per real thing, never a pattern. `stardew_plan_work` compiles a script into a submitted plan and
+ * `stardew_plan_shape` reads what a plan step must supply; neither dispatches an action, and a `stardew_`-prefix rule
+ * would have folded them into dispatch latency. The categories are the mounted surface's tools, spelled one by one, so
+ * a new tool has to be classified on purpose instead of landing in whichever bucket its name resembles.
  *
  * The source is the runtime's own session record (the one `readAgentTurnOutcome` reads): a `toolCall` part in an
  * assistant message carries the call's entry timestamp, the `toolResult` entry matched by `toolCallId` carries the
- * arrival. A call that never got a result (session cut off mid-call) has no duration and is left out rather than
+ * arrival. A call that never got a result (session cut off mid-call) has no duration and is left out rather than being
  * given an invented one.
  */
 const TOOL_TIMING_LONGEST_LIMIT = 10;
-const TOOL_TIMING_CATEGORIES = Object.freeze(["delegate_game_task", "program_tool", "action_dispatch"]);
-// The program tools the Host mounts: a submission or a status poll waits on the program path, not on a receipt.
-const PROGRAM_TOOL_NAMES = Object.freeze([
-  "stardew_submit_action_program",
-  "stardew_plan_work",
-  "stardew_action_program_status",
-  "stardew_action_program_events",
+const TOOL_TIMING_INVARIANT_VIOLATED = "TOOL_TIMING_INVARIANT_VIOLATED";
+const TOOL_TIMING_CATEGORIES = Object.freeze([
+  "delegate",
+  "plan_shape",
+  "plan_compile",
+  "program_submit",
+  "program_status",
+  "flat_dispatch",
 ]);
+const DELEGATE_TOOL_NAME = "delegate_game_task";
+// The planning tools: one answers what a step must supply, one compiles a written script and submits the result.
+const PLAN_SHAPE_TOOL_NAMES = Object.freeze(["stardew_plan_shape"]);
+const PLAN_COMPILE_TOOL_NAMES = Object.freeze(["stardew_plan_work"]);
+// The program tools: a submission waits on the compile + native accept, a status/event read waits on the journal.
+const PROGRAM_SUBMIT_TOOL_NAMES = Object.freeze(["stardew_submit_action_program"]);
+const PROGRAM_STATUS_TOOL_NAMES = Object.freeze(["stardew_action_program_status", "stardew_action_program_events"]);
 const ACTION_TOOL_NAMES = new Set(Object.values(STARDEW_ACTION_TOOL_NAMES));
 
 function toolTimingCategory(toolName) {
   if (typeof toolName !== "string") return undefined;
-  if (toolName === "delegate_game_task") return "delegate_game_task";
-  if (PROGRAM_TOOL_NAMES.includes(toolName)) return "program_tool";
-  if (ACTION_TOOL_NAMES.has(toolName)) return "action_dispatch";
-  // Reads, scene inspection, presentation and every other tool: real calls, but not one of the three owners.
+  if (toolName === DELEGATE_TOOL_NAME) return "delegate";
+  if (PLAN_SHAPE_TOOL_NAMES.includes(toolName)) return "plan_shape";
+  if (PLAN_COMPILE_TOOL_NAMES.includes(toolName)) return "plan_compile";
+  if (PROGRAM_SUBMIT_TOOL_NAMES.includes(toolName)) return "program_submit";
+  if (PROGRAM_STATUS_TOOL_NAMES.includes(toolName)) return "program_status";
+  if (ACTION_TOOL_NAMES.has(toolName)) return "flat_dispatch";
+  // Reads, scene inspection, presentation and every other tool: real calls, but not one of these owners.
   return undefined;
 }
 
@@ -670,15 +686,52 @@ function summarizeCategoryTiming(durations) {
   });
 }
 
-function readToolTiming(sessionJsonlPath) {
+/**
+ * The two counts that describe the same executions, checked against each other.
+ *
+ * `byCategory.flat_dispatch.calls` counts per-action tool calls in the Pi session record; `executionTrace.flat` counts
+ * the request frames the runner actually sent over the bridge. A flat dispatch IS a frame, so the tool-call count can
+ * never exceed the frames: a run claiming more dispatches than it sent is reporting work it did not do. Measured
+ * 2026-10-22 (run `g143closed`): `executionTrace.flat: 0`, no per-action tool mounted, `flat_dispatch.calls: 45` - the
+ * session record read was a PREVIOUS run's, and an auditor concluded from 45 that the flat surface was still mounted.
+ * That over-count is what this invariant forbids by name.
+ *
+ * The other direction is a real fact, not a defect: the runner dispatches a few frames of its own (covenant seeds,
+ * probes), so frames can exceed tool calls. Those are published as `framesWithoutToolCall` rather than folded into a
+ * category or silently tolerated - an unequal pair a reader can see is worth more than an equality nobody measured.
+ */
+function toolTimingInvariant({ calls, frames }) {
+  if (!Number.isInteger(calls) || !Number.isInteger(frames)) {
+    return Object.freeze({
+      checked: false,
+      ok: null,
+      calls: calls ?? null,
+      frames: frames ?? null,
+      framesWithoutToolCall: null,
+    });
+  }
+  return Object.freeze({
+    checked: true,
+    ok: calls <= frames,
+    equal: calls === frames,
+    calls,
+    frames,
+    framesWithoutToolCall: Math.max(0, frames - calls),
+  });
+}
+
+function readToolTiming(sessionJsonlPath, { executionTraceFlat } = {}) {
+  const frames = Number.isInteger(executionTraceFlat) ? executionTraceFlat : null;
   const unobserved = (reason) =>
     Object.freeze({
       observed: false,
       reason,
+      record: null,
       byCategory: Object.freeze(
         Object.fromEntries(TOOL_TIMING_CATEGORIES.map((category) => [category, emptyCategoryTiming()])),
       ),
       longest: Object.freeze([]),
+      invariant: toolTimingInvariant({ calls: null, frames }),
     });
   if (typeof sessionJsonlPath !== "string" || sessionJsonlPath.length === 0) return unobserved("no_session_record");
   let raw;
@@ -732,8 +785,12 @@ function readToolTiming(sessionJsonlPath) {
   return Object.freeze({
     observed: true,
     reason: null,
+    // WHICH record the counts came from, by file name: the lie was a record from another run, and no count can show
+    // that on its own. A reader comparing the run's start with this stamp can see the record is not this run's.
+    record: typeof sessionJsonlPath === "string" ? (sessionJsonlPath.split(/[\\/]/u).pop() ?? null) : null,
     byCategory: Object.freeze(byCategory),
     longest: Object.freeze(longest.slice(0, TOOL_TIMING_LONGEST_LIMIT)),
+    invariant: toolTimingInvariant({ calls: byCategory.flat_dispatch.calls, frames }),
   });
 }
 
@@ -3465,6 +3522,12 @@ async function buildRunResult({ state, error = null, capture, runtimeRoot, settl
   const programRows = programExecutionRows(programOutcomes);
   const executionTrace = executionTraceInvariant({ actionTrace, programOutcomes, programRows });
   if (!executionTrace.ok) console.error("EXECUTION_TRACE_INVARIANT_VIOLATED", JSON.stringify(executionTrace));
+  // The same discipline for the other side of the same executions: the tool-call counts and the frames the runner sent
+  // must not disagree about how many flat dispatches this run made. Read here, not inside the result literal, so the
+  // violation is logged by name before anything is published.
+  const toolTiming = readToolTiming(sessionRecordPath, { executionTraceFlat: executionTrace.flat });
+  if (toolTiming.invariant.ok === false)
+    console.error(TOOL_TIMING_INVARIANT_VIOLATED, JSON.stringify(toolTiming.invariant));
   const result = {
     ...evidence,
     // The run's own window: `startedAtMs` is the runner's own phase clock, so a reader can compute the TAIL (last
@@ -3498,9 +3561,10 @@ async function buildRunResult({ state, error = null, capture, runtimeRoot, settl
     // trace, so "it did nothing" and "the artifact forgot" can never be the same answer.
     attemptedActionIds: dispatched.attempted,
     succeededActionIds: dispatched.succeeded,
-    // Per-tool-call wall clock attributed by OWNER: `delegate_game_task` (a nested agent), a program tool, or an
-    // action dispatch. A run's "long actions" cannot be assigned to the component that should fix them without it.
-    toolTiming: readToolTiming(sessionRecordPath),
+    // Per-tool-call wall clock attributed by OWNER: `delegate` (a nested agent), the planning tools, a program
+    // submission, a program read, or a flat dispatch - one category per tool actually called. `invariant` is the
+    // agreement between `flat_dispatch.calls` and `executionTrace.flat`, so a category cannot over-count silently.
+    toolTiming,
     // What the presentation layer did: every committed companion_text piece in arrival order with its elapsed time,
     // so `firstPieceTtfbMs` (the headline TTFB target) survives however the run ended.
     presentation: summarizePresentationEvidence(),

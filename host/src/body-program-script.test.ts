@@ -116,6 +116,13 @@ function requirementOf(result: CompiledPlan) {
   return result.requirement;
 }
 
+/** The resource claims the surface publishes for one action: the other half of a refusal's teaching payload. */
+function surfaceClaims(actionId: string): readonly Readonly<{ key: string; value: string }>[] {
+  const action = SURFACE.find((candidate) => candidate.actionId === actionId);
+  assert.ok(action, `${actionId} is on the published surface`);
+  return (action.resourceTemplate?.claims ?? []).map((claim) => ({ key: claim.key, value: claim.value }));
+}
+
 type PlanNode = Extract<CompiledPlan, { ok: true }>["program"]["nodes"][number];
 
 function nodesOf(result: CompiledPlan): readonly PlanNode[] {
@@ -378,11 +385,19 @@ test("a refused builder call answers with the action id, its required argument n
     "builder.cut_weeds({ x: 10, y: 10, slot: 3, expectedTargetId: 'weed_01', targetId: 'weed_01' });",
     "builder.cut_weeds({ x: 10, y: 10, slot: 'first', expectedTargetId: 'weed_01' });",
   ])
-    assert.deepEqual(requirementOf(compile(script)), { actionId: "cut_weeds", requiredArguments: required });
+    assert.deepEqual(requirementOf(compile(script)), {
+      actionId: "cut_weeds",
+      requiredArguments: required,
+      resourceClaims: surfaceClaims("cut_weeds"),
+    });
 
   // A closed set travels with the argument that declares it, so the refusal can name the values a guess must be one of.
   const choice = requirementOf(compile("builder.respond_level_up({ choice: 'left' });"));
-  assert.deepEqual(choice, { actionId: "respond_level_up", requiredArguments: surfaceArguments("respond_level_up") });
+  assert.deepEqual(choice, {
+    actionId: "respond_level_up",
+    requiredArguments: surfaceArguments("respond_level_up"),
+    resourceClaims: surfaceClaims("respond_level_up"),
+  });
   assert.deepEqual(choice?.requiredArguments.find((argument) => argument.name === "choice")?.enum, [
     "confirm",
     "branch_a",
@@ -460,4 +475,113 @@ builder.cut_weeds({ x: snapshot.tile.x, y: snapshot.tile.y, slot: slot.slot, exp
     ),
   );
   assert.deepEqual(nodes[0]!.arguments.slot, { type: "integer", canonicalValue: "3" });
+});
+
+/** A live ResourceClump target: the ONE place the published surface declares the tool an action needs. */
+function debris(targetId: string, slot: number, toolKind: string) {
+  return { targetId, slot, toolKind, requiredUpgradeLevel: 0, x: 11, y: 12, parentSheetIndex: 600, health: 2 };
+}
+
+const TOOL_PACK = [
+  { slot: 0, label: "(T)Axe", upgradeLevel: 0 },
+  { slot: 3, label: "(T)Pickaxe", upgradeLevel: 0 },
+] as const;
+
+test("equipFor writes the equip step the target declares, then the action, and answers the slot to name", () => {
+  const nodes = nodesOf(
+    compile(
+      `
+for (const clump of snapshot.debrisTargets ?? []) {
+  const slot = builder.equipFor('clear_debris', clump);
+  builder.clear_debris({ slot, x: clump.x, y: clump.y, expectedTargetId: clump.targetId });
+}
+`,
+      {
+        currentTool: "(T)Axe",
+        currentToolSlot: 0,
+        toolSlots: TOOL_PACK,
+        debrisTargets: [debris("debris_01", 3, "pickaxe")],
+      },
+    ),
+  );
+  assert.deepEqual(
+    nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
+    [
+      ["n01", "equip_tool", []],
+      ["n02", "clear_debris", ["n01"]],
+    ],
+  );
+  // The equip step carries a semantic category from equip_tool's own closed set, never the slot: the Mod resolves the
+  // slot itself, so an index here would be a slot masquerading as a tool.
+  assert.deepEqual(nodes[0]!.arguments, { tool: { type: "string", canonicalValue: "pickaxe" } });
+  // The action names the target's OWN slot, which is the value equipFor answered.
+  assert.deepEqual(nodes[1]!.arguments.slot, { type: "integer", canonicalValue: "3" });
+  assert.equal(
+    validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }),
+    null,
+    "the compiled plan must be one the Mod accepts",
+  );
+});
+
+test("equipFor emits nothing when the tool the target declares is already the held one", () => {
+  const nodes = nodesOf(
+    compile(
+      `
+for (const animal of snapshot.animalProductTargets ?? []) {
+  const slot = builder.equipFor('collect_animal_product', animal);
+  builder.collect_animal_product({ slot, x: animal.x, y: animal.y, expectedTargetId: animal.targetId });
+}
+`,
+      {
+        currentTool: "(T)MilkPail",
+        currentToolSlot: 3,
+        toolSlots: TOOL_PACK,
+        animalProductTargets: [
+          {
+            targetId: "animal_product_01",
+            slot: 3,
+            x: 12,
+            y: 9,
+            animalType: "White Cow",
+            qualifiedProduceItemId: "(O)184",
+            displayName: "Cow Milk",
+            toolKind: "milk_pail",
+            produceStack: 1,
+          },
+        ],
+      },
+    ),
+  );
+  // No equip step: the tool is in hand, so the plan is the action alone and its slot is the held one.
+  assert.deepEqual(
+    nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
+    [["n01", "collect_animal_product", []]],
+  );
+  assert.deepEqual(nodes[0]!.arguments.slot, { type: "integer", canonicalValue: "3" });
+});
+
+/**
+ * The requirement a tool-family action carries lives inside the Mod's handler (`cut_weeds` needs the scythe,
+ * `break_rock_source` the basic pickaxe); the surface names none of it. Guessing is what produced the failed hits, so
+ * the helper refuses by name and hands back what the surface DOES declare.
+ */
+test("equipFor refuses an action whose tool only the Mod's handler knows, naming what the surface declares", () => {
+  const refusal = compile("builder.equipFor('cut_weeds');", { currentToolSlot: 0, toolSlots: TOOL_PACK });
+  assert.equal(refusalOf(refusal), "plan_script_tool_requirement_undeclared:cut_weeds");
+  assert.deepEqual(requirementOf(refusal), {
+    actionId: "cut_weeds",
+    requiredArguments: surfaceArguments("cut_weeds"),
+    resourceClaims: surfaceClaims("cut_weeds"),
+  });
+  // A weed target declares no tool either, so passing one does not turn a guess into a requirement.
+  assert.equal(
+    refusalOf(
+      compile("builder.equipFor('cut_weeds', snapshot.weedTargets[0]);", {
+        weedTargets: [{ targetId: "weed_01", location: "Farm", x: 5, y: 6, health: 1 }],
+      }),
+    ),
+    "plan_script_tool_requirement_undeclared:cut_weeds",
+  );
+  // An id the vocabulary does not have answers with that name, and the host adds the ids it DOES have.
+  assert.equal(refusalOf(compile("builder.equipFor('brew_potion');")), "plan_script_unknown_action:brew_potion");
 });

@@ -92,8 +92,13 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// Projects the validated canonical arguments onto the wire argument shape
     /// exactly as ordinary dispatch would. Values come only from the grant's
     /// canonical arguments (already validated at verify/admission), never from
-    /// parsing evidence. Unsupported argument names are ignored; a missing
-    /// required wire value fails closed below by the router's own gate.
+    /// parsing evidence. Every argument the catalog declares has a wire member
+    /// here — `BodyProgramArgumentProjectionTests` drives the whole catalog
+    /// through this projection and fails on a declared argument whose value does
+    /// not arrive, because a forgotten case used to be a silent drop: `equip_tool`
+    /// program nodes reached the handler with `Tool` null and every one of them
+    /// ended `invalid_tool_selector` by construction.
+    /// A missing required wire value fails closed below by the router's own gate.
     /// The expected revision is bound to the current live execution revision
     /// (the same authority ordinary dispatch uses), never a hardcoded value.
     /// </summary>
@@ -106,11 +111,33 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         float? x = null;
         float? y = null;
         int? slot = null;
+        int? leftSlot = null;
+        int? rightSlot = null;
+        int? colorSelection = null;
+        int? quantity = null;
+        int? expectedSkill = null;
+        int? expectedLevel = null;
+        string? tool = null;
+        string? buildingType = null;
+        string? text = null;
+        string? responseKey = null;
+        string? choice = null;
         string? expectedQualifiedItemId = null;
         string? expectedTargetId = null;
         string? emote = null;
         string? direction = null;
         BridgeNavigationDestinationSelector? destination = null;
+        // Admission validates the KIND of every canonical value, not that an integer fits the wire's
+        // int32 members, and an argument that silently fails to project is not a refusal: the handler
+        // reads `?? 0` and acts on slot 0. So an out-of-range integer fails the whole projection closed
+        // here, before any handler can run, instead of overflowing the tick from inside the mapping.
+        if (grant.CanonicalArguments.Any(pair => pair.Value.Kind == BodyProgramArgumentKind.Integer
+            && (!long.TryParse(pair.Value.CanonicalValue, out long parsedInteger) || parsedInteger is < int.MinValue or > int.MaxValue)))
+        {
+            request = null;
+            reasonCode = "argument_out_of_range";
+            return false;
+        }
         foreach (KeyValuePair<string, BodyProgramCanonicalValue> pair in grant.CanonicalArguments)
         {
             BodyProgramCanonicalValue value = pair.Value;
@@ -123,7 +150,40 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                     y = parsedY;
                     break;
                 case "slot" when value.Kind == BodyProgramArgumentKind.Integer && long.TryParse(value.CanonicalValue, out long parsedSlot):
-                    slot = checked((int)parsedSlot);
+                    slot = (int)parsedSlot;
+                    break;
+                case "leftSlot" when value.Kind == BodyProgramArgumentKind.Integer && long.TryParse(value.CanonicalValue, out long parsedLeftSlot):
+                    leftSlot = (int)parsedLeftSlot;
+                    break;
+                case "rightSlot" when value.Kind == BodyProgramArgumentKind.Integer && long.TryParse(value.CanonicalValue, out long parsedRightSlot):
+                    rightSlot = (int)parsedRightSlot;
+                    break;
+                case "colorSelection" when value.Kind == BodyProgramArgumentKind.Integer && long.TryParse(value.CanonicalValue, out long parsedColorSelection):
+                    colorSelection = (int)parsedColorSelection;
+                    break;
+                case "quantity" when value.Kind == BodyProgramArgumentKind.Integer && long.TryParse(value.CanonicalValue, out long parsedQuantity):
+                    quantity = (int)parsedQuantity;
+                    break;
+                case "expectedSkill" when value.Kind == BodyProgramArgumentKind.Integer && long.TryParse(value.CanonicalValue, out long parsedExpectedSkill):
+                    expectedSkill = (int)parsedExpectedSkill;
+                    break;
+                case "expectedLevel" when value.Kind == BodyProgramArgumentKind.Integer && long.TryParse(value.CanonicalValue, out long parsedExpectedLevel):
+                    expectedLevel = (int)parsedExpectedLevel;
+                    break;
+                case "tool" when value.Kind == BodyProgramArgumentKind.String:
+                    tool = value.CanonicalValue;
+                    break;
+                case "buildingType" when value.Kind == BodyProgramArgumentKind.String:
+                    buildingType = value.CanonicalValue;
+                    break;
+                case "text" when value.Kind == BodyProgramArgumentKind.String:
+                    text = value.CanonicalValue;
+                    break;
+                case "responseKey" when value.Kind == BodyProgramArgumentKind.String:
+                    responseKey = value.CanonicalValue;
+                    break;
+                case "choice" when value.Kind == BodyProgramArgumentKind.String:
+                    choice = value.CanonicalValue;
                     break;
                 case "expectedQualifiedItemId" when value.Kind == BodyProgramArgumentKind.String:
                     expectedQualifiedItemId = value.CanonicalValue;
@@ -164,6 +224,17 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 X = x,
                 Y = y,
                 Slot = slot,
+                LeftSlot = leftSlot,
+                RightSlot = rightSlot,
+                ColorSelection = colorSelection,
+                Quantity = quantity,
+                ExpectedSkill = expectedSkill,
+                ExpectedLevel = expectedLevel,
+                Tool = tool,
+                BuildingType = buildingType,
+                Text = text,
+                ResponseKey = responseKey,
+                Choice = choice,
                 ExpectedQualifiedItemId = expectedQualifiedItemId,
                 ExpectedTargetId = expectedTargetId,
                 Emote = emote,

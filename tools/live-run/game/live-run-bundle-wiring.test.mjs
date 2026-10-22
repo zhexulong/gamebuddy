@@ -261,28 +261,37 @@ test("both result paths carry the run window, so the tail is measurable even whe
   });
 });
 
-test("a tool call's duration names its owner: nested agent, program tool, or action dispatch", () => {
+test("a tool call's duration names its owner: nested agent, planning, program, or flat dispatch", () => {
   // A run's wall clock was split into segments and its 533 s of "long actions" (the execute response had returned
   // and the tool result landed 5-60 s later, over 19 dispatches) was read as bridge latency - while the same audit
   // named `delegate_game_task`, a nested agent, separately. `actionTrace` cannot separate them: it only stamps the
-  // bridge call. The fix is attribution by name, so these are the assertions that keep it honest.
+  // bridge call. The fix is attribution by the tool actually called, so these are the assertions that keep it honest.
   //
-  // 1. Exactly three owners, spelled once.
+  // 1. One category per real thing, spelled once.
   assert.match(
     SOURCE,
-    /const TOOL_TIMING_CATEGORIES = Object\.freeze\(\["delegate_game_task", "program_tool", "action_dispatch"\]\);/,
+    /const TOOL_TIMING_CATEGORIES = Object\.freeze\(\[\n\s+"delegate",\n\s+"plan_shape",\n\s+"plan_compile",\n\s+"program_submit",\n\s+"program_status",\n\s+"flat_dispatch",\n\]\);/,
   );
-  assert.match(SOURCE, /if \(toolName === "delegate_game_task"\) return "delegate_game_task";/);
-  assert.match(SOURCE, /if \(PROGRAM_TOOL_NAMES\.includes\(toolName\)\) return "program_tool";/);
-  // The program tools are named from the mounted vocabulary: a renamed tool would otherwise land in NO category and
-  // silently disappear from the breakdown.
+  assert.match(SOURCE, /if \(toolName === DELEGATE_TOOL_NAME\) return "delegate";/);
+  assert.match(SOURCE, /if \(PLAN_SHAPE_TOOL_NAMES\.includes\(toolName\)\) return "plan_shape";/);
+  assert.match(SOURCE, /if \(PLAN_COMPILE_TOOL_NAMES\.includes\(toolName\)\) return "plan_compile";/);
+  assert.match(SOURCE, /if \(PROGRAM_SUBMIT_TOOL_NAMES\.includes\(toolName\)\) return "program_submit";/);
+  assert.match(SOURCE, /if \(PROGRAM_STATUS_TOOL_NAMES\.includes\(toolName\)\) return "program_status";/);
+  assert.match(SOURCE, /if \(ACTION_TOOL_NAMES\.has\(toolName\)\) return "flat_dispatch";/);
+  // The tools are named from the mounted vocabulary, one by one: a renamed tool would otherwise land in NO category and
+  // silently disappear from the breakdown. `stardew_plan_work` compiles a script and `stardew_plan_shape` reads a step's
+  // shape - neither dispatches, so neither may fall through to dispatch latency.
+  assert.match(SOURCE, /const PLAN_COMPILE_TOOL_NAMES = Object\.freeze\(\["stardew_plan_work"\]\);/);
+  assert.match(SOURCE, /const PLAN_SHAPE_TOOL_NAMES = Object\.freeze\(\["stardew_plan_shape"\]\);/);
+  assert.match(SOURCE, /const PROGRAM_SUBMIT_TOOL_NAMES = Object\.freeze\(\["stardew_submit_action_program"\]\);/);
   assert.match(
     SOURCE,
-    /"stardew_submit_action_program",\n\s+"stardew_plan_work",\n\s+"stardew_action_program_status",\n\s+"stardew_action_program_events",/,
+    /const PROGRAM_STATUS_TOOL_NAMES = Object\.freeze\(\[\n\s+"stardew_action_program_status",\n\s+"stardew_action_program_events",\n\]\);/,
   );
-  // An action dispatch is decided by the Host's own tool-name table, not by a `stardew_` prefix: `stardew_observe`
-  // and `stardew_execution_status` never dispatch, and counting them as dispatch latency would rebuild the same
-  // misattribution one layer down.
+  // A name PATTERN is what the 45-dispatch lie would need to recur: `stardew_observe`, `stardew_execution_status` and
+  // `stardew_plan_work` all wear the prefix and none dispatches an action.
+  assert.doesNotMatch(SOURCE, /startsWith\("stardew_"\)/);
+  // An action dispatch is decided by the Host's own tool-name table, not by that prefix.
   assert.match(
     SOURCE,
     /import \{ STARDEW_ACTION_TOOL_NAMES \} from "\.\.\/\.\.\/\.\.\/host\/dist-test\/action-registry\.js";/,
@@ -296,10 +305,26 @@ test("a tool call's duration names its owner: nested agent, program tool, or act
   assert.match(SOURCE, /byCategory\[category\] = summarizeCategoryTiming\(durations\);/);
   // 3. Published on the result, and on the failure path too: the run that crashed mid-turn is the one whose time
   // most needs an owner. That is why it is published by the one assembly both exits use, not by a literal each.
-  assert.match(SOURCE, /toolTiming: readToolTiming\(sessionRecordPath\),/);
-  assert.equal((SOURCE.match(/toolTiming: readToolTiming\(sessionRecordPath\),/gu) ?? []).length, 1);
+  assert.match(
+    SOURCE,
+    /const toolTiming = readToolTiming\(sessionRecordPath, \{ executionTraceFlat: executionTrace\.flat \}\);/,
+  );
+  assert.equal(
+    (SOURCE.match(/readToolTiming\(sessionRecordPath/gu) ?? []).length,
+    1,
+    "one read, in the assembly both exits use",
+  );
+  assert.match(SOURCE, /^    toolTiming,$/mu);
   assert.match(SOURCE, /sessionRecordPath = sessionSearch\.path;/);
-  // 4. Bounded. The long list is the head of a sorted list, never the whole thing.
+  // 4. The category cannot over-count silently: the tool-call count is checked against the frames the runner sent, and
+  // a disagreement is logged by name where the trace invariant already is.
+  assert.match(SOURCE, /const TOOL_TIMING_INVARIANT_VIOLATED = "TOOL_TIMING_INVARIANT_VIOLATED";/);
+  assert.match(
+    SOURCE,
+    /if \(toolTiming\.invariant\.ok === false\)\n\s+console\.error\(TOOL_TIMING_INVARIANT_VIOLATED,/,
+  );
+  assert.match(SOURCE, /invariant: toolTimingInvariant\(\{ calls: byCategory\.flat_dispatch\.calls, frames \}\)/);
+  // 5. Bounded. The long list is the head of a sorted list, never the whole thing.
   assert.match(SOURCE, /const TOOL_TIMING_LONGEST_LIMIT = 10;/);
   assert.match(SOURCE, /longest\.sort\(\(left, right\) => right\.ms - left\.ms\);/);
   assert.match(SOURCE, /longest: Object\.freeze\(longest\.slice\(0, TOOL_TIMING_LONGEST_LIMIT\)\)/);

@@ -10,6 +10,7 @@ import { resolveLiveRunRoot } from "../core/capture.mjs";
 import { validateEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import { classifyNight } from "../../lib/multiday-baseline.mjs";
 import { executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
+import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
@@ -970,6 +971,154 @@ test("a turn that ended in a provider failure is a failure, not silence", () => 
   assert.equal(agentTurnFailureReason(unreadable), undefined);
 });
 
+/**
+ * The tool-timing block - its constants and the functions that read them - evaluated on its own, so a categorization
+ * can be tested against a real session record instead of against a regex. The runner module never loads here, so the
+ * Host's tool-name table is supplied as a global.
+ */
+function loadToolTiming(source) {
+  const constantsAt = source.indexOf("const TOOL_TIMING_LONGEST_LIMIT");
+  const categorizerAt = source.indexOf("function toolTimingCategory", constantsAt);
+  assert.ok(constantsAt > 0 && categorizerAt > constantsAt, "the tool-timing block must exist");
+  const constants = source.slice(constantsAt, categorizerAt);
+  const functions = [
+    "toolTimingCategory",
+    "emptyCategoryTiming",
+    "summarizeCategoryTiming",
+    "toolTimingInvariant",
+    "readToolTiming",
+  ]
+    .map((name) => extractRunnerFunction(source, name).source)
+    .join("\n");
+  return new Function(
+    "STARDEW_ACTION_TOOL_NAMES",
+    "readFileSync",
+    `${constants}\n${functions}\nreturn { TOOL_TIMING_CATEGORIES, toolTimingCategory, toolTimingInvariant, readToolTiming };`,
+  )(STARDEW_ACTION_TOOL_NAMES, readFileSync);
+}
+
+function writeSessionRecord(names) {
+  const file = join(tmpdir(), `gb-ladder-tool-timing-${randomUUID()}.jsonl`);
+  const entries = [];
+  let atMs = Date.parse("2026-10-22T10:00:00.000Z");
+  for (const [index, name] of names.entries()) {
+    const id = `call-${index}`;
+    atMs += 10;
+    entries.push({
+      type: "message",
+      timestamp: new Date(atMs).toISOString(),
+      message: { role: "assistant", content: [{ type: "toolCall", id, name }] },
+    });
+    atMs += 20;
+    entries.push({
+      type: "message",
+      timestamp: new Date(atMs).toISOString(),
+      message: { role: "toolResult", toolCallId: id, content: "ok" },
+    });
+  }
+  writeFileSync(file, entries.map((entry) => JSON.stringify(entry)).join("\n"), "utf8");
+  return file;
+}
+
+test("a run with no flat dispatch reports zero, and its plan calls are plan compiles", () => {
+  // Measured 2026-10-22 (g143closed): `executionTrace.flat: 0`, no per-action tool on the mounted surface, and
+  // `action_dispatch.calls: 45`. A pattern over tool names, or a session record from another run, is how a category
+  // publishes work this run never did. The falsifier is the split: ten shape reads and four compiled plans are plan
+  // numbers, the read is no category at all, and the flat count stays a measured zero.
+  const { readToolTiming } = loadToolTiming(RUNNER_SOURCE);
+  const record = writeSessionRecord([
+    ...Array.from({ length: 10 }, () => "stardew_plan_shape"),
+    ...Array.from({ length: 4 }, () => "stardew_plan_work"),
+    "stardew_submit_action_program",
+    "stardew_action_program_status",
+    "stardew_action_program_events",
+    "stardew_observe",
+  ]);
+  const timing = readToolTiming(record, { executionTraceFlat: 0 });
+  assert.equal(timing.byCategory.flat_dispatch.calls, 0);
+  assert.equal(timing.byCategory.plan_shape.calls, 10);
+  assert.equal(timing.byCategory.plan_compile.calls, 4);
+  assert.equal(timing.byCategory.program_submit.calls, 1);
+  assert.equal(timing.byCategory.program_status.calls, 2);
+  assert.equal(
+    Object.values(timing.byCategory).reduce((total, entry) => total + entry.calls, 0),
+    17,
+    "the read tool is neither a category nor a dispatch",
+  );
+  assert.equal(timing.invariant.checked, true);
+  assert.equal(timing.invariant.ok, true);
+  assert.equal(timing.record, record.split(/[\\/]/u).pop(), "the counts name the record they came from");
+});
+
+test("a tool-call count above the frames the runner sent is a named violation", () => {
+  // The violating direction is the one that lied: 45 dispatches, 0 frames. The other direction is real - the runner
+  // dispatches frames of its own (seeds, probes) - and is named as `framesWithoutToolCall` instead of being folded
+  // into a category or silently forgiven.
+  const { toolTimingInvariant, readToolTiming } = loadToolTiming(RUNNER_SOURCE);
+  const overCount = toolTimingInvariant({ calls: 45, frames: 0 });
+  assert.equal(overCount.checked, true);
+  assert.equal(overCount.ok, false);
+  assert.equal(overCount.equal, false);
+  assert.equal(overCount.framesWithoutToolCall, 0);
+  const runnerFrames = toolTimingInvariant({ calls: 2, frames: 4 });
+  assert.equal(runnerFrames.ok, true);
+  assert.equal(runnerFrames.equal, false);
+  assert.equal(runnerFrames.framesWithoutToolCall, 2);
+  // Neither side measured is not a pass.
+  assert.equal(toolTimingInvariant({ calls: null, frames: null }).checked, false);
+  // The real reader publishes the disagreement, not just the number.
+  const timing = readToolTiming(writeSessionRecord(["stardew_move_to_tile"]), { executionTraceFlat: 0 });
+  assert.equal(timing.byCategory.flat_dispatch.calls, 1);
+  assert.equal(timing.invariant.ok, false);
+});
+
+test("the assembly logs a tool-timing disagreement by name", async () => {
+  const [, buildRunResult] = extractRunnerFunction(RUNNER_SOURCE, ["summarizeDispatchedActions", "buildRunResult"], {
+    NON_ACCOMPLISHMENT_ACTIONS: new Set(),
+    phaseTimings: { runStartedAtMs: 1, marks: {} },
+    lastObservedSnapshot: null,
+    lastObservedPose: null,
+    actionTrace: [],
+    programSubmissions: [],
+    programOutcomes: [],
+    sampleProgramOutcomes: async () => [],
+    programExecutionRows,
+    executionTraceInvariant,
+    TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
+    multidayOutcome: null,
+    SCENARIO: "morning_routine",
+    LEGACY_LADDER: null,
+    historianRubricOutcome: null,
+    sessionRecordPath: "/tmp/session.jsonl",
+    summarizeActionCadence: () => ({ spans: [] }),
+    summarizePresentationEvidence: () => ({ pieces: [] }),
+    readToolTiming: () => ({ observed: true, invariant: { checked: true, ok: false, calls: 45, frames: 0 } }),
+    buildFailureSnapshot: (input) => input,
+    writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
+    closeCapture: async () => ({ state: "closed" }),
+    writeFile: async () => {},
+    join: (...parts) => parts.join("/"),
+  });
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => logged.push(args);
+  let result;
+  try {
+    result = await buildRunResult({
+      state: "blocked",
+      error: "agent_turn_timeout",
+      settlement: { component: "runner" },
+    });
+  } finally {
+    console.error = original;
+  }
+  assert.ok(
+    logged.some(([code]) => code === "TOOL_TIMING_INVARIANT_VIOLATED"),
+    "a category that over-counts is named where the trace invariant is named",
+  );
+  assert.equal(result.toolTiming.invariant.ok, false, "the result carries the same disagreement");
+});
+
 test("waitForSessionQuiet reaches quiet when only body_trace pings follow a terminal", async () => {
   // The regression: the first implementation compared a TIMESTAMP against an array index and scanned the whole
   // slice since the turn for any meaningful fact, so 20s of quiet was unreachable whenever a terminal had ever
@@ -1379,6 +1528,7 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
     sampleProgramOutcomes: async () => [],
     programExecutionRows,
     executionTraceInvariant,
+    TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
     multidayOutcome: { crossings: 1, dayRecords: [] },
     SCENARIO: "morning_routine",
     LEGACY_LADDER: null,
@@ -1386,7 +1536,7 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
     sessionRecordPath: undefined,
     summarizeActionCadence: () => ({ spans: [] }),
     summarizePresentationEvidence: () => ({ pieces: [] }),
-    readToolTiming: () => ({ observed: false }),
+    readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
     buildFailureSnapshot: (input) => input,
     writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
     closeCapture: async () => ({ state: "closed" }),

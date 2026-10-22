@@ -40,10 +40,11 @@ type PlanArgument = PlanNode["arguments"][string];
 
 export type PlanScriptRequest = Readonly<{ script: string }>;
 
-/** The action a refused builder call named, and the arguments the published surface requires for it. */
+/** The action a refused builder call named, and the arguments and claims the published surface requires for it. */
 export type PlanArgumentRequirement = Readonly<{
   actionId: string;
   requiredArguments: readonly PlanArgumentShape[];
+  resourceClaims: readonly Readonly<{ key: string; value: string }>[];
 }>;
 
 export type CompiledPlan =
@@ -64,6 +65,9 @@ export type CompiledPlan =
 
 /** Frozen maximum node count per program; mirrors `protocol.ts` and the Mod's `BodyProgramValidation.MaximumNodes`. */
 export const MAX_PLAN_NODES = 16;
+
+/** The published action whose one job is putting a tool in hand; the `equipFor` helper writes it. */
+const EQUIP_TOOL_ACTION_ID = "equip_tool";
 
 const MAX_PLAN_SCRIPT_CHARS = 8192;
 /** Wall-clock budget for one compile. A plan is a loop over a snapshot, not a computation. */
@@ -286,9 +290,10 @@ export function compilePlanScript(
     return refused("plan_snapshot_unavailable", scriptSource, snapshotRevision);
 
   const state: PlanScriptState = { nodes: [], refusal: null, calls: 0 };
+  const frozen = deepFreeze(structuredClone(snapshot));
   const sandbox = Object.freeze({
-    snapshot: deepFreeze(structuredClone(snapshot)),
-    builder: createPlanBuilder(dependencies.actions, state),
+    snapshot: frozen,
+    builder: createPlanBuilder(dependencies.actions, frozen, state),
   });
   const context = createContext(sandbox, {
     name: "gamebuddy-plan-script",
@@ -361,12 +366,17 @@ type PlanScriptState = {
 
 /**
  * The script's only writing hand: one method per published action, named exactly as the action, taking
- * exactly the arguments that action declares. Methods are generated from the registration vocabulary,
- * never hand-written per action, so a renamed argument cannot leave a stale recipe behind.
+ * exactly the arguments that action declares, plus `equipFor`. Methods are generated from the registration
+ * vocabulary, never hand-written per action, so a renamed argument cannot leave a stale recipe behind.
  */
-function createPlanBuilder(actions: readonly PublishedPlanAction[], state: PlanScriptState): unknown {
+function createPlanBuilder(
+  actions: readonly PublishedPlanAction[],
+  snapshot: Snapshot,
+  state: PlanScriptState,
+): unknown {
   const methods = new Map<string, (arguments_: unknown) => void>();
   for (const action of actions) methods.set(action.actionId, (arguments_) => emitPlanNode(action, arguments_, state));
+  const equipFor = (actionId: unknown, target: unknown) => equipForAction(actions, snapshot, actionId, target, state);
   return new Proxy(
     {},
     {
@@ -374,6 +384,7 @@ function createPlanBuilder(actions: readonly PublishedPlanAction[], state: PlanS
         if (typeof property !== "string") return undefined;
         if (property === "nodeCount") return state.nodes.length;
         if (property === "isFull") return () => state.nodes.length >= MAX_PLAN_NODES;
+        if (property === "equipFor") return equipFor;
         const method = methods.get(property);
         if (method !== undefined) return method;
         return refusePlan(`plan_script_unknown_action:${property}`, state);
@@ -382,16 +393,71 @@ function createPlanBuilder(actions: readonly PublishedPlanAction[], state: PlanS
   );
 }
 
+/**
+ * Writes the equip step an action's own target declares, immediately before that action, and answers the tool slot the
+ * action must name.
+ *
+ * The published surface names a tool in exactly one place: a target entry's own `toolKind` and `slot`, on the families
+ * a tool is held for - `debrisTargets` and `animalProductTargets`. So the requirement is read from the target the
+ * script is about to act on, and never inferred from an action id. An action whose tool lives only in the Mod's
+ * handler (`cut_weeds` needs the scythe, `break_rock_source` the basic pickaxe) is refused BY NAME, together with the
+ * arguments and claims the surface does declare for it, because a guessed tool is a guaranteed failed hit.
+ */
+function equipForAction(
+  actions: readonly PublishedPlanAction[],
+  snapshot: Snapshot,
+  actionId: unknown,
+  target: unknown,
+  state: PlanScriptState,
+): number {
+  if (typeof actionId !== "string" || actionId.length === 0)
+    refusePlan("plan_script_equip_for_selector_invalid", state);
+  const action = actions.find((candidate) => candidate.actionId === actionId);
+  if (action === undefined) refusePlan(`plan_script_unknown_action:${actionId}`, state);
+  const declared = declaredToolOf(target);
+  if (declared === undefined)
+    refusePlan(`plan_script_tool_requirement_undeclared:${action.actionId}`, state, requirementOf(action));
+  // The target's own slot IS the tool the action must name, so nothing is emitted when that tool is already in hand.
+  if (publishedToolSlot(snapshot) === declared.slot) return declared.slot;
+  const equip = actions.find((candidate) => candidate.actionId === EQUIP_TOOL_ACTION_ID);
+  if (equip === undefined)
+    refusePlan(`plan_script_equip_unavailable:${EQUIP_TOOL_ACTION_ID}`, state, requirementOf(action));
+  // Written through the same emitter as every other node, so the equip step is validated against `equip_tool`'s own
+  // declared argument (a semantic tool category, never a slot) exactly as a hand-written call would be.
+  emitPlanNode(equip, { tool: declared.toolKind }, state);
+  return declared.slot;
+}
+
+/** The tool a target entry declares it needs, or `undefined` when this part of the surface says nothing about a tool. */
+function declaredToolOf(target: unknown): Readonly<{ toolKind: string; slot: number }> | undefined {
+  if (typeof target !== "object" || target === null) return undefined;
+  const declared = target as Readonly<{ toolKind?: unknown; slot?: unknown }>;
+  if (typeof declared.toolKind !== "string") return undefined;
+  if (typeof declared.slot !== "number" || !isNonNegativeSafeInteger(declared.slot)) return undefined;
+  return Object.freeze({ toolKind: declared.toolKind, slot: declared.slot });
+}
+
+/** The slot the farmer is holding, exactly as the Mod's snapshot publishes it. */
+function publishedToolSlot(snapshot: Snapshot): number | null {
+  const held = snapshot.currentToolSlot;
+  return typeof held === "number" && isNonNegativeSafeInteger(held) ? held : null;
+}
+
+/** The shape this action demands, carried by every refusal a call can produce: the model that guessed a name or a kind
+ * reads what the surface requires instead of a bare `invalid_arguments`. */
+function requirementOf(action: PublishedPlanAction): PlanArgumentRequirement {
+  return Object.freeze({
+    actionId: action.actionId,
+    requiredArguments: action.arguments,
+    resourceClaims: action.resourceClaims,
+  });
+}
+
 function emitPlanNode(action: PublishedPlanAction, arguments_: unknown, state: PlanScriptState): void {
   state.calls += 1;
   if (state.calls > MAX_PLAN_BUILDER_CALLS) refusePlan(`plan_script_call_cap:${state.calls}`, state);
   if (state.nodes.length >= MAX_PLAN_NODES) refusePlan(`plan_cap_exceeded:${state.nodes.length + 1}`, state);
-  // The shape this action demands, carried by every refusal a call can produce: the model that guessed a name or a kind
-  // reads what the surface requires instead of a bare `invalid_arguments`.
-  const requirement = Object.freeze({
-    actionId: action.actionId,
-    requiredArguments: action.arguments,
-  }) satisfies PlanArgumentRequirement;
+  const requirement = requirementOf(action);
   // An action that declares no argument is called with none.
   const accepted = arguments_ === undefined && action.arguments.length === 0 ? {} : arguments_;
   if (typeof accepted !== "object" || accepted === null || Array.isArray(accepted))
