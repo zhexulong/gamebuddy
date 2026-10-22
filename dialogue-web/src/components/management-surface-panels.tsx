@@ -33,7 +33,7 @@
  * `role="status"` banner); when it is absent the panel renders the outcome
  * itself, so the composed shell's surface reports it in place.
  */
-import { Archive, Pencil, Sparkles, Trash2 } from "lucide-react";
+import { Archive, Download, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { type KeyboardEvent as ReactKeyboardEvent, type ReactElement, useEffect, useRef, useState } from "react";
 import type { Locale, Messages } from "../i18n";
 import { useArmedConfirmation } from "./armed-confirmation";
@@ -48,6 +48,7 @@ import {
   problemTextWithCode,
   TavernProblemError,
   TavernProtocolError,
+  type ChatExportV1,
   type TavernConnectionStateV1,
   type TavernConnectionThinkingLevelV1,
   type TavernConnectionProviderV1,
@@ -128,6 +129,28 @@ type ChatListView = readonly ChatListEntry[] | "loading" | "error";
 
 function chatListRows(view: ChatListView): readonly ChatListEntry[] {
   return view === "loading" || view === "error" ? [] : view;
+}
+
+/**
+ * The download's own file name: a bounded, filesystem-safe spelling of the Chat's display name, so
+ * a title that is empty, very long or full of separators still yields a name the browser will save.
+ */
+function transcriptFileName(name: string): string {
+  const cleaned = name
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 80);
+  return cleaned.length > 0 ? cleaned : "chat";
+}
+
+/**
+ * How many facts of the conversation the Host's own export left out. The number is what the player
+ * is told: the export's `field` values are the interchange's own identifiers (`message_ids`,
+ * `swipes`), and printing those would put the artifact's vocabulary in the product's face.
+ */
+function exportDroppedFacts(exported: ChatExportV1): number {
+  return exported.dispositions.filter((disposition) => disposition.classification !== "accepted_typed").length;
 }
 
 /**
@@ -290,6 +313,10 @@ export function ChatsSurfacePanel({
     operation: "archive" | "trash";
     selectedAtArm: string;
   }> | null>(null);
+  // The Chat whose transcript export is in flight. Export is a read and a
+  // download, not a mutation, so it never moves the mounted selection and the
+  // list is untouched; this only marks the row so a slow read is not silent.
+  const [exporting, setExporting] = useState<string | null>(null);
   const { inline, report } = useSurfaceNotice(onNotice);
   // The row's rename editor is the same arm-and-close pair the destructive rows use
   // (`armed-confirmation.ts`): opening it REPLACES the pencil that was pressed with a field,
@@ -598,6 +625,47 @@ export function ChatsSurfacePanel({
     })();
   };
 
+  /**
+   * Saves one Chat's transcript as the SillyTavern chat file the Host's own interchange produced.
+   *
+   * Export is a read and a download: it names any row by its own handle, never the mounted one, so
+   * saving a conversation does not mean switching into it. The file is the Host's own bytes - the
+   * browser never re-serializes the transcript - and the Host's dispositions are reported beside it,
+   * because the file is a subset (the selected variant of each turn, no durable message ids) and a
+   * silent subset reads as a lost conversation. A refusal is a sentence, not a lost click.
+   */
+  const exportTranscript = (handle: string, name: string): void => {
+    if (exporting !== null) return;
+    setExporting(handle);
+    void (async () => {
+      let notice: ManagementSurfaceNotice;
+      try {
+        const exported = await api.exportChat({ chatHandle: handle });
+        const fileName = `${transcriptFileName(name)}.jsonl`;
+        const url = URL.createObjectURL(new Blob([exported.jsonl], { type: "application/jsonl" }));
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+        notice = { kind: "success", text: labels.chatExportSaved.replace("{{file}}", fileName) };
+        const dropped = exportDroppedFacts(exported);
+        if (dropped > 0)
+          notice = {
+            kind: "success",
+            text: `${notice.text} ${labels.chatExportDropped.replace("{{count}}", String(dropped))}`,
+          };
+      } catch (error) {
+        notice = { kind: "failure", text: problemTextWithCode(labels.chatExportFailed, error) };
+      } finally {
+        setExporting(null);
+      }
+      report(notice);
+    })();
+  };
+
   if (list === "loading" || list === "error") {
     return (
       <>
@@ -863,6 +931,23 @@ export function ChatsSurfacePanel({
                               <Pencil size={14} aria-hidden="true" />
                             </button>
                           )}
+                          {/* The transcript export is a read of this exact row, so a conversation
+                              is saved without switching into it. It is not a destructive action, so
+                              it needs no arm/confirm - only its own in-flight mark. */}
+                          <button
+                            type="button"
+                            className="icon-button-small"
+                            data-testid="chat-export"
+                            title={labels.exportChat}
+                            aria-label={labels.exportChat}
+                            disabled={exporting !== null}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              exportTranscript(chat.handle, name);
+                            }}
+                          >
+                            <Download size={14} aria-hidden="true" />
+                          </button>
                           {/* Every row carries its own archive/trash arm+confirm, so cleaning up history
                               no longer means switching into each Chat first. */}
                           {retentionAvailable !== false && (
