@@ -508,8 +508,8 @@ const UNREAD_RECORDED_DEBT = [
     keys: ["characters", "chats", "memory", "persona", "settings", "worldInfo"],
   },
   {
-    reason: "the Chats surface reads `chatsPanel`/`chatRetention*`; these older action words have no reader",
-    keys: ["chatHistory", "deleteChat", "exportChat"],
+    reason: "the Chats surface reads `chatsPanel`/`chatRetention*` and its per-row `exportChat`; these older action words have no reader",
+    keys: ["chatHistory", "deleteChat"],
   },
   {
     reason:

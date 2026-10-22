@@ -434,7 +434,10 @@ test("focus.5 (mutation): a control with no ring fails, and a programme-focus ta
 test("focus.6: the subject set is derived from the JSX, and the heading is outside it", (t) => {
   const css = readFileSync(STYLESHEET, "utf8");
   const { subject, interactive, scopedOut } = interactiveOutlineSites(css);
-  for (const name of ["composer-textarea", "form-input", "form-textarea", "form-select", "surface-advanced-editor"]) {
+  // `surface-advanced-editor` left this list when the self-explaining 高级配置 section was deleted: the rule is
+  // still in the stylesheet but no component renders the class, so requiring it here would assert that deleted
+  // markup exists. If the class comes back, it comes back with its JSX.
+  for (const name of ["composer-textarea", "form-input", "form-textarea", "form-select"]) {
     assert.ok(
       subject.classes.has(name),
       `the JSX renders .${name} on a control, so the derived subject set must carry it`,
