@@ -395,6 +395,68 @@ test("hygiene: a suppression directive and a test-only export are both findings"
   }
 });
 
+test("hygiene: what production reads stays green, what only a test reads goes red", (t) => {
+  const root = fixture();
+  const library = "host/src/hygiene-library.ts";
+  try {
+    // Three ways a production path reaches an export, all of them invisible to a scan that keys importers by
+    // the bare name of an `import` declaration: another module in another directory importing it through a
+    // re-export barrel, and the module that declares it naming it itself.
+    write(
+      root,
+      library,
+      [
+        "export function readThroughBarrel(): number { return 1; }",
+        "export function readInsideThisModule(): number { return 2; }",
+        "export const CALLED_HERE = readInsideThisModule();",
+        "export function readOnlyByTests(): number { return 3; }",
+        "",
+      ].join("\n"),
+    );
+    write(root, "host/src/hygiene-library-barrel.ts", 'export { readThroughBarrel } from "./hygiene-library.js";\n');
+    write(
+      root,
+      "host/src/nested/hygiene-consumer.ts",
+      'import { readThroughBarrel } from "../hygiene-library-barrel.js";\nexport const produced = readThroughBarrel();\n',
+    );
+    write(
+      root,
+      "host/src/hygiene-library.test.ts",
+      'import test from "node:test";\nimport { readOnlyByTests } from "./hygiene-library.js";\nvoid readOnlyByTests;\ntest("x", () => {});\n',
+    );
+
+    const broken = violationsOf(root, "hygiene");
+    assert.deepEqual(
+      broken.violations.map((violation) => violation.where),
+      ["host/src/hygiene-library.ts:4"],
+      `only the export a test alone reads is a finding:\n${broken.violations.map((v) => `${v.where} ${v.message}`).join("\n")}`,
+    );
+    t.diagnostic(broken.notes.join(" | "));
+
+    // A production reader turns the red finding green - the same edit in the direction the class was blind to.
+    write(
+      root,
+      "host/src/nested/hygiene-consumer.ts",
+      'import { readThroughBarrel } from "../hygiene-library-barrel.js";\nimport { readOnlyByTests } from "../hygiene-library.js";\nexport const produced = readThroughBarrel() + readOnlyByTests;\n',
+    );
+    assert.deepEqual(violationsOf(root, "hygiene").violations, [], "a production importer must clear the finding");
+
+    // ... and removing it makes the export test-only again, so the green is the reader's and not a silence.
+    write(
+      root,
+      "host/src/nested/hygiene-consumer.ts",
+      'import { readThroughBarrel } from "../hygiene-library-barrel.js";\nexport const produced = readThroughBarrel();\n',
+    );
+    assert.deepEqual(
+      violationsOf(root, "hygiene").violations.map((violation) => violation.where),
+      ["host/src/hygiene-library.ts:4"],
+      "the finding returns once production stops reading the export",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("hygiene reports by kind with a bounded sample, and the unbounded reading keeps every site", () => {
   const root = fixture();
   try {
