@@ -70,6 +70,12 @@ export const MACRO_FIELD = "Close every reply by raking {{char}}'s coals once, n
 const BLOCK_OPEN = "<character-closing-direction>";
 const BLOCK_CLOSE = "</character-closing-direction>";
 const AUTHORED_BLOCK_MARKER = '<gamebuddy-authored-context version="v2"';
+/**
+ * Magic Context's `§N§` prefix. It addresses Magic Context's own `ctx_reduce` tool, which no
+ * surface of this product mounts: on a Chat turn it is notation the model reads, copies into its
+ * own reply, and the player then reads back (`host/src/farmhand-companion-presentation.ts`).
+ */
+const MAGIC_CONTEXT_TAG = /§\d+§/;
 // The product's own escape-hatch provider: a local OpenAI-compatible endpoint with a chosen
 // model id, which is exactly what a stub endpoint needs and what a player uses for a custom host.
 const PROVIDER_ID = "gamebuddy-openai-compatible";
@@ -126,6 +132,27 @@ export function summarizeTurn(entry) {
     lastRole: last?.role ?? null,
     lastText: last === undefined ? "" : textOf(last),
   });
+}
+
+/**
+ * Every message the provider received that carries a Magic Context `§N§` tag, one problem line each.
+ *
+ * The prefix addresses Magic Context's `ctx_reduce` tool. Neither surface of this product mounts
+ * it (the Host's allow-lists carry only its own tools), so a tagged wire is the model reading
+ * notation it cannot use and will copy into its own reply.
+ */
+export function tagProblems(turns) {
+  const problems = [];
+  for (const [index, entry] of (Array.isArray(turns) ? turns : []).entries()) {
+    for (const message of Array.isArray(entry?.messages) ? entry.messages : []) {
+      const text = textOf(message);
+      if (MAGIC_CONTEXT_TAG.test(text))
+        problems.push(
+          `turn ${index + 1}'s ${String(message?.role)} message carries one: ${JSON.stringify(text.slice(0, 60))}`,
+        );
+    }
+  }
+  return problems;
 }
 
 /** Why the last message is not the framed block for `field`, or `null` when it is. */
@@ -195,6 +222,20 @@ export function verifyReadings(run) {
     [`before the edit: ${declared.lastText}`, `after the edit: ${revised.lastText}`],
   );
 
+  // Magic Context's `§N§` prefixes address its own `ctx_reduce` tool. No surface of this product
+  // mounts that tool, so a prefix on the wire is notation the model reads, imitates into its own
+  // reply, and the player then reads back. This is the wire-side half of that claim;
+  // `host/src/farmhand-companion-presentation.ts` states the player-visible half.
+  record(
+    "tagFree",
+    "no message the provider received carries a Magic Context §N§ tag",
+    tagProblems(turns),
+    turns.map(
+      (entry, index) =>
+        `turn ${index + 1}  ${entry.label.padEnd(24)} ` +
+        entry.messages.map((message) => textOf(message).slice(0, 40)).join(" | "),
+    ),
+  );
   const prefixProblems = [];
   if (absent.m0Index < 0)
     prefixProblems.push("the published catalogue's rendered block never reached the request, so there is no m[0]");
@@ -617,6 +658,13 @@ export function formatReadings(run, verdict, link, writer = console.log) {
     writer(
       `  turn ${index + 1}  ${run.turns[index].label.padEnd(24)} catalogue field=${JSON.stringify(summary.catalogField)}`,
     );
+  }
+  writer("");
+  // What the player's own line and her previous reply read as on the wire.
+  writer("reading 5  tagFree - the conversation as the model read it, from the last turn");
+  for (const [index, message] of run.turns[3].messages.entries()) {
+    if (message.role === "system") continue;
+    writer(`  [${index}] ${String(message.role).padEnd(10)} ${JSON.stringify(textOf(message).slice(0, 80))}`);
   }
   writer("");
   for (const check of verdict.checks) {

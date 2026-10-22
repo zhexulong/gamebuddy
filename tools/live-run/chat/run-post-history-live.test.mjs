@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { blockProblem, summarizeTurn, textOf, verifyReadings } from "./run-post-history-live.mjs";
+import { blockProblem, summarizeTurn, tagProblems, textOf, verifyReadings } from "./run-post-history-live.mjs";
 
 const OPEN = "<character-closing-direction>";
 const CLOSE = "</character-closing-direction>";
@@ -177,6 +177,29 @@ test("a record published unrendered is red: the tail must carry the rendering, n
     ]),
   );
   assert.deepEqual(failing(verdict), ["record"]);
+});
+
+test("a wire that carries a Magic Context §N§ tag is red: the prefix addresses a tool this product never mounts", () => {
+  // The tag the model used to read on the player's own line and on its own previous reply, and
+  // then copy into the reply the player reads: `§1§ Good morning.` was the real capture.
+  const verdict = verifyReadings(
+    run([
+      turn("nothing", { role: "user", content: "§1§ Good morning." }),
+      turn("declared", block(DECLARED), { catalogField: DECLARED }),
+      turn("revised", block(REVISED), { catalogField: REVISED }),
+      turn("macro", block(RENDERED), { catalogField: RENDERED }),
+    ]),
+  );
+  assert.deepEqual(failing(verdict), ["tagFree"]);
+});
+
+test("tagProblems names each tagged message, and a tag inside the tail block counts too", () => {
+  assert.deepEqual(tagProblems([turn("clean", block(DECLARED))]), []);
+  const tagged = turn("tagged", block(DECLARED));
+  tagged.messages[2] = { role: "user", content: "§7§ Good morning." };
+  assert.match(tagProblems([tagged])[0], /turn 1's user message carries one: "§7§ Good morning\."/);
+  const taggedTail = turn("tail", { role: "user", content: `§9§ ${OPEN}\nframe\nx\n${CLOSE}` });
+  assert.match(tagProblems([taggedTail])[0], /turn 1's user message carries one: "§9§ /);
 });
 
 test("a run short of four turns says so instead of judging fewer cells", () => {
