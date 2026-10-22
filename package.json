@@ -46,6 +46,9 @@
     "check:live-run-isolation": "node tools/check-live-run-isolation.mjs",
     "check:live-run-multiday-baseline": "node tools/check-live-run-multiday-baseline.mjs",
     "check:production-pack-load": "node tools/check-production-pack-load.mjs",
+    "bench:perf": "node tools/perf/run-benchmarks.mjs",
+    "bench:perf:flame": "node tools/perf/run-benchmarks.mjs --profile",
+    "check:perf-budget": "node tools/check-perf-budget.mjs",
     "check:publint": "node tools/check-publint.mjs",
     "check:scope-references": "node tools/check-scope-references.mjs",
     "check:script-entries": "node tools/scripts/check-script-entry-existence.mjs",
@@ -149,6 +152,7 @@
     "test:lane-diagnosis": "node --test tools/lib/lane-diagnosis.test.mjs",
     "test:live-run-artifact-freshness": "node --test tools/check-live-run-artifact-freshness.test.mjs",
     "test:multiday-loop": "node --test tools/lib/multiday-loop.test.mjs tools/lib/multiday-baseline.test.mjs",
+    "test:perf-budget": "node --test tools/perf/budget.test.mjs",
     "test:production-pack-load": "node --test tools/check-production-pack-load.test.mjs",
     "test:replay-engine": "node --test tools/lib/replay-engine.test.mjs",
     "test:run-scenarios": "node --test tools/live-run/game/run-scenarios.test.mjs tools/live-run/game/live-run-bundle-wiring.test.mjs",
@@ -253,7 +257,9 @@
     "check:duplicated-authority": "node tools/check-duplicated-authority.mjs",
     "check:harness-conformance": "node tools/check-harness-conformance.mjs",
     "check:live-run-preflight": "node tools/preflight-live-run.mjs",
-    "check:live-run-silence": "node tools/check-live-run-silence.mjs"
+    "check:live-run-silence": "node tools/check-live-run-silence.mjs",
+    "audit:totality": "node tools/audit-totality.mjs",
+    "test:audit-totality": "node --test tools/audit-totality.test.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",
