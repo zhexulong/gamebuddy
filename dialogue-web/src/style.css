@@ -645,7 +645,11 @@
 
   .timeline-heading h1 {
     margin: 0;
-    font-size: 18px;
+    /* A Chat's name is a title, not the loudest thing in the product. At 18px/600 it
+       outranked every surface heading and every section title (12px), and the default
+       name it most often shows is a placeholder ("新对话 1"). 16px keeps it a title
+       while putting the information hierarchy back in order. */
+    font-size: 16px;
     font-weight: 600;
     color: var(--text-primary);
     overflow-wrap: anywhere;
@@ -2431,11 +2435,17 @@
 
   .game-group-title {
     margin: 0;
-    font-size: 11px;
-    font-weight: 700;
+    font-size: 12px;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--text-disabled);
+    /* A section's own heading is live player-facing text, exactly like
+       `.section-subtitle` above - and it used to be the *smallest and faintest*
+       type on the page (11px/700 in `--text-disabled`, paler than the 13-14px body
+       it introduced, which made the hierarchy read backwards). The two headings now
+       share one treatment: same size, same weight, same token. `--text-disabled` is
+       for text the player cannot use, and a heading is not that. */
+    color: var(--text-secondary);
   }
 
   .game-panel-empty {
