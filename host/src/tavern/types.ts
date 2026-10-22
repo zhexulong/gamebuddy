@@ -46,6 +46,14 @@ export type CharacterCandidate = ArtifactRevision &
      * data: never a profile field, never prompt input, never executed.
      */
     extensions?: Readonly<Record<string, unknown>>;
+    /**
+     * The card's standard `post_history_instructions`, carried verbatim from the
+     * staged decode so the provisioned companion owns it as her own record
+     * (`post-history-instructions.json`) beside her scenario and her openings. It
+     * is stored, bounded, and otherwise unread: no reader renders it, and it is
+     * never a profile field.
+     */
+    postHistoryInstructions?: string;
   }>;
 /**
  * Player-scoped library metadata. This is deliberately not an IdentityProfile
@@ -137,6 +145,16 @@ export type GreetingSet = ArtifactRevision &
  */
 export type CardExtensions = ArtifactRevision &
   Readonly<{ cardExtensionsId: string; extensions: Readonly<Record<string, unknown>> }>;
+/**
+ * The imported card's own closing direction (`post_history_instructions`), kept as
+ * the companion's own record.
+ *
+ * It is card data, not identity data: nothing derives a profile field from it and
+ * no reader renders it yet. It exists beside her scenario and her openings so the
+ * one instruction a card author wrote to be read LAST survives the import, bounded
+ * by the same constant the compatibility manifest publishes.
+ */
+export type PostHistoryInstructions = ArtifactRevision & Readonly<{ postHistoryInstructionsId: string; text: string }>;
 export type WorldBookBinding = Readonly<{
   bindingId: string;
   worldBookId: string;
@@ -168,6 +186,7 @@ export type TavernArtifact =
   | DialogueExamples
   | GreetingSet
   | CardExtensions
+  | PostHistoryInstructions
   | ChatThread;
 
 export function validateTavernArtifact(value: unknown): TavernArtifact {
@@ -185,6 +204,7 @@ export function validateTavernArtifact(value: unknown): TavernArtifact {
   if (typeof value.examplesId === "string") return examples(value);
   if (typeof value.greetingSetId === "string") return greetings(value);
   if (typeof value.cardExtensionsId === "string") return cardExtensions(value);
+  if (typeof value.postHistoryInstructionsId === "string") return postHistoryInstructions(value);
   return fail();
 }
 function candidate(v: Record<string, unknown>): CharacterCandidate {
@@ -202,6 +222,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
       "worldBookCandidates",
       "worldBookScanDepth",
       "extensions",
+      "postHistoryInstructions",
     ])
   )
     fail();
@@ -245,6 +266,11 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
           });
         });
   const extensions = v.extensions === undefined ? undefined : requiredInertExtensions(v.extensions);
+  // The card's own closing direction. Its 4 KB bound (one constant, published by
+  // the compatibility manifest and enforced by the decoder) is the import's; this
+  // schema applies the same general tavern-text ceiling every authored record uses.
+  const postHistoryInstructions =
+    v.postHistoryInstructions === undefined ? undefined : requiredText(v.postHistoryInstructions, 8_192);
   const candidateId = requiredId(v.candidateId);
   const sourceFormat = requiredSourceFormat(v.sourceFormat);
   const sourceVersion = requiredText(v.sourceVersion, 64);
@@ -272,6 +298,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
     ...(worldBookCandidates === undefined ? {} : { worldBookCandidates: freeze(worldBookCandidates) }),
     ...(worldBookScanDepth === undefined ? {} : { worldBookScanDepth: worldBookScanDepth as number }),
     ...(extensions === undefined ? {} : { extensions }),
+    ...(postHistoryInstructions === undefined ? {} : { postHistoryInstructions }),
   });
 }
 function cardExtensions(v: Record<string, unknown>): CardExtensions {
@@ -281,6 +308,15 @@ function cardExtensions(v: Record<string, unknown>): CardExtensions {
     revision: requiredRevision(v.revision),
     cardExtensionsId: requiredId(v.cardExtensionsId),
     extensions: requiredInertExtensions(v.extensions),
+  });
+}
+function postHistoryInstructions(v: Record<string, unknown>): PostHistoryInstructions {
+  if (!only(v, ["schemaVersion", "revision", "postHistoryInstructionsId", "text"])) fail();
+  return freeze({
+    schemaVersion: TAVERN_SCHEMA_VERSION,
+    revision: requiredRevision(v.revision),
+    postHistoryInstructionsId: requiredId(v.postHistoryInstructionsId),
+    text: requiredText(v.text, 8_192),
   });
 }
 function candidateReview(v: Record<string, unknown>): CandidateReviewRecord {

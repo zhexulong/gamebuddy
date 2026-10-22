@@ -276,7 +276,7 @@ test("safe decoder classifies accepted, opaque, and executable card fields witho
         description: "a companion",
         unrecognized_metadata: { url: "https://example.invalid" },
         creator_notes: "author note",
-        post_history_instructions: "a directive the Host never installs",
+        post_history_instructions: "close in her own voice, never as a narrator",
         regex: [{ find: ".*", replace: "${evil}" }],
         html: "<script>alert(1)</script>",
         extensions: { scripts: ["throw new Error()"] },
@@ -285,15 +285,19 @@ test("safe decoder classifies accepted, opaque, and executable card fields witho
     }),
   );
   assert.equal(report.candidate?.profileCandidate.identity.name, "Safe");
+  assert.equal(report.candidate?.postHistoryInstructions, "close in her own voice, never as a narrator");
   assert.deepEqual(
     report.dispositions.map(({ field, classification }) => [field, classification]),
     [
       ["name", "accepted_typed"],
       ["description", "accepted_typed"],
+      // The card's closing direction moved out of `preserved_opaque`: it is carried
+      // (bounded, verbatim) as her own record rather than kept opaque and unused.
+      // It is still never a profile field and the decoder still does not run it.
+      ["post_history_instructions", "accepted_typed"],
       ["extensions", "accepted_typed"],
       ["creator_notes", "preserved_opaque"],
       ["html", "dropped_unsupported"],
-      ["post_history_instructions", "preserved_opaque"],
       ["prompt_order", "dropped_unsupported"],
       ["regex", "dropped_unsupported"],
       ["unrecognized_metadata", "preserved_opaque"],
@@ -628,6 +632,18 @@ const IMPORT_LOSS_FIXTURES: Readonly<Record<StCardImportLossReason, ImportLossFi
       name: "Rin",
       description: "calm",
       system_prompt: "x".repeat(ST_CARD_DECODER_LIMITS_V1.cardVoiceBytes + 1),
+    },
+  },
+  post_history_instructions_too_long: {
+    field: "post_history_instructions",
+    // The card's closing direction is carried as her own record, bounded at 4 KB -
+    // the one constant the manifest publishes. A longer one is refused by name,
+    // never truncated: half a closing direction is a different instruction.
+    count: 1,
+    data: {
+      name: "Rin",
+      description: "calm",
+      post_history_instructions: "x".repeat(ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes + 1),
     },
   },
 });
@@ -1222,6 +1238,52 @@ test("the import result names system_prompt as carried, and refuses an over-long
   );
   assert.equal(tooLong.candidate?.systemPrompt, undefined);
   assert.deepEqual(tooLong.losses, [{ field: "system_prompt", reason: "character_voice_too_long", count: 1 }]);
+});
+
+test("the import result names post_history_instructions as carried, and a card without it carries nothing", () => {
+  const carried = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: { name: "Kohaku", post_history_instructions: "收束时只说一句家常话。" },
+    }),
+  );
+  // Byte-for-byte the card's own text: no macro rendering, no trimming, no
+  // re-wrapping. Where it is read is a later decision, so what the decoder keeps
+  // is exactly what the author wrote.
+  assert.equal(carried.candidate?.postHistoryInstructions, "收束时只说一句家常话。");
+  assert.deepEqual(carried.losses, []);
+  assert.equal(
+    new Map(carried.dispositions.map((entry) => [entry.field, entry.classification])).get("post_history_instructions"),
+    "accepted_typed",
+  );
+
+  // A card that wrote none records nothing at all: absence must stay
+  // distinguishable from an empty string, because "her card said nothing" and
+  // "her card said nothing useful" are different facts for the next reader.
+  const absent = decodeStCard(JSON.stringify({ spec: "chara_card_v3", data: { name: "Kohaku" } }));
+  assert.equal(absent.candidate?.postHistoryInstructions, undefined);
+  assert.equal(Object.hasOwn(absent.candidate ?? {}, "postHistoryInstructions"), false);
+  assert.equal(
+    absent.dispositions.some((entry) => entry.field === "post_history_instructions"),
+    false,
+    "a field the card never wrote must not appear as a disposition",
+  );
+
+  // An over-long one is refused at the one bound the manifest publishes, by name,
+  // rather than truncated into a directive her author never wrote.
+  const tooLong = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "Kohaku",
+        post_history_instructions: "x".repeat(ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes + 1),
+      },
+    }),
+  );
+  assert.equal(tooLong.candidate?.postHistoryInstructions, undefined);
+  assert.deepEqual(tooLong.losses, [
+    { field: "post_history_instructions", reason: "post_history_instructions_too_long", count: 1 },
+  ]);
 });
 
 test("a blank line inside an example reply keeps the reply whole and reports no loss", () => {

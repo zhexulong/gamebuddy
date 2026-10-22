@@ -34,6 +34,7 @@ const ST_CARD_IMPORT_LOSS_REASONS = [
   "unrenderable_worldbook_entry",
   "worldbook_entry_content_unreadable",
   "character_voice_too_long",
+  "post_history_instructions_too_long",
 ] as const;
 export type StCardImportLossReason = (typeof ST_CARD_IMPORT_LOSS_REASONS)[number];
 export type StCardImportLoss = Readonly<{
@@ -76,6 +77,14 @@ export type StCardImportCandidate = Readonly<{
    * floor, in its own labelled section, and never able to loosen it.
    */
   systemPrompt?: string;
+  /**
+   * The card's standard `post_history_instructions` (v2/v3), carried verbatim as
+   * bounded candidate text so the service can keep it as the companion's own
+   * durable record. It is the card's closing direction - the ST spec injects it
+   * AFTER the history - so it is stored beside her scenario and her openings and
+   * is deliberately not a profile field and not prompt input here.
+   */
+  postHistoryInstructions?: string;
   /**
    * The card's open-by-design `extensions` object, carried verbatim (bounded and
    * deep-frozen) so a consumer can read `extensions.gamebuddy.stardew` — the
@@ -120,6 +129,8 @@ export type StCardImportPreview = Readonly<{
   /** The card's standard `system_prompt`, review-visible candidate data that
    *  becomes the companion's `characterVoice` (rendered after the floor). */
   systemPrompt?: string;
+  /** The card's standard `post_history_instructions`, carried verbatim and bounded. */
+  postHistoryInstructions?: string;
   /** The card's open-by-design `extensions` object, carried inert and verbatim. */
   extensions?: Readonly<Record<string, unknown>>;
   worldBookCandidates: readonly WorldBookEntry[];
@@ -293,6 +304,7 @@ function reportFromValue(value: Record<string, unknown>, source: "json" | "png")
     "alternate_greetings",
     "character_book",
     "system_prompt",
+    "post_history_instructions",
     "extensions",
   ].filter((field) => data[field] !== undefined);
   const dispositions: StCardImportDisposition[] = accepted.map((field) =>
@@ -311,6 +323,9 @@ function reportFromValue(value: Record<string, unknown>, source: "json" | "png")
       profileCandidate: preview.profileCandidate,
       ...(preview.scenario === undefined ? {} : { scenario: preview.scenario }),
       ...(preview.systemPrompt === undefined ? {} : { systemPrompt: preview.systemPrompt }),
+      ...(preview.postHistoryInstructions === undefined
+        ? {}
+        : { postHistoryInstructions: preview.postHistoryInstructions }),
       ...(preview.extensions === undefined ? {} : { extensions: preview.extensions }),
       worldBookCandidates: preview.worldBookCandidates,
       ...(preview.worldBookScanDepth === undefined ? {} : { worldBookScanDepth: preview.worldBookScanDepth }),
@@ -382,6 +397,22 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
       : rawSystemPrompt;
   if (rawSystemPrompt !== undefined && systemPrompt === undefined)
     losses.record("system_prompt", "character_voice_too_long", 1);
+  // `post_history_instructions` is the card's own closing direction. It is carried
+  // verbatim (macros and all: rendering is not this decoder's job) so the service
+  // can keep it as her own durable record. A longer one is refused by name, never
+  // truncated: half a closing direction is a different instruction from the one
+  // the author wrote.
+  const rawPostHistoryInstructions = boundedMultilineText(
+    data.post_history_instructions,
+    ST_CARD_DECODER_LIMITS_V1.textBytes,
+  );
+  const postHistoryInstructions =
+    rawPostHistoryInstructions !== undefined &&
+    utf8Bytes(rawPostHistoryInstructions) > ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes
+      ? undefined
+      : rawPostHistoryInstructions;
+  if (rawPostHistoryInstructions !== undefined && postHistoryInstructions === undefined)
+    losses.record("post_history_instructions", "post_history_instructions_too_long", 1);
   const extensions = readInertExtensions(data.extensions);
   const unsupportedFields = Object.keys(data).filter(isExecutableControlField).sort();
   // Product policy: limits only prevent physical blowup, never the player's
@@ -421,6 +452,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
     losses: losses.entries(),
     ...(scenario === undefined ? {} : { scenario }),
     ...(systemPrompt === undefined ? {} : { systemPrompt }),
+    ...(postHistoryInstructions === undefined ? {} : { postHistoryInstructions }),
     ...(extensions === undefined ? {} : { extensions }),
     worldBookCandidates: Object.freeze(worldBookCandidates),
     ...(worldBook.scanDepth === undefined ? {} : { worldBookScanDepth: worldBook.scanDepth }),
@@ -740,11 +772,12 @@ function parseExamples(
  * never interprets them and a companion surface must never execute them. These
  * are the only fields the decoder drops.
  *
- * `system_prompt` and `extensions` are deliberately NOT here: `system_prompt` is
- * a standard card field carried as the companion's `characterVoice` (and review-
- * visible), `extensions` is open by design and carried verbatim, and any other
- * field that maps nowhere is classified `preserved_opaque` rather than silently
- * dropped.
+ * `system_prompt`, `post_history_instructions` and `extensions` are deliberately
+ * NOT here: `system_prompt` is a standard card field carried as the companion's
+ * `characterVoice` (and review-visible), `post_history_instructions` is her own
+ * closing direction carried as her own record, `extensions` is open by design and
+ * carried verbatim, and any other field that maps nowhere is classified
+ * `preserved_opaque` rather than silently dropped.
  */
 function isExecutableControlField(key: string): boolean {
   return /^(?:regex(?:es)?|macros?|stscript|script|quick_?repl(?:ies)?|html|prompt_?order)$/iu.test(key);

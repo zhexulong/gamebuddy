@@ -20,6 +20,7 @@ import { type ChatThreadStore, createChatThreadStore } from "./chat-thread-store
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
 import { renderMacros } from "./macro-engine.js";
+import { writeCompanionPostHistoryInstructions } from "./post-history-instructions.js";
 import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import type { CharacterCandidate, TavernCompanion } from "./types.js";
@@ -72,6 +73,8 @@ type ProvisionedCardMaterial = Readonly<{
   worldBookScanDepth?: number;
   avatar?: Uint8Array;
   extensions?: Readonly<Record<string, unknown>>;
+  /** The card's own closing direction, kept as her own record when it wrote one. */
+  postHistoryInstructions?: string;
 }>;
 
 /**
@@ -174,6 +177,9 @@ export async function provisionNewCompanion(
       ...(candidate.worldBookScanDepth === undefined ? {} : { worldBookScanDepth: candidate.worldBookScanDepth }),
       ...(avatar === undefined ? {} : { avatar }),
       ...(candidate.extensions === undefined ? {} : { extensions: candidate.extensions }),
+      ...(candidate.postHistoryInstructions === undefined
+        ? {}
+        : { postHistoryInstructions: candidate.postHistoryInstructions }),
     }),
   );
 }
@@ -261,6 +267,15 @@ async function provisionNewCompanionNamespace(
           new TavernArtifactStore(paths.root),
           tavernPaths.companionRoot,
           card.extensions,
+        );
+      // The card's own closing direction, as her own record beside the scenario and
+      // the openings above. A card that wrote none writes nothing, so "the card said
+      // nothing" stays distinguishable from an empty string.
+      if (card?.postHistoryInstructions !== undefined)
+        await writeCompanionPostHistoryInstructions(
+          new TavernArtifactStore(paths.root),
+          tavernPaths.companionRoot,
+          card.postHistoryInstructions,
         );
       // The reviewed card's own picture, written where the avatar face reads it.
       // The companion's root is created here if the card carried neither a

@@ -231,6 +231,11 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
     // candidates) because it is not a field of hers - it is inert card data that
     // no reader renders or executes.
     ...(value.extensions === undefined ? {} : { extensions: value.extensions }),
+    // The card's own closing direction, carried into the persisted candidate so the
+    // confirm step can give it a home next to the scenario and the openings. Like
+    // `extensions` it rides outside the reviewed-field list: it is not a field of
+    // hers, and no reader renders it.
+    ...(value.postHistoryInstructions === undefined ? {} : { postHistoryInstructions: value.postHistoryInstructions }),
   });
 }
 function reportFromDecode(
