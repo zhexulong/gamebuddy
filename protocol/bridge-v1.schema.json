@@ -6576,7 +6576,6 @@
         "sourceEventId",
         "text",
         "locale",
-        "expectedRevision",
         "presentationEpoch"
       ],
       "properties": {
@@ -6594,10 +6593,6 @@
         "locale": {
           "$ref": "#/$defs/bcp47Locale"
         },
-        "expectedRevision": {
-          "type": "integer",
-          "minimum": 0
-        },
         "presentationEpoch": {
           "type": "integer",
           "minimum": 0
@@ -6609,15 +6604,11 @@
       "additionalProperties": false,
       "required": [
         "expressionId",
-        "revision",
         "presentationEpoch"
       ],
       "properties": {
         "expressionId": {
           "$ref": "#/$defs/opaqueId"
-        },
-        "revision": {
-          "type": "integer"
         },
         "presentationEpoch": {
           "type": "integer",

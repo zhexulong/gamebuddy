@@ -92,10 +92,9 @@ export function createFarmhandCompanionPresentationPort(
       ) {
         throw new Error("farmhand_presentation_source_event_required");
       }
-      const snapshot = bridge.state.snapshot;
-      if (snapshot === null) throw new Error("farmhand_presentation_snapshot_unavailable");
+      const sourceEventId = expression.sourceEventId;
       // Reassert immediately before the only write. The Mod independently
-      // checks its own current revision and presentation epoch on its game thread.
+      // checks its own current locale and presentation epoch on its game thread.
       admission.assertHostCurrent(admission.hostBinding);
       epoch.assertCurrent(epoch.binding);
       // The last Host boundary before the text becomes player-visible: the Game
@@ -103,33 +102,33 @@ export function createFarmhandCompanionPresentationPort(
       // mimicked into its reply is removed here, once, for both the bubble and the
       // companion-language hook.
       const text = stripMagicContextSelfTag(expression.text);
+      // No world revision is claimed. Presentation mutates no world state, and the Mod mints a new
+      // action-transaction revision for every receipt it publishes — progress receipts and
+      // auto-collected program nodes included — so the Host's last admitted revision is a cached
+      // projection, not the Mod's current one. Claiming it exactly refused eight successful tool
+      // selections' closing line in a live run (2026-10-22, `invalid_or_stale_companion_presentation`)
+      // with no way to tell which of six conditions had refused it. The STOP epoch is the ordering
+      // claim that does matter, and `expressionId` plus the Mod's fingerprint already make replay exact.
+      const write = () =>
+        bridge.presentCompanionText({
+          expressionId: expression.expressionId,
+          sourceEventId,
+          text,
+          locale: expression.locale,
+          presentationEpoch: epoch.epoch,
+        });
       // One span per player-visible commit: its end is the moment the bubble landed, which is what the run's
       // presentation evidence used to record by hand.
       await (trace === undefined
-        ? bridge.presentCompanionText({
-            expressionId: expression.expressionId,
-            sourceEventId: expression.sourceEventId,
-            text,
-            locale: expression.locale,
-            expectedRevision: snapshot.revision,
-            presentationEpoch: epoch.epoch,
-          })
+        ? write()
         : trace.span(
             RUN_SPAN_NAMES.present,
             {
               expressionId: expression.expressionId,
-              sourceEventId: expression.sourceEventId,
+              sourceEventId,
               locale: expression.locale,
             },
-            () =>
-              bridge.presentCompanionText({
-                expressionId: expression.expressionId,
-                sourceEventId: expression.sourceEventId,
-                text,
-                locale: expression.locale,
-                expectedRevision: snapshot.revision,
-                presentationEpoch: epoch.epoch,
-              }),
+            write,
           ));
       // Fire-and-forget companion-language hook (e.g. streaming TTS). A
       // throwing listener must never fail a presentation that already landed.

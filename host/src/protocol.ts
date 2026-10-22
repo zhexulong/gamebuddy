@@ -1343,7 +1343,12 @@ export type CompanionPresentationRequest = Readonly<{
   sourceEventId: string;
   text: string;
   locale: string;
-  expectedRevision: number;
+  /**
+   * The STOP epoch this bubble was admitted under. It is the only ordering claim a presentation
+   * makes: a request queued before a stop must not land after it. World revision is deliberately
+   * absent — presentation mutates no world state, and no caller can know the Mod's exact current
+   * action-transaction revision (see `farmhand-companion-presentation.ts`).
+   */
   presentationEpoch: number;
 }>;
 
@@ -1527,10 +1532,7 @@ export type BridgeMessage =
   | Envelope<"companion_presentation_request", CompanionPresentationRequest>
   | Envelope<"system_notice_request", SystemNoticeRequest>
   | Envelope<"system_notice_receipt", SystemNoticeReceipt>
-  | Envelope<
-      "companion_presentation_receipt",
-      Readonly<{ expressionId: string; revision: number; presentationEpoch: number }>
-    >
+  | Envelope<"companion_presentation_receipt", Readonly<{ expressionId: string; presentationEpoch: number }>>
   | Envelope<"player_control_receipt", PlayerControlReceipt>
   | Envelope<"execution_receipt", ExecutionReceipt>
   | Envelope<"program_submit", BodyProgramCandidateRequest>
@@ -1865,25 +1867,10 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         : "invalid_cancel_request";
     }
     case "companion_presentation_request": {
-      const expectedRevision = payload.expectedRevision;
       const presentationEpoch = payload.presentationEpoch;
-      if (
-        typeof expectedRevision !== "number" ||
-        !Number.isSafeInteger(expectedRevision) ||
-        expectedRevision < 0 ||
-        typeof presentationEpoch !== "number" ||
-        !Number.isSafeInteger(presentationEpoch) ||
-        presentationEpoch < 0
-      )
+      if (typeof presentationEpoch !== "number" || !Number.isSafeInteger(presentationEpoch) || presentationEpoch < 0)
         return "invalid_companion_presentation_request";
-      return hasExactKeys(payload, [
-        "expressionId",
-        "sourceEventId",
-        "text",
-        "locale",
-        "expectedRevision",
-        "presentationEpoch",
-      ]) &&
+      return hasExactKeys(payload, ["expressionId", "sourceEventId", "text", "locale", "presentationEpoch"]) &&
         isOpaqueId(payload.expressionId) &&
         isOpaqueId(payload.sourceEventId) &&
         typeof payload.text === "string" &&
@@ -1916,9 +1903,7 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
       const presentationEpoch = payload.presentationEpoch;
       if (typeof presentationEpoch !== "number" || !Number.isSafeInteger(presentationEpoch) || presentationEpoch < 0)
         return "invalid_companion_presentation_receipt";
-      return hasExactKeys(payload, ["expressionId", "revision", "presentationEpoch"]) &&
-        isOpaqueId(payload.expressionId) &&
-        Number.isSafeInteger(payload.revision)
+      return hasExactKeys(payload, ["expressionId", "presentationEpoch"]) && isOpaqueId(payload.expressionId)
         ? null
         : "invalid_companion_presentation_receipt";
     }

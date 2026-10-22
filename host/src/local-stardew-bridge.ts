@@ -499,7 +499,6 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     if (
       response.type !== "companion_presentation_receipt" ||
       response.payload.expressionId !== request.expressionId ||
-      response.payload.revision !== request.expectedRevision ||
       response.payload.presentationEpoch !== request.presentationEpoch
     )
       throw new Error("unexpected_companion_presentation_response");

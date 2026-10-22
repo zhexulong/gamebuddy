@@ -24,6 +24,7 @@ internal sealed class BridgeSession : IBodyProgramAdmissionTransport
     private const int MaximumRememberedIdempotencyKeys = 256;
     private const int MaximumPendingPlayerControls = 64;
     private const int MaximumRememberedCancelIdentities = 256;
+    private const int MaximumPresentationTextLength = 4_000;
     private readonly ExecutionManager executions;
     private readonly FarmhandActionRouter actionRouter;
     private readonly BridgeScope scope;
@@ -1223,7 +1224,7 @@ string? bodyProgramUnavailableReason = null,
         response = null;
         if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "companion_presentation_request", out reasonCode)) return false;
         BridgeCompanionPresentationRequest request = envelope!.Payload;
-        string fingerprint = $"{request.SourceEventId}\n{request.Text}\n{request.Locale}\n{request.ExpectedRevision}\n{request.PresentationEpoch}";
+        string fingerprint = $"{request.SourceEventId}\n{request.Text}\n{request.Locale}\n{request.PresentationEpoch}";
         if (this.presentations.TryGetValue(request.ExpressionId, out IdempotentPresentation? existing))
         {
             if (existing.Fingerprint != fingerprint) { reasonCode = "companion_presentation_expression_conflict"; return false; }
@@ -1239,13 +1240,7 @@ string? bodyProgramUnavailableReason = null,
             reasonCode = "companion_presentation_replay";
             return true;
         }
-        if (!TryCurrentPresentationLocale(out string locale)
-            || !BridgeProtocol.IsOpaqueId(request.ExpressionId) || !BridgeProtocol.IsOpaqueId(request.SourceEventId)
-            || string.IsNullOrWhiteSpace(request.Text) || request.Text.Length > 4_000
-            || request.Locale != locale
-            || request.ExpectedRevision != this.executions.Revision
-            || request.PresentationEpoch != this.presentationEpoch)
-        { reasonCode = "invalid_or_stale_companion_presentation"; return false; }
+        if (!TryNamePresentationRefusal(request, out reasonCode)) return false;
         // Terminalize before the native side effect. A throwing sender can have
         // sent chat before reporting failure; replay must never send twice.
         this.presentations.Add(request.ExpressionId, new(fingerprint, null, "companion_presentation_send_failed"));
@@ -1263,7 +1258,7 @@ string? bodyProgramUnavailableReason = null,
             reasonCode = "companion_presentation_send_failed";
             return false;
         }
-        BridgeCompanionPresentationReceipt receipt = new(request.ExpressionId, this.executions.Revision, this.presentationEpoch);
+        BridgeCompanionPresentationReceipt receipt = new(request.ExpressionId, this.presentationEpoch);
         this.presentations[request.ExpressionId] = new(fingerprint, receipt, "accepted");
         response = Reply("companion_presentation_receipt", envelope.CorrelationId, receipt);
         reasonCode = "accepted";
@@ -1410,6 +1405,51 @@ string? bodyProgramUnavailableReason = null,
             locale = string.Empty;
             return false;
         }
+    }
+
+    /// <summary>
+    /// One named refusal per cause. This gate used to answer `invalid_or_stale_companion_presentation`
+    /// for six unrelated conditions, so a live run that lost its voice could not say which one it hit:
+    /// the two sides then argued from guesses (2026-10-22, `game-ladder` blocked right after eight
+    /// successful tool selections with nothing but that code). Every branch now names itself, and the
+    /// ones a caller can act on carry both values so a reader never has to re-measure them.
+    ///
+    /// Presentation is a projection: it mutates no world state, so it is not revision-gated. The Mod
+    /// mints a new action-transaction revision for every receipt it publishes -- progress receipts and
+    /// auto-collected program nodes included -- and a saturated outbound queue drops those facts, so no
+    /// caller can know the exact current revision without a round trip that is itself racy. The
+    /// `presentationEpoch` stays: it is the STOP authority that invalidates a request queued before the
+    /// stop, and `expressionId` plus the fingerprint already make replay exact.
+    /// </summary>
+    private bool TryNamePresentationRefusal(BridgeCompanionPresentationRequest request, out string reasonCode)
+    {
+        if (!TryCurrentPresentationLocale(out string locale))
+        { reasonCode = "companion_presentation_locale_unavailable"; return false; }
+        if (!BridgeProtocol.IsOpaqueId(request.ExpressionId))
+        { reasonCode = "companion_presentation_expression_id_invalid"; return false; }
+        if (!BridgeProtocol.IsOpaqueId(request.SourceEventId))
+        { reasonCode = "companion_presentation_source_event_invalid"; return false; }
+        if (string.IsNullOrWhiteSpace(request.Text))
+        { reasonCode = "companion_presentation_text_empty"; return false; }
+        if (request.Text.Length > MaximumPresentationTextLength)
+        {
+            reasonCode = $"companion_presentation_text_too_long:{request.Text.Length}:{MaximumPresentationTextLength}";
+            return false;
+        }
+        if (request.Locale != locale)
+        {
+            // Reason codes stay inside the wire grammar (lowercase, digits, `_:-`), so the locales are
+            // reported in their BCP-47-insensitive lowercase form.
+            reasonCode = $"companion_presentation_locale_mismatch:{request.Locale.ToLowerInvariant()}:{locale.ToLowerInvariant()}";
+            return false;
+        }
+        if (request.PresentationEpoch != this.presentationEpoch)
+        {
+            reasonCode = $"companion_presentation_stale_epoch:{request.PresentationEpoch}:{this.presentationEpoch}";
+            return false;
+        }
+        reasonCode = "accepted";
+        return true;
     }
     private static bool IsStructurallyValidExecutionRequest(BridgeExecutionRequest? request, out string reasonCode)
     {
@@ -1643,8 +1683,8 @@ internal sealed record BridgeObserveRequest();
 internal sealed record BridgeCancelRequest(string RequestId, string ExecutionId, string CancelId, long CancelEpoch, string ReasonCode);
 /// <summary>Last accepted cancel identity bound to one exact request/execution.</summary>
 internal sealed record CancelIdentityRecord(string ExecutionId, string CancelId, long CancelEpoch);
-internal sealed record BridgeCompanionPresentationRequest(string ExpressionId, string SourceEventId, string Text, string Locale, long ExpectedRevision, long PresentationEpoch);
-internal sealed record BridgeCompanionPresentationReceipt(string ExpressionId, long Revision, long PresentationEpoch);
+internal sealed record BridgeCompanionPresentationRequest(string ExpressionId, string SourceEventId, string Text, string Locale, long PresentationEpoch);
+internal sealed record BridgeCompanionPresentationReceipt(string ExpressionId, long PresentationEpoch);
 internal sealed record BridgeSystemNoticeRequest(string NoticeId, string Key, string Text, string Locale);
 internal sealed record BridgeSystemNoticeReceipt(string NoticeId, long Revision);
 internal sealed record BridgePlayerControlReceipt(string ControlId, string SourceEventId, string Status);

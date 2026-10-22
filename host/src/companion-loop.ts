@@ -538,7 +538,7 @@ function isOpaqueSource(value: unknown): value is string {
  * presentation is only a tail delivery": the runtime epoch was revoked (STOP /
  * transport loss / teardown -> stale_interruption_admission), the source lineage
  * was revoked or closed (stale_presentation_lineage / uncertain lineage), or the
- * bridge refused a stale presentation (bridge_rejected / snapshot unavailable).
+ * bridge refused the presentation (bridge_rejected).
  * None of them can undo the settled gameplay/receipt cycle; downgrading them
  * keeps a completed turn from being reported as failed because its final text
  * did not land after settlement. Everything else (programming errors) still
@@ -549,7 +549,6 @@ function isSettledTailPresentationFailure(error: unknown): boolean {
   return (
     message === "stale_interruption_admission" ||
     message === "stale_presentation_lineage" ||
-    message === "farmhand_presentation_snapshot_unavailable" ||
     message.startsWith("bridge_rejected:") ||
     message === "native_presentation_lineage_mismatch"
   );
