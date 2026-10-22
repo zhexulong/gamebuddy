@@ -527,29 +527,48 @@ function namedCodeIn(node, sourceFile) {
     const text = callee.getText(sourceFile);
     return /(?:Error|Failure)$/u.test(text);
   };
+  // A refusal is named by a *reason*, and this tree writes reasons three ways: a plain string, a no-substitution
+  // template, and a template with the offending value appended (`plan_cap_exceeded:17`). The audit wants to know that
+  // the refusal says something specific; a `:value` suffix does not make it less specific, so the static head is the
+  // name. Reading only plain strings is how this class reported "0 name their code" on a tree full of named refusals.
+  const reasonIn = (expression) => {
+    if (ts.isStringLiteral(expression)) return expression.text;
+    if (ts.isNoSubstitutionTemplateLiteral(expression)) return expression.text;
+    if (ts.isTemplateExpression(expression)) return expression.head.text;
+    return null;
+  };
+  const codeIn = (expression) => {
+    const reason = reasonIn(expression);
+    if (reason === null) return null;
+    const head = reason.split(":")[0]?.trim() ?? "";
+    return BOUNDED_CODE.test(head) ? head : reason.trim().length > 0 && BOUNDED_CODE.test(reason) ? reason : null;
+  };
+  // The helpers that refuse on behalf of their caller, by name.
+  const namedByRefuser = (callee) => /^(?:refuse|fail|reject)/u.test(callee.getText(sourceFile));
   walk(node, (inner) => {
     if (found !== null) return;
-    if (
-      ts.isPropertyAssignment(inner) &&
-      inner.name.getText(sourceFile) === "code" &&
-      ts.isStringLiteral(inner.initializer) &&
-      BOUNDED_CODE.test(inner.initializer.text)
-    )
-      found = inner.initializer.text;
+    if (ts.isPropertyAssignment(inner) && inner.name.getText(sourceFile) === "code") {
+      const code = codeIn(inner.initializer);
+      if (code !== null) found = code;
+    }
     if (
       ts.isCallExpression(inner) &&
       ts.isIdentifier(inner.expression) &&
-      /sendProblem|sendBootstrapProblem|sendLifecycleProblem|refuseBootstrap/u.test(inner.expression.text)
+      (/sendProblem|sendBootstrapProblem|sendLifecycleProblem|refuseBootstrap/u.test(inner.expression.text) ||
+        namedByRefuser(inner.expression))
     ) {
       for (const argument of inner.arguments) {
-        if (ts.isStringLiteral(argument) && BOUNDED_CODE.test(argument.text)) found = argument.text;
+        const code = codeIn(argument);
+        if (code !== null) found = code;
       }
     }
     const thrower =
       (ts.isNewExpression(inner) || ts.isCallExpression(inner)) && namedByThrower(inner.expression) ? inner : null;
     if (thrower !== null)
-      for (const argument of thrower.arguments ?? [])
-        if (ts.isStringLiteral(argument) && BOUNDED_CODE.test(argument.text)) found = argument.text;
+      for (const argument of thrower.arguments ?? []) {
+        const code = codeIn(argument);
+        if (code !== null) found = code;
+      }
   });
   return found;
 }
