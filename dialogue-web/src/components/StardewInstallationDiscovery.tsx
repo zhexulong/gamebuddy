@@ -61,9 +61,24 @@ type Props = {
  *    and a late answer can contradict the cancel they already made.
  *  - **A player who cannot confirm is still not stuck.** The folder picker reaches
  *    the same admission as a candidate does, so it is offered in every state rather
- *    than only the retryable ones. A candidate this panel will not confirm is what
- *    used to leave a player with a found installation and no way to accept it.
+ *    than only the retryable ones - and a scan does not gate it either. A player who
+ *    already knows where their game is must not wait out a search they did not ask
+ *    for; the picker only stands down while another *action* (a confirmation, a retry,
+ *    another picker) is outstanding, because two admissions must not run at once. A
+ *    candidate this panel will not confirm is what used to leave a player with a found
+ *    installation and no way to accept it.
  */
+
+/**
+ * What the panel is waiting on, and therefore what it gates.
+ *
+ * A *scan* blocks the controls that start another scan or a confirmation. An *action* -
+ * every Host mutation this panel performs - blocks every control, because two admissions
+ * must never be in flight together. The distinction is the whole point of the picker's
+ * rule above: `busy` alone could not tell a scan apart from a confirmation, so a scan
+ * gated the one control a player may need most.
+ */
+type Pending = "none" | "scan" | "action";
 
 /**
  * Which candidates the panel offers to confirm.
@@ -83,9 +98,10 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
   const [state, setState] = useState<InstallationDiscoveryState>("loading");
   const [discovery, setDiscovery] = useState<StardewInstallationDiscoveryV1 | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
-  // `busy` guards re-entrant reads/actions AND drives the rendered disabled
-  // state; a ref would not re-render the buttons that must become disabled.
-  const [busy, setBusy] = useState(false);
+  // What is outstanding, which gates the rendered controls; a ref would not re-render
+  // the buttons that must become disabled.
+  const [pending, setPending] = useState<Pending>("none");
+  const busy = pending !== "none";
   const refreshEpoch = useRef(0);
   const mounted = useRef(true);
   useEffect(
@@ -97,7 +113,7 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
   const read = async (internal = false) => {
     if (busy && !internal) return;
     const epoch = ++refreshEpoch.current;
-    if (!internal) setBusy(true);
+    if (!internal) setPending("scan");
     setState("loading");
     try {
       const result = await api.readStardewInstallationDiscovery();
@@ -109,7 +125,9 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
       if (!mounted.current || epoch !== refreshEpoch.current) return;
       setState(installationDiscoveryFailureState(observedProblemCode(error)));
     } finally {
-      if (!internal) setBusy(false);
+      // A read the panel has already retired (by a cancel, or by a picker outcome) must
+      // not clear the work that replaced it.
+      if (!internal && epoch === refreshEpoch.current) setPending("none");
     }
   };
   useEffect(() => {
@@ -121,19 +139,22 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
     // retires the read it interrupts, so that read cannot answer over the cancel.
     if (kind === "cancel") {
       refreshEpoch.current += 1;
-      setBusy(true);
+      setPending("action");
       try {
         await api.cancelStardewInstallationDiscovery();
         if (mounted.current) setState("cancelled");
       } catch (error) {
         if (mounted.current) setState(installationDiscoveryFailureState(observedProblemCode(error)));
       } finally {
-        setBusy(false);
+        setPending("none");
       }
       return;
     }
-    if (busy) return;
-    setBusy(true);
+    // A scan gates the controls that start another scan or a confirmation. It never gates
+    // the folder picker (see the header): that is the other route to the same admission,
+    // and the player may already know where their game is.
+    if (kind === "picker" ? pending === "action" : busy) return;
+    setPending("action");
     setState(kind === "confirm" ? "confirming" : kind === "retry" ? "retrying" : state);
     try {
       const result =
@@ -143,6 +164,10 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
             ? await api.retryStardewInstallationDiscovery()
             : await api.openStardewInstallationPicker();
       if (!mounted.current) return;
+      // A settled answer retires a scan still in flight, so that scan cannot answer over
+      // what the player just did. A dismissed folder dialog is not an answer: the scan it
+      // was shown beside keeps running.
+      if ("status" in result && result.status !== "cancelled") refreshEpoch.current += 1;
       // A selection refusal that names its own cause is a state, not a search
       // failure: the search found the player's game, and what is missing is the
       // mod loader. Both controls that lead here - confirm and the folder picker -
@@ -189,14 +214,21 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
         setState(installationDiscoveryState(result.candidates.length, result.diagnostics));
         return;
       }
+      // A folder dialog the player dismissed is not a failure, and says nothing about the
+      // search: the scan it interrupted is still running (or has already settled behind the
+      // dialog), so the panel keeps the sentence it had.
+      if (kind === "picker" && "status" in result && result.status === "cancelled") return;
       setState("error");
     } catch (error) {
       if (mounted.current) setState(installationDiscoveryFailureState(observedProblemCode(error)));
     } finally {
-      setBusy(false);
+      setPending("none");
     }
   };
-  const disabled = busy || state === "loading" || state === "confirming" || state === "retrying";
+  // A settled answer retires a scan still in flight (above), so this is only what the
+  // controls read: the picker is gated by actions alone.
+  const scannerDisabled = pending !== "none";
+  const pickerDisabled = pending === "action";
   // A confirmation is a Host operation with no cancel of its own, so it is the
   // one state in which abandoning the panel is not offered.
   const cancelDisabled = state === "confirming";
@@ -238,7 +270,7 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
               <button
                 type="button"
                 className="game-action"
-                disabled={disabled || !isConfirmableCandidate(status)}
+                disabled={scannerDisabled || !isConfirmableCandidate(status)}
                 onClick={() => {
                   setSelectedCandidateId(candidateId);
                   void action("confirm", candidateId);
@@ -256,10 +288,10 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
         </p>
       )}
       <div className="game-actions">
-        <button type="button" className="game-action" disabled={disabled} onClick={() => void action("picker")}>
+        <button type="button" className="game-action" disabled={pickerDisabled} onClick={() => void action("picker")}>
           {labels.gameInstallationChooseFolder}
         </button>
-        <button type="button" className="game-action" disabled={disabled} onClick={() => void action("retry")}>
+        <button type="button" className="game-action" disabled={scannerDisabled} onClick={() => void action("retry")}>
           {labels.gameInstallationFindAgain}
         </button>
         <button type="button" className="game-action" disabled={cancelDisabled} onClick={() => void action("cancel")}>

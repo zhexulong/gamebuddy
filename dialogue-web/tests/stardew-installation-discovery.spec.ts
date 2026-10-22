@@ -361,6 +361,50 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
   });
 
   /**
+   * A scan the player did not ask for may not lock the folder picker.
+   *
+   * The component's own contract says the picker is offered in every state, because it
+   * reaches the same admission as a candidate. The render gated it on `busy`, and the mount
+   * read sets `busy`, so a player who already knows where their game is had to wait out a
+   * search - and `action()` returned early while busy, so even an enabled control would have
+   * been inert.
+   */
+  test("the folder picker is live while the first scan is still running", async ({ page }) => {
+    let pickerCalls = 0;
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    await page.route(DRAFT_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })));
+    // A scan that has not settled: it answers only after the picker has been read.
+    await page.route(DISCOVERY_ROUTE, async (route) => {
+      await sleep(4_000);
+      await route.fulfill(jsonOk(foundInstallation)).catch(() => undefined);
+    });
+    await page.route(PICKER_ROUTE, (route) => {
+      pickerCalls += 1;
+      return route.fulfill(jsonOk({ apiVersion: 1, status: "cancelled" }));
+    });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
+    const setup = panel(page);
+    await expect(setup).toHaveAttribute("data-state", "loading");
+    const browse = setup.getByRole("button", { name: "Choose game folder", exact: true });
+    const disabled = await browse.isDisabled();
+    console.log(`[install-picker] outstanding scan: browseDisabled=${disabled}`);
+    expect(disabled, "a scan the player did not ask for does not gate the folder picker").toBe(false);
+    // Painted enabled is not enough: the control must reach the Host while the scan runs.
+    await browse.click();
+    await expect.poll(() => pickerCalls).toBe(1);
+    // A folder dialog the player dismissed is not a search that failed, and the scan it was
+    // shown beside is still the panel's answer.
+    const dismissedState = await setup.getAttribute("data-state");
+    const dismissed = (await sentenceOf(page).first().innerText()).trim();
+    console.log(`[install-picker] dismissed: state=${dismissedState} sentence=${JSON.stringify(dismissed)}`);
+    expect(dismissed, "dismissing the folder dialog claims no failure").not.toBe("The installation search failed.");
+    await expect(setup).toHaveAttribute("data-state", "loading");
+    // The scan still settles, and its answer is the one the panel shows.
+    await expect(setup).toHaveAttribute("data-state", "candidates", { timeout: 10_000 });
+  });
+
+  /**
    * The line under the installation's name speaks the player's language.
    *
    * The panel used to print what the Host mints: `known-location` as the source
@@ -562,13 +606,15 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
       { source: "steam-vdf", spoken: "Found in a Steam library folder", hint: null, confirmDisabled: true },
     ]);
 
-    // 3. confirming - the confirmation is outstanding.
+    // 3. confirming - the confirmation is outstanding, and the outcome that settles it is
+    // the confirmation itself (the refresh behind it finds the same list, and the panel
+    // still says what the player asked for rather than echoing the scan).
     confirmDelayMs = 1_200;
     await rows.nth(1).getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(panel(page)).toHaveAttribute("data-state", "confirming");
     const confirming = await measure("confirm outstanding");
     expect(confirming.sentence, "the panel names the confirmation it is running").toBe("Confirming the installation…");
-    await expect(panel(page)).toHaveAttribute("data-state", "candidates");
+    await expect(panel(page)).toHaveAttribute("data-state", "confirmed");
     confirmDelayMs = 0;
 
     // 4. retrying, then the settled answer it produces.
