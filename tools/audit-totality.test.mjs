@@ -8,7 +8,10 @@
  * one. So every class is proved twice on a scratch tree built for the purpose -
  * green on a tree that satisfies it, red after one injected violation, green
  * again once the injection is removed - and the injection is a real edit to a
- * real file, not a mocked predicate.
+ * real file, not a mocked predicate. Where the class's own rule cannot yet read a
+ * tree the product would accept, the proof is limited to the half that still
+ * holds (`proveAdvisory`), or the test is a skip that names the rule's gap and
+ * its smallest repro rather than the fixture.
  *
  * The scratch tree is deliberately tiny and complete at the same time: it holds
  * the two browser contracts, the handler modules the audit reads codes out of,
@@ -196,7 +199,9 @@ function fixture() {
       "",
     ].join("\n"),
   );
-  write(root, "dialogue-web/tests/only-a-test.test.ts", 'import test from "node:test";\ntest("x", () => {});\n');
+  // The hygiene class reads test importers under the two source roots only, so the test that keeps an export alive
+  // has to live where the product's own tests live.
+  write(root, "host/src/only-a-test.test.ts", 'import test from "node:test";\ntest("x", () => {});\n');
   return root;
 }
 
@@ -265,8 +270,16 @@ function prove(root, id, { file, before, after, expectWhere }) {
 }
 
 test("read-path: a projection that can exceed its own schema is a blank surface", (t) => {
+  // The fixture is the shape the product writes; the rule cannot read it. In `note-route.ts` the read path validates its
+  // own projection through the exported validator object, `TavernBrowserValidatorsV1.NoteListV1Schema.Check(projected)`,
+  // which is what the product's read paths do. `failClosedSites` stores that reference as written
+  // (`tools/audit-totality.mjs:660` today) but `runReadPath` resolves it against a map keyed by the bare declaration name
+  // (`:740`, `:749`), so the lookup misses and the site is counted - `133 remove the surface on mismatch` on this tree -
+  // without ever being checked against a schema. Smallest repro, two roots identical except for the reference: the
+  // namespaced form reports 0 violations with `0 cap(s) that the projection can exceed`, the bare `NoteListV1Schema.Check`
+  // form reports 1. One line in the rule (`site.schema.split(".").at(-1)`) turns this test back into `prove(...)`.
   t.skip(
-    "fixture not reconciled: the class reports a violation on the tree it was meant to accept, so the clean-then-red proof cannot run yet (see .pi/tools/AUDIT-STATE.md)",
+    "rule blind to a namespaced schema reference: audit-totality.mjs:660 keeps `X.NoteListV1Schema` while :740/:749 index bare `NoteListV1Schema`, so no site resolves and read-path cannot go red on a tree that writes the check the way the product does",
   );
 });
 
@@ -294,9 +307,28 @@ test("bounds: the wire's cap and the writer's cap must agree in both directions"
 });
 
 test("refusal: a capacity enforced without a named code is a generic failure", (t) => {
-  t.skip(
-    "fixture not reconciled: the class reports a violation on the tree it was meant to accept, so the clean-then-red proof cannot run yet (see .pi/tools/AUDIT-STATE.md)",
-  );
+  const root = fixture();
+  try {
+    // This class is still advisory, and the reason is a rule gap rather than the fixture. `namedCodeIn`
+    // (`tools/audit-totality.mjs:530-536` today) accepts a code from `ts.isCallExpression` whose callee matches
+    // `/^Error$|Failure$/`, so it reads `throw new Error("notes_too_many")` in this fixture as naming nothing:
+    // `new Error(...)` is a `NewExpression`, and `throw new TavernConnectionInputError("connection_limit_reached")`
+    // (`host/src/tavern/connection-store.ts:215`) is neither `Error` nor `*Failure`. Both are how the product refuses.
+    // So the two correct refusals in this tree are reported and the clean-then-red proof cannot run; what is proved
+    // here is the detection half - a capacity refused with a sentence instead of a code is a new finding, and removing
+    // the injection takes it back. When the rule learns to see `new *Error("code")` this fixture is clean and the test
+    // becomes `prove(...)` and drops out of `ADVISORY`.
+    const clean = proveAdvisory(root, "refusal", {
+      file: "host/src/note-route.ts",
+      before: "  const projected = { revision: 1, notes };",
+      after:
+        '  if (notes.length > MAX_NOTES) throw new Error("Too many notes to project.");\n  const projected = { revision: 1, notes };',
+      expectWhere: "host/src/note-route.ts",
+    });
+    t.diagnostic(clean.notes.join(" | "));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("codes: a mirror that is a stale subset fails", (t) => {
@@ -375,9 +407,24 @@ test("promises: a promise that names an unreachable capability fails", (t) => {
 });
 
 test("hygiene: a suppression directive and a test-only export are both findings", (t) => {
-  t.skip(
-    "fixture not reconciled: the class reports a violation on the tree it was meant to accept, so the clean-then-red proof cannot run yet (see .pi/tools/AUDIT-STATE.md)",
-  );
+  const root = fixture();
+  try {
+    const clean = prove(root, "hygiene", {
+      file: "host/src/note-store.ts",
+      before: "const MAX_NOTES = 10;",
+      after: "// @ts-ignore\nconst MAX_NOTES = 10;",
+      expectWhere: "host/src/note-store.ts:1",
+    });
+    t.diagnostic(clean.notes.join(" | "));
+    prove(root, "hygiene", {
+      file: "host/src/only-a-test.test.ts",
+      before: 'import test from "node:test";',
+      after: 'import test from "node:test";\nimport { noteStoreReady } from "./note-store.js";\nvoid noteStoreReady;',
+      expectWhere: "host/src/note-store.ts",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("the audit reports its own shape and --only narrows the run", () => {
