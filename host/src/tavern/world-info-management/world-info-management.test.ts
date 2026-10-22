@@ -75,6 +75,92 @@ test("managed World Info creates, lists, details, updates, and preserves immutab
   }
 });
 
+test("managed World Info update carries the entry facts the authoring surface never names", async () => {
+  const { root, repository } = await temporaryRepository();
+  try {
+    // A player's own SillyTavern card: "Festival" is always on and gated by its secondary words.
+    const importLorebook = repository.import;
+    assert.ok(importLorebook, "the managed library exposes its one lorebook importer");
+    await importLorebook.call(repository, {
+      name: "Festival Lore",
+      description: "Selection rules for the valley.",
+      entries: [
+        {
+          comment: "Festival",
+          content: "The town holds a festival every summer.",
+          key: ["festival"],
+          keysecondary: ["summer"],
+          selectiveLogic: 1,
+          constant: true,
+        },
+        { comment: "Harbor", content: "Boats moor at the harbor.", key: ["harbor"] },
+      ],
+    });
+    const imported = (await repository.detail("Festival Lore"))!;
+    assert.deepEqual(imported.entries, [
+      {
+        scope: "setting",
+        publicTitle: "Festival",
+        summary: "The town holds a festival every summer.",
+        keys: ["festival"],
+        constant: true,
+        secondaryKeys: ["summer"],
+        selectiveLogic: 1,
+      },
+      { scope: "setting", publicTitle: "Harbor", summary: "Boats moor at the harbor.", keys: ["harbor"] },
+    ]);
+
+    // What the editor submits: the four fields it has a control for, and nothing else.
+    const authored = imported.entries.map((entry) => ({
+      scope: entry.scope,
+      publicTitle: entry.publicTitle,
+      summary: entry.summary,
+      ...(entry.keys === undefined ? {} : { keys: entry.keys }),
+    }));
+    const saved = await repository.update("Festival Lore", {
+      expectedRevision: imported.revision,
+      publicTitle: "Festival Lore",
+      summary: "Selection rules for the valley.",
+      entries: authored,
+    });
+    assert.deepEqual(saved.entries[0], {
+      scope: "setting",
+      publicTitle: "Festival",
+      summary: "The town holds a festival every summer.",
+      keys: ["festival"],
+      constant: true,
+      secondaryKeys: ["summer"],
+      selectiveLogic: 1,
+    });
+
+    // A value the caller does state is its own answer, so the carry can never mean "ignore the request".
+    const stated = await repository.update("Festival Lore", {
+      expectedRevision: saved.revision,
+      publicTitle: "Festival Lore",
+      summary: "Selection rules for the valley.",
+      entries: [{ ...authored[0]!, constant: false, secondaryKeys: ["autumn"], selectiveLogic: 2 }, authored[1]!],
+    });
+    assert.deepEqual(
+      [stated.entries[0]!.constant, stated.entries[0]!.secondaryKeys, stated.entries[0]!.selectiveLogic],
+      [false, ["autumn"], 2],
+    );
+
+    // Dropping a row is not an invitation to hand its facts to its neighbour: the remaining
+    // entry is matched by its own title, so it keeps exactly the facts it never had.
+    const trimmed = await repository.update("Festival Lore", {
+      expectedRevision: stated.revision,
+      publicTitle: "Festival Lore",
+      summary: "Selection rules for the valley.",
+      entries: [authored[1]!],
+    });
+    assert.deepEqual(trimmed.entries, [
+      { scope: "setting", publicTitle: "Harbor", summary: "Boats moor at the harbor.", keys: ["harbor"] },
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("managed World Info delete removes the item from the library and keeps its immutable revision on disk", async () => {
   const { root, repository } = await temporaryRepository();
   try {

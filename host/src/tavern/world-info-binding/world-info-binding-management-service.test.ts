@@ -416,6 +416,52 @@ test("mounted binding service serves the library write half through the exact pr
   }
 });
 
+test("mounted binding service keeps the entry facts the library editor has no field for", async () => {
+  const results = await mounted(`
+    // A player's own SillyTavern card, turned into a library item by the library's one importer.
+    const imported = await repository.import({ name: "Festival Lore", description: "Selection rules for the valley.", entries: [{ comment: "Festival", content: "The town holds a festival every summer.", key: ["festival"], keysecondary: ["summer"], selectiveLogic: 1, constant: true }] });
+    const library = await service.read();
+    const importedItem = library.items.find((item) => item.title === "Festival Lore");
+    const readItem = (state, handle) => service.detail({ apiVersion: 1, selectionGeneration: generation, expectedRevision: state.revision, itemHandle: handle });
+    // The entry's own facts as the editor's draft submits them: the four fields it has a
+    // control for, and nothing else.
+    const authoring = (entry) => ({ scope: entry.scope, publicTitle: entry.publicTitle, summary: entry.summary, keys: [...entry.keys] });
+    const before = await readItem(library, importedItem.handle);
+    const saved = await service.update({ apiVersion: 1, selectionGeneration: generation, expectedRevision: library.revision, itemHandle: importedItem.handle, item: { expectedRevision: before.revision, publicTitle: "Festival Lore", summary: "Selection rules for the valley.", entries: [authoring(before.entries[0])] } });
+    const savedItem = saved.items.find((item) => item.title === "Festival Lore");
+    const afterUnchangedSave = await readItem(saved, savedItem.handle);
+    // A value the caller does state - the flag cleared, another gate and another rule - is
+    // its own answer about the entry and must land.
+    const stated = await service.update({ apiVersion: 1, selectionGeneration: generation, expectedRevision: saved.revision, itemHandle: savedItem.handle, item: { expectedRevision: afterUnchangedSave.revision, publicTitle: "Festival Lore", summary: "Selection rules for the valley.", entries: [{ ...authoring(afterUnchangedSave.entries[0]), constant: false, secondaryKeys: ["autumn"], selectiveLogic: 2 }] } });
+    const statedItem = stated.items.find((item) => item.title === "Festival Lore");
+    const afterStatedChange = await readItem(stated, statedItem.handle);
+    process.stdout.write(JSON.stringify({ importedRevision: imported.revision, before: before.entries[0], afterUnchangedSave: afterUnchangedSave.entries[0], afterStatedChange: afterStatedChange.entries[0] }));
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+  type Entry = {
+    scope: string;
+    publicTitle: string;
+    summary: string;
+    keys?: readonly string[];
+    secondaryKeys?: readonly string[];
+    selectiveLogic?: number;
+    constant?: boolean;
+  };
+  const selectionOf = (entry: Entry) => [entry.constant, entry.secondaryKeys, entry.selectiveLogic];
+  assert.equal(results.importedRevision, 1);
+  // The imported card's entry is what must survive: "any of my secondary words" (1), always on.
+  assert.deepEqual(selectionOf(results.before as Entry), [true, ["summer"], 1]);
+  assert.deepEqual(
+    selectionOf(results.afterUnchangedSave as Entry),
+    [true, ["summer"], 1],
+    "an unchanged save must not rewrite the imported entry's rule",
+  );
+  // Explicitly stated values are the caller's answer, so the carry can never be "ignore the request".
+  assert.deepEqual(selectionOf(results.afterStatedChange as Entry), [false, ["autumn"], 2]);
+});
+
 test("mounted binding service refuses a removal or rename of an item the mounted Chat binds", async () => {
   const results = await mounted(`
     // A fresh Chat carries the companion's own book in HER slot; the managed slot is

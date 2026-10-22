@@ -187,7 +187,12 @@ export function createWorldInfoManagementRepository(runtimeRoot: string): WorldI
           catalog.artifacts.some((item) => item.publicTitle === request.publicTitle)
         )
           throw new Error("world_info_already_exists");
-        const artifact = artifactFor(current.revision + 1, request);
+        const previous = await readRevision(root, directory, current.handle, current.revision);
+        const artifact = artifactFor(current.revision + 1, {
+          publicTitle: request.publicTitle,
+          summary: request.summary,
+          entries: entriesCarryingSelection(previous.entries, request.entries),
+        });
         const readBack = await writeRevision(root, directory, current.handle, artifact);
         const artifacts = catalog.artifacts.map((item, itemIndex) =>
           itemIndex === index
@@ -435,6 +440,47 @@ function validateIdentityKey(value: string): void {
 }
 async function atomicWrite(path: string, content: string, containmentRoot: string): Promise<void> {
   await atomicWriteFile(path, content, containmentRoot);
+}
+
+/**
+ * The entry list one update writes: the caller's entries, plus the facts its surface never names.
+ *
+ * The library's editor carries an entry's scope, title, summary and trigger words, and the update
+ * command is exactly the list it sent - that surface has no `constant`, `secondaryKeys` or
+ * `selectiveLogic` control, so all three are absent from every save it makes. Writing the sent list
+ * alone rewrites an imported entry's author rule ("all of my secondary words", always on) into
+ * "any of these words" on a save that changed nothing. Her own book carries the same two facts for
+ * the same reason (`authoredEntries` in `companion-world-book-service.ts`).
+ *
+ * An entry is matched by its public title, the entry's one stable identity - the same key an item is
+ * named by - and the first unclaimed match wins, so two entries sharing a title keep their own rows
+ * in order. A field the caller DID send is never overridden, even as `false`: that is the caller's
+ * answer, and an entry's schema refuses an empty key list, so "clear the gate" is not expressible
+ * by omission at all - omission here can only mean "not stated by this surface".
+ */
+function entriesCarryingSelection(
+  previous: readonly PublicWorldInfoEntry[],
+  incoming: readonly PublicWorldInfoEntry[],
+): readonly PublicWorldInfoEntry[] {
+  const claimed = new Set<number>();
+  return incoming.map((entry) => {
+    const matched = previous.findIndex(
+      (candidate, index) => !claimed.has(index) && candidate.publicTitle === entry.publicTitle,
+    );
+    if (matched === -1) return entry;
+    claimed.add(matched);
+    const carried = previous[matched]!;
+    return Object.freeze({
+      ...entry,
+      ...(entry.constant === undefined && carried.constant !== undefined ? { constant: carried.constant } : {}),
+      ...(entry.secondaryKeys === undefined && carried.secondaryKeys !== undefined
+        ? { secondaryKeys: carried.secondaryKeys }
+        : {}),
+      ...(entry.selectiveLogic === undefined && carried.selectiveLogic !== undefined
+        ? { selectiveLogic: carried.selectiveLogic }
+        : {}),
+    });
+  });
 }
 
 function artifactFor(revisionNumber: number, request: CreateWorldInfoRequest): ManagedArtifact {
