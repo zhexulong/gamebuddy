@@ -157,14 +157,20 @@ function connectionState(active: boolean) {
 }
 
 /** Every route the composed shell and the four settings panels read. */
-async function stubProductRoutes(page: Page, options: Readonly<{ activeConnection: boolean }>) {
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot)));
+async function stubProductRoutes(
+  page: Page,
+  options: Readonly<{ activeConnection: boolean; chatVoice?: "unavailable" | "ready" }>,
+) {
+  const chat = options.chatVoice === undefined ? composedChat : { ...composedChat, voice: { state: options.chatVoice } };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill(json200({ ...composedRoot, chat })),
+  );
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
   await page.route("**/api/tavern/v1/settings/connection", (route) =>
     route.fulfill(json200(connectionState(options.activeConnection))),
   );
   await page.route("**/api/tavern/v1/settings/language", (route) =>
-    route.fulfill(json200({ revision: 0, locale: "en-US" })),
+    route.fulfill(json200({ revision: 1, locale: "en-US" })),
   );
   await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
     route.fulfill(
@@ -306,5 +312,99 @@ test.describe("B: the connection section is the first thing in Settings", () => 
     await expect(connection.locator("#connection-provider")).toBeVisible();
     await expect(connection.locator("[data-connection-list]")).toBeVisible();
     await expect(connection.getByRole("button", { name: "Save connection", exact: true })).toBeVisible();
+  });
+});
+
+test.describe("C: the voice consent leaves the first settings screen", () => {
+  test("the consent is the last group, still there, and its controls are below the first viewport", async ({
+    page,
+  }) => {
+    await page.setViewportSize(VIEWPORT);
+    await stubProductRoutes(page, { activeConnection: true });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const surface = page.getByTestId("settings-surface");
+    await expect(surface.locator("[data-voice-settings]")).toBeAttached();
+
+    // The voice group is the last group the surface renders, so the disclosure and
+    // its consent are not among the first things a player reads. Measured at
+    // 1280x720: the group starts at 1529 px and its Accept/Revoke pair at 1673 px,
+    // where before this decision they stood at 405 px and 548 px - inside the
+    // first screen.
+    const order = await settingsGroupOrder(page);
+    expect(order[order.length - 1]).toBe("voice");
+
+    const consent = surface.locator("[data-voice-settings]").getByRole("button", { name: "Accept", exact: true });
+    await expect(consent).toHaveCount(1);
+    const consentBox = await consent.boundingBox();
+    expect(consentBox!.y).toBeGreaterThan(VIEWPORT.height);
+  });
+
+  test("accepting it still writes the one durable consent the runtime reads", async ({ page }) => {
+    const writes: unknown[] = [];
+    await page.setViewportSize(VIEWPORT);
+    await stubProductRoutes(page, { activeConnection: true });
+    // Replaces the read stub for this test: the read keeps its answer, the write
+    // is recorded and answered with the accepted read-back.
+    await page.route("**/api/tavern/v1/settings/voice-preference", async (route) => {
+      if (route.request().method() === "GET") {
+        await route.fulfill(
+          json200({
+            revision: 1,
+            disclosureVersion: null,
+            consent: "undecided",
+            decidedAtMs: null,
+            outputDevice: null,
+            persona: null,
+          }),
+        );
+        return;
+      }
+      writes.push(route.request().postDataJSON());
+      await route.fulfill(
+        json200({
+          revision: 2,
+          disclosureVersion: "mimo-cloud-tts-v1",
+          consent: "accepted",
+          decidedAtMs: 1_900_000_000_000,
+          outputDevice: null,
+          persona: null,
+        }),
+      );
+    });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+
+    const voice = page.getByTestId("settings-surface").locator("[data-voice-settings]");
+    await expect(voice).toContainText("Cloud TTS consent");
+    await expect(voice).toContainText("Not decided");
+    await voice.getByRole("button", { name: "Accept", exact: true }).click();
+
+    // The disclosure version rides with the consent: agreement to a version, not
+    // a boolean, so a later disclosure cannot inherit an older yes.
+    await expect.poll(() => writes.length).toBe(1);
+    expect(writes[0]).toEqual({ action: "accept", expectedRevision: 1, disclosureVersion: "mimo-cloud-tts-v1" });
+    await expect(voice).toContainText("Accepted");
+  });
+
+  test("the conversation offers voice only as the Host's own record grants it", async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+    await stubProductRoutes(page, { activeConnection: true, chatVoice: "unavailable" });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    const chat = page.getByTestId("chat-surface");
+    await expect(chat.locator("[data-voice-state='unavailable']")).toBeAttached();
+    await expect(chat).toContainText("Voice unavailable");
+  });
+
+  test("an accepted consent is what turns the conversation's voice control on", async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+    await stubProductRoutes(page, { activeConnection: true, chatVoice: "ready" });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    // The gate is the record the Host projects, never the settings screen the
+    // player happens to have open: the same control reads as the talking one only
+    // once that record says `ready`.
+    const chat = page.getByTestId("chat-surface");
+    await expect(chat.locator("[data-voice-state='ready']")).toBeAttached();
+    await expect(chat).toContainText("Voice ready — press to talk");
   });
 });

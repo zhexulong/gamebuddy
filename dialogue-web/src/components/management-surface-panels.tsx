@@ -1193,8 +1193,15 @@ export type WorldInfoSurfaceSource = Readonly<{
  * that cannot answer. A player who arrived here from the conversation's own
  * "no model connection" sentence lands on the controls that fix it, above the
  * language and voice preferences that only shape a conversation once one exists.
- * The voice group is last: its consent is a disclosure the player reads once, and
- * it belongs beside the far smaller number of players who use voice at all.
+ *
+ * The voice group is last, consent included. The first settings screen keeps the
+ * one consent a conversation needs - the model connection - and the cloud-TTS
+ * consent is a disclosure the player reads once, when they reach for voice. Its
+ * controls stay exactly where they were, with the disclosure sentence they
+ * consent to and the device and persona selections they apply to; nothing was
+ * deleted and no rule changed, so voice is gated by the same durable consent the
+ * moment it is used. It simply is not the third thing a player reads on a screen
+ * about models.
  *
  * The companion language and the voice preference live in ONE Host-owned record,
  * so they share one revision here (`settingsRevisionRef`): a panel-local counter
@@ -1569,14 +1576,6 @@ export function SettingsSurfacePanel({
         onSelectLanguage={mutateCompanionLanguage}
         onSelectUiLanguage={selectUiLocale}
       />
-      <VoiceSettingsPanel
-        voiceView={voiceView}
-        labels={labels}
-        onAccept={() => mutateVoice("accept")}
-        onRevoke={() => mutateVoice("revoke")}
-        onSelectDevice={(deviceId) => mutateVoice("setOutputDevice", deviceId)}
-        onSelectPersona={(persona) => mutateVoice("setPersona", persona)}
-      />
       {modelProfilesView.kind === "ready" && (
         // Rendered only when the mounted profile published the model-profile
         // routes; a profile without them never shows an editor it cannot serve.
@@ -1586,6 +1585,14 @@ export function SettingsSurfacePanel({
           onSave={(surface, modelId, thinkingLevel) => mutateModelProfile(surface, modelId, thinkingLevel)}
         />
       )}
+      <VoiceSettingsPanel
+        voiceView={voiceView}
+        labels={labels}
+        onAccept={() => mutateVoice("accept")}
+        onRevoke={() => mutateVoice("revoke")}
+        onSelectDevice={(deviceId) => mutateVoice("setOutputDevice", deviceId)}
+        onSelectPersona={(persona) => mutateVoice("setPersona", persona)}
+      />
     </>
   );
 }
