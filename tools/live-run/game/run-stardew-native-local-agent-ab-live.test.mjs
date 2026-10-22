@@ -285,8 +285,8 @@ test("the opening task's unit is one whole piece of work, stated without tool na
   const openingTask = extractOpeningTaskPrompt(RUNNER_SOURCE);
   assert.match(openingTask, /把今天这一摊活当成一整件事/);
   assert.match(openingTask, /take today's work as one whole job/);
-  assert.match(openingTask, /怎么一段段排开由系统来/);
-  assert.match(openingTask, /then let the system lay it out in stretches/);
+  assert.match(openingTask, /其余怎么排开由系统来/);
+  assert.match(openingTask, /how it gets laid out is up to the system/);
   // The retired framing is the falsifier: "do as many things as you can" is what made every step its own turn.
   assert.doesNotMatch(openingTask, /能做几件做几件/);
   assert.doesNotMatch(openingTask, /as many things as you can/);
