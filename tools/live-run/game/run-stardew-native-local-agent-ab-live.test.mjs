@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { resolveLiveRunRoot } from "../core/capture.mjs";
 import { validateEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import { classifyNight } from "../../lib/multiday-baseline.mjs";
+import { buildFailureSnapshot } from "../../lib/failure-dump.mjs";
 import { executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
 import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
@@ -518,12 +519,14 @@ test("morning_routine is a self-directed session whose output is a capability au
   assert.match(RUNNER_SOURCE, /spokeToPlayer,/);
   // The failure path must never be the thing that crashes: run N played twelve actions and wrote
   // NO artifact because the catch block read a try-scoped binding, losing both the artifact and
-  // the root error. Nor may it silently lose the artifact at all — three runs (N, O, P) died with
-  // no result file — so whatever escapes the run's own try/catch still writes one.
-  assert.match(RUNNER_SOURCE, /function writeFailureArtifact\(reason\)/);
-  assert.match(RUNNER_SOURCE, /process\.on\("uncaughtException"/);
-  assert.match(RUNNER_SOURCE, /process\.on\("unhandledRejection"/);
-  assert.match(RUNNER_SOURCE, /reason: "runner_failed_before_reporting"/);
+  // the root error. It must also never publish LESS than the run knows: `g149tool` did 184 s of work and left a
+  // seven-field stub, so an escaped error is now assembled by the same builder every other exit uses.
+  assert.match(RUNNER_SOURCE, /async function writeFailureDump\(reason\)/);
+  assert.match(RUNNER_SOURCE, /process\.once\("uncaughtException"/);
+  assert.match(RUNNER_SOURCE, /process\.once\("unhandledRejection"/);
+  // The floor exists for a failure before the run's record exists, and it names itself instead of posing as a result.
+  assert.match(RUNNER_SOURCE, /reason: "failure_dump_assembly_failed"/);
+  assert.doesNotMatch(RUNNER_SOURCE, /reason: "runner_failed_before_reporting"/);
   assert.match(RUNNER_SOURCE, /console\.error\(error\);/);
   // The catch must not read a binding that only the try can see.
   // The catch used the OPTIONAL-CHAINED form (a try-scoped name); the try legitimately reports
@@ -1066,10 +1069,126 @@ test("a tool-call count above the frames the runner sent is a named violation", 
   assert.equal(runnerFrames.framesWithoutToolCall, 2);
   // Neither side measured is not a pass.
   assert.equal(toolTimingInvariant({ calls: null, frames: null }).checked, false);
-  // The real reader publishes the disagreement, not just the number.
+  // The real reader withholds the timings instead of publishing them with a caveat: 1 dispatch against 0 frames is
+  // the over-count, and the only numbers published are the disagreement itself.
   const timing = readToolTiming(writeSessionRecord(["stardew_move_to_tile"]), { executionTraceFlat: 0 });
-  assert.equal(timing.byCategory.flat_dispatch.calls, 1);
+  assert.equal(timing.observed, false);
+  assert.equal(timing.reason, "tool_timing_invariant_violated");
+  assert.equal(timing.byCategory, null, "a number with a caveat gets quoted; there is no number here");
+  assert.equal(timing.longest, null);
   assert.equal(timing.invariant.ok, false);
+  assert.equal(timing.invariant.calls, 1, "the disagreement itself is still published");
+  assert.equal(timing.invariant.frames, 0);
+  assert.ok(timing.record.endsWith(".jsonl"), "the record that disagreed is still named");
+});
+
+/** A session record file with `names.length` tool calls, written where the caller says: the binding is a path fact. */
+function writeSessionRecordAt(path, names) {
+  const entries = [];
+  let atMs = Date.parse("2026-10-22T10:00:00.000Z");
+  for (const [index, name] of names.entries()) {
+    const id = `call-${index}`;
+    atMs += 10;
+    entries.push({
+      type: "message",
+      timestamp: new Date(atMs).toISOString(),
+      message: { role: "assistant", content: [{ type: "toolCall", id, name }] },
+    });
+    atMs += 20;
+    entries.push({
+      type: "message",
+      timestamp: new Date(atMs).toISOString(),
+      message: { role: "toolResult", toolCallId: id, content: "ok" },
+    });
+  }
+  writeFileSync(path, entries.map((entry) => JSON.stringify(entry)).join("\n"), "utf8");
+  return path;
+}
+
+/** The run-scoped session selection, evaluated with the fs readers it uses: its binding is a real directory layout. */
+function loadRunSessionSelection(source) {
+  const [findRunSessionJsonl] = extractRunnerFunction(source, ["findRunSessionJsonl"], { readdirSync, join });
+  return findRunSessionJsonl;
+}
+
+/** Every `.jsonl` under a runtime root, newest file name last: what a root-wide "newest wins" reader would pick. */
+function newestJsonlUnder(root) {
+  const files = [];
+  const collect = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) collect(path);
+      else if (entry.name.endsWith(".jsonl")) files.push({ path, file: entry.name });
+    }
+  };
+  collect(root);
+  files.sort((left, right) => left.file.localeCompare(right.file));
+  return files[files.length - 1];
+}
+
+test("a runtime root holding an older, larger session record still yields THIS run's own record", () => {
+  // Measured 2026-10-22: two runs launched 38 minutes apart (startedAtMs 1792685338882 and 1792683042038) both
+  // published `calls=45, sumMs=47189, frames=0` - one foreign session file chosen by "newest under the runtime
+  // root" - and the pair was then quoted as each run's own latency. The falsifier is that same shape: a root whose
+  // tempting record is both NEWER and LARGER than this run's, so any root-wide newest/largest rule picks the wrong
+  // one, while the run's own surface session directory yields its own counts.
+  const runtimeRoot = mkdtempSync(join(tmpdir(), "gb-ladder-session-binding-"));
+  const foreignDir = join(runtimeRoot, "contexts", "identity", "surface-sessions", "game_1700000000000", "sessions");
+  const ownSessionId = "game_1700005000000";
+  const ownDir = join(runtimeRoot, "contexts", "identity", "surface-sessions", ownSessionId, "sessions");
+  mkdirSync(foreignDir, { recursive: true });
+  mkdirSync(ownDir, { recursive: true });
+  const foreign = writeSessionRecordAt(
+    join(foreignDir, "2026-11-15T01-44-13-944Z_01a16147-bd77-720f-9bd7-9ff68ebf5b74.jsonl"),
+    Array.from({ length: 45 }, () => "stardew_move_to_tile"),
+  );
+  const own = writeSessionRecordAt(
+    join(ownDir, "2026-11-14T22-13-19-944Z_01a16147-2222-720f-9bd7-9ff68ebf5b75.jsonl"),
+    ["stardew_move_to_tile", "stardew_move_to_tile"],
+  );
+  assert.equal(
+    newestJsonlUnder(runtimeRoot).path,
+    foreign,
+    "the fixture must be tempting: the foreign record is what a root-wide newest-wins reader would take",
+  );
+  const findRunSessionJsonl = loadRunSessionSelection(RUNNER_SOURCE);
+  const bound = findRunSessionJsonl(ownDir);
+  assert.equal(bound.path, own);
+  assert.equal(bound.reason, null);
+  const { readToolTiming } = loadToolTiming(RUNNER_SOURCE);
+  const timing = readToolTiming(bound.path, {
+    executionTraceFlat: 2,
+    unboundReason: bound.reason ?? "no_session_record",
+  });
+  assert.equal(timing.record, own.split(/[\\/]/u).pop(), "the counts name this run's own record");
+  assert.equal(timing.byCategory.flat_dispatch.calls, 2, "this run's own count, not the foreign record's 45");
+  assert.equal(timing.byCategory.flat_dispatch.sumMs, 40);
+  assert.equal(timing.invariant.ok, true, "2 dispatches against 2 frames agrees, so the numbers are publishable");
+});
+
+test("a run that cannot bind its own session record publishes no timings, naming the reason", () => {
+  // The other half of the same falsifier: when this run's surface session directory is absent, the numbers of a
+  // neighbouring run must not stand in. `record: null` and a reason, never another run's 45 calls.
+  const runtimeRoot = mkdtempSync(join(tmpdir(), "gb-ladder-session-unbound-"));
+  const foreignDir = join(runtimeRoot, "contexts", "identity", "surface-sessions", "game_1700000000000", "sessions");
+  mkdirSync(foreignDir, { recursive: true });
+  writeSessionRecordAt(
+    join(foreignDir, "2026-11-15T01-44-13-944Z_01a16147-bd77-720f-9bd7-9ff68ebf5b74.jsonl"),
+    Array.from({ length: 45 }, () => "stardew_move_to_tile"),
+  );
+  const findRunSessionJsonl = loadRunSessionSelection(RUNNER_SOURCE);
+  const unboundDir = join(runtimeRoot, "contexts", "identity", "surface-sessions", "game_1700005000000", "sessions");
+  const unbound = findRunSessionJsonl(unboundDir);
+  assert.equal(unbound.path, undefined);
+  assert.equal(unbound.reason, "no_session_record_for_run_surface_session");
+  assert.deepEqual(unbound.searched, [unboundDir], "unobserved must name what it looked at");
+  const { readToolTiming } = loadToolTiming(RUNNER_SOURCE);
+  const timing = readToolTiming(unbound.path, { executionTraceFlat: 45, unboundReason: unbound.reason });
+  assert.equal(timing.observed, false);
+  assert.equal(timing.reason, "no_session_record_for_run_surface_session");
+  assert.equal(timing.record, null, "no record is named, because none was bound");
+  assert.equal(timing.byCategory, null, "another run's 45 calls must not stand in for this one");
+  assert.equal(timing.longest, null);
 });
 
 test("the assembly logs a tool-timing disagreement by name", async () => {
@@ -1089,10 +1208,19 @@ test("the assembly logs a tool-timing disagreement by name", async () => {
     SCENARIO: "morning_routine",
     LEGACY_LADDER: null,
     historianRubricOutcome: null,
-    sessionRecordPath: "/tmp/session.jsonl",
+    runSessionRecord: Object.freeze({ path: "/tmp/session.jsonl", reason: null }),
     summarizeActionCadence: () => ({ spans: [] }),
     summarizePresentationEvidence: () => ({ pieces: [] }),
-    readToolTiming: () => ({ observed: true, invariant: { checked: true, ok: false, calls: 45, frames: 0 } }),
+    // The reader's own answer for a violated invariant, verbatim: this test is about the assembly NAMING the violation
+    // and publishing the withheld shape, not about re-reading a record.
+    readToolTiming: () => ({
+      observed: false,
+      reason: "tool_timing_invariant_violated",
+      record: "session.jsonl",
+      byCategory: null,
+      longest: null,
+      invariant: { checked: true, ok: false, calls: 45, frames: 0 },
+    }),
     buildFailureSnapshot: (input) => input,
     writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
     closeCapture: async () => ({ state: "closed" }),
@@ -1117,6 +1245,12 @@ test("the assembly logs a tool-timing disagreement by name", async () => {
     "a category that over-counts is named where the trace invariant is named",
   );
   assert.equal(result.toolTiming.invariant.ok, false, "the result carries the same disagreement");
+  assert.equal(
+    result.toolTiming.byCategory,
+    null,
+    "the timings are withheld, not published with a caveat: a number beside a warning gets quoted",
+  );
+  assert.equal(result.toolTiming.reason, "tool_timing_invariant_violated");
 });
 
 test("waitForSessionQuiet reaches quiet when only body_trace pings follow a terminal", async () => {
@@ -1533,7 +1667,7 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
     SCENARIO: "morning_routine",
     LEGACY_LADDER: null,
     historianRubricOutcome: null,
-    sessionRecordPath: undefined,
+    runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
     summarizeActionCadence: () => ({ spans: [] }),
     summarizePresentationEvidence: () => ({ pieces: [] }),
     readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
@@ -1575,6 +1709,127 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
     expectedRows: 3,
     unobservedPrograms: 0,
   });
+});
+
+test("an error that escapes the run still publishes the work it had already recorded", async () => {
+  // The `g149tool` finding: 184 s of real work - accepted programs, route progress, successful and refused receipts -
+  // met a run that ended `runner_failed_before_reporting`, and its artifact carried `state`, `scenario`, `reason`,
+  // `error`, `stack`, `at` and nothing else, so none of that work could be examined. Here the run's own record is
+  // already filled when the throw arrives, and the REAL escape path is driven: what it writes must be the run's
+  // result, assembled by the same builder every other exit uses, with the throw named as its reason.
+  const actionTrace = [
+    { action: "equip_tool", state: "succeeded", reasonCode: "tool_equipped" },
+    { action: "till_soil", state: "rejected", reasonCode: "target_unreachable" },
+    { action: "harvest_crop", state: "succeeded", reasonCode: "crop_harvested" },
+  ];
+  const factLog = [
+    { type: "execution_receipt", reasonCode: "tool_equipped", requestId: "r1", executionId: "e1" },
+    { type: "execution_receipt", reasonCode: "target_unreachable", requestId: "r2", executionId: "e2" },
+    { type: "execution_receipt", reasonCode: "crop_harvested", requestId: "r3", executionId: "e3" },
+  ];
+  const programSubmissions = [{ programId: "p_farm_day", code: "accepted", accepted: true }];
+  const written = [];
+  const bundles = [];
+  const resultFile = join(tmpdir(), `gb-escaped-error-${randomUUID()}.result.json`);
+  const previousResultFile = process.env.GAMEBUDDY_RESULT_FILE;
+  process.env.GAMEBUDDY_RESULT_FILE = resultFile;
+  const [, , , , writeFailureDump] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    [
+      "summarizeDispatchedActions",
+      "buildRunResult",
+      "failureDumpEvidence",
+      "writeUnassembledFailure",
+      "writeFailureDump",
+    ],
+    {
+      NON_ACCOMPLISHMENT_ACTIONS: new Set(["equip_tool"]),
+      phaseTimings: { runStartedAtMs: 1, marks: {} },
+      lastObservedSnapshot: null,
+      lastObservedPose: null,
+      actionTrace,
+      factLog,
+      programSubmissions,
+      programOutcomes: [],
+      sampleProgramOutcomes: async () => [],
+      programExecutionRows,
+      executionTraceInvariant,
+      readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
+      TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
+      multidayOutcome: null,
+      historianRubricOutcome: null,
+      runSessionRecord: { path: undefined, reason: "session_record_binding_not_established" },
+      providerReadiness: null,
+      SCENARIO: "multiday_routine",
+      LEGACY_LADDER: null,
+      summarizeActionCadence: () => ({ spans: [] }),
+      summarizePresentationEvidence: () => ({ pieces: [] }),
+      buildFailureSnapshot,
+      buildRunObservation: (input) => input,
+      assessCompanionInteraction: () => ({ passed: true }),
+      findProtectedCovenantShipment: () => undefined,
+      PROTECTED_COVENANT_ITEM_ID: "(O)400",
+      capture: null,
+      runtimeRoot: "/tmp/root",
+      covenantSeed: null,
+      presentedSummary: null,
+      voiceResult: null,
+      agentTurnResult: null,
+      client: { state: { authenticated: true, snapshot: { revision: 42 } } },
+      writeRunBundle: async ({ result }) => {
+        bundles.push(result);
+        return { state: "written", runDir: "/run" };
+      },
+      closeCapture: async () => null,
+      writeFile: async (path, contents) => written.push({ path, contents }),
+      writeFileSync: () => {},
+      join: (...parts) => parts.join("/"),
+    },
+  );
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => logged.push(args.map(String).join(" "));
+  try {
+    await writeFailureDump(new Error("presentation_refused:presentation_bridge_rejected"));
+  } finally {
+    console.error = originalError;
+    if (previousResultFile === undefined) delete process.env.GAMEBUDDY_RESULT_FILE;
+    else process.env.GAMEBUDDY_RESULT_FILE = previousResultFile;
+  }
+  const dump = written.find((entry) => entry.path === resultFile);
+  assert.ok(dump !== undefined, "an escaped error must leave the run's result, not nothing");
+  const published = JSON.parse(dump.contents);
+  assert.equal(published.state, "blocked");
+  assert.equal(published.error, "presentation_refused:presentation_bridge_rejected");
+  assert.equal(
+    published.failure.reasonCode,
+    "presentation_refused:presentation_bridge_rejected",
+    "the outcome that ended the run is its named failure",
+  );
+  // What the run did, read from its own record: the stub this replaces lost every one of these.
+  assert.deepEqual(published.attemptedActionIds, ["equip_tool", "till_soil", "harvest_crop"]);
+  assert.deepEqual(published.succeededActionIds, ["equip_tool", "harvest_crop"]);
+  assert.deepEqual(
+    published.programSubmissions,
+    programSubmissions,
+    "an accepted program it never got to read is still reported",
+  );
+  assert.deepEqual(
+    published.executionTrace,
+    { ok: true, flat: 3, program: 0, programDispatches: 0, rows: 3, expectedRows: 3, unobservedPrograms: 0 },
+    "the trace counts are the trace's own, on this path too",
+  );
+  assert.equal(published.revision, 42, "the bridge facts it received are published with it");
+  assert.equal(published.bridgeFacts.length, 3, "the bridge log it received travels with the result");
+  // The bundle beside it is the run's own contract, written by the same assembly.
+  assert.equal(bundles.length, 1);
+  // And it is NOT the floor record: a floor says it could not be assembled, which must never be what a run with work
+  // in it reads as.
+  assert.equal(Object.hasOwn(published, "reason"), false);
+  assert.ok(
+    logged.every((line) => !line.includes("failure_dump_assembly_failed")),
+    "the assembly must not have fallen through to the floor",
+  );
 });
 
 test("an unobserved program is not a program that dispatched nothing", async () => {

@@ -15,10 +15,23 @@
  *   - a save name whose template directory was never created.
  *
  * Each check reports a stable code, and the FIRST failure is what the caller prints: one line instead of a 25-minute
- * discovery cycle. Every check is read-only and spawns nothing.
+ * discovery cycle. Every check reads the file system and writes nothing; the one check about a runner's entry point
+ * imports that runner in a child process, because what an import does is the property it needs (see
+ * `importsWithoutStarting`).
+ *
+ * A text match for `import.meta.main` is satisfied by a comment, and it says nothing about a driver that starts the
+ * session at top level as well - the shape that wasted the day's runs. So that check observes the import itself.
+ *
+ * `probeProviderReadiness` is the one check that crosses the network, and it is not part of `preflightLiveRun`: it
+ * reads the root's own model profile, provider catalog and credential, then asks the provider for one model listing.
+ * A provider that cannot answer is the failure that costs the most wall clock for the least evidence - two runs ended
+ * `503 auth_unavailable` with zero tokens, and nothing in their results said the provider had never been asked.
  */
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { bridgeConfigPath, bridgePipeNameFor } from "./stardew-bridge-pipe.mjs";
 
 const check = (code, ok, detail) => ({ code, ok, detail });
@@ -137,19 +150,145 @@ const ACTION_RUNNERS = Object.freeze({
   hold_absorption: "run-stardew-native-local-player-hold-absorption-smoke.mjs",
 });
 
+const RUNNER_IMPORT_TIMEOUT_MS = 30_000;
+
+/**
+ * Whether the module at `path` can be imported and starts nothing behind it.
+ *
+ * Imported in a child process that must exit cleanly without printing: a module whose CLI is gated runs nothing on
+ * import, while a module that starts the session at top level either prints, fails, or never returns.
+ */
+export function importsWithoutStarting(path, { spawn = spawnSync, timeoutMs = RUNNER_IMPORT_TIMEOUT_MS } = {}) {
+  if (!existsSync(path)) return { ok: false, detail: `${path} does not exist` };
+  const url = pathToFileURL(resolve(path)).href;
+  const result = spawn(process.execPath, ["--input-type=module", "--eval", `await import(${JSON.stringify(url)});`], {
+    encoding: "utf8",
+    timeout: timeoutMs,
+  });
+  const excerpt = (text) =>
+    String(text ?? "")
+      .trim()
+      .split("\n")[0]
+      ?.slice(0, 200) ?? "";
+  if (result.error?.code === "ETIMEDOUT") return { ok: false, detail: `import did not return in ${timeoutMs}ms` };
+  if (result.status !== 0)
+    return { ok: false, detail: `import exited ${String(result.status)}: ${excerpt(result.stderr)}` };
+  const printed = excerpt(result.stdout);
+  if (printed !== "") return { ok: false, detail: `import printed: ${printed}` };
+  return { ok: true, detail: "imported with nothing started" };
+}
+
+/**
+ * The provider a saved model profile resolves to. A profile stores only the model id and the thinking level, so the
+ * provider is the product's own resolution (`resolveModelProfileConfig`, host/src/settings/model-profile-store.ts:114).
+ */
+const PROFILE_PROVIDER = "cpa-oai";
+const PROVIDER_PROBE_TIMEOUT_MS = 10_000;
+
+const readJsonIfPresent = async (path) => {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return null;
+  }
+};
+
+/** The model this root's Game profile names, or null when it names none. */
+async function readProfileModel(runtimeRoot) {
+  const profile = await readJsonIfPresent(join(runtimeRoot, "settings", "model-profiles.json"));
+  const modelId = profile?.game?.modelId;
+  return typeof modelId === "string" && modelId.length > 0 ? modelId : null;
+}
+
+/** One provider entry of Pi's own `models.json`: the endpoint it serves and the model ids it lists. */
+async function readProviderCatalog(agentDir, provider) {
+  const catalog = await readJsonIfPresent(join(agentDir, "models.json"));
+  const entry = catalog?.providers?.[provider];
+  if (entry === null || typeof entry !== "object") return null;
+  const modelIds = Array.isArray(entry.models)
+    ? entry.models.map((model) => model?.id).filter((id) => typeof id === "string")
+    : [];
+  return Object.freeze({ baseUrl: typeof entry.baseUrl === "string" ? entry.baseUrl : null, modelIds });
+}
+
+/** The credential Pi reads for that provider: `auth.json` sits beside `models.json` in the identity's agent dir. */
+async function readProviderCredential(agentDir, provider) {
+  const auth = await readJsonIfPresent(join(agentDir, "auth.json"));
+  const key = auth?.[provider]?.key;
+  return typeof key === "string" && key.length > 0 ? key : null;
+}
+
+/**
+ * Whether the provider this root's model profile names can answer at all, asked BEFORE the first model turn.
+ *
+ * Two measured runs ended `503 auth_unavailable` with zero tokens and zero player-visible text, and their result files
+ * could not say whether the provider had ever been asked anything. The readiness is therefore resolved from the files
+ * the runtime itself reads - the Game profile's model id, the provider entry in Pi's `models.json`, the credential in
+ * `auth.json` beside it - and then confirmed against the endpoint with one minimal request.
+ *
+ * Each reason is a different repair, which is why it is named:
+ *   `profile-invalid`  the profile names no model, so nothing says what to check
+ *   `missing-model`    the provider's catalog does not list the model the profile names
+ *   `auth`             no credential for that provider, or the endpoint refused it (401/403)
+ *   `unreachable`      no endpoint, a transport failure, a timeout, or any other non-2xx answer
+ *   `ready`            the endpoint answered
+ *
+ * Read-only, and it never spawns anything: the refusal is the caller's decision, made before a turn or a runtime exists.
+ *
+ * The saved profile is the authority here. A player's active connection overrides provider and model when the Game
+ * attachment builds its runtime (`game-runtime-attachment.ts:107`), so a root that carries one is checked against the
+ * profile instead: reading the connection record would mean re-deriving a product path this tool does not own.
+ */
+export async function probeProviderReadiness({
+  runtimeRoot,
+  agentDir,
+  transport = fetch,
+  timeoutMs = PROVIDER_PROBE_TIMEOUT_MS,
+}) {
+  const provider = PROFILE_PROVIDER;
+  const model = await readProfileModel(runtimeRoot);
+  if (model === null) return Object.freeze({ ok: false, provider, model: null, reason: "profile-invalid" });
+  const catalog = await readProviderCatalog(agentDir, provider);
+  if (catalog === null || !catalog.modelIds.includes(model))
+    return Object.freeze({ ok: false, provider, model, reason: "missing-model" });
+  const apiKey = await readProviderCredential(agentDir, provider);
+  if (apiKey === null) return Object.freeze({ ok: false, provider, model, reason: "auth" });
+  if (catalog.baseUrl === null) return Object.freeze({ ok: false, provider, model, reason: "unreachable" });
+  const answer = await requestModelListing(catalog.baseUrl, apiKey, transport, timeoutMs);
+  return Object.freeze({ ok: answer === null, provider, model, reason: answer ?? "ready" });
+}
+
+/** `null` when the endpoint answered; otherwise the refusal reason. Its body is never read, so no provider text escapes. */
+async function requestModelListing(baseUrl, apiKey, transport, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await transport(`${baseUrl.replace(/\/+$/u, "")}/models`, {
+      method: "GET",
+      signal: controller.signal,
+      headers: { accept: "application/json", authorization: `Bearer ${apiKey}` },
+    });
+    if (response.ok === true) return null;
+    return response.status === 401 || response.status === 403 ? "auth" : "unreachable";
+  } catch {
+    return "unreachable";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The name a caller refuses with, so a refused run says which provider and model never answered, and why. */
+export function providerReadinessRefusal(readiness) {
+  return `provider_not_ready:${readiness.provider}:${readiness.model ?? "unknown"}:${readiness.reason}`;
+}
+
 const runnerCheck = (action) => {
   const runner = ACTION_RUNNERS[action];
   if (runner === undefined) return [check("smoke_runner_resolves", false, `no runner known for ${action}`)];
   const path = join("tools", runner);
-  const text = existsSync(path) ? readFileSync(path, "utf8") : "";
-  return [
-    check("smoke_runner_resolves", existsSync(path), path),
-    check(
-      "smoke_runner_has_cli",
-      /import\.meta\.main/u.test(text),
-      "the driver refuses a runner whose import would start the session",
-    ),
-  ];
+  const present = existsSync(path);
+  const imported = present ? importsWithoutStarting(path) : { ok: false, detail: `${path} does not exist` };
+  return [check("smoke_runner_resolves", present, path), check("smoke_runner_has_cli", imported.ok, imported.detail)];
 };
 
 /** Runs every check in order; `ok` is true only when all pass, and `firstFailure` is what a caller prints. */

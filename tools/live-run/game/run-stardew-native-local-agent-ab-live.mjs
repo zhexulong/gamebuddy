@@ -21,7 +21,7 @@
  *    regression. Do not silence a finding to make a rung pass.
  */
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { once } from "node:events";
@@ -103,6 +103,10 @@ import {
   writeProgramExecutionTrace,
 } from "./execution-trace.mjs";
 import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
+// Whether the provider answers at all, resolved from the same files the runtime reads (the Game model profile, Pi's
+// `models.json`, the credential beside it) and asked BEFORE the first model turn: two runs spent their whole budget on
+// `503 auth_unavailable` with zero tokens. One probe module serves this runner and `tools/preflight-live-run.mjs`.
+import { probeProviderReadiness, providerReadinessRefusal } from "../../lib/live-run-preflight.mjs";
 
 // Live-run evidence root: every run writes its own local directory with the
 // runtime root's OWN evidence (identity-profile.json, worldbook.json, the
@@ -158,6 +162,10 @@ const LEGACY_LADDER = process.env.GAMEBUDDY_AGENT_LADDER ?? null;
 // temporal-dead-zone error, which is exactly what the first version of this did - the two runs it broke reported only
 // `Cannot access environmentFactsCache before initialization`.
 let environmentFactsCache = null;
+// The provider readiness this run established (`{ ok, provider, model, reason }`), or null while nobody has asked.
+// Declared before the failure dump reads it: a refusal has to publish WHY it never reached a turn, and null is the
+// fact that says "never checked" instead of "ready".
+let providerReadiness = null;
 
 // Measured ONCE, at start: the bundle needs the adapter and the display, and asking PowerShell for them at the end of a
 // run kept returning nothing - the measurement was being taken while a frozen game was eating the machine, and a failed
@@ -177,12 +185,48 @@ const SCENARIO = (() => {
   return requested;
 })();
 /**
- * Last-resort evidence: whatever escapes the run's own try/catch — an unhandled rejection, a
- * synchronous throw in setup, a transport failure at connect — the artifact is still written, so a
- * failed session is analysable instead of leaving nothing behind. Three real runs (N, O, P) died
- * with no artifact at all; this is the floor that makes that impossible.
+ * The last-resort dump: whatever escapes the run's own try/catch — an unhandled rejection, a synchronous throw in
+ * setup, a failure while the run was assembling itself — still publishes the run.
+ *
+ * Measured 2026-10-22 (`g149tool`): 184 s of real work — accepted programs, route progress, successful and refused
+ * receipts — was recorded as it happened and then lost, because this path wrote a seven-field stub in place of the
+ * run's result. A run whose work cannot be examined is worth nothing to an audit, so an escaped error is assembled
+ * through `buildRunResult`, the ONE builder every other exit uses: the shape cannot drift, and the error that ended
+ * the run is its named reason. Only a failure BEFORE the run's record exists (see the declarations above `actionTrace`)
+ * has nothing to assemble, and that case names itself rather than posing as a result.
  */
-function writeFailureArtifact(reason) {
+async function writeFailureDump(reason) {
+  const errorMessage = String(reason instanceof Error ? reason.message : reason);
+  console.error("RUNNER_FAILED", errorMessage);
+  try {
+    const result = await buildRunResult({
+      state: "blocked",
+      error: errorMessage,
+      ...failureDumpEvidence(errorMessage),
+    });
+    console.error(
+      "RUNNER_FAILED dump published",
+      JSON.stringify({
+        error: result.error,
+        attemptedActionIds: result.attemptedActionIds,
+        executionTrace: result.executionTrace,
+        bundle: result.bundle?.state ?? null,
+      }),
+    );
+    return result;
+  } catch (assemblyError) {
+    writeUnassembledFailure(errorMessage, assemblyError);
+    return null;
+  }
+}
+/**
+ * The floor under the floor: the dump's own assembly failed, which can only mean the run threw before its record
+ * existed (every binding the assembly reads is declared before the first thing it can describe). Written by name, with
+ * the root error beside the assembly error, so the run is still analysable — and this record can never be mistaken for
+ * the run's result, which is what the stub it replaces got wrong.
+ */
+function writeUnassembledFailure(errorMessage, assemblyError) {
+  console.error("RUNNER_FAILED assembly failed", assemblyError);
   try {
     const path = process.env.GAMEBUDDY_RESULT_FILE;
     if (typeof path !== "string" || path.length === 0) return;
@@ -190,27 +234,78 @@ function writeFailureArtifact(reason) {
       state: "blocked",
       scenario: SCENARIO,
       legacyLadder: LEGACY_LADDER,
-      reason: "runner_failed_before_reporting",
-      error: String(reason instanceof Error ? reason.message : reason),
-      stack: reason instanceof Error ? reason.stack : null,
+      reason: "failure_dump_assembly_failed",
+      error: errorMessage,
+      assemblyError: String(assemblyError instanceof Error ? assemblyError.message : assemblyError),
+      providerReadiness,
       at: new Date().toISOString(),
     };
     writeFileSync(path, JSON.stringify(payload, null, 2), "utf8");
-    console.error(`RUNNER_FAILED artifact written to ${path}`);
+    console.error(`RUNNER_FAILED unassembled artifact written to ${path}`);
   } catch (error) {
     console.error("RUNNER_FAILED artifact could not be written", error);
   }
 }
-process.on("uncaughtException", (error) => {
-  writeFailureArtifact(error);
+/**
+ * What a run that never reached its verdict can still say about itself, from the trace, the bridge log and the session
+ * record the run already holds. ONE list, read by the crashed exit and by the escaped-error dump: two paths describing
+ * one failed run may not disagree about what a failed run reports.
+ *
+ * Deliberately no assembled-context evidence: a run that died has none, and reading a binding that only the try
+ * block's own scope owns threw inside this path once and destroyed the artifact of a real failed session
+ * (runs N, O and P produced none).
+ */
+function failureDumpEvidence(errorMessage) {
+  const receiptWith = (reasonCodes) =>
+    factLog.find((fact) => fact.type === "execution_receipt" && reasonCodes.includes(fact.reasonCode)) ?? null;
+  return {
+    capture,
+    runtimeRoot,
+    providerReadiness,
+    settlement: { snapshot: lastObservedSnapshot, reasonCode: errorMessage, component: "runner" },
+    tillReceipt: receiptWith(["soil_tilled"]),
+    plantReceipt: receiptWith(["seed_planted"]),
+    waterReceipt: receiptWith(["crop_watered"]),
+    harvestReceipt: receiptWith(["crop_harvested"]),
+    offerReceipt: receiptWith(["gift_given", "quest_item_delivered"]),
+    covenantReceipt: findProtectedCovenantShipment(factLog, PROTECTED_COVENANT_ITEM_ID) ?? null,
+    covenantSeed,
+    observation: buildRunObservation({
+      prompt: undefined,
+      scenario: SCENARIO,
+      turnStartedAtMs: null,
+      actionTrace,
+      factLog,
+      contextAssembled: null,
+      worldBookAssembled: null,
+      presentedSummary: presentedSummary ?? null,
+      runManifestModel: null,
+    }),
+    presentedSummary: presentedSummary ?? null,
+    interactionAssessment:
+      SCENARIO === "npc_social_and_presence" &&
+      typeof presentedSummary === "string" &&
+      presentedSummary.trim().length > 0
+        ? assessCompanionInteraction(presentedSummary)
+        : null,
+    voiceResult,
+    agentTurn: agentTurnResult,
+    bridgeFacts: factLog,
+    authenticated: client.state.authenticated,
+    revision: client.state.snapshot?.revision,
+  };
+}
+// `once`, not `on`: a throw inside the dump must not re-enter the dump, and both handlers must still terminate the
+// process with the run's failure once the artifact is on disk.
+const exitAfterDump = (error) => {
   process.exitCode = 1;
-  process.exit(1);
-});
-process.on("unhandledRejection", (error) => {
-  writeFailureArtifact(error);
-  process.exitCode = 1;
-  process.exit(1);
-});
+  writeFailureDump(error).then(
+    () => process.exit(1),
+    () => process.exit(1),
+  );
+};
+process.once("uncaughtException", exitAfterDump);
+process.once("unhandledRejection", exitAfterDump);
 
 // This file imports fifteen modules of `host/dist-test` directly, so a stale artifact silently tests the wrong
 // code — observed as an `Unsupported candidate action:` for an action that was already committed. Refuse to
@@ -578,45 +673,40 @@ function agentTurnFailureReason(outcome) {
 }
 
 /**
- * The newest agent session record under this run's runtime root, or an object saying where it looked.
+ * THIS run's own session record: the files under the surface session directory this run materialized, or an object
+ * saying why there is none.
  *
- * The product's own convention is `<runtimeCwd>/surface-sessions/<surfaceSessionId>/sessions/*.jsonl`
- * (`host/src/runtime-identity.ts:127-136`), and that is checked first. It is not the ONLY place a runtime may
- * put a session, though: one live run recorded none there (its result said `no_session_record` while the
- * session had certainly run), so the search falls back to a bounded walk of the runtime cwd. Returning the
- * searched base matters as much as the path: `unobserved` must name what it looked at, so a reader can tell a
- * missing session from a reader looking in the wrong place.
+ * The product's convention is `<runtimeCwd>/surface-sessions/<surfaceSessionId>/sessions/*.jsonl`
+ * (`host/src/runtime-identity.ts:127-136`), and the Game runtime is materialized with this run's own
+ * `gameSessionId` - so that directory IS the binding, and it is the only place this reader looks. It used to walk the
+ * runtime root and take the newest file it found, which is how two runs launched 38 minutes apart published the SAME
+ * foreign record (`calls=45`, `sumMs=47189`, `frames=0` - 2026-10-22 audit) as each run's own measurement, and the
+ * pair was quoted afterwards. A record this run cannot bind is not this run's record: the answer is "none" with the
+ * reason and the directory searched, never a neighbour's numbers. `searched` stays in the answer because a reader has
+ * to tell a missing session from a reader looking in the wrong place.
  */
-function findAgentSessionJsonl(root, identity) {
-  const runtimeCwd = join(root, "contexts", identityKey(identity));
-  const base = join(runtimeCwd, "surface-sessions");
-  const searched = [];
-  const candidates = [];
-  const collect = (directory) => {
-    let entries;
-    try {
-      entries = readdirSync(directory, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) collect(path);
-      else if (entry.name.endsWith(".jsonl")) candidates.push({ path, file: entry.name });
-    }
-  };
-  if (existsSync(base)) {
-    searched.push(base);
-    collect(base);
+function findRunSessionJsonl(sessionDir) {
+  const searched = Object.freeze([String(sessionDir)]);
+  const unbound = Object.freeze({
+    path: undefined,
+    reason: "no_session_record_for_run_surface_session",
+    searched,
+  });
+  let entries;
+  try {
+    entries = readdirSync(sessionDir, { withFileTypes: true });
+  } catch {
+    return unbound;
   }
-  if (candidates.length === 0 && existsSync(runtimeCwd)) {
-    searched.push(runtimeCwd);
-    collect(runtimeCwd);
-  }
-  if (candidates.length === 0) return { path: undefined, searched: searched.map(String) };
-  // Session file names are UTC timestamps, so the last one lexicographically is the newest.
-  candidates.sort((left, right) => left.file.localeCompare(right.file));
-  return { path: candidates[candidates.length - 1].path, searched };
+  // Session file names are UTC timestamps, so the last one lexicographically is the newest - of THIS run's session,
+  // which is what makes it this run's record. A resumed or compacted run may leave several here; all of them belong to
+  // the same surface session, unlike the files of another run under a sibling directory.
+  const files = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+  if (files.length === 0) return unbound;
+  return Object.freeze({ path: join(sessionDir, files[files.length - 1]), reason: null, searched });
 }
 
 /**
@@ -633,6 +723,10 @@ function findAgentSessionJsonl(root, identity) {
  * `stardew_plan_shape` reads what a plan step must supply; neither dispatches an action, and a `stardew_`-prefix rule
  * would have folded them into dispatch latency. The categories are the mounted surface's tools, spelled one by one, so
  * a new tool has to be classified on purpose instead of landing in whichever bucket its name resembles.
+ *
+ * Nothing is published unless it is a MEASUREMENT OF THIS RUN: `sessionJsonlPath` is the record bound to this run's own
+ * surface session, and `unboundReason` is what the binding reported when there was none. When the counts disagree with
+ * the frames the run sent, the categories come back `null` and the violation is the only number published.
  *
  * The source is the runtime's own session record (the one `readAgentTurnOutcome` reads): a `toolCall` part in an
  * assistant message carries the call's entry timestamp, the `toolResult` entry matched by `toolCallId` carries the
@@ -720,25 +814,21 @@ function toolTimingInvariant({ calls, frames }) {
   });
 }
 
-function readToolTiming(sessionJsonlPath, { executionTraceFlat } = {}) {
+function readToolTiming(sessionJsonlPath, { executionTraceFlat, unboundReason = "no_session_record" } = {}) {
   const frames = Number.isInteger(executionTraceFlat) ? executionTraceFlat : null;
-  const unobserved = (reason) =>
-    Object.freeze({
-      observed: false,
-      reason,
-      record: null,
-      byCategory: Object.freeze(
-        Object.fromEntries(TOOL_TIMING_CATEGORIES.map((category) => [category, emptyCategoryTiming()])),
-      ),
-      longest: Object.freeze([]),
-      invariant: toolTimingInvariant({ calls: null, frames }),
-    });
-  if (typeof sessionJsonlPath !== "string" || sessionJsonlPath.length === 0) return unobserved("no_session_record");
+  // ONE shape for "no timing published": `byCategory` and `longest` are null, not empty categories, because an empty
+  // category reads as a measured zero and a zero is a number a reader quotes. `reason` is the only thing to read.
+  const noTiming = (reason, record, invariant = toolTimingInvariant({ calls: null, frames })) =>
+    Object.freeze({ observed: false, reason, record, byCategory: null, longest: null, invariant });
+  if (typeof sessionJsonlPath !== "string" || sessionJsonlPath.length === 0) return noTiming(unboundReason, null);
+  // WHICH record the counts came from, by file name: the lie was a record from another run, and no count can show
+  // that on its own. A reader comparing the run's launch with this stamp can see the record is not this run's.
+  const record = sessionJsonlPath.split(/[\\/]/u).pop() ?? null;
   let raw;
   try {
     raw = readFileSync(sessionJsonlPath, "utf8");
   } catch {
-    return unobserved("session_not_readable");
+    return noTiming("session_not_readable", record);
   }
   const pending = new Map();
   const durationsByCategory = new Map();
@@ -782,15 +872,20 @@ function readToolTiming(sessionJsonlPath, { executionTraceFlat } = {}) {
   // Bounded on purpose: a run with hundreds of calls must not turn its result into a call log. The head of the list
   // is the whole question (which owner the tail belongs to); the aggregate carries everything else.
   longest.sort((left, right) => right.ms - left.ms);
+  const invariant = toolTimingInvariant({ calls: byCategory.flat_dispatch.calls, frames });
+  // WITHHELD, not published-with-a-warning: a count that disagrees with the frames this run sent is not this run's
+  // measurement, so the timings are dropped and only the measured disagreement is published. Measured 2026-10-22:
+  // two runs with different launch times both carried one foreign record's `calls=45, sumMs=47189` under a red
+  // invariant, and the numbers were quoted as each run's own latency anyway. A caveat gets quoted with the number;
+  // an absent number cannot be.
+  if (invariant.ok === false) return noTiming("tool_timing_invariant_violated", record, invariant);
   return Object.freeze({
     observed: true,
     reason: null,
-    // WHICH record the counts came from, by file name: the lie was a record from another run, and no count can show
-    // that on its own. A reader comparing the run's start with this stamp can see the record is not this run's.
-    record: typeof sessionJsonlPath === "string" ? (sessionJsonlPath.split(/[\\/]/u).pop() ?? null) : null,
+    record,
     byCategory: Object.freeze(byCategory),
     longest: Object.freeze(longest.slice(0, TOOL_TIMING_LONGEST_LIMIT)),
-    invariant: toolTimingInvariant({ calls: byCategory.flat_dispatch.calls, frames }),
+    invariant,
   });
 }
 
@@ -2159,6 +2254,14 @@ function findProtectedCovenantShipment(receipts, protectedItemId) {
   }
   return undefined;
 }
+// The run's record, declared where the run's record begins instead of where each field first happens to be needed.
+//
+// The failure dump reads exactly these bindings, and a binding declared further down is a ReferenceError for a run that
+// threw above it — a dump that throws leaves nothing behind, which is how a failed run's evidence was lost (measured
+// 2026-10-22 on `g149tool`: 184 s of real work and no consumable result). Everything here is either a container the run
+// fills or an outcome a later stage assigns; none of it is derived, so declaring it early changes no behaviour, and a
+// throw after this point can always describe what the run had done.
+//
 // Trace every ordinary-action execution request the Agent sends so a
 // rejected coordinate is attributable to the actual submitted args. A thrown
 // rejection (stale_snapshot, replay rejection, bridge_rejected:*) never returns
@@ -2166,6 +2269,30 @@ function findProtectedCovenantShipment(receipts, protectedItemId) {
 // otherwise the run's own health report sees zero rejections while the session
 // shows real ones.
 const actionTrace = [];
+// Every submission, kept as its own record: `agentProgramId` alone says a program EXISTS, not that anything ran
+// through it. Measured 2026-10-20 by an audit of the Pi session logs: one run submitted ten programs and executed
+// zero actions through them while still making 883 individual tool calls - and the run's own result could not say
+// so, because a submission left no trace in it. A path that ships and does nothing is worse than an absent one.
+const programSubmissions = [];
+/** The per-program execution records, filled at assembly time so every result path publishes the same answer. */
+let programOutcomes = Object.freeze([]);
+// Where and when the run stood, and the two facts a later stage assigns (the runtime root it materialized and the
+// capture directory it opened): null until then, so a failure at either step still publishes what came before it.
+let runtimeRoot = null;
+let capture = null;
+// The covenant planted for `memory_covenant`, the agent turn's own terminal facts, the multi-day record, the
+// narrative judgement and this run's own session record: each is assigned by a later stage and each is published by a
+// failed run too.
+let covenantSeed = null;
+let agentTurnResult = null;
+let voiceResult = null;
+let multidayOutcome = null;
+let historianRubricOutcome = null;
+let runSessionRecord = Object.freeze({
+  path: undefined,
+  reason: "session_record_binding_not_established",
+  searched: Object.freeze([]),
+});
 // The bridge's own clock, read at dispatch time. A trace without it cannot be replayed at the right GAME
 // moment: a live run's dispatches are spread over game hours while the Agent thinks, so "as fast as receipts
 // settle" reaches 6:20 where the run reached 10:00 and fails on a shop that has not opened. The snapshot is
@@ -2273,15 +2400,9 @@ client.execute = async (request) => {
 // over this connection; the Agent chooses the id autonomously, so a fixed
 // programId probe can never observe it.
 let agentProgramId = null;
-// Every submission, kept as its own record: `agentProgramId` alone says a program EXISTS, not that anything ran
-// through it. Measured 2026-10-20 by an audit of the Pi session logs: one run submitted ten programs and executed
-// zero actions through them while still making 883 individual tool calls - and the run's own result could not say
-// so, because a submission left no trace in it. A path that ships and does nothing is worse than an absent one.
-const programSubmissions = [];
+// Every submission and the per-program records: declared with the run's record above `actionTrace`.
 /** Page size for the journal read: the wire caps an events page at 32 (validateBodyProgramEventsResult). */
 const PROGRAM_EVENTS_PAGE_SIZE = 32;
-/** The per-program execution records, filled at assembly time so both result paths publish the same answer. */
-let programOutcomes = Object.freeze([]);
 /**
  * One submission's execution record, read from the Mod's own journal.
  *
@@ -2398,7 +2519,7 @@ const usesDisposableRoot = !usesConfiguredRuntimeRoot;
 const disposableParent = join(fileURLToPath(new URL("../../..", import.meta.url)), ".tmp");
 await mkdir(disposableParent, { recursive: true });
 const root = usesDisposableRoot ? await mkdtemp(join(disposableParent, "gamebuddy-agent-ab-")) : configuredRuntimeRoot;
-const runtimeRoot = usesDisposableRoot ? join(root, "runtime") : root;
+runtimeRoot = usesDisposableRoot ? join(root, "runtime") : root;
 await mkdir(join(runtimeRoot, "settings"), { recursive: true });
 // The reviewed live-run persona, provisioned by the product's own file convention
 // (<runtimeRoot>/card.json + worldbook.json), byte for byte and with no preprocessing, and then
@@ -2494,11 +2615,20 @@ await writeFile(
   JSON.stringify({ "cpa-oai": { type: "api_key", key: process.env.CPA_OAI_API_KEY } }),
   "utf8",
 );
+// Readiness, asked before any runtime exists to be built: a root that has run before already carries the provider
+// catalog and the credential its runtime wrote, so a profile naming a model that catalog does not list - or a provider
+// that cannot answer - is refused here, by name, with no session behind it. A disposable root has no catalog until its
+// runtime writes one, so that case asks the same probe right after materialization (see below).
+if (existsSync(join(runtimePaths.agentDir, "models.json"))) {
+  providerReadiness = await probeProviderReadiness({ runtimeRoot, agentDir: runtimePaths.agentDir });
+  if (!providerReadiness.ok) throw new Error(providerReadinessRefusal(providerReadiness));
+  markPhase("providerReadyMs");
+}
 // Capture the run's evidence into a dedicated local directory (git-ignored).
 // The summary lands in the result JSON so a failed capture is visible, never
 // silent — a capture that broke would recreate exactly the blind spot this
 // mechanism exists to remove.
-const capture = await openLiveRunCapture({ kind: "game-ladder", label: SCENARIO, root: LIVE_RUN_ROOT });
+capture = await openLiveRunCapture({ kind: "game-ladder", label: SCENARIO, root: LIVE_RUN_ROOT });
 // One Game activation id for this run: it is the surface session id the runtime
 // uses for its durable run manifest, so the context-evidence read below resolves
 // the same file the runtime wrote.
@@ -2513,7 +2643,6 @@ const gameSessionPaths = resolveRuntimePaths(identity, runtimeRoot, gameSessionI
 // coaching. Seeding is skipped for disposable roots (no persisted memory
 // exists there by construction), and the covenant gate only runs when a seed
 // was actually planted.
-let covenantSeed = null;
 if (SCENARIO === "memory_covenant" && !usesDisposableRoot) {
   const seeded = await seedMemoriesViaManagementSurface({
     root,
@@ -2569,13 +2698,6 @@ const binding = await createGameRuntimeBindingFromReceiptBackedLaunch({
 });
 markPhase("bindingReadyMs");
 let runtime;
-// Declared before the try so the failure path can report the same facts instead
-// of losing them when a later stage throws.
-let agentTurnResult = null;
-let voiceResult = null;
-// The multi-day outcome: the loop's own records plus the baseline's judgement of them. Declared out here so
-// the failure path can report what the run did before it stopped instead of losing the crossings it made.
-let multidayOutcome = null;
 /**
  * Set when the MOD stopped advancing while a turn was running, and why.
  *
@@ -2611,12 +2733,14 @@ const stallSampler = setInterval(() => {
     `:game_threads=${threads}`;
 }, 5_000);
 stallSampler.unref?.();
-// The run's own narrative judgement, made once before the verdict and published in the bundle. Declared out here so
-// the failure path can report it too (the catch may run before the verdict block).
-let historianRubricOutcome = null;
-// The session record the tool-call timing is read from, remembered out here so the failure path can attribute the
-// same wall clock: a run that crashed mid-turn is exactly one whose time needs an owner.
-let sessionRecordPath;
+// THIS run's own session record - its path, or the reason it could not be bound. The binding is established below,
+// from this run's own surface session directory, and until then it is unbound rather than "the newest file we could
+// find"; the declaration itself sits with the run's record so the failure dump reads it instead of a ReferenceError.
+runSessionRecord = Object.freeze({
+  path: undefined,
+  reason: "session_record_binding_not_established",
+  searched: Object.freeze([]),
+});
 try {
   runtime = await binding.executeWithBinding((bindingToken) =>
     withConsumedBindingExecution(bindingToken, (execution) => {
@@ -2649,6 +2773,13 @@ try {
   );
   if (runtime.connected === undefined) throw new Error("agent_runtime_not_connected");
   markPhase("runtimeMaterializedMs");
+  // A disposable root's catalog arrives with its runtime, so readiness is asked here instead - still before the first
+  // turn, and a provider that cannot answer costs one probe instead of the turn's whole budget.
+  if (providerReadiness === null) {
+    providerReadiness = await probeProviderReadiness({ runtimeRoot, agentDir: runtimePaths.agentDir });
+    if (!providerReadiness.ok) throw new Error(providerReadinessRefusal(providerReadiness));
+    markPhase("providerReadyMs");
+  }
   const tools = runtime.connected.host;
   // One prompt per SCENARIO. The retired 0-2 prompts (the Keg errand) are gone: they were the same errand with
   // different walk lengths, and the coaching they carried (named tools, ordered steps, "batch your calls")
@@ -2872,15 +3003,20 @@ try {
   // truncated session does. Its output is still the audit either way.
   const { attempted: attemptedActionIds, accomplished: accomplishedActionIds } =
     summarizeDispatchedActions(actionTrace);
-  // The session's own terminal record, read from the runtime root this run drove. It is what separates
-  // "the companion chose not to speak" from "the turn died at the provider": before this, a real run
-  // whose turn ended in `stopReason: "error"` was reported as `silent`.
-  const sessionSearch = findAgentSessionJsonl(runtimeRoot, identity);
+  // The session's own terminal record, read from THIS run's surface session directory - the one the Game runtime was
+  // materialized with `gameSessionId` under - and nowhere else. It is what separates "the companion chose not to
+  // speak" from "the turn died at the provider": before this, a real run whose turn ended in `stopReason: "error"`
+  // was reported as `silent`. A record that cannot be bound there is reported absent, with the directory searched.
+  const sessionSearch = findRunSessionJsonl(gameSessionPaths.sessionDir);
+  runSessionRecord = Object.freeze({
+    path: sessionSearch.path,
+    reason: sessionSearch.path === undefined ? sessionSearch.reason : null,
+    searched: sessionSearch.searched,
+  });
   const agentTurnOutcome =
     sessionSearch.path === undefined
-      ? Object.freeze({ observed: false, reason: "no_session_record", searched: Object.freeze(sessionSearch.searched) })
+      ? Object.freeze({ observed: false, reason: sessionSearch.reason, searched: sessionSearch.searched })
       : readAgentTurnOutcome(sessionSearch.path);
-  sessionRecordPath = sessionSearch.path;
   const turnFailureReason = agentTurnFailureReason(agentTurnOutcome);
   const unsettledSessionTurns = sessionTurns
     .filter((entry) => entry.turn?.settled !== true)
@@ -3096,6 +3232,7 @@ try {
         : "blocked",
     capture,
     runtimeRoot,
+    providerReadiness,
     settlement: { snapshot: lastObservedSnapshot, reasonCode: null, component: null },
     // This run's own Mod log, archived with the lines an audit needs (see captureModLogFacts).
     modLog: captureModLogFacts(capture?.dir ?? null),
@@ -3196,54 +3333,13 @@ try {
   console.error(error);
   const errorMessage = String(error instanceof Error ? error.message : error);
   // The SAME assembly the passed path uses: a crashed run publishes the same contract, so the field a reader needs
-  // most - what was attempted, what was submitted, how the days went - cannot depend on how the run ended.
+  // most - what was attempted, what was submitted, how the days went - cannot depend on how the run ended. The
+  // evidence a crash can observe is the same list the escaped-error dump publishes (`failureDumpEvidence`), so the two
+  // failed paths cannot describe one run differently.
   const result = await buildRunResult({
     state: "blocked",
     error: errorMessage,
-    capture,
-    runtimeRoot,
-    settlement: { snapshot: lastObservedSnapshot, reasonCode: errorMessage, component: "runner" },
-    tillReceipt: factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "soil_tilled") ?? null,
-    plantReceipt:
-      factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "seed_planted") ?? null,
-    waterReceipt:
-      factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_watered") ?? null,
-    harvestReceipt:
-      factLog.find((fact) => fact.type === "execution_receipt" && fact.reasonCode === "crop_harvested") ?? null,
-    offerReceipt:
-      factLog.find(
-        (fact) =>
-          fact.type === "execution_receipt" &&
-          (fact.reasonCode === "gift_given" || fact.reasonCode === "quest_item_delivered"),
-      ) ?? null,
-    covenantReceipt: findProtectedCovenantShipment(factLog, PROTECTED_COVENANT_ITEM_ID) ?? null,
-    covenantSeed,
-    observation: buildRunObservation({
-      prompt: undefined,
-      scenario: SCENARIO,
-      turnStartedAtMs: null,
-      actionTrace,
-      factLog,
-      contextAssembled: null,
-      worldBookAssembled: null,
-      presentedSummary: presentedSummary ?? null,
-      // A failed run has no assembled-context evidence to report, and the catch must not read a
-      // binding that only the try can see: doing so threw a ReferenceError inside the failure
-      // path and destroyed the artifact of a real failed session (runs N, O and P produced none).
-      runManifestModel: null,
-    }),
-    presentedSummary: presentedSummary ?? null,
-    interactionAssessment:
-      SCENARIO === "npc_social_and_presence" &&
-      typeof presentedSummary === "string" &&
-      presentedSummary.trim().length > 0
-        ? assessCompanionInteraction(presentedSummary)
-        : null,
-    voiceResult,
-    agentTurn: agentTurnResult,
-    bridgeFacts: factLog,
-    authenticated: client.state.authenticated,
-    revision: client.state.snapshot?.revision,
+    ...failureDumpEvidence(errorMessage),
   });
   console.error("RUNNER_CRASH", JSON.stringify({ error: result.error }));
   console.log(JSON.stringify(result, null, 2));
@@ -3483,7 +3579,15 @@ function bundleCrossingRecord(outcome) {
  * dispatches because that run ended on the path whose literal never named it. What is published here is the run's
  * contract; `evidence` is what the calling path could observe, spread in first so it can never override it.
  */
-async function buildRunResult({ state, error = null, capture, runtimeRoot, settlement, ...evidence }) {
+async function buildRunResult({
+  state,
+  error = null,
+  capture,
+  runtimeRoot,
+  settlement,
+  providerReadiness = null,
+  ...evidence
+}) {
   // Both halves of "where and when": the snapshot carries the clock and location, the execution receipt's local
   // observation carries the pose (the snapshot has no facing). Neither can be re-read after teardown.
   const snapshot = settlement?.snapshot ?? lastObservedSnapshot ?? lastObservedPose ?? null;
@@ -3524,8 +3628,13 @@ async function buildRunResult({ state, error = null, capture, runtimeRoot, settl
   if (!executionTrace.ok) console.error("EXECUTION_TRACE_INVARIANT_VIOLATED", JSON.stringify(executionTrace));
   // The same discipline for the other side of the same executions: the tool-call counts and the frames the runner sent
   // must not disagree about how many flat dispatches this run made. Read here, not inside the result literal, so the
-  // violation is logged by name before anything is published.
-  const toolTiming = readToolTiming(sessionRecordPath, { executionTraceFlat: executionTrace.flat });
+  // violation is logged by name before anything is published. The record is the one bound to THIS run's surface
+  // session; when it could not be bound, its reason is published instead of another run's numbers, and when the
+  // invariant fails the reader withholds the timings rather than qualifying them.
+  const toolTiming = readToolTiming(runSessionRecord.path, {
+    executionTraceFlat: executionTrace.flat,
+    unboundReason: runSessionRecord.reason ?? "no_session_record",
+  });
   if (toolTiming.invariant.ok === false)
     console.error(TOOL_TIMING_INVARIANT_VIOLATED, JSON.stringify(toolTiming.invariant));
   const result = {
@@ -3563,8 +3672,14 @@ async function buildRunResult({ state, error = null, capture, runtimeRoot, settl
     succeededActionIds: dispatched.succeeded,
     // Per-tool-call wall clock attributed by OWNER: `delegate` (a nested agent), the planning tools, a program
     // submission, a program read, or a flat dispatch - one category per tool actually called. `invariant` is the
-    // agreement between `flat_dispatch.calls` and `executionTrace.flat`, so a category cannot over-count silently.
+    // agreement between `flat_dispatch.calls` and `executionTrace.flat`, and it is the ONLY thing published when that
+    // agreement fails: the categories are then null and `reason` says why, because a number with a caveat gets quoted.
+    // `record` names the session file the counts came from, and `reason` is a binding reason when none could be bound.
     toolTiming,
+    // Whether the provider was asked before the first model turn, and what it answered: `{ ok, provider, model,
+    // reason }`. A later `503 auth_unavailable` in this result is then a provider that went down mid-run, not a run
+    // nobody checked - and `null` says nobody checked at all.
+    providerReadiness,
     // What the presentation layer did: every committed companion_text piece in arrival order with its elapsed time,
     // so `firstPieceTtfbMs` (the headline TTFB target) survives however the run ended.
     presentation: summarizePresentationEvidence(),

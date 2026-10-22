@@ -8,7 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { preflightLiveRun } from "./live-run-preflight.mjs";
+import {
+  importsWithoutStarting,
+  preflightLiveRun,
+  probeProviderReadiness,
+  providerReadinessRefusal,
+} from "./live-run-preflight.mjs";
 
 const codesFor = (result) => result.checks.map((entry) => entry.code);
 const failureCodes = (result) => result.checks.filter((entry) => !entry.ok).map((entry) => entry.code);
@@ -144,6 +149,155 @@ test("a runner without a CLI entry point is refused, because the driver would ru
     // The real repo's runner has the entry point; this asserts the check is present and green on the real tree.
     const entry = result.checks.find((item) => item.code === "smoke_runner_has_cli");
     assert.equal(entry.ok, true, JSON.stringify(entry));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The check is "importing this module starts nothing", so the falsifier is a module that starts something on import
+// while naming `import.meta.main` - the exact shape a source-text match accepts and an import observes.
+test("a runner whose CLI is not really gated is refused by importing it", () => {
+  const root = mkdtempSync(join(tmpdir(), "preflight-runner-import-"));
+  try {
+    const ungated = join(root, "ungated-runner.mjs");
+    writeFileSync(ungated, '// import.meta.main is mentioned here only\nprocess.stdout.write("session started\\n");\n');
+    const started = importsWithoutStarting(ungated);
+    assert.equal(started.ok, false);
+    assert.match(started.detail, /import printed: session started/u);
+
+    const gated = join(root, "gated-runner.mjs");
+    writeFileSync(gated, 'if (import.meta.main) process.stdout.write("session started\\n");\n');
+    assert.deepEqual(importsWithoutStarting(gated), { ok: true, detail: "imported with nothing started" });
+
+    assert.equal(importsWithoutStarting(join(root, "absent-runner.mjs")).ok, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── Provider readiness ──
+//
+// The two falsifiers below are the ones the audit asked for: a profile naming a model the provider's catalog does not
+// list must refuse as `missing-model` without asking the provider anything, and a catalog that does list it must let
+// the run proceed. The tree is the shape a real runtime root has (`.tmp/rt-e`): `settings/model-profiles.json` names the
+// model, and the identity's `pi-agent/` holds `models.json` (provider catalogs) with `auth.json` beside it.
+const MODEL_ID = "deepseek-v4.1-flash";
+const AGENT_DIR = join("contexts", "identity-1", "pi-agent");
+
+function providerRoot({
+  modelId = MODEL_ID,
+  catalogued = [MODEL_ID],
+  baseUrl = "http://127.0.0.1:8317/v1",
+  apiKey = "sk-test",
+} = {}) {
+  const root = mkdtempSync(join(tmpdir(), "preflight-provider-"));
+  mkdirSync(join(root, "settings"), { recursive: true });
+  writeFileSync(
+    join(root, "settings", "model-profiles.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      chat: { revision: 1, modelId, thinkingLevel: "high" },
+      game: { revision: 1, modelId, thinkingLevel: "high" },
+    }),
+  );
+  const agentDir = join(root, AGENT_DIR);
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(
+    join(agentDir, "models.json"),
+    JSON.stringify({
+      providers: { "cpa-oai": { baseUrl, models: catalogued.map((id) => ({ id, name: id })) } },
+    }),
+  );
+  if (apiKey !== null)
+    writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ "cpa-oai": { type: "api_key", key: apiKey } }));
+  return { root, agentDir };
+}
+
+/** A transport that records what was asked and refuses to be used when a check must not reach the network. */
+function recordingTransport(answer) {
+  const calls = [];
+  const transport = async (url, init) => {
+    calls.push({ url, init });
+    if (answer === "throw") throw new Error("connect ECONNREFUSED 127.0.0.1:8317");
+    return { ok: answer === 200, status: answer };
+  };
+  return { calls, transport };
+}
+
+test("a profile naming a model its provider catalog does not list refuses as missing-model, and asks nothing", async () => {
+  const { root, agentDir } = providerRoot({ modelId: "ghost-model-v9" });
+  try {
+    const { calls, transport } = recordingTransport(200);
+    const readiness = await probeProviderReadiness({ runtimeRoot: root, agentDir, transport });
+    assert.deepEqual(readiness, { ok: false, provider: "cpa-oai", model: "ghost-model-v9", reason: "missing-model" });
+    assert.equal(providerReadinessRefusal(readiness), "provider_not_ready:cpa-oai:ghost-model-v9:missing-model");
+    assert.equal(calls.length, 0, "a model the catalog does not list must not be asked for at the endpoint");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a catalog that lists the model proceeds, with one listing request carrying the provider's own credential", async () => {
+  const { root, agentDir } = providerRoot();
+  try {
+    const { calls, transport } = recordingTransport(200);
+    const readiness = await probeProviderReadiness({ runtimeRoot: root, agentDir, transport });
+    assert.deepEqual(readiness, { ok: true, provider: "cpa-oai", model: MODEL_ID, reason: "ready" });
+    assert.equal(calls.length, 1, "one minimal request, and only one");
+    assert.equal(calls[0].url, "http://127.0.0.1:8317/v1/models");
+    assert.equal(calls[0].init.headers.authorization, "Bearer sk-test");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("auth and unreachable are different refusals, because they are different repairs", async () => {
+  const noCredential = providerRoot({ apiKey: null });
+  try {
+    const { calls, transport } = recordingTransport(200);
+    const readiness = await probeProviderReadiness({
+      runtimeRoot: noCredential.root,
+      agentDir: noCredential.agentDir,
+      transport,
+    });
+    assert.equal(readiness.reason, "auth");
+    assert.equal(calls.length, 0, "no credential means nothing to send");
+    assert.equal(providerReadinessRefusal(readiness), `provider_not_ready:cpa-oai:${MODEL_ID}:auth`);
+  } finally {
+    rmSync(noCredential.root, { recursive: true, force: true });
+  }
+
+  for (const [answer, reason] of [
+    [401, "auth"],
+    [503, "unreachable"],
+    ["throw", "unreachable"],
+  ]) {
+    const { root, agentDir } = providerRoot();
+    try {
+      const readiness = await probeProviderReadiness({
+        runtimeRoot: root,
+        agentDir,
+        transport: recordingTransport(answer).transport,
+      });
+      assert.deepEqual(
+        { ok: readiness.ok, reason: readiness.reason },
+        { ok: false, reason },
+        `an endpoint answering ${String(answer)} is ${reason}`,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("a root whose profile names no model is refused before anything can be asked", async () => {
+  const root = mkdtempSync(join(tmpdir(), "preflight-provider-noprofile-"));
+  try {
+    const { calls, transport } = recordingTransport(200);
+    const readiness = await probeProviderReadiness({ runtimeRoot: root, agentDir: join(root, AGENT_DIR), transport });
+    assert.deepEqual(readiness, { ok: false, provider: "cpa-oai", model: null, reason: "profile-invalid" });
+    assert.equal(providerReadinessRefusal(readiness), "provider_not_ready:cpa-oai:unknown:profile-invalid");
+    assert.equal(calls.length, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

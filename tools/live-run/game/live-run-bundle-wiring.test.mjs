@@ -284,9 +284,12 @@ test("a tool call's duration names its owner: nested agent, planning, program, o
   assert.match(SOURCE, /const PLAN_COMPILE_TOOL_NAMES = Object\.freeze\(\["stardew_plan_work"\]\);/);
   assert.match(SOURCE, /const PLAN_SHAPE_TOOL_NAMES = Object\.freeze\(\["stardew_plan_shape"\]\);/);
   assert.match(SOURCE, /const PROGRAM_SUBMIT_TOOL_NAMES = Object\.freeze\(\["stardew_submit_action_program"\]\);/);
+  // Formatting-insensitive: what is asserted is the two names in ONE list, not how the formatter wrapped it (the
+  // wrapped form is what this regex used to demand, and the committed source is a single line - so the assertion failed
+  // on the file it was written for).
   assert.match(
     SOURCE,
-    /const PROGRAM_STATUS_TOOL_NAMES = Object\.freeze\(\[\n\s+"stardew_action_program_status",\n\s+"stardew_action_program_events",\n\]\);/,
+    /const PROGRAM_STATUS_TOOL_NAMES = Object\.freeze\(\[\s*"stardew_action_program_status",\s*"stardew_action_program_events",?\s*\]\);/,
   );
   // A name PATTERN is what the 45-dispatch lie would need to recur: `stardew_observe`, `stardew_execution_status` and
   // `stardew_plan_work` all wear the prefix and none dispatches an action.
@@ -305,17 +308,20 @@ test("a tool call's duration names its owner: nested agent, planning, program, o
   assert.match(SOURCE, /byCategory\[category\] = summarizeCategoryTiming\(durations\);/);
   // 3. Published on the result, and on the failure path too: the run that crashed mid-turn is the one whose time
   // most needs an owner. That is why it is published by the one assembly both exits use, not by a literal each.
+  // The record it reads is the one BOUND to this run's own surface session; an unbound record publishes its reason
+  // instead of a path, which is what stops a neighbouring run's numbers standing in for this one's.
   assert.match(
     SOURCE,
-    /const toolTiming = readToolTiming\(sessionRecordPath, \{ executionTraceFlat: executionTrace\.flat \}\);/,
+    /const toolTiming = readToolTiming\(runSessionRecord\.path, \{\n\s+executionTraceFlat: executionTrace\.flat,\n\s+unboundReason: runSessionRecord\.reason \?\? "no_session_record",\n\s+\}\);/,
   );
   assert.equal(
-    (SOURCE.match(/readToolTiming\(sessionRecordPath/gu) ?? []).length,
+    (SOURCE.match(/readToolTiming\(runSessionRecord\.path/gu) ?? []).length,
     1,
     "one read, in the assembly both exits use",
   );
   assert.match(SOURCE, /^    toolTiming,$/mu);
-  assert.match(SOURCE, /sessionRecordPath = sessionSearch\.path;/);
+  assert.match(SOURCE, /const sessionSearch = findRunSessionJsonl\(gameSessionPaths\.sessionDir\);/);
+  assert.match(SOURCE, /runSessionRecord = Object\.freeze\(\{\n\s+path: sessionSearch\.path,/);
   // 4. The category cannot over-count silently: the tool-call count is checked against the frames the runner sent, and
   // a disagreement is logged by name where the trace invariant already is.
   assert.match(SOURCE, /const TOOL_TIMING_INVARIANT_VIOLATED = "TOOL_TIMING_INVARIANT_VIOLATED";/);
@@ -323,7 +329,20 @@ test("a tool call's duration names its owner: nested agent, planning, program, o
     SOURCE,
     /if \(toolTiming\.invariant\.ok === false\)\n\s+console\.error\(TOOL_TIMING_INVARIANT_VIOLATED,/,
   );
-  assert.match(SOURCE, /invariant: toolTimingInvariant\(\{ calls: byCategory\.flat_dispatch\.calls, frames \}\)/);
+  assert.match(
+    SOURCE,
+    /const invariant = toolTimingInvariant\(\{ calls: byCategory\.flat_dispatch\.calls, frames \}\);/,
+  );
+  // A disagreement WITHHOLDS the timings: the invariant is published, the categories and the list are not, because a
+  // number with a caveat gets quoted and these numbers were quoted (2026-10-22 audit).
+  assert.match(
+    SOURCE,
+    /if \(invariant\.ok === false\) return noTiming\("tool_timing_invariant_violated", record, invariant\);/,
+  );
+  assert.match(
+    SOURCE,
+    /Object\.freeze\(\{ observed: false, reason, record, byCategory: null, longest: null, invariant \}\)/,
+  );
   // 5. Bounded. The long list is the head of a sorted list, never the whole thing.
   assert.match(SOURCE, /const TOOL_TIMING_LONGEST_LIMIT = 10;/);
   assert.match(SOURCE, /longest\.sort\(\(left, right\) => right\.ms - left\.ms\);/);
@@ -333,9 +352,10 @@ test("a tool call's duration names its owner: nested agent, planning, program, o
     1,
     "one cap, applied where the list is published",
   );
-  // An unreadable record is its own answer, so an empty aggregate can never be read as a measured zero.
-  assert.match(SOURCE, /return unobserved\("no_session_record"\);/);
-  assert.match(SOURCE, /return unobserved\("session_not_readable"\);/);
+  // An unreadable record is its own answer, so an empty aggregate can never be read as a measured zero: no timing is
+  // published as `null` categories with the reason that says why.
+  assert.match(SOURCE, /return noTiming\(unboundReason, null\);/);
+  assert.match(SOURCE, /return noTiming\("session_not_readable", record\);/);
   // A call with no result yet (session cut off mid-call) carries no duration: it is left out, not given one.
   assert.match(SOURCE, /if \(call === undefined\) continue;/);
 });
@@ -376,6 +396,10 @@ test("program submissions are published on the failure path too, through the bun
   // The guarantee is the shared function: a publication on one exit alone would fail the bundle assertion above, and
   // an exit that stopped calling writeRunBundle would fail here.
   assert.match(SOURCE, /result\.bundle = await writeRunBundle\(\{/u);
-  assert.equal((SOURCE.match(/await buildRunResult\(\{/gu) ?? []).length, 2, "both exits use the one assembly");
+  assert.equal(
+    (SOURCE.match(/await buildRunResult\(\{/gu) ?? []).length,
+    3,
+    "both exits and the escaped-error dump use the one assembly",
+  );
   assert.doesNotMatch(SOURCE, /partialResult/u);
 });
