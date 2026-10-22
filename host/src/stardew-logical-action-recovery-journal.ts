@@ -858,6 +858,18 @@ async function readLegacyDocument(
   maxRecords: number,
 ): Promise<Document | undefined> {
   let value: unknown;
+  // "No legacy document" is the normal case once a journal has been migrated, and the strict reader reports a missing
+  // file as `invalid_strict_json_file` with the ENOENT buried in its cause - so the check is a stat, not a catch on the
+  // error shape. Measured 2026-10-22: after the append-only migration removed the v1 file, every open crashed here at
+  // step 0 with `invalid_strict_json_file`, which reads like corruption rather than "nothing to migrate".
+  let present = true;
+  try {
+    await stat(path);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") present = false;
+    else throw error;
+  }
+  if (!present) return undefined;
   try {
     documentParseCount += 1;
     value = await readStrictJsonFile(path);
