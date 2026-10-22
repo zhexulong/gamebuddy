@@ -14,25 +14,32 @@
  *       tail and a block folded into a cached prefix, and no unit test can give it.
  *   [3] `prefix` - `m[0]`'s bytes and the stable publication hash, printed once for the
  *       with-field run and once for a card that declares nothing.
+ *   [4] `record` - the field the catalogue carried IS her own durable record's text, rendered
+ *       through the run's macro table (`{{char}}` resolved, nothing left standing), and absent
+ *       when she declares nothing. This is the reading that says the field comes from the
+ *       product's own record read, not from this script.
  *
  * # How it drives the product
  *
  * One real runtime (`host/dist-test` -> `createCompanionRuntime`, surface `chat`), one real Pi
- * session, one real Magic Context context handler, and the product's own publication calls
- * (`publishGameBuddyAuthoredStableCatalog` / `replaceGameBuddyAuthoredStableCatalog` - exactly
- * the pair a mounted Chat calls when its authored context is refreshed). The provider is a local
- * OpenAI-compatible endpoint this script serves, so it records the request body Pi actually
- * posted: the model is stubbed, the assembly is not, and the assembly is what is under test.
+ * session, one real Magic Context context handler. Her card's closing direction is written by
+ * the product's own writer (`writeCompanionPostHistoryInstructions`, the call the import makes),
+ * read back by `materializeTavernAuthoredStableCatalog` - the call a mounted Chat makes - and
+ * the resulting catalogue is published through `publishGameBuddyAuthoredStableCatalog` /
+ * `replaceGameBuddyAuthoredStableCatalog`. Nothing about the field is supplied by this script:
+ * the only thing it supplies is her record, which is the thing under test. The provider is a
+ * local OpenAI-compatible endpoint this script serves, so it records the request body Pi
+ * actually posted: the model is stubbed, the assembly is not.
  *
- * # What this run cannot settle, and says so
+ * # How the field is changed
  *
- * The card's durable record (`post-history-instructions.json`, written by the import) has no
- * production reader in the Host yet: `readCompanionPostHistoryInstructions` is called only from
- * its own test, and `materializeTavernAuthoredContextCatalog` never sets the catalogue's
- * `postHistoryInstructions`. The field therefore rides the catalogue here, through the product's
- * own publication call, not through the record. This runner prints that link's state on every
- * run (`durableRecordLink`) so the note cannot rot silently: when a reader appears, the reading
- * to take is the record-driven one, and this line says so.
+ * The record is written once, when a companion is provisioned (revision 1), and the product
+ * offers no edit operation for it yet - so "the author changed that line" is a re-provisioned
+ * record: the old file goes and the product's writer stamps the new one. What the next turn
+ * then proves is the part that matters: the catalogue is materialized again, the new text
+ * reaches the tail, and the canonical hash does NOT move, because this field renders after the
+ * transcript rather than into the cached prefix. The runner prints the reader's own state
+ * (`durableRecordLink`) so a future change that unwires it cannot pass silently.
  *
  *   node tools/live-run/chat/run-post-history-live.mjs
  *   node tools/live-run/chat/run-post-history-live.mjs --declared-field=""   # must be RED
@@ -42,7 +49,7 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { mkdtemp, realpath } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -55,6 +62,11 @@ const HOST_SOURCE_ROOT = join(REPOSITORY_ROOT, "host", "src");
 /** The card's closing direction, and the author's edit to it. Distinctive on purpose. */
 export const DECLARED_FIELD = "Close every reply by raking the coals once, never twice.";
 export const REVISED_FIELD = "Close every reply by hanging the kettle back on its hook.";
+/**
+ * A closing direction that carries the one macro a card's author is most likely to write.
+ * The catalogue must publish it resolved, not as `{{char}}`.
+ */
+export const MACRO_FIELD = "Close every reply by raking {{char}}'s coals once, never twice.";
 const BLOCK_OPEN = "<character-closing-direction>";
 const BLOCK_CLOSE = "</character-closing-direction>";
 const AUTHORED_BLOCK_MARKER = '<gamebuddy-authored-context version="v2"';
@@ -63,7 +75,7 @@ const AUTHORED_BLOCK_MARKER = '<gamebuddy-authored-context version="v2"';
 const PROVIDER_ID = "gamebuddy-openai-compatible";
 const MODEL_ID = "gamebuddy-post-history-live";
 const STUB_REPLY = "She nods and sets the kettle down.";
-const PROMPTS = Object.freeze(["Good morning.", "I am off to buy seed.", "The seed is in."]);
+const PROMPTS = Object.freeze(["Good morning.", "I am off to buy seed.", "The seed is in.", "Did the kettle boil?"]);
 const REQUEST_TIMEOUT_MS = 60_000;
 const SETTLE_TIMEOUT_MS = 30_000;
 
@@ -108,6 +120,8 @@ export function summarizeTurn(entry) {
     // The agent's own system prompt is the other half of the prefix a turn may not disturb.
     systemSha256: messages[0] === undefined ? null : sha256(wireBytes(messages[0])),
     publicationHash: entry?.publicationHash ?? null,
+    // What the catalogue this turn ran on carried: null when her card declared nothing.
+    catalogField: typeof entry?.catalogField === "string" ? entry.catalogField : null,
     blocks: messages.filter((message) => textOf(message).includes(BLOCK_OPEN)).length,
     lastRole: last?.role ?? null,
     lastText: last === undefined ? "" : textOf(last),
@@ -145,12 +159,14 @@ export function verifyReadings(run) {
   const turns = Array.isArray(run?.turns) ? run.turns : [];
   const declaredField = typeof run?.declaredField === "string" ? run.declaredField : "";
   const revisedField = typeof run?.revisedField === "string" ? run.revisedField : "";
-  if (turns.length !== 3) {
-    record("turns", "three real turns", [`got ${turns.length} turns, expected 3`], []);
+  const macroField = typeof run?.macroField === "string" ? run.macroField : "";
+  const renderedMacroField = typeof run?.renderedMacroField === "string" ? run.renderedMacroField : "";
+  if (turns.length !== 4) {
+    record("turns", "four real turns", [`got ${turns.length} turns, expected 4`], []);
     return Object.freeze({ checks: Object.freeze(checks), ok: false });
   }
   const summaries = turns.map((entry) => summarizeTurn(entry));
-  const [absent, declared, revised] = summaries;
+  const [absent, declared, revised, macro] = summaries;
 
   record(
     "control",
@@ -202,13 +218,40 @@ export function verifyReadings(run) {
     ),
   );
 
+  // The reading this unit exists for: what the catalogue carried came from HER RECORD, through
+  // the product's own read, rendered - not from anything this runner put in the catalogue.
+  const recordProblems = [];
+  if (absent.catalogField !== null)
+    recordProblems.push("the no-record turn published a closing direction her card never declared");
+  if ((declared.catalogField ?? "") !== declaredField)
+    recordProblems.push("the catalogue's field is not her record's text");
+  if ((revised.catalogField ?? "") !== revisedField)
+    recordProblems.push("after the edit the catalogue's field is not her record's new text");
+  if (!macroField.includes("{{")) recordProblems.push("the macro cell declares no macro, so rendering proves nothing");
+  if (renderedMacroField.length === 0 || renderedMacroField === macroField || renderedMacroField.includes("{{"))
+    recordProblems.push(`the expected rendering is not a rendering of the record (${renderedMacroField})`);
+  if (macro.catalogField !== renderedMacroField)
+    recordProblems.push("the catalogue published her record unrendered, or rendered it differently");
+  const macroTail = blockProblem(macro, renderedMacroField);
+  if (macroTail !== null) recordProblems.push(macroTail);
+  record(
+    "record",
+    "the catalogue carries her own durable record's rendered text, and nothing when she declares none",
+    recordProblems,
+    summaries.map(
+      (summary, index) => `${turns[index].label.padEnd(30)} catalogue field=${JSON.stringify(summary.catalogField)}`,
+    ),
+  );
+
   return Object.freeze({ checks: Object.freeze(checks), ok: checks.every((check) => check.ok) });
 }
 
 /**
- * Whether the Host reads the card's durable record. This is the one claim the runner cannot settle
- * on the wire, so it is measured rather than asserted: a production caller found means the
- * record-driven reading is the one to take, and the printed line says so.
+ * How many production Host files call the record's reader. The runner now drives the field
+ * through that reader, so this line is printed as the reader's own state rather than as a
+ * substitute for the reading: if the wiring is ever removed, `callers` drops to 0 and the line
+ * says the record is unread while the run would otherwise still be green on a hand-supplied
+ * catalogue.
  */
 export function durableRecordLink(sourceRoot = HOST_SOURCE_ROOT) {
   const definitions = join(sourceRoot, "tavern", "post-history-instructions.ts");
@@ -243,11 +286,27 @@ async function loadProduct() {
   if (!existsSync(extensionEntry))
     throw new RunnerBlocked("magic_context_build_missing", `the Host resolves ${extensionEntry}, which is not there`);
   const tavernEntry = join(dirname(extensionEntry), "tavern", "index.js");
-  const [{ TavernConnectionStore }, pathLock, reclaimer, fixture, tavern] = await Promise.all([
+  const [
+    { TavernConnectionStore },
+    { TavernArtifactStore },
+    { resolveTavernPaths },
+    { materializeTavernAuthoredStableCatalog },
+    { writeCompanionPostHistoryInstructions },
+    { macroTable },
+    { createChatThreadStore, createProfileAwareChatThreadCreationCapability },
+    pathLock,
+    reclaimer,
+    tavern,
+  ] = await Promise.all([
     loadTestModule("tavern/connection-store.js"),
+    loadTestModule("tavern/artifact-store.js"),
+    loadTestModule("tavern/tavern-paths.js"),
+    loadTestModule("tavern/catalog-service.js"),
+    loadTestModule("tavern/post-history-instructions.js"),
+    loadTestModule("tavern/macro-engine.js"),
+    loadTestModule("tavern/chat-thread-store.js"),
     loadTestModule("path-lock.js"),
     loadTestModule("windows-stale-lock-reclaimer/index.js"),
-    loadTestModule("test-support/authored-context-catalog.test-support.js"),
     import(pathToFileURL(tavernEntry).href),
   ]);
   pathLock.bindWindowsStaleLockReclaimer(await reclaimer.createBuildWindowsStaleLockReclaimer());
@@ -255,7 +314,13 @@ async function loadProduct() {
     createCompanionRuntime: runtime.createCompanionRuntime,
     resolveRuntimePaths: runtime.resolveRuntimePaths,
     TavernConnectionStore,
-    authoredContextCatalogFixture: fixture.authoredContextCatalogFixture,
+    TavernArtifactStore,
+    resolveTavernPaths,
+    materializeTavernAuthoredStableCatalog,
+    writeCompanionPostHistoryInstructions,
+    macroTable,
+    createChatThreadStore,
+    createProfileAwareChatThreadCreationCapability,
     publish: tavern.publishGameBuddyAuthoredStableCatalog,
     replace: tavern.replaceGameBuddyAuthoredStableCatalog,
   };
@@ -402,38 +467,49 @@ export async function runLiveRun({
     const piSessionId = runtime.sessionManager.getSessionId();
     if (typeof piSessionId !== "string" || piSessionId.length === 0) throw new Error("pi_session_unavailable");
     log(`pi session   : ${piSessionId}`);
+    // The product's own Tavern roots and artifact store, over this run's runtime root: her
+    // closing direction is a durable record under her own companion root, and the catalog call
+    // below reads it from there.
+    const tavernPaths = product.resolveTavernPaths(runtime.paths, identity);
+    const artifacts = new product.TavernArtifactStore(runtime.paths.root);
+    const recordPath = join(tavernPaths.companionRoot, "post-history-instructions.json");
+    // A real thread in its own store, created by the product's own capability. The scope the
+    // catalogue binds is this thread's, exactly as a mounted Chat's is.
+    const threads = product.createChatThreadStore(runtime.paths.root, runtime.identityKey);
+    const creation = product.createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return runtime.identityProfile;
+      },
+    });
+    const thread = await creation.createExplicit({
+      chatThreadId: "thread_post_history_live",
+      chatSurfaceSessionId: surfaceSessionId,
+      companionId: identity.companionId,
+      continuityId: identity.continuityId,
+      opening: "blank",
+    });
     const scope = Object.freeze({
       continuityId: identity.continuityId,
       sessionId: piSessionId,
       surface: "tavern",
-      threadId: "thread_post_history_live",
-      profile: Object.freeze({ profileId: "profile_post_history_live", revision: 1, canonicalHash: "a".repeat(64) }),
+      threadId: thread.thread.chatThreadId,
+      profile: runtime.identityProfile,
     });
-    const sources = Object.freeze({
-      stableSources: [
-        Object.freeze({
-          sourceId: "scenario_post_history_live",
-          kind: "scenario",
-          revision: "1",
-          content: "A quiet kitchen at first light, the stove still warm.",
-          budgetTokens: 8,
-          totalOrderKey: "0001",
-          provenance: "live-run/post-history-live",
-        }),
-      ],
-    });
-    // The Host's own test support builds the catalogue the Host publishes (its canonical hash is
-    // computed over the body, never invented). The closing direction is carried BESIDE that hashed
-    // body - the shape the package validates, and the reason changing it cannot move the hash.
-    const catalog = (field) => {
-      const built = product.authoredContextCatalogFixture(scope, sources).catalog;
-      return field === undefined || field.length === 0
-        ? built
-        : Object.freeze({ ...built, postHistoryInstructions: field });
+    // The one macro table every authored field is rendered through on this run.
+    const macros = product.macroTable({ char: runtime.profile.identity.name });
+    /**
+     * Her record, rewritten as a re-provisioned card would leave it, then read back by the
+     * product's own catalog call. Nothing here supplies the catalogue's field.
+     */
+    const materialize = async (field) => {
+      await rm(recordPath, { force: true });
+      if (field.length > 0)
+        await product.writeCompanionPostHistoryInstructions(artifacts, tavernPaths.companionRoot, field);
+      return await product.materializeTavernAuthoredStableCatalog(tavernPaths, artifacts, thread.thread, scope, macros);
     };
 
     const turns = [];
-    const turn = async (label, publication, prompt, published) => {
+    const turn = async (label, catalog, prompt, published) => {
       const thisTurn = await (async () => {
         const promise = runtime.session.prompt(prompt);
         const received = await awaitRequest(provider, REQUEST_TIMEOUT_MS);
@@ -445,7 +521,8 @@ export async function runLiveRun({
         Object.freeze({
           label,
           prompt,
-          publicationHash: publication.canonicalHash,
+          publicationHash: catalog.canonicalHash,
+          catalogField: catalog.postHistoryInstructions ?? null,
           published,
           promptSettled: thisTurn.didSettle,
           messages: Array.isArray(thisTurn.received.body.messages) ? thisTurn.received.body.messages : [],
@@ -456,22 +533,31 @@ export async function runLiveRun({
       );
     };
 
-    // 1. A card that declares nothing: the control side of the prefix reading.
-    const absentCatalog = catalog(undefined);
+    // 1. A card that declares nothing: the control side of both the prefix and the record reading.
+    const absentCatalog = await materialize("");
     const absent = product.publish(scope, absentCatalog);
     await turn("card declares nothing", absentCatalog, PROMPTS[0], "none");
-    // 2. The same card, now declaring the field.
-    const declaredCatalog = catalog(declaredField);
+    // 2. The same companion, now declaring the field on her own record.
+    const declaredCatalog = await materialize(declaredField);
     const declared = product.replace(absent, scope, declaredCatalog);
     await turn("card declares the field", declaredCatalog, PROMPTS[1], "declared");
-    // 3. The author changes the field: only the NEXT turn may show it, and only at its tail.
-    const revisedCatalog = catalog(revisedField);
-    product.replace(declared, scope, revisedCatalog);
+    // 3. The author changes that line: only the NEXT turn may show it, and only at its tail.
+    const revisedCatalog = await materialize(revisedField);
+    const revised = product.replace(declared, scope, revisedCatalog);
     await turn("the field is changed", revisedCatalog, PROMPTS[2], "revised");
+    // 4. A record whose text carries `{{char}}`: the tail must carry it RENDERED, which is what
+    //    makes the catalogue the product's rendering of her record rather than its raw bytes.
+    const macroCatalog = await materialize(MACRO_FIELD);
+    product.replace(revised, scope, macroCatalog);
+    await turn("the record carries {{char}}", macroCatalog, PROMPTS[3], "macro");
 
     return Object.freeze({
       declaredField,
       revisedField,
+      macroField: MACRO_FIELD,
+      // Her own name, read from the product, substituted once: this is what the catalogue must
+      // carry if it rendered her record rather than shipping it raw.
+      renderedMacroField: MACRO_FIELD.replace("{{char}}", macros.char),
       stubReply: STUB_REPLY,
       root: runtime.paths.runtimeCwd,
       turns: Object.freeze(turns),
@@ -499,10 +585,10 @@ export function formatReadings(run, verdict, link, writer = console.log) {
     link.known === false
       ? "  durable record  : UNKNOWN - host/src is not readable from here"
       : link.callers === 0
-        ? "  durable record  : the card's post-history-instructions.json has NO production reader in the Host, so the\n" +
-          "                    field rides the product's own catalogue publication (replaceGameBuddyAuthoredStableCatalog),\n" +
-          "                    which is what a mounted Chat calls on refresh - not the card record"
-        : `  durable record  : READ by ${link.callers} production caller(s); the record-driven reading is the one to take`,
+        ? "  durable record  : the card's post-history-instructions.json has NO production reader in the Host;\n" +
+          "                    this run's readings below therefore describe a catalogue this script built"
+        : `  durable record  : READ by ${link.callers} production caller(s) - this run's catalogue is her record, read back\n` +
+          "                    by materializeTavernAuthoredStableCatalog and published beside its hashed body",
   );
   writer("");
   writer("reading 1  tailBlock - the last outgoing message, card declaring the field");
@@ -523,6 +609,13 @@ export function formatReadings(run, verdict, link, writer = console.log) {
       `  turn ${index + 1}  ${run.turns[index].label.padEnd(24)} ${run.turns[index].published.padEnd(9)}` +
         ` m[0] bytes=${String(summary.m0Bytes).padStart(5)}  m[0] sha256=${summary.m0Sha256 ?? "(absent)"}` +
         `  publication sha256=${summary.publicationHash ?? "(none)"}`,
+    );
+  }
+  writer("");
+  writer("reading 4  record - the catalogue's field beside her own record's text, turn by turn");
+  for (const [index, summary] of summaries.entries()) {
+    writer(
+      `  turn ${index + 1}  ${run.turns[index].label.padEnd(24)} catalogue field=${JSON.stringify(summary.catalogField)}`,
     );
   }
   writer("");

@@ -125,8 +125,10 @@ export const COMPATIBILITY_MANIFEST_V1 = Object.freeze({
         // spec injects AFTER the history rather than as a statement of voice. It is
         // accepted and bounded here, then kept as the companion's own durable record
         // (`post-history-instructions.json`) beside her scenario and her openings -
-        // never a profile field and never part of the cached prefix. No reader
-        // renders it yet; where it is appended is a separate decision.
+        // never a profile field and never part of the cached prefix. The Chat
+        // materialization reads it (`catalog-service.ts`) and publishes it beside the
+        // catalogue's hashed body, which is where the fork appends it after the
+        // transcript.
         post_history_instructions: entry(
           "accepted_typed",
           "companion_artifact",
