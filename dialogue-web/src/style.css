@@ -1887,6 +1887,14 @@
     color: var(--text-primary);
     font-family: inherit;
     font-size: 14px;
+    /* One line box for the whole form family, and the multi-line field is where it decides
+     layout: a `rows` field is sized from its `line-height`, and `normal` is a font fact. The
+     browser took 18 px from the Latin face and then rendered the Chinese glyphs from a taller
+     fallback at 21 px, so a 4-row field was a 72 px box showing 3.43 lines and its last line was
+     sliced in half (shots-final41, `10-characters-1440x900.png`). At 1.5 the row size, the
+     rendered lines and the base 14 px type all quote the same 21 px, so every authoring field
+     holds a whole number of lines and a field that must scroll moves whole lines. */
+    line-height: 1.5;
     padding: 8px 12px;
     outline: none;
     transition: border-color var(--motion-duration-fast) var(--motion-ease-out);

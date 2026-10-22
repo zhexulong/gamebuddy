@@ -866,3 +866,138 @@ test("item 5: the variant pager and regenerate are one strip at the bubble's foo
     `the strip holds the pager: ${JSON.stringify(measured.actionChildren)}`,
   ).toBe(true);
 });
+
+/**
+ * Every multi-line authoring field, measured against its own rendered line box.
+ *
+ * The fields on the Characters surface ended on a sliced line - 演出指导, 场景文本, each 开场白
+ * variant and 词条正文 showed the top half of a last line and no more (shots-final41,
+ * `10-characters-1440x900.png`, `88-world-book-refusal-stale-revision-1440x900.png`). The cause is
+ * the shared class: `.form-textarea` never declared a `line-height`, so its `line-height` was
+ * `normal` - a value the browser derives from a *font*, and it derived the row size from the
+ * Latin face while the Chinese glyphs came from a taller fallback. The box was therefore sized
+ * for 4 x 18 px while the rendered lines measured 21 px, and 72 px admits 3.43 of them.
+ *
+ * The proof is the rendered arithmetic, not the declaration: the line box is measured by growing
+ * the field one line at a time and reading `scrollHeight`'s own step, then compared with the
+ * content box the browser laid out. `scrollHeight % lineHeight` is deliberately *not* the
+ * assertion - `scrollHeight` carries the field's padding, which is not a line box, so that
+ * remainder is 16 px in every state and would pass for a sliced field as readily as a whole one.
+ *
+ * Before (shipped stack): `lineHeight: normal`, 演出指导/用户设定描述/场景文本/词条正文 measured
+ * `clientHeight 88` (content box 72) against their own line box, and under the Latin-first stack
+ * the same fields reported 3.37 visible lines.
+ */
+async function measureAuthoringFields(page: Page) {
+  return await page.evaluate(() => {
+    const round = (value: number) => Math.round(value * 100) / 100;
+    const line = "这一行用来量出真正的行盒高度。";
+    return [...document.querySelectorAll<HTMLTextAreaElement>("textarea.form-textarea")]
+      .filter((node) => node.getBoundingClientRect().height > 0)
+      .map((node) => {
+        const style = getComputedStyle(node);
+        const padTop = Number.parseFloat(style.paddingTop);
+        const padBottom = Number.parseFloat(style.paddingBottom);
+        const original = node.value;
+        const scrolledFor = (lines: number): number => {
+          node.value = Array.from({ length: lines }, () => line).join("\n");
+          return node.scrollHeight;
+        };
+        const five = scrolledFor(5);
+        const six = scrolledFor(6);
+        node.value = original;
+        void node.scrollHeight;
+        const lineBox = six - five;
+        const contentBox = round(node.clientHeight - padTop - padBottom);
+        const visibleLines = round(contentBox / lineBox);
+        return {
+          label: node.id || node.getAttribute("aria-label") || "textarea",
+          rows: node.rows,
+          lineHeight: style.lineHeight,
+          declaredLineHeight: round(Number.parseFloat(style.lineHeight)),
+          clientHeight: node.clientHeight,
+          scrollHeightAtFiveLines: five,
+          contentBox,
+          lineBox,
+          visibleLines,
+          whole: Math.abs(visibleLines - Math.round(visibleLines)) < 0.02,
+        };
+      });
+  });
+}
+
+test("item 6: every multi-line authoring field shows whole lines, and a scrolling one does not cut one", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stubShell(page);
+  await page.route("**/api/tavern/v1/memory", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, projectionRevision: worldInfoHandle, memories: [], chapters: [] })),
+  );
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=characters`);
+  await expect(page.locator("[data-opening-editor]")).toBeVisible();
+  // The entry bodies only exist inside the editor, so open it: 词条正文 was one of the four
+  // fields the review saw sliced.
+  await page.locator("[data-companion-world-book-edit]").click();
+  await expect(page.locator("[data-companion-world-book-draft]")).toBeVisible();
+
+  const shipped = await measureAuthoringFields(page);
+  console.log(`[item-6 authoring fields @1440] ${JSON.stringify(shipped)}`);
+
+  // The fields the review named, plus every other one the shared class reaches: the assertion is
+  // about the class, so a field missing from this list is a field the fix does not cover.
+  const labels = shipped.map((field) => field.label);
+  for (const named of [
+    "character-voice-text",
+    "scenario-description",
+    "persona-description",
+    "opening-variant-0-text",
+    "companion-world-book-entry-0-body",
+  ]) {
+    expect(labels, `${named} is one of the authoring fields under test`).toContain(named);
+  }
+  expect(shipped.length, `every authoring field on the surface is measured: ${JSON.stringify(labels)}`).toBeGreaterThanOrEqual(
+    14,
+  );
+
+  for (const field of shipped) {
+    const quoted = JSON.stringify(field);
+    // 1. The row count is derived from a definite line box, not from a font's `normal`.
+    expect(
+      Number.isFinite(field.declaredLineHeight),
+      `the row size of ${field.label} is not a font-derived 'normal': ${quoted}`,
+    ).toBe(true);
+    // 2. The box the browser laid out is a whole number of the line boxes it renders.
+    expect(field.whole, `${field.label} shows whole lines, not ${field.visibleLines}: ${quoted}`).toBe(true);
+    expect(
+      field.contentBox,
+      `${field.label} is exactly ${field.rows} rows of ${field.lineBox} px: ${quoted}`,
+    ).toBe(field.rows * field.lineBox);
+  }
+
+  // …and the scrolling case: a field whose text overflows keeps its own line box in charge, so
+  // the lines below the fold are whole lines too. The Latin-first stack is the shape the shots
+  // were rendered in (the product's own stack puts Latin faces in front of the CJK fallback);
+  // injecting it makes the two metrics differ deterministically instead of depending on which
+  // fonts the machine happens to have.
+  const latinFirst = await page.addStyleTag({
+    content: "textarea.form-textarea { font-family: Arial; }",
+  });
+  const sliced = await measureAuthoringFields(page);
+  console.log(`[item-6 authoring fields, Latin-first stack] ${JSON.stringify(sliced)}`);
+  await latinFirst.evaluate((node) => node.remove());
+  for (const field of sliced) {
+    expect(
+      field.contentBox,
+      `${field.label} keeps its own line box when the font changes: ${JSON.stringify(field)}`,
+    ).toBe(field.rows * field.lineBox);
+  }
+
+  // The same class is the one the Memory composer uses, so the fields there are whole too.
+  await page.getByRole("button", { name: "记忆", exact: true }).click();
+  await page.locator("[data-memory-authoring-toggle]").click();
+  const memory = await measureAuthoringFields(page);
+  console.log(`[item-6 memory composer] ${JSON.stringify(memory)}`);
+  expect(memory).toHaveLength(1);
+  expect(memory[0]!.whole, `记忆内容 is a whole number of lines: ${JSON.stringify(memory[0])}`).toBe(true);
+});
