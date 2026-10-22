@@ -725,7 +725,7 @@ test("the Memory surface's primary action outranks its secondaries", async ({ pa
   const refresh = surface.getByRole("button", { name: "刷新记忆", exact: true });
   const closed = await read(toggle);
   const secondary = await read(refresh);
-  console.log(`[defect-6 closed] primary=${JSON.stringify(closed)} secondary=${JSON.stringify(secondary)}`);
+  console.log(`[memory-primary closed] primary=${JSON.stringify(closed)} secondary=${JSON.stringify(secondary)}`);
 
   expect(closed.backgroundColor, "the surface's own action is painted as the product's primary").toBe(accentSolid);
   expect(
@@ -751,7 +751,7 @@ test("the Memory surface's primary action outranks its secondaries", async ({ pa
   await expect(toggle).toHaveCSS("background-color", secondary.backgroundColor);
   const opened = await read(toggle);
   const committed = await read(save);
-  console.log(`[defect-6 open] withdraw=${JSON.stringify(opened)} save=${JSON.stringify(committed)}`);
+  console.log(`[memory-primary open] withdraw=${JSON.stringify(opened)} save=${JSON.stringify(committed)}`);
 
   expect(committed.backgroundColor, "the compose-and-save control is the primary one").toBe(accentSolid);
   expect(opened.backgroundColor, "and the withdraw beside it is not").not.toBe(accentSolid);
