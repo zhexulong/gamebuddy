@@ -55,8 +55,14 @@
  *
  * Reporting shape: one summary line, then violations grouped by class and
  * ranked by "a player reaches it and it fails badly". Every violation carries
- * `path:line`. `--only=<class>` runs one class; `--json` emits the same facts
- * as data. Exit status is non-zero when any class has a violation.
+ * `path:line`. A class that reports by *kind* (today only `hygiene`, whose 400
+ * findings are 399 instances of one pattern) prints one line per kind with its
+ * count and at most ten of its sites, because a list of 399 identical
+ * complaints is a report nobody reads; `--verbose` (or `--all-findings`) prints
+ * every site, and `--json` carries every site either way. Aggregation is a
+ * reading aid, never a smaller total: the counts are the counts that were
+ * found. `--only=<class>` runs one class; `--json` emits the same facts as
+ * data. Exit status is non-zero when any blocking class has a violation.
  *
  * A gate that is wrong is worse than no gate, so each class's own test
  * (`audit-totality.test.mjs`) injects one violation into a scratch copy of the
@@ -916,10 +922,20 @@ export function runAudit({ root = DEFAULT_ROOT, only = null } = {}) {
   return results;
 }
 
+// ---------------------------------------------------------------------------
+// Reporting
+// ---------------------------------------------------------------------------
+
+/** How many sites of one kind the report prints; `--verbose` lifts it. Nothing is lost, only bounded. */
+const SAMPLE_LIMIT = 10;
+
+/** How much of a sampled finding's message a sample line prints before it clips. */
+const SAMPLE_MESSAGE = 160;
+
 export function totals(results) {
   const violations = results.flatMap((result) => result.violations);
-  // Advisory classes still report; they do not decide the exit code. Their fixtures are not reconciled yet, so a
-  // red from them would be a statement about the fixture rather than about the product.
+  // Advisory classes still report; they do not decide the exit code, and `ADVISORY` states why each one is listed.
+  // The count below is the count that was found, advisory or not.
   const blocking = results.filter((result) => result.advisory !== true).flatMap((result) => result.violations);
   return {
     classes: results.length,
@@ -930,7 +946,7 @@ export function totals(results) {
   };
 }
 
-export function formatReport(results) {
+export function formatReport(results, { all = false } = {}) {
   const summary = totals(results);
   const lines = [
     `audit-totality: ${summary.classes} classes, ${summary.declared} declared items walked, ${summary.violations} violations`,
@@ -942,19 +958,46 @@ export function formatReport(results) {
     );
   for (const note of results.flatMap((result) => result.notes)) lines.push(`  note  ${note}`);
   const ranked = [...results.flatMap((result) => result.violations)].sort((left, right) => left.rank - right.rank);
-  if (ranked.length > 0) {
-    lines.push("", "violations, worst first:");
-    for (const violation of ranked)
+  if (ranked.length === 0) return lines.join("\n");
+  lines.push("", "violations, worst first:");
+  // A violation that carries a `kind` is reported by kind: one line with the count, then at most `SAMPLE_LIMIT` of
+  // its sites. A violation without one is reported by site, as every class except `hygiene` does. Both keep the
+  // count that was found - the sample bounds what is printed, never what is reported. `all` lifts the bound.
+  const perKind = new Map();
+  for (const violation of ranked)
+    if (violation.kind !== undefined) {
+      const key = `${violation.class}: ${violation.kind}`;
+      perKind.set(key, (perKind.get(key) ?? 0) + 1);
+    }
+  const printed = new Map();
+  for (const violation of ranked) {
+    if (violation.kind === undefined || all) {
       lines.push(`  [${violation.rank}] ${violation.class}: ${violation.where}`, `        ${violation.message}`);
+      continue;
+    }
+    const key = `${violation.class}: ${violation.kind}`;
+    const found = perKind.get(key) ?? 0;
+    const shown = printed.get(key) ?? 0;
+    if (shown === 0) lines.push(`  [${violation.rank}] ${key} - ${found} finding(s)`);
+    if (shown < SAMPLE_LIMIT) lines.push(`          ${violation.where}  ${sampled(violation.message)}`);
+    else if (shown === SAMPLE_LIMIT)
+      lines.push(`          … ${found - SAMPLE_LIMIT} more site(s) of this kind; --verbose prints every one`);
+    printed.set(key, shown + 1);
   }
   return lines.join("\n");
 }
 
+/** A sample line's message, clipped: the sample carries the site, `--verbose` carries the whole finding. */
+function sampled(message) {
+  return message.length <= SAMPLE_MESSAGE ? message : `${message.slice(0, SAMPLE_MESSAGE)}…`;
+}
+
 function parseArguments(argv) {
-  const options = { root: DEFAULT_ROOT, only: null, json: false };
+  const options = { root: DEFAULT_ROOT, only: null, json: false, all: false };
   for (const argument of argv) {
     if (argument.startsWith("--only=")) options.only = argument.slice("--only=".length).split(",");
     else if (argument === "--json") options.json = true;
+    else if (argument === "--verbose" || argument === "--all-findings") options.all = true;
   }
   return options;
 }
@@ -964,7 +1007,7 @@ function main() {
   const results = runAudit(options);
   const summary = totals(results);
   if (options.json) process.stdout.write(`${JSON.stringify({ summary, results }, null, 2)}\n`);
-  else process.stdout.write(`${formatReport(results)}\n`);
+  else process.stdout.write(`${formatReport(results, { all: options.all })}\n`);
   process.exitCode = summary.blocking > 0 ? 1 : 0;
 }
 
@@ -1550,6 +1593,34 @@ const SUPPRESSION =
 const COMMENTED_CODE =
   /^\s*\/\/\s*(?:const|let|var|return|if|for|while|await|import|export|function|class|throw|switch|case)\b.*[;){]$/u;
 
+/**
+ * The readings `hygiene` reports, each with what a count of it means.
+ *
+ * 399 of this tree's 400 findings are one pattern, and the owner cannot act on a list that long: either the pattern
+ * is accepted wholesale (and the rule is withdrawn) or it is one defect with a mechanical sweep, and neither is a
+ * decision about a line. So each kind carries its own reading, every site stays a finding, and the report prints the
+ * count with a bounded sample instead of 399 lines.
+ *
+ * `decision` is a broad pattern one ruling settles; `defect` is a site that is wrong on its own terms.
+ */
+const HYGIENE_KINDS = Object.freeze([
+  {
+    id: "test-only export",
+    readsAs: "decision",
+    note: "every finding is the same pattern - a Host module exports a production path whose only importer is a test - so one ruling settles all of them: accept test-only exports wholesale (and withdraw the rule) or treat the pattern as one defect and sweep it mechanically; editing 399 sites one at a time is not the fix",
+  },
+  {
+    id: "commented-out code",
+    readsAs: "defect",
+    note: "each site is a line the compiler never reads; the fix is to delete that line, site by site",
+  },
+  {
+    id: "suppression directive",
+    readsAs: "defect",
+    note: "each site hides one specific defect from the compiler or the linter; the fix belongs at that defect, not at the directive",
+  },
+]);
+
 /** Exported symbols of a Host module, with the line that exports them. */
 function exportedSymbols(sources, file) {
   const sourceFile = sources.source(file);
@@ -1581,24 +1652,22 @@ function runHygiene(sources) {
   const notes = [];
   const hostFiles = sources.files(sources.path(...HOST));
   const webFiles = sources.files(sources.path(...WEB));
-  let suppressions = 0;
-  let commentedCode = 0;
   for (const file of [...hostFiles, ...webFiles]) {
     const lines = readFileSync(file, "utf8").split("\n");
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index];
       if (SUPPRESSION.test(line)) {
-        suppressions += 1;
         violations.push({
           rank: 4,
+          kind: "suppression directive",
           where: `${relativeTo(sources.root, file)}:${index + 1}`,
           message: `suppression directive ${JSON.stringify(line.trim().slice(0, 72))}; a compiler or linter silenced by hand hides the next defect`,
         });
       }
       if (COMMENTED_CODE.test(line)) {
-        commentedCode += 1;
         violations.push({
           rank: 4,
+          kind: "commented-out code",
           where: `${relativeTo(sources.root, file)}:${index + 1}`,
           message: `commented-out code ${JSON.stringify(line.trim().slice(0, 72))}`,
         });
@@ -1638,14 +1707,20 @@ function runHygiene(sources) {
       testOnly += 1;
       violations.push({
         rank: 4,
+        kind: "test-only export",
         where: symbol.where,
         message: `${symbol.name} is exported and only a test imports it (${users.map((user) => relativeTo(sources.root, user)).join(", ")}); it is a production path with no production consumer`,
       });
     }
   }
+  const kinds = HYGIENE_KINDS.map((kind) => ({
+    ...kind,
+    count: violations.filter((violation) => violation.kind === kind.id).length,
+  }));
   notes.push(
-    `hygiene: ${suppressions} suppression directive(s), ${commentedCode} commented-out code line(s) across ${hostFiles.length + webFiles.length} source file(s); ${examinedExports} imported export(s) examined, ${testOnly} imported only by a test`,
+    `hygiene: ${violations.length} finding(s) in ${kinds.filter((kind) => kind.count > 0).length} kind(s) across ${hostFiles.length + webFiles.length} source file(s); ${examinedExports} imported export(s) examined, ${testOnly} imported only by a test`,
   );
+  for (const kind of kinds) notes.push(`hygiene: ${kind.id} (${kind.count}) reads as a ${kind.readsAs}: ${kind.note}`);
   return { declared: hostFiles.length + webFiles.length, violations, notes };
 }
 

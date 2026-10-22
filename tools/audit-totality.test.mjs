@@ -24,7 +24,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { ADVISORY, runAudit, totals } from "./audit-totality.mjs";
+import { ADVISORY, formatReport, runAudit, totals } from "./audit-totality.mjs";
 
 function write(root, path, text) {
   const file = join(root, path);
@@ -422,6 +422,45 @@ test("hygiene: a suppression directive and a test-only export are both findings"
       after: 'import test from "node:test";\nimport { noteStoreReady } from "./note-store.js";\nvoid noteStoreReady;',
       expectWhere: "host/src/note-store.ts",
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hygiene reports by kind with a bounded sample, and the unbounded reading keeps every site", () => {
+  const root = fixture();
+  try {
+    // Twelve findings of one kind - three times the sample bound, so the bound has to bite. The real tree reads the
+    // same way at 400: one pattern, one dead line. `main` maps `--verbose` and `--all-findings` to this `all` option.
+    const names = Array.from({ length: 12 }, (_, index) => `onlyTest${index}`);
+    write(
+      root,
+      "host/src/only-a-test-exports.ts",
+      `${names.map((name, index) => `export const ${name} = ${index};`).join("\n")}\n`,
+    );
+    write(
+      root,
+      "host/src/only-a-test-exports.test.ts",
+      `import test from "node:test";\nimport { ${names.join(", ")} } from "./only-a-test-exports.js";\nvoid [${names.join(", ")}];\ntest("x", () => {});\n`,
+    );
+    const results = runAudit({ root, only: ["hygiene"] });
+    assert.equal(totals(results).violations, 12, "aggregation reports the count it found, not the number it prints");
+    const report = formatReport(results).split("\n");
+    assert.ok(
+      report.some((line) => /test-only export - 12 finding\(s\)/u.test(line)),
+      `the kind line must carry its count:\n${report.join("\n")}`,
+    );
+    assert.equal(
+      report.filter((line) => /onlyTest\d+/u.test(line)).length,
+      10,
+      "the report prints at most ten sites of one kind",
+    );
+    assert.ok(
+      report.some((line) => /2 more site\(s\) of this kind/u.test(line)),
+      "the report says how many sites the sample left out",
+    );
+    const every = formatReport(results, { all: true }).split("\n");
+    assert.equal(every.filter((line) => /onlyTest\d+/u.test(line)).length, 12, "--all-findings keeps every site");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
