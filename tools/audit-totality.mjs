@@ -549,7 +549,13 @@ function namedCodeIn(node, sourceFile) {
 
 function enclosingFunction(node) {
   for (let current = node.parent; current !== undefined; current = current.parent) {
-    if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) || ts.isArrowFunction(current))
+    if (
+      ts.isFunctionDeclaration(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isArrowFunction(current) ||
+      ts.isMethodDeclaration(current) ||
+      ts.isConstructorDeclaration(current)
+    )
       return current;
     if (ts.isSourceFile(current)) return null;
   }
