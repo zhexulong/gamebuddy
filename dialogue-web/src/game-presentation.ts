@@ -156,6 +156,13 @@ export type InstallationDiscoveryState =
   // selection refusal the player can fix, and it is never a search outcome: the
   // search found the game.
   | "mod-loader-missing"
+  // The chosen folder holds no Stardew Valley at all. The second selection refusal the
+  // player can fix, and - like `mod-loader-missing` - never a search outcome.
+  | "not-stardew-installation"
+  // A registration the Host could not name a cause for (it is stopping, or the write
+  // itself failed). `source-unavailable` is reserved for a source that could not be
+  // read; nothing here was a search.
+  | "selection-unavailable"
   // The Host registered the installation. The scan that follows a registration
   // finds nothing left to offer, so without this state the one moment the player
   // needs an answer read as an empty scan ("no installation was found") after
@@ -234,6 +241,10 @@ export function installationStateLabel(labels: Messages, state: InstallationDisc
       return labels.gameInstallationResultUnavailable;
     case "mod-loader-missing":
       return labels.gameInstallationModLoaderMissing;
+    case "not-stardew-installation":
+      return labels.gameInstallationNotStardewInstallation;
+    case "selection-unavailable":
+      return labels.gameInstallationSelectionUnavailable;
     case "confirmed":
       return labels.gameInstallationConfirmed;
     case "expired":

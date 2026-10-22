@@ -161,10 +161,15 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await confirm.click();
     await expect.poll(() => reads).toBe(2);
     expect(confirms).toBe(1);
-    // The state after confirming is the Host's fresh answer, not a sentence this
-    // panel invented for its own success.
-    await expect(setup).toHaveAttribute("data-state", "no-candidates");
-    await expect(sentenceOf(page)).toHaveText("No Stardew Valley installation was found.");
+    // The state after confirming is the confirmation, over the Host's fresh answer: the
+    // registration consumed the candidate, so the list is empty and the outcome is the one
+    // the player asked for (the fixture's second read is `no-candidates`, which is what the
+    // panel used to render as "no installation was found" right after accepting one).
+    await expect(setup).toHaveAttribute("data-state", "confirmed");
+    await expect(sentenceOf(page)).toHaveText(
+      "Confirmed. Next, enable companion play and set up Stardew Valley, then load your farm.",
+    );
+    await expect(setup.locator(".installation-candidate")).toHaveCount(0);
   });
 
   /**
@@ -211,6 +216,58 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await expect(setup).not.toContainText("We found possible installations. Choose one to connect.");
     // The candidate the player confirmed is no longer offered for a second confirm.
     await expect(setup.locator(".installation-candidate")).toHaveCount(0);
+  });
+
+  /**
+   * The wrong folder is named as the wrong folder.
+   *
+   * Picking a folder that holds no game used to end in the same place as a scan that could
+   * not read a source: `data-state="source-unavailable"` and "The installation search is
+   * unavailable right now." - about a search that had already found the player's game,
+   * while the actual fault was the folder. The Host now names that refusal
+   * (`not_stardew_installation`), and the sentence says what to do about it.
+   *
+   * The unnamed refusal is the same defect one step further out: a registration the Host
+   * could not name a cause for may not borrow the search's sentence either, so it has one
+   * of its own that claims nothing.
+   */
+  test("the wrong folder is named as the wrong folder, not as a broken search", async ({ page }) => {
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    await mountGameDrawerRoutes(page);
+    await page.route(DRAFT_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })));
+    await page.route(DISCOVERY_ROUTE, (route) => route.fulfill(jsonOk(foundInstallation)));
+    await page.route(PICKER_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, status: "not_stardew_installation" })));
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
+    const setup = panel(page);
+    await expect(setup).toHaveAttribute("data-state", "candidates");
+    const browse = setup.getByRole("button", { name: "Choose game folder", exact: true });
+
+    // The folder picker: the player chose a folder that is not Stardew.
+    await browse.click();
+    await expect(setup).toHaveAttribute("data-state", "not-stardew-installation");
+    await expect(sentenceOf(page)).toHaveText(
+      "That folder is not a Stardew Valley installation. Choose the game folder that contains Stardew Valley.exe.",
+    );
+    await expect(setup).not.toContainText("The installation search is unavailable right now.");
+    await expect(setup).not.toContainText("The installation search failed.");
+    // And the next thing the sentence names is a control the player can press.
+    await expect(browse).toBeEnabled();
+
+    // The confirmed candidate reaches the same refusal and says the same thing.
+    await page.unroute(PICKER_ROUTE);
+    await page.route(CONFIRM_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, status: "not_stardew_installation" })));
+    await setup.getByRole("button", { name: "Confirm", exact: true }).click();
+    await expect(setup).toHaveAttribute("data-state", "not-stardew-installation");
+
+    // A registration that named no cause: `source-unavailable` stays reserved for a source
+    // the scan could not read, and the panel says only what it knows.
+    await page.unroute(CONFIRM_ROUTE);
+    await page.route(PICKER_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, status: "unavailable" })));
+    await browse.click();
+    await expect(setup).toHaveAttribute("data-state", "selection-unavailable");
+    await expect(sentenceOf(page)).toHaveText("That folder could not be used. Choose another game folder.");
+    await expect(setup).not.toContainText("The installation search is unavailable right now.");
   });
 
   /**

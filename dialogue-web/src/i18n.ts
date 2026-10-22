@@ -724,6 +724,13 @@ const en = {
   gameInstallationResultUnavailable: "We couldn't read the installation search result.",
   gameInstallationModLoaderMissing:
     "We found Stardew Valley, but there is no mod loader (SMAPI) in that folder. Install SMAPI, then find again — or choose a game folder that already has it.",
+  // The other selection refusal a player can fix. The file name is what they look for in
+  // their folder; the sentence says what to do rather than only what is wrong.
+  gameInstallationNotStardewInstallation:
+    "That folder is not a Stardew Valley installation. Choose the game folder that contains Stardew Valley.exe.",
+  // A registration the Host could not name a cause for. It says nothing it cannot know:
+  // not that the folder is wrong, not that the search failed.
+  gameInstallationSelectionUnavailable: "That folder could not be used. Choose another game folder.",
   // The registration the player just asked for is done. A scan after a
   // registration finds nothing left to offer, so this sentence is the only place
   // the outcome exists; it says what the panel will not do (nothing here) and what
@@ -1455,6 +1462,9 @@ const zh: Messages = {
   gameInstallationResultUnavailable: "无法读取游戏安装搜索结果。",
   gameInstallationModLoaderMissing:
     "已找到《星露谷物语》，但这个目录里没有模组加载器（SMAPI）。请先安装 SMAPI，再重新查找；也可以选择已经装有 SMAPI 的游戏文件夹。",
+  gameInstallationNotStardewInstallation:
+    "这个文件夹不是《星露谷物语》的安装位置。请选择包含 Stardew Valley.exe 的那个游戏文件夹。",
+  gameInstallationSelectionUnavailable: "无法使用这个文件夹，请重新选择游戏文件夹。",
   gameInstallationConfirmed: "已确认。接下来启用伙伴陪玩，再设置《星露谷物语》，就可以载入你的农场。",
   gameInstallationExpired: "搜索结果已过期，请重新搜索。",
   gameInstallationError: "搜索游戏安装位置失败。",

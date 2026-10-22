@@ -53,6 +53,8 @@ const INSTALLATION_STATES = [
   "no-candidates",
   "result-unavailable",
   "mod-loader-missing",
+  "not-stardew-installation",
+  "selection-unavailable",
   "confirmed",
   "expired",
   "error",
@@ -167,6 +169,34 @@ test("a confirmation reads as the outcome it is, in both languages", () => {
     installationStateLabel(messages("en"), "confirmed"),
     installationStateLabel(messages("en"), "candidates"),
     "a confirmed installation is not the candidate-found sentence",
+  );
+});
+
+test("a selection refusal names its cause, and an unnamed one says only what it knows", () => {
+  // A folder holding no game: the player can fix it, so the sentence names the folder and
+  // what to pick instead. It is not the search's sentence.
+  assert.equal(
+    installationStateLabel(messages("en"), "not-stardew-installation"),
+    "That folder is not a Stardew Valley installation. Choose the game folder that contains Stardew Valley.exe.",
+  );
+  assert.equal(
+    installationStateLabel(messages("zh-CN"), "not-stardew-installation"),
+    "这个文件夹不是《星露谷物语》的安装位置。请选择包含 Stardew Valley.exe 的那个游戏文件夹。",
+  );
+  // A registration the Host could not name a cause for claims nothing beyond that, and in
+  // particular is not the "could not read the source" sentence.
+  assert.equal(
+    installationStateLabel(messages("en"), "selection-unavailable"),
+    "That folder could not be used. Choose another game folder.",
+  );
+  assert.equal(
+    installationStateLabel(messages("zh-CN"), "selection-unavailable"),
+    "无法使用这个文件夹，请重新选择游戏文件夹。",
+  );
+  assert.notEqual(
+    installationStateLabel(messages("zh-CN"), "selection-unavailable"),
+    installationStateLabel(messages("zh-CN"), "source-unavailable"),
+    "a registration that could not complete is not a source that could not be read",
   );
 });
 

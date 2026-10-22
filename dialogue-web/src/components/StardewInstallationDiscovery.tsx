@@ -152,6 +152,18 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
         setState("mod-loader-missing");
         return;
       }
+      // The other refusal a player can fix, and for the same reason its own state: the
+      // folder holds no Stardew Valley, so there is nothing there to register.
+      if ("status" in result && result.status === "not_stardew_installation") {
+        setState("not-stardew-installation");
+        return;
+      }
+      // A registration that named no cause stays unnamed. `source-unavailable` is
+      // reserved for a source the scan could not read, and this was not a scan.
+      if ("status" in result && result.status === "unavailable") {
+        setState("selection-unavailable");
+        return;
+      }
       if (
         kind === "confirm" &&
         "status" in result &&
@@ -169,10 +181,6 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
         if (result.status === "accepted" || result.status === "registered") {
           await read(true);
           if (mounted.current) setState("confirmed");
-          return;
-        }
-        if (result.status === "unavailable") {
-          setState("source-unavailable");
           return;
         }
       }
