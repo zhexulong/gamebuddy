@@ -26,7 +26,13 @@ test("ST-card compatibility manifest publishes the decoder's exact byte bounds",
   assert.equal(fields.extensions.maxBytes, ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars, 8_192);
   assert.equal(fields.creator_notes.decision, "preserved_opaque");
-  assert.equal(fields.post_history_instructions.decision, "preserved_opaque");
+  // The card's own closing direction is no longer `never_runtime`: it is accepted,
+  // bounded at 4 KB, and kept as her own record beside her scenario and openings.
+  // It is still never a profile field and never part of the cached prefix.
+  assert.equal(fields.post_history_instructions.decision, "accepted_typed");
+  assert.equal(fields.post_history_instructions.eligibility, "companion_artifact");
+  assert.equal(fields.post_history_instructions.maxBytes, ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes);
+  assert.equal(ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes, 4_096);
   assert.equal(fields.regex_scripts.decision, "dropped_unsupported");
   assert.equal(ST_CARD_DECODER_LIMITS_V1.inputBytesJson, 2_097_152);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.inputBytesPng, 33_554_432);

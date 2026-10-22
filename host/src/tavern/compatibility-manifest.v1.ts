@@ -29,6 +29,14 @@ export const ST_CARD_DECODER_LIMITS_V1 = Object.freeze({
    * writes is one the decoder keeps whole.
    */
   cardExtensionsJsonChars: 8_192,
+  /**
+   * The card's own closing direction (`post_history_instructions`), carried as the
+   * companion's own durable record. Tighter than `textBytes` on purpose: this text
+   * is third-party prose the companion surface appends after the transcript on
+   * every turn, outside the cached prefix. A longer one is refused at import by
+   * name (`post_history_instructions_too_long`), never truncated.
+   */
+  postHistoryInstructionsBytes: 4_096,
 });
 
 /**
@@ -113,14 +121,17 @@ export const COMPATIBILITY_MANIFEST_V1 = Object.freeze({
           "profile_eligible_after_explicit_review",
           ST_CARD_DECODER_LIMITS_V1.cardVoiceBytes,
         ),
-        // `post_history_instructions` is deliberately still never_runtime: the ST
-        // spec injects it AFTER the history precisely to steer the model, which
-        // makes it an override channel rather than a statement of voice. The
-        // companion already receives the card's own directive through
-        // `system_prompt`; carrying a second, deeper override slot into a
-        // third-party card's hands would add attack surface and no voice the
-        // directive does not already provide.
-        post_history_instructions: entry("preserved_opaque", "never_runtime", ST_CARD_DECODER_LIMITS_V1.textBytes),
+        // A standard v2/v3 field: the card's own closing direction, which the ST
+        // spec injects AFTER the history rather than as a statement of voice. It is
+        // accepted and bounded here, then kept as the companion's own durable record
+        // (`post-history-instructions.json`) beside her scenario and her openings -
+        // never a profile field and never part of the cached prefix. No reader
+        // renders it yet; where it is appended is a separate decision.
+        post_history_instructions: entry(
+          "accepted_typed",
+          "companion_artifact",
+          ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes,
+        ),
         character_book: entry("accepted_typed", "candidate_only", ST_CARD_DECODER_LIMITS_V1.characterBookBytes),
         // Open by design. Carried verbatim as bounded inert data (never executed)
         // and preserved into the companion's own `card-extensions.json`, so the
