@@ -506,7 +506,15 @@ function runBounds(sources) {
 /** A bounded token: the shape every problem code has. */
 const BOUNDED_CODE = /^[a-z][a-z0-9_]{0,63}$/u;
 
-/** The string a refusal names, if the branch names one at all. */
+/**
+ * The string a refusal names, if the branch names one at all.
+ *
+ * A refusal is spelled three ways in this tree: a `{ code: "…" }` payload, a `sendProblem(response, 400, "…")`
+ * call, and a thrown error. The thrown error is the one the rule used to miss: `throw new Error("notes_too_many")`
+ * is a `NewExpression` (not a call), and `throw new TavernConnectionInputError("connection_limit_reached")`
+ * names its own class. Both put the code in the first string argument of a constructor or function whose name
+ * ends in `Error`/`Failure`, which is the one convention every thrower here follows.
+ */
 function namedCodeIn(node, sourceFile) {
   let found = null;
   walk(node, (inner) => {
@@ -527,12 +535,13 @@ function namedCodeIn(node, sourceFile) {
         if (ts.isStringLiteral(argument) && BOUNDED_CODE.test(argument.text)) found = argument.text;
       }
     }
-    if (
-      ts.isCallExpression(inner) &&
-      ts.isIdentifier(inner.expression) &&
-      /^Error$|Failure$/u.test(inner.expression.text)
-    )
-      for (const argument of inner.arguments)
+    const thrower =
+      (ts.isNewExpression(inner) || ts.isCallExpression(inner)) &&
+      /(?:Error|Failure)$/u.test(inner.expression.getText(sourceFile))
+        ? inner
+        : null;
+    if (thrower !== null)
+      for (const argument of thrower.arguments ?? [])
         if (ts.isStringLiteral(argument) && BOUNDED_CODE.test(argument.text)) found = argument.text;
   });
   return found;
