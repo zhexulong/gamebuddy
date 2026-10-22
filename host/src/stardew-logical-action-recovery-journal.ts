@@ -851,6 +851,16 @@ async function repairTornTail(path: string, source: string): Promise<string> {
   return repaired;
 }
 
+/** Move an unreadable superseded document aside, keeping it for inspection rather than failing every open. */
+async function quarantineLegacy(path: string): Promise<void> {
+  const aside = `${path}.unreadable-${Date.now()}`;
+  try {
+    await rename(path, aside);
+  } catch {
+    await rm(path, { force: true }).catch(() => undefined);
+  }
+}
+
 /** Read the replaced whole-document format, strictly, once. */
 async function readLegacyDocument(
   path: string,
@@ -875,7 +885,12 @@ async function readLegacyDocument(
     value = await readStrictJsonFile(path);
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") return undefined;
-    throw error;
+    // The v1 document is SUPERSEDED once this journal has its log file, so an unreadable legacy copy must not block
+    // every open for ever: it is quarantined beside the log and the log continues. Refusing instead would turn "we
+    // cannot migrate an obsolete file" into "the product does not start" - measured 2026-10-22, three runs died at
+    // step 0 with `invalid_strict_json_file` before a single action was dispatched.
+    await quarantineLegacy(path);
+    return undefined;
   }
   return validateDocument(value, options, maxRecords);
 }
