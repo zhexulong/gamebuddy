@@ -203,16 +203,20 @@ test("a builder method generated from the published surface rejects a wrong, mis
     refusalOf(compile("builder.move_to_tile({ x: '10', y: 10 });")),
     "plan_script_argument_not_canonical:move_to_tile.x",
   );
-  // An action the surface does not publish for programs has no method at all, and says so by name.
-  assert.equal(refusalOf(compile("builder.clear_debris({ x: 1, y: 1 });")), "plan_script_unknown_action:clear_debris");
+  // A real action that the Mod declares read-only has no method at all, and the refusal names it: a plan is made of
+  // executions, and an observation is not a step the Mod can run.
+  assert.equal(refusalOf(compile("builder.observe_scene({});")), "plan_script_unknown_action:observe_scene");
 });
 
-test("a builder method is generated only for published executions whose arguments a program can carry", () => {
+test("a builder method is generated for exactly the lifecycles the Mod's Body Program catalog admits", () => {
   const generated = ACTIONS.map((action) => action.actionId);
   for (const actionId of ["move_to_tile", "water_crop", "harvest_crop", "pickup_forage"])
     assert.ok(generated.includes(actionId), `${actionId} must be callable from a plan`);
-  for (const actionId of ["cut_weeds", "clear_debris", "ship_item"])
-    assert.ok(!generated.includes(actionId), `${actionId} is not published for programs`);
+  // `live_verified` is an admission, not a draft: the action really ran on the target game version and produced a
+  // native receipt, so the Mod accepts it as a node. A Host gate that dropped it refused plans the Mod accepts, and
+  // the companion then had no way to name those actions except one flat tool call per step.
+  for (const actionId of ["clear_debris", "cut_weeds", "talk_to_npc", "express_emote"])
+    assert.ok(generated.includes(actionId), `${actionId} is live-verified and must be callable from a plan`);
   // Every generated method's argument list is the surface's own declaration, name for name.
   const declared = new Map(
     SURFACE.map((action) => [action.actionId, Object.keys(action.argumentSchema ?? {})] as const),
@@ -221,6 +225,70 @@ test("a builder method is generated only for published executions whose argument
     assert.deepEqual(
       action.arguments.map((argument) => argument.name),
       declared.get(action.actionId),
+    );
+});
+
+/**
+ * The Mod's own Body Program catalog is the authority for what a node may name, so this test reads it rather than
+ * restating it: whatever lifecycles the C# projection admits, the builder must generate, and whatever it refuses,
+ * the builder must refuse. A future divergence between the two fails here instead of in a live run.
+ */
+const MOD_PROJECTION = readFileSync(
+  resolve(hostRoot, "../integrations/stardew/src/Core/BodyPrograms/FarmhandBodyProgramCatalogProjection.cs"),
+  "utf8",
+);
+const MOD_LIFECYCLE_WIRE = readFileSync(
+  resolve(hostRoot, "../integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"),
+  "utf8",
+);
+
+/** The enum-to-wire map the Mod publishes with, straight from its own source. */
+const MOD_LIFECYCLE_VALUES: readonly string[] = [
+  ...MOD_LIFECYCLE_WIRE.matchAll(/FarmhandActionLifecycle\.([A-Za-z]+) => "([a-z_]+)"/gu),
+].map((match) => match[2] as string);
+
+/** The lifecycles `FarmhandBodyProgramCatalogProjection.TryProject` admits, read from its own condition. */
+function modAdmittedLifecycles(): readonly string[] {
+  const at = MOD_PROJECTION.indexOf("if (source.Lifecycle != ");
+  assert.notEqual(at, -1, "the Mod's lifecycle admission condition is in the source");
+  const condition = MOD_PROJECTION.slice(at, MOD_PROJECTION.indexOf("{", at));
+  const wire = new Map(
+    [...MOD_LIFECYCLE_WIRE.matchAll(/FarmhandActionLifecycle\.([A-Za-z]+) => "([a-z_]+)"/gu)].map(
+      (match) => [match[1], match[2]] as const,
+    ),
+  );
+  return [...condition.matchAll(/FarmhandActionLifecycle\.([A-Za-z]+)\.ToWireValue\(\)/gu)].map((match) => {
+    const lifecycle = wire.get(match[1] as string);
+    assert.ok(lifecycle !== undefined, `${match[1]} has a wire value in the Mod's own map`);
+    return lifecycle;
+  });
+}
+
+const registrationWith = (lifecycle: string, actionId = "move_to_tile"): ActionRegistration => ({
+  actionId,
+  familyId: "movement_navigation",
+  identityVersion: 1,
+  lifecycle: lifecycle as ActionRegistration["lifecycle"],
+  kind: "execution",
+  descriptor: { argumentSchema: { x: { type: "integer" }, y: { type: "integer" } } },
+});
+
+test("the builder admits and refuses exactly the lifecycles the Mod's catalog does", () => {
+  const admitted = modAdmittedLifecycles();
+  assert.ok(admitted.length > 0, "the Mod's admission condition was read, not assumed");
+  for (const lifecycle of admitted)
+    assert.deepEqual(
+      planActionsFromRegistrations([registrationWith(lifecycle)]).map((action) => action.actionId),
+      ["move_to_tile"],
+      `${lifecycle} is admitted by the Mod's Body Program catalog, so the builder must generate it`,
+    );
+  const refused = MOD_LIFECYCLE_VALUES.filter((lifecycle) => !admitted.includes(lifecycle));
+  assert.ok(refused.length > 0, "the Mod refuses at least one lifecycle, so the refusal side is exercised");
+  for (const lifecycle of refused)
+    assert.deepEqual(
+      planActionsFromRegistrations([registrationWith(lifecycle)]),
+      [],
+      `${lifecycle} is not a Body Program node the Mod accepts, so the builder must not generate it`,
     );
 });
 

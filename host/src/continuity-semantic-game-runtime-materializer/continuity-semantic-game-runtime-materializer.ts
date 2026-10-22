@@ -169,15 +169,21 @@ function createBodyProgramTools(
         // per PIECE OF WORK, not per step. A plan script is how the companion says "all of it, in this order" without
         // paying a decision between steps; it is compiled here and submitted as ONE program, so the Mod's journal,
         // admission and recovery see exactly what a hand-written program gives them. The script is not a macro action:
-        // it names published actions and real snapshot targets, so "water the three by the door, leave the far ones"
-        // stays expressible, and nothing executes against physics until the Mod runs the admitted nodes.
+        // it names actions the Mod's Body Program catalog accepts and real snapshot targets, so "water the three by
+        // the door, leave the far ones" stays expressible, and nothing executes against physics until the Mod runs the
+        // admitted nodes.
         description:
-          "Write a short script over the current snapshot and the builder, one builder.<actionId> call per step, and the host compiles it into the one plan the Mod executes. The Mod advances that plan itself, so you do not come back between steps. Work that does not fit in one plan is yours to split: stop when builder.isFull() is true, and plan the rest in the next call.",
+          "Write a short script over the current snapshot and the builder, one builder.<actionId> call per step, and the host compiles it into the one plan the Mod executes. The Mod advances that plan itself, so you do not come back between steps. Every action you can take is a builder method, published and live-verified alike, so this tool carries the whole action surface and no per-action tool is mounted beside it. Work that does not fit in one plan is yours to split: stop when builder.isFull() is true, and plan the rest in the next call, in this shape:\n" +
+          "for (const crop of snapshot.cropTargets) {\n" +
+          "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });\n" +
+          "  if (builder.isFull()) break;\n" +
+          "}",
         parameters: planToolParameters(),
         execute: async (_toolCallId, params) => {
+          const actions = readPlanActions(connection);
           const compiled = compilePlanScript(readPlanScriptRequest(params), {
             snapshot: readLiveSnapshot(connection),
-            actions: readPlanActions(connection),
+            actions,
           });
           // The run artifact keeps the script, the snapshot it read and the program it produced, so a plan that
           // failed can be replayed and audited without guessing what the companion asked for.
@@ -189,8 +195,16 @@ function createBodyProgramTools(
           if (!compiled.ok) {
             span.end({ reasonCode: compiled.reasonCode });
             // The compiler's own name for the refusal, unchanged and with no plan behind it: there is no partial plan
-            // to run, so the count is zero and the reason is what the companion tells the player.
-            return planDetails({ accepted: false, nodeCount: 0, reasonCode: compiled.reasonCode });
+            // to run, so the count is zero and the reason is what the companion tells the player. A name the builder
+            // does not have also gets the ids it DOES have, so a wrong guess teaches instead of blocking the turn.
+            return planDetails({
+              accepted: false,
+              nodeCount: 0,
+              reasonCode: compiled.reasonCode,
+              ...(compiled.reasonCode.startsWith("plan_script_unknown_action:")
+                ? { legalActionIds: legalPlanActionIds(actions) }
+                : {}),
+            });
           }
           const nodes = compiled.program.nodes;
           const programId = planProgramId(compiled.snapshotRevision, nodes);
@@ -252,10 +266,11 @@ function createBodyProgramTools(
 }
 
 /**
- * The action vocabulary the plan builder exposes: the registrations the Mod published as executable, with the
- * argument names each one declares. `planActionsFromRegistrations` applies the same two gates the Mod's Body
- * Program catalog projection does, so a generated method cannot name an action a program may not carry, and a
- * generated argument list cannot drift from the surface - there is no hand-written per-action recipe here.
+ * The action vocabulary the plan builder exposes: the registrations the Mod's Body Program catalog accepts as
+ * executable, with the argument names each one declares. `planActionsFromRegistrations` applies the same gates the Mod's Body Program
+ * catalog projection does - the lifecycles it admits, the execution kind, and the argument contract - so a generated
+ * method cannot name an action a program may not carry, and a generated argument list cannot drift from the
+ * surface. There is no hand-written per-action recipe here.
  */
 function readPlanActions(connection: GameConnection): readonly PublishedPlanAction[] {
   const state = (connection as { state?: { catalogRegistrations?: readonly ActionRegistration[] } }).state;
@@ -281,14 +296,31 @@ function planDetails(details: Readonly<Record<string, unknown>>) {
   });
 }
 
+/**
+ * Every target family the Mod's snapshot declares, in the order `Snapshot` declares them (host/src/protocol.ts:212):
+ * a script that cannot see which arrays exist cannot write a loop over one. The plan test reads the type and fails
+ * when the two drift, so this list cannot quietly become a half-truth.
+ */
+const PLAN_TARGET_FAMILIES: readonly string[] = Object.freeze(
+  `doorTargets forageTargets itemTargets refillWateringCanTargets cropTargets petBowlTargets slimeHutchTroughTargets bushTargets fruitTreeTargets shakeTreeTargets pedestalTargets fenceGateTargets harvestTargets seedTargets fertilizerTargets woodFenceTargets woodFenceResultTargets crabPotTargets crabPotResultTargets crabPotCollectTargets baitCrabPotTargets baitCrabPotResultTargets debrisTargets rockSourceTargets clearHoeDirtTargets artifactSpotTargets artifactSpotResultTargets treeChopSourceTargets treeChopResultTargets treeStumpTargets treeSaplingTargets weedTargets grassTargets caskTargets mannequinTargets signTargets siloTargets scytheCropTargets machineTargets npcRelationshipTargets petTargets animalProductTargets feedTroughTargets chestStoreTargets chestRetrieveTargets foodTargets shippingBinTargets craftingRecipeTargets cookingRecipeTargets cookingStationTargets shopTargets mineElevatorFloorTargets minecartTargets raftTargets horseTargets mineEntranceTargets animalDoorTargets fishPondTargets worldObjectTargets farmBuildingTargets dailyQuestTargets specialOrderTargets museumRewardTargets colorTargets tailoringTargets wearableTargets warpItemTargets mailboxTargets buildingChestTargets obeliskTargets`.split(
+    " ",
+  ),
+);
+
+/** Bounded so a wrong name teaches instead of spending the turn's context on the whole vocabulary. */
+const MAX_LISTED_PLAN_ACTION_IDS = 20;
+
+function legalPlanActionIds(actions: readonly PublishedPlanAction[]): readonly string[] {
+  return Object.freeze(actions.slice(0, MAX_LISTED_PLAN_ACTION_IDS).map((action) => action.actionId));
+}
+
 function planToolParameters() {
   return Type.Object(
     {
       script: Type.String({
         minLength: 1,
         maxLength: 8192,
-        description:
-          "One synchronous script body, called once with `snapshot` (the frozen live observation, target families included) and `builder`; call builder.<actionId>({...}) with exactly the argument names that action declares. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.",
+        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\`, \`x\` and \`y\` except doorTargets (sourceX, sourceY, targetX, targetY), foodTargets (slot, qualifiedItemId) and warpItemTargets (slot, qualifiedItemId, destination). builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
       }),
     },
     { additionalProperties: false },

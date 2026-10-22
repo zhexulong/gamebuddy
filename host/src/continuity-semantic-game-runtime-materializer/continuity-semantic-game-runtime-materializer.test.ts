@@ -1022,6 +1022,32 @@ test("the Game channel's per-turn world-state corpus is the line Magic Context i
   assert.equal(gameTurnWorldStateText({ state: {} } as never), "");
 });
 
+/**
+ * Every `*Targets` field the `Snapshot` type declares, read from the type itself: the plan parameter that names them
+ * must not become a list of arrays the Mod does not send.
+ */
+async function snapshotTargetFamilies(root: string): Promise<readonly string[]> {
+  const protocol = await readFile(join(root, "protocol.ts"), "utf8");
+  const start = protocol.indexOf("export type Snapshot = Readonly<{");
+  assert.notEqual(start, -1, "the Snapshot type is declared in protocol.ts");
+  const body = protocol.slice(start + "export type Snapshot = Readonly<{".length);
+  let depth = 1;
+  let end = body.length;
+  for (let index = 0; index < body.length; index += 1) {
+    if (body[index] === "{") depth += 1;
+    else if (body[index] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        end = index;
+        break;
+      }
+    }
+  }
+  return [...body.slice(0, end).matchAll(/^ {2}([A-Za-z0-9_]+)\??:/gmu)]
+    .map((match) => match[1] as string)
+    .filter((name) => name.endsWith("Targets"));
+}
+
 test("the plan tool hands its compiled program to the one submission path a model-authored program takes", async () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
   const source = await readFile(
@@ -1052,7 +1078,7 @@ test("the plan tool hands its compiled program to the one submission path a mode
   assert.match(source, /compilePlanScript\(readPlanScriptRequest\(params\), \{/u);
   // It carries the companion's own plan in its own words, and the description says what the Mod does with it.
   const parameters = source.slice(
-    source.indexOf("function planToolParameters()"),
+    source.indexOf("const PLAN_TARGET_FAMILIES"),
     source.indexOf("function isBodyProgramCandidateRequest("),
   );
   assert.ok(parameters.includes("script: Type.String("), "the plan tool takes one script");
@@ -1071,8 +1097,32 @@ test("the plan tool hands its compiled program to the one submission path a mode
     (description.match(/\.\s|\.$/gu) ?? []).length <= 3,
     "the plan tool describes itself in at most three sentences",
   );
+  // The example is four lines of real names a model can copy: the family from the snapshot type, the action from the
+  // published surface, and that action's own argument names. A wrong example is worse than none, so every identifier
+  // in it is checked against the sources it came from (see the production-surface test for the same check on the
+  // mounted tool).
+  for (const line of [
+    "for (const crop of snapshot.cropTargets) {",
+    "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });",
+    "  if (builder.isFull()) break;",
+    "}",
+  ])
+    assert.ok(description.includes(line), `the example carries this line verbatim: ${line}`);
+  // The parameter names the snapshot's SHAPE, and the families it names are the type's own: a list that drifted from
+  // protocol.ts would tell the companion to iterate an array the Mod does not send.
+  const namedFamilies = [...new Set([...parameters.matchAll(/([a-z][A-Za-z0-9]*Targets)/gu)].map((match) => match[1]))];
+  assert.deepEqual(namedFamilies.sort(), [...(await snapshotTargetFamilies(root))].sort());
+  const parameterText = parameters.replaceAll("\\`", "`");
+  assert.match(parameterText, /`snapshot\.tile` is your own `\{ x, y \}`/u);
+  assert.match(parameterText, /every entry carries `targetId`, `x` and `y`/u);
+  // A name the builder does not have answers with the ids it DOES have, bounded, so a typo teaches instead of blocking.
+  assert.match(source, /legalActionIds: legalPlanActionIds\(actions\)/u);
+  assert.match(source, /slice\(0, MAX_LISTED_PLAN_ACTION_IDS\)/u);
   // Every outcome answers the same two questions; a refusal adds the compiler's own reason name, unchanged.
-  assert.match(source, /return planDetails\(\{ accepted: false, nodeCount: 0, reasonCode: compiled\.reasonCode \}\);/u);
+  assert.match(
+    source,
+    /return planDetails\(\{\n\s+accepted: false,\n\s+nodeCount: 0,\n\s+reasonCode: compiled\.reasonCode,/u,
+  );
   assert.match(source, /accepted: code === "accepted" \|\| code === "idempotent",\n\s+nodeCount: nodes\.length,/u);
   // The run artifact keeps the script, the snapshot it read and the program it produced, so a failed plan can be
   // replayed and audited instead of guessed at.

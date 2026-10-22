@@ -51,6 +51,16 @@ const MAX_PLAN_BUILDER_CALLS = 64;
 const PLAN_ARGUMENT_TYPES: readonly string[] = Object.freeze(["integer", "string", "boolean", "destination_selector"]);
 
 /**
+ * The lifecycles a node may name: the same two the Mod's own Body Program catalog projects
+ * (`integrations/stardew/src/Core/BodyPrograms/FarmhandBodyProgramCatalogProjection.cs:96-102`: `live_verified`
+ * "is an admission, not a draft" - the action really ran on the target game version and produced a native
+ * receipt). The Host also admits both when it projects the visible surface
+ * (`visibleActionsFromModCatalog`, host/src/action-registry.ts), so a builder narrower than either would refuse
+ * plans the Mod accepts.
+ */
+const PLAN_ACTION_LIFECYCLES: readonly string[] = Object.freeze(["published", "live_verified"]);
+
+/**
  * What a plan script may not name, refused before it runs.
  *
  * Each entry either leaves the sandbox (require/import/fetch/process/globalThis), makes the plan
@@ -100,16 +110,16 @@ const ABSENT_PLAN_GLOBALS: readonly string[] = Object.freeze([
 ]);
 
 /**
- * The builder's action vocabulary: exactly the registrations the Mod published as executable AND whose
- * every declared argument has a Body Program value contract. `FarmhandBodyProgramCatalogProjection`
- * applies the same two rules, so a generated method can never name an action a program may not carry.
+ * The builder's action vocabulary: exactly the registrations the Mod's own Body Program catalog will accept -
+ * `published` or `live_verified`, executable, and with every declared argument carrying a Body Program value
+ * contract - so a generated method can never name an action a program may not carry.
  */
 export function planActionsFromRegistrations(
   registrations: readonly ActionRegistration[],
 ): readonly PublishedPlanAction[] {
   const actions: PublishedPlanAction[] = [];
   for (const registration of registrations) {
-    if (registration.lifecycle !== "published" || registration.kind !== "execution") continue;
+    if (!PLAN_ACTION_LIFECYCLES.includes(registration.lifecycle) || registration.kind !== "execution") continue;
     const declared = declaredArgumentsOf(registration);
     if (declared === undefined || !declared.every((argument) => PLAN_ARGUMENT_TYPES.includes(argument.type))) continue;
     actions.push(Object.freeze({ actionId: registration.actionId, arguments: Object.freeze(declared) }));
