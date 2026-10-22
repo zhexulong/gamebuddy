@@ -8,7 +8,7 @@
     "pipeName": "gamebuddy_stardew",
     "bridgeToken": "replace_with_a_16_character_or_longer_local_token"
   },
-  "model": "deepseek-v4-flash",
+  "model": "deepseek-v4.1-flash",
   "thinkingLevel": "high",
   "gameplaySubagent": false,
   "actionPolicy": {
