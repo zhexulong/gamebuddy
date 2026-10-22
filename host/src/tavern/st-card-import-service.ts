@@ -73,13 +73,23 @@ export class StCardImportService {
     return Object.freeze({ candidate: persistedCandidate, report: persistedReport });
   }
 
-  /** Hash-verified readback of the two inert artifacts, suitable for a review UI or export. */
+  /**
+   * Hash-verified readback of the two inert artifacts, suitable for a review UI or export.
+   *
+   * An id this store stages nothing under is the one refusal here about the request: it names
+   * no import any more. A record that is present and does not read back is the opposite fact
+   * - the Host's own data - and keeps its own error.
+   */
   async read(importId: string): Promise<PersistedStCardImport> {
-    const candidate = await this.store.read(
+    const candidate = await this.store.readIfPresent(
       tavernImportPath(this.paths, importId, "candidate.json"),
       validateTavernArtifact,
     );
-    const report = await this.store.read(tavernImportPath(this.paths, importId, "report.json"), validateTavernArtifact);
+    const report = await this.store.readIfPresent(
+      tavernImportPath(this.paths, importId, "report.json"),
+      validateTavernArtifact,
+    );
+    if (candidate === undefined || report === undefined) throw new Error("st_card_import_not_found");
     if (
       !isCandidate(candidate.artifact) ||
       !isReport(report.artifact) ||
@@ -128,10 +138,18 @@ export class StCardImportService {
     return this.store.write(path, artifact, validateTavernArtifact) as Promise<PersistedCandidateReview>;
   }
 
+  /**
+   * The exact review record. An import that has not been reviewed yet has none, which is a
+   * refusal of this call rather than a missing import; a record that exists and does not match
+   * this candidate is a different, durable fact.
+   */
   async readReview(importId: string): Promise<PersistedCandidateReview> {
     const imported = await this.read(importId);
     const path = tavernImportPath(this.paths, importId, "candidate.json").replace(/candidate\.json$/u, "review.json");
-    const review = (await this.store.read(path, validateTavernArtifact)) as PersistedCandidateReview;
+    const review = (await this.store.readIfPresent(path, validateTavernArtifact)) as
+      | PersistedCandidateReview
+      | undefined;
+    if (review === undefined) throw new Error("st_card_import_review_missing");
     if (
       !isReview(review.artifact) ||
       review.artifact.importId !== importId ||

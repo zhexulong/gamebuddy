@@ -37,13 +37,17 @@
  *    drift that lived there was exactly the invisible kind - the mirror's `["state", "items"]`
  *    against `WorldInfoStateV1Schema`'s `state` + `revision` + `items`, which made `revision` fail the
  *    mirror's exact-key check and took the reference surface's whole snapshot read down;
- *  - `LABEL_KEYS` and `REFERENCE_PIPELINE_OPERATION_IDS` are projections of the
- *    *profile* the reference client serves (`chat_core`, which declares no
- *    `world-info.*`/`companion.*` operation), not of the contract's ~50-member unions.
- *    That wire can never carry a wider label or operation id, so a shorter list there
- *    is not the narrowed-mirror defect this gate is for. They are named in
- *    `EXCLUDED_VOCABULARIES` and counted in the diagnostic, so the exclusion is
- *    visible rather than silent.
+ *  - `LABEL_KEYS` and `REFERENCE_PIPELINE_OPERATION_IDS` (in
+ *    `reference-pipeline-api.ts`) are projections of the *profile* the reference client
+ *    serves (`chat_core`, which declares no `world-info.*`/`companion.*` operation), not of
+ *    the contract's ~50-member unions. That wire can never carry a wider label or operation
+ *    id, so a shorter list there is not the narrowed-mirror defect this gate is for. They are
+ *    named in `EXCLUDED_VOCABULARIES` and counted in the diagnostic, so the exclusion is
+ *    visible rather than silent. The management mirror's own two allowlists are NOT excluded:
+ *    that mount can carry every operation the contract declares, and both were measured
+ *    stale - `OPERATION_IDS` knew 48 of 50 (`chat.select`, `companion.avatar.update`) and
+ *    `MANAGEMENT_LABEL_KEYS` 52 of 53 (`tavern.operation.companion.avatar.update`), so a
+ *    snapshot projecting either refused as protocol corruption and the surface went quiet.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -93,6 +97,11 @@ export const MIRRORED_VOCABULARIES = [
     mirror: "WORLD_INFO_ITEM_KEYS",
     contract: { name: "WorldInfoStateV1Schema", properties: true, within: "items" },
   },
+  // The management mount can carry every operation and label the contract declares, and the two
+  // runtime allowlists below are what its own validators consult - a member missing from either
+  // refuses a legal operation (or the whole snapshot carrying it) as protocol corruption.
+  { mirror: "OPERATION_IDS", contract: { name: "OperationId" } },
+  { mirror: "MANAGEMENT_LABEL_KEYS", contract: { name: "LabelKey" } },
 ];
 
 /**

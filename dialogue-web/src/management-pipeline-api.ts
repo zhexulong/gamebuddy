@@ -77,6 +77,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "chat.rename"
     | "chat.opening"
     | "chat.create"
+    | "chat.select"
     | "memory.mutate"
     | "world-info.bind"
     | "world-info.detail"
@@ -100,12 +101,14 @@ type TavernBrowserOperationV1 = Readonly<{
     | "companion.worldbook.read"
     | "companion.worldbook.update"
     | "companion.profile.read"
+    | "companion.card.export"
     | "companion.avatar.update"
     | "companion.create"
     | "character.import.stage"
     | "character.import.read"
     | "character.import.review"
     | "character.import.confirm"
+    | "character.import.history"
     | "persona.read"
     | "persona.update"
     | "scenario.read"
@@ -152,12 +155,14 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.companion.worldbook.read"
     | "tavern.operation.companion.worldbook.update"
     | "tavern.operation.companion.profile.read"
+    | "tavern.operation.companion.card.export"
     | "tavern.operation.companion.avatar.update"
     | "tavern.operation.companion.create"
     | "tavern.operation.character.import.stage"
     | "tavern.operation.character.import.read"
     | "tavern.operation.character.import.review"
     | "tavern.operation.character.import.confirm"
+    | "tavern.operation.character.import.history"
     | "tavern.operation.persona.read"
     | "tavern.operation.persona.update"
     | "tavern.operation.scenario.read"
@@ -993,6 +998,7 @@ const OPERATION_IDS = [
   "chat.rename",
   "chat.opening",
   "chat.create",
+  "chat.select",
   "memory.mutate",
   "world-info.bind",
   "world-info.detail",
@@ -1025,6 +1031,7 @@ const OPERATION_IDS = [
   // design/28 §2 the character-card export: a roster companion's own records as a
   // standard Tavern V3 card she can save and re-import.
   "companion.card.export",
+  "companion.avatar.update",
   "companion.create",
   // design/28 §2 companion directive: the mounted companion's own performance
   // directive (the reviewed card's `system_prompt`), read/edit/clear.
@@ -1046,7 +1053,7 @@ const OPERATION_IDS = [
   "chat.restore",
   "chat.trash",
 ] as const;
-const LABEL_KEYS = [
+const MANAGEMENT_LABEL_KEYS = [
   "tavern.nav.chat",
   "tavern.nav.memory",
   "tavern.operation.submit",
@@ -1082,6 +1089,7 @@ const LABEL_KEYS = [
   "tavern.operation.companion.worldbook.update",
   "tavern.operation.companion.profile.read",
   "tavern.operation.companion.card.export",
+  "tavern.operation.companion.avatar.update",
   "tavern.operation.companion.create",
   "tavern.operation.character.import.stage",
   "tavern.operation.character.import.read",
@@ -1527,7 +1535,7 @@ function isTavernBrowserOperation(value: unknown): value is TavernBrowserOperati
     isRecord(value) &&
     hasExactKeys(value, OPERATION_KEYS) &&
     isOneOf(value.operationId, OPERATION_IDS) &&
-    isOneOf(value.labelKey, LABEL_KEYS) &&
+    isOneOf(value.labelKey, MANAGEMENT_LABEL_KEYS) &&
     isOneOf(value.availability, OPERATION_AVAILABILITY) &&
     isLengthBoundedString(value.routeId, 1, 128) &&
     ROUTE_ID_PATTERN.test(value.routeId)
@@ -1539,7 +1547,7 @@ function isNavigationItem(value: unknown): boolean {
     isRecord(value) &&
     hasExactKeys(value, NAVIGATION_ITEM_KEYS) &&
     isOneOf(value.itemId, NAVIGATION_ITEM_IDS) &&
-    isOneOf(value.labelKey, LABEL_KEYS) &&
+    isOneOf(value.labelKey, MANAGEMENT_LABEL_KEYS) &&
     isOneOf(value.availability, NAVIGATION_AVAILABILITY)
   );
 }

@@ -77,6 +77,15 @@
  * `game_endgame_settlement_unavailable`) are members of the game contract now, so
  * this gate carries no allowlist: every code the route can produce is declared, and
  * a sixth one added without a declaration fails here.
+ *
+ * `problem-code.11` is the other direction of the same honesty, for one surface. The reviewed
+ * card import's three routes caught every failure of their service and answered it with the
+ * code that means "the fields you submitted cannot be accepted" - a storage failure, a runtime
+ * outage and a bug inside the service all reached the player as a detailed accusation of a form
+ * they never sent, and the cause was gone. Every code involved was declared and had its own
+ * sentence; what was wrong was which code a failure chose. So this rule pins the pairing in both
+ * catalogues: the request-shaped refusals read as the import form being refused, and the Host's
+ * own failures read as the service sentence - and the two can never be the same words.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -690,4 +699,41 @@ test("problem-code.10: every declared game code reaches the player as its own se
     labels.problemInternalErrorDetail.replace("{{code}}", "gate_invented_game_code"),
     "an undeclared game code is the shape a missing sentence takes",
   );
+});
+
+/**
+ * The reviewed-card import's codes, and the two readings they must keep apart.
+ *
+ * The measured defect: the three import routes caught every failure of their service and answered
+ * it with the code that means "the fields you submitted cannot be accepted", so a storage failure,
+ * a runtime outage or a bug inside the service reached the player as a detailed accusation of a
+ * form they never sent - and the cause was discarded on the way. The codes were all declared and
+ * all had their own sentence; what was wrong was which one a failure chose. This pins the pairing,
+ * in both catalogues, so a route that reaches for the accusing code on a Host failure fails here.
+ */
+test("problem-code.11: an import the Host failed on never reads as an import the player sent wrong", (t) => {
+  const reading = (labels, code) => {
+    const view = composedProblemView(problemFor(code), labels);
+    return `${view.title}\n${view.detail}`;
+  };
+  const pairings = [];
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    const formRefused = `${labels.problemImportFormInvalidTitle}\n${labels.problemImportFormInvalidDetail}`;
+    const hostFailed = `${labels.problemServiceUnavailableTitle}\n${labels.problemServiceUnavailableDetail}`;
+    const namesNothing = `${labels.problemNoSuchItemTitle}\n${labels.problemNoSuchItemDetail}`;
+    // The request-shaped refusals: the review or the confirm carried nothing the import accepts.
+    for (const code of ["character_import_review_invalid", "character_import_confirm_invalid"])
+      assert.equal(reading(labels, code), formRefused, `${locale}: ${code} is a refusal of the request`);
+    // The import id names nothing any more - gone, not refused.
+    assert.equal(reading(labels, "character_import_not_found"), namesNothing, `${locale}: a gone import id`);
+    // The Host's own failures: the store, the runtime, and the service behind the route.
+    for (const code of ["storage_unavailable", "runtime_unavailable"])
+      assert.equal(reading(labels, code), hostFailed, `${locale}: ${code} is the Host's own failure`);
+    // The whole point: the two readings are distinct sentences in the language the player reads.
+    assert.notEqual(hostFailed, formRefused, `${locale}: a Host failure and a refused form must not read alike`);
+    if (locale === "en")
+      pairings.push(`refused="${formRefused.replace("\n", " / ")}" host="${hostFailed.replace("\n", " / ")}"`);
+  }
+  t.diagnostic(`problem-code.11: ${pairings.join("; ")}`);
 });
