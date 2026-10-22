@@ -425,6 +425,8 @@ function measurementsFor(L, driverTexts, run) {
       /^text after switching forward equals the regenerated text:/,
       /^byte-identical to the ORIGINAL/,
       /^turn settled:/,
+      /^surface notice after the turn:/,
+      /^the surface reported a failure instead of a reply:/,
       /indicator after switch-back/,
     ]) {
       const hit = lineMatching(f, re);
@@ -768,6 +770,8 @@ function buildReport({ paths, run, launch, rootLayout, cleanupLogText }) {
   const f = driver(paths, "f-turn-variant") ?? "";
   for (const re of [
     /^turn settled:/,
+    /^surface notice after the turn:/,
+    /^the surface reported a failure instead of a reply:/,
     /^bubble handle before=/,
     /^player rows for the exchange:/,
     /^text after switch-back equals the original:/,

@@ -18,6 +18,17 @@ const SKIP = (reason) => `SKIPPED:${reason}`;
 
 const TURN_RUNNING = () => document.querySelector(".composer-button.stop-button, .composer-button.composer-busy") !== null;
 
+// The surface's own terminal sentence for the turn (`ChatSurface`'s `notice`, drawn as
+// `.reference-turn-notice`). A turn that fails pre-commit - the endpoint refusing the request,
+// a drop mid-reply, an unwritable transcript - ends with NO companion row and this one sentence.
+// Reading it is what separates "the product told the player what happened" from "the turn did
+// nothing": without it a refused turn reads as a bare timeout and the driver reports a silence
+// the player never saw.
+const turnNotice = () => {
+  const element = document.querySelector(".reference-turn-notice");
+  return element === null ? null : (element.innerText ?? "").trim();
+};
+
 const readTranscript = () => [...document.querySelectorAll(".message-list > li.message")].map((row) => {
   const bubble = row.querySelector(".message-bubble");
   return {
@@ -223,6 +234,16 @@ async function waitForSettle(page, label, predicate, attempts = 120) {
 
   const settledState = await waitForSettle(page, "turn", () => document.querySelectorAll(".message-list > li.message.companion:not([data-streaming])").length > 1);
   say("turn settled:", settledState !== null);
+  // The surface's own words for the turn, read whatever the settling said: a refused turn
+  // settles idle carrying this sentence and no reply row, so without this line the driver
+  // would report "no reply and no error" for a product that showed one. The notice element
+  // also carries benign opening notes, so it is only read as the turn's outcome when no
+  // reply settled; the verbatim text is printed either way for the reader to judge.
+  const noticeAfterTurn = await page.evaluate(turnNotice);
+  say("surface notice after the turn:", JSON.stringify(noticeAfterTurn));
+  say(
+    `the surface reported a failure instead of a reply: ${settledState === null && noticeAfterTurn !== null}`,
+  );
   say("=== ITEM: transcript after 你好 ===");
   const afterTurn = await page.evaluate(settledTranscript);
   say(JSON.stringify(afterTurn, null, 1));
