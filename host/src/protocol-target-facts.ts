@@ -13,11 +13,15 @@ export function isBoundedNonEmptyString(value: unknown, maxLength: number): valu
 export function isToolSlotFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["slot", "label"]) &&
+    hasExactKeys(value, ["slot", "label", "upgradeLevel"]) &&
     isToolSlot(value.slot) &&
     typeof value.label === "string" &&
     value.label.length > 0 &&
-    value.label.length <= 128
+    value.label.length <= 128 &&
+    // Optional because the Mod reports it only for tools that have an upgrade level; an absent value is
+    // "this tool does not upgrade", never "unknown".
+    (value.upgradeLevel === undefined ||
+      (typeof value.upgradeLevel === "number" && Number.isInteger(value.upgradeLevel) && value.upgradeLevel >= 0))
   );
 }
 

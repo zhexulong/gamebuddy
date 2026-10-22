@@ -204,7 +204,13 @@ public sealed record BridgeDoor(
 
 public sealed record BridgeSoilTile(int X, int Y);
 
-public sealed record BridgeToolSlot(int Slot, string Label);
+/// <summary>
+/// One inventory slot that holds a tool: the slot the tool-family actions name as their `slot` argument, the
+/// tool's own item identity, and its upgrade level. The level is a fact, not advice: those handlers require the
+/// BASIC tool (`basic_axe_not_equipped_in_requested_slot`, `basic_pickaxe_not_equipped_in_requested_slot`), so
+/// an identity alone would leave an upgraded tool looking equipped and explain nothing.
+/// </summary>
+public sealed record BridgeToolSlot(int Slot, string Label, int UpgradeLevel = 0);
 
 public sealed record BridgeWateringCanFact(int Slot, string QualifiedItemId, string Label, int Water, int Max);
 
@@ -586,7 +592,17 @@ public sealed record BridgeSnapshot(
     // The actor's own profession ids. A fresh read of this set is how a caller sees that a profession branch landed
     // on the chosen id and NOT on the other card, and the level-5 choice a level-10 pair continues from is a member
     // of it. Defaulted and LAST for the same reason as its siblings above.
-    IReadOnlyList<int>? Professions = null);
+    IReadOnlyList<int>? Professions = null,
+    // The farmer's ACTIVE tool slot (`Farmer.CurrentToolIndex`) and what that slot holds, whatever its kind. The
+    // tool-family actions (`cut_weeds`, `break_rock_source`, `chop_tree_source`, `water_crop`, ...) take a `slot`
+    // that must EQUAL this index and hold the exact tool, so the companion cannot judge or name it statically -
+    // last night's `basic_pickaxe_not_equipped_in_requested_slot` and `invalid_tool_selector` receipts were that
+    // guess failing. `currentToolSlotItem` names the occupant even when it is NOT a tool, so a present occupant
+    // beside an absent `currentTool` reads as "holding something that is not a tool" rather than as an equip that
+    // silently did nothing. Null only while the world is not ready, like every sibling projection.
+    // Defaulted and LAST for the same reason as its siblings above.
+    int? CurrentToolSlot = null,
+    string? CurrentToolSlotItem = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,

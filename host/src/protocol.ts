@@ -1584,6 +1584,8 @@ const SNAPSHOT_KEYS = [
   "actorDispositionActionOwned",
   "health",
   "currentTool",
+  "currentToolSlot",
+  "currentToolSlotItem",
   "inventorySlots",
   "actionable",
   "capabilities",
