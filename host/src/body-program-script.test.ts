@@ -10,6 +10,7 @@ import {
   compilePlanScript,
   planActionsFromRegistrations,
   planProgramId,
+  planShape,
 } from "./body-program-script.js";
 import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateRequest } from "./protocol.js";
 
@@ -28,6 +29,8 @@ type SurfaceAction = Readonly<{
   lifecycle: string;
   kind: string;
   argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[] }>>;
+  outputFacts?: Readonly<Record<string, string>>;
+  resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
 }>;
 
 const SURFACE = (
@@ -42,9 +45,28 @@ const REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action) =>
     identityVersion: 1,
     lifecycle: action.lifecycle as ActionRegistration["lifecycle"],
     kind: action.kind as ActionRegistration["kind"],
-    ...(action.argumentSchema === undefined ? {} : { descriptor: { argumentSchema: action.argumentSchema } }),
+    ...(action.argumentSchema === undefined
+      ? {}
+      : {
+          descriptor: {
+            argumentSchema: action.argumentSchema,
+            outputFacts: action.outputFacts ?? {},
+            ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
+          },
+        }),
   }),
 );
+
+/** The surface's own declaration of one action's arguments, in the order the artifact lists them. */
+function surfaceArguments(
+  actionId: string,
+): readonly Readonly<{ name: string; type: string; enum?: readonly string[] }>[] {
+  const action = SURFACE.find((candidate) => candidate.actionId === actionId);
+  assert.ok(action, `${actionId} is on the published surface`);
+  return Object.entries(action.argumentSchema ?? {}).map(([name, declared]) =>
+    declared.enum === undefined ? { name, type: declared.type } : { name, type: declared.type, enum: declared.enum },
+  );
+}
 
 const ACTIONS = planActionsFromRegistrations(REGISTRATIONS);
 
@@ -86,6 +108,12 @@ function compile(script: string, overrides: Partial<Snapshot> = {}): CompiledPla
 function refusalOf(result: CompiledPlan): string {
   if (result.ok) assert.fail("expected a refusal");
   return result.reasonCode;
+}
+
+/** The action shape a refused builder call answered with, read from the result the materializer publishes. */
+function requirementOf(result: CompiledPlan) {
+  if (result.ok) assert.fail("expected a refusal");
+  return result.requirement;
 }
 
 type PlanNode = Extract<CompiledPlan, { ok: true }>["program"]["nodes"][number];
@@ -334,4 +362,102 @@ test("a destination selector argument is compiled in the typed shape the wire de
     type: "destination_selector",
     destination: { kind: "label", label: "Mine" },
   });
+});
+
+/**
+ * The refusal is the teaching surface now that no per-action tool carries a schema: a builder call that names the wrong
+ * argument, drops one, or supplies the wrong kind must answer with the action's OWN declared arguments - read back here
+ * from the artifact, so a hand-written list cannot drift from what the Mod enforces.
+ */
+test("a refused builder call answers with the action id, its required argument names and their kinds", () => {
+  const required = surfaceArguments("cut_weeds");
+  assert.ok(required.length >= 2, "cut_weeds declares more than one argument");
+  for (const script of [
+    // Already the live failure: x and y supplied, the tool slot and the target id guessed at or omitted.
+    "builder.cut_weeds({ x: 10, y: 10 });",
+    "builder.cut_weeds({ x: 10, y: 10, slot: 3, expectedTargetId: 'weed_01', targetId: 'weed_01' });",
+    "builder.cut_weeds({ x: 10, y: 10, slot: 'first', expectedTargetId: 'weed_01' });",
+  ])
+    assert.deepEqual(requirementOf(compile(script)), { actionId: "cut_weeds", requiredArguments: required });
+
+  // A closed set travels with the argument that declares it, so the refusal can name the values a guess must be one of.
+  const choice = requirementOf(compile("builder.respond_level_up({ choice: 'left' });"));
+  assert.deepEqual(choice, { actionId: "respond_level_up", requiredArguments: surfaceArguments("respond_level_up") });
+  assert.deepEqual(choice?.requiredArguments.find((argument) => argument.name === "choice")?.enum, [
+    "confirm",
+    "branch_a",
+    "branch_b",
+  ]);
+});
+
+/** `stardew_plan_shape` answers from this function, so its answer is the surface's own vocabulary, not a second copy. */
+test("plan_shape names the surface's own arguments, output facts and resource claims for one action", () => {
+  const cutWeeds = planShape(ACTIONS, { actionId: "cut_weeds" });
+  assert.ok(cutWeeds.ok, "cut_weeds is a plannable action");
+  assert.deepEqual(
+    cutWeeds.actions.map((action) => action.actionId),
+    ["cut_weeds"],
+  );
+  assert.deepEqual(
+    cutWeeds.actions[0]!.arguments.map((argument) => argument.name),
+    Object.keys(SURFACE.find((action) => action.actionId === "cut_weeds")!.argumentSchema ?? {}),
+  );
+  assert.deepEqual(cutWeeds.actions[0]!.arguments, surfaceArguments("cut_weeds"));
+
+  const inspect = planShape(ACTIONS, { actionId: "machine_inspect" });
+  assert.ok(inspect.ok);
+  assert.deepEqual(inspect.actions[0]!.outputFacts, [{ name: "machine_target_id", type: "string" }]);
+  assert.deepEqual(
+    inspect.actions[0]!.resourceClaims,
+    SURFACE.find((action) => action.actionId === "machine_inspect")!.resourceTemplate!.claims.map((claim) => ({
+      key: claim.key,
+      value: claim.value,
+    })),
+  );
+});
+
+test("plan_shape answers a whole family, and a selector that names nothing with what does exist", () => {
+  const family = planShape(ACTIONS, { family: "fixture_family" });
+  assert.ok(family.ok);
+  assert.deepEqual(
+    family.actions.map((action) => action.actionId),
+    ACTIONS.map((action) => action.actionId),
+  );
+
+  assert.deepEqual(planShape(ACTIONS, {}), { ok: false, reasonCode: "plan_shape_selector_invalid" });
+  assert.deepEqual(planShape(ACTIONS, { actionId: "cut_weeds", family: "fixture_family" }), {
+    ok: false,
+    reasonCode: "plan_shape_selector_invalid",
+  });
+  const unknown = planShape(ACTIONS, { actionId: "brew_potion" });
+  assert.ok(!unknown.ok);
+  assert.equal(unknown.reasonCode, "plan_shape_unknown_action:brew_potion");
+  // The ids it offers are the vocabulary's own head, bounded: a wrong name teaches without spending the turn on all of it.
+  assert.deepEqual(
+    unknown.legalActionIds,
+    ACTIONS.slice(0, 20).map((action) => action.actionId),
+  );
+  const unknownFamily = planShape(ACTIONS, { family: "brewing" });
+  assert.ok(!unknownFamily.ok);
+  assert.equal(unknownFamily.reasonCode, "plan_shape_unknown_family:brewing");
+  assert.deepEqual(unknownFamily.legalFamilies, ["fixture_family"]);
+});
+
+/**
+ * "Is the scythe equipped" cannot be judged statically and the slot index cannot be guessed: the Mod publishes the held
+ * tool and the pack's tool slots, so a script reads both from the snapshot it was handed instead of inventing a slot.
+ */
+test("a script reads the held tool and its slot from the snapshot instead of guessing a slot index", () => {
+  const nodes = nodesOf(
+    compile(
+      `
+const held = snapshot.currentTool;
+const slot = (snapshot.toolSlots ?? []).find((entry) => entry.label === held);
+if (slot === undefined) throw new Error("held_tool_has_no_slot");
+builder.cut_weeds({ x: snapshot.tile.x, y: snapshot.tile.y, slot: slot.slot, expectedTargetId: "weed_01" });
+`,
+      { currentTool: "(T)Scythe", toolSlots: [{ slot: 3, label: "(T)Scythe" }] },
+    ),
+  );
+  assert.deepEqual(nodes[0]!.arguments.slot, { type: "integer", canonicalValue: "3" });
 });

@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
 import {
   createGameRuntimeBindingFromReceiptBackedLaunch,
@@ -462,14 +463,15 @@ test("actual attested pipe mounts only the program submit tool until a submissio
             [
               "stardew_submit_action_program",
               "stardew_plan_work",
+              "stardew_plan_shape",
               "stardew_action_program_status",
               "stardew_action_program_events",
             ].includes(name),
           )
           .sort();
         // The two readers answer only for a program that exists, so nothing is mounted for them yet; the raw submit
-        // tool and the plan tool that compiles into the same submission are both offered.
-        assert.deepEqual(fixedToolNames, ["stardew_plan_work", "stardew_submit_action_program"]);
+        // tool, the plan tool that compiles into the same submission, and the read-only shape of one action are offered.
+        assert.deepEqual(fixedToolNames, ["stardew_plan_shape", "stardew_plan_work", "stardew_submit_action_program"]);
         const execute = async (name: string, params: Record<string, unknown>) => {
           const tool = tools.find((current) => current.name === name);
           assert.ok(tool, `missing ${name}`);
@@ -567,6 +569,9 @@ test("actual attested pipe mounts only the program submit tool until a submissio
           accepted: false,
           nodeCount: 0,
           reasonCode: "plan_script_unknown_action:move_to_tile",
+          // Nothing was published for programs on this bridge, so the refusal lists no legal id - but it always
+          // answers with the list, so a model reading it never has to guess whether an empty answer means "none".
+          legalActionIds: [],
         });
         const forbiddenPlan = await execute("stardew_plan_work", { script: 'const fs = require("node:fs");' });
         assert.deepEqual(forbiddenPlan.details, {
@@ -672,6 +677,40 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
           "one submission path, two callers",
         );
 
+        // A builder call with a missing argument answers with the action's own declaration, read straight off the
+        // catalog this bridge published: the refusal is the only place the shape is taught now.
+        assert.deepEqual(await execute("stardew_plan_work", { script: "builder.move_to_tile({ x: 5 });" }), {
+          accepted: false,
+          nodeCount: 0,
+          reasonCode: "plan_script_missing_argument:move_to_tile.y",
+          actionId: "move_to_tile",
+          requiredArguments: [
+            { name: "x", type: "integer" },
+            { name: "y", type: "integer" },
+          ],
+        });
+        // ...and the same declaration is reachable without writing a script, for one action or a whole family.
+        assert.deepEqual(await execute("stardew_plan_shape", { actionId: "move_to_tile" }), {
+          actions: [
+            {
+              actionId: "move_to_tile",
+              familyId: "movement_navigation",
+              lifecycle: "published",
+              arguments: [
+                { name: "x", type: "integer" },
+                { name: "y", type: "integer" },
+              ],
+              outputFacts: [],
+              resourceClaims: [],
+            },
+          ],
+        });
+        assert.deepEqual(await execute("stardew_plan_shape", { family: "brewing" }), {
+          reasonCode: "plan_shape_unknown_family:brewing",
+          legalFamilies: ["movement_navigation"],
+        });
+        assert.equal(submissions().length, 2, "reading a shape submits nothing");
+
         // A plan of seventeen nodes is refused by name and nothing is submitted.
         const refusedAtCap = await execute("stardew_plan_work", {
           script: "for (let index = 0; index < 17; index++) builder.move_to_tile({ x: 5 + index, y: 8 });",
@@ -716,6 +755,162 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
       );
       return true;
     },
+    {
+      registrations: [
+        {
+          actionId: "move_to_tile",
+          familyId: "movement_navigation",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+          descriptor: { argumentSchema: { x: { type: "integer" }, y: { type: "integer" } } },
+        },
+      ],
+    },
+  );
+});
+
+/**
+ * The plan example is only better than no example if every name in it exists, so the checks below read the names
+ * back out of the sources they were taken from: the `Snapshot` type for the family and its entry fields, the
+ * published action surface for the action and its argument names.
+ */
+function snapshotShape(protocol: string): Readonly<{
+  all: readonly string[];
+  entryOf(family: string): readonly string[];
+}> {
+  const start = protocol.indexOf("export type Snapshot = Readonly<{");
+  assert.notEqual(start, -1, "the Snapshot type is declared in protocol.ts");
+  const body = protocol.slice(start + "export type Snapshot = Readonly<{".length);
+  let depth = 1;
+  let end = body.length;
+  for (let index = 0; index < body.length; index += 1) {
+    if (body[index] === "{") depth += 1;
+    else if (body[index] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        end = index;
+        break;
+      }
+    }
+  }
+  const declared = body.slice(0, end);
+  return {
+    all: [...declared.matchAll(/^ {2}([A-Za-z0-9_]+)\??:/gmu)].map((match) => match[1] as string),
+    entryOf(family: string): readonly string[] {
+      const at = declared.indexOf(`  ${family}?:`);
+      assert.notEqual(at, -1, `${family} is a field of the Snapshot type`);
+      const boundary = declared.slice(at + 1).search(/\n {2}[A-Za-z0-9_]+\??:/u);
+      const segment = boundary === -1 ? declared.slice(at) : declared.slice(at, at + 1 + boundary);
+      return [...new Set([...segment.matchAll(/([A-Za-z0-9_]+)\??:/gu)].map((match) => match[1] as string))].filter(
+        (name) => name !== family,
+      );
+    },
+  };
+}
+
+test("the Game surface offers one plan tool instead of the flat per-action tools, and a wrong builder name lists the legal ids", async () => {
+  const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        client,
+        Object.freeze({
+          playerId: "player_attestation",
+          companionId: scope.companionId,
+          continuityId,
+          saveId: scope.saveId,
+          worldId: scope.worldId,
+        }),
+        { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+      );
+      const binding = await receiptBackedBinding(launch);
+      let materialized:
+        | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+        | undefined;
+      try {
+        materialized = await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        );
+        const tools = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools;
+        const mounted = tools.map((tool) => tool.name).sort();
+        // Nothing on the surface is a per-action tool, and the plan tool, the observation and the stop tool (which is
+        // deliberately NOT an action) are all still there.
+        assert.deepEqual(
+          mounted.filter((name) => testAdapter.actionIdForToolName(name) !== null),
+          [],
+          "no mounted tool is a per-action tool",
+        );
+        assert.ok(mounted.includes("stardew_plan_work"), "the plan tool is mounted");
+        assert.ok(mounted.includes("stardew_observe"), "the observation stays");
+        assert.ok(mounted.includes("stardew_stop_action"), "the stop tool is not an action and stays");
+        const plan = tools.find((tool) => tool.name === "stardew_plan_work");
+        assert.ok(plan);
+
+        // The example a model copies, checked name by name against the type and the published surface.
+        const protocol = await readFile(join(repositoryRoot, "host", "src", "protocol.ts"), "utf8");
+        const shape = snapshotShape(protocol);
+        const surface = JSON.parse(
+          await readFile(
+            join(repositoryRoot, "integrations/stardew/action-development/contracts/generated/action-surface.v1.json"),
+            "utf8",
+          ),
+        ) as { actions: readonly { actionId: string; argumentSchema?: Record<string, { type: string }> }[] };
+        const example = plan.description.slice(plan.description.indexOf("for (const"));
+        const [loopLine, callLine] = example.split("\n");
+        const loop = /for \(const ([A-Za-z0-9_$]+) of snapshot\.([A-Za-z0-9_]+)\) \{/u.exec(loopLine ?? "");
+        assert.ok(loop, "the example iterates one target family");
+        const variable = loop[1] as string;
+        const family = loop[2] as string;
+        assert.ok(shape.all.includes(family), `the example iterates ${family}, a field the Snapshot type declares`);
+        const call = new RegExp(`builder\\.([a-z0-9_]+)\\(\\{ (.*) \\}\\);`, "u").exec(callLine ?? "");
+        assert.ok(call, "the example makes one builder call");
+        const action = surface.actions.find((entry) => entry.actionId === call[1]);
+        assert.ok(action, `${String(call[1])} is an action the surface publishes`);
+        const argumentNames = [...(call[2] as string).matchAll(/([A-Za-z0-9_]+):/gu)].map((match) => match[1]);
+        assert.deepEqual(argumentNames, Object.keys(action.argumentSchema ?? {}));
+        const targetFields = [
+          ...new Set(
+            [...(call[2] as string).matchAll(new RegExp(`\\b${variable}\\.([A-Za-z0-9_]+)`, "gu"))].map(
+              (match) => match[1],
+            ),
+          ),
+        ];
+        assert.ok(targetFields.length > 0, "every argument value in the example comes from the target entry");
+        for (const field of targetFields)
+          assert.ok(shape.entryOf(family).includes(field as string), `${family} entries carry ${String(field)}`);
+
+        // A name the builder does not have answers with the ids it does have, so a typo teaches.
+        const refused = await plan.execute(
+          "plan-unknown-action",
+          { script: "builder.brew_potion({});" },
+          new AbortController().signal,
+          () => undefined,
+        );
+        const details = refused.details as { reasonCode?: string; legalActionIds?: readonly string[] };
+        assert.equal(details.reasonCode, "plan_script_unknown_action:brew_potion");
+        assert.deepEqual(details.legalActionIds, ["move_to_tile"]);
+      } finally {
+        await materialized?.close();
+        await binding.close();
+      }
+    },
+    undefined,
     {
       registrations: [
         {

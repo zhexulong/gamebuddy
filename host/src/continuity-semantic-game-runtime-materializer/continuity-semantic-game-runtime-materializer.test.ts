@@ -1115,9 +1115,18 @@ test("the plan tool hands its compiled program to the one submission path a mode
   const parameterText = parameters.replaceAll("\\`", "`");
   assert.match(parameterText, /`snapshot\.tile` is your own `\{ x, y \}`/u);
   assert.match(parameterText, /every entry carries `targetId`, `x` and `y`/u);
+  // Equipment is a live fact, not a static one: the parameters name the held tool and the pack's tool slots so a script
+  // can read the slot a tool action must name instead of guessing an index.
+  assert.match(parameterText, /`snapshot\.currentTool` is the qualified id of the tool the farmer holds/u);
+  assert.match(parameterText, /`snapshot\.toolSlots` lists/u);
   // A name the builder does not have answers with the ids it DOES have, bounded, so a typo teaches instead of blocking.
   assert.match(source, /legalActionIds: legalPlanActionIds\(actions\)/u);
-  assert.match(source, /slice\(0, MAX_LISTED_PLAN_ACTION_IDS\)/u);
+  // A builder call with the wrong arguments answers with that action's own declaration - name, kind and closed set -
+  // because the per-action tools that used to carry a schema are no longer mounted.
+  assert.match(source, /requiredArguments: compiled\.requirement\.requiredArguments,/u);
+  // The shape of one action (or one family) stays reachable as a read-only tool instead of 95 schemas in every context.
+  assert.match(source, /name: "stardew_plan_shape",/u);
+  assert.match(source, /const shape = planShape\(readPlanActions\(connection\), readPlanShapeRequest\(params\)\);/u);
   // Every outcome answers the same two questions; a refusal adds the compiler's own reason name, unchanged.
   assert.match(
     source,

@@ -3,8 +3,10 @@ import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent
 import { resolveCompanionLocale, type CompanionLocale } from "../settings/player-preference-store.js";
 import {
   compilePlanScript,
+  legalPlanActionIds,
   planActionsFromRegistrations,
   planProgramId,
+  planShape,
   type PlanScriptRequest,
   type PublishedPlanAction,
 } from "../body-program-script.js";
@@ -201,6 +203,12 @@ function createBodyProgramTools(
               accepted: false,
               nodeCount: 0,
               reasonCode: compiled.reasonCode,
+              ...(compiled.requirement === undefined
+                ? {}
+                : {
+                    actionId: compiled.requirement.actionId,
+                    requiredArguments: compiled.requirement.requiredArguments,
+                  }),
               ...(compiled.reasonCode.startsWith("plan_script_unknown_action:")
                 ? { legalActionIds: legalPlanActionIds(actions) }
                 : {}),
@@ -224,6 +232,27 @@ function createBodyProgramTools(
             span.end({ reasonCode: "plan_submission_failed" });
             throw error;
           }
+        },
+      }),
+    ),
+    Object.freeze(
+      defineTool({
+        name: "stardew_plan_shape",
+        label: "stardew_plan_shape",
+        // The per-action tools that used to carry a generated schema are gone, so this is where their shapes live now:
+        // one read-only answer per action (or per family) instead of ninety-five schemas in every context.
+        description:
+          "Read what a plan step must supply for one action, or for every plannable action of one family: the argument names with their types and, where the Mod declares a closed set, its values, plus the resource the action claims and the output facts a later step can bind. Read-only, so it changes nothing; ask it when you are unsure what builder.<actionId> takes instead of guessing and being refused.",
+        parameters: planShapeParameters(),
+        execute: async (_toolCallId, params) => {
+          const shape = planShape(readPlanActions(connection), readPlanShapeRequest(params));
+          if (!shape.ok)
+            return planDetails({
+              reasonCode: shape.reasonCode,
+              ...(shape.legalActionIds === undefined ? {} : { legalActionIds: shape.legalActionIds }),
+              ...(shape.legalFamilies === undefined ? {} : { legalFamilies: shape.legalFamilies }),
+            });
+          return planDetails({ actions: shape.actions });
         },
       }),
     ),
@@ -289,6 +318,26 @@ function readPlanScriptRequest(value: unknown): PlanScriptRequest {
   return Object.freeze({ script: value.script });
 }
 
+/**
+ * The shape selector, bounded to the surface's own id grammar: a selector is echoed in the reason code and lands in the
+ * run trace, so it may not carry arbitrary text.
+ */
+function readPlanShapeRequest(value: unknown): Readonly<{ actionId?: string; family?: string }> {
+  if (!isRecord(value)) throw new Error("invalid_body_program_tool_arguments");
+  const actionId = value.actionId;
+  const family = value.family;
+  if (actionId !== undefined && !isPlanSelector(actionId)) throw new Error("invalid_body_program_tool_arguments");
+  if (family !== undefined && !isPlanSelector(family)) throw new Error("invalid_body_program_tool_arguments");
+  return Object.freeze({
+    ...(actionId === undefined ? {} : { actionId }),
+    ...(family === undefined ? {} : { family }),
+  });
+}
+
+function isPlanSelector(value: unknown): value is string {
+  return typeof value === "string" && /^[a-z][a-z0-9_]{0,127}$/u.test(value);
+}
+
 function planDetails(details: Readonly<Record<string, unknown>>) {
   return Object.freeze({
     content: [{ type: "text" as const, text: JSON.stringify(details) }],
@@ -307,11 +356,16 @@ const PLAN_TARGET_FAMILIES: readonly string[] = Object.freeze(
   ),
 );
 
-/** Bounded so a wrong name teaches instead of spending the turn's context on the whole vocabulary. */
-const MAX_LISTED_PLAN_ACTION_IDS = 20;
-
-function legalPlanActionIds(actions: readonly PublishedPlanAction[]): readonly string[] {
-  return Object.freeze(actions.slice(0, MAX_LISTED_PLAN_ACTION_IDS).map((action) => action.actionId));
+/** One action id or one family id, never both: a selector that names nothing gets the vocabulary that does exist. */
+function planShapeParameters() {
+  const selector = (description: string) => Type.Optional(Type.String({ minLength: 1, maxLength: 128, description }));
+  return Type.Object(
+    {
+      actionId: selector("One plannable action id, as it appears as a builder method (for example cut_weeds)."),
+      family: selector("One plannable family id (for example movement_navigation), answered with every action in it."),
+    },
+    { additionalProperties: false },
+  );
 }
 
 function planToolParameters() {
@@ -320,7 +374,7 @@ function planToolParameters() {
       script: Type.String({
         minLength: 1,
         maxLength: 8192,
-        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\`, \`x\` and \`y\` except doorTargets (sourceX, sourceY, targetX, targetY), foodTargets (slot, qualifiedItemId) and warpItemTargets (slot, qualifiedItemId, destination). builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
+        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\`, \`x\` and \`y\` except doorTargets (sourceX, sourceY, targetX, targetY), foodTargets (slot, qualifiedItemId) and warpItemTargets (slot, qualifiedItemId, destination). \`snapshot.currentTool\` is the qualified id of the tool the farmer holds and \`snapshot.toolSlots\` lists \`{ slot, label }\` for every tool in the pack, so a slot an action asks for is the entry whose label matches the held tool - equipment cannot be judged statically and must be read here. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
       }),
     },
     { additionalProperties: false },

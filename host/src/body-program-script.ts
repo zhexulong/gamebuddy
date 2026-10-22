@@ -18,16 +18,33 @@ import { isNonNegativeSafeInteger, isOpaqueId, isTileCoordinate } from "./protoc
  * it runs (`plan_script_uses_forbidden:<name>`), and the context does not carry it either.
  */
 
-/** One action as the Mod published it for Body Programs: the id and the argument vocabulary it declares. */
+/** One argument as the Mod declared it: the name a script must use, the kind it must supply, and any closed set. */
+export type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: readonly string[] }>;
+
+/**
+ * One action as the Mod published it for Body Programs: the id, the family it belongs to, and everything a script or a
+ * program must supply or can read back. Every field is the Mod's own declaration, so a refusal or a shape answer cannot
+ * describe an action differently from the surface the Mod actually enforces.
+ */
 export type PublishedPlanAction = Readonly<{
   actionId: string;
-  arguments: readonly Readonly<{ name: string; type: string; enum?: readonly string[] }>[];
+  familyId: string;
+  lifecycle: string;
+  arguments: readonly PlanArgumentShape[];
+  outputFacts: readonly Readonly<{ name: string; type: string }>[];
+  resourceClaims: readonly Readonly<{ key: string; value: string }>[];
 }>;
 
 type PlanNode = BodyProgramCandidateRequest["nodes"][number];
 type PlanArgument = PlanNode["arguments"][string];
 
 export type PlanScriptRequest = Readonly<{ script: string }>;
+
+/** The action a refused builder call named, and the arguments the published surface requires for it. */
+export type PlanArgumentRequirement = Readonly<{
+  actionId: string;
+  requiredArguments: readonly PlanArgumentShape[];
+}>;
 
 export type CompiledPlan =
   | Readonly<{
@@ -36,7 +53,14 @@ export type CompiledPlan =
       snapshotRevision: number;
       program: Readonly<{ nodes: readonly PlanNode[] }>;
     }>
-  | Readonly<{ ok: false; scriptSource: string; snapshotRevision: number | null; reasonCode: string }>;
+  | Readonly<{
+      ok: false;
+      scriptSource: string;
+      snapshotRevision: number | null;
+      reasonCode: string;
+      /** Present when the refusal was a builder call, so the answer names what that action demands. */
+      requirement?: PlanArgumentRequirement;
+    }>;
 
 /** Frozen maximum node count per program; mirrors `protocol.ts` and the Mod's `BodyProgramValidation.MaximumNodes`. */
 export const MAX_PLAN_NODES = 16;
@@ -122,15 +146,22 @@ export function planActionsFromRegistrations(
     if (!PLAN_ACTION_LIFECYCLES.includes(registration.lifecycle) || registration.kind !== "execution") continue;
     const declared = declaredArgumentsOf(registration);
     if (declared === undefined || !declared.every((argument) => PLAN_ARGUMENT_TYPES.includes(argument.type))) continue;
-    actions.push(Object.freeze({ actionId: registration.actionId, arguments: Object.freeze(declared) }));
+    actions.push(
+      Object.freeze({
+        actionId: registration.actionId,
+        familyId: registration.familyId,
+        lifecycle: registration.lifecycle,
+        arguments: Object.freeze(declared),
+        outputFacts: Object.freeze(declaredOutputFactsOf(registration)),
+        resourceClaims: Object.freeze(declaredResourceClaimsOf(registration)),
+      }),
+    );
   }
   return Object.freeze(actions);
 }
 
 /** The published argument vocabulary, in either shape the wire and the surface artifact use. */
-function declaredArgumentsOf(
-  registration: ActionRegistration,
-): readonly Readonly<{ name: string; type: string; enum?: readonly string[] }>[] | undefined {
+function declaredArgumentsOf(registration: ActionRegistration): readonly PlanArgumentShape[] | undefined {
   const descriptor = registration.descriptor;
   if (descriptor === undefined) return undefined;
   if (Array.isArray(descriptor.arguments)) {
@@ -154,6 +185,79 @@ function declaredArgumentsOf(
       ),
     ),
   );
+}
+
+/** The facts a later program node may bind to this action's output, exactly as the Mod declared them. */
+function declaredOutputFactsOf(registration: ActionRegistration): readonly Readonly<{ name: string; type: string }>[] {
+  const outputFacts = registration.descriptor?.outputFacts;
+  if (outputFacts === undefined) return [];
+  return Object.entries(outputFacts).map(([name, type]) => Object.freeze({ name, type }));
+}
+
+/** The resources the Mod says this action claims while it runs (an embodied actor, for instance). */
+function declaredResourceClaimsOf(
+  registration: ActionRegistration,
+): readonly Readonly<{ key: string; value: string }>[] {
+  const template = registration.descriptor?.resourceTemplate;
+  if (template === undefined || typeof template === "string") return [];
+  return template.claims.map((claim) => Object.freeze({ key: claim.key, value: claim.value }));
+}
+
+/**
+ * One read-only answer about the plan vocabulary: what a script must pass for one action, or for every plannable action
+ * of one family. A selection that names nothing answers with the vocabulary that DOES exist, so one wrong guess teaches.
+ */
+export type PlanShape =
+  | Readonly<{ ok: true; actions: readonly PublishedPlanAction[] }>
+  | Readonly<{
+      ok: false;
+      reasonCode: string;
+      legalActionIds?: readonly string[];
+      legalFamilies?: readonly string[];
+    }>;
+
+/** Bounded so a wrong name teaches instead of spending the turn's context on the whole vocabulary. */
+const MAX_LISTED_PLAN_IDS = 20;
+
+export function legalPlanActionIds(actions: readonly PublishedPlanAction[]): readonly string[] {
+  return Object.freeze(actions.slice(0, MAX_LISTED_PLAN_IDS).map((action) => action.actionId));
+}
+
+export function legalPlanFamilies(actions: readonly PublishedPlanAction[]): readonly string[] {
+  return Object.freeze([...new Set(actions.map((action) => action.familyId))].slice(0, MAX_LISTED_PLAN_IDS));
+}
+
+/**
+ * Reads the shape of one action or one family straight out of the vocabulary the Mod published for Body Programs.
+ * Nothing here is a hand-written table: a renamed argument, a new closed set or a new output fact reaches the answer as
+ * soon as the surface reaches the builder.
+ */
+export function planShape(
+  actions: readonly PublishedPlanAction[],
+  request: Readonly<{ actionId?: string; family?: string }>,
+): PlanShape {
+  const actionId = request.actionId;
+  const family = request.family;
+  if ((actionId === undefined) === (family === undefined))
+    return Object.freeze({ ok: false as const, reasonCode: "plan_shape_selector_invalid" });
+  if (actionId !== undefined) {
+    const action = actions.find((candidate) => candidate.actionId === actionId);
+    if (action === undefined)
+      return Object.freeze({
+        ok: false as const,
+        reasonCode: `plan_shape_unknown_action:${actionId}`,
+        legalActionIds: legalPlanActionIds(actions),
+      });
+    return Object.freeze({ ok: true as const, actions: Object.freeze([action]) });
+  }
+  const members = actions.filter((candidate) => candidate.familyId === family);
+  if (members.length === 0)
+    return Object.freeze({
+      ok: false as const,
+      reasonCode: `plan_shape_unknown_family:${family}`,
+      legalFamilies: legalPlanFamilies(actions),
+    });
+  return Object.freeze({ ok: true as const, actions: Object.freeze(members) });
 }
 
 /**
@@ -200,14 +304,14 @@ export function compilePlanScript(
       filename: "plan-script.js",
     });
   } catch (error) {
-    if (state.refusal !== null) return refused(state.refusal, scriptSource, snapshotRevision);
+    if (state.refusal !== null) return refused(state.refusal, scriptSource, snapshotRevision, state.requirement);
     if (isTimeout(error))
       return refused(`plan_script_timeout:${PLAN_SCRIPT_BUDGET_MS}`, scriptSource, snapshotRevision);
     return refused(`plan_script_threw:${thrownName(error)}`, scriptSource, snapshotRevision);
   }
   // A script may swallow a builder refusal with its own try/catch; the plan is still refused, because the
   // node it asked for was not added and a program missing that node is not the plan the companion wrote.
-  if (state.refusal !== null) return refused(state.refusal, scriptSource, snapshotRevision);
+  if (state.refusal !== null) return refused(state.refusal, scriptSource, snapshotRevision, state.requirement);
   if (state.nodes.length === 0) return refused("plan_script_empty", scriptSource, snapshotRevision);
   // A plan is only meaningful against a revision: an accepted plan whose revision is unknown could not be
   // replayed and could not answer idempotency, so that is a refusal rather than a plan with a null revision.
@@ -233,11 +337,27 @@ export function planProgramId(snapshotRevision: number, nodes: readonly PlanNode
   return `plan_${snapshotRevision}_${digest}`;
 }
 
-function refused(reasonCode: string, scriptSource: string, snapshotRevision: number | null): CompiledPlan {
-  return Object.freeze({ ok: false as const, scriptSource, snapshotRevision, reasonCode });
+function refused(
+  reasonCode: string,
+  scriptSource: string,
+  snapshotRevision: number | null,
+  requirement?: PlanArgumentRequirement,
+): CompiledPlan {
+  return Object.freeze({
+    ok: false as const,
+    scriptSource,
+    snapshotRevision,
+    reasonCode,
+    ...(requirement === undefined ? {} : { requirement }),
+  });
 }
 
-type PlanScriptState = { nodes: PlanNode[]; refusal: string | null; calls: number };
+type PlanScriptState = {
+  nodes: PlanNode[];
+  refusal: string | null;
+  requirement?: PlanArgumentRequirement;
+  calls: number;
+};
 
 /**
  * The script's only writing hand: one method per published action, named exactly as the action, taking
@@ -266,19 +386,27 @@ function emitPlanNode(action: PublishedPlanAction, arguments_: unknown, state: P
   state.calls += 1;
   if (state.calls > MAX_PLAN_BUILDER_CALLS) refusePlan(`plan_script_call_cap:${state.calls}`, state);
   if (state.nodes.length >= MAX_PLAN_NODES) refusePlan(`plan_cap_exceeded:${state.nodes.length + 1}`, state);
+  // The shape this action demands, carried by every refusal a call can produce: the model that guessed a name or a kind
+  // reads what the surface requires instead of a bare `invalid_arguments`.
+  const requirement = Object.freeze({
+    actionId: action.actionId,
+    requiredArguments: action.arguments,
+  }) satisfies PlanArgumentRequirement;
   // An action that declares no argument is called with none.
   const accepted = arguments_ === undefined && action.arguments.length === 0 ? {} : arguments_;
   if (typeof accepted !== "object" || accepted === null || Array.isArray(accepted))
-    refusePlan(`plan_script_argument_not_canonical:${action.actionId}`, state);
+    refusePlan(`plan_script_argument_not_canonical:${action.actionId}`, state, requirement);
   const supplied = accepted as Readonly<Record<string, unknown>>;
   const declared = new Map(action.arguments.map((argument) => [argument.name, argument] as const));
   for (const name of Object.keys(supplied))
-    if (!declared.has(name)) refusePlan(`plan_script_unknown_argument:${action.actionId}.${name}`, state);
+    if (!declared.has(name)) refusePlan(`plan_script_unknown_argument:${action.actionId}.${name}`, state, requirement);
   const canonical: Record<string, PlanArgument> = {};
   for (const [name, declaration] of declared) {
-    if (!Object.hasOwn(supplied, name)) refusePlan(`plan_script_missing_argument:${action.actionId}.${name}`, state);
+    if (!Object.hasOwn(supplied, name))
+      refusePlan(`plan_script_missing_argument:${action.actionId}.${name}`, state, requirement);
     const value = canonicalPlanArgument(declaration, supplied[name]);
-    if (value === undefined) refusePlan(`plan_script_argument_not_canonical:${action.actionId}.${name}`, state);
+    if (value === undefined)
+      refusePlan(`plan_script_argument_not_canonical:${action.actionId}.${name}`, state, requirement);
     canonical[name] = value;
   }
   // The script's statement order IS the plan's order: "till this tile, then fertilise it" is two calls,
@@ -343,8 +471,9 @@ function canonicalDestinationSelector(value: unknown): PlanArgument | undefined 
 }
 
 /** Records the named refusal and stops the script at the statement that caused it. */
-function refusePlan(reasonCode: string, state: PlanScriptState): never {
+function refusePlan(reasonCode: string, state: PlanScriptState, requirement?: PlanArgumentRequirement): never {
   state.refusal = reasonCode;
+  if (requirement !== undefined) state.requirement = requirement;
   throw new Error(reasonCode);
 }
 
