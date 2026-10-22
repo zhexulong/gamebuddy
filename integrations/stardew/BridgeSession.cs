@@ -1595,7 +1595,7 @@ string? bodyProgramUnavailableReason = null,
             diagnostic.Code,
             diagnostic.NodeId is not null && BridgeProtocol.IsOpaqueId(diagnostic.NodeId) ? diagnostic.NodeId : null,
             diagnostic.Path,
-            diagnostic.Message)).ToArray());
+            diagnostic.WireMessage)).ToArray());
     private static BridgeBodyProgramStatusSnapshot? ToBridgeSnapshot(BodyProgramStatusSnapshot? snapshot) => snapshot is null
         ? null
         : new BridgeBodyProgramStatusSnapshot(

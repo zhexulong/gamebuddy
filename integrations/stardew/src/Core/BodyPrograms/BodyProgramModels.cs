@@ -17,7 +17,12 @@ public enum BodyProgramArgumentKind { Integer = 1, String = 2, Boolean = 3, Dest
 #pragma warning restore CA1720
 public sealed record BodyProgramArgumentDescriptor(string Name, BodyProgramArgumentKind Kind);
 public sealed record BodyProgramFactDescriptor(string Name, BodyProgramArgumentKind Kind);
-public enum BodyProgramResourceTemplateValue { ScopePlayer = 1, ActionId = 2 }
+/// <summary>
+/// What a <see cref="BodyProgramResourceTemplateClaim"/> materializes to. <see cref="ToolAnyUpgrade"/> and
+/// <see cref="ToolBasicOnly"/> are the upgrade-level half of a `tool:&lt;category&gt;` claim: the category is in the
+/// claim KEY (the resource identity the journal conflicts on), the level requirement is here.
+/// </summary>
+public enum BodyProgramResourceTemplateValue { ScopePlayer = 1, ActionId = 2, ToolAnyUpgrade = 3, ToolBasicOnly = 4 }
 public sealed record BodyProgramResourceTemplateClaim(string Key, BodyProgramResourceTemplateValue Value);
 
 /// <summary>Mod registration projection used to verify candidates; it is the only action membership source for this Core slice.</summary>
@@ -80,7 +85,58 @@ public sealed record ActionProgramCandidateNode(string NodeId, string ActionId, 
 public sealed record ActionProgramBinding(string ProducerNodeId, string FactName);
 
 public enum BodyProgramDiagnosticSeverity { Error = 1 }
-public sealed record BodyProgramDiagnostic(BodyProgramDiagnosticSeverity Severity, string Code, string? NodeId, string Path, string Message);
+
+/// <summary>
+/// The failed precondition named by a refusal, in the same vocabulary the argument refusals already use. One spelling per
+/// concept, because a caller that has to match several spellings of "the tool is not equipped" cannot act on either.
+/// </summary>
+public static class BodyProgramFailedPrecondition
+{
+    /// <summary>The submission itself is malformed (program identity, node count, node identity or shape).</summary>
+    public const string ProgramShape = "program_shape";
+    /// <summary>The node names an action that no published/live-verified execution registration projects.</summary>
+    public const string ActionRegistration = "action_registration";
+    /// <summary>The action is registered but the live action policy on this snapshot does not enable it.</summary>
+    public const string LiveActionPolicy = "live_action_policy";
+    /// <summary>The node's declared arguments do not match the descriptor's own argument contract.</summary>
+    public const string ArgumentShape = "argument_shape";
+    /// <summary>The dependency graph is malformed (duplicate/unknown/self edge, or a cycle).</summary>
+    public const string DependencyGraph = "dependency_graph";
+    /// <summary>A declared fact binding cannot be resolved to a producer fact of the claimed kind.</summary>
+    public const string FactBinding = "fact_binding";
+    /// <summary>Two nodes claim the same resource without depending on each other.</summary>
+    public const string ResourceClaim = "resource_claim";
+    /// <summary>The authority's journal or policy identity cannot accept this submission.</summary>
+    public const string AuthorityState = "authority_state";
+}
+
+/// <summary>
+/// One preflight refusal. <see cref="Code"/> is the machine reason code (already the one the wire carries) and
+/// <see cref="NodeId"/> is the node it names; the last three fields are the cause, in the same spirit as the argument
+/// refusals: WHICH precondition failed, what was expected, and what was actually observed. A refusal that leaves these
+/// null is a refusal a caller can only guess about, which is the defect this shape exists to close.
+/// </summary>
+public sealed record BodyProgramDiagnostic(
+    BodyProgramDiagnosticSeverity Severity,
+    string Code,
+    string? NodeId,
+    string Path,
+    string Message,
+    string? FailedPrecondition = null,
+    string? Expected = null,
+    string? Actual = null)
+{
+    /// <summary>
+    /// The canonical, machine-parseable rendering of the cause that rides INSIDE the wire's existing `message`
+    /// field. It is a separate method, not a second field, because `BridgeBodyProgramDiagnostic` has an exact-key
+    /// boundary that both sides validate: adding keys would make every refusal unreadable to a reader that predates
+    /// them. So the cause is rendered the way the argument refusals already render theirs (`missing [...]` lives in
+    /// the message too), and `expected=`/`actual=` remain greppable without a schema change.
+    /// </summary>
+    public string WireMessage => this.FailedPrecondition is null
+        ? this.Message
+        : $"{this.Message} failed_precondition={this.FailedPrecondition} expected={this.Expected ?? "unspecified"} actual={this.Actual ?? "unspecified"}";
+}
 public sealed record BodyProgramVerificationReport(bool Accepted, long CatalogRevision, ActionProgramCandidate? CanonicalProgram, IReadOnlyList<BodyProgramDiagnostic> Diagnostics);
 public enum BodyProgramSubmitCode { Accepted, Rejected, Idempotent, Conflict, PersistenceFailure, Quarantined }
 public sealed record BodyProgramSubmitResult(BodyProgramSubmitCode Code, BodyProgramVerificationReport Verification, BodyProgramStatusSnapshot? Snapshot);
@@ -176,6 +232,21 @@ internal static class BodyProgramValidation
     internal static bool IsValidWatchdogMs(long value) => value is > 0 and <= MaximumJavaScriptSafeInteger;
     internal static bool IsValidDerivedDeadlineMs(long? value) => value is not null and > 0 and <= MaximumJavaScriptSafeInteger;
     internal static bool IsIdentifier(string? value) => value is { Length: >= 1 and <= 128 } && value.All(c => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c is '_' or '-');
+    /// <summary>
+    /// A resource-claim key: an ordinary identifier or a `tool:&lt;category&gt;` subject. The colon is the one
+    /// separator the canonical claim vocabulary needs (the Mod publishes `tool:scythe`, `tool:pickaxe`, ... exactly
+    /// as the Mod-owned claim key) and it is admitted here, not by widening <see cref="IsIdentifier"/>, because the
+    /// same identifier rule guards program/node/request identities that must never carry one.
+    /// </summary>
+    internal static bool IsResourceClaimKey(string? value)
+    {
+        if (value is null || value.Length > 128) return false;
+        if (IsIdentifier(value)) return true;
+        const string toolPrefix = "tool:";
+        return value.Length > toolPrefix.Length
+            && value.StartsWith(toolPrefix, StringComparison.Ordinal)
+            && IsIdentifier(value.Substring(toolPrefix.Length));
+    }
     internal static bool IsValidExecutionBinding(NodeExecutionBinding? value) => value is not null
         && IsIdentifier(value.ProgramId) && IsIdentifier(value.NodeId) && value.NodeAttempt > 0
         && IsIdentifier(value.RequestId) && IsIdentifier(value.IdempotencyKey) && IsIdentifier(value.ExecutionId);
@@ -190,7 +261,7 @@ internal static class BodyProgramValidation
         && action.Arguments is { Count: <= 32 } && action.OutputFacts is { Count: <= 32 } && action.ResourceTemplate is { Count: <= 16 }
         && action.Arguments.All(argument => argument is not null && IsIdentifier(argument.Name) && Enum.IsDefined(argument.Kind) && argument.Kind != BodyProgramArgumentKind.DestinationArrival)
         && action.OutputFacts.All(fact => fact is not null && IsIdentifier(fact.Name) && Enum.IsDefined(fact.Kind) && fact.Kind != BodyProgramArgumentKind.DestinationSelector)
-        && action.ResourceTemplate.All(claim => claim is not null && IsIdentifier(claim.Key) && Enum.IsDefined(claim.Value))
+        && action.ResourceTemplate.All(claim => claim is not null && IsResourceClaimKey(claim.Key) && Enum.IsDefined(claim.Value))
         && action.Arguments.Select(argument => argument.Name).Distinct(StringComparer.Ordinal).Count() == action.Arguments.Count
         && action.OutputFacts.Select(fact => fact.Name).Distinct(StringComparer.Ordinal).Count() == action.OutputFacts.Count
         && action.ResourceTemplate.Select(claim => claim.Key).Distinct(StringComparer.Ordinal).Count() == action.ResourceTemplate.Count;

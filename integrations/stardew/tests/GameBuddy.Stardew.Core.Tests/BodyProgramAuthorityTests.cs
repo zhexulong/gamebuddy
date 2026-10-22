@@ -526,6 +526,37 @@ public sealed class BodyProgramAuthorityTests
         BridgeProtocol.IsReasonCode(diagnostic.Code).Should().BeTrue();
     }
 
+    /// <summary>
+    /// A precondition refusal must tell the caller WHICH node failed and WHY, the way the argument refusals already do:
+    /// the caller fixed a missing `expectedQualifiedItemId` in one attempt because `invalid_arguments` named the node,
+    /// the missing argument and its path, while a bare precondition code left it unable to tell whether to fix, retry
+    /// or abandon. So the five fields are asserted here on a known bad precondition (the declared `y` is absent).
+    /// </summary>
+    [Fact]
+    public void PreconditionRefusalNamesTheNodeTheReasonAndTheDeclaredVersusSuppliedArguments()
+    {
+        BodyProgramActionCatalog catalog = FarmhandBodyProgramCatalogProjection.Create().Catalog!;
+        ActionProgramCandidate candidate = new("mow_a", new[]
+        {
+            new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("x", 7), Array.Empty<string>(), Bindings()),
+        });
+
+        BodyProgramVerificationReport verification = Open(catalog: catalog).Verify(candidate);
+
+        verification.Accepted.Should().BeFalse();
+        BodyProgramDiagnostic diagnostic = verification.Diagnostics.Should().ContainSingle().Subject;
+        diagnostic.NodeId.Should().Be("first");
+        diagnostic.Code.Should().Be("invalid_arguments:move_to_tile");
+        diagnostic.FailedPrecondition.Should().Be(BodyProgramFailedPrecondition.ArgumentShape);
+        diagnostic.Expected.Should().Contain("x").And.Contain("y");
+        diagnostic.Actual.Should().Contain("x").And.Contain("missing=y");
+        diagnostic.Path.Should().Be("/nodes/0/arguments");
+        // The cause still reaches a reader through the wire's one free-text field, because its exact-key boundary
+        // cannot carry three more keys without making every refusal unreadable to a reader that predates them.
+        diagnostic.WireMessage.Should().Contain($"failed_precondition={BodyProgramFailedPrecondition.ArgumentShape}")
+            .And.Contain("expected=").And.Contain("actual=");
+    }
+
     [Fact]
     public void CandidateVerifierNamesTheActionThatCannotBeGrouped()
     {

@@ -1005,7 +1005,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
 
     private static BridgeBodyProgramDiagnostic ProjectDiagnostic(BodyProgramDiagnostic diagnostic) =>
         new(diagnostic.Severity == BodyProgramDiagnosticSeverity.Error ? "error" : throw new ArgumentOutOfRangeException(nameof(diagnostic)),
-            diagnostic.Code, diagnostic.NodeId, diagnostic.Path, diagnostic.Message);
+            diagnostic.Code, diagnostic.NodeId, diagnostic.Path, diagnostic.WireMessage);
 
     private static BridgeBodyProgramStatusSnapshot ProjectBodyProgramStatusSnapshot(BodyProgramStatusSnapshot snapshot) =>
         new(snapshot.ProgramId, snapshot.State.ToWireValue(), snapshot.CatalogRevision, snapshot.StopEpoch, snapshot.EventHighWater,

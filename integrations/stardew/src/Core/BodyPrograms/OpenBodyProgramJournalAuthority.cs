@@ -752,7 +752,7 @@ public sealed class OpenBodyProgramJournalAuthority
           if (HasExecutableWork(program)) return BodyProgramState.Active;
           return program.Nodes.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected) ? BodyProgramState.Failed : BodyProgramState.Succeeded;
       }
-    private static BodyProgramVerificationReport Rejected(string code, string? node, string path) => new(false, 0, null, new[] { new BodyProgramDiagnostic(BodyProgramDiagnosticSeverity.Error, code, node, path, code) });
+    private static BodyProgramVerificationReport Rejected(string code, string? node, string path) => new(false, 0, null, new[] { new BodyProgramDiagnostic(BodyProgramDiagnosticSeverity.Error, code, node, path, code, BodyProgramVerifier.PreconditionForCode(code)) });
     private static ActionProgramCandidate ToCandidate(VerifiedBodyProgram program) => new(program.ProgramId, program.Nodes.Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, node.CanonicalArguments.ToDictionary(pair => pair.Key, pair => BodyProgramValidation.ToRuntimeValue(pair.Value), StringComparer.Ordinal), node.DependsOn, node.Bindings)).ToArray());
     private static BodyProgramJournalState RestartFence(BodyProgramJournalState persisted, out bool changed)
     {
@@ -780,26 +780,33 @@ internal static class BodyProgramVerifier
     internal static BodyProgramVerificationReport Verify(ActionProgramCandidate candidate, BodyProgramActionCatalog catalog, IReadOnlySet<string>? restrictiveActionIds)
     {
         List<BodyProgramDiagnostic> diagnostics = new();
-        if (candidate is null || !BodyProgramValidation.IsIdentifier(candidate.ProgramId) || candidate.Nodes is not { Count: >= 1 and <= BodyProgramValidation.MaximumNodes }) return Reject(catalog, diagnostics, "invalid_program", null, "/");
+        if (candidate is null || !BodyProgramValidation.IsIdentifier(candidate.ProgramId) || candidate.Nodes is not { Count: >= 1 and <= BodyProgramValidation.MaximumNodes })
+            return Reject(catalog, diagnostics, "invalid_program", null, "/", "program_id_and_1..16_nodes", candidate is null ? "null" : $"programId={candidate.ProgramId};nodes={candidate.Nodes?.Count}");
         Dictionary<string, ActionProgramCandidateNode> nodes = new(StringComparer.Ordinal); int edges = 0;
         foreach (ActionProgramCandidateNode node in candidate.Nodes)
         {
             string path = $"/nodes/{nodes.Count}";
-            if (node is null || !BodyProgramValidation.IsIdentifier(node.NodeId) || !BodyProgramValidation.IsIdentifier(node.ActionId) || node.Arguments is null || node.DependsOn is null || node.Bindings is null || node.DependsOn.Count > 8 || node.Bindings.Count > 4 || !nodes.TryAdd(node.NodeId, node)) { diagnostics.Add(Error("invalid_node", node?.NodeId, path)); continue; }
+            if (node is null || !BodyProgramValidation.IsIdentifier(node.NodeId) || !BodyProgramValidation.IsIdentifier(node.ActionId) || node.Arguments is null || node.DependsOn is null || node.Bindings is null || node.DependsOn.Count > 8 || node.Bindings.Count > 4 || !nodes.TryAdd(node.NodeId, node))
+            {
+                diagnostics.Add(Error("invalid_node", node?.NodeId, path, "node_id,action_id,arguments,dependsOn<=8,bindings<=4", node?.NodeId ?? "unnamed"));
+                continue;
+            }
             edges += node.DependsOn.Count;
             if (!catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? action))
                 diagnostics.Add(Error(Named("unknown_action", node.ActionId), node.NodeId, path + "/actionId",
-                    $"'{node.ActionId}' cannot be a Body Program node: only published or live-verified execution actions with a scalar value contract are projected. Dispatch it as a single action instead."));
+                    $"'{node.ActionId}' cannot be a Body Program node: only published or live-verified execution actions with a scalar value contract are projected. Dispatch it as a single action instead.",
+                    BodyProgramFailedPrecondition.ActionRegistration, "published_or_live_verified_execution_action", node.ActionId));
             else if (restrictiveActionIds is not null && !restrictiveActionIds.Contains(node.ActionId))
                 diagnostics.Add(Error(Named("action_not_enabled", node.ActionId), node.NodeId, path + "/actionId",
-                    $"'{node.ActionId}' is not enabled by the live action policy on this snapshot."));
+                    $"'{node.ActionId}' is not enabled by the live action policy on this snapshot.",
+                    BodyProgramFailedPrecondition.LiveActionPolicy, "enabled_by_live_action_policy", node.ActionId));
             else ValidateArguments(node, action!, diagnostics, path);
         }
-        if (edges > 32) diagnostics.Add(Error("too_many_edges", null, "/nodes"));
+        if (edges > 32) diagnostics.Add(Error("too_many_edges", null, "/nodes", "<=32_edges", $"{edges}_edges"));
         foreach (ActionProgramCandidateNode node in nodes.Values)
             if (node.DependsOn.Distinct(StringComparer.Ordinal).Count() != node.DependsOn.Count || node.DependsOn.Any(dependency => !nodes.ContainsKey(dependency) || dependency == node.NodeId))
-                diagnostics.Add(Error("invalid_dependency", node.NodeId, "/nodes"));
-        if (HasCycle(nodes)) diagnostics.Add(Error("cycle", null, "/nodes"));
+                diagnostics.Add(Error("invalid_dependency", node.NodeId, "/nodes", "dependencies_exist_and_are_not_the_node_itself", string.Join(",", node.DependsOn)));
+        if (HasCycle(nodes)) diagnostics.Add(Error("cycle", null, "/nodes", "acyclic_dependency_graph", "cycle"));
         foreach (ActionProgramCandidateNode node in nodes.Values) ValidateBindings(node, nodes, catalog, diagnostics);
         ValidateResourceConflicts(nodes, catalog, diagnostics);
         return diagnostics.Count > 0 ? Reject(catalog, diagnostics) : new(true, catalog.Revision, Canonicalize(candidate), Array.Empty<BodyProgramDiagnostic>());
@@ -817,9 +824,13 @@ internal static class BodyProgramVerifier
         if (missing.Length == 0 && unexpected.Length == 0 && wrongKind.Length == 0) return;
         // The descriptor's own arguments are the whole contract, so "missing: slot" is the answer to
         // "why can this action not be grouped": an equipped tool slot is a declared argument, never an
-        // implicit one the Mod would guess.
+        // implicit one the Mod would guess. The five fields carry the same answer structurally: which
+        // node, which precondition, and the declared-vs-supplied argument names.
         diagnostics.Add(Error(Named("invalid_arguments", node.ActionId), node.NodeId, path + "/arguments",
-            $"Node arguments do not match '{node.ActionId}': missing [{string.Join(", ", missing)}], unexpected [{string.Join(", ", unexpected)}], wrong value kind [{string.Join(", ", wrongKind)}]."));
+            $"Node arguments do not match '{node.ActionId}': missing [{string.Join(", ", missing)}], unexpected [{string.Join(", ", unexpected)}], wrong value kind [{string.Join(", ", wrongKind)}].",
+            BodyProgramFailedPrecondition.ArgumentShape,
+            string.Join(",", action.Arguments.Select(argument => argument.Name)),
+            string.Join(",", node.Arguments.Keys.OrderBy(name => name, StringComparer.Ordinal)) + (missing.Length == 0 ? "" : $";missing={string.Join(",", missing)}") + (wrongKind.Length == 0 ? "" : $";wrong_kind={string.Join(",", wrongKind)}")));
     }
     private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments(ActionProgramCandidateNode node, BodyProgramActionCatalog catalog) { BodyProgramActionCatalog _ = catalog; BodyProgramActionDescriptor action = catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? found) ? found! : throw new InvalidOperationException(); Dictionary<string, BodyProgramCanonicalValue> result = new(StringComparer.Ordinal); foreach (BodyProgramArgumentDescriptor argument in action.Arguments) { if (!node.Arguments.TryGetValue(argument.Name, out BodyProgramRuntimeValue? value) || !BodyProgramValidation.TryDecodeRuntimeValue(value, argument.Kind, out BodyProgramCanonicalValue? canonical) || !result.TryAdd(argument.Name, canonical!)) throw new InvalidOperationException(); } return new ReadOnlyDictionary<string, BodyProgramCanonicalValue>(result); }
     private static void ValidateBindings(ActionProgramCandidateNode node, IReadOnlyDictionary<string, ActionProgramCandidateNode> nodes, BodyProgramActionCatalog catalog, List<BodyProgramDiagnostic> diagnostics) { if (!catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? consumerAction)) { diagnostics.Add(Error(Named("invalid_binding", node.ActionId), node.NodeId, "/nodes")); return; } foreach ((string argument, ActionProgramBinding binding) in node.Bindings) { BodyProgramArgumentDescriptor? consumerArgument = consumerAction!.Arguments.SingleOrDefault(item => item.Name == argument); if (binding is null || !nodes.TryGetValue(binding.ProducerNodeId, out ActionProgramCandidateNode? producer) || !node.DependsOn.Contains(binding.ProducerNodeId, StringComparer.Ordinal) || !catalog.TryGetAction(producer.ActionId, out BodyProgramActionDescriptor? producerAction) || consumerArgument is null || !producerAction!.OutputFacts.Any(fact => fact.Name == binding.FactName && fact.Kind == consumerArgument.Kind)) diagnostics.Add(Error(Named("invalid_binding", node.ActionId), node.NodeId, "/nodes")); } }
@@ -829,8 +840,29 @@ internal static class BodyProgramVerifier
     private static IReadOnlyDictionary<string, string> DeriveClaims(BodyProgramActionDescriptor action, BridgeScope scope) { Dictionary<string, string> claims = new(StringComparer.Ordinal); foreach (BodyProgramResourceTemplateClaim claim in action.ResourceTemplate) if (!claims.TryAdd(claim.Key, claim.Value switch { BodyProgramResourceTemplateValue.ScopePlayer => scope.PlayerId, BodyProgramResourceTemplateValue.ActionId => action.ActionId, _ => throw new InvalidOperationException() })) throw new InvalidOperationException(); return new ReadOnlyDictionary<string, string>(claims); }
     private static bool HasCycle(IReadOnlyDictionary<string, ActionProgramCandidateNode> nodes) { HashSet<string> visited = new(StringComparer.Ordinal), active = new(StringComparer.Ordinal); bool Visit(string id) { if (!visited.Add(id)) return active.Contains(id); active.Add(id); bool cycle = nodes[id].DependsOn.Any(dependency => nodes.ContainsKey(dependency) && Visit(dependency)); active.Remove(id); return cycle; } return nodes.Keys.Any(Visit); }
     private static ActionProgramCandidate Canonicalize(ActionProgramCandidate candidate) => new(candidate.ProgramId, Array.AsReadOnly(candidate.Nodes.OrderBy(node => node.NodeId, StringComparer.Ordinal).Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, BodyProgramValidation.FreezeMap(node.Arguments), Array.AsReadOnly(node.DependsOn.OrderBy(id => id, StringComparer.Ordinal).ToArray()), BodyProgramValidation.FreezeMap(node.Bindings))).ToArray()));
-    private static BodyProgramDiagnostic Error(string code, string? node, string path) => new(BodyProgramDiagnosticSeverity.Error, code, node, path, code);
-    private static BodyProgramDiagnostic Error(string code, string? node, string path, string message) => new(BodyProgramDiagnosticSeverity.Error, code, node, path, message);
+    private static BodyProgramDiagnostic Error(string code, string? node, string path) => new(BodyProgramDiagnosticSeverity.Error, code, node, path, code, PreconditionForCode(code));
+    private static BodyProgramDiagnostic Error(string code, string? node, string path, string message) => new(BodyProgramDiagnosticSeverity.Error, code, node, path, message, PreconditionForCode(code));
+    private static BodyProgramDiagnostic Error(string code, string? node, string path, string expected, string actual) =>
+        new(BodyProgramDiagnosticSeverity.Error, code, node, path, $"{code}: expected {expected}, actual {actual}.", PreconditionForCode(code), expected, actual);
+    private static BodyProgramDiagnostic Error(string code, string? node, string path, string message, string failedPrecondition, string expected, string actual) =>
+        new(BodyProgramDiagnosticSeverity.Error, code, node, path, message, failedPrecondition, expected, actual);
+    /// <summary>
+    /// The precondition a reason code names, for the refusals that carry a bespoke message rather than the
+    /// expected/actual pair. Keeping it a single switch means a new code cannot be added without deciding - once,
+    /// here - which precondition it names.
+    /// </summary>
+    internal static string PreconditionForCode(string code) => code switch
+    {
+        "invalid_node" or "invalid_program" => BodyProgramFailedPrecondition.ProgramShape,
+        "authority_unavailable" or "policy_identity_invalid" or "policy_identity_stale" => BodyProgramFailedPrecondition.AuthorityState,
+        "too_many_edges" or "invalid_dependency" or "cycle" => BodyProgramFailedPrecondition.DependencyGraph,
+        "invalid_binding" => BodyProgramFailedPrecondition.FactBinding,
+        "resource_conflict" => BodyProgramFailedPrecondition.ResourceClaim,
+        _ => code.StartsWith("unknown_action", StringComparison.Ordinal) ? BodyProgramFailedPrecondition.ActionRegistration
+            : code.StartsWith("action_not_enabled", StringComparison.Ordinal) ? BodyProgramFailedPrecondition.LiveActionPolicy
+            : code.StartsWith("invalid_arguments", StringComparison.Ordinal) ? BodyProgramFailedPrecondition.ArgumentShape
+            : BodyProgramFailedPrecondition.ProgramShape,
+    };
     /// <summary>
     /// Names the offending action inside the reason code. The wire accepts only `[a-z0-9_:-]` reason
     /// codes, so an action id outside that alphabet keeps the bare code and is named in the message
@@ -841,7 +873,7 @@ internal static class BodyProgramVerifier
         string named = $"{code}:{actionId}";
         return named.Length <= 128 && named.All(character => (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '_' or ':' or '-') ? named : code;
     }
-    private static BodyProgramVerificationReport Reject(BodyProgramActionCatalog catalog, List<BodyProgramDiagnostic> diagnostics, string? code = null, string? node = null, string path = "/") { if (code is not null) diagnostics.Add(Error(code, node, path)); return new(false, catalog.Revision, null, Array.AsReadOnly(diagnostics.OrderBy(diagnostic => diagnostic.Path, StringComparer.Ordinal).ThenBy(diagnostic => diagnostic.Code, StringComparer.Ordinal).Take(64).ToArray())); }
+    private static BodyProgramVerificationReport Reject(BodyProgramActionCatalog catalog, List<BodyProgramDiagnostic> diagnostics, string? code = null, string? node = null, string path = "/", string? expected = null, string? actual = null) { if (code is not null) diagnostics.Add(new BodyProgramDiagnostic(BodyProgramDiagnosticSeverity.Error, code, node, path, code, PreconditionForCode(code), expected, actual)); return new(false, catalog.Revision, null, Array.AsReadOnly(diagnostics.OrderBy(diagnostic => diagnostic.Path, StringComparer.Ordinal).ThenBy(diagnostic => diagnostic.Code, StringComparer.Ordinal).Take(64).ToArray())); }
 }
 
 internal static class BodyProgramCanonical
