@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { resolveLiveRunRoot } from "../core/capture.mjs";
 import { validateEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import { classifyNight } from "../../lib/multiday-baseline.mjs";
+import { executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
@@ -34,7 +35,7 @@ function extractOpeningTaskPrompt(source) {
 function extractProgramToolDescription(source) {
   const toolAt = source.indexOf('"stardew_submit_action_program"');
   const descriptionAt = source.indexOf("description:", toolAt);
-  const end = source.indexOf("parameters: bodyProgramToolParameters(name)", descriptionAt);
+  const end = source.indexOf("parameters: bodyProgramToolParameters(", descriptionAt);
   assert.ok(toolAt >= 0 && descriptionAt > toolAt && end > descriptionAt, "the program tool must have a description");
   return source.slice(descriptionAt, end);
 }
@@ -1376,6 +1377,8 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
     programSubmissions: [{ tool: "stardew_submit_action_program", accepted: false }],
     programOutcomes: [],
     sampleProgramOutcomes: async () => [],
+    programExecutionRows,
+    executionTraceInvariant,
     multidayOutcome: { crossings: 1, dayRecords: [] },
     SCENARIO: "morning_routine",
     LEGACY_LADDER: null,
@@ -1412,6 +1415,16 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
   for (const field of ["startedAtMs", "endedAtMs", "actionCadence", "toolTiming", "presentation"]) {
     assert.ok(Object.hasOwn(result, field), `${field} must be published`);
   }
+  // The count identity is published by the crashed path too: three flat frames and no observed program is three rows.
+  assert.deepEqual(result.executionTrace, {
+    ok: true,
+    flat: 3,
+    program: 0,
+    programDispatches: 0,
+    rows: 3,
+    expectedRows: 3,
+    unobservedPrograms: 0,
+  });
 });
 
 test("an unobserved program is not a program that dispatched nothing", async () => {
@@ -1427,7 +1440,7 @@ test("an unobserved program is not a program that dispatched nothing", async () 
     eventsQuery: async () => ({ code: "not_found", events: [], nextCursor: 0 }),
   });
   assert.deepEqual(failing, [
-    { programId: "p_unreadable", accepted: true, observed: false, dispatched: null, nodeOutcomes: [] },
+    { programId: "p_unreadable", accepted: true, observed: false, dispatched: null, executions: [], nodeOutcomes: [] },
   ]);
   assert.equal(failing[0].dispatched, null, "an unobserved program must not read as dispatched: 0");
 
@@ -1484,6 +1497,15 @@ test("a program that dispatched three nodes reports dispatched: 3, and its node 
   });
   assert.equal(records[0].observed, true);
   assert.equal(records[0].dispatched, 3, "three native_dispatch events are three executions");
+  assert.deepEqual(
+    records[0].executions,
+    [
+      { nodeId: "a", nodeAttempt: null, cursor: 2 },
+      { nodeId: "b", nodeAttempt: null, cursor: 4 },
+      { nodeId: "b", nodeAttempt: null, cursor: 5 },
+    ],
+    "each execution keeps the journal's own identity, which is what makes it a trace row rather than a count",
+  );
   assert.deepEqual(records[0].nodeOutcomes, [
     { nodeId: "a", state: "succeeded" },
     { nodeId: "b", state: "failed" },

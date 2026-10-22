@@ -93,6 +93,15 @@ import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 import { buildFailureSnapshot, buildReproPlan } from "../../lib/failure-dump.mjs";
 import { writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
+// Program executions are a second kind of execution, written beside the request frames and merged back at read time.
+// The module's own header states the invariant these two files have to satisfy together.
+import {
+  executionTraceInvariant,
+  FLAT_EXECUTION_VIA,
+  PROGRAM_TRACE_FILE,
+  programExecutionRows,
+  writeProgramExecutionTrace,
+} from "./execution-trace.mjs";
 import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 
 // Live-run evidence root: every run writes its own local directory with the
@@ -2164,6 +2173,9 @@ client.execute = async (request) => {
     const receipt = await originalExecute(request);
     rememberPose(receipt?.observation);
     const entry = {
+      // How this execution was dispatched. A flat frame is the runner's own request; a program node has no frame and is
+      // recorded in `programTrace.jsonl` (execution-trace.mjs), so a filter on this field separates the two.
+      via: FLAT_EXECUTION_VIA,
       action: request?.action,
       requestId: request?.requestId,
       args: request?.args,
@@ -2184,6 +2196,7 @@ client.execute = async (request) => {
   } catch (error) {
     const reasonCode = String(error?.message ?? error).replace(/^bridge_rejected:/, "");
     const entry = {
+      via: FLAT_EXECUTION_VIA,
       action: request?.action,
       requestId: request?.requestId,
       args: request?.args,
@@ -2217,18 +2230,26 @@ let programOutcomes = Object.freeze([]);
  *
  * `accepted` is an ingress fact and only an ingress fact: eight of ten audited runs published accepted batches and no
  * artifact could say whether a node ran. `dispatched` is the count of the Mod's own `native_dispatch` events - exactly
- * "the executions the program produced" - and `nodeOutcomes` are the per-node states the Mod reports. A journal query
- * that fails is `observed: false` with `dispatched: null`, NEVER `dispatched: 0`: an unobserved program and a program
- * that dispatched nothing are different facts and collapsing them would turn a read failure into a measured zero. A
- * `programId` the Mod never minted (a rejected submit) reads `not_found` and is likewise `observed: false`, with
- * `accepted: false` saying why.
+ * "the executions the program produced" - and `executions` is those same events as rows, so each execution has a place
+ * in the run's trace (`programTrace.jsonl`, execution-trace.mjs) instead of existing only as a number. `nodeOutcomes`
+ * are the per-node states the Mod reports. A journal query that fails is `observed: false` with `dispatched: null`,
+ * NEVER `dispatched: 0`: an unobserved program and a program that dispatched nothing are different facts and collapsing
+ * them would turn a read failure into a measured zero. A `programId` the Mod never minted (a rejected submit) reads
+ * `not_found` and is likewise `observed: false`, with `accepted: false` saying why.
  */
 async function readProgramOutcomes({ submissions, statusQuery, eventsQuery }) {
   const records = [];
   for (const submission of submissions) {
     const programId = typeof submission?.programId === "string" ? submission.programId : null;
     const accepted = submission?.accepted === true;
-    const unobserved = Object.freeze({ programId, accepted, observed: false, dispatched: null, nodeOutcomes: [] });
+    const unobserved = Object.freeze({
+      programId,
+      accepted,
+      observed: false,
+      dispatched: null,
+      executions: [],
+      nodeOutcomes: [],
+    });
     if (programId === null) {
       records.push(unobserved);
       continue;
@@ -2250,12 +2271,24 @@ async function readProgramOutcomes({ submissions, statusQuery, eventsQuery }) {
         if (batch.length === 0 || result.nextCursor <= cursor) break;
         cursor = result.nextCursor;
       }
+      // The journal's own identity for each execution: `cursor` is the event's page position, so the same event read on
+      // two pages is one execution, while a retried node is a new `nodeAttempt` and therefore a second one.
+      const executions = events
+        .filter((event) => event?.kind === "native_dispatch")
+        .map((event) =>
+          Object.freeze({
+            nodeId: event?.nodeId ?? null,
+            nodeAttempt: event?.nodeAttempt ?? null,
+            cursor: event?.cursor ?? null,
+          }),
+        );
       records.push(
         Object.freeze({
           programId,
           accepted,
           observed: true,
-          dispatched: events.filter((event) => event?.kind === "native_dispatch").length,
+          dispatched: executions.length,
+          executions: Object.freeze(executions),
           nodeOutcomes: Object.freeze(
             (status.snapshot.nodes ?? []).map((node) =>
               Object.freeze({ nodeId: node?.nodeId ?? null, state: node?.state ?? null }),
@@ -3425,6 +3458,13 @@ async function buildRunResult({ state, error = null, capture, runtimeRoot, settl
   // committed to the result and the bundle together and neither can disagree with the other. Assigned to the module
   // binding `writeRunBundle` reads, so both result paths publish the same read without a second query.
   programOutcomes = await sampleProgramOutcomes();
+  // The executions those programs dispatched, as trace rows, and the count identity they have to satisfy together with
+  // the flat request frames: rows == flat dispatches + the observed programs' `dispatched` counts. Published on the
+  // result because this identity is the one that was silently broken - a run with 22 submissions and program
+  // `dispatched` counts of 1-4 published a trace of ZERO rows, and nobody could tell from the artifact.
+  const programRows = programExecutionRows(programOutcomes);
+  const executionTrace = executionTraceInvariant({ actionTrace, programOutcomes, programRows });
+  if (!executionTrace.ok) console.error("EXECUTION_TRACE_INVARIANT_VIOLATED", JSON.stringify(executionTrace));
   const result = {
     ...evidence,
     // The run's own window: `startedAtMs` is the runner's own phase clock, so a reader can compute the TAIL (last
@@ -3447,6 +3487,9 @@ async function buildRunResult({ state, error = null, capture, runtimeRoot, settl
     // Mod's own `native_dispatch` events - the executions the program produced - and `observed: false` (with
     // `dispatched: null`) is an unobserved program, which a program that ran nothing must never be confused with.
     programOutcomes,
+    // How many executions the run has, and where they were recorded: `flat` request frames in `actionTrace.jsonl`,
+    // `program` journal executions in `programTrace.jsonl`, `rows` = their sum. `ok` is the invariant above, measured.
+    executionTrace,
     // The run's own cadence, split into the three spans that a single "gap" number conflated: the game doing the
     // work, the agent deciding, and the dispatch-to-dispatch total. Published for EVERY scenario, because "the
     // companion feels laggy" is a question about all of them.
@@ -3473,6 +3516,9 @@ async function buildRunResult({ state, error = null, capture, runtimeRoot, settl
     scenario: SCENARIO,
     runtimeRoot,
     actionTrace,
+    // The program half of the same trace, derived above from the journal read, so the two files and the manifest are
+    // written from one derivation and cannot disagree about how many executions the run had.
+    programRows,
     settlement,
     snapshot,
     pose,
@@ -3495,6 +3541,7 @@ async function writeRunBundle({
   scenario,
   runtimeRoot,
   actionTrace,
+  programRows,
   settlement,
   // Where and when this run last stood, and the failure dump built from it: derived ONCE in buildRunResult, so the
   // bundle cannot judge a run whose `failure` block says something else.
@@ -3602,11 +3649,23 @@ async function writeRunBundle({
     // so the failed run - the one where "the batch ran nothing" matters most - reads the same `dispatched`/`observed`
     // facts as a passed one.
     programOutcomes,
+    // THE INVARIANT, published where the trace is written: a run's execution rows are `executionTrace.flat` request
+    // frames in `actionTrace.jsonl` PLUS `executionTrace.program` journal executions in `programTrace.jsonl`, and the
+    // program half is the sum of the observed programs' `dispatched` counts. `executionTrace.ok` is that identity
+    // measured; a `false` here means the trace is missing executions the Mod reported, which is the failure that made a
+    // run doing real work read as if nothing happened.
+    executionTrace: result.executionTrace,
+    // Two files, one record: a reader merges them (execution-trace.mjs) instead of reading the flat file alone and
+    // concluding the run dispatched nothing.
+    programTrace: { path: PROGRAM_TRACE_FILE, records: (programRows ?? []).length },
   };
   // The timeline record COUNT is the fact log's length, so the on-disk file must match it (the validator
   // cross-checks the file against the manifest).
   const timeline = factLog.map((entry, index) => ({ index, ...entry }));
   try {
+    // The program half of the trace is written FIRST and into the same run directory: it is evidence in its own right,
+    // and it must not depend on the manifest being accepted.
+    await writeProgramExecutionTrace(capture.dir, programRows);
     const written = await writeEvidenceBundle(capture.dir, { bundle, timeline, actionTrace });
     return Object.freeze({ state: "written", runDir: written.runDir });
   } catch (error) {
@@ -3620,6 +3679,8 @@ async function writeRunBundle({
         snapshotFields: snapshot === null ? [] : Object.keys(snapshot).sort(),
         poseFields: pose === null ? [] : Object.keys(pose).sort(),
         actionTraceSteps: actionTrace.length,
+        // The program half too: a refused manifest must not be the only thing the run says about work the Mod did.
+        programTraceSteps: (programRows ?? []).length,
         slot,
       }),
     );
