@@ -1344,9 +1344,16 @@ export function MemoryPanel({
       )}
       {mutationAvailable && (
         <div className="memory-authoring" data-memory-authoring>
+          {/* The surface's own action, painted as the product's primary while the form is closed -
+              it was a bare 12 px text link under the card while 刷新记忆 was a bordered button. Once
+              the form is open the primary moves to the verb that commits it, so this button becomes
+              the way out and drops back to the secondary treatment rather than two primaries
+              sharing the panel. */}
           <button
             type="button"
-            className="memory-authoring-toggle"
+            className={
+              authoringOpen ? "small-button memory-authoring-toggle" : "small-button primary memory-authoring-toggle"
+            }
             data-memory-authoring-toggle
             aria-expanded={authoringOpen}
             onClick={() => setAuthoringOpen((open) => !open)}
@@ -1383,7 +1390,7 @@ export function MemoryCreateForm({
       />
       <button
         type="button"
-        className="small-button"
+        className="small-button primary"
         disabled={content.trim().length === 0}
         onClick={() => {
           onCreate(content.trim());

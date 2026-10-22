@@ -676,6 +676,92 @@ test("defect 5: a button beside a full-width field keeps its label on one line",
 });
 
 
+// --- defect 6 ----------------------------------------------------------------
+
+/**
+ * The Memory surface's own primary action read as its weakest control: the way to tell her
+ * something was a bare 12 px `--text-secondary` text link with no chrome, while 刷新记忆 - a
+ * recovery action - was a 44 px bordered button in the header. The surface therefore offered
+ * two controls and painted the maintenance one loudest.
+ *
+ * The treatment is the product's own primary (`small-button primary`, `--accent-solid`), so
+ * nothing here invents a colour step: the assertion reads the token off the sheet and compares
+ * the two controls against it. `--accent-solid` is resolved through a probe element rather than
+ * written as a literal, so the test follows the sheet if the token moves.
+ *
+ * Before: the toggle measured `background-color: rgba(0, 0, 0, 0)`, `font-size: 12px`,
+ * `color: rgb(200, 192, 182)`, `border: 0` against 刷新记忆's `rgb(32, 29, 29)` behind a 1 px
+ * border at 13 px/`rgb(245, 240, 232)`.
+ */
+test("the Memory surface's primary action outranks its secondaries", async ({ page }) => {
+  await mountShell(page);
+  await openSurface(page, "记忆", "memory-surface");
+  const surface = page.getByTestId("memory-surface");
+
+  const accentSolid = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.backgroundColor = "var(--accent-solid)";
+    document.body.append(probe);
+    const value = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return value;
+  });
+
+  const read = (locator: Locator) =>
+    locator.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        text: (node.textContent ?? "").trim(),
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        color: style.color,
+        backgroundColor: style.backgroundColor,
+        borderTopWidth: style.borderTopWidth,
+        height: Math.round(node.getBoundingClientRect().height),
+      };
+    });
+
+  const toggle = surface.locator("[data-memory-authoring-toggle]");
+  const refresh = surface.getByRole("button", { name: "刷新记忆", exact: true });
+  const closed = await read(toggle);
+  const secondary = await read(refresh);
+  console.log(`[defect-6 closed] primary=${JSON.stringify(closed)} secondary=${JSON.stringify(secondary)}`);
+
+  expect(closed.backgroundColor, "the surface's own action is painted as the product's primary").toBe(accentSolid);
+  expect(
+    closed.backgroundColor,
+    `the primary (${closed.backgroundColor}) is not the secondary's fill (${secondary.backgroundColor})`,
+  ).not.toBe(secondary.backgroundColor);
+  expect(
+    closed.fontSize,
+    `the primary is not quieter than the recovery control (${closed.fontSize} vs ${secondary.fontSize})`,
+  ).toBe(secondary.fontSize);
+  expect(closed.height, "and it keeps the 44 px floor like every other control").toBe(44);
+  // The two secondaries are untouched: the recovery control keeps its quiet fill and border.
+  expect(secondary.borderTopWidth, "刷新记忆 keeps its resting border").toBe("1px");
+
+  // Opening the form moves the primary to the verb that commits it: the toggle becomes the way
+  // out, so it drops back to the secondary treatment instead of two primaries sharing the panel.
+  await toggle.click();
+  const save = surface.getByRole("button", { name: "创建", exact: true });
+  await expect(save).toBeVisible();
+  // Off the button, and settled: `small-button` transitions its own fill, so the reading below is
+  // taken after the repaint rather than mid-interpolation.
+  await page.mouse.move(0, 0);
+  await expect(toggle).toHaveCSS("background-color", secondary.backgroundColor);
+  const opened = await read(toggle);
+  const committed = await read(save);
+  console.log(`[defect-6 open] withdraw=${JSON.stringify(opened)} save=${JSON.stringify(committed)}`);
+
+  expect(committed.backgroundColor, "the compose-and-save control is the primary one").toBe(accentSolid);
+  expect(opened.backgroundColor, "and the withdraw beside it is not").not.toBe(accentSolid);
+  expect(opened.backgroundColor, "the withdraw is the same secondary treatment as 刷新记忆").toBe(
+    secondary.backgroundColor,
+  );
+  // The labelled control is the one the surface is for: the primary carries the notebook's words.
+  expect(closed.text, "the primary is the action the surface exists for").toContain("悄悄告诉伴侣一件事");
+});
+
 // --- the opening switcher's label vocabulary ---------------------------------
 
 /**

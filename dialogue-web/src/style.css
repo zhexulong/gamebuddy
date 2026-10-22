@@ -4479,21 +4479,9 @@
   }
 
   .memory-authoring-toggle {
+    /* Layout only: the treatment is the shared `small-button`, so the surface's primary action and
+     the rest of the product's controls cannot drift apart. */
     align-self: flex-start;
-    min-height: var(--touch-target-min);
-    padding: 0 var(--space-2);
-    border: 0;
-    background: none;
-    color: var(--text-secondary);
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: color var(--motion-duration-fast) var(--motion-ease-out);
-  }
-
-  .memory-authoring-toggle:hover {
-    color: var(--text-primary);
   }
 
   /* --- game-surface lane: the companion capability board and the start guide ---
