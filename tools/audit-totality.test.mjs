@@ -419,10 +419,34 @@ test("hygiene: what production reads stays green, what only a test reads goes re
       "host/src/nested/hygiene-consumer.ts",
       'import { readThroughBarrel } from "../hygiene-library-barrel.js";\nexport const produced = readThroughBarrel();\n',
     );
+    // ... and the two consumers that bind no name to import: a type written inline, and a namespace import.
+    write(root, "host/src/hygiene-inline-type.ts", "export type InlineRead = { value: number };\n");
+    write(root, "host/src/hygiene-namespaced.ts", "export const NAMESPACED = 1;\n");
+    write(
+      root,
+      "host/src/nested/hygiene-unnamed-consumer.ts",
+      [
+        'import * as namespaced from "../hygiene-namespaced.js";',
+        'export const read = (value: import("../hygiene-inline-type.js").InlineRead): number =>',
+        "  value.value + namespaced.NAMESPACED;",
+        "",
+      ].join("\n"),
+    );
+    // The test reads the two unnamed-consumer exports by name, so a production consumer the scan failed to see
+    // would surface them as findings instead of quietly leaving them unexamined.
     write(
       root,
       "host/src/hygiene-library.test.ts",
-      'import test from "node:test";\nimport { readOnlyByTests } from "./hygiene-library.js";\nvoid readOnlyByTests;\ntest("x", () => {});\n',
+      [
+        'import test from "node:test";',
+        'import { readOnlyByTests } from "./hygiene-library.js";',
+        'import { NAMESPACED } from "./hygiene-namespaced.js";',
+        'import type { InlineRead } from "./hygiene-inline-type.js";',
+        "void [readOnlyByTests, NAMESPACED];",
+        "export type Probe = InlineRead;",
+        'test("x", () => {});',
+        "",
+      ].join("\n"),
     );
 
     const broken = violationsOf(root, "hygiene");
