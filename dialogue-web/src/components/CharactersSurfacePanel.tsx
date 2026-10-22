@@ -1,11 +1,12 @@
 import { ChevronDown } from "lucide-react";
-import { type ReactElement, useCallback, useEffect, useState } from "react";
+import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 import type { Locale } from "../i18n";
-import type {
-  CompanionWorldBookV1,
-  ManagementPipelineApi,
-  WorldInfoContentV1,
-  WorldInfoStateV1,
+import {
+  type CompanionWorldBookV1,
+  MAX_LOREBOOK_FILE_BYTES,
+  type ManagementPipelineApi,
+  type WorldInfoContentV1,
+  type WorldInfoStateV1,
 } from "../management-pipeline-api";
 import { problemTextWithCode, TavernProblemError } from "../management-pipeline-api";
 import { useArmedConfirmation } from "./armed-confirmation";
@@ -908,6 +909,15 @@ function CharacterWorldBookPanel({
   // The item whose delete is armed. Arming is per item and per panel, so a
   // second arm replaces the first and no stale arm can fire on another row.
   const [armed, setArmed] = useState<string | null>(null);
+  // The picked lorebook file waiting to be imported: a raw ST/Chub world book
+  // the Host's own importer turns into a library item. Held client-side until the
+  // player presses Import, so picking a file is not itself a durable change.
+  const [pickedLorebook, setPickedLorebook] = useState<Readonly<{
+    name: string;
+    lorebook: Record<string, unknown>;
+  }> | null>(null);
+  const [importing, setImporting] = useState(false);
+  const lorebookInputRef = useRef<HTMLInputElement>(null);
 
   const readOnce = useCallback(async (): Promise<WorldBookView> => {
     try {
@@ -1105,6 +1115,64 @@ function CharacterWorldBookPanel({
     })();
   };
 
+  /**
+   * The picked lorebook file, read in this browser and held until Import.
+   *
+   * The file's interior is never inspected here: the Host's own importer is the one place that
+   * translates an ST/Chub/`character_book` payload, and this side only proves the bytes are a JSON
+   * object (the shape the route's schema carries) before offering them. A file that is not JSON, is
+   * too large, or is not an object gets its own sentence rather than a request the Host would refuse.
+   */
+  const handleLorebookFile = async (file: File): Promise<void> => {
+    setNotice(null);
+    setPickedLorebook(null);
+    if (file.size > MAX_LOREBOOK_FILE_BYTES) {
+      setNotice({ kind: "failure", text: labels.worldBookImportTooLarge });
+      return;
+    }
+    try {
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(await file.arrayBuffer()).replace(/^\uFEFF/u, "");
+      const value: unknown = JSON.parse(text);
+      if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("not_object");
+      setPickedLorebook({ name: file.name, lorebook: value as Record<string, unknown> });
+    } catch {
+      setNotice({ kind: "failure", text: labels.worldBookImportInvalid });
+    }
+  };
+
+  /**
+   * Imports the picked file through the library's own importer. The Host's reply is the new
+   * projection, so the imported item is re-rendered from what the Host returned rather than from
+   * anything this side holds; a refusal re-reads the library before it is reported.
+   */
+  const importLorebook = (): void => {
+    if (view.kind !== "ready" || pickedLorebook === null || importing) return;
+    const expectedRevision = view.worldInfo.revision;
+    const lorebook = pickedLorebook.lorebook;
+    setImporting(true);
+    void (async () => {
+      let failure: string | null = null;
+      try {
+        const result = await api.importWorldInfo(
+          { apiVersion: 1, selectionGeneration: generation, expectedRevision, lorebook },
+          csrfToken,
+        );
+        setView({ kind: "ready", worldInfo: result });
+        setPickedLorebook(null);
+      } catch (error) {
+        failure = problemTextWithCode(labels.worldBookImportFailed, error);
+        setView(await readOnce());
+      } finally {
+        setImporting(false);
+      }
+      setNotice(
+        failure === null
+          ? { kind: "success", text: labels.worldBookImportImported }
+          : { kind: "failure", text: failure },
+      );
+    })();
+  };
+
   if (view.kind === "loading") return null;
   if (view.kind === "error" || view.kind === "unavailable") {
     return (
@@ -1154,6 +1222,52 @@ function CharacterWorldBookPanel({
         <div className="composer-actions">
           <button type="button" className="small-button" data-world-book-create onClick={beginCreate}>
             {labels.worldBookCreate}
+          </button>
+        </div>
+      )}
+      {/* Importing an existing world book file is the other way a library item appears, and it is
+          the one that serves the library's own SillyTavern/Chub importer to the player: the file is
+          chosen here, held locally, and posted whole only when Import is pressed. */}
+      <div className="composer-actions">
+        <button
+          type="button"
+          className="small-button"
+          data-world-book-import-trigger
+          disabled={importing}
+          onClick={() => lorebookInputRef.current?.click()}
+        >
+          {labels.worldBookImport}
+        </button>
+        <input
+          ref={lorebookInputRef}
+          type="file"
+          accept=".json,application/json"
+          aria-label={labels.worldBookImportFileLabel}
+          className="card-import-file-input"
+          disabled={importing}
+          tabIndex={-1}
+          data-world-book-import-file
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file !== undefined) void handleLorebookFile(file);
+          }}
+        />
+      </div>
+      {pickedLorebook !== null && (
+        <div className="composer-actions" data-world-book-import-picked>
+          <p className="management-settings-hint">{pickedLorebook.name}</p>
+          <button
+            type="button"
+            className="small-button primary"
+            data-world-book-import-submit
+            disabled={importing}
+            onClick={importLorebook}
+          >
+            {importing ? labels.worldBookImportBusy : labels.worldBookImport}
+          </button>
+          <button type="button" className="small-button" disabled={importing} onClick={() => setPickedLorebook(null)}>
+            {labels.worldBookCancel}
           </button>
         </div>
       )}
