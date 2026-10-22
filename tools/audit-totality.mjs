@@ -1870,8 +1870,12 @@ function runHygiene(sources) {
   }
 
   // An export whose only readers are tests is a production path a test keeps alive: nothing ships it, and
-  // deleting the test would expose it as dead. The reading is resolved rather than name-matched, because an
-  // export reached through a barrel, or used by its own module, is a production path whatever a test does.
+  // deleting the test would expose it as dead. The reading resolves each relative specifier to the module it
+  // names and counts a module's own use of its export, because the bare-name scan it replaces counted only
+  // `import` declarations: `MAX_PLAN_NODES` read by the file that declares it, with a test importing it, was
+  // reported as a production path with no production consumer. A re-export barrel is transparent here - a
+  // consumer of the barrel is recorded against the module that declares the symbol - so a barrel neither
+  // launders a test-only export nor hides a production one.
   const audited = sources.allFiles(sources.path(...HOST), sources.path(...WEB));
   const surfaces = new Map(audited.map((file) => [file, moduleSurface(sources, file)]));
   const consumers = exportConsumers(sources, audited, surfaces);
@@ -2026,11 +2030,13 @@ function runDelegated(sources, gate) {
  * it as one defect and sweep it mechanically. Until that ruling exists the class reports by kind with counts and a
  * bounded sample, and it does not block.
  *
- * That count only became a reading when the importer detection was resolved rather than name-matched: an export
- * reached through a re-export barrel, or named by its own module, used to be reported as test-only, so the number
- * described the scan instead of the tree. The class now resolves each relative specifier to the module it names,
- * follows re-export barrels to the module that declares a symbol, and counts a module's own use of its export;
- * its own test proves both directions (a production-only importer stays green, a test-only importer goes red).
+ * That count only became a reading when the importer detection was resolved (`759b588a`). The scan it replaced keyed
+ * importers by the bare name of an `import` declaration, so an export the declaring module itself names - a constant
+ * the file uses, `MAX_PLAN_NODES` at `body-program-script.ts:66`, with a test importing it - was reported as a
+ * production path with no production consumer, and an import that renamed the binding cleared the wrong symbol. 286 of
+ * the 287 findings the fix removed were the first shape; the rest moved to the declaration a re-export list aliases.
+ * The class now resolves a relative specifier to the module it names, treats a re-export barrel as transparent, and
+ * counts a module's own use of its export; its own test proves both directions, and the 152 that remain are real.
  *
  * `read-path` left this list when the rule learned the namespaced schema reference the product writes (`e9efd15e`):
  * its fixture now resolves the site, goes red on a projection bounded above the schema it validates against, and
