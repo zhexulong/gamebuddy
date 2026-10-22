@@ -7,6 +7,7 @@ import {
   resolveCompanionOwnOpening,
   resolveCompanionOwnScenario,
   resolveCompanionOwnWorldBookBinding,
+  resolvePlayerOwnPersona,
 } from "./library-service.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import {
@@ -131,6 +132,13 @@ export function createManifestDerivedInitialChatExactContentPort(
           request.scenarioId === undefined
             ? await resolveCompanionOwnScenario(artifacts, tavernPaths.companionRoot)
             : undefined;
+        // The player's own persona is the fourth authored class this Chat carries. It is
+        // resolved on the SAME seam the scenario and the book are, so the first Chat of a
+        // continuity is not the one Chat that never learned how she knows the player.
+        const persona =
+          request.personaId === undefined
+            ? await resolvePlayerOwnPersona(artifacts, tavernPaths.playerRoot)
+            : undefined;
         const companionWorldBookBinding =
           request.companionWorldBookBinding ?? (await resolveCompanionOwnWorldBookBinding(runtimePaths.runtimeCwd));
         const opening =
@@ -143,11 +151,16 @@ export function createManifestDerivedInitialChatExactContentPort(
           ));
         return inner.createExplicit({
           ...request,
-          ...(scenario === undefined
+          ...(scenario === undefined ? {} : { scenarioId: scenario.artifact.scenarioId }),
+          ...(persona === undefined ? {} : { personaId: persona.artifact.personaId }),
+          ...(scenario === undefined && persona === undefined
             ? {}
             : {
-                scenarioId: scenario.artifact.scenarioId,
-                stableArtifactBindings: Object.freeze([...(request.stableArtifactBindings ?? []), scenario.binding]),
+                stableArtifactBindings: Object.freeze([
+                  ...(request.stableArtifactBindings ?? []),
+                  ...(scenario === undefined ? [] : [scenario.binding]),
+                  ...(persona === undefined ? [] : [persona.binding]),
+                ]),
               }),
           ...(companionWorldBookBinding === undefined ? {} : { companionWorldBookBinding }),
           opening: opening ?? "blank",

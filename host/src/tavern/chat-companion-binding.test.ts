@@ -42,7 +42,7 @@ import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-recl
 import { TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import { createManifestDerivedInitialChatExactContentPort } from "./initial-chat-exact-content-port.js";
-import { createTavernLibraryService } from "./library-service.js";
+import { createTavernLibraryService, resolvePlayerOwnPersona } from "./library-service.js";
 import {
   createNewCompanionService,
   provisionDirectNewCompanion,
@@ -52,6 +52,7 @@ import { resolveTavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import { type CharacterCandidate, validateTavernArtifact } from "./types.js";
 import { readWorldBook, writeWorldBook } from "../worldbook.js";
 import { macroTable } from "./macro-engine.js";
+import { createPersonaManagementService, playerPersonaId } from "./persona-management/persona-management.js";
 import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "./companion-world-book-service.js";
 
 test.before(async () => {
@@ -82,6 +83,15 @@ const CARD = Object.freeze({
 });
 
 const REVIEWED_FIELDS = ["name", "persona_core", "example_1", "scenario", "first_greeting"] as const;
+
+/**
+ * The player's own side of the same scene: a name and the answer to the Characters panel's
+ * 「你希望伙伴如何认识你」. The description is a sentinel so a quoted read-back names it.
+ */
+const PERSONA = Object.freeze({
+  name: "阿岚",
+  description: "SENTINEL-PERSONA-DESCRIPTION: 我们春天在河谷的老橡树下认识，那天你在修篱笆。",
+});
 
 const FIRST = Object.freeze({
   chatThreadId: `chat-${"1".repeat(16)}`,
@@ -579,6 +589,104 @@ test("a book changed outside the service still refuses the mount", async () => {
       chat.prepared.materializeDesiredStableContextForPiSession("pi_hand_edited_book"),
       /chat_runtime_exact_content_unavailable/,
     );
+  } finally {
+    await release({ ...(chat === undefined ? {} : { first: chat }), threads: fixture.threads, root: fixture.root });
+  }
+});
+
+/**
+ * The player's own persona used to be written and then dropped.
+ *
+ * The Characters panel asks 「你希望伙伴如何认识你」 and persists the answer under the one
+ * derived id, but no Chat ever bound it: `personaId` was set only when a caller named one,
+ * and no product route names one. The authored context the model reads is materialized from
+ * the thread's own bindings, so the player's name and the description of how she knows them
+ * reached nothing at all. This pins the fourth authored class to BOTH creation seams - the
+ * saga's first Chat and the management surface's New Chat - and quotes it out of the
+ * catalog the turn's prompt is assembled from.
+ */
+test("the player's own persona is bound by both Chat seams and her description reaches the model", async () => {
+  const fixture = await twoChats();
+  const content = createManifestDerivedInitialChatExactContentPort(fixture.manifest);
+  let firstChat: PreparedChat | undefined;
+  let secondChat: PreparedChat | undefined;
+  try {
+    await createPersonaManagementService(fixture.artifacts, fixture.tavernPaths.playerRoot).create(PERSONA);
+    await content.port.createExplicit({
+      ...FIRST,
+      companionId: fixture.provision.identity.companionId,
+      continuityId: fixture.provision.identity.continuityId!,
+    });
+    await fixture.library.createNewChat({ ...SECOND });
+
+    const expectedId = playerPersonaId(fixture.tavernPaths.playerRoot);
+    for (const chat of [FIRST, SECOND]) {
+      const state = await fixture.threads.resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId);
+      assert.equal(state.thread.personaId, expectedId, `Chat ${chat.chatThreadId} must bind the player's own persona`);
+      assert.equal(
+        state.thread.stableArtifactBindings?.some((item) => item.kind === "persona" && item.sourceId === expectedId),
+        true,
+        `Chat ${chat.chatThreadId} must persist the persona binding the catalog is read against; the model reads ${JSON.stringify(state.thread.stableArtifactBindings?.map((item) => item.kind) ?? [])}`,
+      );
+    }
+
+    firstChat = await constructChat(fixture, FIRST);
+    secondChat = await constructChat(fixture, SECOND);
+    for (const [index, prepared] of [firstChat, secondChat].entries()) {
+      const catalog = await prepared.prepared.materializeDesiredStableContextForPiSession(`pi_persona_${index}`);
+      const personaSource = catalog.stableSources.find((source) => source.kind === "persona");
+      assert.notEqual(personaSource, undefined, "the player's persona is one of the model's authored sources");
+      const published = catalog.stableSources.map((source) => source.content).join("\n");
+      assert.equal(
+        published.includes(PERSONA.description),
+        true,
+        `her description must reach the model verbatim; got ${published.slice(0, 600)}`,
+      );
+      assert.equal(published.includes(PERSONA.name), true, "and her name must reach it with the description");
+      assert.equal(published.includes("{{"), false, "no raw macro may be published as authored context");
+    }
+  } finally {
+    await release({
+      ...(firstChat === undefined ? {} : { first: firstChat }),
+      ...(secondChat === undefined ? {} : { second: secondChat }),
+      content,
+      threads: fixture.threads,
+      root: fixture.root,
+    });
+  }
+});
+
+/**
+ * A player who has not filled the Characters panel is not a degraded case.
+ *
+ * With no persona on disk nothing is bound and nothing is emitted: the catalog keeps
+ * exactly the sources, order keys and `{{user}}` rendering it had before personas were
+ * bindable. The pronoun is the macro table's own default (`macro-engine.ts`), so `{{user}}`
+ * still says 你 rather than the name of a persona that does not exist.
+ */
+test("a player with no persona publishes the same catalog it did before personas were bound", async () => {
+  const fixture = await twoChats();
+  let chat: PreparedChat | undefined;
+  try {
+    assert.equal(
+      await resolvePlayerOwnPersona(fixture.artifacts, fixture.tavernPaths.playerRoot),
+      undefined,
+      "premise: this player has authored no persona",
+    );
+    const created = await fixture.library.createNewChat({ ...SECOND });
+    assert.equal(created.thread.personaId, undefined, "nothing is bound, so the thread names no persona");
+
+    chat = await constructChat(fixture, SECOND);
+    const catalog = await chat.prepared.materializeDesiredStableContextForPiSession("pi_no_persona");
+    assert.deepEqual(
+      catalog.stableSources.map((source) => `${source.kind}@${source.totalOrderKey}`),
+      ["scenario@0001", "lorebook_constant@0002"],
+      "no persona source is invented, and no order key is renumbered for one that is absent",
+    );
+    const published = catalog.stableSources.map((source) => source.content).join("\n");
+    assert.equal(published.includes("{{"), false, "no raw macro may be published as authored context");
+    assert.equal(published.includes("你 takes the heavy work"), true, "{{user}} still renders to the pronoun");
+    assert.equal(published.includes(PERSONA.name), false, "no persona of another root leaks in");
   } finally {
     await release({ ...(chat === undefined ? {} : { first: chat }), threads: fixture.threads, root: fixture.root });
   }

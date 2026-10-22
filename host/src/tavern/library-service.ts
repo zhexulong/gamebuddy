@@ -15,6 +15,7 @@ import type {
   TavernStableArtifactBinding,
   TavernStableWorldBookBinding,
 } from "./chat-thread-store.js";
+import { playerPersonaId } from "./persona-management/persona-management.js";
 import { companionScenarioId } from "./scenario-management/scenario-management.js";
 import { type TavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import {
@@ -149,9 +150,15 @@ export function createTavernLibraryService(
       // selected scenario is the caller's, never replaced or added to.
       const ownScenario =
         input.scenarioId === undefined ? await resolveCompanionOwnScenario(store, paths.companionRoot) : undefined;
+      // A Chat that names no persona takes the player's own - there is exactly one, so
+      // "which persona" is not a choice a caller makes. Resolution lives in ONE place
+      // (`resolvePlayerOwnPersona` below), shared with the unmounted creation port, and
+      // is reached only when the caller names none.
+      const ownPersona =
+        input.personaId === undefined ? await resolvePlayerOwnPersona(store, paths.playerRoot) : undefined;
       const persona =
         input.personaId === undefined
-          ? undefined
+          ? ownPersona?.artifact
           : await latestExact<UserPersona>(
               store,
               join(paths.playerRoot, "personas", input.personaId),
@@ -179,7 +186,13 @@ export function createTavernLibraryService(
       const stableArtifactBindings: TavernStableArtifactBinding[] = [];
       if (persona !== undefined)
         stableArtifactBindings.push(
-          await stableBinding(store, personaPath(persona.personaId, persona.revision), "persona", persona.personaId),
+          ownPersona?.binding ??
+            (await stableBinding(
+              store,
+              personaPath(persona.personaId, persona.revision),
+              "persona",
+              persona.personaId,
+            )),
         );
       if (scenario !== undefined)
         stableArtifactBindings.push(
@@ -450,6 +463,47 @@ export async function resolveCompanionOwnScenario(
     artifact: envelope.artifact,
     binding: Object.freeze({
       kind: "scenario" as const,
+      sourceId,
+      revision: envelope.revision,
+      canonicalHash: envelope.canonicalHash,
+    }),
+  });
+}
+
+/**
+ * The player's own persona, for a Chat that names none.
+ *
+ * The Characters panel asks how the companion should know the player and persists the
+ * answer under the ONE derived id (`playerPersonaId`). Until a Chat bound it, the record
+ * reached nothing: the catalogue only publishes sources the thread binds, so the player's
+ * own name and the description of how she knows them were written and never sent.
+ *
+ * The binding is returned with the artifact because the caller must PERSIST it on the
+ * thread: the mount path materializes only what the thread binds, and acceptance refuses
+ * a persona source whose thread carries no binding.
+ *
+ * Absent is ordinary - a player who has not filled the panel has no persona, and `{{user}}`
+ * stays the locale's own word. A present but unreadable persona fails closed (the same
+ * bounded `invalid_tavern_selection` an explicitly selected one already reports) rather
+ * than opening a Chat that silently lost how she knows you.
+ */
+export async function resolvePlayerOwnPersona(
+  store: TavernArtifactStore,
+  playerRoot: string,
+): Promise<Readonly<{ artifact: UserPersona; binding: TavernStableArtifactBinding }> | undefined> {
+  const sourceId = playerPersonaId(playerRoot);
+  const envelope = await selectionRepository<UserPersona>(
+    store,
+    join(playerRoot, "personas", sourceId),
+    sourceId,
+    "invalid_tavern_selection",
+    (artifact) => artifact.personaId === sourceId,
+  ).readLatestArtifact();
+  if (envelope === undefined) return undefined;
+  return Object.freeze({
+    artifact: envelope.artifact,
+    binding: Object.freeze({
+      kind: "persona" as const,
       sourceId,
       revision: envelope.revision,
       canonicalHash: envelope.canonicalHash,

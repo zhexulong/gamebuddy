@@ -22,6 +22,17 @@ export type PersonaManagementService = Readonly<{
 }>;
 
 /**
+ * The ONE derivation of the player's own persona id.
+ *
+ * The Characters panel writes the persona under this id, and a Chat creation that
+ * names no persona binds the same id, so the writer and every reader agree by
+ * construction rather than by two copies of a hash.
+ */
+export function playerPersonaId(playerRoot: string): string {
+  return `player-persona-${digest(resolve(playerRoot))}`;
+}
+
+/**
  * Player-scoped persona persistence. The public result is deliberately a
  * strict projection: no artifact path, identifier, hash, or runtime content
  * crosses this boundary.
@@ -31,7 +42,7 @@ export function createPersonaManagementService(
   playerRoot: string,
 ): PersonaManagementService {
   const root = resolve(playerRoot);
-  const personaId = `player-persona-${digest(root)}`;
+  const personaId = playerPersonaId(root);
   const repository = store.openRevisionRepository({
     root: join(root, "personas", personaId),
     artifactKind: "persona",
@@ -114,10 +125,17 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function singleLine(value: unknown, max: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001F\u007F-\u009F]/u.test(value);
+  return (
+    typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001F\u007F-\u009F]/u.test(value)
+  );
 }
 function text(value: unknown, max: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value);
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= max &&
+    !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
+  );
 }
 function digest(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex").slice(0, 32);
