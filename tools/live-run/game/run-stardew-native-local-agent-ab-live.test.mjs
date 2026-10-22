@@ -12,6 +12,32 @@ import { classifyNight } from "../../lib/multiday-baseline.mjs";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
+// The program tool's description is presented material, but the runner mounts the Host's tool definitions rather
+// than authoring them, so the one copy lives in the materializer. Read (never write) it here to falsify its content.
+const HOST_MATERIALIZER_SOURCE = await readFile(
+  new URL(
+    "../../../host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
+
+/** The opening scenario's own prompt text: the task the run presents first, and nothing else. */
+function extractOpeningTaskPrompt(source) {
+  const start = source.indexOf("morning_routine: Object.freeze({");
+  const end = source.indexOf("memory_covenant: Object.freeze({");
+  assert.ok(start >= 0 && end > start, "the runner must define the opening scenario's prompt");
+  return source.slice(start, end);
+}
+
+/** The `description` literal that belongs to `stardew_submit_action_program`, delimited by its own tool body. */
+function extractProgramToolDescription(source) {
+  const toolAt = source.indexOf('"stardew_submit_action_program"');
+  const descriptionAt = source.indexOf("description:", toolAt);
+  const end = source.indexOf("parameters: bodyProgramToolParameters(name)", descriptionAt);
+  assert.ok(toolAt >= 0 && descriptionAt > toolAt && end > descriptionAt, "the program tool must have a description");
+  return source.slice(descriptionAt, end);
+}
 
 test("the runner resolves its capture root to the repository root, not tools/", () => {
   // The runner lives at tools/live-run/game; "../../.." must land on the
@@ -247,6 +273,57 @@ test("prompts state the errand, not the route (no step-by-step coaching)", () =>
   // The goal statement itself must survive.
   assert.match(RUNNER_SOURCE, /她需要一颗新鲜花椰菜/);
   assert.match(RUNNER_SOURCE, /she needs a fresh cauliflower/);
+});
+
+test("the opening task's unit is one whole piece of work, stated without tool names or a route", () => {
+  // Measured 2026-10-21: the companion's problem was not discoverability (one session made 22 accepted program
+  // submissions) but the UNIT the opening task asked for - "do as many things as you can" produces one model
+  // round-trip per thing (settle -> dispatch p50 3.3 s, p90 37 s, none of 28 gaps under 500 ms) where a plan's own
+  // node-to-node step costs ~10 ms. So the text asks for one job carried through in a single pass, and it still
+  // prescribes no tool and no ordered steps: the two halves are asserted together, because a prompt that bought
+  // the unit by naming the route would hide the observation defects this scenario exists to expose.
+  const openingTask = extractOpeningTaskPrompt(RUNNER_SOURCE);
+  assert.match(openingTask, /把今天这一摊活当成一整件事/);
+  assert.match(openingTask, /take today's work as one whole job/);
+  assert.match(openingTask, /再一口气把它做完/);
+  assert.match(openingTask, /then carry it through in one go/);
+  // The retired framing is the falsifier: "do as many things as you can" is what made every step its own turn.
+  assert.doesNotMatch(openingTask, /能做几件做几件/);
+  assert.doesNotMatch(openingTask, /as many things as you can/);
+  for (const toolName of ["stardew_", "observe_scene", "move_to_tile", "submit_action_program", "programId"])
+    assert.ok(!openingTask.includes(toolName), `the opening task must not name the tool surface: ${toolName}`);
+  for (const routeWord of [
+    "按顺序",
+    "依次",
+    "第一步",
+    "第二步",
+    "然后调用",
+    "先检查",
+    "先观察",
+    "in this order",
+    "step by step",
+    "step 1",
+    "first call",
+    "then call",
+  ])
+    assert.ok(!openingTask.includes(routeWord), `the opening task must not prescribe the route: ${routeWord}`);
+});
+
+test("the program tool's description says it carries the moves and that the Mod advances them", () => {
+  // Evidence: the description said what the tool was FOR, but not what it CARRIES. Runs therefore answered their
+  // task step by step, paying a model round-trip between steps. The description is presented material, so it is
+  // asserted where it is authored - and its load-bearing rules are pinned beside the new sentences so buying the
+  // unit cannot cost the advertised-surface rule or the bounded-refusal contract.
+  const description = extractProgramToolDescription(HOST_MATERIALIZER_SOURCE);
+  assert.match(description, /the plan and the moves that carry it out travel together/);
+  assert.match(description, /advances the successors itself/);
+  assert.match(description, /does not come back between steps/);
+  // The cost of the alternative, in one clause: without this the unit is stated but the trade is not.
+  assert.match(description, /waiting for a decision between every step/);
+  assert.match(description, /must be actions currently advertised to you/);
+  assert.match(description, /bounded and side-effect free/);
+  assert.match(description, /Nodes carry no deadline/);
+  assert.match(description, /"programId":"farm_morning"/);
 });
 
 test("the fact log keeps receipt evidence so observed events can be derived", () => {

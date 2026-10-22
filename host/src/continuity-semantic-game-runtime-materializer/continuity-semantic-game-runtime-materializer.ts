@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { resolveCompanionLocale, type CompanionLocale } from "../settings/player-preference-store.js";
 import { Type } from "typebox";
@@ -38,6 +38,7 @@ import { identityProfileMetadata } from "../identity-profile.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
 import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
 import { createMaterializedGameCompanionRuntime } from "../game-runtime-fixed-tools.internal.js";
+import { createRunTrace, writeRunTrace, type RunTrace } from "../run-trace.js";
 import {
   validateBodyProgramCandidateRequest,
   validateBodyProgramEventsResult,
@@ -125,8 +126,13 @@ function createBodyProgramTools(
         // the previous description was an error taxonomy - bounded rejection, no journal, no `deadline` field, what
         // `bindings` keys mean - and never said what the tool was FOR. Across every live run the companion submitted
         // no program at all (zero `AGENT_PROGRAM_SUBMIT`), while it used the ~104 flat action tools one at a time.
+        // Measured 2026-10-21: discoverability was no longer the problem (one session made 22 accepted submissions),
+        // the UNIT was - a session that answered its task step by step paid a full model round-trip per step
+        // (settle -> dispatch p50 3.3 s, p90 37 s, none of 28 gaps under 500 ms) against ~10 ms per node inside a
+        // plan. So the description states what the tool CARRIES (a whole piece of work, the moves included) and that
+        // the Mod advances the nodes itself: leaving the unit implicit is what produced the step-by-step runs.
         description:
-          'Submit a multi-step plan of game actions in ONE call: the Mod validates the whole plan, then runs each node natively once its predecessors\' receipts are in, advancing the successors itself - so several steps cost one turn instead of one turn per step. Prefer it over several separate action calls whenever you already know the steps. Node actionIds must be actions currently advertised to you; an unknown one is rejected before anything runs. A refused candidate is bounded and side-effect free (no journal, claim, grant, execution or receipt) and returns diagnostics to fix. Nodes carry no deadline: the Mod derives each action\'s execution budget from its descriptor-owned watchdog at admission time, so never invent or submit a clock value. Every node carries all five fields, each argument is {type, canonicalValue} with type string|integer|boolean, and bindings map a CONSUMER ARGUMENT NAME to {nodeId, factName} of a fact an earlier node declares - keep the bound argument in arguments too, with its observed literal value. A move, an inspection and the load that binds the inspected machine, in the accepted shape; copy it and replace the values: {"programId":"farm_morning","nodes":[{"nodeId":"walk_to_keg","actionId":"move_to_tile","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"}},"dependsOn":[],"bindings":{}},{"nodeId":"inspect_keg","actionId":"machine_inspect","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"},"expectedTargetId":{"type":"string","canonicalValue":"machine_keg_20_12"}},"dependsOn":["walk_to_keg"],"bindings":{}},{"nodeId":"load_keg","actionId":"machine_load","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"},"slot":{"type":"integer","canonicalValue":"3"},"expectedQualifiedItemId":{"type":"string","canonicalValue":"(O)433"},"expectedTargetId":{"type":"string","canonicalValue":"machine_keg_20_12"}},"dependsOn":["inspect_keg"],"bindings":{"expectedTargetId":{"nodeId":"inspect_keg","factName":"machine_target_id"}}}]}',
+          'Submit one whole piece of work in ONE call, not one step: the plan and the moves that carry it out travel together, so the walking, the inspecting and the loading are one submission. The Mod validates the whole plan, then runs each node natively once its predecessors\' receipts are in and advances the successors itself - the companion does not come back between steps, and a whole piece of work costs one turn instead of one turn per step. Sending the same steps one at a time instead means waiting for a decision between every step. Prefer it over separate action calls whenever you already know the work. Node actionIds must be actions currently advertised to you; an unknown one is rejected before anything runs. A refused candidate is bounded and side-effect free (no journal, claim, grant, execution or receipt) and returns diagnostics to fix. Nodes carry no deadline: the Mod derives each action\'s execution budget from its descriptor-owned watchdog at admission time, so never invent or submit a clock value. Every node carries all five fields, each argument is {type, canonicalValue} with type string|integer|boolean, and bindings map a CONSUMER ARGUMENT NAME to {nodeId, factName} of a fact an earlier node declares - keep the bound argument in arguments too, with its observed literal value. A move, an inspection and the load that binds the inspected machine, in the accepted shape; copy it and replace the values: {"programId":"farm_morning","nodes":[{"nodeId":"walk_to_keg","actionId":"move_to_tile","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"}},"dependsOn":[],"bindings":{}},{"nodeId":"inspect_keg","actionId":"machine_inspect","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"},"expectedTargetId":{"type":"string","canonicalValue":"machine_keg_20_12"}},"dependsOn":["walk_to_keg"],"bindings":{}},{"nodeId":"load_keg","actionId":"machine_load","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"},"slot":{"type":"integer","canonicalValue":"3"},"expectedQualifiedItemId":{"type":"string","canonicalValue":"(O)433"},"expectedTargetId":{"type":"string","canonicalValue":"machine_keg_20_12"}},"dependsOn":["inspect_keg"],"bindings":{"expectedTargetId":{"nodeId":"inspect_keg","factName":"machine_target_id"}}}]}',
         parameters: bodyProgramToolParameters(name),
         execute: async (_toolCallId, params) => {
           if (!isBodyProgramCandidateRequest(params)) throw new Error("invalid_body_program_tool_arguments");
@@ -448,6 +454,8 @@ export function createHostGameRuntimeMaterializer(
   return Object.freeze({
     async materializeEnter(reservation, permit): Promise<MaterializedGameRuntime> {
       return await materializeExactEnter(reservation, permit, async (execution, admission) => {
+        // One recorder per Game runtime: the run id is the game session this runtime is bound to.
+        const runTrace = createRunTrace(permit.gameSessionId);
         const mountedPolicy = execution.connection.module.parsePolicy(execution.connection.module.defaultPolicy);
         const retainedPolicyIdentity = readBodyProgramPolicyIdentity(execution.connection);
         const recoveryIdentity = createStableGameRuntimeBindingIdentity(execution);
@@ -571,6 +579,7 @@ export function createHostGameRuntimeMaterializer(
             }),
             options.identityProfile,
             options.worldBook,
+            runTrace,
           );
         } catch (error) {
           await closeFixedTools();
@@ -693,6 +702,10 @@ export function createHostGameRuntimeMaterializer(
               }),
           ...(operationalGateEvidence === undefined ? {} : { operationalGateEvidence }),
           closeRecoveryJournal: () => recoveryJournal.close(),
+          // Written last on purpose: the export is the run's own evidence, so it must include every span that settled
+          // before teardown. Perfetto and chrome://tracing open it directly.
+          flushRunTrace: () =>
+            writeRunTrace(join(dirname(runtime.paths.runManifestPath), "run-trace.json"), runTrace.spans()),
           closeFixedTools,
           ...(constructed.clearAuthoredContext === undefined
             ? {}
@@ -853,6 +866,7 @@ async function createMaterializedGameRuntime(
     Readonly<{ resolvedPolicy: IntegrationActionPolicy }>,
   identityProfile?: import("./../identity-profile.js").IdentityProfile,
   worldBook?: import("./../worldbook.js").WorldBookBinding,
+  runTrace?: RunTrace,
 ): Promise<
   Readonly<{
     runtime: RuntimeSession;
@@ -896,6 +910,7 @@ async function createMaterializedGameRuntime(
         presentation,
         createFarmhandPresentationEpochAdmission(handle.interruption),
         onCompanionTextPresented,
+        runTrace,
       ),
       admissionProvider: createGamePresentationAdmissionProvider(turnTracker, handle.interruption),
     });
@@ -931,6 +946,7 @@ async function createMaterializedGameRuntime(
         recoveryAttachment?.resolvedPolicy ?? connection.module.parsePolicy(connection.module.defaultPolicy),
       ...(assembledProfile === undefined ? {} : { initialProfile: assembledProfile }),
       ...(assembledWorldBook === undefined ? {} : { worldBook: assembledWorldBook }),
+      ...(runTrace === undefined ? {} : { runTrace }),
     }),
   );
   // The Game surface carries the same reviewed companion the Chat surface

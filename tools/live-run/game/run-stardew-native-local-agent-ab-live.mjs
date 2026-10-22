@@ -210,7 +210,10 @@ await assertLiveRunArtifactFresh();
 
 // The three scenarios' prompts, in both locales. Written as DATA rather than nested conditionals so the
 // contract is auditable at a glance: what a scenario asks for, and that it asks for it without prescribing a
-// route. The bracketed-emotion paragraph and the "not a task announcer" rule are part of every prompt: the
+// route. The opening task's unit is ONE piece of work carried out in a single pass, not a list of chores: a
+// measured session that answered it chore-by-chore paid a full model round-trip between steps (settle -> dispatch
+// p50 3.3 s, p90 37 s, none of 28 gaps under 500 ms), while a submitted plan's own node-to-node step is ~10 ms.
+// The bracketed-emotion paragraph and the "not a task announcer" rule are part of every prompt: the
 // companion's speech is what the interaction gate assesses, and the emote actions are the game-side half.
 const PRESENCE_PARAGRAPH_ZH =
   "（台词之外可以用括号写角色的情绪或内心，例如（想了想）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）";
@@ -222,8 +225,8 @@ const COMPANION_VOICE_RULE_EN =
   "**How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and do not recite a checklist.**";
 const SCENARIO_PROMPTS = Object.freeze({
   morning_routine: Object.freeze({
-    zh: `现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活——你自己看看周围，想做什么就做什么，能做几件做几件（地里的农活、农场上的杂物、屋里的箱子和机器都算）。做完之后用两三句话跟玩家说说：哪些你做成了、哪些做不了或者卡住了、卡在哪里（**总共控制在 120 字以内**——这是同伴说话的长度口径，不是让你省略内容，而是像陪玩的人一样挑重点说）。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
-    en: `It is a spring morning in Stardew Valley and you are on the farm by yourself. Nobody has assigned you anything today — look around and do whatever you think is worth doing, as many things as you can (field work, odds and ends on the farm, the chests and machines indoors — all fair game). When you are done, tell the player in two or three sentences: what you got done, what you could not do or got stuck on, and where (**keep the whole thing within 120 characters** — that is the companion's speaking length, not a request to leave things out; pick what matters the way someone playing alongside would). ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+    zh: `现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活——你自己看看周围，把今天这一摊活当成一整件事（地里的农活、农场上的杂物、屋里的箱子和机器都算）：先想清楚整件活从头到尾怎么做，再一口气把它做完，中间不用回来问下一步。做完之后用两三句话跟玩家说说：整件活做到哪儿了、哪一段做不了或者卡住了、卡在哪里（**总共控制在 120 字以内**——这是同伴说话的长度口径，不是让你省略内容，而是像陪玩的人一样挑重点说）。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+    en: `It is a spring morning in Stardew Valley and you are on the farm by yourself. Nobody has assigned you anything today — look around and take today's work as one whole job (field work, odds and ends on the farm, the chests and machines indoors — all fair game): work out how the whole job goes from start to finish first, then carry it through in one go, without coming back to ask what is next. When you are done, tell the player in two or three sentences: how far the whole job got, what you could not do or got stuck on, and where (**keep the whole thing within 120 characters** — that is the companion's speaking length, not a request to leave things out; pick what matters the way someone playing alongside would). ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
   }),
   memory_covenant: Object.freeze({
     // The standing rule is NOT in this prompt: it is planted as a memory through the real management surface,
