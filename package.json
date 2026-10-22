@@ -153,6 +153,7 @@
     "test:live-run-artifact-freshness": "node --test tools/check-live-run-artifact-freshness.test.mjs",
     "test:multiday-loop": "node --test tools/lib/multiday-loop.test.mjs tools/lib/multiday-baseline.test.mjs",
     "test:perf-budget": "node --test tools/perf/budget.test.mjs",
+    "test:post-history-live": "node --test tools/live-run/chat/run-post-history-live.test.mjs",
     "test:production-pack-load": "node --test tools/check-production-pack-load.test.mjs",
     "test:replay-engine": "node --test tools/lib/replay-engine.test.mjs",
     "test:run-scenarios": "node --test tools/live-run/game/run-scenarios.test.mjs tools/live-run/game/live-run-bundle-wiring.test.mjs",
