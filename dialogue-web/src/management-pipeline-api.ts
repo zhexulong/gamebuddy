@@ -265,6 +265,8 @@ export type ChatExportV1 = Readonly<{
   canonicalHash: string;
   jsonl: string;
 }>;
+/** `chat.export`'s own query: the exact Chat the browser's list handed out. */
+export type ChatExportQueryV1 = Readonly<{ chatHandle: string }>;
 
 /** Metadata-only companion library entry: opaque handle plus display name. */
 export type CompanionListEntryV1 = Readonly<{
@@ -1582,6 +1584,13 @@ const WORLD_INFO_AUTHORED_KEYS = ["publicTitle", "summary", "entries"] as const;
 const WORLD_INFO_UPDATE_ITEM_KEYS = ["publicTitle", "summary", "entries", "expectedRevision"] as const;
 const WORLD_INFO_ITEM_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "itemHandle"] as const;
 const WORLD_INFO_CREATE_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "item"] as const;
+const WORLD_INFO_IMPORT_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "lorebook"] as const;
+/**
+ * The largest lorebook file the import route accepts, mirroring the Host's own body ceiling
+ * (`MAX_WORLD_INFO_IMPORT_BODY_BYTES`). The picker refuses a larger file before reading a byte of it,
+ * so the refusal is a sentence rather than a multi-megabyte round trip.
+ */
+export const MAX_LOREBOOK_FILE_BYTES = 2 * 1024 * 1024;
 const WORLD_INFO_UPDATE_COMMAND_KEYS = [
   "apiVersion",
   "selectionGeneration",
@@ -1696,6 +1705,20 @@ function isWorldInfoUpdateCommand(value: unknown): value is WorldInfoUpdateComma
   );
 }
 
+/**
+ * One external lorebook file, carried whole. The file's interior is the Host importer's business,
+ * so this mirror admits any JSON object and decides nothing about its entries - exactly the shape
+ * `tavern-lorebook-importer.ts` reads through the library's own `import()`.
+ */
+function isWorldInfoImportCommand(value: unknown): value is WorldInfoImportCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, WORLD_INFO_IMPORT_COMMAND_KEYS) &&
+    isWorldInfoProjectionCommand(value) &&
+    isRecord(value.lorebook)
+  );
+}
+
 const COMPANION_LIST_KEYS = ["apiVersion", "companions"] as const;
 const COMPANION_LIST_ENTRY_KEYS = ["handle", "name", "isCurrent"] as const;
 const COMPANION_DETAIL_KEYS = ["apiVersion", "name"] as const;
@@ -1705,6 +1728,20 @@ const GREETING_KEYS = ["apiVersion", "present", "revision", "label", "variants"]
 const GREETING_VARIANT_KEYS = ["label", "text"] as const;
 const RETENTION_RESULT_KEYS = ["apiVersion", "handle", "status", "managementRevision"] as const;
 const RETENTION_OPERATIONS = ["archive", "restore", "trash"] as const;
+const CHAT_EXPORT_KEYS = [
+  "apiVersion",
+  "format",
+  "chatHandle",
+  "messageCount",
+  "dispositions",
+  "canonicalHash",
+  "jsonl",
+] as const;
+const CHAT_EXPORT_DISPOSITION_KEYS = ["field", "classification", "reason"] as const;
+const CHAT_EXPORT_DISPOSITION_CLASSES = ["accepted_typed", "dropped_unsupported", "rejected_invalid"] as const;
+// Mirrors the contract's own `CHAT_EXPORT_JSONL_MAX_LENGTH`: 256 bubbles of at most 4 000 bytes plus their JSON.
+const CHAT_EXPORT_JSONL_MAX_LENGTH = 1_048_576;
+const CHAT_EXPORT_HASH_PATTERN = /^[0-9a-f]{64}$/;
 
 function isCompanionList(value: unknown): value is CompanionListV1 {
   if (!isRecord(value) || !hasExactKeys(value, COMPANION_LIST_KEYS)) return false;
@@ -2121,6 +2158,34 @@ function isChatRetentionResult(value: unknown): value is ChatRetentionResultV1 {
     isOpaqueHandle(value.handle) &&
     isOneOf(value.status, ["active", "archived", "trashed"]) &&
     isNonNegativeSafeInteger(value.managementRevision)
+  );
+}
+
+/**
+ * One Chat's transcript as a SillyTavern chat file. `jsonl` is the file itself, the header line plus
+ * one bubble per message, so the browser saves the Host's own bytes rather than re-serializing the
+ * transcript; `dispositions` says what the file does not carry.
+ */
+function isChatExport(value: unknown): value is ChatExportV1 {
+  if (!isRecord(value) || !hasExactKeys(value, CHAT_EXPORT_KEYS)) return false;
+  return (
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    value.format === "tavern-interchange/v1" &&
+    isOpaqueHandle(value.chatHandle) &&
+    isNonNegativeSafeInteger(value.messageCount) &&
+    Array.isArray(value.dispositions) &&
+    value.dispositions.length <= 8 &&
+    value.dispositions.every(
+      (disposition) =>
+        isRecord(disposition) &&
+        hasExactKeys(disposition, CHAT_EXPORT_DISPOSITION_KEYS) &&
+        isLengthBoundedString(disposition.field, 1, 128) &&
+        isOneOf(disposition.classification, CHAT_EXPORT_DISPOSITION_CLASSES) &&
+        isLengthBoundedString(disposition.reason, 1, 128),
+    ) &&
+    typeof value.canonicalHash === "string" &&
+    CHAT_EXPORT_HASH_PATTERN.test(value.canonicalHash) &&
+    isLengthBoundedString(value.jsonl, 1, CHAT_EXPORT_JSONL_MAX_LENGTH)
   );
 }
 
@@ -2782,6 +2847,11 @@ export function validateWorldInfoUpdateCommand(value: unknown): WorldInfoUpdateC
   return value;
 }
 
+export function validateWorldInfoImportCommand(value: unknown): WorldInfoImportCommandV1 {
+  if (!isWorldInfoImportCommand(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validateCompanionList(value: unknown): CompanionListV1 {
   if (!isCompanionList(value)) throw new TavernProtocolError();
   return value;
@@ -2852,6 +2922,11 @@ export function validateGreeting(value: unknown): GreetingV1 {
 
 export function validateChatRetentionResult(value: unknown): ChatRetentionResultV1 {
   if (!isChatRetentionResult(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateChatExport(value: unknown): ChatExportV1 {
+  if (!isChatExport(value)) throw new TavernProtocolError();
   return value;
 }
 
@@ -2991,6 +3066,11 @@ export type ManagementPipelineApi = Readonly<{
   saveDraft(command: SaveDraftCommandV1, csrfToken: string): Promise<BrowserDraftV1>;
   /** DELETE /api/tavern/v1/draft with durable revision CAS. */
   discardDraft(command: DiscardDraftCommandV1, csrfToken: string): Promise<BrowserDraftV1>;
+  /**
+   * GET /api/tavern/v1/chat/export: one Chat of this companion/continuity, named by the handle the
+   * list handed out, as the interchange's own SillyTavern chat file (browser session; no CSRF header).
+   */
+  exportChat(command: ChatExportQueryV1): Promise<ChatExportV1>;
   /** PUT /api/tavern/v1/chat/title with Content-Type and x-csrf-token. */
   renameChatTitle(command: RenameChatTitleCommandV1, csrfToken: string): Promise<ChatTitleV1>;
   /**
@@ -3021,6 +3101,12 @@ export type ManagementPipelineApi = Readonly<{
   updateWorldInfo(command: WorldInfoUpdateCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
   /** DELETE /api/tavern/v1/world-info/item: removes an item from the library. */
   deleteWorldInfo(command: WorldInfoItemCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
+  /**
+   * POST /api/tavern/v1/world-info/import: one external SillyTavern/Chub lorebook file, carried
+   * whole, answered with the re-projected library. The file's interior is the Host importer's
+   * business - this client uploads the player's file as-is and never translates its entries.
+   */
+  importWorldInfo(command: WorldInfoImportCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
   /** GET /api/tavern/v1/settings/language (browser session; no CSRF header). */
   readLanguagePreference(): Promise<TavernLanguagePreferenceV1>;
   /**
@@ -3271,6 +3357,12 @@ export function createManagementPipelineApi(
       observe("draft.discard", "passed", String(result.revision));
       return result;
     },
+    async exportChat(command: ChatExportQueryV1): Promise<ChatExportV1> {
+      if (!isRecord(command) || !hasExactKeys(command, ["chatHandle"]) || !isOpaqueHandle(command.chatHandle))
+        throw new TavernProtocolError();
+      const params = new URLSearchParams({ chatHandle: command.chatHandle });
+      return exchange(fetchLike, "GET", `/api/tavern/v1/chat/export?${params.toString()}`, 200, validateChatExport);
+    },
     async renameChatTitle(command: RenameChatTitleCommandV1, csrfToken: string): Promise<ChatTitleV1> {
       if (!isRenameChatTitleCommand(command)) throw new TavernProtocolError();
       if (!isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
@@ -3390,6 +3482,20 @@ export function createManagementPipelineApi(
         command,
       );
       observe("world-info.delete", "passed", result.revision);
+      return result;
+    },
+    async importWorldInfo(command: WorldInfoImportCommandV1, csrfToken: string): Promise<WorldInfoStateV1> {
+      if (!isWorldInfoImportCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/world-info/import",
+        200,
+        validateWorldInfoState,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("world-info.import", "passed", result.revision);
       return result;
     },
     async readVoicePreference(): Promise<TavernVoicePreferenceV1> {
