@@ -643,6 +643,11 @@ function blankingShape(node, sourceFile) {
  * failure branch. Request validators are not read paths - they decide whether to
  * accept a write - so a site whose argument is the request is excluded by the
  * enclosing name, and a site that only returns a boolean is a predicate.
+ *
+ * The schema is recorded by its **declaration name** (`NoteListV1Schema`), the
+ * same name `contractSchemas` keys its map by. Storing the reference as written
+ * (`TavernBrowserValidatorsV1.NoteListV1Schema`) is what made this class vacuous
+ * on the product: every site was counted and none was ever resolved.
  */
 function failClosedSites(sources) {
   const sites = [];
@@ -650,16 +655,21 @@ function failClosedSites(sources) {
     const sourceFile = sources.source(file);
     walk(sourceFile, (node) => {
       if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
-      const name = node.expression.name.text;
-      if (name !== "Check" || !/Schema$/u.test(node.expression.expression.getText(sourceFile))) return;
+      if (node.expression.name.text !== "Check") return;
+      const reference = node.expression.expression;
+      const declared = ts.isIdentifier(reference)
+        ? reference.text
+        : ts.isPropertyAccessExpression(reference)
+          ? reference.name.text
+          : null;
+      if (declared === null || !/Schema$/u.test(declared)) return;
       const scope = enclosingFunction(node);
       if (scope === null) return;
       const shape = blankingShape(scope, sourceFile);
-      const site = at(sources.root, node, sourceFile, file);
       sites.push({
-        schema: node.expression.expression.getText(sourceFile),
+        schema: declared,
         file,
-        where: site,
+        where: at(sources.root, node, sourceFile, file),
         shape,
         blanking: shape !== null,
       });
@@ -699,38 +709,6 @@ function importClosure(sources, file, depth = 3) {
   return seen;
 }
 
-/** Capacity constants compared against a collection inside a module set. */
-function capacitiesWithin(sources, moduleSet) {
-  const found = [];
-  for (const file of moduleSet) {
-    let sourceFile;
-    try {
-      sourceFile = sources.source(file);
-    } catch {
-      continue;
-    }
-    walk(sourceFile, (node) => {
-      if (!ts.isBinaryExpression(node)) return;
-      const sides = [node.left.getText(sourceFile).trim(), node.right.getText(sourceFile).trim()];
-      if (!sides.some((side) => /\.length$/u.test(side))) return;
-      for (const side of sides) {
-        if (!/(?:^MAX_|_MAX$|_LIMIT$)/u.test(side) || /_MS$|_BYTES$/u.test(side)) continue;
-        // A character measure cannot exceed a row cap; only a row capacity can.
-        if (/_LENGTH$|_CHARS$|^MAX_LENGTH$/u.test(side)) continue;
-        const limit = resolveNumberFromFile(sourceFile, side);
-        if (limit === null) continue;
-        found.push({ name: side, limit, file, where: at(sources.root, node, sourceFile, file) });
-      }
-    });
-  }
-  return found;
-}
-
-function resolveNumberFromFile(sourceFile, name) {
-  const initializer = constInitializer(sourceFile, name);
-  return initializer === undefined ? null : resolveNumber(initializer, sourceFile);
-}
-
 function runReadPath(sources) {
   const sites = failClosedSites(sources);
   const schemas = [
@@ -738,10 +716,16 @@ function runReadPath(sources) {
     ...contractSchemas(sources, sources.path(...GAME_CONTRACT)),
   ];
   const byName = new Map(schemas.map((schema) => [schema.name, schema]));
+  // The same capacity constants `bounds` pairs against the wire, so a projection's producer is measured by
+  // the same reading in both classes. Paired by name, not by presence: a constant sharing no concept with the
+  // capped property does not bound it, and counting it as a bound is how this class printed fifteen findings
+  // about constants that measure a different collection.
+  const constants = hostCapConstants(sources);
   const violations = [];
   const notes = [];
   let blanking = 0;
   let exceeded = 0;
+  let within = 0;
   let unbound = 0;
   for (const site of sites) {
     if (!site.blanking) continue;
@@ -750,11 +734,16 @@ function runReadPath(sources) {
     if (schema === undefined) continue;
     const capped = schema.properties.filter((property) => property.kind === "maxItems" && property.limit !== null);
     if (capped.length === 0) continue;
-    const capacities = capacitiesWithin(sources, importClosure(sources, site.file));
+    const reachable = hostCapConstantsWithin(constants, importClosure(sources, site.file));
     for (const property of capped) {
-      const larger = capacities.filter((capacity) => capacity.limit > property.limit);
-      if (larger.length === 0) {
+      const naming = reachable.filter((constant) => capAffinity(property, constant) > 0);
+      if (naming.length === 0) {
         unbound += 1;
+        continue;
+      }
+      const larger = naming.filter((constant) => constant.limit > property.limit);
+      if (larger.length === 0) {
+        within += 1;
         continue;
       }
       exceeded += 1;
@@ -762,14 +751,19 @@ function runReadPath(sources) {
       violations.push({
         rank: 1,
         where: `${site.where} vs ${worst.where}`,
-        message: `${site.schema}.${property.property} is capped at ${property.limit} (${property.where}) but this read path's own dependency tree allows ${worst.limit} (${worst.name}); one row over the cap and ${site.shape} removes the whole surface`,
+        message: `${site.schema}.${property.property} is capped at ${property.limit} (${property.where}) but this read path's own dependency tree fills it to ${worst.limit} (${worst.name}); one row over the cap and ${site.shape} removes the whole surface`,
       });
     }
   }
   notes.push(
-    `read-path: ${sites.length} schema self-validation site(s), ${blanking} remove the surface on mismatch, ${exceeded} cap(s) that the projection can exceed, ${unbound} capped field(s) with no larger capacity in the read path's own dependency tree (clean only if the producer is bounded outside it)`,
+    `read-path: ${sites.length} schema self-validation site(s), ${blanking} remove the surface on mismatch, ${exceeded} cap(s) that the projection can exceed, ${within} bounded by a constant that names it, ${unbound} capped field(s) no reachable constant names (NOT clean: the producer is bounded outside the read path's dependency tree)`,
   );
   return { declared: sites.length, violations, notes };
+}
+
+/** The capacity constants whose declaring module is in a read path's own dependency tree. */
+function hostCapConstantsWithin(constants, moduleSet) {
+  return constants.filter((constant) => moduleSet.has(constant.file));
 }
 
 const CLASS_IMPLEMENTATIONS = [
