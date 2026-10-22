@@ -224,6 +224,19 @@ jobs:
           node-version: 24.13.0
       - run: node tools/check-ci-coverage.mjs
       - run: node tools/check-ci-coverage.mjs --run
+      # The totality audit's full finding list, kept per run so "is this getting better?" has an answer that is not a
+      # memory. `--verbose` prints every site (the default report prints counts with a bounded sample), and the step runs
+      # after the gate so a red gate still leaves its evidence behind.
+      - if: always()
+        run: node tools/audit-totality.mjs --verbose > audit-totality.txt
+        continue-on-error: true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-totality
+          path: audit-totality.txt
+          retention-days: 30
+          if-no-files-found: ignore
 
   voice-gateway:
     runs-on: windows-latest
