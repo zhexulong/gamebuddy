@@ -757,3 +757,80 @@ test("the editor fits its column at 1440x900 and at 400x800, and removing a row 
   await expect(block.locator("[data-companion-world-book-notice]")).toHaveText("已保存。");
   expect(sentEntries!.map((entry) => entry.title)).toEqual(["词条 1", "词条 2"]);
 });
+
+/**
+ * The trigger-words helper sat under the wrong field.
+ *
+ * `companionWorldBookEntryKeysHint` - "用逗号分隔。在对话里，当你说到这些词时…" - explains the 触发词
+ * input, but it was emitted *after* the 始终随行 switch, so in the editor it read as that switch's
+ * caption while the field it describes sat two controls above it. A stray `{" "}` followed it.
+ *
+ * The assertion is the reading order, measured: the sentence comes after its own field's bottom
+ * edge and before the next field's top edge, and it is that field's next sibling in the DOM, so no
+ * later control can be mistaken for what it explains. Before: `hint.top` sat below
+ * `.companion-world-book-constant`'s bottom (the switch was at 611..655 and the sentence began at
+ * 659), i.e. it was the switch's caption.
+ */
+test("the trigger-words sentence sits under the field it describes, not under the switch below it", async ({ page }) => {
+  const book = {
+    apiVersion: 1,
+    present: true,
+    revision: 5,
+    entries: [{ title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "温室的玻璃是她去年冬天换的。" }],
+  };
+  await stubCharacters(page, book);
+  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+  const surface = await openCharacters(page, "角色");
+
+  const block = surface.locator("[data-companion-world-book]");
+  await block.locator("[data-companion-world-book-edit]").click();
+  const editor = block.locator("[data-companion-world-book-draft]");
+  await expect(editor).toBeVisible();
+
+  const measured = await editor.evaluate((node) => {
+    const row = node.querySelector<HTMLElement>("[data-companion-world-book-entry-draft]");
+    if (row === null) return null;
+    const keys = row.querySelector<HTMLInputElement>('input[id$="-keys"]');
+    const constant = row.querySelector<HTMLElement>(".companion-world-book-constant");
+    const hint = [...row.querySelectorAll<HTMLElement>("p.management-settings-hint")].find((element) =>
+      (element.textContent ?? "").startsWith("用逗号分隔"),
+    );
+    if (keys === null || constant === null || hint === undefined) return null;
+    const box = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      return { top: Math.round(rect.top), bottom: Math.round(rect.bottom) };
+    };
+    return {
+      hint: (hint.textContent ?? "").trim(),
+      keys: box(keys),
+      switch: box(constant),
+      sentence: box(hint),
+      followsItsField: keys.nextElementSibling === hint,
+      fieldBetween: keys.nextElementSibling === constant,
+      order: [...row.children].map((child) => child.tagName.toLowerCase() + "." + (child.className || "-")),
+    };
+  });
+  console.log(`[world-book-keys-hint] ${JSON.stringify(measured)}`);
+  expect(measured, "the entry row carries a keys field, the switch and the sentence").not.toBeNull();
+
+  // The sentence describes the trigger words, so it is that field's own next sentence…
+  expect(measured!.followsItsField, `the sentence follows the keys field directly: ${JSON.stringify(measured!.order)}`)
+    .toBe(true);
+  expect(measured!.fieldBetween, "nothing sits between the keys field and its sentence").toBe(false);
+  // …it is painted below that field's edge and above the next control's…
+  expect(
+    measured!.sentence.top,
+    `the sentence starts below the keys field (${measured!.sentence.top} vs ${measured!.keys.bottom})`,
+  ).toBeGreaterThanOrEqual(measured!.keys.bottom);
+  expect(
+    measured!.sentence.top,
+    `and above the always-with-her switch (${measured!.sentence.top} vs ${measured!.switch.top})`,
+  ).toBeLessThan(measured!.switch.top);
+  // …and it is closer to the field it explains than to the switch it used to caption.
+  const toItsField = measured!.sentence.top - measured!.keys.bottom;
+  const toTheSwitch = measured!.switch.top - measured!.keys.bottom;
+  expect(
+    toItsField,
+    `the sentence belongs to the field above it (${toItsField} px away, the switch ${toTheSwitch} px)`,
+  ).toBeLessThan(toTheSwitch);
+});

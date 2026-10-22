@@ -652,6 +652,10 @@ function CompanionWorldBookEditor({
             value={entry.keys}
             onChange={(event) => updateEntry(index, { ...entry, keys: event.target.value })}
           />
+          {/* The sentence belongs to the field above it. It used to be emitted after the switch
+              below, where it read as that switch's caption while the field it describes sat two
+              controls above. */}
+          <p className="management-settings-hint">{labels.companionWorldBookEntryKeysHint}</p>
           {/* The one fact about an entry that is a switch rather than a string, beside
               the trigger words it overrides: an entry marked always with her is carried
               whether or not the player's words match, so a player who writes her own
@@ -668,7 +672,6 @@ function CompanionWorldBookEditor({
             />
             <span>{labels.companionWorldBookAlwaysOn}</span>
           </label>
-          <p className="management-settings-hint">{labels.companionWorldBookEntryKeysHint}</p>{" "}
           <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-body`}>
             {labels.companionWorldBookEntryBody}
           </label>
