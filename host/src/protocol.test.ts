@@ -42,24 +42,65 @@ const snapshot: Snapshot = {
 const now = 1_700_000_000_000;
 
 const admissionChallenge = {
-  programId: "program_1", nodeId: "node_1", nodeAttempt: 1, admissionAttempt: 2,
-  stopEpoch: 3, catalogRevision: 4, policyIdentity: { value: "mod:policy/v1", capabilityRevision: 5 },
-  actionId: "navigate_to_destination", canonicalBoundArgs: {
+  programId: "program_1",
+  nodeId: "node_1",
+  nodeAttempt: 1,
+  admissionAttempt: 2,
+  stopEpoch: 3,
+  catalogRevision: 4,
+  policyIdentity: { value: "mod:policy/v1", capabilityRevision: 5 },
+  actionId: "navigate_to_destination",
+  canonicalBoundArgs: {
     destination: { type: "destination_selector", destination: { kind: "label", label: "Town" } },
     count: { type: "integer", canonicalValue: "9223372036854775807" },
-    enabled: { type: "boolean", canonicalValue: "true" }, text: { type: "string", canonicalValue: "" },
-  }, derivedResourceClaims: { actor: "player_1" }, deadlineMs: 5000,
+    enabled: { type: "boolean", canonicalValue: "true" },
+    text: { type: "string", canonicalValue: "" },
+  },
+  derivedResourceClaims: { actor: "player_1" },
+  deadlineMs: 5000,
 };
-const admissionBinding = { programId: "program_1", nodeId: "node_1", nodeAttempt: 1, requestId: "request_1", idempotencyKey: "key_1", executionId: "execution_1" };
-const admissionGrant = { ...admissionChallenge, grantId: "grant_1", attachmentGeneration: "attachment:epoch/7", policyRevision: "host:policy/9", executionBinding: null };
+const admissionBinding = {
+  programId: "program_1",
+  nodeId: "node_1",
+  nodeAttempt: 1,
+  requestId: "request_1",
+  idempotencyKey: "key_1",
+  executionId: "execution_1",
+};
+const admissionGrant = {
+  ...admissionChallenge,
+  grantId: "grant_1",
+  attachmentGeneration: "attachment:epoch/7",
+  policyRevision: "host:policy/9",
+  executionBinding: null,
+};
 function checkAdmission(payload: unknown, grant = false): string | null {
-  return validateBridgeMessage(newEnvelope(grant ? "body_node_admission_grant" : "body_node_admission_challenge", scope, payload, "corr_1", now), scope, now);
+  return validateBridgeMessage(
+    newEnvelope(grant ? "body_node_admission_grant" : "body_node_admission_challenge", scope, payload, "corr_1", now),
+    scope,
+    now,
+  );
 }
 
 test("body admission challenge and grants preserve strings, destination and nullable full binding", () => {
-  for (const payload of [admissionChallenge, { ...admissionChallenge, canonicalBoundArgs: { destination: { type: "destination_selector", destination: { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA" } } } }]) assert.equal(checkAdmission(payload), null);
+  for (const payload of [
+    admissionChallenge,
+    {
+      ...admissionChallenge,
+      canonicalBoundArgs: {
+        destination: { type: "destination_selector", destination: { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA" } },
+      },
+    },
+  ])
+    assert.equal(checkAdmission(payload), null);
   for (const executionBinding of [null, admissionBinding]) {
-    const envelope = newEnvelope("body_node_admission_grant", scope, { ...admissionGrant, executionBinding }, "corr_1", now);
+    const envelope = newEnvelope(
+      "body_node_admission_grant",
+      scope,
+      { ...admissionGrant, executionBinding },
+      "corr_1",
+      now,
+    );
     const parsed = JSON.parse(serializeBounded(envelope));
     assert.equal(validateBridgeMessage(parsed, scope, now), null);
     assert.equal(parsed.payload.attachmentGeneration, "attachment:epoch/7");
@@ -71,13 +112,82 @@ test("body admission challenge and grants preserve strings, destination and null
 
 test("body admission rejects noncanonical scalar lexical forms and invalid selectors", () => {
   for (const canonicalValue of ["01", "-0", "+1", " 1", "1.0", "1e0", "9223372036854775808", "-9223372036854775809"]) {
-    assert.notEqual(checkAdmission({ ...admissionChallenge, canonicalBoundArgs: { count: { type: "integer", canonicalValue } } }), null, canonicalValue);
+    assert.notEqual(
+      checkAdmission({ ...admissionChallenge, canonicalBoundArgs: { count: { type: "integer", canonicalValue } } }),
+      null,
+      canonicalValue,
+    );
   }
-  for (const canonicalValue of ["True", "0", "", 1, null]) assert.notEqual(checkAdmission({ ...admissionChallenge, canonicalBoundArgs: { flag: { type: "boolean", canonicalValue } } }), null);
-  for (const destination of [{ kind: "label", label: "" }, { kind: "label", label: " " }, { kind: "label", label: "e\u0301" }, { kind: "label", label: "x".repeat(129) }, { kind: "ref", ref: "opaque" }, { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAB" }, { kind: "label", label: "Town", extra: 0 }]) {
-    assert.notEqual(checkAdmission({ ...admissionChallenge, canonicalBoundArgs: { target: { type: "destination_selector", destination } } }), null);
+  for (const canonicalValue of ["True", "0", "", 1, null])
+    assert.notEqual(
+      checkAdmission({ ...admissionChallenge, canonicalBoundArgs: { flag: { type: "boolean", canonicalValue } } }),
+      null,
+    );
+  for (const destination of [
+    { kind: "label", label: "" },
+    { kind: "label", label: " " },
+    { kind: "label", label: "e\u0301" },
+    { kind: "label", label: "x".repeat(129) },
+    { kind: "ref", ref: "opaque" },
+    { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAB" },
+    { kind: "label", label: "Town", extra: 0 },
+  ]) {
+    assert.notEqual(
+      checkAdmission({
+        ...admissionChallenge,
+        canonicalBoundArgs: { target: { type: "destination_selector", destination } },
+      }),
+      null,
+    );
   }
-  assert.notEqual(checkAdmission({ ...admissionChallenge, canonicalBoundArgs: { target: { type: "destination_selector", selector: { kind: "label", label: "Town" } } } }), null);
+  assert.notEqual(
+    checkAdmission({
+      ...admissionChallenge,
+      canonicalBoundArgs: { target: { type: "destination_selector", selector: { kind: "label", label: "Town" } } },
+    }),
+    null,
+  );
+});
+
+const toolClaimChallenge = {
+  ...admissionChallenge,
+  derivedResourceClaims: { embodied_actor: "player_1", "tool:scythe": "tool:scythe" },
+};
+
+test("body admission admits a namespaced resource-claim key with its verbatim value", () => {
+  // The Mod publishes a tool-family claim as `tool:<category>` on BOTH sides of the map (`key` and its value),
+  // so admitting the key alone would still fail on the value predicate. This is the exact tuple the Mod sends.
+  assert.equal(checkAdmission(toolClaimChallenge), null);
+  assert.equal(checkAdmission({ ...admissionGrant, ...toolClaimChallenge }, true), null);
+});
+
+test("body admission refuses a resource-claim key outside the namespaced shape, one case per rule", () => {
+  for (const claimKey of [
+    "tool::scythe", // empty segment in the middle
+    "tool:", // trailing colon leaves an empty last segment
+    "tool:Scythe", // uppercase segment
+    "a".repeat(129), // over the 128-character bound
+  ])
+    assert.notEqual(
+      checkAdmission({ ...admissionChallenge, derivedResourceClaims: { [claimKey]: "player_1" } }),
+      null,
+      claimKey,
+    );
+  // A malformed VALUE is refused by the same rule, not just a malformed key: `tool:` is neither an opaque id
+  // nor a valid claim key (its trailing colon leaves an empty segment).
+  assert.notEqual(checkAdmission({ ...admissionChallenge, derivedResourceClaims: { "tool:scythe": "tool:" } }), null);
+});
+
+test("body admission still refuses a colon-bearing canonical-args name", () => {
+  // `canonicalBoundArgs` keeps the bare rule: the Mod parses those names with IsOpaqueId/IsIdentifier and can
+  // never send a colon there. This is what proves the shared key rule was not simply loosened.
+  assert.notEqual(
+    checkAdmission({
+      ...admissionChallenge,
+      canonicalBoundArgs: { "tool:scythe": { type: "string", canonicalValue: "" } },
+    }),
+    null,
+  );
 });
 
 test("body admission enforces exact payload keys, policy identity, bounded maps and safe numbers", () => {
@@ -89,13 +199,26 @@ test("body admission enforces exact payload keys, policy identity, bounded maps 
     assert.notEqual(checkAdmission(payload), null, key);
   }
   for (const patch of [
-    { extra: 0 }, { nodeAttempt: 0 }, { nodeAttempt: 2_147_483_648 }, { admissionAttempt: 1.5 }, { stopEpoch: -1 }, { catalogRevision: Number.MAX_SAFE_INTEGER + 1 }, { deadlineMs: 0 },
-    { policyIdentity: { value: "", capabilityRevision: 5 } }, { policyIdentity: { value: "policy", capabilityRevision: -1 } },
-    { policyIdentity: { value: "policy", capabilityRevision: Number.MAX_SAFE_INTEGER + 1 } }, { policyIdentity: { value: "policy", capabilityRevision: 5, extra: 0 } },
+    { extra: 0 },
+    { nodeAttempt: 0 },
+    { nodeAttempt: 2_147_483_648 },
+    { admissionAttempt: 1.5 },
+    { stopEpoch: -1 },
+    { catalogRevision: Number.MAX_SAFE_INTEGER + 1 },
+    { deadlineMs: 0 },
+    { policyIdentity: { value: "", capabilityRevision: 5 } },
+    { policyIdentity: { value: "policy", capabilityRevision: -1 } },
+    { policyIdentity: { value: "policy", capabilityRevision: Number.MAX_SAFE_INTEGER + 1 } },
+    { policyIdentity: { value: "policy", capabilityRevision: 5, extra: 0 } },
     { canonicalBoundArgs: { "bad key": { type: "string", canonicalValue: "" } } },
-    { canonicalBoundArgs: Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "" }])) },
+    {
+      canonicalBoundArgs: Object.fromEntries(
+        Array.from({ length: 33 }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "" }]),
+      ),
+    },
     { derivedResourceClaims: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`claim_${i}`, "actor"])) },
-  ]) assert.notEqual(checkAdmission({ ...admissionChallenge, ...patch }), null);
+  ])
+    assert.notEqual(checkAdmission({ ...admissionChallenge, ...patch }), null);
 });
 
 test("body admission grant rejects numeric opaque fields and malformed or missing binding", () => {
@@ -103,19 +226,33 @@ test("body admission grant rejects numeric opaque fields and malformed or missin
     const payload: Record<string, unknown> = { ...admissionGrant };
     delete payload[key];
     assert.notEqual(checkAdmission(payload, true), null);
-    for (const value of [0, "", {}, undefined]) assert.notEqual(checkAdmission({ ...admissionGrant, [key]: value }, true), null);
+    for (const value of [0, "", {}, undefined])
+      assert.notEqual(checkAdmission({ ...admissionGrant, [key]: value }, true), null);
   }
   for (const key of Object.keys(admissionBinding)) {
     const binding: Record<string, unknown> = { ...admissionBinding };
     delete binding[key];
     assert.notEqual(checkAdmission({ ...admissionGrant, executionBinding: binding }, true), null);
   }
-  for (const patch of [{ extra: 0 }, { programId: "other" }, { nodeId: "other" }, { nodeAttempt: 2 }, { requestId: "bad id" }]) assert.notEqual(checkAdmission({ ...admissionGrant, executionBinding: { ...admissionBinding, ...patch } }, true), null);
+  for (const patch of [
+    { extra: 0 },
+    { programId: "other" },
+    { nodeId: "other" },
+    { nodeAttempt: 2 },
+    { requestId: "bad id" },
+  ])
+    assert.notEqual(
+      checkAdmission({ ...admissionGrant, executionBinding: { ...admissionBinding, ...patch } }, true),
+      null,
+    );
 });
 
 test("body admission preserves envelope scope, type and serialized frame limits", () => {
   const envelope = newEnvelope("body_node_admission_challenge", scope, admissionChallenge, "corr_1", now);
-  assert.throws(() => serializeBounded({ ...envelope, payload: { ...admissionChallenge, extra: 0 } }), /invalid_body_node_admission/);
+  assert.throws(
+    () => serializeBounded({ ...envelope, payload: { ...admissionChallenge, extra: 0 } }),
+    /invalid_body_node_admission/,
+  );
   assert.throws(() => serializeBounded({ ...envelope, protocolVersion: 2 }), /unsupported_protocol_version/);
   assert.notEqual(validateBridgeMessage({ ...envelope, type: "body_node_admission_grant" }, scope, now), null);
   assert.notEqual(validateBridgeMessage({ ...envelope, scope: { ...scope, saveId: "other" } }, scope, now), null);
@@ -126,7 +263,18 @@ test("body admission preserves envelope scope, type and serialized frame limits"
   // protocol has used, and stays over it if the bound moves again. The C# twin was fixed the same way.
   const oversizeChunk = 4 * 1024;
   const oversizeCount = 64;
-  const oversized = { ...envelope, payload: { ...admissionChallenge, canonicalBoundArgs: Object.fromEntries(Array.from({ length: oversizeCount }, (_, i) => [`arg_${i}`, { type: "string", canonicalValue: "x".repeat(oversizeChunk) }])) } };
+  const oversized = {
+    ...envelope,
+    payload: {
+      ...admissionChallenge,
+      canonicalBoundArgs: Object.fromEntries(
+        Array.from({ length: oversizeCount }, (_, i) => [
+          `arg_${i}`,
+          { type: "string", canonicalValue: "x".repeat(oversizeChunk) },
+        ]),
+      ),
+    },
+  };
   assert.throws(() => serializeBounded(oversized), /message_too_large/);
   assert.notEqual(validateBridgeMessage(oversized, scope, now), null);
 });
@@ -135,17 +283,31 @@ test("current Mod hello acknowledgement wire projection is admitted", () => {
   const valid = newEnvelope(
     "hello_ack",
     scope,
-    { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 }, enabledActionIds: ["move_to_tile"], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
+    {
+      sessionId: "session_01",
+      capabilities: ["move_to_tile"],
+      catalogRevision: 1,
+      policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
+      enabledActionIds: ["move_to_tile"],
+      runtimeRole: "farmhand_client",
+      launchGeneration: "generation_01",
+      presentationLocale: "en-US",
+      registrations: [
+        {
+          actionId: "move_to_tile",
+          familyId: "movement_navigation",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+        },
+      ],
+    },
     "hello_01",
     now,
   );
   assert.equal(validateBridgeMessage(valid, scope, now), null);
   assert.equal(
-    validateBridgeMessage(
-      { ...valid, payload: { ...valid.payload, launchGeneration: null } },
-      scope,
-      now,
-    ),
+    validateBridgeMessage({ ...valid, payload: { ...valid.payload, launchGeneration: null } }, scope, now),
     "invalid_hello_ack",
   );
   assert.equal(
@@ -153,7 +315,25 @@ test("current Mod hello acknowledgement wire projection is admitted", () => {
       newEnvelope(
         "hello_ack",
         scope,
-        { sessionId: "invalid session", capabilities: [], catalogRevision: 1, policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 }, enabledActionIds: [], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
+        {
+          sessionId: "invalid session",
+          capabilities: [],
+          catalogRevision: 1,
+          policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
+          enabledActionIds: [],
+          runtimeRole: "farmhand_client",
+          launchGeneration: "generation_01",
+          presentationLocale: "en-US",
+          registrations: [
+            {
+              actionId: "move_to_tile",
+              familyId: "movement_navigation",
+              identityVersion: 1,
+              lifecycle: "published",
+              kind: "execution",
+            },
+          ],
+        },
         "hello_02",
         now,
       ),
@@ -167,7 +347,25 @@ test("current Mod hello acknowledgement wire projection is admitted", () => {
       newEnvelope(
         "hello_ack",
         scope,
-        { sessionId: "session_01", capabilities: [1], catalogRevision: 1, policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 }, enabledActionIds: [], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
+        {
+          sessionId: "session_01",
+          capabilities: [1],
+          catalogRevision: 1,
+          policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
+          enabledActionIds: [],
+          runtimeRole: "farmhand_client",
+          launchGeneration: "generation_01",
+          presentationLocale: "en-US",
+          registrations: [
+            {
+              actionId: "move_to_tile",
+              familyId: "movement_navigation",
+              identityVersion: 1,
+              lifecycle: "published",
+              kind: "execution",
+            },
+          ],
+        },
         "hello_03",
         now,
       ),
@@ -182,7 +380,11 @@ test("catalog updates are exact and bounded", () => {
   const valid = newEnvelope(
     "catalog_update",
     scope,
-    { catalogRevision: 2, policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 }, enabledActionIds: ["move_to_tile"] },
+    {
+      catalogRevision: 2,
+      policyIdentity: { value: "abcdef0123456789abcdef0123456789", capabilityRevision: 2 },
+      enabledActionIds: ["move_to_tile"],
+    },
     "catalog_01",
     now,
   );
@@ -197,7 +399,25 @@ test("hello acknowledgement and snapshot reject missing or invalid presentation 
   const validHello = newEnvelope(
     "hello_ack",
     scope,
-    { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 }, enabledActionIds: ["move_to_tile"], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
+    {
+      sessionId: "session_01",
+      capabilities: ["move_to_tile"],
+      catalogRevision: 1,
+      policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
+      enabledActionIds: ["move_to_tile"],
+      runtimeRole: "farmhand_client",
+      launchGeneration: "generation_01",
+      presentationLocale: "en-US",
+      registrations: [
+        {
+          actionId: "move_to_tile",
+          familyId: "movement_navigation",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+        },
+      ],
+    },
     "hello_locale_01",
     now,
   );
@@ -363,18 +583,20 @@ test("bridge message payloads fail closed", () => {
   assert.equal(validateBridgeMessage(receiptWithScene, scope, now), null);
   assert.equal(
     validateBridgeMessage(
-      { ...receiptWithScene, payload: { ...receiptWithScene.payload, piggybackedScene: { ...receiptWithScene.payload!.piggybackedScene, partial: "yes" } } },
+      {
+        ...receiptWithScene,
+        payload: {
+          ...receiptWithScene.payload,
+          piggybackedScene: { ...receiptWithScene.payload!.piggybackedScene, partial: "yes" },
+        },
+      },
       scope,
       now,
     ),
     "invalid_receipt",
   );
   assert.equal(
-    validateBridgeMessage(
-      { ...receiptWithScene, payload: { ...receiptWithScene.payload, extraKey: 1 } },
-      scope,
-      now,
-    ),
+    validateBridgeMessage({ ...receiptWithScene, payload: { ...receiptWithScene.payload, extraKey: 1 } }, scope, now),
     "invalid_receipt",
   );
   const cancellationReceiptWithoutEvidence = newEnvelope(
@@ -624,11 +846,19 @@ test("bridge message payloads fail closed", () => {
   assert.equal(validateBridgeMessage(badActive, scope, now), "invalid_snapshot");
   // `exhausted` is an optional boolean; a non-boolean is rejected, a boolean is accepted.
   assert.equal(
-    validateBridgeMessage(newEnvelope("snapshot", scope, { ...snapshot, exhausted: "tired" }, "snapshot_exhausted_01", now), scope, now),
+    validateBridgeMessage(
+      newEnvelope("snapshot", scope, { ...snapshot, exhausted: "tired" }, "snapshot_exhausted_01", now),
+      scope,
+      now,
+    ),
     "invalid_snapshot",
   );
   assert.equal(
-    validateBridgeMessage(newEnvelope("snapshot", scope, { ...snapshot, exhausted: true }, "snapshot_exhausted_02", now), scope, now),
+    validateBridgeMessage(
+      newEnvelope("snapshot", scope, { ...snapshot, exhausted: true }, "snapshot_exhausted_02", now),
+      scope,
+      now,
+    ),
     null,
   );
   assert.equal(
@@ -649,8 +879,12 @@ test("bridge message payloads fail closed", () => {
         { x: 10, y: 12 },
         { x: 11, y: 12 },
       ],
-      forageTargets: [{ targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)399", displayName: "Spring Onion", stack: 1 }],
-      itemTargets: [{ targetId: "item_0_0_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 }],
+      forageTargets: [
+        { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)399", displayName: "Spring Onion", stack: 1 },
+      ],
+      itemTargets: [
+        { targetId: "item_0_0_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 },
+      ],
       cropTargets: [{ targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24", displayName: "Parsnip" }],
       harvestTargets: [
         {
@@ -663,8 +897,19 @@ test("bridge message payloads fail closed", () => {
           regrowsAfterHarvest: false,
         },
       ],
-      seedTargets: [{ targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds" }],
-      fertilizerTargets: [{ targetId: "fertilizer_deadbeef", slot: 3, x: 10, y: 12, qualifiedItemId: "(O)368", displayName: "Basic Fertilizer" }],
+      seedTargets: [
+        { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds" },
+      ],
+      fertilizerTargets: [
+        {
+          targetId: "fertilizer_deadbeef",
+          slot: 3,
+          x: 10,
+          y: 12,
+          qualifiedItemId: "(O)368",
+          displayName: "Basic Fertilizer",
+        },
+      ],
       debrisTargets: [
         {
           targetId: "debris_deadbeef",
@@ -708,7 +953,17 @@ test("bridge message payloads fail closed", () => {
           inCurrentLocation: false,
         },
       ],
-      petTargets: [{ targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 500, pettedToday: false, stationary: false }],
+      petTargets: [
+        {
+          targetId: "pet_deadbeef",
+          x: 10,
+          y: 12,
+          petType: "Dog",
+          friendship: 500,
+          pettedToday: false,
+          stationary: false,
+        },
+      ],
       animalProductTargets: [
         {
           targetId: "animal_product_deadbeef",
@@ -724,7 +979,9 @@ test("bridge message payloads fail closed", () => {
       ],
       feedTroughTargets: [{ targetId: "feed_trough_deadbeef", slot: 7, x: 10, y: 11, hayStack: 2 }],
       inventoryItemFacts: [{ slot: 8, qualifiedItemId: "(O)184", displayName: "Milk", stack: 1 }],
-      foodTargets: [{ slot: 5, qualifiedItemId: "(O)216", displayName: "Bread", stack: 3, edibility: 20, isDrink: false }],
+      foodTargets: [
+        { slot: 5, qualifiedItemId: "(O)216", displayName: "Bread", stack: 3, edibility: 20, isDrink: false },
+      ],
     },
     "snapshot_soil_01",
     now,
@@ -766,7 +1023,12 @@ test("bridge message payloads fail closed", () => {
       newEnvelope(
         "snapshot",
         scope,
-        { ...snapshot, forageTargets: [{ targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "", displayName: "Spring Onion", stack: 1 }] },
+        {
+          ...snapshot,
+          forageTargets: [
+            { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "", displayName: "Spring Onion", stack: 1 },
+          ],
+        },
         "snapshot_forage_01",
         now,
       ),
@@ -780,7 +1042,12 @@ test("bridge message payloads fail closed", () => {
       newEnvelope(
         "snapshot",
         scope,
-        { ...snapshot, seedTargets: [{ targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "", displayName: "Seeds" }] },
+        {
+          ...snapshot,
+          seedTargets: [
+            { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "", displayName: "Seeds" },
+          ],
+        },
         "snapshot_seed_01",
         now,
       ),
@@ -851,13 +1118,13 @@ test("bridge message payloads fail closed", () => {
         scope,
         { ...snapshot, inventoryItemFacts: [{ slot: 3, qualifiedItemId: "(O)184", displayName: "Milk", stack: 0 }] },
         "snapshot_inventory_01",
+        now,
+      ),
+      scope,
       now,
     ),
-    scope,
-    now,
-  ),
-  "invalid_snapshot",
-);
+    "invalid_snapshot",
+  );
 });
 
 test("snapshot target facts reject schema-forbidden extra keys before Host consumers use them", () => {
@@ -873,8 +1140,21 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
     ["toolSlots", { slot: 4, label: "Axe" }],
     ["wateringCanFacts", { slot: 4, qualifiedItemId: "(T)WateringCan", label: "Watering Can", water: 40, max: 40 }],
     ["refillWateringCanTargets", { targetId: "refill_deadbeef", x: 10, y: 12 }],
-    ["forageTargets", { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)16", displayName: "Wild Horseradish", stack: 1 }],
-    ["itemTargets", { targetId: "item_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 }],
+    [
+      "forageTargets",
+      {
+        targetId: "forage_deadbeef",
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)16",
+        displayName: "Wild Horseradish",
+        stack: 1,
+      },
+    ],
+    [
+      "itemTargets",
+      { targetId: "item_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 },
+    ],
     ["cropTargets", { targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24", displayName: "Parsnip" }],
     [
       "harvestTargets",
@@ -911,7 +1191,10 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
     ["crabPotResultTargets", { ...crabPot, ownerId: 1, offsetX: 0, offsetY: 0, overlayTiles: [] }],
     ["baitCrabPotTargets", { ...crabPot, baitQualifiedItemId: "(O)685", ownerId: "1", baitStack: 1 }],
     ["baitCrabPotResultTargets", { ...crabPot, baitQualifiedItemId: "(O)685", ownerId: "1", baitStack: 1 }],
-    ["seedTargets", { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds" }],
+    [
+      "seedTargets",
+      { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds" },
+    ],
     [
       "debrisTargets",
       {
@@ -992,7 +1275,10 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
         giftsThisWeek: 0,
       },
     ],
-    ["petTargets", { targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 1, pettedToday: false, stationary: true }],
+    [
+      "petTargets",
+      { targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 1, pettedToday: false, stationary: true },
+    ],
     [
       "animalProductTargets",
       {
@@ -1011,7 +1297,10 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
     ["foodTargets", { slot: 4, qualifiedItemId: "(O)216", stack: 1, edibility: 20, isDrink: false }],
     ["craftingRecipeTargets", { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true }],
     ["cookingRecipeTargets", { targetId: "Fried_Egg", displayName: "Fried Egg", ingredientsAvailable: false }],
-    ["cookingStationTargets", { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" }],
+    [
+      "cookingStationTargets",
+      { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" },
+    ],
     [
       "minecartTargets",
       {
@@ -1059,13 +1348,43 @@ test("the native litter-category targets accept any bounded item id, not one pin
   const cases: ReadonlyArray<readonly [string, Record<string, unknown>, Record<string, unknown>]> = [
     [
       "rockSourceTargets",
-      { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)343", displayName: "Stone", health: 1 },
-      { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)2", displayName: "Stone", health: 1 },
+      {
+        targetId: "rock_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)343",
+        displayName: "Stone",
+        health: 1,
+      },
+      {
+        targetId: "rock_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)2",
+        displayName: "Stone",
+        health: 1,
+      },
     ],
     [
       "artifactSpotTargets",
-      { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)SeedSpot", displayName: "Artifact Spot" },
-      { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590", displayName: "Artifact Spot" },
+      {
+        targetId: "artifact_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)SeedSpot",
+        displayName: "Artifact Spot",
+      },
+      {
+        targetId: "artifact_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)590",
+        displayName: "Artifact Spot",
+      },
     ],
   ];
   for (const [field, nativeVariant, pinnedVariant] of cases) {
@@ -1103,13 +1422,27 @@ test("the native litter-category targets accept any bounded item id, not one pin
 
 test("clear_cask requires exact target coordinates and the selected tool slot", () => {
   const request = {
-    requestId: "request_clear_cask_01", idempotencyKey: "idempotency_clear_cask_01", action: "clear_cask",
-    args: { slot: 2, x: 11, y: 12, expectedTargetId: "cask_0123456789abcdef" }, expectedRevision: snapshot.revision, deadlineMs: now + 10_000,
+    requestId: "request_clear_cask_01",
+    idempotencyKey: "idempotency_clear_cask_01",
+    action: "clear_cask",
+    args: { slot: 2, x: 11, y: 12, expectedTargetId: "cask_0123456789abcdef" },
+    expectedRevision: snapshot.revision,
+    deadlineMs: now + 10_000,
   };
   const enabled = { ...snapshot, capabilities: [...snapshot.capabilities, "clear_cask"] };
   assert.equal(validateExecutionRequest(request, enabled, now), null);
-  assert.equal(validateExecutionRequest({ ...request, args: { x: 11, y: 12, expectedTargetId: "cask_0123456789abcdef" } }, enabled, now), "invalid_args");
-  assert.equal(validateExecutionRequest({ ...request, args: { ...request.args, slot: 99 } }, enabled, now), "invalid_cask_target");
+  assert.equal(
+    validateExecutionRequest(
+      { ...request, args: { x: 11, y: 12, expectedTargetId: "cask_0123456789abcdef" } },
+      enabled,
+      now,
+    ),
+    "invalid_args",
+  );
+  assert.equal(
+    validateExecutionRequest({ ...request, args: { ...request.args, slot: 99 } }, enabled, now),
+    "invalid_cask_target",
+  );
 });
 
 test("execution validation fails closed for stale, unknown, malformed, and unactionable requests", () => {
@@ -1168,17 +1501,16 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA", label: null },
   ]) {
     assert.equal(
-      validateExecutionRequest(
-        { ...navigateByLabel, args: { destination } },
-        navigationSnapshot,
-        now,
-      ),
+      validateExecutionRequest({ ...navigateByLabel, args: { destination } }, navigationSnapshot, now),
       "invalid_navigation_destination",
     );
   }
   assert.equal(
     validateExecutionRequest(
-      { ...navigateByLabel, args: { destination: { kind: "label", label: "Mine" }, destinationRef: "dr1_AAAAAAAAAAAAAAAAAAAAAA" } },
+      {
+        ...navigateByLabel,
+        args: { destination: { kind: "label", label: "Mine" }, destinationRef: "dr1_AAAAAAAAAAAAAAAAAAAAAA" },
+      },
       navigationSnapshot,
       now,
     ),
@@ -1291,8 +1623,14 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   const raftSnapshot = { ...raftCapability, raftTargets: [{ targetId: "raft_0123456789abcdef", x: 10, y: 11 }] };
   const useRaft = { ...valid, action: "use_raft" };
   assert.equal(validateExecutionRequest({ ...useRaft, args: { slot: 2, x: 10, y: 11 } }, raftSnapshot, now), null);
-  assert.equal(validateExecutionRequest({ ...useRaft, args: { slot: 37, x: 10, y: 11 } }, raftSnapshot, now), "invalid_raft_target");
-  assert.equal(validateExecutionRequest({ ...useRaft, args: { slot: 2, x: 10, y: 12 } }, raftSnapshot, now), "invalid_raft_target");
+  assert.equal(
+    validateExecutionRequest({ ...useRaft, args: { slot: 37, x: 10, y: 11 } }, raftSnapshot, now),
+    "invalid_raft_target",
+  );
+  assert.equal(
+    validateExecutionRequest({ ...useRaft, args: { slot: 2, x: 10, y: 12 } }, raftSnapshot, now),
+    "invalid_raft_target",
+  );
   assert.equal(validateExecutionRequest({ ...valid, args: { x: -1, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: 11.5, y: 12 } }, snapshot, now), "invalid_target_tile");
   // The gateway no longer decides body actionability: `actionable: false` is exactly the state the modal
@@ -1355,7 +1693,13 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   const pickupForage = {
     ...valid,
     action: "pickup_forage",
-     args: { x: 10, y: 12, expectedQualifiedItemId: "(O)399", expectedTargetId: "forage_deadbeef", sceneTarget: { observationId: "observation_deadbeef", ref: "sr1_AAAAAAAAAAAAAAAA" } },
+    args: {
+      x: 10,
+      y: 12,
+      expectedQualifiedItemId: "(O)399",
+      expectedTargetId: "forage_deadbeef",
+      sceneTarget: { observationId: "observation_deadbeef", ref: "sr1_AAAAAAAAAAAAAAAA" },
+    },
   };
   const pickupItem = {
     ...valid,
@@ -1480,7 +1824,14 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     {
       ...snapshot,
       artifactSpotTargets: [
-        { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590", displayName: "Artifact Spot" },
+        {
+          targetId: "artifact_spot_deadbeef",
+          location: "Farm",
+          x: 10,
+          y: 12,
+          qualifiedItemId: "(O)590",
+          displayName: "Artifact Spot",
+        },
       ],
       artifactSpotFarmSourceCount: 1,
     },
@@ -1516,7 +1867,14 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
           // list here rejected the Mod's correct discovery. An empty token is still
           // refused, so the field stays a bounded typed identifier.
           artifactSpotTargets: [
-            { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "", displayName: "Artifact Spot" },
+            {
+              targetId: "artifact_spot_deadbeef",
+              location: "Farm",
+              x: 10,
+              y: 12,
+              qualifiedItemId: "",
+              displayName: "Artifact Spot",
+            },
           ],
         },
       },
@@ -2092,14 +2450,17 @@ test("protocol serialization rejects oversized, undefined, and circular values",
   assert.throws(() => serializeBounded(circular), /message_not_serializable/);
 });
 
-
 test("navigation read requests admit only the strict inspect and destination-search unions", () => {
   for (const payload of [
     { operation: "inspect_world_map", args: {} },
     { operation: "inspect_world_map", args: { nodeRef: "nr1_farm" } },
     { operation: "inspect_world_map", args: { cursor: "wc1_page2" } },
     { operation: "find_destination", args: { query: "Carpenter's Shop" } },
-  ]) assert.equal(validateBridgeMessage(newEnvelope("navigation_read_request", scope, payload, "nav_req", now), scope, now), null);
+  ])
+    assert.equal(
+      validateBridgeMessage(newEnvelope("navigation_read_request", scope, payload, "nav_req", now), scope, now),
+      null,
+    );
 
   for (const payload of [
     { operation: "inspect_world_map", args: { nodeRef: "nr1_farm", cursor: "wc1_page2" } },
@@ -2107,20 +2468,63 @@ test("navigation read requests admit only the strict inspect and destination-sea
     { operation: "find_destination", args: { query: "" } },
     { operation: "find_destination", args: { query: "x".repeat(129) } },
     { operation: "find_destination", args: { query: "Farm", score: 1 } },
-  ]) assert.equal(validateBridgeMessage(newEnvelope("navigation_read_request", scope, payload, "nav_bad", now), scope, now), "invalid_navigation_read_request");
+  ])
+    assert.equal(
+      validateBridgeMessage(newEnvelope("navigation_read_request", scope, payload, "nav_bad", now), scope, now),
+      "invalid_navigation_read_request",
+    );
 });
 
 test("navigation read results enforce the operation-independent exact wire union", () => {
   const baseNulls = { entries: null, nextCursor: null, candidates: null, destination: null, unlockState: null };
   const inspect = {
-    status: "succeeded", reason: "world_map_observed",
-    entries: [{ label: "Farm", contextLabel: null, nodeRef: "nr1_farm", destination: { kind: "label", label: "Farm", ref: null } }],
-    nextCursor: "wc1_page2", candidates: null, destination: null, unlockState: null,
+    status: "succeeded",
+    reason: "world_map_observed",
+    entries: [
+      {
+        label: "Farm",
+        contextLabel: null,
+        nodeRef: "nr1_farm",
+        destination: { kind: "label", label: "Farm", ref: null },
+      },
+    ],
+    nextCursor: "wc1_page2",
+    candidates: null,
+    destination: null,
+    unlockState: null,
   };
-  const resolved = { ...baseNulls, status: "resolved", reason: "exact_alias", destination: { kind: "ref", label: null, ref: "nr1_shop" }, unlockState: "unknown" };
-  const candidates = { ...baseNulls, status: "candidates", reason: "fuzzy_match", candidates: [{ label: "Shop", contextLabel: "Town", destination: { kind: "ref", label: null, ref: null }, unlockState: "unknown" }] };
-  for (const payload of [inspect, resolved, candidates, { ...baseNulls, status: "not_found", reason: "destination_not_found" }, { ...baseNulls, status: "invalid", reason: "destination_search_invalid" }, { ...baseNulls, status: "blocked", reason: "world_unavailable" }])
-    assert.equal(validateBridgeMessage(newEnvelope("navigation_read_result", scope, payload, "nav_result", now), scope, now), null);
+  const resolved = {
+    ...baseNulls,
+    status: "resolved",
+    reason: "exact_alias",
+    destination: { kind: "ref", label: null, ref: "nr1_shop" },
+    unlockState: "unknown",
+  };
+  const candidates = {
+    ...baseNulls,
+    status: "candidates",
+    reason: "fuzzy_match",
+    candidates: [
+      {
+        label: "Shop",
+        contextLabel: "Town",
+        destination: { kind: "ref", label: null, ref: null },
+        unlockState: "unknown",
+      },
+    ],
+  };
+  for (const payload of [
+    inspect,
+    resolved,
+    candidates,
+    { ...baseNulls, status: "not_found", reason: "destination_not_found" },
+    { ...baseNulls, status: "invalid", reason: "destination_search_invalid" },
+    { ...baseNulls, status: "blocked", reason: "world_unavailable" },
+  ])
+    assert.equal(
+      validateBridgeMessage(newEnvelope("navigation_read_result", scope, payload, "nav_result", now), scope, now),
+      null,
+    );
 
   const invalid = [
     { ...inspect, score: 1 },
@@ -2132,22 +2536,29 @@ test("navigation read results enforce the operation-independent exact wire union
     { ...baseNulls, status: "not_found", reason: "wrong_reason" },
   ];
   for (const payload of invalid)
-    assert.equal(validateBridgeMessage(newEnvelope("navigation_read_result", scope, payload, "nav_invalid", now), scope, now), "invalid_navigation_read_result");
+    assert.equal(
+      validateBridgeMessage(newEnvelope("navigation_read_result", scope, payload, "nav_invalid", now), scope, now),
+      "invalid_navigation_read_result",
+    );
 });
-
 
 test("body-program wire messages require exact bounded payloads", () => {
   const candidate = {
     programId: "program_01",
-    nodes: [{
-      nodeId: "node_01",
-      actionId: "move_to_tile",
-      arguments: { x: { type: "integer", canonicalValue: "5" } },
-      dependsOn: [],
-      bindings: {},
-    }],
+    nodes: [
+      {
+        nodeId: "node_01",
+        actionId: "move_to_tile",
+        arguments: { x: { type: "integer", canonicalValue: "5" } },
+        dependsOn: [],
+        bindings: {},
+      },
+    ],
   } as const;
-  assert.equal(validateBridgeMessage(newEnvelope("program_submit", scope, candidate, "program_submit_01", now), scope, now), null);
+  assert.equal(
+    validateBridgeMessage(newEnvelope("program_submit", scope, candidate, "program_submit_01", now), scope, now),
+    null,
+  );
   assert.equal(
     validateBridgeMessage(
       newEnvelope("program_submit", scope, { ...candidate, nodes: [] }, "program_submit_01", now),
@@ -2158,13 +2569,28 @@ test("body-program wire messages require exact bounded payloads", () => {
   );
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("program_events_result", scope, {
-        programId: "program_01",
-        code: "found",
-        nextCursor: 1,
-        highWater: 1,
-        events: [{ cursor: 1, programId: "program_01", kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }],
-      }, "program_events_01", now),
+      newEnvelope(
+        "program_events_result",
+        scope,
+        {
+          programId: "program_01",
+          code: "found",
+          nextCursor: 1,
+          highWater: 1,
+          events: [
+            {
+              cursor: 1,
+              programId: "program_01",
+              kind: "accepted",
+              catalogRevision: 1,
+              nodeId: null,
+              nodeAttempt: null,
+            },
+          ],
+        },
+        "program_events_01",
+        now,
+      ),
       scope,
       now,
     ),
@@ -2172,13 +2598,28 @@ test("body-program wire messages require exact bounded payloads", () => {
   );
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("program_events_result", scope, {
-        programId: "program_01",
-        code: "found",
-        nextCursor: 1,
-        highWater: 1,
-        events: [{ cursor: -1, programId: "program_01", kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null }],
-      }, "program_events_02", now),
+      newEnvelope(
+        "program_events_result",
+        scope,
+        {
+          programId: "program_01",
+          code: "found",
+          nextCursor: 1,
+          highWater: 1,
+          events: [
+            {
+              cursor: -1,
+              programId: "program_01",
+              kind: "accepted",
+              catalogRevision: 1,
+              nodeId: null,
+              nodeAttempt: null,
+            },
+          ],
+        },
+        "program_events_02",
+        now,
+      ),
       scope,
       now,
     ),
@@ -2205,7 +2646,10 @@ test("body-program candidate supports only the C# typed destination_selector rep
     destination: { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA" },
   });
   for (const payload of [label, ref])
-    assert.equal(validateBridgeMessage(newEnvelope("program_submit", scope, payload, "selector_submit_ok", now), scope, now), null);
+    assert.equal(
+      validateBridgeMessage(newEnvelope("program_submit", scope, payload, "selector_submit_ok", now), scope, now),
+      null,
+    );
 
   for (const destination of [
     { type: "destination_selector", destination: { kind: "label", label: "" } },
@@ -2223,7 +2667,11 @@ test("body-program candidate supports only the C# typed destination_selector rep
     { type: "destination_selector", destination: { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAA" } },
   ])
     assert.equal(
-      validateBridgeMessage(newEnvelope("program_submit", scope, nodesFor(destination), "selector_submit_bad", now), scope, now),
+      validateBridgeMessage(
+        newEnvelope("program_submit", scope, nodesFor(destination), "selector_submit_bad", now),
+        scope,
+        now,
+      ),
       "invalid_body_program_request",
       JSON.stringify(destination),
     );
@@ -2251,11 +2699,19 @@ test("body-program candidate rejects more than 4 bindings per node, matching the
   });
 
   assert.equal(
-    validateBridgeMessage(newEnvelope("program_submit", scope, candidate(bindingsFor(4)), "binding_4_submit_ok", now), scope, now),
+    validateBridgeMessage(
+      newEnvelope("program_submit", scope, candidate(bindingsFor(4)), "binding_4_submit_ok", now),
+      scope,
+      now,
+    ),
     null,
   );
   assert.equal(
-    validateBridgeMessage(newEnvelope("program_submit", scope, candidate(bindingsFor(5)), "binding_5_submit_bad", now), scope, now),
+    validateBridgeMessage(
+      newEnvelope("program_submit", scope, candidate(bindingsFor(5)), "binding_5_submit_bad", now),
+      scope,
+      now,
+    ),
     "invalid_body_program_request",
   );
 });
@@ -2304,7 +2760,18 @@ test("body-program submit result preserves embedded verification and admits the 
       newEnvelope(
         "program_submit_result",
         scope,
-        { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics: [...diagnostics, { severity: "error", code: "diagnostic", nodeId: null, path: "node", message: "x" }] }, snapshot: null },
+        {
+          code: "rejected",
+          verification: {
+            accepted: false,
+            catalogRevision: 1,
+            diagnostics: [
+              ...diagnostics,
+              { severity: "error", code: "diagnostic", nodeId: null, path: "node", message: "x" },
+            ],
+          },
+          snapshot: null,
+        },
         "submit_verify_65",
         now,
       ),
@@ -2315,7 +2782,13 @@ test("body-program submit result preserves embedded verification and admits the 
   );
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("program_submit_result", scope, { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics }, snapshot: null }, "submit_verify_64", now),
+      newEnvelope(
+        "program_submit_result",
+        scope,
+        { code: "rejected", verification: { accepted: false, catalogRevision: 1, diagnostics }, snapshot: null },
+        "submit_verify_64",
+        now,
+      ),
       scope,
       now,
     ),
@@ -2338,12 +2811,20 @@ test("body-program destination selector labels enforce NFC canonicalization like
   });
   // Already-canonicalized precomposed NFC label is exchangeable, exactly as C# ReadPlayerText admits it.
   assert.equal(
-    validateBridgeMessage(newEnvelope("program_submit", scope, candidate("Caf\u00e9"), "selector_nfc", now), scope, now),
+    validateBridgeMessage(
+      newEnvelope("program_submit", scope, candidate("Caf\u00e9"), "selector_nfc", now),
+      scope,
+      now,
+    ),
     null,
   );
   // Decomposed FormD label is not NFC-canonical, so the C# ingress rejects it; the Host must fail closed too.
   assert.equal(
-    validateBridgeMessage(newEnvelope("program_submit", scope, candidate("Cafe\u0301"), "selector_decomposed", now), scope, now),
+    validateBridgeMessage(
+      newEnvelope("program_submit", scope, candidate("Cafe\u0301"), "selector_decomposed", now),
+      scope,
+      now,
+    ),
     "invalid_body_program_request",
   );
 });
@@ -2383,7 +2864,11 @@ test("body-program status snapshot node arrays freeze at the C# MaximumNodes bou
       newEnvelope(
         "program_submit_result",
         scope,
-        { code: "accepted", verification: { accepted: true, catalogRevision: 1, diagnostics: [] }, snapshot: snapshot(17) },
+        {
+          code: "accepted",
+          verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+          snapshot: snapshot(17),
+        },
         "submit_17",
         now,
       ),
@@ -2408,11 +2893,19 @@ test("body-program node attempt counters align to the C# Int32 wire fields", () 
     code: "found",
     nextCursor: 1,
     highWater: 1,
-    events: [{ cursor: 1, programId: "program_01", kind: "native_dispatch", catalogRevision: 1, nodeId: null, nodeAttempt }],
+    events: [
+      { cursor: 1, programId: "program_01", kind: "native_dispatch", catalogRevision: 1, nodeId: null, nodeAttempt },
+    ],
   });
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(2_147_483_647, 2_147_483_647) }, "int32_max_status", now),
+      newEnvelope(
+        "program_status_result",
+        scope,
+        { code: "found", snapshot: snapshot(2_147_483_647, 2_147_483_647) },
+        "int32_max_status",
+        now,
+      ),
       scope,
       now,
     ),
@@ -2420,7 +2913,13 @@ test("body-program node attempt counters align to the C# Int32 wire fields", () 
   );
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(2_147_483_648, 1) }, "int32_over_node_status", now),
+      newEnvelope(
+        "program_status_result",
+        scope,
+        { code: "found", snapshot: snapshot(2_147_483_648, 1) },
+        "int32_over_node_status",
+        now,
+      ),
       scope,
       now,
     ),
@@ -2428,18 +2927,32 @@ test("body-program node attempt counters align to the C# Int32 wire fields", () 
   );
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(1, 2_147_483_648) }, "int32_over_admission_status", now),
+      newEnvelope(
+        "program_status_result",
+        scope,
+        { code: "found", snapshot: snapshot(1, 2_147_483_648) },
+        "int32_over_admission_status",
+        now,
+      ),
       scope,
       now,
     ),
     "invalid_body_program_result",
   );
   assert.equal(
-    validateBridgeMessage(newEnvelope("program_events_result", scope, eventResult(2_147_483_647), "int32_max_event", now), scope, now),
+    validateBridgeMessage(
+      newEnvelope("program_events_result", scope, eventResult(2_147_483_647), "int32_max_event", now),
+      scope,
+      now,
+    ),
     null,
   );
   assert.equal(
-    validateBridgeMessage(newEnvelope("program_events_result", scope, eventResult(2_147_483_648), "int32_over_event", now), scope, now),
+    validateBridgeMessage(
+      newEnvelope("program_events_result", scope, eventResult(2_147_483_648), "int32_over_event", now),
+      scope,
+      now,
+    ),
     "invalid_body_program_result",
   );
 });
@@ -2463,8 +2976,20 @@ test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malform
     year: 1,
     weather: "sunny",
     activeExecution: null,
-    chestStoreTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, slot: 2, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 5 }],
-    chestRetrieveTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 3 }],
+    chestStoreTargets: [
+      {
+        targetId: "chest_0123456789abcdef",
+        x: 4,
+        y: 5,
+        slot: 2,
+        qualifiedItemId: "(O)24",
+        displayName: "Parsnip",
+        stack: 5,
+      },
+    ],
+    chestRetrieveTargets: [
+      { targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 3 },
+    ],
   };
   const base = newEnvelope("snapshot", scope, basePayload, "chest_snapshot_01", now);
   assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
@@ -2474,7 +2999,17 @@ test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malform
         ...base,
         payload: {
           ...basePayload,
-          chestStoreTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, slot: 99, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 5 }],
+          chestStoreTargets: [
+            {
+              targetId: "chest_0123456789abcdef",
+              x: 4,
+              y: 5,
+              slot: 99,
+              qualifiedItemId: "(O)24",
+              displayName: "Parsnip",
+              stack: 5,
+            },
+          ],
         },
       },
       scope,
@@ -2488,7 +3023,9 @@ test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malform
         ...base,
         payload: {
           ...basePayload,
-          chestRetrieveTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "", displayName: "Item", stack: 3 }],
+          chestRetrieveTargets: [
+            { targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "", displayName: "Item", stack: 3 },
+          ],
         },
       },
       scope,
@@ -2525,12 +3062,32 @@ test("snapshot admits treeStumpTargets and rejects malformed rows", () => {
     year: 1,
     weather: "sunny",
     activeExecution: null,
-    treeStumpTargets: [{ targetId: "tree_stump_0123456789abcdef", location: "Farm", x: 12, y: 13, treeType: "Tree", health: 5 }],
+    treeStumpTargets: [
+      { targetId: "tree_stump_0123456789abcdef", location: "Farm", x: 12, y: 13, treeType: "Tree", health: 5 },
+    ],
   };
   const base = newEnvelope("snapshot", scope, basePayload, "stump_snapshot_01", now);
   assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
-  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeStumpTargets: [{ targetId: "tree_stump_0123456789abcdef", location: "Farm", x: 12, y: 13, treeType: "", health: 5 }] } }, scope, now), "invalid_snapshot:treeStumpTargets");
-  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeStumpTargets: undefined } }, scope, now), "accepted");
+  assert.equal(
+    diagnoseBridgeMessage(
+      {
+        ...base,
+        payload: {
+          ...basePayload,
+          treeStumpTargets: [
+            { targetId: "tree_stump_0123456789abcdef", location: "Farm", x: 12, y: 13, treeType: "", health: 5 },
+          ],
+        },
+      },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:treeStumpTargets",
+  );
+  assert.equal(
+    diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeStumpTargets: undefined } }, scope, now),
+    "accepted",
+  );
 });
 
 test("snapshot admits treeSaplingTargets and rejects malformed rows", () => {
@@ -2552,7 +3109,16 @@ test("snapshot admits treeSaplingTargets and rejects malformed rows", () => {
     year: 1,
     weather: "sunny",
     activeExecution: null,
-    treeSaplingTargets: [{ targetId: "tree_sapling_0123456789abcdef", slot: 2, x: 4, y: 5, qualifiedItemId: "(O)309", displayName: "Acorn" }],
+    treeSaplingTargets: [
+      {
+        targetId: "tree_sapling_0123456789abcdef",
+        slot: 2,
+        x: 4,
+        y: 5,
+        qualifiedItemId: "(O)309",
+        displayName: "Acorn",
+      },
+    ],
   };
   const base = newEnvelope("snapshot", scope, basePayload, "sapling_snapshot_01", now);
   assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
@@ -2562,7 +3128,16 @@ test("snapshot admits treeSaplingTargets and rejects malformed rows", () => {
         ...base,
         payload: {
           ...basePayload,
-          treeSaplingTargets: [{ targetId: "tree_sapling_0123456789abcdef", slot: 99, x: 4, y: 5, qualifiedItemId: "(O)309", displayName: "Acorn" }],
+          treeSaplingTargets: [
+            {
+              targetId: "tree_sapling_0123456789abcdef",
+              slot: 99,
+              x: 4,
+              y: 5,
+              qualifiedItemId: "(O)309",
+              displayName: "Acorn",
+            },
+          ],
         },
       },
       scope,
@@ -2570,7 +3145,10 @@ test("snapshot admits treeSaplingTargets and rejects malformed rows", () => {
     ),
     "invalid_snapshot:treeSaplingTargets",
   );
-  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeSaplingTargets: undefined } }, scope, now), "accepted");
+  assert.equal(
+    diagnoseBridgeMessage({ ...base, payload: { ...basePayload, treeSaplingTargets: undefined } }, scope, now),
+    "accepted",
+  );
 });
 
 test("snapshot validates Cask target identity and held-object projection", () => {
@@ -2578,12 +3156,38 @@ test("snapshot validates Cask target identity and held-object projection", () =>
     ...snapshot,
     capabilities: ["clear_cask"],
     enabledActionIds: ["clear_cask"],
-    caskTargets: [{ targetId: "cask_0123456789abcdef", location: "Farm", x: 6, y: 7, hasHeldObject: false, heldQualifiedItemId: null }],
+    caskTargets: [
+      {
+        targetId: "cask_0123456789abcdef",
+        location: "Farm",
+        x: 6,
+        y: 7,
+        hasHeldObject: false,
+        heldQualifiedItemId: null,
+      },
+    ],
   };
   const base = newEnvelope("snapshot", scope, basePayload, "cask_snapshot_01", now);
   assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
-  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, hasHeldObject: true }] } }, scope, now), "invalid_snapshot:caskTargets");
-  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, heldQualifiedItemId: "(O)348" }] } }, scope, now), "accepted");
+  assert.equal(
+    diagnoseBridgeMessage(
+      { ...base, payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, hasHeldObject: true }] } },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:caskTargets",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      {
+        ...base,
+        payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, heldQualifiedItemId: "(O)348" }] },
+      },
+      scope,
+      now,
+    ),
+    "accepted",
+  );
 });
 
 test("snapshot validates Cask target identity and held-object projection", () => {
@@ -2591,12 +3195,38 @@ test("snapshot validates Cask target identity and held-object projection", () =>
     ...snapshot,
     capabilities: ["clear_cask"],
     enabledActionIds: ["clear_cask"],
-    caskTargets: [{ targetId: "cask_0123456789abcdef", location: "Farm", x: 6, y: 7, hasHeldObject: false, heldQualifiedItemId: null }],
+    caskTargets: [
+      {
+        targetId: "cask_0123456789abcdef",
+        location: "Farm",
+        x: 6,
+        y: 7,
+        hasHeldObject: false,
+        heldQualifiedItemId: null,
+      },
+    ],
   };
   const base = newEnvelope("snapshot", scope, basePayload, "cask_snapshot_01", now);
   assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
-  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, hasHeldObject: true }] } }, scope, now), "invalid_snapshot:caskTargets");
-  assert.equal(diagnoseBridgeMessage({ ...base, payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, heldQualifiedItemId: "(O)348" }] } }, scope, now), "accepted");
+  assert.equal(
+    diagnoseBridgeMessage(
+      { ...base, payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, hasHeldObject: true }] } },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:caskTargets",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      {
+        ...base,
+        payload: { ...basePayload, caskTargets: [{ ...basePayload.caskTargets![0]!, heldQualifiedItemId: "(O)348" }] },
+      },
+      scope,
+      now,
+    ),
+    "accepted",
+  );
 });
 
 test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows", () => {
@@ -2619,13 +3249,29 @@ test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows",
     weather: "sunny",
     activeExecution: null,
     weedTargets: [{ targetId: "weed_0123456789abcdef", location: "Farm", x: 6, y: 7, health: 1 }],
-    scytheCropTargets: [{ targetId: "scythe_crop_0123456789abcdef", location: "Farm", x: 6, y: 7, cropId: "wheat", qualifiedHarvestItemId: "(O)262", displayName: "Wheat" }],
+    scytheCropTargets: [
+      {
+        targetId: "scythe_crop_0123456789abcdef",
+        location: "Farm",
+        x: 6,
+        y: 7,
+        cropId: "wheat",
+        qualifiedHarvestItemId: "(O)262",
+        displayName: "Wheat",
+      },
+    ],
   };
   const base = newEnvelope("snapshot", scope, basePayload, "weed_snapshot_01", now);
   assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
   assert.equal(
     diagnoseBridgeMessage(
-      { ...base, payload: { ...basePayload, weedTargets: [{ targetId: "weed_0123456789abcdef", location: "Farm", x: 6, y: 7, health: -1 }] } },
+      {
+        ...base,
+        payload: {
+          ...basePayload,
+          weedTargets: [{ targetId: "weed_0123456789abcdef", location: "Farm", x: 6, y: 7, health: -1 }],
+        },
+      },
       scope,
       now,
     ),
@@ -2637,7 +3283,17 @@ test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows",
         ...base,
         payload: {
           ...basePayload,
-          scytheCropTargets: [{ targetId: "scythe_crop_0123456789abcdef", location: "Farm", x: 6, y: 7, cropId: "wheat", qualifiedHarvestItemId: "", displayName: "Wheat" }],
+          scytheCropTargets: [
+            {
+              targetId: "scythe_crop_0123456789abcdef",
+              location: "Farm",
+              x: 6,
+              y: 7,
+              cropId: "wheat",
+              qualifiedHarvestItemId: "",
+              displayName: "Wheat",
+            },
+          ],
         },
       },
       scope,
@@ -2646,7 +3302,11 @@ test("snapshot admits weedTargets/scytheCropTargets and rejects malformed rows",
     "invalid_snapshot:scytheCropTargets",
   );
   assert.equal(
-    diagnoseBridgeMessage({ ...base, payload: { ...basePayload, weedTargets: undefined, scytheCropTargets: undefined } }, scope, now),
+    diagnoseBridgeMessage(
+      { ...base, payload: { ...basePayload, weedTargets: undefined, scytheCropTargets: undefined } },
+      scope,
+      now,
+    ),
     "accepted",
   );
 });
@@ -2661,7 +3321,14 @@ test("observe_scene result admits tree and animal affordance kinds and still rej
         currentLocation: "Farm",
         currentRegion: "Farm",
         affordances: [
-          { ref: "sr1_dense0abcdefghij", kind, name: kind === "tree" ? "Tree" : "Cluck", distance: 2, direction: "East", actionHint },
+          {
+            ref: "sr1_dense0abcdefghij",
+            kind,
+            name: kind === "tree" ? "Tree" : "Cluck",
+            distance: 2,
+            direction: "East",
+            actionHint,
+          },
         ],
         summary: "1 actionable objects visible in Farm.",
         partial: false,
@@ -2686,12 +3353,19 @@ test("observe_scene result admits tree and animal affordance kinds and still rej
       currentLocation: "Farm",
       currentRegion: "Farm",
       affordances: [
-        { ref: "sr1_dense0abcdefghij", kind: "seed_packet", name: "Seed Packet", distance: 2, direction: "East", actionHint: null },
+        {
+          ref: "sr1_dense0abcdefghij",
+          kind: "seed_packet",
+          name: "Seed Packet",
+          distance: 2,
+          direction: "East",
+          actionHint: null,
+        },
       ],
       summary: "1 actionable objects visible in Farm.",
       partial: false,
       truncatedReason: null,
-        ground: null,
+      ground: null,
     },
     "observe_scene_weed_01",
     now,
@@ -2701,29 +3375,32 @@ test("observe_scene result admits tree and animal affordance kinds and still rej
 
 test("observe_scene result admits reachable as true, false, null or absent, and rejects a non-boolean", () => {
   const sceneFor = (reachable: boolean | null | undefined) =>
-    newEnvelope("observe_scene_result", scope, {
-      observationId: "so1_REACHAB1E0001",
-      currentLocation: "Farm",
-      currentRegion: "Farm",
-      affordances: [
-        {
-          ref: "sr1_AAAAAAAAAAAAAAAA",
-          kind: "crop",
-          name: "Crop",
-          distance: 1,
-          direction: "East",
-          actionHint: null,
-         ...(reachable === undefined ? {} : { reachable }),
-        },
-      ],
-      summary: "1 actionable objects visible in Farm.",
-      partial: false,
-      truncatedReason: null,
-      ground: null,
-    },
-    "observe_scene_reach_01",
-    now,
-  );
+    newEnvelope(
+      "observe_scene_result",
+      scope,
+      {
+        observationId: "so1_REACHAB1E0001",
+        currentLocation: "Farm",
+        currentRegion: "Farm",
+        affordances: [
+          {
+            ref: "sr1_AAAAAAAAAAAAAAAA",
+            kind: "crop",
+            name: "Crop",
+            distance: 1,
+            direction: "East",
+            actionHint: null,
+            ...(reachable === undefined ? {} : { reachable }),
+          },
+        ],
+        summary: "1 actionable objects visible in Farm.",
+        partial: false,
+        truncatedReason: null,
+        ground: null,
+      },
+      "observe_scene_reach_01",
+      now,
+    );
   // The field is tri-state and OPTIONAL: the whole point is the difference between false (a measured no) and
   // ABSENT or null (nobody measured). A non-boolean is still refused.
   assert.equal(diagnoseBridgeMessage(sceneFor(true), scope, now), null);
@@ -2734,7 +3411,15 @@ test("observe_scene result admits reachable as true, false, null or absent, and 
   (invalid as unknown as { payload: Record<string, unknown> }).payload = {
     ...(invalid as unknown as { payload: Record<string, unknown> }).payload,
     affordances: [
-      { ref: "sr1_AAAAAAAAAAAAAAAA", kind: "crop", name: "Crop", distance: 1, direction: "East", actionHint: null, reachable: "no" },
+      {
+        ref: "sr1_AAAAAAAAAAAAAAAA",
+        kind: "crop",
+        name: "Crop",
+        distance: 1,
+        direction: "East",
+        actionHint: null,
+        reachable: "no",
+      },
     ],
   };
   // The payload sits under `payload`, so the malformed affordance is reached and must be named by the payload
@@ -2765,7 +3450,10 @@ test("snapshot admits a warp's accessible as true, false, null or absent, and re
   assert.equal(diagnoseBridgeMessage(forWarp(warp(undefined)), scope, now), "accepted");
   // A measured non-boolean and an unknown key are both refused by the family predicate, and the
   // refusal names the offending field rather than the whole snapshot.
-  for (const malformed of [{ ...warp(true), accessible: "yes" }, { ...warp(true), extra: true }])
+  for (const malformed of [
+    { ...warp(true), accessible: "yes" },
+    { ...warp(true), extra: true },
+  ])
     assert.equal(diagnoseBridgeMessage(forWarp(malformed), scope, now), "invalid_snapshot:warps");
 });
 test("observe_scene result admits water_source affordance kind and rejects unknown kinds", () => {
@@ -2789,7 +3477,7 @@ test("observe_scene result admits water_source affordance kind and rejects unkno
       summary: "1 actionable objects visible in Farm.",
       partial: false,
       truncatedReason: null,
-        ground: null,
+      ground: null,
     },
     "observe_scene_water_01",
     now,
@@ -2816,7 +3504,7 @@ test("observe_scene result admits water_source affordance kind and rejects unkno
       summary: "1 actionable objects visible in Farm.",
       partial: false,
       truncatedReason: null,
-        ground: null,
+      ground: null,
     },
     "observe_scene_water_02",
     now,
@@ -2847,7 +3535,13 @@ test("observe_scene ground summary accepts real shapes and rejects impossible co
       now,
     );
 
-  const uniform = { dominantKind: "grass", dominantTileCount: 49, scannedTileCount: 49, exceptions: [], omittedExceptionTileCount: 0 };
+  const uniform = {
+    dominantKind: "grass",
+    dominantTileCount: 49,
+    scannedTileCount: 49,
+    exceptions: [],
+    omittedExceptionTileCount: 0,
+  };
   assert.equal(diagnoseBridgeMessage(sceneWithGround(uniform), scope, now), null);
 
   const mixed = {
@@ -2867,11 +3561,7 @@ test("observe_scene ground summary accepts real shapes and rejects impossible co
 
   // Dominant cannot exceed what was scanned.
   assert.equal(
-    diagnoseBridgeMessage(
-      sceneWithGround({ ...uniform, dominantTileCount: 50, scannedTileCount: 49 }),
-      scope,
-      now,
-    ),
+    diagnoseBridgeMessage(sceneWithGround({ ...uniform, dominantTileCount: 50, scannedTileCount: 49 }), scope, now),
     "invalid_observe_scene_result",
   );
   // An unnamed surface must still use the engine's own fallback value, not a new label.
@@ -2931,7 +3621,13 @@ test("observe_scene ground_limit is an admitted truncation reason", () => {
       summary: "Nothing actionable is visible in Farm.",
       partial: true,
       truncatedReason: "ground_limit",
-      ground: { dominantKind: "grass", dominantTileCount: 1, scannedTileCount: 41, exceptions: [], omittedExceptionTileCount: 40 },
+      ground: {
+        dominantKind: "grass",
+        dominantTileCount: 1,
+        scannedTileCount: 41,
+        exceptions: [],
+        omittedExceptionTileCount: 40,
+      },
     },
     "observe_scene_ground_02",
     now,
@@ -2965,25 +3661,67 @@ test("snapshot admits villagerWhereabouts and rejects malformed rows", () => {
     activeExecution: null,
   };
   const row = { npcName: "Jodi", displayName: "Jodi", location: "SeedShop", x: 3, y: 8, inCurrentLocation: false };
-  assert.equal(diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [row] }, "vw_ok", now), scope, now), "accepted");
-  assert.equal(diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [] }, "vw_empty", now), scope, now), "accepted");
+  assert.equal(
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [row] }, "vw_ok", now),
+      scope,
+      now,
+    ),
+    "accepted",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [] }, "vw_empty", now),
+      scope,
+      now,
+    ),
+    "accepted",
+  );
   // An unknown extra key must fail closed rather than be silently forwarded.
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [{ ...row, extra: 1 }] }, "vw_extra", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [{ ...row, extra: 1 }] }, "vw_extra", now),
+      scope,
+      now,
+    ),
     "invalid_snapshot:villagerWhereabouts",
   );
   // The readable name is required; an empty one is not a valid fact.
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [{ ...row, displayName: "" }] }, "vw_noname", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [{ ...row, displayName: "" }] }, "vw_noname", now),
+      scope,
+      now,
+    ),
     "invalid_snapshot:villagerWhereabouts",
   );
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [{ ...row, inCurrentLocation: "yes" }] }, "vw_bool", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...base, villagerWhereabouts: [{ ...row, inCurrentLocation: "yes" }] },
+        "vw_bool",
+        now,
+      ),
+      scope,
+      now,
+    ),
     "invalid_snapshot:villagerWhereabouts",
   );
   // Bound is 64 entries.
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: Array.from({ length: 65 }, () => row) }, "vw_many", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...base, villagerWhereabouts: Array.from({ length: 65 }, () => row) },
+        "vw_many",
+        now,
+      ),
+      scope,
+      now,
+    ),
     "invalid_snapshot:villagerWhereabouts",
   );
 });
@@ -3029,11 +3767,19 @@ test("snapshot admits weather and harvestWhereabouts and rejects malformed value
   // bounded count, real tiles, 64-entry cap.
   const row = { location: "Farm", readyForHarvestCount: 1, nearestX: 64, nearestY: 18 };
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: [row] }, "hw_ok", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: [row] }, "hw_ok", now),
+      scope,
+      now,
+    ),
     "accepted",
   );
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: [] }, "hw_empty", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: [] }, "hw_empty", now),
+      scope,
+      now,
+    ),
     "accepted",
   );
   assert.equal(
@@ -3046,7 +3792,13 @@ test("snapshot admits weather and harvestWhereabouts and rejects malformed value
   );
   assert.equal(
     diagnoseBridgeMessage(
-      newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: [{ ...row, readyForHarvestCount: -1 }] }, "hw_neg", now),
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...base, harvestWhereabouts: [{ ...row, readyForHarvestCount: -1 }] },
+        "hw_neg",
+        now,
+      ),
       scope,
       now,
     ),
@@ -3054,7 +3806,13 @@ test("snapshot admits weather and harvestWhereabouts and rejects malformed value
   );
   assert.equal(
     diagnoseBridgeMessage(
-      newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: [{ ...row, nearestX: -3, nearestY: 99999 }] }, "hw_tile", now),
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...base, harvestWhereabouts: [{ ...row, nearestX: -3, nearestY: 99999 }] },
+        "hw_tile",
+        now,
+      ),
       scope,
       now,
     ),
@@ -3062,7 +3820,13 @@ test("snapshot admits weather and harvestWhereabouts and rejects malformed value
   );
   assert.equal(
     diagnoseBridgeMessage(
-      newEnvelope("snapshot", scope, { ...base, harvestWhereabouts: Array.from({ length: 65 }, () => row) }, "hw_many", now),
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...base, harvestWhereabouts: Array.from({ length: 65 }, () => row) },
+        "hw_many",
+        now,
+      ),
       scope,
       now,
     ),
@@ -3089,7 +3853,7 @@ test("a snapshot taken while an execution is in flight carries the body owner, i
       interruptible: true,
     },
   };
-    assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, inFlight, "inflight_1", now), scope, now), null);
+  assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, inFlight, "inflight_1", now), scope, now), null);
 
   // A Mod that predates the two members must still validate: they are optional, not required.
   const older = {
@@ -3103,7 +3867,7 @@ test("a snapshot taken while an execution is in flight carries the body owner, i
       evidence: null,
     },
   };
-    assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, older, "older_1", now), scope, now), null);
+  assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, older, "older_1", now), scope, now), null);
 
   // The phase pair, added for the same reason as the owner pair above: a hold's cancel safety is a property of
   // its PHASE, and the Host must be able to see both while refusing nothing it should accept.
@@ -3134,7 +3898,13 @@ test("a snapshot taken while an execution is in flight carries the body owner, i
   // (this is the pair the neighbouring tests use). Assert the name, because the name is the diagnosis.
   assert.equal(
     diagnoseBridgeMessage(
-      newEnvelope("snapshot", scope, { ...inFlight, activeExecution: { ...inFlight.activeExecution, interruptible: "yes" } }, "bad_type", now),
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...inFlight, activeExecution: { ...inFlight.activeExecution, interruptible: "yes" } },
+        "bad_type",
+        now,
+      ),
       scope,
       now,
     ),
@@ -3143,7 +3913,13 @@ test("a snapshot taken while an execution is in flight carries the body owner, i
   // And an unknown key is still an unknown key.
   assert.equal(
     diagnoseBridgeMessage(
-      newEnvelope("snapshot", scope, { ...inFlight, activeExecution: { ...inFlight.activeExecution, whatever: 1 } }, "bad_key", now),
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...inFlight, activeExecution: { ...inFlight.activeExecution, whatever: 1 } },
+        "bad_key",
+        now,
+      ),
       scope,
       now,
     ),
@@ -3173,18 +3949,59 @@ test("snapshot admits crafting/cooking recipe and cooking-station discovery and 
     activeExecution: null,
   };
   const recipe = { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true };
-  const station = { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" };
+  const station = {
+    targetId: "cooking_station_0123456789abcdef",
+    location: "FarmHouse",
+    x: 4,
+    y: 5,
+    stationKind: "kitchen",
+  };
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, craftingRecipeTargets: [recipe], cookingRecipeTargets: [{ ...recipe, targetId: "Fried_Egg" }], cookingStationTargets: [station] }, "recipe_ok", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope(
+        "snapshot",
+        scope,
+        {
+          ...base,
+          craftingRecipeTargets: [recipe],
+          cookingRecipeTargets: [{ ...recipe, targetId: "Fried_Egg" }],
+          cookingStationTargets: [station],
+        },
+        "recipe_ok",
+        now,
+      ),
+      scope,
+      now,
+    ),
     "accepted",
   );
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, craftingRecipeTargets: [], cookingRecipeTargets: [], cookingStationTargets: [] }, "recipe_empty", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...base, craftingRecipeTargets: [], cookingRecipeTargets: [], cookingStationTargets: [] },
+        "recipe_empty",
+        now,
+      ),
+      scope,
+      now,
+    ),
     "accepted",
   );
   // The cookout kit is a first-class station kind, so it must round trip too.
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, cookingStationTargets: [{ ...station, stationKind: "cookout_kit" }] }, "recipe_kit", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...base, cookingStationTargets: [{ ...station, stationKind: "cookout_kit" }] },
+        "recipe_kit",
+        now,
+      ),
+      scope,
+      now,
+    ),
     "accepted",
   );
   for (const [field, bad] of [
@@ -3194,7 +4011,11 @@ test("snapshot admits crafting/cooking recipe and cooking-station discovery and 
     ["cookingRecipeTargets", { targetId: "Wood Fence", displayName: "Wood Fence", ingredientsAvailable: true }],
   ] as const) {
     assert.equal(
-      diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, [field]: [bad] }, `recipe_bad_${field}`, now), scope, now),
+      diagnoseBridgeMessage(
+        newEnvelope("snapshot", scope, { ...base, [field]: [bad] }, `recipe_bad_${field}`, now),
+        scope,
+        now,
+      ),
       `invalid_snapshot:${field}`,
       field,
     );
@@ -3206,17 +4027,41 @@ test("snapshot admits crafting/cooking recipe and cooking-station discovery and 
     { ...station, x: -1 },
   ]) {
     assert.equal(
-      diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, cookingStationTargets: [bad] }, "station_bad", now), scope, now),
+      diagnoseBridgeMessage(
+        newEnvelope("snapshot", scope, { ...base, cookingStationTargets: [bad] }, "station_bad", now),
+        scope,
+        now,
+      ),
       "invalid_snapshot:cookingStationTargets",
     );
   }
   // Both recipe lists are bounded at 64, stations at 16.
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, craftingRecipeTargets: Array.from({ length: 65 }, () => recipe) }, "recipe_many", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...base, craftingRecipeTargets: Array.from({ length: 65 }, () => recipe) },
+        "recipe_many",
+        now,
+      ),
+      scope,
+      now,
+    ),
     "invalid_snapshot:craftingRecipeTargets",
   );
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, cookingStationTargets: Array.from({ length: 17 }, () => station) }, "station_many", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...base, cookingStationTargets: Array.from({ length: 17 }, () => station) },
+        "station_many",
+        now,
+      ),
+      scope,
+      now,
+    ),
     "invalid_snapshot:cookingStationTargets",
   );
   // Minecart objectives: one entry per (station tile, destination). The target
@@ -3234,11 +4079,19 @@ test("snapshot admits crafting/cooking recipe and cooking-station discovery and 
     targetTileY: 12,
   };
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, minecartTargets: [ride] }, "ride_ok", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, minecartTargets: [ride] }, "ride_ok", now),
+      scope,
+      now,
+    ),
     "accepted",
   );
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, minecartTargets: [{ ...ride, price: 100 }] }, "ride_price", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope("snapshot", scope, { ...base, minecartTargets: [{ ...ride, price: 100 }] }, "ride_price", now),
+      scope,
+      now,
+    ),
     "accepted",
   );
   for (const bad of [
@@ -3252,12 +4105,26 @@ test("snapshot admits crafting/cooking recipe and cooking-station discovery and 
     { ...ride, stationX: -1 },
   ]) {
     assert.equal(
-      diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, minecartTargets: [bad] }, "ride_bad", now), scope, now),
+      diagnoseBridgeMessage(
+        newEnvelope("snapshot", scope, { ...base, minecartTargets: [bad] }, "ride_bad", now),
+        scope,
+        now,
+      ),
       "invalid_snapshot:minecartTargets",
     );
   }
   assert.equal(
-    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, minecartTargets: Array.from({ length: 25 }, () => ride) }, "ride_many", now), scope, now),
+    diagnoseBridgeMessage(
+      newEnvelope(
+        "snapshot",
+        scope,
+        { ...base, minecartTargets: Array.from({ length: 25 }, () => ride) },
+        "ride_many",
+        now,
+      ),
+      scope,
+      now,
+    ),
     "invalid_snapshot:minecartTargets",
   );
 });

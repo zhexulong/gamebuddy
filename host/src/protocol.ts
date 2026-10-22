@@ -251,6 +251,11 @@ export type Snapshot = Readonly<{
   professions?: readonly number[];
   /** Older Mod snapshots may omit fields added after the initial bridge contract. */
   currentTool?: string | null;
+  /**
+   * The farmer's active tool slot (`Farmer.CurrentToolIndex`). The tool-family actions take a `slot` that must EQUAL
+   * this index and hold the exact tool, so the slot cannot be judged statically: it is published here instead.
+   */
+  currentToolSlot?: number | null;
   inventorySlots?: number;
   /**
    * The persistent native exhaustion flag. While set, Farmer's day-update
@@ -315,8 +320,8 @@ export type Snapshot = Readonly<{
   }>[];
   /** Current live tiles that the target-version Hoe can potentially till. */
   soilTiles?: readonly Readonly<{ x: number; y: number }>[];
-  /** Current Farmhand inventory Tool slots, with bounded labels only. */
-  toolSlots?: readonly Readonly<{ slot: number; label: string }>[];
+  /** Current Farmhand inventory Tool slots: the slot, its bounded label and the tool's upgrade level. */
+  toolSlots?: readonly Readonly<{ slot: number; label: string; upgradeLevel?: number }>[];
   /** Nearby native forage objects available through GameLocation.checkAction. */
   forageTargets?: readonly Readonly<{
     targetId: string;
@@ -2071,7 +2076,9 @@ function validateBodyNodeAdmissionChallenge(value: Record<string, unknown>, gran
     return "invalid_body_node_admission_challenge";
   return Object.keys(value.derivedResourceClaims).length <= 16 &&
     Object.keys(value.canonicalBoundArgs).length <= 32 &&
-    Object.entries(value.derivedResourceClaims).every(([k, v]) => isAdmissionMapKey(k) && isOpaqueId(v)) &&
+    Object.entries(value.derivedResourceClaims).every(
+      ([k, v]) => isResourceClaimKey(k) && isDerivedResourceClaimValue(v),
+    ) &&
     Object.entries(value.canonicalBoundArgs).every(([k, v]) => isAdmissionMapKey(k) && isBodyCanonicalValue(v))
     ? null
     : "invalid_body_node_admission_challenge";
@@ -2127,6 +2134,41 @@ function isFarmhandPolicyIdentity(value: unknown): value is FarmhandPolicyIdenti
 
 function isAdmissionMapKey(value: unknown): value is string {
   return isOpaqueId(value) && value !== "__proto__";
+}
+
+/** A resource-claim key's length bound, mirroring the Mod's `BodyProgramValidation.IsResourceClaimKey`. */
+const MAX_RESOURCE_CLAIM_KEY_LENGTH = 128;
+/**
+ * The resource-claim key's segment bound. N segments need at least `2N - 1` characters, so 64 is the largest
+ * count the length bound already allows; it is kept explicit because the contract names the bound, not to add
+ * a second restriction on top of the length.
+ */
+const MAX_RESOURCE_CLAIM_KEY_SEGMENTS = 64;
+
+/**
+ * A derived resource claim's KEY: one or more lowercase identifier segments joined by `:`, so `embodied_actor`
+ * and `tool:scythe` are the same shape. This is the Mod's own rule (`BodyProgramValidation.IsResourceClaimKey`)
+ * and the reason the claim map cannot reuse `isAdmissionMapKey`: the key IS the resource identity the Mod
+ * derives, persists and conflicts on, so it is admitted by name or refused, never re-spelled. The `__proto__`
+ * refusal is kept from the old key rule so a JSON-owned key cannot be mistaken for an own property.
+ * `canonicalBoundArgs` is a different map and keeps the bare rule, because the Mod parses those names with
+ * `IsOpaqueId` (BridgeProtocol) and `IsIdentifier` (journal) and can never carry a colon.
+ */
+function isResourceClaimKey(value: unknown): value is string {
+  if (typeof value !== "string" || value.length < 1 || value.length > MAX_RESOURCE_CLAIM_KEY_LENGTH) return false;
+  if (value === "__proto__") return false;
+  const segments = value.split(":");
+  if (segments.length > MAX_RESOURCE_CLAIM_KEY_SEGMENTS) return false;
+  return segments.every((segment) => /^[a-z0-9_]+$/u.test(segment));
+}
+
+/**
+ * A derived resource claim's VALUE: an opaque id (a scoped player, an action identity) or the claim-key form
+ * the Mod publishes verbatim for a tool-family claim (`tool:scythe` names itself on both sides of the map).
+ * Mirrors the Mod's `ReadResourceClaimValue`.
+ */
+function isDerivedResourceClaimValue(value: unknown): value is string {
+  return isOpaqueId(value) || isResourceClaimKey(value);
 }
 function isAdmissionOpaque(value: unknown): value is string {
   return (
@@ -3451,6 +3493,12 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     return "invalid_snapshot:weather";
   if (value.currentTool !== undefined && value.currentTool !== null && typeof value.currentTool !== "string")
     return "invalid_snapshot:currentTool";
+  if (
+    value.currentToolSlot !== undefined &&
+    value.currentToolSlot !== null &&
+    !isNonNegativeSafeInteger(value.currentToolSlot)
+  )
+    return "invalid_snapshot:currentToolSlot";
   if (value.inventorySlots !== undefined && !Number.isSafeInteger(value.inventorySlots))
     return "invalid_snapshot:inventorySlots";
   if (
