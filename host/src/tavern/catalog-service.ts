@@ -189,7 +189,7 @@ export async function materializeTavernAuthoredContextCatalog(
         ? personaStableContent(artifact as UserPersona, macros)
         : selected.kind === "scenario"
           ? renderMacros((artifact as Scenario).text, macros)
-          : canonicalJson({ blocks: (artifact as DialogueExamples).blocks });
+          : dialogueExamplesProse(artifact as DialogueExamples);
     // A scenario and a persona are each ONE bound stable source, so unlike a world book
     // entry neither can be dropped. An authored macro the run's table cannot resolve still
     // must not be published as the companion's context, exactly as the Game surface refuses
@@ -422,32 +422,43 @@ function deriveStableWorldInfoContent(sourceValue: TavernWorldInfoSource): strin
     : boundedWorldInfoOverview(overview);
 }
 /**
- * One authored title as a Markdown heading, or nothing when the source has no title.
- *
- * A layer's always-on material used to publish as `canonicalJson` of the store's own
- * shape - `worldBookId`, `{entryId, title, content}`. Every authored word was in there,
- * but so was the durable record's identity, and a model that reads
- * `{"entryId":"wb-entry-01",…}` is reading a database row rather than lore. The
- * identities and revisions stay in the durable record and in the catalog source
- * metadata; only this rendering changed.
- */
-/**
  * The player's own side of the scene, as authored: her name and the answer to
  * 「你希望伙伴如何认识你」. Both fields are bounded by the artifact contract at authoring
  * time, and both render through the run's macro table, so `{{user}}`/`{{char}}` in a
  * description resolve instead of reaching the model as placeholders.
  */
 function personaStableContent(persona: UserPersona, macros: MacroTable): string {
-  return canonicalJson({
-    name: renderMacros(persona.name, macros),
-    ...(persona.description === undefined ? {} : { description: renderMacros(persona.description, macros) }),
-  });
+  return authoredProse([
+    authoredHeading(renderMacros(persona.name, macros)),
+    persona.description === undefined ? undefined : renderMacros(persona.description, macros),
+  ]);
+}
+/**
+ * The card's own example exchanges, as prose.
+ *
+ * The artifact stores them as `blocks`; the model reads each one the way the card wrote it,
+ * one exchange per paragraph, rather than as an array inside a record.
+ */
+function dialogueExamplesProse(examples: DialogueExamples): string {
+  return authoredProse(examples.blocks);
 }
 
+/** One authored title as a Markdown heading, or nothing when the source has no title. */
 function authoredHeading(title: string | undefined): string | undefined {
   return title === undefined || title.trim().length === 0 ? undefined : `## ${title}`;
 }
-/** Prose paragraphs joined with one blank line; an absent or empty part contributes nothing. */
+/**
+ * Authored prose paragraphs joined with one blank line; an absent or empty part contributes
+ * nothing.
+ *
+ * Every authored stable source publishes through here rather than as `canonicalJson` of the
+ * store's own shape. A source is introduced to the model as canon - "everything below is the
+ * established background setting" - so what it reads has to be what the player wrote: the
+ * durable record's identity (`worldBookId`, `entryId`, `personaId`, a `blocks` array, and
+ * escaped quotes) is bookkeeping, not lore. Every identity and revision stays in the record
+ * and in the catalog source metadata (`sourceId`, `revision`, `canonicalHash`, `provenance`);
+ * only the rendering changed.
+ */
 function authoredProse(parts: readonly (string | undefined)[]): string {
   return parts.filter((part): part is string => part !== undefined && part.trim().length > 0).join("\n\n");
 }

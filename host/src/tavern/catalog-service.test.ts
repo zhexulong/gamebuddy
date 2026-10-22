@@ -17,6 +17,7 @@ import { validateWorldBook, worldBookMetadata } from "../worldbook.js";
 import { createManagedWorldInfoBindingResolver } from "./world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "./world-info-management/world-info-management.js";
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
+import { DEFAULT_COMPANION_PRESET } from "./default-companion-preset.js";
 import { macroTable } from "./macro-engine.js";
 import { writeCompanionPostHistoryInstructions } from "./post-history-instructions.js";
 import { resolveTavernPaths, tavernRevisionPath } from "./tavern-paths.js";
@@ -733,6 +734,156 @@ test("native WorldBookBinding materializes constant entries into lorebook_consta
     assert.equal(catalog.volatileSources[0]?.selectiveLogic, 0);
   } finally {
     threads.close?.();
+  }
+});
+
+/**
+ * What the model is told reads as her world, not as the record it is stored in.
+ *
+ * The block opens with "everything below is the established background setting ... treat it as
+ * canon", and then used to hand the model a database row for every source but the scenario: her
+ * person as `{"description":...,"name":...}`, her example exchanges as a `blocks` array with
+ * escaped lore on one line. A model asked to keep canon has to read the player's words.
+ *
+ * Asserted on the RENDERED block, through the vendor's own publisher, because that string - not
+ * the catalog object - is what the provider receives; and on every authored word surviving it.
+ * The vendor's validator re-derives the catalog's canonical form before it mints a capability,
+ * so publishing is also what proves the catalogue's hash still behaves as it did.
+ */
+test("every authored source reaches the model as prose, with the durable record's identity left out", async () => {
+  const root = await canonicalTestRoot("gamebuddy-authored-prose-");
+  const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
+  const paths = resolveTavernPaths({ root } as never, identity);
+  const artifacts = new TavernArtifactStore(root);
+  const PERSONA_TEXT = "SENTINEL-PERSONA: 山谷里长大的木匠，话不多，习惯在清晨先给屋外的水缸添满水。";
+  const EXAMPLE_TEXT = "SENTINEL-EXAMPLE: 你: 今天先把西边那垄翻了？\n琥珀: 先喝口水，太阳还没上来呢。";
+  const persona = await artifacts.write(
+    tavernRevisionPath(join(paths.playerRoot, "personas", "persona"), 1),
+    { schemaVersion: 1 as const, revision: 1, personaId: "persona", name: "阿明", description: PERSONA_TEXT },
+    validateTavernArtifact,
+  );
+  const scenario = await artifacts.write(
+    tavernRevisionPath(join(paths.companionRoot, "scenarios", "scenario"), 1),
+    {
+      schemaVersion: 1 as const,
+      revision: 1,
+      scenarioId: "scenario",
+      name: "Scenario",
+      description: "Quiet.",
+      text: DEFAULT_COMPANION_PRESET.scenario ?? "Quiet.",
+      provenance: "authored" as const,
+      owner: "chat_override" as const,
+    },
+    validateTavernArtifact,
+  );
+  const examples = await artifacts.write(
+    tavernRevisionPath(join(paths.companionRoot, "dialogue-examples", "examples"), 1),
+    { schemaVersion: 1 as const, revision: 1, examplesId: "examples", blocks: [EXAMPLE_TEXT] },
+    validateTavernArtifact,
+  );
+  // The shipped card's own book, exactly as the reviewed import binds it to a Chat.
+  const book = DEFAULT_COMPANION_PRESET.worldBook;
+  const metadata = worldBookMetadata(book);
+  const binding = {
+    worldBookId: book.worldBookId,
+    revision: metadata.revision,
+    canonicalHash: metadata.canonicalHash,
+    provenance: "reviewed-import" as const,
+  };
+  const constants = book.entries.filter((entry) => entry.constant === true);
+  const threads = createChatThreadStore(root, "continuity-key");
+  try {
+    const thread = await createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    }).createExplicit({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      companionId: "companion",
+      continuityId: "continuity",
+      personaId: "persona",
+      scenarioId: "scenario",
+      stableArtifactBindings: [
+        { kind: "persona", sourceId: "persona", revision: 1, canonicalHash: persona.canonicalHash },
+        { kind: "scenario", sourceId: "scenario", revision: 1, canonicalHash: scenario.canonicalHash },
+        { kind: "dialogue_examples", sourceId: "examples", revision: 1, canonicalHash: examples.canonicalHash },
+      ],
+      companionWorldBookBinding: binding,
+      opening: "blank",
+    });
+    const scope = {
+      continuityId: "continuity",
+      sessionId: "pi-authored-prose",
+      surface: "tavern" as const,
+      threadId: "thread",
+      profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+    };
+    const catalog = await materializeTavernAuthoredStableCatalog(paths, artifacts, thread.thread, scope, TEST_MACROS, {
+      companionWorldBook: {
+        binding,
+        alwaysOnPremise: book.alwaysOnPremise,
+        constantEntries: constants,
+        keywordEntries: book.entries.filter((entry) => entry.constant !== true),
+      },
+    });
+    assert.deepEqual(
+      catalog.stableSources.map((source) => source.kind),
+      ["dialogue_examples", "persona", "scenario", "lorebook_constant"],
+    );
+    // No source is a JSON record any more: each one is prose the model can read.
+    for (const source of catalog.stableSources) {
+      assert.equal(
+        source.content.trimStart().startsWith("{"),
+        false,
+        `${source.kind} must not reach the model as a JSON record: ${source.content.slice(0, 120)}`,
+      );
+      // The hash still binds the rendered bytes, exactly as before: only the rendering moved.
+      assert.equal(
+        source.canonicalHash,
+        createHash("sha256").update(source.content, "utf8").digest("hex"),
+        `${source.kind}'s published hash must bind the prose it publishes`,
+      );
+    }
+
+    const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/tavern");
+    const capability = publishGameBuddyAuthoredStableCatalog(scope, catalog);
+    try {
+      const materialization = readAuthoredContextRegistry()?.materializations.get(scope.sessionId);
+      assert.notEqual(materialization, undefined, "the vendor accepted the catalog this test built");
+      const block = materialization?.renderedBlock ?? "";
+      // The renderer XML-escapes `<`, `>` and `&`; nothing else is rewritten.
+      const readable = block.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+      // Every authored word survives, byte for byte, in what the model receives.
+      for (const authored of [
+        "阿明",
+        PERSONA_TEXT,
+        DEFAULT_COMPANION_PRESET.scenario ?? "",
+        book.alwaysOnPremise,
+        ...constants.map((entry) => entry.content),
+        EXAMPLE_TEXT,
+      ])
+        assert.equal(readable.includes(authored), true, `the model must read the authored words verbatim: ${authored}`);
+      // ...and the entries keep ONE readable frame: their own title as a heading.
+      for (const entry of constants)
+        assert.equal(
+          readable.includes(`## ${entry.title}`),
+          true,
+          `the entry keeps its authored title as a heading: ${entry.title}`,
+        );
+      // The durable record's identity is bookkeeping and stays out of the prompt.
+      for (const identifier of ["entryId", "worldBookId", "personaId", "examplesId", '"blocks"'])
+        assert.equal(
+          block.includes(identifier),
+          false,
+          `${identifier} is durable bookkeeping and must not reach the model: ${block.slice(0, 400)}`,
+        );
+    } finally {
+      await capability.clear();
+    }
+  } finally {
+    threads.close?.();
+    await rm(root, { recursive: true, force: true });
   }
 });
 
