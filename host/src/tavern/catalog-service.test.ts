@@ -18,6 +18,7 @@ import { createManagedWorldInfoBindingResolver } from "./world-info-binding/mana
 import { createWorldInfoManagementRepository } from "./world-info-management/world-info-management.js";
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
 import { macroTable } from "./macro-engine.js";
+import { writeCompanionPostHistoryInstructions } from "./post-history-instructions.js";
 import { resolveTavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import { type Scenario, validateTavernArtifact } from "./types.js";
 
@@ -660,6 +661,11 @@ test("native WorldBookBinding materializes constant entries into lorebook_consta
         scope: "setting",
         provenance: "reviewed-import",
         tokenBudget: "small",
+        // The card's own second gate, the shape an imported entry carries once its
+        // `secondary_keys` survive the import: this entry is only about sunny days the
+        // player also brought a picnic or the washing into.
+        secondaryKeys: ["野餐", "晒被子"],
+        selectiveLogic: 0,
       },
     ],
   });
@@ -720,6 +726,11 @@ test("native WorldBookBinding materializes constant entries into lorebook_consta
     assert.equal(catalog.volatileSources[0]?.kind, "lorebook_entry");
     assert.equal(catalog.volatileSources[0]?.content, "伴侣其实格外喜欢晴朗天气。");
     assert.deepEqual(catalog.volatileSources[0]?.selectionKeys, ["喜欢晴天"]);
+    // The secondary gate reaches the per-turn selector with the primary words: it is
+    // the only place the four SillyTavern modes are applied, so a candidate built
+    // without it can never honour the card's own rule.
+    assert.deepEqual(catalog.volatileSources[0]?.secondaryKeys, ["野餐", "晒被子"]);
+    assert.equal(catalog.volatileSources[0]?.selectiveLogic, 0);
   } finally {
     threads.close?.();
   }
@@ -1002,5 +1013,138 @@ test("the vendor publishes the Game catalog carrying the companion's scenario as
     );
   } finally {
     await capability.clear();
+  }
+});
+
+const POST_HISTORY_IDENTITY = { playerId: "player", companionId: "companion", continuityId: "continuity" };
+
+/**
+ * One real Chat thread over the companion's own root, materialized through the product's
+ * own catalog call - the seam that reads her `post-history-instructions.json`.
+ */
+async function closingDirectionFixture(root: string) {
+  const paths = resolveTavernPaths({ root } as never, POST_HISTORY_IDENTITY);
+  const artifacts = new TavernArtifactStore(root);
+  const threads = createChatThreadStore(root, "continuity-key");
+  const creation = createProfileAwareChatThreadCreationCapability(threads, {
+    async readExact() {
+      return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+    },
+  });
+  const thread = await creation.createExplicit({
+    chatThreadId: "thread",
+    chatSurfaceSessionId: "surface",
+    companionId: "companion",
+    continuityId: "continuity",
+    opening: "blank",
+  });
+  const scope = Object.freeze({
+    continuityId: "continuity",
+    sessionId: "pi-session",
+    surface: "tavern" as const,
+    threadId: "thread",
+    profile: Object.freeze({ profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }),
+  });
+  return Object.freeze({
+    paths,
+    artifacts,
+    scope,
+    catalog: () => materializeTavernAuthoredContextCatalog(paths, artifacts, thread.thread, scope, TEST_MACROS),
+    close: () => threads.close?.(),
+  });
+}
+
+/**
+ * Rewrites her durable closing direction.
+ *
+ * The record is written once, at provisioning (revision 1), and the product offers no
+ * edit operation for it yet, so "the author changed this line" is a re-provisioned
+ * record: the old file goes and the product's own writer stamps the new one.
+ */
+async function rewriteClosingDirection(
+  artifacts: TavernArtifactStore,
+  companionRoot: string,
+  text: string,
+): Promise<void> {
+  await rm(join(companionRoot, "post-history-instructions.json"), { force: true });
+  await writeCompanionPostHistoryInstructions(artifacts, companionRoot, text);
+}
+
+test("her card's closing direction is published from her own record, rendered, beside the hashed body", async () => {
+  const root = await canonicalTestRoot("gamebuddy-catalog-post-history-");
+  const fixture = await closingDirectionFixture(root);
+  try {
+    const silent = await fixture.catalog();
+    // Absent stays absent: no member at all, not an empty string.
+    assert.equal(Object.hasOwn(silent, "postHistoryInstructions"), false);
+    // The hashed body is exactly the four members the fork recomputes it over.
+    assert.equal(
+      silent.canonicalHash,
+      canonicalHash({
+        version: "gamebuddy-authored-context-catalog/v2",
+        scope: fixture.scope,
+        stableSources: [],
+        volatileSources: [],
+      }),
+    );
+
+    await rewriteClosingDirection(
+      fixture.artifacts,
+      fixture.paths.companionRoot,
+      "Close by raking {{char}}'s coals once, then look at {{user}}.",
+    );
+    const declared = await fixture.catalog();
+    assert.equal(declared.postHistoryInstructions, "Close by raking 琥珀's coals once, then look at 你.");
+    // Beside the hash, not inside it: the field renders after the transcript, so it can
+    // never bust the cached prefix or its cache key.
+    assert.equal(declared.canonicalHash, silent.canonicalHash);
+    assert.equal(Object.hasOwn(declared, "postHistoryInstructions"), true);
+  } finally {
+    fixture.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("a changed record reaches the NEXT materialization: freshness comes from re-reading, not from the hash", async () => {
+  const root = await canonicalTestRoot("gamebuddy-catalog-post-history-fresh-");
+  const fixture = await closingDirectionFixture(root);
+  try {
+    const companionRoot = fixture.paths.companionRoot;
+    await rewriteClosingDirection(fixture.artifacts, companionRoot, "Close by raking the coals once.");
+    const first = await fixture.catalog();
+    // Two consecutive materializations of an unchanged record are the same catalogue...
+    assert.deepEqual(await fixture.catalog(), first);
+
+    await rewriteClosingDirection(fixture.artifacts, companionRoot, "Close by hanging the kettle back on its hook.");
+    const revised = await fixture.catalog();
+    // ...and a changed record materializes differently at the SAME canonical hash, which
+    // is why the removal of a hand-supplied field can rest on re-materializing her record.
+    assert.equal(revised.postHistoryInstructions, "Close by hanging the kettle back on its hook.");
+    assert.notDeepEqual(revised, first);
+    assert.equal(revised.canonicalHash, first.canonicalHash);
+  } finally {
+    fixture.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("the closing direction refuses a macro the run cannot render and a rendered text past the shared 4 KB bound", async () => {
+  const root = await canonicalTestRoot("gamebuddy-catalog-post-history-bounds-");
+  const fixture = await closingDirectionFixture(root);
+  try {
+    const companionRoot = fixture.paths.companionRoot;
+    await rewriteClosingDirection(fixture.artifacts, companionRoot, "x".repeat(4_096));
+    assert.equal((await fixture.catalog()).postHistoryInstructions?.length, 4_096);
+
+    // The bound is applied to the RENDERED bytes, so a macro that grows the text over
+    // 4 KB is refused here instead of being sent and refused by the fork.
+    await rewriteClosingDirection(fixture.artifacts, companionRoot, `${"x".repeat(4_092)}{{char}}`);
+    await assert.rejects(() => fixture.catalog(), /tavern_stable_context_post_history_too_long/);
+
+    await rewriteClosingDirection(fixture.artifacts, companionRoot, "Close as {{unknown_macro}} says.");
+    await assert.rejects(() => fixture.catalog(), /tavern_stable_context_unrendered_post_history_macro/);
+  } finally {
+    fixture.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
