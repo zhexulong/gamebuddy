@@ -214,6 +214,96 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
   });
 
   /**
+   * Two installations of the same game are two rows a player can choose between.
+   *
+   * Every Steam library installs to `<library>\steamapps\common\Stardew Valley`, so the
+   * Host's `label` is the same string for both, its `hint` is the same notice, and the
+   * source sentence is the same - the OOBE review measured exactly that as two identical
+   * rows. The drive and the library folder's own name are the fact that separates them,
+   * and the panel renders nothing but that fact: no path, no executable name.
+   *
+   * The other half is the constraint: candidates that genuinely agree must still render
+   * identically, because a row that invents a difference would let a player choose
+   * between two words for the same folder.
+   */
+  test("two installations that differ only by where they live are two different rows", async ({ page }) => {
+    const row = (id: string, location: string | null) => ({
+      candidateId: id,
+      source: "steam-vdf",
+      label: "Stardew Valley",
+      hint: "Detected installation (path hidden)",
+      status: "admission_required",
+      ...(location === null ? {} : { location }),
+    });
+    let readBody: unknown = { apiVersion: 1, candidates: [], diagnostics: [] };
+    let mounted = false;
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    await mountGameDrawerRoutes(page);
+    await page.route(DRAFT_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })));
+    await page.route(DISCOVERY_ROUTE, (route) => route.fulfill(jsonOk(readBody)));
+
+    const rows = async () => {
+      const read = await page.locator(".game-installation-panel").evaluate((node) =>
+        [...node.querySelectorAll(".installation-candidate")].map((candidate) => ({
+          text: (candidate as HTMLElement).innerText.replace(/\s+/g, " ").trim(),
+          caption: candidate.querySelector(".installation-candidate-label")?.textContent?.trim() ?? "",
+          location: candidate.getAttribute("data-location"),
+          label: candidate.getAttribute("data-label"),
+        })),
+      );
+      console.log(`[install-rows] ${JSON.stringify(read)}`);
+      return read;
+    };
+    const mount = async (body: unknown) => {
+      readBody = body;
+      if (mounted) await page.reload();
+      else {
+        await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+        mounted = true;
+      }
+      await openGameDrawer(page);
+      await expect(panel(page)).toHaveAttribute("data-state", "candidates");
+    };
+
+    // Two libraries, the same game, nothing else different.
+    await mount({ apiVersion: 1, candidates: [row(candidateId, "C: · Steam"), row(candidateStatusId, "D: · SteamLibrary")], diagnostics: [] });
+    const different = await rows();
+    expect(different.map((entry) => entry.location), "each row names its installation's location").toEqual([
+      "C: · Steam",
+      "D: · SteamLibrary",
+    ]);
+    expect(different.map((entry) => entry.caption), "and says it in the row's own words").toEqual([
+      "Stardew Valley (C: · Steam)",
+      "Stardew Valley (D: · SteamLibrary)",
+    ]);
+    expect(different[0]!.text, "the two rows are not the same row twice").not.toBe(different[1]!.text);
+    // The Host's own label stays as attribution, and no path or executable name is printed.
+    expect(different.map((entry) => entry.label)).toEqual(["Stardew Valley", "Stardew Valley"]);
+    await expect(page.locator(".game-installation-panel")).not.toContainText("steamapps");
+    await expect(page.locator(".game-installation-panel")).not.toContainText("Stardew Valley.exe");
+
+    // The same two libraries: the rows are allowed - required - to look the same.
+    await mount({
+      apiVersion: 1,
+      candidates: [row(candidateId, "D: · SteamLibrary"), row(candidateStatusId, "D: · SteamLibrary")],
+      diagnostics: [],
+    });
+    const same = await rows();
+    expect(same[0]!.text, "candidates that agree render identically").toBe(same[1]!.text);
+    expect(same.map((entry) => entry.caption)).toEqual([
+      "Stardew Valley (D: · SteamLibrary)",
+      "Stardew Valley (D: · SteamLibrary)",
+    ]);
+
+    // A reply that predates the field is still two rows, and still not separable - the
+    // panel says nothing it does not know rather than inventing a distinction.
+    await mount({ apiVersion: 1, candidates: [row(candidateId, null), row(candidateStatusId, null)], diagnostics: [] });
+    const unlabelled = await rows();
+    expect(unlabelled.map((entry) => entry.location)).toEqual([null, null]);
+    expect(unlabelled[0]!.text).toBe(unlabelled[1]!.text);
+  });
+
+  /**
    * The line under the installation's name speaks the player's language.
    *
    * The panel used to print what the Host mints: `known-location` as the source
@@ -240,16 +330,29 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     // this test locates it by its own class instead: it has to look at the same panel
     // in two languages.
     const setup = page.locator(".game-installation-panel");
-    const rendered = async (): Promise<{ sources: string[]; hints: (string | null)[]; rawHits: string[] }> => {
+    const rendered = async (): Promise<{
+      captions: string[];
+      sources: string[];
+      hints: (string | null)[];
+      rawHits: string[];
+    }> => {
       const facts = await page.evaluate(() => {
         const node = document.querySelector<HTMLElement>(".game-installation-panel");
         return {
+          captions: [...(node?.querySelectorAll(".installation-candidate-label") ?? [])].map((name) =>
+            (name.textContent ?? "").trim(),
+          ),
           sources: [...(node?.querySelectorAll(".installation-source") ?? [])].map((chip) => (chip.textContent ?? "").trim()),
           hints: [...(node?.querySelectorAll(".installation-hint") ?? [])].map((note) => (note.textContent ?? "").trim()),
           text: node?.innerText ?? "",
         };
       });
-      return { sources: facts.sources, hints: facts.hints, rawHits: RAW.filter((member) => facts.text.includes(member)) };
+      return {
+        captions: facts.captions,
+        sources: facts.sources,
+        hints: facts.hints,
+        rawHits: RAW.filter((member) => facts.text.includes(member)),
+      };
     };
 
     await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
@@ -263,6 +366,10 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await expect(setup).toHaveAttribute("data-state", "candidates");
     const english = await rendered();
     console.log(`[install-words] en: ${JSON.stringify(english)}`);
+    expect(english.captions, "the row is named by the product, not by the Host's one English string").toEqual([
+      "Stardew Valley",
+      "Stardew Valley",
+    ]);
     expect(english.sources, "each declared source reads as its own sentence").toEqual([
       "Found in a common install folder",
       "Found on this computer",
@@ -281,6 +388,12 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await expect(setup).toHaveAttribute("data-state", "candidates");
     const chinese = await rendered();
     console.log(`[install-words] zh: ${JSON.stringify(chinese)}`);
+    // The row's caption used to be the Host's `label`, which is one fixed English
+    // string for every installation - the last English text in a Chinese row.
+    expect(chinese.captions, "the game's name is the player's language too").toEqual([
+      "《星露谷物语》",
+      "《星露谷物语》",
+    ]);
     expect(chinese.sources, "the same sentences in the player's other language").toEqual([
       "在常见的安装位置找到",
       "已在这台电脑上找到",

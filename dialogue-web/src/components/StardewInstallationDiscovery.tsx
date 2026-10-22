@@ -6,6 +6,7 @@ import type {
 } from "../composed-reference-game-browser-api";
 import { observedProblemCode } from "../composed-problem-view";
 import {
+  installationCandidateLabel,
   installationDiscoveryFailureState,
   installationDiscoveryState,
   installationHintLabel,
@@ -209,9 +210,15 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
       </p>
       {discovery !== null && discovery.candidates.length > 0 && (
         <ul className="installation-candidates">
-          {discovery.candidates.map(({ candidateId, label, source, hint, status }) => (
-            <li className="installation-candidate" key={candidateId}>
-              <span className="installation-candidate-label">{label}</span>
+          {discovery.candidates.map(({ candidateId, label, source, hint, location, status }) => (
+            <li className="installation-candidate" key={candidateId} data-label={label} data-location={location}>
+              {/* The row's words are the product's: the game's own name from the
+                  catalogue (the Host's English `label` used to be the last English
+                  text in a Chinese row) and, when the Host publishes one, where this
+                  installation is (`D: · SteamLibrary`) - the fact that tells two
+                  installations of the same game apart. Both wire facts stay as the
+                  row's own attribution (`data-label`/`data-location`). */}
+              <span className="installation-candidate-label">{installationCandidateLabel(labels, location)}</span>
               {/* The wire member stays as the row's own attribution (`data-source`),
                   and the words beside the name are the player's language: a source
                   the panel has no sentence for reads as "found on this computer"

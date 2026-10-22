@@ -52,6 +52,19 @@ const CABIN_CHOICE_KEYS = ["displayLabel", "availability", "choiceHandle", "expi
 const CABIN_CONFIRMATION_KEYS = ["apiVersion", "status"] as const;
 const INSTALLATION_DISCOVERY_KEYS = ["apiVersion", "candidates", "diagnostics"] as const;
 const INSTALLATION_CANDIDATE_KEYS = ["candidateId", "source", "label", "hint", "status"] as const;
+/**
+ * The same shape carrying `location`, which the contract declares `Type.Optional`:
+ * the drive and library folder's own name, so two installations of the same game can
+ * be told apart without publishing a path.
+ */
+const INSTALLATION_CANDIDATE_KEYS_WITH_LOCATION = [
+  "candidateId",
+  "source",
+  "label",
+  "hint",
+  "location",
+  "status",
+] as const;
 const INSTALLATION_DIAGNOSTICS_MAX = 32;
 
 /**
@@ -209,6 +222,8 @@ export type StardewInstallationCandidateV1 = Readonly<{
   source: string;
   label: string;
   hint: string | null;
+  /** Where it is, in the Host's redaction-safe words (`D: · SteamLibrary`), or null. */
+  location: string | null;
   status: "candidate" | "invalid" | "admission_required";
 }>;
 export type StardewInstallationDiscoveryV1 = Readonly<{
@@ -452,11 +467,15 @@ function validateStardewInstallationDiscovery(value: unknown): StardewInstallati
   for (const candidate of value.candidates) {
     if (
       !isRecord(candidate) ||
-      !hasExactKeys(candidate, INSTALLATION_CANDIDATE_KEYS) ||
+      !(
+        hasExactKeys(candidate, INSTALLATION_CANDIDATE_KEYS) ||
+        hasExactKeys(candidate, INSTALLATION_CANDIDATE_KEYS_WITH_LOCATION)
+      ) ||
       !isInstallationCandidateId(candidate.candidateId) ||
       !isBoundedString(candidate.source, 1, 64) ||
       !isBoundedString(candidate.label, 1, 256) ||
       !isNullableLabel(candidate.hint, 256) ||
+      ("location" in candidate && !isNullableLabel(candidate.location, 64)) ||
       !["candidate", "invalid", "admission_required"].includes(candidate.status as string)
     )
       throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_candidate");
@@ -466,6 +485,7 @@ function validateStardewInstallationDiscovery(value: unknown): StardewInstallati
         source: candidate.source,
         label: candidate.label,
         hint: candidate.hint,
+        location: (candidate.location as string | null | undefined) ?? null,
         status: candidate.status as StardewInstallationCandidateV1["status"],
       }),
     );

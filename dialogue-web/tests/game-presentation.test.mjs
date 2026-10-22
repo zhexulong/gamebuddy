@@ -6,6 +6,7 @@ import {
   capabilitiesLabel,
   compatibilityLabel,
   connectionLabel,
+  installationCandidateLabel,
   installationDiscoveryFailureState,
   installationDiscoveryState,
   installationStateLabel,
@@ -166,6 +167,27 @@ test("a confirmation reads as the outcome it is, in both languages", () => {
     installationStateLabel(messages("en"), "confirmed"),
     installationStateLabel(messages("en"), "candidates"),
     "a confirmed installation is not the candidate-found sentence",
+  );
+});
+
+test("a candidate's own line carries where it is, so two installations are not one row twice", () => {
+  const en = messages("en");
+  const zh = messages("zh-CN");
+  assert.equal(installationCandidateLabel(en, null), "Stardew Valley");
+  // The game's name is the product's, in the player's language - the Host's `label` is
+  // one fixed English string for every installation.
+  assert.equal(installationCandidateLabel(zh, null), "《星露谷物语》");
+  // With a location the row states it, and the parentheses are the locale's own.
+  assert.equal(installationCandidateLabel(en, "D: · SteamLibrary"), "Stardew Valley (D: · SteamLibrary)");
+  assert.equal(installationCandidateLabel(zh, "D: · SteamLibrary"), "《星露谷物语》（D: · SteamLibrary）");
+  // The property two rows depend on: equal when they agree, different when they do not.
+  assert.notEqual(
+    installationCandidateLabel(en, "C: · Steam"),
+    installationCandidateLabel(en, "D: · SteamLibrary"),
+  );
+  assert.equal(
+    installationCandidateLabel(en, "D: · SteamLibrary"),
+    installationCandidateLabel(en, "D: · SteamLibrary"),
   );
 });
 

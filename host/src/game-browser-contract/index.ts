@@ -311,11 +311,18 @@ const GameDiagnosticsReadCommandV1Schema = strictObject({
 
 // Installation discovery is deliberately redacted: paths and executable identity
 // never cross the browser boundary.
+//
+// `location` is the one exception, and it is not a path: the drive and the library
+// folder's own name (`D: · SteamLibrary`), which is what tells two installations of
+// the same game apart when `label` cannot (every Steam library installs to
+// `...\steamapps\common\Stardew Valley`). Optional because reads that predate it are
+// still legal v1 replies.
 const GameCandidateV1Schema = strictObject({
   candidateId: OpaqueHandle,
   source: Type.String({ minLength: 1, maxLength: 64 }),
   label: Type.String({ minLength: 1, maxLength: 256 }),
   hint: Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]),
+  location: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()])),
   status: Type.Union([Type.Literal("candidate"), Type.Literal("invalid"), Type.Literal("admission_required")]),
 });
 export const GameDiscoveryReadResultV1Schema = strictObject({

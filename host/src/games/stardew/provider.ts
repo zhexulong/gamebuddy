@@ -49,6 +49,7 @@ function projectDiscoveryReadResult(
       source: candidate.source,
       label: candidate.label,
       hint: candidate.displayPath === REDACTED_DISCOVERY_HINT ? REDACTED_DISCOVERY_HINT : null,
+      location: candidate.location,
       status: candidate.status,
     })),
     diagnostics: [...result.diagnostics],
@@ -144,12 +145,14 @@ export function createStardewGamePresentationProjection(
 export function createStardewGameIntegrationProvider(): GameIntegrationProvider {
   return Object.freeze({
     gameId: "stardew",
-    async createLifecycleCoordinator(input: Readonly<{
-      manifest: HostDeploymentManifest;
-      game: SemanticGameProductionAuthority;
-      folderPicker: InjectedStardewFolderPickerCapability;
-      runtimeCollaborator: StardewPlayerHostRuntimeLaunchCollaborator;
-    }>) {
+    async createLifecycleCoordinator(
+      input: Readonly<{
+        manifest: HostDeploymentManifest;
+        game: SemanticGameProductionAuthority;
+        folderPicker: InjectedStardewFolderPickerCapability;
+        runtimeCollaborator: StardewPlayerHostRuntimeLaunchCollaborator;
+      }>,
+    ) {
       const coordinator = createStardewProductionLifecycleCoordinator(
         input.manifest,
         input.folderPicker,

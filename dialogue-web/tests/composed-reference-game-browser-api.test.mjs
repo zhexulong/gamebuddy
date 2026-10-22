@@ -264,17 +264,23 @@ test("composed client reports bounded server problems without accepting additive
 test("installation discovery is strict, uses opaque candidate IDs, and gates mutations on CSRF", async () => {
   const candidateId = "A".repeat(22);
   const discovery = { apiVersion: 1, candidates: [{ candidateId, source: "registry", label: "Game", hint: null, status: "candidate" }], diagnostics: [] };
+  // `location` is the contract's one optional candidate key, so a reply that predates
+  // it decodes to the same shape a location-less candidate has.
+  const decoded = { ...discovery, candidates: [{ ...discovery.candidates[0], location: null }] };
   const recorder = transport(jsonResponse(discovery));
   const api = createComposedReferenceGameBrowserApi(recorder.fetch);
-  assert.deepEqual(await api.readStardewInstallationDiscovery(), discovery);
+  assert.deepEqual(await api.readStardewInstallationDiscovery(), decoded);
   for (const valid of ["A".repeat(22), "A".repeat(43), "A".repeat(128)]) {
     const validRecorder = transport(jsonResponse({
       ...discovery,
-      candidates: [{ ...discovery.candidates[0], candidateId: valid }],
+      candidates: [{ ...discovery.candidates[0], candidateId: valid, location: "D: · SteamLibrary" }],
     }));
     assert.deepEqual(
       await createComposedReferenceGameBrowserApi(validRecorder.fetch).readStardewInstallationDiscovery(),
-      { ...discovery, candidates: [{ ...discovery.candidates[0], candidateId: valid }] },
+      {
+        ...discovery,
+        candidates: [{ ...discovery.candidates[0], candidateId: valid, location: "D: · SteamLibrary" }],
+      },
     );
   }
   for (const bad of [
@@ -296,6 +302,9 @@ test("installation discovery is strict, uses opaque candidate IDs, and gates mut
     { ...discovery, extra: true },
     { ...discovery, diagnostics: Array.from({ length: 33 }, () => "x") },
     { ...discovery, candidates: [{ ...discovery.candidates[0], path: "C:/raw", executable: "game.exe" }] },
+    // The label is bounded to the path-free fact it stands for; anything longer is not
+    // a location this contract admits.
+    { ...discovery, candidates: [{ ...discovery.candidates[0], location: "C:\\".padEnd(80, "x") }] },
   ]) {
     const badTransport = transport(jsonResponse(bad));
     await assert.rejects(createComposedReferenceGameBrowserApi(badTransport.fetch).readStardewInstallationDiscovery(), ComposedReferenceGameProtocolError);

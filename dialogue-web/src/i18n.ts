@@ -744,6 +744,16 @@ const en = {
   gameInstallationSourceSteamVdf: "Found in a Steam library folder",
   gameInstallationSourceKnownLocation: "Found in a common install folder",
   gameInstallationSourceOther: "Found on this computer",
+  // The row's own name for the game. The Host's `label` is content but it is one
+  // fixed English string for every installation (`StardewDiscoverySession.issue`), so
+  // a Chinese row built from it carried English while everything around it was
+  // translated; the product already names the game in both catalogues, and the wire's
+  // own `label` stays as the row's attribution (`data-label`).
+  gameInstallationCandidateName: "Stardew Valley",
+  // Where that installation is, when several of the same game are offered: the Host
+  // publishes the drive and library folder's own name (`D: · SteamLibrary`), and the
+  // parentheses are the player's own punctuation rather than the Host's.
+  gameInstallationCandidateLocation: "{{name}} ({{location}})",
   // The Host redacts the installation's path and says so in its own English
   // (`host/src/games/stardew/provider.ts`); the panel states that fact itself.
   gameInstallationHintPathHidden: "Its folder path is hidden.",
@@ -1455,6 +1465,8 @@ const zh: Messages = {
   gameInstallationSourceSteamVdf: "在 Steam 库文件夹中找到",
   gameInstallationSourceKnownLocation: "在常见的安装位置找到",
   gameInstallationSourceOther: "已在这台电脑上找到",
+  gameInstallationCandidateName: "《星露谷物语》",
+  gameInstallationCandidateLocation: "{{name}}（{{location}}）",
   gameInstallationHintPathHidden: "安装路径不显示。",
 
   gameDiagnostics: "游戏数据与诊断",

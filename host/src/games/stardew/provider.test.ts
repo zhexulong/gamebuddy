@@ -64,6 +64,7 @@ function fakeCoordinator(
             source: "known-location" as const,
             label: "Stardew Valley",
             displayPath: "C:\\\\Games\\\\Stardew Valley",
+            location: null,
             status: "candidate" as const,
           },
           {
@@ -71,6 +72,7 @@ function fakeCoordinator(
             source: "steam-vdf" as const,
             label: "Stardew Valley",
             displayPath: "Detected installation (path hidden)",
+            location: "C: · Steam",
             status: "admission_required" as const,
           },
         ],
@@ -168,6 +170,7 @@ test("stardew discovery mount delegates every nested callback to the same activa
         source: "known-location",
         label: "Stardew Valley",
         hint: null,
+        location: null,
         status: "candidate",
       },
       {
@@ -175,6 +178,7 @@ test("stardew discovery mount delegates every nested callback to the same activa
         source: "steam-vdf",
         label: "Stardew Valley",
         hint: "Detected installation (path hidden)",
+        location: "C: · Steam",
         status: "admission_required",
       },
     ],

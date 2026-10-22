@@ -269,6 +269,26 @@ export function installationSourceLabel(labels: Messages, source: string): strin
 }
 
 /**
+ * A candidate's own name as the panel speaks it, and - when the Host published one -
+ * where that installation is.
+ *
+ * Two Steam libraries install to the same folder name, so the Host's `label` and hint
+ * are identical for both and the panel rendered two identical rows a player could not
+ * choose between; the Host's redaction-safe location (`D: · SteamLibrary`, the contract's
+ * optional `location`) is the fact that separates them. The location is content - a
+ * folder name is neither translated nor a path - and the parentheses that hold it are
+ * the player's own punctuation, which is why this is a catalogue template rather than
+ * string concatenation.
+ */
+export function installationCandidateLabel(labels: Messages, location: string | null): string {
+  return location === null
+    ? labels.gameInstallationCandidateName
+    : labels.gameInstallationCandidateLocation
+        .replace("{{name}}", labels.gameInstallationCandidateName)
+        .replace("{{location}}", location);
+}
+
+/**
  * The candidate's own note, as player text.
  *
  * The Host's projection publishes exactly one note or none - the redacted path
