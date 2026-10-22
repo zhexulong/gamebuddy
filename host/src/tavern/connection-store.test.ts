@@ -241,7 +241,7 @@ test("a keyless self-hosted connection is allowed only where the player stated i
         apiKey: null,
         baseUrl: null,
         apiShape: null,
-        modelId: "deepseek-v4-flash",
+        modelId: "deepseek-v4.1-flash",
       }),
       (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "api_key_required",
     );
@@ -252,7 +252,7 @@ test("a keyless self-hosted connection is allowed only where the player stated i
         apiKey: null,
         baseUrl: null,
         apiShape: null,
-        modelId: "deepseek-v4-flash",
+        modelId: "deepseek-v4.1-flash",
         apiKeyRequired: false,
       }),
       (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "api_key_required",
@@ -274,7 +274,7 @@ test("the environment connection never accepts, stores or reads back a credentia
       modelId: null,
     });
     const connection = document.connections[0]!;
-    assert.equal(connection.modelId, "deepseek-v4-flash");
+    assert.equal(connection.modelId, "deepseek-v4.1-flash");
     await assert.rejects(readFile(connectionAuthPath(root), "utf8"), /ENOENT/);
     const previous = process.env.CPA_OAI_API_KEY;
     try {
@@ -296,7 +296,7 @@ test("probe outcomes are recorded as a closed vocabulary and gate activation", a
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-v4.1-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
     await assert.rejects(
@@ -315,7 +315,7 @@ test("probe outcomes are recorded as a closed vocabulary and gate activation", a
       store.activate(connectionId, failed.revision),
       (error: unknown) => error instanceof TavernConnectionInputError && error.reason === "not_ready",
     );
-    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-flash"] });
+    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4.1-flash"] });
     assert.equal(ready.connections[0]!.readiness, "ready");
     assert.equal(ready.connections[0]!.failure, null);
     const active = await store.activate(connectionId, ready.revision);
@@ -339,10 +339,10 @@ test("the endpoint's own model listing is durable, bounded and sanitised, and a 
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-v4.1-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
-    const listed = ["deepseek-v4-flash", "deepseek-v4-pro"];
+    const listed = ["deepseek-v4.1-flash", "deepseek-v4-pro"];
     const probed = await store.recordProbe(connectionId, { outcome: "ready", modelIds: listed });
     assert.deepEqual(probed.connections[0]!.modelIds, listed);
     // Durable: another reader of the same root sees exactly the list the probe published.
@@ -387,10 +387,10 @@ test("changing the selected model withdraws readiness until it is probed again",
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-v4.1-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
-    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-flash"] });
+    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4.1-flash"] });
     const changed = await store.selectModel(connectionId, ready.revision, "deepseek-v4-pro", "max");
     assert.equal(changed.connections[0]!.modelId, "deepseek-v4-pro");
     assert.equal(changed.connections[0]!.thinkingLevel, "max");
@@ -435,10 +435,10 @@ test("a stale expectedRevision is a durable conflict, never a silent overwrite",
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-v4.1-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
-    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-flash"] });
+    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4.1-flash"] });
     await store.activate(connectionId, ready.revision);
     await assert.rejects(
       store.activate(connectionId, ready.revision),
@@ -459,7 +459,7 @@ test("removing a connection drops its stored credential and keeps unrelated prov
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-v4.1-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
     const removed = await store.remove(connectionId, created.revision);
@@ -477,10 +477,10 @@ test("the active connection cannot be removed", async () => {
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-v4.1-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
-    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-flash"] });
+    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4.1-flash"] });
     const active = await store.activate(connectionId, ready.revision);
     await assert.rejects(
       store.remove(connectionId, active.revision),
@@ -504,7 +504,7 @@ test("a corrupted connection document fails closed instead of reading as empty",
       apiKey: "k",
       baseUrl: null,
       apiShape: null,
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-v4.1-flash",
     });
     const connectionId = created.connections[0]!.connectionId;
 
@@ -689,7 +689,7 @@ function persistedConnection(connectionId: string) {
     providerId: "deepseek",
     baseUrl: null,
     apiShape: null,
-    modelId: "deepseek-v4-flash",
+    modelId: "deepseek-v4.1-flash",
     thinkingLevel: "high",
     readiness: "configured",
     failure: null,

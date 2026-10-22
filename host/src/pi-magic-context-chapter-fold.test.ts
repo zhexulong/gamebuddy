@@ -231,10 +231,7 @@ test(
     // outlive the run and the next run inherits the debris. Measured here: 340.7s of body, so the
     // default is a whole minute-scale budget rather than a few seconds. Raise it with
     // `GAMEBUDDY_CHAPTER_FOLD_DEADLINE_SECONDS` on a slower machine or a stricter provider.
-    const configuredDeadlineSeconds = Number.parseInt(
-      process.env.GAMEBUDDY_CHAPTER_FOLD_DEADLINE_SECONDS ?? "600",
-      10,
-    );
+    const configuredDeadlineSeconds = Number.parseInt(process.env.GAMEBUDDY_CHAPTER_FOLD_DEADLINE_SECONDS ?? "600", 10);
     const budgetMs =
       (Number.isSafeInteger(configuredDeadlineSeconds) && configuredDeadlineSeconds > 0
         ? configuredDeadlineSeconds
@@ -248,7 +245,8 @@ test(
     const phases: string[] = [];
     const phase = (name: string, from?: number): void => {
       phases.push(
-        `phase=${name} at=${secondsSince(bodyStartedAt)}s` + (from === undefined ? "" : ` delta=${secondsSince(from)}s`),
+        `phase=${name} at=${secondsSince(bodyStartedAt)}s` +
+          (from === undefined ? "" : ` delta=${secondsSince(from)}s`),
       );
     };
     const deadlineExpired = (name: string): string =>
@@ -300,11 +298,7 @@ test(
       // The provider credential, exactly where the runtime reads it.
       const agentDir = resolveRuntimePaths(identity, root).agentDir;
       await mkdir(agentDir, { recursive: true });
-      await writeFile(
-        join(agentDir, "auth.json"),
-    				JSON.stringify({ "cpa-oai": { type: "api_key", key } }),
-        "utf8",
-      );
+      await writeFile(join(agentDir, "auth.json"), JSON.stringify({ "cpa-oai": { type: "api_key", key } }), "utf8");
       const markers = await captureMarkers(async (markers) => {
         const runtimeStartedAt = Date.now();
         runtime = await bounded(
@@ -313,7 +307,7 @@ test(
             identity,
             root,
             undefined,
-            { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "low" },
+            { provider: "cpa-oai", modelId: "deepseek-v4.1-flash", thinkingLevel: "low" },
             undefined,
             undefined,
             false,

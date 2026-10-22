@@ -48,13 +48,13 @@ test("model profiles start from the shipped recommendation without activation st
     assert.deepEqual({ ...chat, surface: undefined }, { ...game, surface: undefined });
     assert.equal(chat.surface, "chat");
     assert.equal(game.surface, "game");
-    assert.equal(chat.modelId, "deepseek-v4-flash");
-    assert.equal(game.modelId, "deepseek-v4-flash");
+    assert.equal(chat.modelId, "deepseek-v4.1-flash");
+    assert.equal(game.modelId, "deepseek-v4.1-flash");
     assert.equal(chat.revision, 0);
     assert.equal(game.revision, 0);
     assert.equal("active" in chat, false);
 
-    await store.update("chat", 0, { modelId: "deepseek-v4-flash", thinkingLevel: "high" });
+    await store.update("chat", 0, { modelId: "deepseek-v4.1-flash", thinkingLevel: "high" });
     assert.equal((await new ModelProfileStore(path).read("chat")).revision, 1);
     assert.equal((await new ModelProfileStore(path).read("game")).revision, 0);
   });
@@ -89,7 +89,7 @@ test("a model id outside the recommended catalog round-trips through the profile
     } satisfies CompanionModelConfig);
 
     // The other surface keeps its own model; one profile never overrides the other.
-    assert.equal((await store.read("game")).modelId, "deepseek-v4-flash");
+    assert.equal((await store.read("game")).modelId, "deepseek-v4.1-flash");
   });
 });
 
@@ -97,7 +97,7 @@ test("every bounded model id and thinking level resolves to an immutable runtime
   await withStore(async (_path, store) => {
     const profile = await store.read("chat");
     const config: CompanionModelConfig | null = resolveModelProfileConfig(profile);
-    assert.deepEqual(config, { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "high" });
+    assert.deepEqual(config, { provider: "cpa-oai", modelId: "deepseek-v4.1-flash", thinkingLevel: "high" });
     assert.equal(Object.isFrozen(config), true);
     // A third-party gateway spelling and a local server's tag are both usable.
     for (const modelId of ["openrouter/anthropic.claude-3", "llama3.2:latest", "my-model_v2"]) {
@@ -118,7 +118,7 @@ test("every bounded model id and thinking level resolves to an immutable runtime
 
 test("updates remain isolated to their selected surface", async () => {
   await withStore(async (_path, store) => {
-    const changed = await store.update("chat", 0, { modelId: "deepseek-v4-flash", thinkingLevel: "high" });
+    const changed = await store.update("chat", 0, { modelId: "deepseek-v4.1-flash", thinkingLevel: "high" });
     const game = await store.read("game");
     assert.equal(changed.revision, 1);
     assert.equal(game.revision, 0);
@@ -127,15 +127,15 @@ test("updates remain isolated to their selected surface", async () => {
 
 test("stale revisions are rejected deterministically without changing a profile", async () => {
   await withStore(async (_path, store) => {
-    await store.update("game", 0, { modelId: "deepseek-v4-flash", thinkingLevel: "high" });
+    await store.update("game", 0, { modelId: "deepseek-v4.1-flash", thinkingLevel: "high" });
     await assert.rejects(
-      store.update("game", 0, { modelId: "deepseek-v4-flash", thinkingLevel: "high" }),
+      store.update("game", 0, { modelId: "deepseek-v4.1-flash", thinkingLevel: "high" }),
       ModelProfileRevisionConflict,
     );
     assert.deepEqual(await store.read("game"), {
       surface: "game",
       revision: 1,
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-v4.1-flash",
       thinkingLevel: "high",
     } satisfies ModelProfile);
   });
@@ -152,11 +152,11 @@ test("invalid profile updates and persisted profiles are rejected", async () => 
       /invalid_model_profile_update/,
     );
     await assert.rejects(
-      store.update("chat", 0, { modelId: "deepseek-v4-flash", thinkingLevel: "" } as never),
+      store.update("chat", 0, { modelId: "deepseek-v4.1-flash", thinkingLevel: "" } as never),
       /invalid_model_profile_update/,
     );
     await assert.rejects(
-      store.update("chat", 0, { modelId: "deepseek-v4-flash", thinkingLevel: "3 high" } as never),
+      store.update("chat", 0, { modelId: "deepseek-v4.1-flash", thinkingLevel: "3 high" } as never),
       /invalid_model_profile_update/,
     );
     assert.equal((await store.read("chat")).revision, 0);
@@ -166,8 +166,8 @@ test("invalid profile updates and persisted profiles are rejected", async () => 
       path,
       JSON.stringify({
         schemaVersion: 1,
-        chat: { revision: 0, modelId: " cpa-oai/deepseek-v4-flash", thinkingLevel: "high" },
-        game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+        chat: { revision: 0, modelId: " cpa-oai/deepseek-v4.1-flash", thinkingLevel: "high" },
+        game: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
       }),
     );
     await assert.rejects(store.read("chat"), /invalid_model_profile_store/);
@@ -176,8 +176,8 @@ test("invalid profile updates and persisted profiles are rejected", async () => 
       path,
       JSON.stringify({
         schemaVersion: 1,
-        chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high", active: true },
-        game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+        chat: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high", active: true },
+        game: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
       }),
     );
     await assert.rejects(store.read("chat"), /invalid_model_profile_store/);
@@ -187,15 +187,15 @@ test("invalid profile updates and persisted profiles are rejected", async () => 
       JSON.stringify({
         schemaVersion: 1,
         root: "/legacy/root",
-        chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
-        game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+        chat: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
+        game: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
       }),
     );
     await assert.rejects(store.read("chat"), /invalid_model_profile_store/);
 
     await writeFile(
       path,
-      '{"schemaVersion":1,"chat":{"revision":0,"modelId":"deepseek-v4-flash","thinkingLevel":"high"},"game":{"revision":0,"modelId":"deepseek-v4-flash","thinkingLevel":"high"},"schema\\u0056ersion":1}',
+      '{"schemaVersion":1,"chat":{"revision":0,"modelId":"deepseek-v4.1-flash","thinkingLevel":"high"},"game":{"revision":0,"modelId":"deepseek-v4.1-flash","thinkingLevel":"high"},"schema\\u0056ersion":1}',
     );
     await assert.rejects(store.read("chat"), /invalid_model_profile_store/);
   });
@@ -205,7 +205,7 @@ test("profile projection exposes no credential, provider, or endpoint values", a
   await withStore(async (_path, store) => {
     const profile = (await store.read("chat")) as Record<string, unknown>;
     assert.deepEqual(Object.keys(profile).sort(), ["modelId", "revision", "surface", "thinkingLevel"]);
-    assert.equal(profile.modelId, "deepseek-v4-flash");
+    assert.equal(profile.modelId, "deepseek-v4.1-flash");
     for (const [key, value] of Object.entries(profile)) {
       assert.doesNotMatch(key, /credential|secret|token|password|provider|endpoint|authorization/i);
       assert.equal(typeof value === "string" && /^(?:https?:|cpa-oai\/)/.test(value), false);

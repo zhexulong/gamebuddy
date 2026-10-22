@@ -476,14 +476,14 @@ test("the client mirror's API shape and thinking level lists are the Host contra
 function connectionRow(overrides = {}) {
   return {
     connectionId: HANDLE,
-    label: "DeepSeek \u00b7 deepseek-v4-flash",
+    label: "DeepSeek \u00b7 deepseek-v4.1-flash",
     providerId: "deepseek",
     providerLabel: "DeepSeek",
     configured: true,
     readiness: "configured",
     active: false,
-    modelId: "deepseek-v4-flash",
-    modelLabel: "DeepSeek V4 Flash",
+    modelId: "deepseek-v4.1-flash",
+    modelLabel: "DeepSeek V4.1 Flash",
     thinkingLevel: "high",
     allowedThinkingLevels: ["low", "high", "max"],
     modelIds: null,
@@ -536,14 +536,14 @@ test("the client mirror accepts the endpoint's own listing under the Host contra
 function modelProfiles(overrides = {}) {
   return {
     apiVersion: 1,
-    chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
-    game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+    chat: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
+    game: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
     recommendedModels: [
       {
         providerId: "deepseek",
         providerLabel: "DeepSeek",
-        modelId: "deepseek-v4-flash",
-        modelLabel: "DeepSeek V4 Flash",
+        modelId: "deepseek-v4.1-flash",
+        modelLabel: "DeepSeek V4.1 Flash",
         allowedThinkingLevels: ["low", "high", "max"],
         defaultThinkingLevel: "high",
       },

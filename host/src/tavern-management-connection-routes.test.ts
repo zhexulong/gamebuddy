@@ -369,11 +369,11 @@ test("the connection read projects the catalog, and selectable models are the ca
     assert.deepEqual(byId.get("cpa-oai")!.setupFields, []);
     assert.deepEqual(
       byId.get("cpa-oai")!.allowedPlayerModels.map((model) => model.modelId),
-      ["deepseek-v4-flash"],
+      ["deepseek-v4.1-flash"],
     );
     assert.deepEqual(
       byId.get("deepseek")!.allowedPlayerModels.map((model) => model.modelId),
-      ["deepseek-v4-flash", "deepseek-v4-pro"],
+      ["deepseek-v4.1-flash", "deepseek-v4-pro"],
     );
     const escapeHatches = body.providers.filter((provider) => provider.escapeHatch);
     assert.equal(escapeHatches.length, 1);
@@ -415,7 +415,7 @@ test("a catalog key is written to the Pi provider store and never read back to t
         providerId: "deepseek",
         apiKey: "sk-synthetic-credential",
         // A curated id is a suggestion, not a default: every draft names its model.
-        modelId: "deepseek-v4-flash",
+        modelId: "deepseek-v4.1-flash",
       },
     );
     assert.equal(created.status, 200);
@@ -696,7 +696,7 @@ test("probe failures are reported as closed categories with no provider text", a
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
           // A curated id is a suggestion, not a default: every draft names its model.
-          modelId: "deepseek-v4-flash",
+          modelId: "deepseek-v4.1-flash",
         },
       );
       const connection = (created.body as { revision: number; connections: readonly { connectionId: string }[] })
@@ -920,7 +920,7 @@ test("a keyless self-hosted endpoint saves and probes ready, and a curated provi
           "POST",
           "/api/tavern/v1/settings/connections",
           {},
-          { apiVersion: 1, providerId: "deepseek", modelId: "deepseek-v4-flash", ...override },
+          { apiVersion: 1, providerId: "deepseek", modelId: "deepseek-v4.1-flash", ...override },
         );
         assert.equal(refused.status, 400, `deepseek without a key (${JSON.stringify(override)})`);
         assert.equal((refused.body as { code: string }).code, "invalid_request");
@@ -964,7 +964,7 @@ test("a transport failure is classified as unreachable, and a hang as timeout", 
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
           // A curated id is a suggestion, not a default: every draft names its model.
-          modelId: "deepseek-v4-flash",
+          modelId: "deepseek-v4.1-flash",
         },
       );
       const connection = (created.body as { revision: number; connections: readonly { connectionId: string }[] })
@@ -990,7 +990,7 @@ test("a transport failure is classified as unreachable, and a hang as timeout", 
  * id, and a model on the one entry whose model is the operator's, not the player's.
  */
 test("a typed model id is a legal draft on every entry the player configures, and only the probe makes it ready", async () => {
-  const served = ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-next"];
+  const served = ["deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-next"];
   await withHandler(
     { probe: stubEndpoint(() => ({ status: 200, body: listModels(...served) })) },
     async (_root, request, bootstrap) => {
@@ -1004,7 +1004,7 @@ test("a typed model id is a legal draft on every entry the player configures, an
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
           // A curated id is a suggestion, not a default: every draft names its model.
-          modelId: "deepseek-v4-flash",
+          modelId: "deepseek-v4.1-flash",
         },
       );
       const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!
@@ -1133,7 +1133,7 @@ test("a typed model id is a legal draft on every entry the player configures, an
 
 test("a connection activation during a running turn is Class B: it succeeds and leaves the turn untouched", async () => {
   await withHandler(
-    { turnActive: true, probe: stubEndpoint(() => ({ status: 200, body: listModels("deepseek-v4-flash") })) },
+    { turnActive: true, probe: stubEndpoint(() => ({ status: 200, body: listModels("deepseek-v4.1-flash") })) },
     async (_root, request, bootstrap) => {
       await bootstrap();
       const before = await request("GET", "/api/tavern/v1/state");
@@ -1146,7 +1146,7 @@ test("a connection activation during a running turn is Class B: it succeeds and 
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
           // A curated id is a suggestion, not a default: every draft names its model.
-          modelId: "deepseek-v4-flash",
+          modelId: "deepseek-v4.1-flash",
         },
       );
       const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!
@@ -1183,7 +1183,7 @@ test("a connection activation during a running turn is Class B: it succeeds and 
 
 test("removal needs the exact revision, cannot drop the active connection, and deletes the stored key", async () => {
   await withHandler(
-    { probe: stubEndpoint(() => ({ status: 200, body: listModels("deepseek-v4-flash") })) },
+    { probe: stubEndpoint(() => ({ status: 200, body: listModels("deepseek-v4.1-flash") })) },
     async (root, request, bootstrap) => {
       await bootstrap();
       const created = await request(
@@ -1195,7 +1195,7 @@ test("removal needs the exact revision, cannot drop the active connection, and d
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
           // A curated id is a suggestion, not a default: every draft names its model.
-          modelId: "deepseek-v4-flash",
+          modelId: "deepseek-v4.1-flash",
         },
       );
       const connectionId = (created.body as { connections: readonly { connectionId: string }[] }).connections[0]!

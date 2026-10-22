@@ -309,8 +309,8 @@ test("the profiles read is a browser-session read of both surfaces plus the ship
     assert.equal(result.status, 200);
     const profiles = result.body as ProfilesBody;
     assert.equal(profiles.apiVersion, 1);
-    assert.deepEqual(profiles.chat, { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" });
-    assert.deepEqual(profiles.game, { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" });
+    assert.deepEqual(profiles.chat, { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" });
+    assert.deepEqual(profiles.game, { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" });
     // The guidance list is derived from the one provider catalog, so it names the
     // shipped models without becoming the set of models a profile may hold.
     const shipped = TAVERN_PROVIDER_CATALOG.flatMap((provider) => provider.allowedPlayerModels.map((m) => m.modelId));
@@ -389,7 +389,7 @@ test("a model id outside the shipped catalog round-trips through the authenticat
     assert.equal(profiles.game.revision, 1);
     // The other surface's durable revision must not move.
     assert.equal(profiles.chat.revision, 0);
-    assert.equal(profiles.chat.modelId, "deepseek-v4-flash");
+    assert.equal(profiles.chat.modelId, "deepseek-v4.1-flash");
 
     // The durable file is the authority: a fresh store reads the exact value back.
     const reopened = await new ModelProfileStore(profilesPath).read("game");
@@ -414,7 +414,7 @@ test("a stale revision and a malformed model id are rejected without changing th
         apiVersion: 1,
         surface: "chat",
         expectedRevision: 7,
-        modelId: "deepseek-v4-flash",
+        modelId: "deepseek-v4.1-flash",
         thinkingLevel: "high",
       },
     );
@@ -452,7 +452,7 @@ test("a profile that advertises no profile route answers 404 instead of inventin
         apiVersion: 1,
         surface: "chat",
         expectedRevision: 0,
-        modelId: "deepseek-v4-flash",
+        modelId: "deepseek-v4.1-flash",
         thinkingLevel: "high",
       },
     );

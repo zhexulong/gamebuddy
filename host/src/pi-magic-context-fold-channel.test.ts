@@ -83,7 +83,7 @@ async function constructAndReadConfig(
       identity,
       root,
       undefined,
-      { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "low" },
+      { provider: "cpa-oai", modelId: "deepseek-v4.1-flash", thinkingLevel: "low" },
       undefined,
       undefined,
       false,

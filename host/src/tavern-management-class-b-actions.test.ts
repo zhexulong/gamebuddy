@@ -455,7 +455,7 @@ test(
       ),
     });
     const connectionProbe: TavernConnectionProbe = async () =>
-      Object.freeze({ outcome: "ready" as const, modelIds: Object.freeze(["deepseek-v4-flash", "deepseek-v4-pro"]) });
+      Object.freeze({ outcome: "ready" as const, modelIds: Object.freeze(["deepseek-v4.1-flash", "deepseek-v4-pro"]) });
 
     const turn = runningTurnFacade();
     const connection = createTavernConnectionService({ agentDir: root, probe: connectionProbe });
@@ -650,7 +650,7 @@ test(
           apiVersion: 1,
           providerId: "deepseek",
           apiKey: "sk-synthetic-credential",
-          modelId: "deepseek-v4-flash",
+          modelId: "deepseek-v4.1-flash",
         }),
       });
       assert.equal(created.status, 200);

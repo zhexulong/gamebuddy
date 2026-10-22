@@ -47,16 +47,16 @@ const SAME_ID_TWO_PROVIDERS = [
   {
     providerId: "cpa-oai",
     providerLabel: "CPA OAI",
-    modelId: "deepseek-v4-flash",
-    modelLabel: "DeepSeek V4 Flash",
+    modelId: "deepseek-v4.1-flash",
+    modelLabel: "DeepSeek V4.1 Flash",
     allowedThinkingLevels: ["off", "medium", "high"],
     defaultThinkingLevel: "medium",
   },
   {
     providerId: "openrouter",
     providerLabel: "OpenRouter",
-    modelId: "deepseek-v4-flash",
-    modelLabel: "DeepSeek V4 Flash (OR)",
+    modelId: "deepseek-v4.1-flash",
+    modelLabel: "DeepSeek V4.1 Flash (OR)",
     allowedThinkingLevels: ["off", "medium", "high"],
     defaultThinkingLevel: "medium",
   },
@@ -172,8 +172,8 @@ async function mountShell(
     route.fulfill(
       jsonOk({
         apiVersion: 1,
-        chat: { revision: 1, modelId: "deepseek-v4-flash", thinkingLevel: "medium" },
-        game: { revision: 1, modelId: "deepseek-v4-flash", thinkingLevel: "medium" },
+        chat: { revision: 1, modelId: "deepseek-v4.1-flash", thinkingLevel: "medium" },
+        game: { revision: 1, modelId: "deepseek-v4.1-flash", thinkingLevel: "medium" },
         recommendedModels: options.recommendedModels ?? [],
       }),
     ),

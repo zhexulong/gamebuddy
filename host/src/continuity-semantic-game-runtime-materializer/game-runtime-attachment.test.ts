@@ -192,7 +192,7 @@ test("a Game runtime root without a saved profile takes the store's shipped Game
   // travels with the model rather than replacing it.
   assert.deepEqual(attachment.modelConfig, {
     provider: "cpa-oai",
-    modelId: "deepseek-v4-flash",
+    modelId: "deepseek-v4.1-flash",
     thinkingLevel: "high",
   });
   assert.equal(attachment.gameplaySubagentEnabled, true);

@@ -57,8 +57,8 @@ function connectionState(overrides = {}) {
           setupFields: [],
           allowedPlayerModels: [
             {
-              modelId: "deepseek-v4-flash",
-              modelLabel: "DeepSeek V4 Flash",
+              modelId: "deepseek-v4.1-flash",
+              modelLabel: "DeepSeek V4.1 Flash",
               allowedThinkingLevels: ["low", "high", "max"],
               defaultThinkingLevel: "high",
             },
@@ -141,8 +141,8 @@ test("the connection projection is strictly validated and never invents a ready 
             ...state.providers[0],
             allowedPlayerModels: [
               {
-                modelId: "deepseek-v4-flash",
-                modelLabel: "DeepSeek V4 Flash",
+                modelId: "deepseek-v4.1-flash",
+                modelLabel: "DeepSeek V4.1 Flash",
                 allowedThinkingLevels: ["high"],
                 defaultThinkingLevel: "low",
               },

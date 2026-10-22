@@ -37,8 +37,8 @@ const ZERO_CONFIG_DEEPSEEK = `{
       },
       "models": [
         {
-          "id": "deepseek-v4-flash",
-          "name": "deepseek-v4-flash",
+          "id": "deepseek-v4.1-flash",
+          "name": "deepseek-v4.1-flash",
           "reasoning": true,
           "thinkingLevelMap": {
             "off": "none",
@@ -100,12 +100,12 @@ async function withRoot(run: (modelsPath: string) => Promise<void>): Promise<voi
 test("zero configuration writes exactly the previous single-provider document", async () => {
   await withRoot(async (modelsPath) => {
     // The frozen entry the pre-change code built for the default model.
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4-flash"));
+    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
     assert.equal(await readFile(modelsPath, "utf8"), ZERO_CONFIG_DEEPSEEK);
 
     // Re-running with the same entry is idempotent: a second runtime start for
     // the same model must not perturb the document.
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4-flash"));
+    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
     assert.equal(await readFile(modelsPath, "utf8"), ZERO_CONFIG_DEEPSEEK);
   });
 });
@@ -134,7 +134,7 @@ test("a second model keeps the frozen entry shape while the environment entry st
 
 test("merging keeps an unrelated provider entry instead of deleting it", async () => {
   await withRoot(async (modelsPath) => {
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4-flash"));
+    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
     await mergeModelProviderEntry(modelsPath, TAVERN_ESCAPE_HATCH_PROVIDER_ID, {
       name: "OpenAI-compatible endpoint",
       baseUrl: "http://127.0.0.1:11434/v1",
@@ -148,7 +148,7 @@ test("merging keeps an unrelated provider entry instead of deleting it", async (
 
     // The previous behaviour replaced the whole document. Prove the frozen
     // entry survives a later start for a different selection.
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4-flash"));
+    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
     const after = JSON.parse(await readFile(modelsPath, "utf8"));
     assert.equal(after.providers[TAVERN_ESCAPE_HATCH_PROVIDER_ID].models[0].id, "qwen2.5-coder:7b");
   });
@@ -157,11 +157,11 @@ test("merging keeps an unrelated provider entry instead of deleting it", async (
 test("a malformed document is replaced by the entry the runtime owns", async () => {
   await withRoot(async (modelsPath) => {
     await writeFile(modelsPath, "not json", "utf8");
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4-flash"));
+    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
     assert.equal(await readFile(modelsPath, "utf8"), ZERO_CONFIG_DEEPSEEK);
 
     await writeFile(modelsPath, JSON.stringify({ providers: "invalid" }), "utf8");
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4-flash"));
+    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
     assert.equal(await readFile(modelsPath, "utf8"), ZERO_CONFIG_DEEPSEEK);
   });
 });
@@ -178,11 +178,11 @@ test("the runtime provider entry follows the selected connection and its own end
     // No player connection at all: the frozen environment entry is selected.
     const environment = await modelProviderEntry(root, {
       provider: "cpa-oai",
-      modelId: "deepseek-v4-flash",
+      modelId: "deepseek-v4.1-flash",
       thinkingLevel: "high",
     });
     assert.equal(environment?.providerId, "cpa-oai");
-    assert.deepEqual(environment?.entry, environmentProviderEntry("deepseek-v4-flash"));
+    assert.deepEqual(environment?.entry, environmentProviderEntry("deepseek-v4.1-flash"));
 
     // A catalog provider pins the Host-owned endpoint and adds no model list,
     // so the model metadata Pi ships for that provider is preserved.

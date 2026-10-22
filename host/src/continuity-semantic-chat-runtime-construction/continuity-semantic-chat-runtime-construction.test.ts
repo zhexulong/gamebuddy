@@ -258,7 +258,7 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.equal(prepared.runtimeRoot, value.runtimeRoot);
     assert.equal(prepared.surfaceSessionId, "chat_session_01");
     assert.equal(prepared.modelConfig.provider, "cpa-oai");
-    assert.equal(prepared.modelConfig.modelId, "deepseek-v4-flash");
+    assert.equal(prepared.modelConfig.modelId, "deepseek-v4.1-flash");
     assert.equal(prepared.modelProfileRevision, 0);
     // Chat mounts no speaking pseudo-tool or presentation callback. Native
     // assistant content is observed privately by the bound provider invocation.
