@@ -42,6 +42,11 @@ type Props = {
  *    means "nothing was found" when none of them names a source it could not read
  *    (`game-presentation.ts`). Deriving the sentence from `candidates.length`
  *    alone told a player whose game IS installed that no installation exists.
+ *  - **A selection refusal is not a search failure.** Confirming a candidate and
+ *    choosing a folder both end in the Host's registration. A refusal that names
+ *    its own cause (`mod_loader_missing`) is rendered as that cause, because
+ *    "the search failed" is a statement about a search that had just found the
+ *    player's game.
  *  - **A scan that does not settle must not lock the panel.** The controls that
  *    *start* work are off while work is outstanding, but the one that abandons it
  *    is not, and abandoning it retires the read it interrupts - otherwise a slow
@@ -131,6 +136,15 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
             ? await api.retryStardewInstallationDiscovery()
             : await api.openStardewInstallationPicker();
       if (!mounted.current) return;
+      // A selection refusal that names its own cause is a state, not a search
+      // failure: the search found the player's game, and what is missing is the
+      // mod loader. Both controls that lead here - confirm and the folder picker -
+      // report it, so a vanilla install never renders as `source-unavailable` or
+      // `error`.
+      if ("status" in result && result.status === "mod_loader_missing") {
+        setState("mod-loader-missing");
+        return;
+      }
       if (
         kind === "confirm" &&
         "status" in result &&

@@ -51,6 +51,7 @@ const INSTALLATION_STATES = [
   "source-unavailable",
   "no-candidates",
   "result-unavailable",
+  "mod-loader-missing",
   "expired",
   "error",
 ];

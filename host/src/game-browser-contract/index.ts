@@ -326,12 +326,20 @@ export const GameDiscoveryReadResultV1Schema = strictObject({
 export const GameDiscoveryConfirmCommandV1Schema = strictObject({ apiVersion: ApiVersion, candidateId: OpaqueHandle });
 export const GameDiscoveryActionCommandV1Schema = strictObject({ apiVersion: ApiVersion });
 
-/** Redacted outcomes for installation-discovery mutations. */
+/**
+ * Redacted outcomes for installation-discovery mutations.
+ *
+ * `mod_loader_missing` is the one refusal the player can act on: the chosen folder
+ * holds Stardew Valley and no mod loader, so the Companion Mod can never load in
+ * it. It is a distinct outcome because the search itself succeeded - reporting it
+ * as `unavailable` read to the player as a failed search.
+ */
 export const GameDiscoveryMutationResultV1Schema = Type.Union([
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("accepted") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("registered") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("cancelled") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("unavailable") }),
+  strictObject({ apiVersion: ApiVersion, status: Type.Literal("mod_loader_missing") }),
 ]);
 export type GameDiscoveryMutationResultV1 = Static<typeof GameDiscoveryMutationResultV1Schema>;
 

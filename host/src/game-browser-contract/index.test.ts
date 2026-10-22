@@ -60,20 +60,46 @@ const baseState = {
 
 test("Stardew cabin handoff contract exposes only opaque choices and exact confirmation", () => {
   const opaque32 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-  assert.equal(Compile(StardewCabinChoicesV1Schema).Check({
-    apiVersion: 1,
-    choices: [{ displayLabel: "Cabin 1", availability: "available", choiceHandle: opaque32, expiresAtMs: 100_000 }],
-  }), true);
-  assert.equal(Compile(StardewCabinChoicesV1Schema).Check({
-    apiVersion: 1,
-    choices: [{ displayLabel: "Cabin 1", availability: "available", choiceHandle: opaque32, expiresAtMs: 100_000, cabinId: "raw" }],
-  }), false);
-  assert.equal(Compile(StardewCabinConfirmCommandV1Schema).Check({
-    apiVersion: 1, idempotencyKey, choiceHandle: opaque32, confirmed: true,
-  }), true);
-  assert.equal(Compile(StardewCabinConfirmCommandV1Schema).Check({
-    apiVersion: 1, idempotencyKey, choiceHandle: opaque32, confirmed: false,
-  }), false);
+  assert.equal(
+    Compile(StardewCabinChoicesV1Schema).Check({
+      apiVersion: 1,
+      choices: [{ displayLabel: "Cabin 1", availability: "available", choiceHandle: opaque32, expiresAtMs: 100_000 }],
+    }),
+    true,
+  );
+  assert.equal(
+    Compile(StardewCabinChoicesV1Schema).Check({
+      apiVersion: 1,
+      choices: [
+        {
+          displayLabel: "Cabin 1",
+          availability: "available",
+          choiceHandle: opaque32,
+          expiresAtMs: 100_000,
+          cabinId: "raw",
+        },
+      ],
+    }),
+    false,
+  );
+  assert.equal(
+    Compile(StardewCabinConfirmCommandV1Schema).Check({
+      apiVersion: 1,
+      idempotencyKey,
+      choiceHandle: opaque32,
+      confirmed: true,
+    }),
+    true,
+  );
+  assert.equal(
+    Compile(StardewCabinConfirmCommandV1Schema).Check({
+      apiVersion: 1,
+      idempotencyKey,
+      choiceHandle: opaque32,
+      confirmed: false,
+    }),
+    false,
+  );
   assert.equal(Compile(StardewCabinConfirmResultV1Schema).Check({ apiVersion: 1, status: "manifest_admitted" }), true);
   assert.ok(GAME_BROWSER_OPERATION_IDS_V1.includes("game.stardew.cabins.read"));
   assert.ok(GAME_BROWSER_OPERATION_IDS_V1.includes("game.stardew.cabins.confirm"));
@@ -81,29 +107,71 @@ test("Stardew cabin handoff contract exposes only opaque choices and exact confi
 
 test("Game installation discovery contract is redacted and exact", () => {
   const opaqueHandle = "A".repeat(43);
-  assert.equal(Compile(GameDiscoveryReadResultV1Schema).Check({
-    apiVersion: 1,
-    candidates: [{ candidateId: opaqueHandle, source: "steam", label: "Stardew Valley", hint: null, status: "candidate" }],
-    diagnostics: [],
-  }), true);
-  assert.equal(Compile(GameDiscoveryReadResultV1Schema).Check({
-    apiVersion: 1,
-    candidates: [{ candidateId: opaqueHandle, source: "steam", label: "Stardew Valley", hint: null, status: "candidate", path: "C:\\\\Games" }],
-    diagnostics: [],
-  }), false);
+  assert.equal(
+    Compile(GameDiscoveryReadResultV1Schema).Check({
+      apiVersion: 1,
+      candidates: [
+        { candidateId: opaqueHandle, source: "steam", label: "Stardew Valley", hint: null, status: "candidate" },
+      ],
+      diagnostics: [],
+    }),
+    true,
+  );
+  assert.equal(
+    Compile(GameDiscoveryReadResultV1Schema).Check({
+      apiVersion: 1,
+      candidates: [
+        {
+          candidateId: opaqueHandle,
+          source: "steam",
+          label: "Stardew Valley",
+          hint: null,
+          status: "candidate",
+          path: "C:\\\\Games",
+        },
+      ],
+      diagnostics: [],
+    }),
+    false,
+  );
   assert.equal(Compile(GameDiscoveryConfirmCommandV1Schema).Check({ apiVersion: 1, candidateId: opaqueHandle }), true);
-  assert.equal(Compile(GameDiscoveryConfirmCommandV1Schema).Check({ apiVersion: 1, candidateId: opaqueHandle, path: "C:\\\\Games" }), false);
+  assert.equal(
+    Compile(GameDiscoveryConfirmCommandV1Schema).Check({
+      apiVersion: 1,
+      candidateId: opaqueHandle,
+      path: "C:\\\\Games",
+    }),
+    false,
+  );
   assert.equal(Compile(GameDiscoveryActionCommandV1Schema).Check({ apiVersion: 1 }), true);
   assert.equal(Compile(GameDiscoveryActionCommandV1Schema).Check({ apiVersion: 1, candidateId: opaqueHandle }), false);
   assert.equal(Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "registered" }), true);
-  assert.equal(Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "accepted", path: "C:\\\\Games" }), false);
+  // The mod-loader refusal is its own outcome, so the search that found the game is
+  // never reported as an unavailable one.
+  assert.equal(
+    Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "mod_loader_missing" }),
+    true,
+  );
+  assert.equal(
+    Compile(GameDiscoveryMutationResultV1Schema).Check({
+      apiVersion: 1,
+      status: "mod_loader_missing",
+      path: "C:\\\\Games",
+    }),
+    false,
+  );
+  assert.equal(
+    Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "accepted", path: "C:\\\\Games" }),
+    false,
+  );
   for (const operation of [
     "game.installation.discovery.read",
     "game.installation.discovery.confirm",
     "game.installation.discovery.retry",
     "game.installation.discovery.cancel",
     "game.installation.discovery.manual_picker",
-  ] as const) assert.ok(GAME_BROWSER_OPERATION_IDS_V1.includes(operation));
+  ] as const)
+    assert.ok(GAME_BROWSER_OPERATION_IDS_V1.includes(operation));
 });
 
 test("Game Browser v1 provides a bounded, unmounted Game lifecycle contract", () => {
@@ -173,20 +241,14 @@ test("GameBrowserStateV1 pending states never claim connected", () => {
 test("GameBrowserStateV1 accepts every actionAuthority value", () => {
   const validator = Compile(GameBrowserStateV1Schema);
   for (const actionAuthority of ["unavailable", "active", "paused"] as const) {
-    assert.equal(
-      validator.Check({ ...baseState, game: { ...baseState.game, actionAuthority } }),
-      true,
-    );
+    assert.equal(validator.Check({ ...baseState, game: { ...baseState.game, actionAuthority } }), true);
   }
 });
 
 test("GameBrowserStateV1 rejects invented actionAuthority values", () => {
   const validator = Compile(GameBrowserStateV1Schema);
   for (const actionAuthority of ["pending", "awaiting", "resumed", "ready", "ACTIVE"]) {
-    assert.equal(
-      validator.Check({ ...baseState, game: { ...baseState.game, actionAuthority } as unknown }),
-      false,
-    );
+    assert.equal(validator.Check({ ...baseState, game: { ...baseState.game, actionAuthority } as unknown }), false);
   }
 });
 
@@ -320,7 +382,10 @@ test("GameBrowserStateV1 rejects instance with path field", () => {
   assert.equal(
     validator.Check({
       ...baseState,
-      game: { ...baseState.game, instance: { status: "detected", gameTitle: "Stardew Valley", detectedPath: "E:\\games" } },
+      game: {
+        ...baseState.game,
+        instance: { status: "detected", gameTitle: "Stardew Valley", detectedPath: "E:\\games" },
+      },
     }),
     false,
   );
@@ -378,10 +443,7 @@ test("GameBrowserStateV1 accepts valid role values", () => {
 
 test("GameBrowserStateV1 rejects invalid role value", () => {
   const validator = Compile(GameBrowserStateV1Schema);
-  assert.equal(
-    validator.Check({ ...baseState, game: { ...baseState.game, role: "farmhand" } }),
-    false,
-  );
+  assert.equal(validator.Check({ ...baseState, game: { ...baseState.game, role: "farmhand" } }), false);
 });
 
 // ─── Capability summary ─────────────────────────────────────────────────────
@@ -413,19 +475,13 @@ test("GameBrowserStateV1 capability summary rejects count exceeding max", () => 
 test("GameBrowserStateV1 accepts all valid outcome values", () => {
   const validator = Compile(GameBrowserStateV1Schema);
   for (const outcome of ["none", "succeeded", "failed", "cancelled"] as const) {
-    assert.equal(
-      validator.Check({ ...baseState, game: { ...baseState.game, latestOutcome: outcome } }),
-      true,
-    );
+    assert.equal(validator.Check({ ...baseState, game: { ...baseState.game, latestOutcome: outcome } }), true);
   }
 });
 
 test("GameBrowserStateV1 rejects invalid outcome value", () => {
   const validator = Compile(GameBrowserStateV1Schema);
-  assert.equal(
-    validator.Check({ ...baseState, game: { ...baseState.game, latestOutcome: "in_progress" } }),
-    false,
-  );
+  assert.equal(validator.Check({ ...baseState, game: { ...baseState.game, latestOutcome: "in_progress" } }), false);
 });
 
 // ─── Read commands ──────────────────────────────────────────────────────────
@@ -539,44 +595,105 @@ test("game.resume result is strict, redacted, and covers the exact frozen status
 
 test("game.create carries only apiVersion, idempotencyKey, integrationId, and continuityIdentityId", () => {
   const validator = Compile(GameCreateCommandV1Schema);
-  assert.equal(validator.Check({
-    apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: null,
-  }), true);
-  assert.equal(validator.Check({
-    apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: "continuity-1",
-  }), true);
+  assert.equal(
+    validator.Check({
+      apiVersion: 1,
+      idempotencyKey,
+      integrationId: "stardew",
+      continuityIdentityId: null,
+    }),
+    true,
+  );
+  assert.equal(
+    validator.Check({
+      apiVersion: 1,
+      idempotencyKey,
+      integrationId: "stardew",
+      continuityIdentityId: "continuity-1",
+    }),
+    true,
+  );
   // Rejects missing fields.
-  assert.equal(validator.Check({ apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: undefined }), false);
+  assert.equal(
+    validator.Check({ apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: undefined }),
+    false,
+  );
   assert.equal(validator.Check({ apiVersion: 1, idempotencyKey, integrationId: "stardew" }), false);
   assert.equal(validator.Check({ apiVersion: 1, idempotencyKey, continuityIdentityId: null }), false);
   assert.equal(validator.Check({ apiVersion: 1, integrationId: "stardew", continuityIdentityId: null }), false);
   // Rejects extra fields: no expectedAttachmentGeneration, gameSessionId, or
   // any bootstrap/native/launch fact on the create wire.
-  assert.equal(validator.Check({
-    apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: null, expectedAttachmentGeneration: 1,
-  }), false);
-  assert.equal(validator.Check({
-    apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: null, gameSessionId: "session-abc",
-  }), false);
+  assert.equal(
+    validator.Check({
+      apiVersion: 1,
+      idempotencyKey,
+      integrationId: "stardew",
+      continuityIdentityId: null,
+      expectedAttachmentGeneration: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    validator.Check({
+      apiVersion: 1,
+      idempotencyKey,
+      integrationId: "stardew",
+      continuityIdentityId: null,
+      gameSessionId: "session-abc",
+    }),
+    false,
+  );
   for (const extra of ["launchGeneration", "path", "pipeEndpoint", "token", "principal", "rootLayout"]) {
-    assert.equal(validator.Check({
-      apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: null, [extra]: "forbidden",
-    }), false, extra);
+    assert.equal(
+      validator.Check({
+        apiVersion: 1,
+        idempotencyKey,
+        integrationId: "stardew",
+        continuityIdentityId: null,
+        [extra]: "forbidden",
+      }),
+      false,
+      extra,
+    );
   }
   // integrationId follows the loose safe-id pattern only (not a canonical handle).
-  assert.equal(validator.Check({
-    apiVersion: 1, idempotencyKey, integrationId: "Bad id!", continuityIdentityId: null,
-  }), false);
-  assert.equal(validator.Check({
-    apiVersion: 1, idempotencyKey, integrationId: "", continuityIdentityId: null,
-  }), false);
-  assert.equal(validator.Check({
-    apiVersion: 1, idempotencyKey, integrationId: "x".repeat(129), continuityIdentityId: null,
-  }), false);
+  assert.equal(
+    validator.Check({
+      apiVersion: 1,
+      idempotencyKey,
+      integrationId: "Bad id!",
+      continuityIdentityId: null,
+    }),
+    false,
+  );
+  assert.equal(
+    validator.Check({
+      apiVersion: 1,
+      idempotencyKey,
+      integrationId: "",
+      continuityIdentityId: null,
+    }),
+    false,
+  );
+  assert.equal(
+    validator.Check({
+      apiVersion: 1,
+      idempotencyKey,
+      integrationId: "x".repeat(129),
+      continuityIdentityId: null,
+    }),
+    false,
+  );
   // continuityIdentityId must be a safe id or null.
-  assert.equal(validator.Check({
-    apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: "not valid!",
-  }), false);
+  assert.equal(
+    validator.Check({
+      apiVersion: 1,
+      idempotencyKey,
+      integrationId: "stardew",
+      continuityIdentityId: "not valid!",
+    }),
+    false,
+  );
 });
 
 test("game.create result is strict and binds the opaque session handle to its status (null⇔unavailable)", () => {
@@ -585,17 +702,38 @@ test("game.create result is strict and binds the opaque session handle to its st
   // Positive: accepted/attached always carry the store-minted opaque id.
   for (const status of ["accepted", "attached"] as const) {
     assert.equal(validator.Check({ apiVersion: 1, status, gameSessionId: opaqueSessionId }), true, status);
-    assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check({ apiVersion: 1, status, gameSessionId: opaqueSessionId }), true, status);
+    assert.equal(
+      GameBrowserValidatorsV1.GameCreateResultV1Schema.Check({ apiVersion: 1, status, gameSessionId: opaqueSessionId }),
+      true,
+      status,
+    );
   }
   // Positive: unavailable always carries null.
   assert.equal(validator.Check({ apiVersion: 1, status: "unavailable", gameSessionId: null }), true);
-  assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check({ apiVersion: 1, status: "unavailable", gameSessionId: null }), true);
+  assert.equal(
+    GameBrowserValidatorsV1.GameCreateResultV1Schema.Check({
+      apiVersion: 1,
+      status: "unavailable",
+      gameSessionId: null,
+    }),
+    true,
+  );
   // Negative: accepted/attached must never carry null; unavailable must never carry an id.
   assert.equal(validator.Check({ apiVersion: 1, status: "accepted", gameSessionId: null }), false);
   assert.equal(validator.Check({ apiVersion: 1, status: "attached", gameSessionId: null }), false);
   assert.equal(validator.Check({ apiVersion: 1, status: "unavailable", gameSessionId: opaqueSessionId }), false);
-  assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check({ apiVersion: 1, status: "attached", gameSessionId: null }), false);
-  assert.equal(GameBrowserValidatorsV1.GameCreateResultV1Schema.Check({ apiVersion: 1, status: "unavailable", gameSessionId: opaqueSessionId }), false);
+  assert.equal(
+    GameBrowserValidatorsV1.GameCreateResultV1Schema.Check({ apiVersion: 1, status: "attached", gameSessionId: null }),
+    false,
+  );
+  assert.equal(
+    GameBrowserValidatorsV1.GameCreateResultV1Schema.Check({
+      apiVersion: 1,
+      status: "unavailable",
+      gameSessionId: opaqueSessionId,
+    }),
+    false,
+  );
   // Rejects invented statuses and missing apiVersion.
   assert.equal(validator.Check({ apiVersion: 1, status: "invented_status", gameSessionId: null }), false);
   assert.equal(validator.Check({ apiVersion: 1, status: "invented_status", gameSessionId: opaqueSessionId }), false);
@@ -604,10 +742,27 @@ test("game.create result is strict and binds the opaque session handle to its st
   assert.equal(validator.Check({ apiVersion: 2, status: "accepted", gameSessionId: opaqueSessionId }), false);
   // Rejects extra fields: session internals/launch/process/token/generation/proofs.
   for (const extra of [
-    "sessionId", "launchGeneration", "processPath", "pipeEndpoint", "controlToken", "lease", "digest", "receipt", "attestation", "extraneous",
+    "sessionId",
+    "launchGeneration",
+    "processPath",
+    "pipeEndpoint",
+    "controlToken",
+    "lease",
+    "digest",
+    "receipt",
+    "attestation",
+    "extraneous",
   ]) {
-    assert.equal(validator.Check({ apiVersion: 1, status: "accepted", gameSessionId: opaqueSessionId, [extra]: "forbidden" }), false, extra);
-    assert.equal(validator.Check({ apiVersion: 1, status: "unavailable", gameSessionId: null, [extra]: "forbidden" }), false, extra);
+    assert.equal(
+      validator.Check({ apiVersion: 1, status: "accepted", gameSessionId: opaqueSessionId, [extra]: "forbidden" }),
+      false,
+      extra,
+    );
+    assert.equal(
+      validator.Check({ apiVersion: 1, status: "unavailable", gameSessionId: null, [extra]: "forbidden" }),
+      false,
+      extra,
+    );
   }
   // The session handle is a loose safe id, not a canonical base64url handle.
   assert.equal(validator.Check({ apiVersion: 1, status: "accepted", gameSessionId: "!bad!" }), false);
@@ -629,11 +784,20 @@ test("game.resume.cancel pins the exact in-flight attempt generation and returns
   assert.equal(commandValidator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 0 }), false);
   assert.equal(commandValidator.Check({ apiVersion: 1, idempotencyKey }), false);
   assert.equal(commandValidator.Check({ apiVersion: 1, expectedAttachmentGeneration: 2 }), false);
-  assert.equal(commandValidator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 2, extra: true }), false);
-  assert.equal(commandValidator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 2, gameSessionId: "s" }), false);
+  assert.equal(
+    commandValidator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 2, extra: true }),
+    false,
+  );
+  assert.equal(
+    commandValidator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 2, gameSessionId: "s" }),
+    false,
+  );
   const resultValidator = Compile(GameResumeCancelResultV1Schema);
   assert.equal(resultValidator.Check({ apiVersion: 1, status: "cancelled" }), true);
-  assert.equal(GameBrowserValidatorsV1.GameResumeCancelResultV1Schema.Check({ apiVersion: 1, status: "cancelled" }), true);
+  assert.equal(
+    GameBrowserValidatorsV1.GameResumeCancelResultV1Schema.Check({ apiVersion: 1, status: "cancelled" }),
+    true,
+  );
   assert.equal(resultValidator.Check({ apiVersion: 1, status: "invented" }), false);
   assert.equal(resultValidator.Check({ apiVersion: 1 }), false);
   assert.equal(resultValidator.Check({ status: "cancelled" }), false);
@@ -655,11 +819,17 @@ test("game.reopen carries idempotency key, expected attachment generation, and a
   assert.equal(commandValidator.Check({ apiVersion: 1, idempotencyKey }), false);
   assert.equal(commandValidator.Check({ apiVersion: 1, expectedAttachmentGeneration: 1 }), false);
   // Rejects extra fields
-  assert.equal(commandValidator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1, extra: true }), false);
+  assert.equal(
+    commandValidator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1, extra: true }),
+    false,
+  );
   const resultValidator = Compile(GameReopenActionAuthorityResultV1Schema);
   assert.equal(resultValidator.Check({ apiVersion: 1, status: "reopened" }), true);
   // The aggregate validators expose the exact same compiled schema.
-  assert.equal(GameBrowserValidatorsV1.GameReopenActionAuthorityResultV1Schema.Check({ apiVersion: 1, status: "reopened" }), true);
+  assert.equal(
+    GameBrowserValidatorsV1.GameReopenActionAuthorityResultV1Schema.Check({ apiVersion: 1, status: "reopened" }),
+    true,
+  );
   // Rejects invented statuses.
   assert.equal(resultValidator.Check({ apiVersion: 1, status: "invented" }), false);
   assert.equal(resultValidator.Check({ apiVersion: 1 }), false);
@@ -753,10 +923,24 @@ test("composeGameProfile creates a valid frozen Game profile", () => {
   const profile = composeGameProfile({
     profileId: "gamebuddy.game.preview",
     releaseTier: "game_preview",
-    operationIds: ["game.prerequisites.read", "game.state.read", "game.launch", "game.attach", "game.stop", "game.disconnect"],
+    operationIds: [
+      "game.prerequisites.read",
+      "game.state.read",
+      "game.launch",
+      "game.attach",
+      "game.stop",
+      "game.disconnect",
+    ],
     navigationItemIds: ["game"],
   });
-  assert.deepEqual(profile.operationIds, ["game.prerequisites.read", "game.state.read", "game.launch", "game.attach", "game.stop", "game.disconnect"]);
+  assert.deepEqual(profile.operationIds, [
+    "game.prerequisites.read",
+    "game.state.read",
+    "game.launch",
+    "game.attach",
+    "game.stop",
+    "game.disconnect",
+  ]);
   assert.deepEqual(profile.navigationItemIds, ["game"]);
   assert.equal(profile.profileId, "gamebuddy.game.preview");
   assert.equal(profile.releaseTier, "game_preview");

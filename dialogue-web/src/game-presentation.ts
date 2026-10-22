@@ -152,6 +152,10 @@ export type InstallationDiscoveryState =
   | "source-unavailable"
   | "no-candidates"
   | "result-unavailable"
+  // The chosen folder holds Stardew Valley and no mod loader. It is the one
+  // selection refusal the player can fix, and it is never a search outcome: the
+  // search found the game.
+  | "mod-loader-missing"
   | "expired"
   | "error";
 
@@ -223,6 +227,8 @@ export function installationStateLabel(labels: Messages, state: InstallationDisc
       return labels.gameInstallationNoCandidates;
     case "result-unavailable":
       return labels.gameInstallationResultUnavailable;
+    case "mod-loader-missing":
+      return labels.gameInstallationModLoaderMissing;
     case "expired":
       return labels.gameInstallationExpired;
     case "error":

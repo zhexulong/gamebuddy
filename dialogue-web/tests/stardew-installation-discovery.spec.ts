@@ -41,6 +41,7 @@ const DISCOVERY_ROUTE = "**/api/composed-reference-game/v1/game/installation/dis
 const CONFIRM_ROUTE = "**/api/composed-reference-game/v1/game/installation/discovery/confirm";
 const RETRY_ROUTE = "**/api/composed-reference-game/v1/game/installation/discovery/retry";
 const CANCEL_ROUTE = "**/api/composed-reference-game/v1/game/installation/discovery/cancel";
+const PICKER_ROUTE = "**/api/composed-reference-game/v1/game/installation/discovery/manual-picker";
 
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -417,6 +418,44 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await mountWithDiscovery(page, { apiVersion: 1, candidates: [], diagnostics: ["no-candidates"] });
     await expect(panel(page)).toHaveAttribute("data-state", "no-candidates");
     await expect(sentenceOf(page)).toHaveText("No Stardew Valley installation was found.");
+  });
+
+  test("an installation without a mod loader names SMAPI instead of the search", async ({ page }) => {
+    // The player this test exists for: Stardew Valley is bought and installed, SMAPI
+    // never was. The Host's scan finds the game, so the panel offers it - and the
+    // confirm refuses with `mod_loader_missing`, exactly as the coordinator reports
+    // it for a folder holding `Stardew Valley.exe` and no `StardewModdingAPI.exe`
+    // (`host/src/stardew-production-lifecycle-coordinator.internal.test.ts`).
+    const sentence =
+      "We found Stardew Valley, but there is no mod loader (SMAPI) in that folder. Install SMAPI, then find again — or choose a game folder that already has it.";
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    await mountGameDrawerRoutes(page);
+    await page.route(DRAFT_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })));
+    await page.route(DISCOVERY_ROUTE, (route) => route.fulfill(jsonOk(foundInstallation)));
+    await page.route(CONFIRM_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, status: "mod_loader_missing" })));
+    await page.route(PICKER_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, status: "mod_loader_missing" })));
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
+    const setup = panel(page);
+    // The search succeeded: the game it found is offered.
+    await expect(setup).toHaveAttribute("data-state", "candidates");
+
+    await setup.getByRole("button", { name: "Confirm", exact: true }).click();
+    await expect(setup).toHaveAttribute("data-state", "mod-loader-missing");
+    await expect(sentenceOf(page)).toHaveText(sentence);
+    // Neither honest search state may stand in for this one: both blame a search that
+    // had just found the player's game, and neither names the missing piece.
+    await expect(setup).not.toContainText("The installation search failed.");
+    await expect(setup).not.toContainText("The installation search is unavailable right now.");
+    await expect(setup).not.toContainText("No Stardew Valley installation was found.");
+
+    // The folder picker reaches the same admission, so it says the same thing.
+    await setup.getByRole("button", { name: "Choose game folder", exact: true }).click();
+    await expect(setup).toHaveAttribute("data-state", "mod-loader-missing");
+    await expect(sentenceOf(page)).toHaveText(sentence);
+    // And the next step the sentence names is a control the player can press.
+    await expect(setup.getByRole("button", { name: "Choose game folder", exact: true })).toBeEnabled();
+    await expect(setup.getByRole("button", { name: "Find again", exact: true })).toBeEnabled();
   });
 
   test("renders source-unavailable as a typed problem", async ({ page }) => {

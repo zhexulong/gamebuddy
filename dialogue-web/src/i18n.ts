@@ -722,6 +722,8 @@ const en = {
   gameInstallationSourceUnavailable: "The installation search is unavailable right now.",
   gameInstallationNoCandidates: "No Stardew Valley installation was found.",
   gameInstallationResultUnavailable: "We couldn't read the installation search result.",
+  gameInstallationModLoaderMissing:
+    "We found Stardew Valley, but there is no mod loader (SMAPI) in that folder. Install SMAPI, then find again — or choose a game folder that already has it.",
   gameInstallationExpired: "These search results expired. Search again.",
   gameInstallationError: "The installation search failed.",
   gameInstallationConfirm: "Confirm",
@@ -1423,6 +1425,8 @@ const zh: Messages = {
   gameInstallationSourceUnavailable: "目前无法搜索游戏安装位置。",
   gameInstallationNoCandidates: "未找到《星露谷物语》安装位置。",
   gameInstallationResultUnavailable: "无法读取游戏安装搜索结果。",
+  gameInstallationModLoaderMissing:
+    "已找到《星露谷物语》，但这个目录里没有模组加载器（SMAPI）。请先安装 SMAPI，再重新查找；也可以选择已经装有 SMAPI 的游戏文件夹。",
   gameInstallationExpired: "搜索结果已过期，请重新搜索。",
   gameInstallationError: "搜索游戏安装位置失败。",
   gameInstallationConfirm: "确认",

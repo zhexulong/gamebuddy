@@ -13,7 +13,9 @@ import { createStardewGamePresentationProjection } from "./provider.js";
 
 const csrfToken = "A".repeat(43);
 
-function fakeCoordinator() {
+function fakeCoordinator(
+  confirmResult: Readonly<{ status: "registered" | "mod_loader_missing" }> = { status: "registered" },
+) {
   const calls = { lifecycle: 0, attachment: 0, launchReadiness: 0, actionAuthority: 0, installation: 0 };
   const discoveryCalls: string[] = [];
   const discoveryReceivers: unknown[] = [];
@@ -78,7 +80,7 @@ function fakeCoordinator() {
     async confirmInstallation(this: unknown, _admission: unknown, candidateId: string) {
       discoveryReceivers.push(this);
       discoveryCalls.push(`confirm:${candidateId}`);
-      return { status: "registered" as const };
+      return confirmResult;
     },
     async retryInstallationDiscovery(this: unknown) {
       discoveryReceivers.push(this);
@@ -195,6 +197,21 @@ test("stardew discovery mount delegates every nested callback to the same activa
     projection.lifecycleActivationBindingSink.bindBrowserAdmissionIssuer,
     activationOwner.bindBrowserAdmissionIssuer,
   );
+});
+
+test("the mod-loader refusal crosses the seam as its own outcome, not as an unavailable one", async () => {
+  const { coordinator } = fakeCoordinator({ status: "mod_loader_missing" });
+  const projection = createStardewGamePresentationProjection(coordinator);
+  const discovery = projection.lifecycleActivationBindingSink.gameDiscovery!;
+  const admission = {} as Parameters<typeof discovery.confirm>[0];
+
+  // Producer: the coordinator refused the candidate because the folder has no mod
+  // loader. Verifier: the projection keeps that outcome instead of folding it into
+  // `unavailable`, which the panel renders as a search outcome.
+  assert.deepEqual(await discovery.confirm(admission, { apiVersion: 1, candidateId: "Q".repeat(42) + "A" }), {
+    apiVersion: 1,
+    status: "mod_loader_missing",
+  });
 });
 
 test("stardew presentation projection reads game state through the coordinator's own readers", async () => {

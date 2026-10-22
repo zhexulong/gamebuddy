@@ -14,7 +14,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { admitStardewInstallation, type AdmittedStardewInstallation } from "./stardew-installation-admission.js";
 import { readStardewInstallationRegistration } from "./stardew-installation-registration.internal.js";
-import { requireStardewModLoaderInstalled } from "./stardew-game-install/discovery.js";
+import { requireStardewModLoaderInstalled, STARDEW_MOD_LOADER_MISSING } from "./stardew-game-install/discovery.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import {
@@ -299,8 +299,18 @@ export type StardewGameSurfaceActionAuthorityReader = Readonly<{
   readActionAuthorityView(): StardewGameSurfaceActionAuthorityView;
 }>;
 
+/**
+ * The outcome of confirming or picking an installation.
+ *
+ * `mod_loader_missing` is the refusal a player can act on: the folder holds
+ * Stardew Valley but no mod loader, so the Companion Mod can never load in it.
+ * `unavailable` is every other refusal, which names no cause the player can fix.
+ */
+export type StardewInstallationSelectionResult = Readonly<{
+  status: "registered" | "cancelled" | "unavailable" | "mod_loader_missing";
+}>;
+
 export type StardewInstallationDiscoveryView = Readonly<StardewInstallationDiscoveryProviderResult>;
-export type StardewInstallationSelectionResult = Readonly<{ status: "registered" | "cancelled" | "unavailable" }>;
 
 export type StardewProductionLifecycleActivationOwner = Readonly<{
   bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
@@ -1538,6 +1548,23 @@ function createCoordinator(
     await internal.replaceStagedInstallationLocator(owner, current.revision, locator);
     return Object.freeze({ status: "registered" });
   };
+  /**
+   * The outcome a registration refusal names.
+   *
+   * Registration refuses for several causes, and only one of them is a fact the
+   * player can act on: a folder holding Stardew Valley but no mod loader, where the
+   * Companion Mod can never load. Reporting that as `unavailable` told a vanilla
+   * player their installation search had failed, on a machine where the search had
+   * in fact found their game. Every other cause stays `unavailable`, which claims
+   * no cause at all.
+   */
+  const registrationRefusal = (error: unknown): StardewInstallationSelectionResult =>
+    Object.freeze({
+      status:
+        error instanceof Error && error.message === STARDEW_MOD_LOADER_MISSING
+          ? ("mod_loader_missing" as const)
+          : ("unavailable" as const),
+    });
   const selectAndRegisterPlayerHostInstallation = async (): Promise<boolean> => {
     const result = await selectStardewFolder(folderPicker);
     if (result.status === "cancelled") return false;
@@ -2660,8 +2687,8 @@ function createCoordinator(
         return Object.freeze({ status: "unavailable" as const });
       try {
         return await registerInstallationLocator(installationDiscoveryProvider.confirm(candidateId));
-      } catch {
-        return Object.freeze({ status: "unavailable" as const });
+      } catch (error) {
+        return registrationRefusal(error);
       }
     });
   const retryInstallationDiscovery = (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) =>
@@ -2684,8 +2711,8 @@ function createCoordinator(
         return (await selectAndRegisterPlayerHostInstallation())
           ? { status: "registered" as const }
           : { status: "cancelled" as const };
-      } catch {
-        return { status: "unavailable" as const };
+      } catch (error) {
+        return registrationRefusal(error);
       }
     });
 

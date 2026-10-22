@@ -219,7 +219,7 @@ export type StardewInstallationDiscoveryV1 = Readonly<{
 
 export type StardewInstallationMutationV1 = Readonly<{
   apiVersion: 1;
-  status: "accepted" | "registered" | "cancelled" | "unavailable";
+  status: "accepted" | "registered" | "cancelled" | "unavailable" | "mod_loader_missing";
 }>;
 
 type StardewCabinChoicesV1 = Readonly<{
@@ -483,7 +483,7 @@ function validateStardewInstallationMutation(value: unknown): StardewInstallatio
     !isRecord(value) ||
     !hasExactKeys(value, ["apiVersion", "status"]) ||
     value.apiVersion !== 1 ||
-    !["accepted", "registered", "cancelled", "unavailable"].includes(value.status as string)
+    !["accepted", "registered", "cancelled", "unavailable", "mod_loader_missing"].includes(value.status as string)
   )
     throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_mutation");
   return Object.freeze({ apiVersion: 1, status: value.status as StardewInstallationMutationV1["status"] });
