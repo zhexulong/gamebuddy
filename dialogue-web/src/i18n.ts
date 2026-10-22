@@ -775,21 +775,6 @@ const en = {
   gameGuideStepTwoDetail: "Start the game with your companion, then load the farm you want to play.",
   gameGuideStepThreeTitle: "Your companion moves in",
   gameGuideStepThreeDetail: "Choose the cabin your companion settles into.",
-  /* The advanced configuration block (design/104 §3). This is player copy, so it names no
-     upstream tool, no file of another product and no route: it says which settings live in the
-     file, what the file is for the player, and - because this screen cannot change it -
-     that there is nothing to edit here. `advancedPiSettings*` are the key names, not the copy. */
-  advancedPiSettingsTitle: "Advanced configuration",
-  advancedPiSettingsHint:
-    "Edit the full settings file directly: each entry under `providers` is one connection your companion reads (baseUrl, api, apiKey, models, …).",
-  advancedPiSettingsSave: "Save advanced configuration",
-  advancedPiSettingsApplied: "Saved. It is read the next time your companion starts.",
-  advancedPiSettingsNoRoute:
-    "Your companion's model and connection settings live in one settings file. The provider, model and key you set above are written into it along with everything else, and this screen cannot change that file - so there is nothing to edit here.",
-  advancedPiSettingsInvalidJson:
-    "This is not valid JSON. Check brackets, commas and quotes and try again. Nothing was written.",
-  advancedPiSettingsInvalidShape:
-    "This is not the settings file: the only top-level key is providers, and each provider entry must be an object. Nothing was written.",
 
   // --- endgame lane: the one deliberate complete-game-termination control ----
   // The terminal operation is set apart from Stop/Disconnect: it reads as its
@@ -822,6 +807,12 @@ const en = {
   // current state. The words state the consequence and never promise
   // reversibility the action does not have.
   chatRetentionArchiveConfirm: "Archive this chat? It leaves the active list. This cannot be undone.",
+  // The chat transcript export: one Chat's own messages as the SillyTavern chat file the Host's
+  // interchange produced. The player saves the Host's own bytes and is told what the file does not
+  // carry, so a subset is never mistaken for the whole conversation.
+  chatExportSaved: "Saved {{file}}.",
+  chatExportFailed: "The chat could not be exported.",
+  chatExportDropped: "Not in the file: {{fields}}.",
   chatRetentionArchiveConfirmYes: "Archive",
   chatRetentionTrashConfirm: "Move this chat to the trash? It leaves the active list. This cannot be undone.",
   chatRetentionTrashConfirmYes: "Move to trash",
@@ -1475,16 +1466,6 @@ const zh: Messages = {
   gameGuideStepThreeDetail: "选一间农舍，同伴就住进去。",
   // 高级配置：这里是玩家可见文案，不出现上游工具名、他人的文件名或路由；
   // 只说清楚这些设置存在文件里、本页面不能改，以及因此没有可编辑的内容。
-  advancedPiSettingsTitle: "高级配置",
-  advancedPiSettingsHint:
-    "直接编辑完整设置文件：`providers` 下每个条目就是伙伴读取的一条连接（baseUrl、api、apiKey、models 等）。",
-  advancedPiSettingsSave: "保存高级配置",
-  advancedPiSettingsApplied: "已保存。将在伙伴下次启动时读取。",
-  advancedPiSettingsNoRoute:
-    "伙伴的模型与连接设置保存在同一个设置文件里：你在上方设置的服务商、模型和密钥，会和其他设置一起写进这个文件。本页面无法修改该文件，所以这里没有可编辑的内容。",
-  advancedPiSettingsInvalidJson: "这不是合法的 JSON：请检查括号、逗号和引号后重试。未写入任何内容。",
-  advancedPiSettingsInvalidShape:
-    "这不是合法的设置文件：顶层只能有 providers，且每个 provider 条目必须是对象。未写入任何内容。",
 
   // --- 终局操作 lane：唯一会彻底结束游戏世界的刻意控件 ---
   gameEndgame: "结束游戏",
@@ -1511,6 +1492,9 @@ const zh: Messages = {
   // 与产品中的结束游戏分组同一形状：首次点击只是预置，只有确认按钮才会发出请求，
   // 取消则保持当前状态。措辞说明后果，绝不承诺该动作并不具备的可逆性。
   chatRetentionArchiveConfirm: "归档此会话？它将离开活动列表，此操作不可撤销。",
+  chatExportSaved: "已保存 {{file}}。",
+  chatExportFailed: "无法导出这个会话。",
+  chatExportDropped: "文件中不包含：{{fields}}。",
   chatRetentionArchiveConfirmYes: "归档",
   chatRetentionTrashConfirm: "将此会话移入回收站？它将离开活动列表，此操作不可撤销。",
   chatRetentionTrashConfirmYes: "移入回收站",

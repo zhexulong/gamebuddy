@@ -205,7 +205,6 @@ export type CharacterLabels = Readonly<{
    * is too large, or the Host would not keep what it held - so the player looks at the right fault.
    */
   worldBookImport: string;
-  worldBookImportHint: string;
   worldBookImportFileLabel: string;
   worldBookImportBusy: string;
   worldBookImportImported: string;
@@ -461,8 +460,6 @@ const en: CharacterLabels = Object.freeze({
   worldBookDetailFailed: "Its own text could not be read.",
 
   worldBookImport: "Import a lorebook file",
-  worldBookImportHint:
-    "Add a SillyTavern world book, a Chub lorebook, or the world book built into a character card, to the library. The file is read in your browser; the Host's own importer translates its entries, and a book it cannot read is refused rather than half-added.",
   worldBookImportFileLabel: "Lorebook file",
   worldBookImportBusy: "Importing…",
   worldBookImportImported: "Imported this world book into your library. Its entries are now in the list above.",
@@ -694,8 +691,6 @@ const zh: CharacterLabels = Object.freeze({
   worldBookDetailFailed: "无法读取它的内容。",
 
   worldBookImport: "导入世界书文件",
-  worldBookImportHint:
-    "把 SillyTavern 世界书、Chub lorebook，或角色卡自带的世界书加入书库。文件在你的浏览器中读取；由 Host 自带的导入器转换其中的词条，读不了的世界书会被拒绝，而不是只加进去一半。",
   worldBookImportFileLabel: "世界书文件",
   worldBookImportBusy: "正在导入…",
   worldBookImportImported: "已把这本世界书导入到你的书库，它的词条已在上面列表中。",
