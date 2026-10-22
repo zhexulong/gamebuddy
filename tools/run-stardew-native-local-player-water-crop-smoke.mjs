@@ -57,7 +57,10 @@ export async function runWaterCropSmoke(
       snapshot,
     );
     const equipTerminal = await waitForTerminal(receipts, equipped, terminalTimeoutMs);
-    if (equipTerminal.state !== "succeeded" || (equipTerminal.reasonCode !== "tool_equipped" && equipTerminal.reasonCode !== "already_equipped"))
+    if (
+      equipTerminal.state !== "succeeded" ||
+      (equipTerminal.reasonCode !== "tool_equipped" && equipTerminal.reasonCode !== "already_equipped")
+    )
       throw new Error(`watering_can_equip_failed:${equipTerminal.reasonCode}`);
     const equipEvidence = parseEvidence(equipTerminal.evidence, ["after", "before", "expected", "tool"]);
     if (equipEvidence.expected !== wateringCan.label || equipEvidence.after !== wateringCan.label)
@@ -102,6 +105,13 @@ export async function runWaterCropSmoke(
       "stamina_after",
       "stamina_delta",
       "expected_stamina_cost",
+      // The receipt now states the tool it selected and, after the finally, that the previous one was restored.
+      // Exact key set: these two are part of the contract now, so the gate must expect them.
+      "tool_selected",
+      "slot",
+      "tool_before",
+      "slot_before",
+      "tool_restored",
     ]);
     const after = await waitForStableRevision(client, {
       revision: terminal.revision,
@@ -385,10 +395,7 @@ function validateNativeLocalConfig(value) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  if (
-    (value.ExperimentalActions?.length ?? 0) !== 0
-  )
-    throw new Error("native_local_water_crop_action_policy_invalid");
+  if ((value.ExperimentalActions?.length ?? 0) !== 0) throw new Error("native_local_water_crop_action_policy_invalid");
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
   if (
     ["SaveId", "WorldId", "PlayerId", "CompanionId", "PipeName", "BridgeToken"].some(
