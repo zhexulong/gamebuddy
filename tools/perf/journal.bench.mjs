@@ -12,6 +12,8 @@
  * write profile is read around the whole case, so the case itself proves what it measured:
  * appends must equal the ops performed and no compaction may happen inside the window (a
  * compaction reserialises every live record, and its cost is the document's, not a transition's).
+ * The bytes per op are read off the log file's own growth, because that is the durable cost a
+ * transition adds, whatever the module calls its counters this week.
  *
  * `maxOps` bounds the case instead of the clock, because the journal refuses writes past its own
  * record budget (4096) and its `prepared` records owe recovery, so they cannot be evicted: an
@@ -19,7 +21,7 @@
  * in a number.
  */
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -78,6 +80,12 @@ async function tempDirectory() {
   return mkdtemp(join(root, "gamebuddy-perf-journal-"));
 }
 
+/** The journal log's size: the directory holds that one file, so its name is not assumed here. */
+async function logBytes(directory) {
+  const [name] = await readdir(directory);
+  return (await stat(join(directory, name))).size;
+}
+
 for (const { size, settledHistory } of SIZES) {
   test(`${CASE} ${size}`, async () => {
     const directory = await tempDirectory();
@@ -91,6 +99,7 @@ for (const { size, settledHistory } of SIZES) {
         for (let index = 1; index <= settledHistory; index += 1) await journal.prepare(dispatchMaterial(index));
         let next = settledHistory + 1;
         const before = recoveryJournalWriteProfile();
+        const bytesBefore = await logBytes(directory);
         const result = await measure({
           id: CASE,
           size,
@@ -98,6 +107,7 @@ for (const { size, settledHistory } of SIZES) {
           run: () => journal.prepare(dispatchMaterial(next++)),
         });
         const after = recoveryJournalWriteProfile();
+        const bytesAfter = await logBytes(directory);
         const appends = after.appends - before.appends;
         const compactions = after.compactions - before.compactions;
         assert.equal(appends, result.ops, "every measured transition must still cost exactly one durable append");
@@ -108,10 +118,7 @@ for (const { size, settledHistory } of SIZES) {
         );
         report({
           ...result,
-          detail: {
-            settledHistory,
-            bytesPerOp: Math.round((after.serialisedBytes - before.serialisedBytes) / result.ops),
-          },
+          detail: { settledHistory, bytesPerOp: Math.round((bytesAfter - bytesBefore) / result.ops) },
         });
       } finally {
         await journal.close();
