@@ -517,6 +517,10 @@ const BOUNDED_CODE = /^[a-z][a-z0-9_]{0,63}$/u;
  */
 function namedCodeIn(node, sourceFile) {
   let found = null;
+  const namedByThrower = (callee) => {
+    const text = callee.getText(sourceFile);
+    return /(?:Error|Failure)$/u.test(text);
+  };
   walk(node, (inner) => {
     if (found !== null) return;
     if (
@@ -536,10 +540,7 @@ function namedCodeIn(node, sourceFile) {
       }
     }
     const thrower =
-      (ts.isNewExpression(inner) || ts.isCallExpression(inner)) &&
-      /(?:Error|Failure)$/u.test(inner.expression.getText(sourceFile))
-        ? inner
-        : null;
+      (ts.isNewExpression(inner) || ts.isCallExpression(inner)) && namedByThrower(inner.expression) ? inner : null;
     if (thrower !== null)
       for (const argument of thrower.arguments ?? [])
         if (ts.isStringLiteral(argument) && BOUNDED_CODE.test(argument.text)) found = argument.text;
@@ -563,33 +564,109 @@ function enclosingFunction(node) {
 }
 
 /**
- * The statement that decides what a failed capacity comparison means: the `if`
- * that tests it, not the whole function. A function with two refusals must not
- * let one name the other.
+ * The nearest enclosing function the module *declared* by name. An arrow is a callback passed to something else
+ * (`value.every((item) => …)`), so the question it answers is the named function's, not its own.
  */
-function refusalScope(node) {
+function declaredFunction(node) {
   for (let current = node.parent; current !== undefined; current = current.parent) {
-    if (ts.isIfStatement(current)) return current;
-    if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) || ts.isArrowFunction(current))
-      return current;
+    if (ts.isFunctionDeclaration(current) || ts.isMethodDeclaration(current)) return current;
+    if (ts.isFunctionExpression(current) && current.name !== undefined) return current;
     if (ts.isSourceFile(current)) return null;
   }
   return null;
 }
 
 /**
- * Every comparison of a collection's length against a capacity constant, with
- * the refusal the comparison leads to. A capacity that is enforced without a
- * named code is a limit the player meets as an unexplained failure.
+ * A function that answers a question instead of performing the write: a name this tree uses for predicates
+ * (`isX`/`hasX`/`canX`/`validateX`/`assertX`/`allowsX`), or a `boolean` / `value is T` return. Its refusal is named by
+ * its caller, which is the one place a single refusal can be given one sentence. Counted, not failed - the audit
+ * cannot see the caller's mapping from a predicate.
+ */
+function answersQuestion(fn) {
+  if (fn === null) return false;
+  const name =
+    ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)
+      ? fn.name?.text
+      : undefined;
+  if (name !== undefined && /^(?:is|has|can|validate|assert|allows)/u.test(name)) return true;
+  const type = fn.type;
+  if (type === undefined) return false;
+  return ts.isTypePredicateNode(type) || type.kind === ts.SyntaxKind.BooleanKeyword;
+}
+
+/** A function declared at module level, so a decision can be followed one hop into the helper that refuses. */
+function localFunction(sourceFile, name) {
+  for (const statement of sourceFile.statements)
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) return statement;
+  return null;
+}
+
+/**
+ * The statement that decides what a failed capacity comparison means: the `if` that tests it, not the whole
+ * function. A function with two refusals must not let one name the other. A comparison no `if` tests - a `filter`
+ * callback, a ternary - is decided by the statement that carries it.
+ */
+function refusalScope(node) {
+  for (let current = node.parent; current !== undefined; current = current.parent) {
+    if (ts.isIfStatement(current)) return current.thenStatement;
+    if (ts.isStatement(current)) return current;
+    if (ts.isSourceFile(current)) return null;
+  }
+  return null;
+}
+
+/** The bounded code a decision names, including one hop into a module-level helper it calls (`fail()`). */
+function decisionCode(deciding, sourceFile) {
+  const own = namedCodeIn(deciding, sourceFile);
+  if (own !== null) return own;
+  let code = null;
+  walk(deciding, (node) => {
+    if (code !== null || !ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return;
+    const helper = localFunction(sourceFile, node.expression.text);
+    if (helper !== null) code = namedCodeIn(helper, sourceFile);
+  });
+  return code;
+}
+
+/**
+ * What a decision does with the comparison: refuse the operation, or narrow the value.
+ *
+ * A refusal is a `throw`, a `send*Problem`/`refuse*` call, or a helper that does one - the branch that stops the
+ * operation, and the only place a bounded code belongs. A bound is a `break`, a `slice`/`filter`, or a `return` of
+ * nothing: the payload is trimmed or dropped instead of the operation being refused. That is a truncation defect of
+ * its own, not a limit the player meets as a generic failure, and this class reports it as a bound rather than as a
+ * missing code.
+ */
+function decisionKind(deciding, sourceFile) {
+  let narrows = false;
+  let discards = false;
+  walk(deciding, (node) => {
+    if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) narrows = true;
+    if (ts.isReturnStatement(node)) discards = true;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      /^(?:filter|slice)$/u.test(node.expression.name.text)
+    )
+      narrows = true;
+  });
+  return narrows ? "narrows" : discards ? "discards" : "refuses";
+}
+
+/**
+ * Every comparison of a collection's length against a capacity constant, with the refusal the comparison leads to.
+ * A capacity that is enforced without a named code is a limit the player meets as an unexplained failure.
  */
 function runRefusal(sources) {
   const constants = hostCapConstants(sources);
   const byName = new Map(constants.map((constant) => [constant.name, constant]));
   const violations = [];
   const notes = [];
+  const bounds = [];
   let comparisons = 0;
   let named = 0;
   let delegated = 0;
+  let scopeless = 0;
   for (const file of sources.files(sources.path(...HOST))) {
     const sourceFile = sources.source(file);
     walk(sourceFile, (node) => {
@@ -600,33 +677,52 @@ function runRefusal(sources) {
       const lengthSide = [left, right].find((side) => /\.length$/u.test(side.trim()));
       if (constantEntry === undefined || lengthSide === undefined) return;
       comparisons += 1;
-      const scope = enclosingFunction(node);
-      if (scope === null) return;
-      const name = ts.isFunctionDeclaration(scope) ? scope.name?.text : null;
-      // A predicate (`isX`/`validateX`/`canX`) answers a question instead of
-      // performing the write; the code is named by its caller, which is the one
-      // place a single refusal can be given one sentence. Counted, not failed -
-      // the audit cannot see the caller's mapping from a predicate.
-      if (name !== null && /^(?:is|has|can|validate|assert|allows)/u.test(name)) {
+      if (enclosingFunction(node) === null) {
+        scopeless += 1;
+        return;
+      }
+      if (answersQuestion(declaredFunction(node))) {
         delegated += 1;
         return;
       }
       const deciding = refusalScope(node);
-      const refusal = deciding === null ? null : namedCodeIn(deciding, sourceFile);
-      if (refusal !== null) {
+      const code = deciding === null ? null : decisionCode(deciding, sourceFile);
+      if (code !== null) {
         named += 1;
+        return;
+      }
+      const kind = deciding === null ? "refuses" : decisionKind(deciding, sourceFile);
+      const where = at(sources.root, node, sourceFile, file);
+      if (kind !== "refuses") {
+        bounds.push({
+          where,
+          kind,
+          constant: constantEntry.name,
+          limit: constantEntry.limit,
+          lengthSide: lengthSide.trim(),
+        });
         return;
       }
       violations.push({
         rank: 2,
-        where: at(sources.root, node, sourceFile, file),
+        where,
         message: `${constantEntry.name} (${constantEntry.limit}) is enforced on ${lengthSide.trim()} with no bounded code in the refusal; the player meets the ceiling as a generic failure`,
       });
     });
   }
   notes.push(
-    `refusal: ${comparisons} capacity comparison(s) across ${constants.length} cap constant(s), ${named} name their code, ${delegated} answered by a predicate (named by its caller)`,
+    `refusal: ${comparisons} capacity comparison(s) across ${constants.length} cap constant(s), ${named} name their code, ${delegated} answered by a predicate (named by its caller), ${bounds.length} bound the value instead of refusing it, ${scopeless} outside any function`,
   );
+  for (const kind of ["narrows", "discards"]) {
+    const ofKind = bounds.filter((bound) => bound.kind === kind);
+    if (ofKind.length === 0) continue;
+    notes.push(
+      `refusal: NOT audited here - ${ofKind.length} comparison(s) ${kind === "narrows" ? "trim the collection (break/slice/filter)" : "discard the value (return null/undefined)"} instead of refusing the operation: ${ofKind
+        .slice(0, 6)
+        .map((bound) => `${bound.constant}@${bound.where}`)
+        .join(", ")}${ofKind.length > 6 ? `, +${ofKind.length - 6} more` : ""}`,
+    );
+  }
   return { declared: constants.length, violations, notes };
 }
 
