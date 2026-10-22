@@ -409,7 +409,7 @@ export type GameCompanionIdentity = CompanionIdentity &
  */
 export const DEFAULT_COMPANION_MODEL_CONFIG: CompanionModelConfig = Object.freeze({
   provider: "cpa-oai",
-  modelId: "deepseek-v4-flash",
+  modelId: "deepseek-v4.1-flash",
   thinkingLevel: "high",
 });
 

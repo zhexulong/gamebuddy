@@ -96,7 +96,7 @@ export class ModelProfileStore {
 /** The shipped recommendation a root starts from; a player may replace either field. */
 const DEFAULT_PROFILE: StoredProfile = Object.freeze({
   revision: 0,
-  modelId: "deepseek-v4-flash",
+  modelId: "deepseek-v4.1-flash",
   thinkingLevel: "high",
 });
 const DEFAULT_PROFILES: StoredProfiles = Object.freeze({
@@ -163,10 +163,7 @@ function validPublicProfile(value: unknown): value is ModelProfile {
 }
 function isUpdate(value: unknown): value is ModelProfileUpdate {
   return (
-    record(value) &&
-    isModelId(value.modelId) &&
-    isThinkingLevel(value.thinkingLevel) &&
-    Object.keys(value).length === 2
+    record(value) && isModelId(value.modelId) && isThinkingLevel(value.thinkingLevel) && Object.keys(value).length === 2
   );
 }
 function isModelId(value: unknown): value is string {
