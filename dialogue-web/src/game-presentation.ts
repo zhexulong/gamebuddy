@@ -156,6 +156,11 @@ export type InstallationDiscoveryState =
   // selection refusal the player can fix, and it is never a search outcome: the
   // search found the game.
   | "mod-loader-missing"
+  // The Host registered the installation. The scan that follows a registration
+  // finds nothing left to offer, so without this state the one moment the player
+  // needs an answer read as an empty scan ("no installation was found") after
+  // the installation had just been accepted.
+  | "confirmed"
   | "expired"
   | "error";
 
@@ -229,6 +234,8 @@ export function installationStateLabel(labels: Messages, state: InstallationDisc
       return labels.gameInstallationResultUnavailable;
     case "mod-loader-missing":
       return labels.gameInstallationModLoaderMissing;
+    case "confirmed":
+      return labels.gameInstallationConfirmed;
     case "expired":
       return labels.gameInstallationExpired;
     case "error":

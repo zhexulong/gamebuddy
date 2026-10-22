@@ -168,6 +168,52 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
   });
 
   /**
+   * A confirmation is an outcome, and it must read as one.
+   *
+   * The panel used to answer a *successful* confirmation with a fresh scan, and the
+   * fresh scan answers `no-candidates` once the installation is registered - so the
+   * player pressed 确认 and was told "No Stardew Valley installation was found." The
+   * failure this catches: the one moment the player needs an answer has no sentence,
+   * and the sentence that does appear contradicts what just happened.
+   */
+  test("a confirmed installation says it was confirmed, not that nothing was found", async ({ page }) => {
+    let reads = 0;
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    await page.route(DRAFT_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })));
+    await page.route(DISCOVERY_ROUTE, (route) => {
+      // Today's answer from a machine the player just registered: the first scan
+      // offers the installation, and the scan after the registration has nothing
+      // left to offer.
+      const body = reads === 0 ? foundInstallation : { apiVersion: 1, candidates: [], diagnostics: ["no-candidates"] };
+      reads += 1;
+      return route.fulfill(jsonOk(body));
+    });
+    await page.route(CONFIRM_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, status: "registered" })));
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
+    const setup = panel(page);
+    await expect(setup).toHaveAttribute("data-state", "candidates");
+    const before = (await sentenceOf(page).innerText()).trim();
+
+    await setup.getByRole("button", { name: "Confirm", exact: true }).click();
+    await expect.poll(() => reads).toBe(2);
+    const confirmedState = await setup.getAttribute("data-state");
+    const confirmed = (await sentenceOf(page).innerText()).trim();
+    console.log(`[install-confirmed] state=${confirmedState} sentence=${JSON.stringify(confirmed)} before=${JSON.stringify(before)}`);
+    expect(confirmedState, "a registered installation is its own state").toBe("confirmed");
+    expect(confirmed, "and it says what happens next").toBe(
+      "Confirmed. Next, enable companion play and set up Stardew Valley, then load your farm.",
+    );
+    // The sentence that used to stand in for success said the player's own machine
+    // had no installation in it.
+    expect(confirmed, "a confirmation never reads as an empty scan").not.toBe("No Stardew Valley installation was found.");
+    await expect(setup).not.toContainText("No Stardew Valley installation was found.");
+    await expect(setup).not.toContainText("We found possible installations. Choose one to connect.");
+    // The candidate the player confirmed is no longer offered for a second confirm.
+    await expect(setup.locator(".installation-candidate")).toHaveCount(0);
+  });
+
+  /**
    * The line under the installation's name speaks the player's language.
    *
    * The panel used to print what the Host mints: `known-location` as the source

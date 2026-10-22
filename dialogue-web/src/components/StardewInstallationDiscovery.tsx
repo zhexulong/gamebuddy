@@ -49,6 +49,10 @@ type Props = {
  *    its own cause (`mod_loader_missing`) is rendered as that cause, because
  *    "the search failed" is a statement about a search that had just found the
  *    player's game.
+ *  - **A confirmation is an outcome.** Confirming a candidate and choosing a folder
+ *    both end in the Host's registration, and the scan that follows a registration
+ *    finds nothing left to offer. The panel states that outcome itself, so a
+ *    successful confirmation never reads as the empty scan it causes.
  *  - **A scan that does not settle must not lock the panel.** The controls that
  *    *start* work are off while work is outstanding, but the one that abandons it
  *    is not, and abandoning it retires the read it interrupts - otherwise a slow
@@ -152,12 +156,18 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
         "status" in result &&
         (result.status === "registered" || result.status === "accepted")
       ) {
+        // The registration is the answer, and the scan that follows it has nothing
+        // left to offer - so the outcome is stated after the refresh rather than
+        // letting an empty scan stand in for it ("no installation was found" after
+        // the player's installation had just been accepted).
         await read(true);
+        if (mounted.current) setState("confirmed");
         return;
       }
       if (kind === "picker" && "status" in result) {
         if (result.status === "accepted" || result.status === "registered") {
           await read(true);
+          if (mounted.current) setState("confirmed");
           return;
         }
         if (result.status === "unavailable") {

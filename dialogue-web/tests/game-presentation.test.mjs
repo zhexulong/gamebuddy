@@ -52,6 +52,7 @@ const INSTALLATION_STATES = [
   "no-candidates",
   "result-unavailable",
   "mod-loader-missing",
+  "confirmed",
   "expired",
   "error",
 ];
@@ -148,6 +149,24 @@ test("the installation sentence follows the transport's own answer", () => {
   assert.equal(installationDiscoveryFailureState("state_unavailable"), "error");
   for (const code of ["unauthorized", "not_found", "malformed_request", "closed", "invalid_stardew_installation_discovery", "network_error", null])
     assert.equal(installationDiscoveryFailureState(code), "result-unavailable", String(code));
+});
+
+test("a confirmation reads as the outcome it is, in both languages", () => {
+  // A registered installation is the one moment a player needs to be told what
+  // happened next; it used to be spoken as the empty scan a registration causes.
+  assert.equal(
+    installationStateLabel(messages("en"), "confirmed"),
+    "Confirmed. Next, enable companion play and set up Stardew Valley, then load your farm.",
+  );
+  assert.equal(
+    installationStateLabel(messages("zh-CN"), "confirmed"),
+    "已确认。接下来启用伙伴陪玩，再设置《星露谷物语》，就可以载入你的农场。",
+  );
+  assert.notEqual(
+    installationStateLabel(messages("en"), "confirmed"),
+    installationStateLabel(messages("en"), "candidates"),
+    "a confirmed installation is not the candidate-found sentence",
+  );
 });
 
 test("the four discovery outcomes are four different sentences", () => {

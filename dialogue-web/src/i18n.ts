@@ -724,6 +724,11 @@ const en = {
   gameInstallationResultUnavailable: "We couldn't read the installation search result.",
   gameInstallationModLoaderMissing:
     "We found Stardew Valley, but there is no mod loader (SMAPI) in that folder. Install SMAPI, then find again — or choose a game folder that already has it.",
+  // The registration the player just asked for is done. A scan after a
+  // registration finds nothing left to offer, so this sentence is the only place
+  // the outcome exists; it says what the panel will not do (nothing here) and what
+  // the player does next (the two steps on the game panel above it).
+  gameInstallationConfirmed: "Confirmed. Next, enable companion play and set up Stardew Valley, then load your farm.",
   gameInstallationExpired: "These search results expired. Search again.",
   gameInstallationError: "The installation search failed.",
   gameInstallationConfirm: "Confirm",
@@ -1440,6 +1445,7 @@ const zh: Messages = {
   gameInstallationResultUnavailable: "无法读取游戏安装搜索结果。",
   gameInstallationModLoaderMissing:
     "已找到《星露谷物语》，但这个目录里没有模组加载器（SMAPI）。请先安装 SMAPI，再重新查找；也可以选择已经装有 SMAPI 的游戏文件夹。",
+  gameInstallationConfirmed: "已确认。接下来启用伙伴陪玩，再设置《星露谷物语》，就可以载入你的农场。",
   gameInstallationExpired: "搜索结果已过期，请重新搜索。",
   gameInstallationError: "搜索游戏安装位置失败。",
   gameInstallationConfirm: "确认",
