@@ -278,7 +278,7 @@ test("a tool call's duration names its owner: nested agent, program tool, or act
   // silently disappear from the breakdown.
   assert.match(
     SOURCE,
-    /"stardew_submit_action_program",\n\s+"stardew_action_program_status",\n\s+"stardew_action_program_events",/,
+    /"stardew_submit_action_program",\n\s+"stardew_plan_work",\n\s+"stardew_action_program_status",\n\s+"stardew_action_program_events",/,
   );
   // An action dispatch is decided by the Host's own tool-name table, not by a `stardew_` prefix: `stardew_observe`
   // and `stardew_execution_status` never dispatch, and counting them as dispatch latency would rebuild the same

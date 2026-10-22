@@ -20,6 +20,7 @@ import {
   type OpaqueS4cMaterializationAdmission,
 } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.internal.js";
 import { loadHostDeploymentManifest } from "./deployment-manifest.js";
+import { planProgramId } from "./body-program-script.js";
 import { createHostGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import { observeMaterializedProductionRuntimeForTest } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.js";
 import { assertReceiptBackedLaunch } from "./integration-launcher.js";
@@ -57,6 +58,21 @@ const scope: Scope = Object.freeze({
 const token = "farmhand_bridge_token_0123456789";
 const generation = "ai-generation-attestation";
 const continuityId = "continuity_attestation";
+
+/**
+ * What the shared pipe's Mod publishes: one published execution whose descriptor declares no arguments. A plan
+ * script therefore has no method for it, which is what the refusal cases below exercise; a test that needs a plan the
+ * builder can actually write passes its own catalog to `withHelloAck`.
+ */
+const DEFAULT_HELLO_REGISTRATIONS: readonly unknown[] = Object.freeze([
+  {
+    actionId: "move_to_tile",
+    familyId: "movement_navigation",
+    identityVersion: 1,
+    lifecycle: "published",
+    kind: "execution",
+  },
+]);
 
 test.before(async () => {
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
@@ -134,6 +150,7 @@ async function withHelloAck<T>(
   launchGeneration: string | null,
   operation: (pipeName: string, peerClosed: Promise<void>) => Promise<T>,
   onRequest?: (request: BridgeMessage, socket: Socket) => boolean | void,
+  helloAck?: Readonly<{ registrations: readonly unknown[] }>,
 ): Promise<T> {
   const pipeName = `gamebuddy_farmhand_attestation_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   let peer: Socket | undefined;
@@ -166,15 +183,7 @@ async function withHelloAck<T>(
                 policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
                 enabledActionIds: ["move_to_tile"],
                 presentationLocale: "en-US",
-                registrations: [
-                  {
-                    actionId: "move_to_tile",
-                    familyId: "movement_navigation",
-                    identityVersion: 1,
-                    lifecycle: "published",
-                    kind: "execution",
-                  },
-                ],
+                registrations: helloAck?.registrations ?? DEFAULT_HELLO_REGISTRATIONS,
                 runtimeRole,
                 launchGeneration,
               },
@@ -452,13 +461,15 @@ test("actual attested pipe mounts only the program submit tool until a submissio
           .filter((name) =>
             [
               "stardew_submit_action_program",
+              "stardew_plan_work",
               "stardew_action_program_status",
               "stardew_action_program_events",
             ].includes(name),
           )
           .sort();
-        // The two readers answer only for a program that exists, so nothing is mounted for them yet.
-        assert.deepEqual(fixedToolNames, ["stardew_submit_action_program"]);
+        // The two readers answer only for a program that exists, so nothing is mounted for them yet; the raw submit
+        // tool and the plan tool that compiles into the same submission are both offered.
+        assert.deepEqual(fixedToolNames, ["stardew_plan_work", "stardew_submit_action_program"]);
         const execute = async (name: string, params: Record<string, unknown>) => {
           const tool = tools.find((current) => current.name === name);
           assert.ok(tool, `missing ${name}`);
@@ -541,6 +552,34 @@ test("actual attested pipe mounts only the program submit tool until a submissio
           /invalid_body_program_tool_arguments/,
         );
         assert.equal(requests.filter((request) => request.type === "program_submit").length, 1);
+        // The plan tool compiles from the LIVE snapshot this bridge published and the LIVE vocabulary hello_ack
+        // carried. A script over an empty family produces no nodes and names that; a script naming an action this
+        // bridge did not publish for programs is told so by name - and neither reaches the Mod as a program, which
+        // the same request recorder would show.
+        const emptyPlan = await execute("stardew_plan_work", {
+          script: "for (const crop of snapshot.cropTargets ?? []) builder.move_to_tile({ x: crop.x, y: crop.y });",
+        });
+        assert.deepEqual(emptyPlan.details, { accepted: false, nodeCount: 0, reasonCode: "plan_script_empty" });
+        const unpublishedPlan = await execute("stardew_plan_work", {
+          script: "builder.move_to_tile({ x: 5, y: 8 });",
+        });
+        assert.deepEqual(unpublishedPlan.details, {
+          accepted: false,
+          nodeCount: 0,
+          reasonCode: "plan_script_unknown_action:move_to_tile",
+        });
+        const forbiddenPlan = await execute("stardew_plan_work", { script: 'const fs = require("node:fs");' });
+        assert.deepEqual(forbiddenPlan.details, {
+          accepted: false,
+          nodeCount: 0,
+          reasonCode: "plan_script_uses_forbidden:require",
+        });
+        await assert.rejects(() => execute("stardew_plan_work", {}), /invalid_body_program_tool_arguments/);
+        assert.equal(
+          requests.filter((request) => request.type === "program_submit").length,
+          1,
+          "a plan that compiled nothing must not reach the Mod as a program",
+        );
       } finally {
         await materialized?.close();
         await binding.close();
@@ -548,6 +587,146 @@ test("actual attested pipe mounts only the program submit tool until a submissio
     },
     (request) => {
       requests.push(request);
+    },
+  );
+});
+
+test("a plan compiled against the live catalog reaches the Mod by the same submission a hand-written program takes", async () => {
+  const requests: BridgeMessage[] = [];
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        client,
+        Object.freeze({
+          playerId: "player_attestation",
+          companionId: scope.companionId,
+          continuityId,
+          saveId: scope.saveId,
+          worldId: scope.worldId,
+        }),
+        { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+      );
+      const binding = await receiptBackedBinding(launch);
+      let materialized:
+        | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+        | undefined;
+      try {
+        materialized = await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        );
+        const tools = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools;
+        const execute = async (name: string, params: Record<string, unknown>) => {
+          const tool = tools.find((current) => current.name === name);
+          assert.ok(tool, `missing ${name}`);
+          const result = await tool.execute("plan-work", params, new AbortController().signal, () => undefined);
+          return result.details as Record<string, unknown>;
+        };
+        const submissions = () => requests.filter((request) => request.type === "program_submit");
+
+        const planned = await execute("stardew_plan_work", {
+          script: "builder.move_to_tile({ x: snapshot.tile.x + 1, y: snapshot.tile.y });",
+        });
+        const [submittedByPlan] = submissions();
+        assert.ok(submittedByPlan, "an accepted plan reaches the Mod");
+        const payload = submittedByPlan.payload as { programId: string; nodes: readonly never[] };
+        // The Mod received the program the script compiled: one node, built from the snapshot the tool read.
+        assert.deepEqual(payload.nodes, [
+          {
+            nodeId: "n01",
+            actionId: "move_to_tile",
+            arguments: { x: { type: "integer", canonicalValue: "6" }, y: { type: "integer", canonicalValue: "8" } },
+            dependsOn: [],
+            bindings: {},
+          },
+        ]);
+        assert.equal(payload.programId, planProgramId(1, payload.nodes));
+        // The compiled program is one the real Body Program validator accepts.
+        assert.equal(validateBodyProgramCandidateRequest(payload), null);
+        assert.deepEqual(planned, {
+          accepted: true,
+          nodeCount: 1,
+          programId: payload.programId,
+          submitted: "accepted",
+        });
+        // A hand-written program with this same body reaches the Mod as the identical frame: the two tools share one
+        // submission, so a plan cannot take a route the raw program tool cannot.
+        await execute("stardew_submit_action_program", payload);
+        assert.deepEqual(
+          submissions().map((request) => request.payload),
+          [payload, payload],
+          "one submission path, two callers",
+        );
+
+        // A plan of seventeen nodes is refused by name and nothing is submitted.
+        const refusedAtCap = await execute("stardew_plan_work", {
+          script: "for (let index = 0; index < 17; index++) builder.move_to_tile({ x: 5 + index, y: 8 });",
+        });
+        assert.deepEqual(refusedAtCap, { accepted: false, nodeCount: 0, reasonCode: "plan_cap_exceeded:17" });
+        // A script that awaits is refused by the name of what it reached for, before it runs a single node.
+        const refusedAtAwait = await execute("stardew_plan_work", {
+          script: "await builder.move_to_tile({ x: 5, y: 8 });",
+        });
+        assert.deepEqual(refusedAtAwait, {
+          accepted: false,
+          nodeCount: 0,
+          reasonCode: "plan_script_uses_forbidden:await",
+        });
+        assert.equal(submissions().length, 2, "a refused plan submits nothing");
+      } finally {
+        await materialized?.close();
+        await binding.close();
+      }
+    },
+    (request, socket) => {
+      requests.push(request);
+      if (request.type !== "program_submit") return;
+      socket.write(
+        frame({
+          ...request,
+          messageId: "mod_program_submit_plan_work",
+          type: "program_submit_result",
+          payload: {
+            code: "accepted",
+            verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+            snapshot: {
+              programId: (request.payload as { programId: string }).programId,
+              state: "active",
+              catalogRevision: 1,
+              stopEpoch: 0,
+              eventHighWater: 0,
+              nodes: [],
+            },
+          },
+        }),
+      );
+      return true;
+    },
+    {
+      registrations: [
+        {
+          actionId: "move_to_tile",
+          familyId: "movement_navigation",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+          descriptor: { argumentSchema: { x: { type: "integer" }, y: { type: "integer" } } },
+        },
+      ],
     },
   );
 });

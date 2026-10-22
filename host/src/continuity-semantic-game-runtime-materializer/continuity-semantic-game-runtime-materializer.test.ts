@@ -1021,3 +1021,63 @@ test("the Game channel's per-turn world-state corpus is the line Magic Context i
   assert.equal(gameTurnWorldStateText({ state: undefined } as never), "");
   assert.equal(gameTurnWorldStateText({ state: {} } as never), "");
 });
+
+test("the plan tool hands its compiled program to the one submission path a model-authored program takes", async () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
+  const source = await readFile(
+    join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"),
+    "utf8",
+  );
+  // One call site reaches the port at all: a plan cannot arrive at the Mod by a route a program authored by the
+  // model cannot, and a second copy of the submission could drift from the preflight, the journal answer or the
+  // reader reveal without any test noticing.
+  assert.equal(
+    (source.match(/port\.submit\(/gu) ?? []).length,
+    1,
+    "the program port has exactly one submission call site",
+  );
+  assert.match(source, /const submitProgram = async \(request: BodyProgramCandidateRequest\) => \{/u);
+  assert.match(source, /const result = await invoke\(request, validateBodyProgramCandidateRequest,/u);
+  // Both tools enter that one function: the raw tool with its own arguments, the plan tool with what it compiled.
+  assert.match(
+    source,
+    /execute: async \(_toolCallId, params\) => \{\n\s+if \(!isBodyProgramCandidateRequest\(params\)\) throw new Error\("invalid_body_program_tool_arguments"\);\n\s+return submitProgram\(params\);/u,
+  );
+  assert.match(source, /const submitted = await submitProgram\(\{ programId, nodes \}\);/u);
+  // The plan is compiled and submitted in the same call, inside the same frozen closure as the raw program tool.
+  assert.match(
+    source,
+    /return Object\.freeze\(\[\n\s+submitTool\(\),\n\s+Object\.freeze\(\n\s+defineTool\(\{\n\s+name: "stardew_plan_work",/u,
+  );
+  assert.match(source, /compilePlanScript\(readPlanScriptRequest\(params\), \{/u);
+  // It carries the companion's own plan in its own words, and the description says what the Mod does with it.
+  const parameters = source.slice(
+    source.indexOf("function planToolParameters()"),
+    source.indexOf("function isBodyProgramCandidateRequest("),
+  );
+  assert.ok(parameters.includes("script: Type.String("), "the plan tool takes one script");
+  const description = source
+    .slice(source.indexOf('name: "stardew_plan_work"'), source.indexOf("parameters: planToolParameters()"))
+    // The measured history above the string is not what the model reads.
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+  assert.match(description, /The Mod advances that plan itself/u);
+  assert.match(description, /you do not come back between steps/u);
+  assert.match(description, /builder\.isFull\(\)/u);
+  // Two or three sentences and no step list: the description says what the tool is for, and the mechanics of the
+  // script live in the parameter that carries it.
+  assert.ok(
+    (description.match(/\.\s|\.$/gu) ?? []).length <= 3,
+    "the plan tool describes itself in at most three sentences",
+  );
+  // Every outcome answers the same two questions; a refusal adds the compiler's own reason name, unchanged.
+  assert.match(source, /return planDetails\(\{ accepted: false, nodeCount: 0, reasonCode: compiled\.reasonCode \}\);/u);
+  assert.match(source, /accepted: code === "accepted" \|\| code === "idempotent",\n\s+nodeCount: nodes\.length,/u);
+  // The run artifact keeps the script, the snapshot it read and the program it produced, so a failed plan can be
+  // replayed and audited instead of guessed at.
+  assert.match(
+    source,
+    /runTrace\.begin\("plan\.script", \{\n\s+scriptSource: compiled\.scriptSource,\n\s+snapshotRevision: compiled\.snapshotRevision \?\? -1,\n\s+producedProgram: compiled\.ok \? JSON\.stringify\(compiled\.program\) : "",/u,
+  );
+});

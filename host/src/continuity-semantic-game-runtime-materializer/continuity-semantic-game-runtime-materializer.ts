@@ -1,6 +1,13 @@
 import { dirname, join } from "node:path";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { resolveCompanionLocale, type CompanionLocale } from "../settings/player-preference-store.js";
+import {
+  compilePlanScript,
+  planActionsFromRegistrations,
+  planProgramId,
+  type PlanScriptRequest,
+  type PublishedPlanAction,
+} from "../body-program-script.js";
 import { Type } from "typebox";
 import {
   createStableGameRuntimeBindingIdentity,
@@ -49,6 +56,7 @@ import {
   type BodyProgramCandidateRequest,
   type BodyProgramEventsRequest,
   type BodyProgramStatusRequest,
+  type ActionRegistration,
   type FarmhandPolicyIdentity,
   type Snapshot,
 } from "../protocol.js";
@@ -88,6 +96,7 @@ function createBodyProgramTools(
   mountedPolicy: IntegrationActionPolicy,
   retainedPolicyIdentity: FarmhandPolicyIdentity,
   revealReaders: () => void,
+  runTrace: RunTrace,
 ): readonly ToolDefinition[] {
   const invoke = async <TResult>(
     request: Record<string, unknown>,
@@ -112,15 +121,25 @@ function createBodyProgramTools(
       if (!record.available && record.active === 0) record.drained?.();
     }
   };
-  const candidateTool = (
-    name: "stardew_submit_action_program",
-    validateResult: (value: Record<string, unknown>) => string | null,
-    call: (port: BodyProgramPort, request: BodyProgramCandidateRequest) => Promise<unknown>,
-  ): ToolDefinition =>
+  // ONE submission path. The raw program tool and the routine tool both hand their candidate here,
+  // so a routine can never reach the Mod by a route a model-authored program cannot.
+  const submitProgram = async (request: BodyProgramCandidateRequest) => {
+    if (!isBodyProgramCandidateRequest(request)) throw new Error("invalid_body_program_tool_arguments");
+    assertFreshBodyProgramPreflight(connection, mountedPolicy, retainedPolicyIdentity, request);
+    const result = await invoke(request, validateBodyProgramCandidateRequest, validateBodyProgramSubmitResult, (port) =>
+      port.submit(request),
+    );
+    // Only a recorded program gives the readers anything to answer; a rejected candidate leaves none.
+    const details: unknown = result.details;
+    const code = isRecord(details) ? details.code : undefined;
+    if (code === "accepted" || code === "idempotent") revealReaders();
+    return result;
+  };
+  const submitTool = (): ToolDefinition =>
     Object.freeze(
       defineTool({
-        name,
-        label: name,
+        name: "stardew_submit_action_program",
+        label: "stardew_submit_action_program",
         // Purpose first, in the voice Pi's own tools use for their snippets: what the tool IS, when to prefer it
         // over the flat per-action tools, and the one example that makes the shape concrete. Measured 2026-10-17/18:
         // the previous description was an error taxonomy - bounded rejection, no journal, no `deadline` field, what
@@ -133,24 +152,66 @@ function createBodyProgramTools(
         // the Mod advances the nodes itself: leaving the unit implicit is what produced the step-by-step runs.
         description:
           'Submit one whole piece of work in ONE call, not one step: the plan and the moves that carry it out travel together, so the walking, the inspecting and the loading are one submission. The Mod validates the whole plan, then runs each node natively once its predecessors\' receipts are in and advances the successors itself - the companion does not come back between steps, and a whole piece of work costs one turn instead of one turn per step. Sending the same steps one at a time instead means waiting for a decision between every step. Prefer it over separate action calls whenever you already know the work. Node actionIds must be actions currently advertised to you; an unknown one is rejected before anything runs. A refused candidate is bounded and side-effect free (no journal, claim, grant, execution or receipt) and returns diagnostics to fix. Nodes carry no deadline: the Mod derives each action\'s execution budget from its descriptor-owned watchdog at admission time, so never invent or submit a clock value. Every node carries all five fields, each argument is {type, canonicalValue} with type string|integer|boolean, and bindings map a CONSUMER ARGUMENT NAME to {nodeId, factName} of a fact an earlier node declares - keep the bound argument in arguments too, with its observed literal value. A move, an inspection and the load that binds the inspected machine, in the accepted shape; copy it and replace the values: {"programId":"farm_morning","nodes":[{"nodeId":"walk_to_keg","actionId":"move_to_tile","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"}},"dependsOn":[],"bindings":{}},{"nodeId":"inspect_keg","actionId":"machine_inspect","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"},"expectedTargetId":{"type":"string","canonicalValue":"machine_keg_20_12"}},"dependsOn":["walk_to_keg"],"bindings":{}},{"nodeId":"load_keg","actionId":"machine_load","arguments":{"x":{"type":"integer","canonicalValue":"20"},"y":{"type":"integer","canonicalValue":"12"},"slot":{"type":"integer","canonicalValue":"3"},"expectedQualifiedItemId":{"type":"string","canonicalValue":"(O)433"},"expectedTargetId":{"type":"string","canonicalValue":"machine_keg_20_12"}},"dependsOn":["inspect_keg"],"bindings":{"expectedTargetId":{"nodeId":"inspect_keg","factName":"machine_target_id"}}}]}',
-        parameters: bodyProgramToolParameters(name),
+        parameters: bodyProgramToolParameters("stardew_submit_action_program"),
         execute: async (_toolCallId, params) => {
           if (!isBodyProgramCandidateRequest(params)) throw new Error("invalid_body_program_tool_arguments");
-          assertFreshBodyProgramPreflight(connection, mountedPolicy, retainedPolicyIdentity, params);
-          const result = await invoke(params, validateBodyProgramCandidateRequest, validateResult, (port) =>
-            call(port, params),
-          );
-          // Only a recorded program gives the readers anything to answer; a rejected candidate leaves none.
-          const details: unknown = result.details;
-          const code = isRecord(details) ? details.code : undefined;
-          if (code === "accepted" || code === "idempotent") revealReaders();
-          return result;
+          return submitProgram(params);
         },
       }),
     );
   return Object.freeze([
-    candidateTool("stardew_submit_action_program", validateBodyProgramSubmitResult, (port, request) =>
-      port.submit(request),
+    submitTool(),
+    Object.freeze(
+      defineTool({
+        name: "stardew_plan_work",
+        label: "stardew_plan_work",
+        // The unit the 2026-10-21 measurement asked for (see `stardew_submit_action_program`): one model round-trip
+        // per PIECE OF WORK, not per step. A plan script is how the companion says "all of it, in this order" without
+        // paying a decision between steps; it is compiled here and submitted as ONE program, so the Mod's journal,
+        // admission and recovery see exactly what a hand-written program gives them. The script is not a macro action:
+        // it names published actions and real snapshot targets, so "water the three by the door, leave the far ones"
+        // stays expressible, and nothing executes against physics until the Mod runs the admitted nodes.
+        description:
+          "Write a short script over the current snapshot and the builder, one builder.<actionId> call per step, and the host compiles it into the one plan the Mod executes. The Mod advances that plan itself, so you do not come back between steps. Work that does not fit in one plan is yours to split: stop when builder.isFull() is true, and plan the rest in the next call.",
+        parameters: planToolParameters(),
+        execute: async (_toolCallId, params) => {
+          const compiled = compilePlanScript(readPlanScriptRequest(params), {
+            snapshot: readLiveSnapshot(connection),
+            actions: readPlanActions(connection),
+          });
+          // The run artifact keeps the script, the snapshot it read and the program it produced, so a plan that
+          // failed can be replayed and audited without guessing what the companion asked for.
+          const span = runTrace.begin("plan.script", {
+            scriptSource: compiled.scriptSource,
+            snapshotRevision: compiled.snapshotRevision ?? -1,
+            producedProgram: compiled.ok ? JSON.stringify(compiled.program) : "",
+          });
+          if (!compiled.ok) {
+            span.end({ reasonCode: compiled.reasonCode });
+            // The compiler's own name for the refusal, unchanged and with no plan behind it: there is no partial plan
+            // to run, so the count is zero and the reason is what the companion tells the player.
+            return planDetails({ accepted: false, nodeCount: 0, reasonCode: compiled.reasonCode });
+          }
+          const nodes = compiled.program.nodes;
+          const programId = planProgramId(compiled.snapshotRevision, nodes);
+          try {
+            const submitted = await submitProgram({ programId, nodes });
+            const code = submitted.details.code;
+            if (typeof code !== "string") throw new Error("body_program_protocol_invalid");
+            span.end({ programId, submitted: code });
+            // `submitted` is the Mod's own answer; `accepted` is the same fact in the form the companion asks for.
+            return planDetails({
+              accepted: code === "accepted" || code === "idempotent",
+              nodeCount: nodes.length,
+              programId,
+              submitted: code,
+            });
+          } catch (error) {
+            span.end({ reasonCode: "plan_submission_failed" });
+            throw error;
+          }
+        },
+      }),
     ),
     Object.freeze(
       defineTool({
@@ -188,6 +249,50 @@ function createBodyProgramTools(
       }),
     ),
   ]);
+}
+
+/**
+ * The action vocabulary the plan builder exposes: the registrations the Mod published as executable, with the
+ * argument names each one declares. `planActionsFromRegistrations` applies the same two gates the Mod's Body
+ * Program catalog projection does, so a generated method cannot name an action a program may not carry, and a
+ * generated argument list cannot drift from the surface - there is no hand-written per-action recipe here.
+ */
+function readPlanActions(connection: GameConnection): readonly PublishedPlanAction[] {
+  const state = (connection as { state?: { catalogRegistrations?: readonly ActionRegistration[] } }).state;
+  return planActionsFromRegistrations(state?.catalogRegistrations ?? []);
+}
+
+/** The current Mod snapshot: a plan script reads the world as the Mod last published it. */
+function readLiveSnapshot(connection: GameConnection): Snapshot | null {
+  const state = (connection as { state?: { snapshot?: Snapshot | null } }).state;
+  return state?.snapshot ?? null;
+}
+
+function readPlanScriptRequest(value: unknown): PlanScriptRequest {
+  if (!isRecord(value) || typeof value.script !== "string" || value.script.trim().length === 0)
+    throw new Error("invalid_body_program_tool_arguments");
+  return Object.freeze({ script: value.script });
+}
+
+function planDetails(details: Readonly<Record<string, unknown>>) {
+  return Object.freeze({
+    content: [{ type: "text" as const, text: JSON.stringify(details) }],
+    details: Object.freeze(details),
+  });
+}
+
+function planToolParameters() {
+  return Type.Object(
+    {
+      script: Type.String({
+        minLength: 1,
+        maxLength: 8192,
+        description:
+          "One synchronous script body, called once with `snapshot` (the frozen live observation, target families included) and `builder`; call builder.<actionId>({...}) with exactly the argument names that action declares. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.",
+      }),
+    },
+    { additionalProperties: false },
+  );
 }
 
 function isBodyProgramCandidateRequest(value: unknown): value is BodyProgramCandidateRequest {
@@ -545,6 +650,7 @@ export function createHostGameRuntimeMaterializer(
               mountedPolicy,
               retainedPolicyIdentity,
               () => revealProgramReaders(),
+              runTrace,
             )
           : Object.freeze([]);
         const recovery = readStardewRecoveryBindingContext(recoveryContext);

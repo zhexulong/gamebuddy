@@ -630,6 +630,7 @@ const TOOL_TIMING_CATEGORIES = Object.freeze(["delegate_game_task", "program_too
 // The program tools the Host mounts: a submission or a status poll waits on the program path, not on a receipt.
 const PROGRAM_TOOL_NAMES = Object.freeze([
   "stardew_submit_action_program",
+  "stardew_plan_work",
   "stardew_action_program_status",
   "stardew_action_program_events",
 ]);
