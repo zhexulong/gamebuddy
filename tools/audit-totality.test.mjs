@@ -8,10 +8,11 @@
  * one. So every class is proved twice on a scratch tree built for the purpose -
  * green on a tree that satisfies it, red after one injected violation, green
  * again once the injection is removed - and the injection is a real edit to a
- * real file, not a mocked predicate. Where the class's own rule cannot yet read a
- * tree the product would accept, the proof is limited to the half that still
- * holds (`proveAdvisory`), or the test is a skip that names the rule's gap and
- * its smallest repro rather than the fixture.
+ * real file, not a mocked predicate. Every class that owns a rule is proved
+ * that way (`catalogue` is delegated to its own gate and proved there); a class
+ * whose findings print but do not decide the run is proved as well, and
+ * `ADVISORY` records the ruling its findings await, never a rule nobody could
+ * read.
  *
  * The scratch tree is deliberately tiny and complete at the same time: it holds
  * the two browser contracts, the handler modules the audit reads codes out of,
@@ -142,10 +143,10 @@ function fixture() {
     [
       'import { MAX_NOTES } from "./note-store.js";',
       'import { TavernBrowserValidatorsV1 } from "./tavern/browser-contract/index.js";',
-      "export const NOTES_CAP = MAX_NOTES;",
+      "const NOTES_MAX = MAX_NOTES;",
       "",
       "export function readNotes(notes: unknown[], response: unknown): unknown {",
-      "  const projected = { revision: 1, notes };",
+      "  const projected = { revision: 1, notes: notes.slice(0, NOTES_MAX) };",
       '  if (!TavernBrowserValidatorsV1.NoteListV1Schema.Check(projected)) throw new Error("projection_invalid");',
       "  void response;",
       "  return projected;",
@@ -213,40 +214,6 @@ function violationsOf(root, id) {
   return result;
 }
 
-/**
- * The same proof for an **advisory** class: its fixture is not reconciled yet, so it reports violations before any
- * injection - but the half that matters (an injected violation makes it report one more, and undoing the edit takes it
- * back) must still hold. Asserting the clean fixture here would be asserting the fixture, not the class.
- */
-function proveAdvisory(root, id, { file, before, after, expectWhere }) {
-  assert.ok(ADVISORY.has(id), `${id} must be declared advisory for this proof`);
-  const clean = violationsOf(root, id);
-  assert.equal(clean.advisory, true, `${id} must mark its result advisory`);
-  const original = read(root, file);
-  assert.ok(original.includes(before), `${id}: the injection anchor must exist in ${file}`);
-  write(root, file, original.replace(before, after));
-  try {
-    const broken = violationsOf(root, id);
-    assert.ok(
-      broken.violations.length > clean.violations.length,
-      `${id} must report at least one more violation after the injection`,
-    );
-    assert.ok(
-      broken.violations.some((violation) => violation.where.includes(expectWhere)),
-      `${id}: the violation must name ${expectWhere}, got ${broken.violations.map((violation) => violation.where).join(", ")}`,
-    );
-  } finally {
-    write(root, file, original);
-  }
-  const restored = violationsOf(root, id);
-  assert.equal(
-    restored.violations.length,
-    clean.violations.length,
-    `${id} must report the same count once the injection is removed`,
-  );
-  return clean;
-}
-
 /** Green, red after one real edit, green again once the edit is undone. */
 function prove(root, id, { file, before, after, expectWhere }) {
   const clean = violationsOf(root, id);
@@ -270,17 +237,22 @@ function prove(root, id, { file, before, after, expectWhere }) {
 }
 
 test("read-path: a projection that can exceed its own schema is a blank surface", (t) => {
-  // The fixture is the shape the product writes; the rule cannot read it. In `note-route.ts` the read path validates its
-  // own projection through the exported validator object, `TavernBrowserValidatorsV1.NoteListV1Schema.Check(projected)`,
-  // which is what the product's read paths do. `failClosedSites` stores that reference as written
-  // (`tools/audit-totality.mjs:660` today) but `runReadPath` resolves it against a map keyed by the bare declaration name
-  // (`:740`, `:749`), so the lookup misses and the site is counted - `133 remove the surface on mismatch` on this tree -
-  // without ever being checked against a schema. Smallest repro, two roots identical except for the reference: the
-  // namespaced form reports 0 violations with `0 cap(s) that the projection can exceed`, the bare `NoteListV1Schema.Check`
-  // form reports 1. One line in the rule (`site.schema.split(".").at(-1)`) turns this test back into `prove(...)`.
-  t.skip(
-    "rule blind to a namespaced schema reference: audit-totality.mjs:660 keeps `X.NoteListV1Schema` while :740/:749 index bare `NoteListV1Schema`, so no site resolves and read-path cannot go red on a tree that writes the check the way the product does",
-  );
+  const root = fixture();
+  try {
+    // The fixture's read handler projects at most `NOTES_MAX` rows and then validates that projection against the
+    // contract's own `NoteListV1Schema`, whose `notes` is capped at 10. The handler's writer constant is what this
+    // product got wrong four times over: a producer bounded above the schema it then validates against, so one row
+    // over the cap and the fail-closed branch removes the whole surface. Raising that one constant is the injection.
+    const clean = prove(root, "read-path", {
+      file: "host/src/note-route.ts",
+      before: "const NOTES_MAX = MAX_NOTES;",
+      after: "const NOTES_MAX = 40;",
+      expectWhere: "host/src/note-route.ts",
+    });
+    t.diagnostic(clean.notes.join(" | "));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("bounds: the wire's cap and the writer's cap must agree in both directions", (t) => {
@@ -309,20 +281,16 @@ test("bounds: the wire's cap and the writer's cap must agree in both directions"
 test("refusal: a capacity enforced without a named code is a generic failure", (t) => {
   const root = fixture();
   try {
-    // This class is still advisory, and the reason is a rule gap rather than the fixture. `namedCodeIn`
-    // (`tools/audit-totality.mjs:530-536` today) accepts a code from `ts.isCallExpression` whose callee matches
-    // `/^Error$|Failure$/`, so it reads `throw new Error("notes_too_many")` in this fixture as naming nothing:
-    // `new Error(...)` is a `NewExpression`, and `throw new TavernConnectionInputError("connection_limit_reached")`
-    // (`host/src/tavern/connection-store.ts:215`) is neither `Error` nor `*Failure`. Both are how the product refuses.
-    // So the two correct refusals in this tree are reported and the clean-then-red proof cannot run; what is proved
-    // here is the detection half - a capacity refused with a sentence instead of a code is a new finding, and removing
-    // the injection takes it back. When the rule learns to see `new *Error("code")` this fixture is clean and the test
-    // becomes `prove(...)` and drops out of `ADVISORY`.
+    // `namedCodeIn` reads a code out of each way this tree refuses: a `{ code: "…" }` payload, a `sendProblem(...)`
+    // call, and the first string of a constructor or function whose name ends in `Error`/`Failure` - so
+    // `throw new Error("notes_too_many")` names its code and so does `throw new TavernConnectionInputError("…")`.
+    // What this proof adds is the other half: a capacity refused with a sentence instead of a code is a finding, and
+    // the fixture is green again once the injection is removed.
     const clean = prove(root, "refusal", {
       file: "host/src/note-route.ts",
-      before: "  const projected = { revision: 1, notes };",
+      before: "  const projected = { revision: 1, notes: notes.slice(0, NOTES_MAX) };",
       after:
-        '  if (notes.length > MAX_NOTES) throw new Error("Too many notes to project.");\n  const projected = { revision: 1, notes };',
+        '  if (notes.length > MAX_NOTES) throw new Error("Too many notes to project.");\n  const projected = { revision: 1, notes: notes.slice(0, NOTES_MAX) };',
       expectWhere: "host/src/note-route.ts",
     });
     t.diagnostic(clean.notes.join(" | "));
@@ -482,6 +450,11 @@ test("the audit reports its own shape and --only narrows the run", () => {
     const summary = totals(all);
     assert.equal(summary.classes, 10);
     assert.ok(summary.declared > 0, "the audit must walk something");
+    assert.deepEqual(
+      [...ADVISORY].sort(),
+      ["hygiene"],
+      "a class leaves ADVISORY when its findings stop being a ruling the owner has not taken",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

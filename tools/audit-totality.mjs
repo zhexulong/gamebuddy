@@ -1835,9 +1835,19 @@ function runDelegated(sources, gate) {
 /**
  * Classes whose findings print but do not fail the run.
  *
- * Each class listed here reports a violation on the tree its own self-test was written to accept, so the
- * clean-then-red proof cannot run: a red would be a statement about the fixture rather than about the product.
- * They stay readable, and they stay listed by name so the list cannot grow silently.
+ * A class belongs here for one reason: its findings are a ruling the owner has not taken, so a red from it would
+ * veto an unmade decision rather than report a defect this repository already holds wrong. That is not a licence
+ * for a rule that cannot read its own fixture - such a rule would be a broken gate, and every rule here is proved
+ * clean-then-red-then-clean on the scratch tree before it is trusted.
+ *
+ * `hygiene` is the member, and the argument is its own note: 399 of its 400 findings are one pattern, a Host export
+ * whose only importer is a test, which one ruling settles - accept it wholesale and withdraw the rule, or treat it
+ * as one defect and sweep it mechanically. The 400th is an individual dead line. Until that ruling exists the class
+ * reports by kind with counts and a bounded sample, and it does not block.
+ *
+ * `read-path` left this list when the rule learned the namespaced schema reference the product writes (`e9efd15e`):
+ * its fixture now resolves the site, goes red on a projection bounded above the schema it validates against, and
+ * goes green again, so it blocks - and the real tree reports `0 cap(s) that the projection can exceed`.
  *
  * `bounds`, `fields` and `routes` are not here. Their heuristics were triaged, and each now compares only what
  * it can prove: a cap is paired with a constant only when that constant names the same property, a field counts
@@ -1847,7 +1857,7 @@ function runDelegated(sources, gate) {
  * schema around it is used - prints as a note and is never reported as a violation, so a green run means the
  * class found nothing it can prove, not that it stopped looking.
  */
-export const ADVISORY = Object.freeze(new Set(["read-path", "hygiene"]));
+export const ADVISORY = Object.freeze(new Set(["hygiene"]));
 
 export const CLASSES = Object.freeze([
   ...CLASS_IMPLEMENTATIONS,
