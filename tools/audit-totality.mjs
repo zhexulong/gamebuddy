@@ -373,9 +373,19 @@ function hostCapConstants(sources) {
   return found;
 }
 
-/** How well a writer's constant names the contract's cap. Higher is more specific. */
+/**
+ * How well a writer's constant names the contract's cap. Higher is more specific; zero means "not this
+ * collection", and the cap is then reported unpaired instead of compared against a guess.
+ *
+ * The constant has to name the **property**, because the property is the collection the cap counts.
+ * A concept word in common is not enough on its own: `MAX_CONNECTIONS` shares `connection` with
+ * `TavernConnectionThinkingLevelV1Schema`, whose `maxItems: 7` counts thinking levels, and
+ * `MAX_SUMMARY` shares `summary` with `StCardImportFieldSummaryV1Schema`, whose array holds one
+ * summary per card field. Pairing either would compare two different collections and print a
+ * violation no writer can act on.
+ */
 function capAffinity(entry, constant) {
-  if (entry.limit === null) return 0;
+  if (entry.limit === null || constant.concept.size === 0) return 0;
   const propertyWords = new Set(
     conceptWords(entry.property)
       .filter((word) => !GENERIC_WORDS.has(word))
@@ -386,24 +396,17 @@ function capAffinity(entry, constant) {
       .filter((word) => !GENERIC_WORDS.has(word))
       .map(SINGULAR),
   );
-  const elementWords = new Set(
-    entry.elementSchema === null
-      ? []
-      : conceptWords(entry.elementSchema)
-          .filter((word) => !GENERIC_WORDS.has(word))
-          .map(SINGULAR),
-  );
-  let propertyFit = 0;
-  for (const word of constant.concept) if (propertyWords.has(word) || elementWords.has(word)) propertyFit += 1;
   // A constant that names more concepts than the property does is not this
   // property's writer: `MAX_NOTE_TITLE_LENGTH` says nothing about `notes`.
-  if (propertyFit === 0 || propertyFit !== constant.concept.size) return 0;
+  for (const word of constant.concept) if (!propertyWords.has(word)) return 0;
   let fileFit = 0;
   for (const word of constant.fileWords) {
     const matched = [...schemaWords].some((candidate) => candidate.includes(word) || word.includes(candidate));
     if (matched) fileFit += 1;
   }
-  return propertyFit * 10 + fileFit;
+  // A constant that names more of the property is a closer name; a constant whose own module is
+  // named after the schema breaks the tie between two that name it equally well.
+  return constant.concept.size * 10 + fileFit;
 }
 
 /** Pairs each contract cap with the single writer constant that best names it. */
@@ -1100,17 +1103,26 @@ function runCodes(sources) {
 // Class: routes
 // ---------------------------------------------------------------------------
 
-/** Every route descriptor the tavern contract declares, as a frozen entry list. */
+/**
+ * Every route descriptor the tavern contract declares, and every table entry the reader could not read.
+ *
+ * The count of `routeId` properties in the file is not a count of routes: the same module declares the
+ * `routeId` member of a schema and the `routeId` key of a profile. An entry the reader cannot read is
+ * the only honest signal that its reading is incomplete - a table entry that is not an object literal,
+ * or whose `routeId` is not a string literal, is a route this rule would silently not see.
+ */
 function routeDescriptors(sources) {
   const file = sources.path(...TAVERN_CONTRACT);
   const sourceFile = sources.source(file);
   const routes = [];
-  let assignments = 0;
+  const unresolved = [];
   walk(sourceFile, (node) => {
-    if (ts.isPropertyAssignment(node) && node.name.getText(sourceFile) === "routeId") assignments += 1;
     if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression) || node.expression.text !== "route") return;
     const argument = node.arguments[0];
-    if (argument === undefined || !ts.isObjectLiteralExpression(argument)) return;
+    if (argument === undefined || !ts.isObjectLiteralExpression(argument)) {
+      unresolved.push(at(sources.root, node, sourceFile, file));
+      return;
+    }
     const entry = { where: at(sources.root, node, sourceFile, file) };
     for (const property of argument.properties) {
       if (!ts.isPropertyAssignment(property)) continue;
@@ -1118,13 +1130,17 @@ function routeDescriptors(sources) {
       if (["routeId", "method", "path"].includes(name) && ts.isStringLiteral(property.initializer))
         entry[name] = property.initializer.text;
     }
-    if (entry.routeId !== undefined) routes.push(entry);
+    if (entry.routeId === undefined) {
+      unresolved.push(entry.where);
+      return;
+    }
+    routes.push(entry);
   });
-  return { routes, assignments };
+  return { routes, unresolved };
 }
 
 function runRoutes(sources) {
-  const { routes, assignments } = routeDescriptors(sources);
+  const { routes, unresolved } = routeDescriptors(sources);
   const declared = new Set(routes.map((route) => route.routeId));
   const violations = [];
   const notes = [];
@@ -1171,14 +1187,14 @@ function runRoutes(sources) {
       }
     });
   }
-  if (routes.length !== assignments)
+  if (unresolved.length > 0)
     violations.push({
       rank: 3,
-      where: "host/src/tavern/browser-contract/index.ts",
-      message: `the table declares ${assignments} \`routeId\` assignment(s) but the reader built ${routes.length} descriptor(s); the route rule below is incomplete`,
+      where: unresolved[0],
+      message: `${unresolved.length} route table entr${unresolved.length === 1 ? "y" : "ies"} could not be read as an object literal with a string \`routeId\` (${unresolved.join(", ")}), so this rule is incomplete`,
     });
   notes.push(
-    `routes: ${routes.length} declared route descriptor(s), ${served} named by a Host dispatcher, ${hostFiles.length} dispatcher candidates scanned`,
+    `routes: ${routes.length} declared route descriptor(s), ${unresolved.length} table entry(ies) the reader could not read, ${served} named by a Host dispatcher, ${hostFiles.length} dispatcher candidates scanned`,
   );
   return { declared: routes.length, violations, notes };
 }
@@ -1201,58 +1217,77 @@ function declaredFields(sources) {
   return fields;
 }
 
+/**
+ * Every name a source spells, with the first place it appears: an identifier, or a string literal when
+ * the key is quoted.
+ *
+ * A schema field reaches a source in more forms than `field: value`. `{ chats }` is a shorthand
+ * assignment, `<Row companionHandle={...}>` is a JSX attribute, `const { chats } = list` is a binding
+ * element, and a projection usually reads the value into a local of the same name before it fills the
+ * schema. All of those are identifiers, so the name - not the syntax around it - is what counts as a
+ * mention. Anything narrower reads production as absence.
+ */
+function namesIn(sources, roots, skip) {
+  const seen = new Map();
+  for (const file of sources.files(...roots)) {
+    if (skip.has(file)) continue;
+    const sourceFile = sources.source(file);
+    walk(sourceFile, (node) => {
+      const name = ts.isIdentifier(node) || ts.isStringLiteral(node) ? node.text : null;
+      if (name === null || seen.has(name)) return;
+      seen.set(name, at(sources.root, node, sourceFile, file));
+    });
+  }
+  return seen;
+}
+
 function runFields(sources) {
   const fields = declaredFields(sources);
   const contractFiles = new Set([sources.path(...TAVERN_CONTRACT), sources.path(...GAME_CONTRACT)]);
-  const mentions = (roots) => {
-    const seen = new Map();
-    for (const file of sources.files(...roots)) {
-      if (contractFiles.has(file)) continue;
-      const sourceFile = sources.source(file);
-      walk(sourceFile, (node) => {
-        if (ts.isPropertyAssignment(node) || ts.isPropertyAccessExpression(node)) {
-          const name = ts.isPropertyAssignment(node)
-            ? node.name.getText(sourceFile).replaceAll(/["']/gu, "")
-            : node.name.text;
-          if (!seen.has(name)) seen.set(name, at(sources.root, node, sourceFile, file));
-        } else if (ts.isStringLiteral(node)) {
-          if (!seen.has(node.text)) seen.set(node.text, at(sources.root, node, sourceFile, file));
-        }
-      });
-    }
-    return seen;
-  };
-  const hostMentions = mentions([sources.path(...HOST)]);
-  const webMentions = mentions([sources.path(...WEB)]);
+  const hostNames = namesIn(sources, [sources.path(...HOST)], contractFiles);
+  const webNames = namesIn(sources, [sources.path(...WEB)], new Set());
   const violations = [];
   const notes = [];
   let produced = 0;
   let read = 0;
-  const noProducer = [];
-  const noConsumer = [];
+  const unproduced = [];
+  const unread = [];
   for (const [field, entry] of fields) {
-    const producedAt = hostMentions.get(field);
-    const readAt = webMentions.get(field);
-    if (producedAt !== undefined) produced += 1;
-    else noProducer.push({ field, ...entry });
-    if (readAt !== undefined) read += 1;
-    else noConsumer.push({ field, ...entry });
+    if (hostNames.has(field)) produced += 1;
+    else unproduced.push({ field, ...entry });
+    if (webNames.has(field)) read += 1;
+    else unread.push({ field, ...entry });
   }
-  for (const entry of noProducer)
+  // A field nobody names is only dead when the schema around it is unnamed too: a side that names the
+  // schema can still produce or read the field through a spread or a projection it derives from that
+  // schema, and the reader cannot see which members such a value carries. That is unverified, and it
+  // is reported as a count rather than as a violation.
+  const unverified = (rows, names) => rows.filter((entry) => names.has(entry.schema));
+  for (const entry of unproduced) {
+    if (hostNames.has(entry.schema)) continue;
     violations.push({
       rank: 3,
       where: entry.where,
-      message: `${entry.schema}.${entry.field} is declared but no Host source names it; a declared member with nothing behind it reads as a capability a player waits for`,
+      message: `${entry.schema}.${entry.field} is declared but no Host source names it, nor the schema that declares it; a declared member with nothing behind it reads as a capability a player waits for`,
     });
-  for (const entry of noConsumer)
+  }
+  for (const entry of unread) {
+    if (webNames.has(entry.schema)) continue;
     violations.push({
       rank: 4,
       where: entry.where,
-      message: `${entry.schema}.${entry.field} is declared but no browser source names it; the wire carries a field nothing reads`,
+      message: `${entry.schema}.${entry.field} is declared but no browser source names it, nor the schema that declares it; the wire carries a field nothing reads`,
     });
+  }
+  const unverifiedProducer = unverified(unproduced, hostNames);
+  const unverifiedConsumer = unverified(unread, webNames);
   notes.push(
-    `fields: ${fields.size} distinct declared field name(s), ${produced} named by a Host source, ${read} named by a browser source; name-level approximation - a field the Host writes under another name reads as missing, and a common word reads as present`,
+    `fields: ${fields.size} distinct declared field name(s), ${produced} named by a Host source, ${read} named by a browser source; a field whose schema a side names but whose own name it does not is counted unverified (${unverifiedProducer.length} producer, ${unverifiedConsumer.length} consumer), not dead`,
   );
+  if (unverifiedProducer.length + unverifiedConsumer.length > 0)
+    notes.push(
+      `fields: unverified - the name is spelled nowhere on that side, so a spread or a schema-derived projection could still carry it: ${[...unverifiedProducer.map((entry) => `${entry.schema}.${entry.field}`), ...unverifiedConsumer.map((entry) => `${entry.schema}.${entry.field}`)].slice(0, 12).join(", ")}`,
+    );
   return { declared: fields.size, violations, notes };
 }
 
@@ -1620,18 +1655,19 @@ function runDelegated(sources, gate) {
 /**
  * Classes whose findings print but do not fail the run.
  *
- * Two reasons, both stated per class rather than implied:
- *  - `refusal`, `read-path`, `hygiene`: the class reports a violation on the tree its own self-test was written to
- *    accept, so the clean-then-red proof cannot run - a red would be a statement about the fixture;
- *  - `bounds`, `fields`, `routes`: the class is a **heuristic** (it pairs a cap with a constant by concept words, or
- *    decides a field is dead by looking for its name in sources). Their findings are worth reading and are printed in
- *    full, but a false positive here would block a release for the wrong reason. They become blocking once their
- *    findings are triaged and their fixtures reconciled; `.pi/tools/AUDIT-STATE.md` keeps that list.
+ * Each class listed here reports a violation on the tree its own self-test was written to accept, so the
+ * clean-then-red proof cannot run: a red would be a statement about the fixture rather than about the product.
+ * They stay readable, and they stay listed by name so the list cannot grow silently.
  *
- * The four classes that stay blocking (`codes`, `catalogue`, `prompt`, `promises`) are the ones whose self-test proves a
- * clean tree goes green and an injected violation goes red - and whose zero today was earned by fixing real defects.
+ * `bounds`, `fields` and `routes` are not here. Their heuristics were triaged, and each now compares only what
+ * it can prove: a cap is paired with a constant only when that constant names the same property, a field counts
+ * as produced or read when the side that produces or reads it spells the name in any form (property, shorthand,
+ * JSX attribute, binding, literal), and a route table entry is checked as an entry rather than as an occurrence
+ * of the word `routeId`. What remains uncertain - a cap no constant names, a field no source spells while the
+ * schema around it is used - prints as a note and is never reported as a violation, so a green run means the
+ * class found nothing it can prove, not that it stopped looking.
  */
-export const ADVISORY = Object.freeze(new Set(["refusal", "read-path", "hygiene", "bounds", "fields", "routes"]));
+export const ADVISORY = Object.freeze(new Set(["refusal", "read-path", "hygiene"]));
 
 export const CLASSES = Object.freeze([
   ...CLASS_IMPLEMENTATIONS,
@@ -1643,3 +1679,7 @@ export const CLASSES = Object.freeze([
   { id: "promises", rank: 4, title: "a promise names something reachable", run: runPromises },
   { id: "hygiene", rank: 4, title: "no test-only production path, suppression or dead comment", run: runHygiene },
 ]);
+
+// The gate `package.json` runs, and only that: a test that imports the class list must not run a whole audit
+// as a side effect of the import.
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
