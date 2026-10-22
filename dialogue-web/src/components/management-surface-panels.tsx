@@ -1184,9 +1184,17 @@ export type WorldInfoSurfaceSource = Readonly<{
 }>;
 
 /**
- * The Settings panel: the companion language, the voice consent/devices, the
- * connection records and the two model profiles - the four field groups the
- * management surface shows, in the same order, over the same routes.
+ * The Settings panel: the connection records, the companion language, the voice
+ * consent/devices and the two model profiles - the four field groups the
+ * management surface shows, over the same routes.
+ *
+ * The connection group is first because it is the one fact that decides whether
+ * a reply can happen at all: without it every other setting describes a product
+ * that cannot answer. A player who arrived here from the conversation's own
+ * "no model connection" sentence lands on the controls that fix it, above the
+ * language and voice preferences that only shape a conversation once one exists.
+ * The voice group is last: its consent is a disclosure the player reads once, and
+ * it belongs beside the far smaller number of players who use voice at all.
  *
  * The companion language and the voice preference live in ONE Host-owned record,
  * so they share one revision here (`settingsRevisionRef`): a panel-local counter
@@ -1515,21 +1523,6 @@ export function SettingsSurfacePanel({
   return (
     <>
       <SurfaceNotice notice={inline} />
-      <LanguageSettingsPanel
-        languageView={languageView}
-        uiLocale={uiLocale}
-        labels={labels}
-        onSelectLanguage={mutateCompanionLanguage}
-        onSelectUiLanguage={selectUiLocale}
-      />
-      <VoiceSettingsPanel
-        voiceView={voiceView}
-        labels={labels}
-        onAccept={() => mutateVoice("accept")}
-        onRevoke={() => mutateVoice("revoke")}
-        onSelectDevice={(deviceId) => mutateVoice("setOutputDevice", deviceId)}
-        onSelectPersona={(persona) => mutateVoice("setPersona", persona)}
-      />
       {connectionView.kind === "ready" && (
         // Rendered only when the mounted profile actually published the
         // connection routes; a profile without them never shows a control that
@@ -1569,6 +1562,21 @@ export function SettingsSurfacePanel({
           }
         />
       )}
+      <LanguageSettingsPanel
+        languageView={languageView}
+        uiLocale={uiLocale}
+        labels={labels}
+        onSelectLanguage={mutateCompanionLanguage}
+        onSelectUiLanguage={selectUiLocale}
+      />
+      <VoiceSettingsPanel
+        voiceView={voiceView}
+        labels={labels}
+        onAccept={() => mutateVoice("accept")}
+        onRevoke={() => mutateVoice("revoke")}
+        onSelectDevice={(deviceId) => mutateVoice("setOutputDevice", deviceId)}
+        onSelectPersona={(persona) => mutateVoice("setPersona", persona)}
+      />
       {modelProfilesView.kind === "ready" && (
         // Rendered only when the mounted profile published the model-profile
         // routes; a profile without them never shows an editor it cannot serve.

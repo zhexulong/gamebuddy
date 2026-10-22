@@ -234,3 +234,77 @@ test.describe("A: the conversation speaks before the player sends", () => {
     await expect(composer).toHaveValue("Are you there?");
   });
 });
+
+/**
+ * The four settings groups in the order the surface renders them.
+ *
+ * Read off the DOM rather than trusted from the source: the order a player meets
+ * is the order the elements sit in, and `compareDocumentPosition` is that fact.
+ */
+async function settingsGroupOrder(page: Page): Promise<string[]> {
+  return await page.getByTestId("settings-surface").evaluate((surface) => {
+    const rows: Array<readonly [string, string]> = [
+      ["connection", "[data-connection-settings]"],
+      ["language", "[data-language-settings]"],
+      ["voice", "[data-voice-settings]"],
+      ["modelProfiles", "[data-model-profiles]"],
+    ];
+    return [...surface.querySelectorAll(rows.map(([, selector]) => selector).join(","))].map(
+      (element) => rows.find(([, selector]) => element.matches(selector))![0],
+    );
+  });
+}
+
+/** Where one settings group starts, in page pixels, with the surface scrolled to its top. */
+async function settingsGroupTop(page: Page, selector: string): Promise<number> {
+  const box = await page.getByTestId("settings-surface").locator(selector).boundingBox();
+  if (box === null) throw new Error(`${selector} is not laid out`);
+  return box.y;
+}
+
+const VIEWPORT = { width: 1280, height: 720 };
+
+test.describe("B: the connection section is the first thing in Settings", () => {
+  test("the model connection comes before language and voice, inside the first screen", async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+    await stubProductRoutes(page, { activeConnection: false });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(page.getByTestId("settings-surface")).toBeVisible();
+    await expect(page.getByTestId("settings-surface").locator("[data-connection-settings]")).toBeVisible();
+
+    // The order a player meets, measured: the connection group is first, and both
+    // the language and the voice group come after it. Before this change the
+    // connection group sat at 878 px - below the 720 px viewport, behind language
+    // and the whole voice section - and now starts at 56 px.
+    const order = await settingsGroupOrder(page);
+    expect(order[0]).toBe("connection");
+    expect(order.indexOf("connection")).toBeLessThan(order.indexOf("language"));
+    expect(order.indexOf("connection")).toBeLessThan(order.indexOf("voice"));
+
+    const connectionTop = await settingsGroupTop(page, "[data-connection-settings]");
+    const languageTop = await settingsGroupTop(page, "[data-language-settings]");
+    const voiceTop = await settingsGroupTop(page, "[data-voice-settings]");
+    expect(connectionTop).toBeLessThan(languageTop);
+    expect(connectionTop).toBeLessThan(voiceTop);
+    // Inside the first viewport, not merely before something else: the whole
+    // section a player must act on is on the screen they land on.
+    const connectionBox = await page.getByTestId("settings-surface").locator("[data-connection-settings]").boundingBox();
+    expect(connectionBox!.y).toBeGreaterThanOrEqual(0);
+    expect(connectionBox!.y + connectionBox!.height).toBeLessThan(VIEWPORT.height);
+  });
+
+  test("every control and data hook the connection group had is still there", async ({ page }) => {
+    await stubProductRoutes(page, { activeConnection: true });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+
+    const connection = page.getByTestId("settings-surface").locator("[data-connection-settings]");
+    await expect(connection).toBeVisible();
+    await expect(connection.locator("[data-connection-active]")).toBeVisible();
+    await expect(connection.locator("[data-connection-form]")).toBeVisible();
+    await expect(connection.locator("#connection-provider")).toBeVisible();
+    await expect(connection.locator("[data-connection-list]")).toBeVisible();
+    await expect(connection.getByRole("button", { name: "Save connection", exact: true })).toBeVisible();
+  });
+});
