@@ -6,13 +6,14 @@ import { SurfaceView } from "./SurfaceView";
 import { Timeline } from "./Timeline";
 
 /**
- * The conversation peer surface: the transcript and the composer band, and
- * nothing else.
+ * The conversation peer surface: the transcript, the composer band, and the one
+ * standing fact about them that is not part of either.
  *
  * It is the region's reading flow and writing flow together, so it takes the
  * transcript projection plus the authoring facts its one composer renders -
  * never the shell's view object. The shell keeps the session wiring (the send,
- * stop, swipe, regenerate, opening and draft commands and the state they move);
+ * stop, swipe, regenerate, opening and draft commands and the state they move),
+ * including the connection read whose result is `connectionMissing` below;
  * this module names only what the region shows and what it calls to change it.
  */
 export function ChatSurface({
@@ -46,6 +47,8 @@ export function ChatSurface({
   isGenerating,
   canStop,
   disabled,
+  connectionMissing,
+  onOpenSettings,
   voice,
   settingsAction,
   draftActions,
@@ -107,6 +110,15 @@ export function ChatSurface({
    */
   canStop: boolean;
   disabled: boolean;
+  /**
+   * True only when the Host's durable connection record says nothing is active, so a reply
+   * could not reach a model. The surface says that here, before the player writes a message that
+   * cannot succeed, and offers the one surface where it is fixed - never by disabling the
+   * composer, because writing and fixing the connection are not the same act.
+   */
+  connectionMissing: boolean;
+  /** Opens the Settings surface (the connection section is its first block). */
+  onOpenSettings: () => void;
   voice?: VoiceSurfaceStateV1 | null;
   settingsAction: ComposerSettingsAction;
   draftActions: ComposerDraftActions;
@@ -137,6 +149,17 @@ export function ChatSurface({
         pendingPlayerMessage={pendingPlayerMessage}
         replyTruncated={replyTruncated}
       />
+      {connectionMissing && (
+        // The standing fact, above the one line that reports the last outcome: no active
+        // connection means the reply cannot reach a model, and the honest sentence about it
+        // belongs on the surface the player is looking at rather than after a failed send.
+        <div className="warning-banner" data-chat-connection-missing="" role="status">
+          <span>{labels.chatNoConnectionTitle}</span>
+          <button type="button" className="small-button" onClick={onOpenSettings}>
+            {labels.chatNoConnectionAction}
+          </button>
+        </div>
+      )}
       {notice !== null && (
         <p className="reference-turn-notice" role="status">
           {notice}

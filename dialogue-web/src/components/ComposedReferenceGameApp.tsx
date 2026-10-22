@@ -1243,6 +1243,33 @@ export function ComposedReferenceGameApp() {
 
   const managementPanelsAvailable = view.kind === "ready" && view.session.snapshot.chat !== null;
 
+  /**
+   * Whether the durable connection record has anything active to send a reply through.
+   *
+   * `null` is "not known": the read is an extension-published route, and a mount that does
+   * not serve it says nothing rather than claiming there is no connection. The read is
+   * repeated whenever the conversation is shown again, so activating a connection in
+   * Settings clears the surface's own sentence without a reload - the record, not this
+   * state, remains the authority for every other reader.
+   */
+  const [chatConnectionActive, setChatConnectionActive] = useState<boolean | null>(null);
+  const conversationShown = view.kind === "ready" && view.session.snapshot.chat !== null;
+  useEffect(() => {
+    if (!conversationShown || shownSurface !== CHAT_PANEL) return;
+    let active = true;
+    void (async () => {
+      try {
+        const state = await managementPipelineApiRef.current.readConnection();
+        if (active) setChatConnectionActive(state.active !== null);
+      } catch {
+        if (active) setChatConnectionActive(null);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [conversationShown, shownSurface]);
+
   const openGamePanel = openPanelOf(GAME_PANEL, gameEntryRef);
   const openChat = openPanelOf(CHAT_PANEL, chatEntryRef);
   const openChats = openPanelOf(CHATS_PANEL, chatsEntryRef);
@@ -1370,6 +1397,8 @@ export function ComposedReferenceGameApp() {
                 isGenerating={turnInFlight}
                 canStop={stopAvailable}
                 disabled={!submitAvailable}
+                connectionMissing={chatConnectionActive === false}
+                onOpenSettings={openSettings}
                 voice={view.session.snapshot.voice}
                 settingsAction={{
                   label: labels().chatModelSettings,

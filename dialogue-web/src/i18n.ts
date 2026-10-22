@@ -205,6 +205,12 @@ const en = {
   chatFailedRuntimeUnavailable:
     "The reply never reached a model: the endpoint GameBuddy sends your messages to refused it — the API key is missing, wrong or revoked, the model you picked is not one that endpoint serves, or the endpoint could not be reached. Check the connection and model in Settings (Connection and model); repeating this message will fail the same way.",
   chatFailedStorageUnavailable: "The reply could not be saved. You can try again.",
+  // The surface's own zero-connection state. Without a connection a reply cannot reach a model, and
+  // the surface used to say nothing about it until the player had already sent. The line states the
+  // fact and the button goes to the one surface that fixes it; neither touches the composer,
+  // because writing and fixing the connection are not the same act.
+  chatNoConnectionTitle: "No model connection is set up yet",
+  chatNoConnectionAction: "Open settings",
 
   // Settings & System
   language: "Language",
@@ -1016,6 +1022,8 @@ const zh: Messages = {
   chatFailedRuntimeUnavailable:
     "这条回复没有送达任何模型：GameBuddy 转发消息的端点拒绝了它——API Key 缺失、错误或已被吊销，你选的模型不是该端点提供的，或者根本连不上那个端点。请在「设置 → 连接与模型」里检查连接和模型；重复发送同一条消息只会以同样方式失败。",
   chatFailedStorageUnavailable: "回复没能保存下来。你可以重试。",
+  chatNoConnectionTitle: "尚未配置模型连接",
+  chatNoConnectionAction: "前往设置",
 
   // Settings & System
   language: "语言",
