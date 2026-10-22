@@ -4499,10 +4499,22 @@
 
    Measured at 1440x900: with the drawer's own grid and this one, the surface's
    content is two columns below the drawer and scrolls 900 px, against 1294 px in
-   the single column it was. At 400x800 nothing pairs: one track, one column. */
+   the single column it was. At 400x800 nothing pairs: one track, one column.
+
+   The rows are `max-content` rather than `auto` because this grid holds a card
+   that scrolls itself: the installation panel is `max-height` + `overflow-y: auto`,
+   and a scroll container contributes no block-axis content to an `auto` row.
+   Measured at 400x800 with `auto`, the resolved rows were
+   `1323.66px 26px 277.5px 61px` - the installation row was the card's own padding
+   and border (26 px) while the card was 256 px tall, so the model settings began at
+   y=1492 inside a card that ran to y=1710 and the two blocks painted over each
+   other by 218 px. `max-content` sizes the row from the card's painted box
+   (`1323.66px 256px 277.5px 61px`), which is what makes the settings start below
+   it. */
   .surface-game > .surface-content {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(560px, 100%), 1fr));
+    grid-auto-rows: max-content;
     align-items: start;
     gap: 12px;
   }

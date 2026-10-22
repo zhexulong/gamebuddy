@@ -430,12 +430,31 @@ async function measureGameSurface(page: Page) {
     const main = document.querySelector<HTMLElement>("#main-content");
     const content = surface.querySelector<HTMLElement>(".surface-content");
     const allLefts = [...new Set(groups.map((group) => group.left))].sort((left, right) => left - right);
+    // Any two of the region's own blocks painted in the same place. Measured off
+    // the rects rather than inferred from the grid: the defect this reports was
+    // an installation card that overran its row and painted over the model
+    // settings below it, and `position`, `margin` and `transform` all read
+    // innocent while it did.
+    const blocks = content === null ? [] : [...content.children].map((child) => child as HTMLElement);
+    const overlaps: string[] = [];
+    for (let i = 0; i < blocks.length; i += 1) {
+      for (let j = i + 1; j < blocks.length; j += 1) {
+        const a = blocks[i]!.getBoundingClientRect();
+        const b = blocks[j]!.getBoundingClientRect();
+        const across = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const down = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (across > 0 && down > 0) {
+          overlaps.push(`${blocks[i]!.className.toString().split(/\s+/u)[0]} over ${blocks[j]!.className.toString().split(/\s+/u)[0]} by ${round(across)}x${round(down)}`);
+        }
+      }
+    }
     return {
       surface: boxOf(surface),
       pageScrollHeight: document.documentElement.scrollHeight,
       mainScrollHeight: main === null ? null : main.scrollHeight,
       contentScrollHeight: content === null ? null : content.scrollHeight,
       contentChildren: content === null ? [] : [...content.children].map(boxOf),
+      contentOverlaps: overlaps,
       contentColumnCount:
         content === null
           ? 0
@@ -480,6 +499,17 @@ test("item 3: the Game surface uses the width it is given, and stays one column 
   const narrow = await measureGameSurface(page);
   console.log(`[item-3 game @400] ${JSON.stringify(narrow)}`);
 
+  // Sensitivity proof for the overlap assertion below, taken through the same
+  // probe: rows sized by `auto` are what let a self-scrolling card overrun its
+  // own row, so putting that back must reproduce the overlap. The injected rule
+  // is unlayered, so it wins over the layered stylesheet.
+  const autoRows = await page.addStyleTag({
+    content: ".surface-game > .surface-content { grid-auto-rows: auto; }",
+  });
+  const overrun = await measureGameSurface(page);
+  console.log(`[item-3 game @400, rows sized auto] ${JSON.stringify(overrun)}`);
+  await autoRows.evaluate((node) => node.remove());
+
   expect(wide, "the Game surface renders").not.toBeNull();
   expect(reverted, "the Game surface renders with the pre-fix layout injected").not.toBeNull();
   expect(narrow, "the Game surface renders at 400").not.toBeNull();
@@ -511,6 +541,23 @@ test("item 3: the Game surface uses the width it is given, and stays one column 
   expect(narrow!.columnCount, "the narrow surface is a single column").toBe(1);
   expect(narrow!.contentColumnCount, "the narrow surface's content is a single column too").toBe(1);
   expect(narrow!.surface.width, "400 leaves a single readable column").toBeLessThan(420);
+
+  // No two blocks of the region are painted on top of each other, at either
+  // width. The failure this catches: the installation card is a scroll container
+  // (`max-height` + `overflow-y: auto`), which contributes no block-axis content
+  // to an `auto` row - at 400x800 the card was 256 px tall in a 26 px row, so the
+  // model settings started at y=1492 inside a card that ran to y=1710.
+  expect(overrun, "the Game surface renders with rows sized auto").not.toBeNull();
+  expect(overrun!.contentOverlaps, "rows sized auto put the card over the block below it").not.toEqual([]);
+  for (const [name, measured] of [
+    ["1440x900", wide],
+    ["400x800", narrow],
+  ] as const) {
+    expect(
+      measured!.contentOverlaps,
+      `at ${name} the region's blocks do not paint over each other: ${JSON.stringify(measured!.contentChildren.map((child) => `${child.name}@${child.top}+${child.height}`))}`,
+    ).toEqual([]);
+  }
 });
 
 /**
