@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -21,7 +22,7 @@ import {
   type OpaqueS4cMaterializationAdmission,
 } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.internal.js";
 import { loadHostDeploymentManifest } from "./deployment-manifest.js";
-import { planProgramId } from "./body-program-script.js";
+import { planActionsFromRegistrations, planProgramId } from "./body-program-script.js";
 import { createHostGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import { observeMaterializedProductionRuntimeForTest } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.js";
 import { assertReceiptBackedLaunch } from "./integration-launcher.js";
@@ -31,6 +32,7 @@ import type { GameConnection } from "./game-connection.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import {
   validateBodyProgramCandidateRequest,
+  type ActionRegistration,
   type BridgeMessage,
   type ExecutionReceipt,
   type Scope,
@@ -74,6 +76,56 @@ const DEFAULT_HELLO_REGISTRATIONS: readonly unknown[] = Object.freeze([
     kind: "execution",
   },
 ]);
+
+/** One action as the Mod's own published surface artifact declares it. */
+type PublishedSurfaceAction = Readonly<{
+  actionId: string;
+  lifecycle: string;
+  kind: string;
+  argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[] }>>;
+  outputFacts?: Readonly<Record<string, string>>;
+  resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
+}>;
+
+/**
+ * The registrations a live Farmhand advertises on hello_ack, rebuilt from the Mod-owned surface artifact
+ * (`integrations/stardew/action-development/contracts/generated/action-surface.v1.json`) rather than hand-written
+ * here: a surface assertion has to be made over the catalog the product actually publishes.
+ */
+function publishedSurfaceRegistrations(): readonly ActionRegistration[] {
+  const path = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "integrations",
+    "stardew",
+    "action-development",
+    "contracts",
+    "generated",
+    "action-surface.v1.json",
+  );
+  const surface = JSON.parse(readFileSync(path, "utf8")) as { actions: readonly PublishedSurfaceAction[] };
+  return Object.freeze(
+    surface.actions.map((action) =>
+      Object.freeze({
+        actionId: action.actionId,
+        familyId: "fixture_family",
+        identityVersion: 1,
+        lifecycle: action.lifecycle as ActionRegistration["lifecycle"],
+        kind: action.kind as ActionRegistration["kind"],
+        ...(action.argumentSchema === undefined
+          ? {}
+          : {
+              descriptor: {
+                argumentSchema: action.argumentSchema,
+                outputFacts: action.outputFacts ?? {},
+                ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
+              },
+            }),
+      }),
+    ),
+  );
+}
 
 test.before(async () => {
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
@@ -151,8 +203,11 @@ async function withHelloAck<T>(
   launchGeneration: string | null,
   operation: (pipeName: string, peerClosed: Promise<void>) => Promise<T>,
   onRequest?: (request: BridgeMessage, socket: Socket) => boolean | void,
-  helloAck?: Readonly<{ registrations: readonly unknown[] }>,
+  helloAck?: Readonly<{ registrations: readonly unknown[]; capabilities?: readonly string[] }>,
 ): Promise<T> {
+  // The fixture Mod publishes one published execution unless a test supplies the catalog it wants the surface built
+  // over: the figures a surface assertion makes have to come from the Mod's own hello_ack, not from the test's list.
+  const capabilities = helloAck?.capabilities ?? ["move_to_tile"];
   const pipeName = `gamebuddy_farmhand_attestation_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   let peer: Socket | undefined;
   let resolvePeerClosed!: () => void;
@@ -179,10 +234,10 @@ async function withHelloAck<T>(
               type: "hello_ack",
               payload: {
                 sessionId: "session_attestation",
-                capabilities: ["move_to_tile"],
+                capabilities,
                 catalogRevision: 1,
                 policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
-                enabledActionIds: ["move_to_tile"],
+                enabledActionIds: capabilities,
                 presentationLocale: "en-US",
                 registrations: helloAck?.registrations ?? DEFAULT_HELLO_REGISTRATIONS,
                 runtimeRole,
@@ -204,9 +259,9 @@ async function withHelloAck<T>(
                 exhausted: false,
                 health: 100,
                 actionable: true,
-                capabilities: ["move_to_tile"],
+                capabilities,
                 catalogRevision: 1,
-                enabledActionIds: ["move_to_tile"],
+                enabledActionIds: capabilities,
                 presentationLocale: "en-US",
                 weather: "sunny",
                 timeOfDay: 600,
@@ -923,6 +978,87 @@ test("the Game surface offers one plan tool instead of the flat per-action tools
         },
       ],
     },
+  );
+});
+
+/**
+ * The falsifier for the surface the live run actually mounts. The materializer composes the fixed plan tools and
+ * `createRuntimeWithFixedToolsCore` is the one composition that mounts an adapter's tools onto that session, so the
+ * assertion is made there, over the Mod's whole published catalog instead of a one-action fixture: no executable
+ * action has a per-action tool on the mounted surface, the read-only navigation tools stay as observation, and the
+ * plan builder still carries every executable action.
+ */
+test("over the published catalog the mounted Game surface carries no per-action tool, and the plan builder carries every executable action", async () => {
+  const registrations = publishedSurfaceRegistrations();
+  const executableActionIds = registrations
+    .filter((registration) => registration.kind === "execution")
+    .map((registration) => registration.actionId);
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        client,
+        Object.freeze({
+          playerId: "player_attestation",
+          companionId: scope.companionId,
+          continuityId,
+          saveId: scope.saveId,
+          worldId: scope.worldId,
+        }),
+        { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+      );
+      const binding = await receiptBackedBinding(launch);
+      let materialized:
+        | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+        | undefined;
+      try {
+        materialized = await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        );
+        const mounted = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools.map(
+          (tool) => tool.name,
+        );
+        const perActionTools = mounted.filter((name) =>
+          executableActionIds.some((actionId) => `stardew_${actionId}` === name),
+        );
+        assert.deepEqual(perActionTools, [], "no executable action has a per-action tool on the mounted surface");
+        assert.ok(mounted.includes("stardew_plan_work"), "the plan tool is mounted");
+        assert.ok(mounted.includes("stardew_observe"), "observation is mounted");
+        assert.ok(mounted.includes("stardew_stop_action"), "the stop tool is mounted and is not an action");
+        // The read-only actions are observation, not dispatch, and they stay: closing the flat surface must not close
+        // what the companion reads the world map with.
+        for (const name of ["stardew_inspect_world_map", "stardew_find_destination"])
+          assert.ok(mounted.includes(name), `${name} stays as observation`);
+        // The capability did not leave with the flat tools: every executable action the Mod publishes is a builder
+        // method, so the plan tool is the whole action surface rather than one entry point beside it.
+        assert.deepEqual(
+          planActionsFromRegistrations(registrations)
+            .map((action) => action.actionId)
+            .sort(),
+          [...executableActionIds].sort(),
+          "the plan builder carries every executable published action",
+        );
+      } finally {
+        await materialized?.close();
+        await binding.close();
+      }
+    },
+    undefined,
+    { registrations, capabilities: executableActionIds },
   );
 });
 

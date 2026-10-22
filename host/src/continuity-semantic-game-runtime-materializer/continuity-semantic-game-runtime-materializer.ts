@@ -1134,6 +1134,12 @@ async function createMaterializedGameRuntime(
     runtimeAttachment,
     Object.freeze({
       fixedTools,
+      // The live Game surface's action vocabulary is the plan builder's, so its runtime never mounts the adapter's
+      // per-action tools: they are the same 92 executable actions (host/src/body-program-script.ts), and a one-step
+      // tool beside the plan tool only invites one-step runs. It is not a flat surface's fallback either - when the Mod
+      // reports no Body Program surface this runtime has none, and the materializer's own `BODY_PROGRAM_MOUNT` marker
+      // names that state instead of re-mounting ninety-five single-step tools.
+      planActionSurface: true as const,
       resolvedPolicy:
         recoveryAttachment?.resolvedPolicy ?? connection.module.parsePolicy(connection.module.defaultPolicy),
       ...(assembledProfile === undefined ? {} : { initialProfile: assembledProfile }),

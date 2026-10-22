@@ -811,6 +811,12 @@ export async function createRuntimeWithFixedToolsCore(
   fixedTools: readonly ToolDefinition[] = Object.freeze([]),
   /** Construction-private resolved policy supplied only by the fixed-tool composer. */
   resolvedPolicy?: IntegrationActionPolicy,
+  /**
+   * Declared by the composition that mounts this surface's action vocabulary. The composed Game surface carries the
+   * plan builder (`stardew_plan_work`), which exposes the same published action vocabulary the adapter's per-action
+   * tools do, so it is the only action surface on that runtime.
+   */
+  planActionSurface = false,
 ): Promise<RuntimeSession> {
   // A surface session ID identifies a persistent session; it must never be
   // used to infer the product surface because both Chat and Game have them.
@@ -1203,10 +1209,22 @@ export async function createRuntimeWithFixedToolsCore(
             : { dispatchAdmissionFactory: () => dispatchController.createAdmission() }),
         })
       : undefined;
+  // A surface that carries the plan builder does not also carry the flat per-action tools: the builder exposes the
+  // same vocabulary the Mod's Body Program catalog accepts (host/src/body-program-script.ts, measured over the
+  // published 95-action surface: the builder's method set and the adapter's mounted action-tool set are the same 92
+  // executable actions), so a one-step tool mounted beside it only invites one-step runs. A tool the adapter does not
+  // publish as an action stays mounted - `stardew_stop_action` is deliberately not an action. The decision is the
+  // composition's to declare, not a Stardew tool name's to imply here.
+  const actionToolsToMount =
+    integrationToolSet === undefined
+      ? []
+      : planActionSurface
+        ? integrationToolSet.actions.filter((tool) => integrationModule?.actionIdForToolName(tool.name) === null)
+        : integrationToolSet.actions;
   const rawIntegrationTools =
     integrationToolSet === undefined
       ? []
-      : [...integrationToolSet.observation, ...integrationToolSet.actions, ...integrationToolSet.knowledge];
+      : [...integrationToolSet.observation, ...actionToolsToMount, ...integrationToolSet.knowledge];
   // Tool definitions remain mounted for the lifetime of a Pi session. Every
   // adapter tool therefore receives a Host-owned execution fence so a later
   // lifecycle loss revokes stale closures rather than trusting the adapter to
