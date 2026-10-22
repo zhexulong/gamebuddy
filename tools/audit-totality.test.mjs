@@ -318,7 +318,7 @@ test("refusal: a capacity enforced without a named code is a generic failure", (
     // here is the detection half - a capacity refused with a sentence instead of a code is a new finding, and removing
     // the injection takes it back. When the rule learns to see `new *Error("code")` this fixture is clean and the test
     // becomes `prove(...)` and drops out of `ADVISORY`.
-    const clean = proveAdvisory(root, "refusal", {
+    const clean = prove(root, "refusal", {
       file: "host/src/note-route.ts",
       before: "  const projected = { revision: 1, notes };",
       after:

@@ -1772,7 +1772,7 @@ function runDelegated(sources, gate) {
  * schema around it is used - prints as a note and is never reported as a violation, so a green run means the
  * class found nothing it can prove, not that it stopped looking.
  */
-export const ADVISORY = Object.freeze(new Set(["refusal", "read-path", "hygiene"]));
+export const ADVISORY = Object.freeze(new Set(["read-path", "hygiene"]));
 
 export const CLASSES = Object.freeze([
   ...CLASS_IMPLEMENTATIONS,
