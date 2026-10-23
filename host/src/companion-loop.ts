@@ -6,6 +6,7 @@ import {
   NATIVE_BUBBLE_STAGE_DIRECTION,
   type NativeCompanionContentObserver,
 } from "./native-companion-content.js";
+import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { CompanionEventPump, type CompanionTurnOutcome, type DeliveryDisposition } from "./event-pump.js";
 import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
 
@@ -136,7 +137,13 @@ export class CompanionLoop {
         const parsed = JSON.parse(batch) as SerializedBatch;
         const sourceEventId = canonicalPresentationSource(parsed);
         const batchId = isOpaqueSource(parsed.batchId) ? parsed.batchId : undefined;
-        const completion = this.#deliverAndObserve(batch, disposition, sourceEventId, batchId);
+        const completion = this.#deliverAndObserve(
+          batch,
+          disposition,
+          sourceEventId,
+          batchId,
+          canonicalTurnLocale(parsed),
+        );
         this.#inFlight = completion;
         try {
           return await completion;
@@ -152,6 +159,7 @@ export class CompanionLoop {
     disposition: Exclude<DeliveryDisposition, "hold">,
     sourceEventId: string | undefined,
     batchId: string | undefined,
+    turnLocale: string | undefined,
   ): Promise<CompanionTurnOutcome> {
     let accepted = false;
     let settled = false;
@@ -300,7 +308,24 @@ export class CompanionLoop {
                     recordOutcome(reason === "aborted" || reason === "error" ? reason : "error");
                   },
                 },
-                { stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION, scaffolding: NATIVE_BUBBLE_SCAFFOLDING },
+                {
+                  stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,
+                  scaffolding: NATIVE_BUBBLE_SCAFFOLDING,
+                  // The in-game surface delivers with pacing on; the Chat transcript's
+                  // observer is configured elsewhere and takes the off default.
+                  pacing: GAME_DELIVERY_PACING,
+                  // The turn's own identity seeds the reaction sound and its language
+                  // picks the vocabulary. Both come from the authenticated batch facts,
+                  // never from generated content.
+                  ...(sourceEventId === undefined
+                    ? {}
+                    : {
+                        turn: Object.freeze({
+                          id: sourceEventId,
+                          ...(turnLocale === undefined ? {} : { locale: turnLocale }),
+                        }),
+                      }),
+                },
               );
               nativeContentObserver.open();
               // Previews unlock the delta lane for every Game surface, not only
@@ -469,7 +494,7 @@ function isExactBatchMessage(message: unknown, expectedBatch: string): boolean {
 
 type SerializedBatch = Readonly<{
   batchId?: string;
-  playerInputs?: readonly Readonly<{ eventId?: string; inputId?: string }>[];
+  playerInputs?: readonly Readonly<{ eventId?: string; inputId?: string; locale?: string }>[];
   worldFacts?: readonly Readonly<{
     kind?: string;
     sourceEventId?: string;
@@ -490,6 +515,18 @@ type SerializedBatch = Readonly<{
     payload?: Readonly<{ state?: unknown }>;
   }>[];
 }>;
+
+/**
+ * The language this turn is conducted in, from the last player input the batch
+ * carried. A world-triggered turn has no player input and therefore no locale,
+ * which the reaction mechanism reads as "say nothing" rather than guessing.
+ */
+function canonicalTurnLocale(batch: SerializedBatch): string | undefined {
+  const locales = (batch.playerInputs ?? [])
+    .map((input) => input.locale)
+    .filter((locale): locale is string => typeof locale === "string" && locale.length > 0);
+  return locales.at(-1);
+}
 
 /**
  * Selects the canonical cause only from a real serialized Pi batch. Events are

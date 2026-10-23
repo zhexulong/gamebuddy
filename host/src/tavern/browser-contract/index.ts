@@ -832,6 +832,8 @@ const OperationId = Type.Union([
   Type.Literal("settings.voice.devices"),
   Type.Literal("settings.language.read"),
   Type.Literal("settings.language.update"),
+  Type.Literal("settings.delivery.read"),
+  Type.Literal("settings.delivery.update"),
   Type.Literal("settings.connection.read"),
   Type.Literal("settings.connection.create"),
   Type.Literal("settings.connection.test"),
@@ -887,6 +889,8 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.settings.voice.devices"),
   Type.Literal("tavern.operation.settings.language.read"),
   Type.Literal("tavern.operation.settings.language.update"),
+  Type.Literal("tavern.operation.settings.delivery.read"),
+  Type.Literal("tavern.operation.settings.delivery.update"),
   Type.Literal("tavern.operation.settings.connection.read"),
   Type.Literal("tavern.operation.settings.connection.create"),
   Type.Literal("tavern.operation.settings.connection.test"),
@@ -1633,6 +1637,23 @@ export const TavernLanguagePreferenceV1Schema = strictObject({
 export const TavernLanguagePreferenceCommandV1Schema = strictObject({
   expectedRevision: Revision,
   locale: TavernCompanionLocaleV1Schema,
+});
+
+/**
+ * Host-owned delivery preference: whether Chat replies arrive as short paced
+ * pieces instead of one whole message.
+ *
+ * It reads exactly what the player chose; which surfaces honour it, and how an
+ * un-chosen record falls for each of them, belongs to the delivery path rather
+ * than to this wire.
+ */
+export const TavernDeliveryPreferenceV1Schema = strictObject({
+  revision: Revision,
+  paced: Type.Boolean(),
+});
+export const TavernDeliveryPreferenceCommandV1Schema = strictObject({
+  expectedRevision: Revision,
+  paced: Type.Boolean(),
 });
 
 const MemoryStateSnapshotV1Schema = Type.Union([
@@ -2583,6 +2604,35 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: TavernLanguagePreferenceV1Schema },
   }),
   route({
+    routeId: "settings.delivery.read",
+    method: "GET",
+    path: "/api/tavern/v1/settings/delivery",
+    operationId: "settings.delivery.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: TavernDeliveryPreferenceV1Schema },
+  }),
+  route({
+    routeId: "settings.delivery.update",
+    method: "PUT",
+    path: "/api/tavern/v1/settings/delivery",
+    operationId: "settings.delivery.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: TavernDeliveryPreferenceCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernDeliveryPreferenceV1Schema },
+  }),
+  route({
     routeId: "settings.connection.read",
     method: "GET",
     path: "/api/tavern/v1/settings/connection",
@@ -3090,6 +3140,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernVoicePreferenceConsentCommandV1Schema,
     TavernLanguagePreferenceV1Schema,
     TavernLanguagePreferenceCommandV1Schema,
+    TavernDeliveryPreferenceV1Schema,
+    TavernDeliveryPreferenceCommandV1Schema,
     TavernStateSnapshotV1Schema,
     SubmitMessageCommandV1Schema,
     SaveDraftCommandV1Schema,
@@ -3204,6 +3256,8 @@ export type TavernVoiceDevicesV1 = Static<typeof TavernVoiceDevicesV1Schema>;
 export type TavernVoicePreferenceConsentCommandV1 = Static<typeof TavernVoicePreferenceConsentCommandV1Schema>;
 export type TavernLanguagePreferenceV1 = Static<typeof TavernLanguagePreferenceV1Schema>;
 export type TavernLanguagePreferenceCommandV1 = Static<typeof TavernLanguagePreferenceCommandV1Schema>;
+export type TavernDeliveryPreferenceV1 = Static<typeof TavernDeliveryPreferenceV1Schema>;
+export type TavernDeliveryPreferenceCommandV1 = Static<typeof TavernDeliveryPreferenceCommandV1Schema>;
 export type StCardImportFieldSummaryV1 = Static<typeof StCardImportFieldSummaryV1Schema>;
 export type StCardImportDispositionV1 = Static<typeof StCardImportDispositionV1Schema>;
 export type StCardImportLossV1 = Static<typeof StCardImportLossV1Schema>;

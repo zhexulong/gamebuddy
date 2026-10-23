@@ -3,12 +3,12 @@ import { readStrictJsonFile } from "../strict-json-reader.js";
 import { join } from "node:path";
 
 /**
- * Host-owned player preference record. One path, one revision, both field
- * groups: the companion language the runtimes read at mount and the cloud TTS
- * consent/output the Voice surface reads. Every player-visible settings write
- * goes through this one record's compare-and-swap, so a write from either
- * settings surface advances the same revision and a stale expectedRevision is
- * rejected for both.
+ * Host-owned player preference record. One path, one revision, three field
+ * groups: the companion language the runtimes read at mount, the cloud TTS
+ * consent/output the Voice surface reads, and whether Chat replies arrive as
+ * short paced pieces. Every player-visible settings write goes through this one
+ * record's compare-and-swap, so a write from any settings surface advances the
+ * same revision and a stale expectedRevision is rejected for all of them.
  */
 export const PLAYER_PREFERENCE_SCHEMA_VERSION = 1 as const;
 
@@ -68,6 +68,18 @@ export type VoicePersona = string | null;
 export type VoiceCloudTtsConsent = "undecided" | "accepted" | "revoked";
 
 /**
+ * Whether the player chose short paced Chat replies instead of one whole
+ * message.
+ *
+ * It is the player's choice and nothing else: which surfaces honour it, and
+ * which way an un-chosen record falls for each surface, is the pacing slice's
+ * decision (`native-companion-content.ts` and its per-surface config). This
+ * record answers only what the player chose, so it cannot drift into a second
+ * place that decides presentation policy.
+ */
+export type PacedDelivery = boolean;
+
+/**
  * The single root-level path of the record. One path, one authority: the
  * management surface writes it and every runtime reads it, so neither side
  * carries a preference of its own.
@@ -88,6 +100,8 @@ export type PlayerPreference = Readonly<{
   outputDevice: VoiceOutputDevice;
   /** Named voice persona, or null for the extension's own default resolution. */
   persona: VoicePersona;
+  /** True when the player chose short paced Chat replies; never chosen is false. */
+  paced: PacedDelivery;
 }>;
 
 /**
@@ -100,7 +114,8 @@ export type PlayerPreferenceUpdate =
   | Readonly<{ action: "accept"; disclosureVersion: typeof VOICE_CLOUD_TTS_DISCLOSURE_VERSION }>
   | Readonly<{ action: "revoke" }>
   | Readonly<{ action: "setOutputDevice"; outputDevice: VoiceOutputDevice }>
-  | Readonly<{ action: "setPersona"; persona: VoicePersona }>;
+  | Readonly<{ action: "setPersona"; persona: VoicePersona }>
+  | Readonly<{ action: "setPaced"; paced: PacedDelivery }>;
 
 type StoredPlayerPreference = Readonly<{
   schemaVersion: typeof PLAYER_PREFERENCE_SCHEMA_VERSION;
@@ -111,6 +126,7 @@ type StoredPlayerPreference = Readonly<{
   decidedAtMs: number | null;
   outputDevice: VoiceOutputDevice;
   persona: VoicePersona;
+  paced: PacedDelivery;
 }>;
 
 export class PlayerPreferenceRevisionConflict extends Error {
@@ -142,6 +158,7 @@ export class PlayerPreferenceStore {
         decidedAtMs: decidedThisUpdate ? Date.now() : current.decidedAtMs,
         outputDevice: update.action === "setOutputDevice" ? update.outputDevice : current.outputDevice,
         persona: update.action === "setPersona" ? update.persona : current.persona,
+        paced: update.action === "setPaced" ? update.paced : current.paced,
       });
       await writeAtomically(this.path, next);
       const readBack = await this.load();
@@ -178,6 +195,20 @@ export async function resolveCompanionLocale(runtimeRoot: string): Promise<Compa
   return (await readStoredCompanionLocale(runtimeRoot)) ?? DEFAULT_COMPANION_LOCALE;
 }
 
+/**
+ * Whether the player chose short paced Chat replies, or false when they never
+ * chose.
+ *
+ * The delivery path reads this per surface instead of carrying a preference of
+ * its own, so the settings surface that writes it and the surface that shapes a
+ * reply from it are the same authority. An unreadable record throws rather than
+ * silently presenting replies in a shape the player did not choose, exactly as
+ * the companion-language reader above does.
+ */
+export async function resolvePacedDelivery(runtimeRoot: string): Promise<PacedDelivery> {
+  return (await new PlayerPreferenceStore(playerPreferencePath(runtimeRoot)).read()).paced;
+}
+
 const DEFAULT_PLAYER_PREFERENCE: StoredPlayerPreference = Object.freeze({
   schemaVersion: PLAYER_PREFERENCE_SCHEMA_VERSION,
   revision: 0,
@@ -187,6 +218,7 @@ const DEFAULT_PLAYER_PREFERENCE: StoredPlayerPreference = Object.freeze({
   decidedAtMs: null,
   outputDevice: null,
   persona: null,
+  paced: false,
 });
 
 function project(value: StoredPlayerPreference): PlayerPreference {
@@ -198,6 +230,7 @@ function project(value: StoredPlayerPreference): PlayerPreference {
     decidedAtMs: value.decidedAtMs,
     outputDevice: value.outputDevice,
     persona: value.persona,
+    paced: value.paced,
   });
 }
 
@@ -212,6 +245,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     !isDecisionTimeOrNull(value.decidedAtMs) ||
     !isOutputDevice(value.outputDevice) ||
     !isVoicePersona(value.persona) ||
+    !isPaced(value.paced) ||
     !hasExactKeys(value, [
       "schemaVersion",
       "revision",
@@ -221,6 +255,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
       "decidedAtMs",
       "outputDevice",
       "persona",
+      "paced",
     ])
   )
     throw new Error("invalid_player_preference_store");
@@ -245,6 +280,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     decidedAtMs: value.decidedAtMs as number | null,
     outputDevice: value.outputDevice as VoiceOutputDevice,
     persona: value.persona as VoicePersona,
+    paced: value.paced as PacedDelivery,
   });
 }
 
@@ -264,6 +300,9 @@ function isUpdate(value: unknown): value is PlayerPreferenceUpdate {
   }
   if (value.action === "setPersona") {
     return hasExactKeys(value, ["action", "persona"]) && isVoicePersona(value.persona);
+  }
+  if (value.action === "setPaced") {
+    return hasExactKeys(value, ["action", "paced"]) && isPaced(value.paced);
   }
   return value.action === "revoke" && hasExactKeys(value, ["action"]);
 }
@@ -296,6 +335,11 @@ function isVoicePersona(value: unknown): value is VoicePersona {
     value === null ||
     (typeof value === "string" && value.length <= VOICE_PERSONA_MAX_LENGTH && VOICE_PERSONA_PATTERN.test(value))
   );
+}
+
+/** The player's own yes/no: a real boolean, never a truthy string or number. */
+function isPaced(value: unknown): value is PacedDelivery {
+  return typeof value === "boolean";
 }
 
 function isConsent(value: unknown): value is VoiceCloudTtsConsent {

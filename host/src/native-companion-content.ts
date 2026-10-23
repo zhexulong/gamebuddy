@@ -1,5 +1,12 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import {
+  budgetedSpeechPieces,
+  CHAT_DELIVERY_PACING,
+  selectReactionSound,
+  typingDurationMs,
+  type CompanionDeliveryPacing,
+} from "./companion-delivery-pacing.js";
 import { removeModelScaffolding } from "./companion-scaffolding.js";
 import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-speech-dehydration.js";
 import { IncrementalSpeechAccumulator } from "./companion-speech-incremental.js";
@@ -11,6 +18,10 @@ const MAX_NATIVE_COMPANION_TEXT_UTF8_BYTES = 16_384;
  * time to notice the silence. It is the point where the companion says one
  * thing while it works instead of leaving the game silent; anything it says
  * about its own actions after that is what the shape rule below forbids.
+ *
+ * It is the fallback, not the rule: a surface with typing pacing on measures
+ * the sentence instead (`typingDurationMs`), so a short remark lands sooner and
+ * a long one later instead of everything arriving on one flat beat.
  */
 const WORKING_REMARK_SILENCE_MS = 3_000;
 
@@ -76,6 +87,19 @@ export const NATIVE_BUBBLE_SCAFFOLDING = "unchanged" as const;
 export type NativeCompanionContentOptions = Readonly<{
   stageDirection: StageDirectionPresentation;
   scaffolding: ScaffoldingPresentation;
+  /**
+   * The humanised delivery policy, chosen per surface (`GAME_DELIVERY_PACING` in
+   * `companion-loop.ts`, `CHAT_DELIVERY_PACING` here as the default). Absent
+   * means the Chat default: every mechanism off, so the delivery is exactly
+   * what it was before pacing existed.
+   */
+  pacing?: CompanionDeliveryPacing | null;
+  /**
+   * The turn's own identity and language, which the reaction mechanism seeds its
+   * choice from and picks its vocabulary by. Absent means no reaction: a sound in
+   * a language the surface never named is worse than the silence it replaced.
+   */
+  turn?: Readonly<{ id: string; locale?: string }>;
 }>;
 
 /**
@@ -208,6 +232,15 @@ export function attachNativeCompanionContent(
   // working remark per turn after a real silence, and everything still held at
   // `message_end` as one paragraph.
   let pendingSentences: string[] = [];
+  // The pacing policy this surface chose. Absent means the Chat default, where
+  // all three mechanisms are off and delivery is byte-identical to what it was
+  // before pacing existed.
+  const pacing = options.pacing ?? CHAT_DELIVERY_PACING;
+  const typing = pacing.typing;
+  const reaction = pacing.reaction;
+  const lengthBudget = pacing.lengthBudget;
+  const turnIdentity = options.turn;
+  let reactionReleased = false;
   // One working remark per Pi turn. A step report is emitted step by step, so it
   // appears in EVERY tool-use message; allowing exactly one piece per turn
   // therefore lets company through while making a running narration structurally
@@ -226,10 +259,48 @@ export function attachNativeCompanionContent(
   };
 
   /**
+   * Emits this turn's one reaction sound, if the surface asked for one and the
+   * turn's language has vocabulary for it. It runs at the head of the first
+   * dispatched piece, and `dispatch` serializes that queue, so the sound is
+   * always heard before the words it introduces. The sound is a closed-set
+   * interjection chosen from the turn's own identity: it asserts nothing about
+   * the world, so a reply that never happened cannot be implied by it.
+   */
+  const emitReaction = async (): Promise<void> => {
+    if (reactionReleased) return;
+    reactionReleased = true;
+    if (reaction === null || !incrementalActive || turnIdentity === undefined) return;
+    const sound = selectReactionSound(turnIdentity.id, turnIdentity.locale ?? "", reaction);
+    if (sound === null) return;
+    await sinks.onIncrementalText!(sound);
+  };
+
+  /**
+   * The pieces one presented paragraph becomes. Without a budget, or without the
+   * incremental lane to carry the earlier pieces, the paragraph stays whole: the
+   * length mechanism only ever splits at sentence boundaries the accumulator
+   * already recognizes, and the caller hands the LAST piece to `onFinalText` so a
+   * budgeted reply still commits exactly once.
+   */
+  const splitForBudget = (text: string): readonly string[] => {
+    if (lengthBudget === null || !incrementalActive) return [text];
+    return budgetedSpeechPieces(text, lengthBudget);
+  };
+
+  /**
+   * How long the held first sentence may stay unspoken, measured from its own
+   * content when typing pacing is on: a short remark lands sooner and a long one
+   * later, instead of everything arriving on one flat beat. The flat constant
+   * remains the answer for a surface that switched the mechanism off.
+   */
+  const workingRemarkDelayMs = (sentence: string): number =>
+    typing === null ? WORKING_REMARK_SILENCE_MS : typingDurationMs(present(sentence), typing);
+
+  /**
    * Arms this turn's one working remark: holds the first completed sentence of
-   * whatever message is streaming and releases it once the player has been
-   * silent for `WORKING_REMARK_SILENCE_MS`. A message that finishes sooner never
-   * arms anything, so an ordinary reply is not cut in half by this.
+   * whatever message is streaming and releases it once its own typing time has
+   * passed. A message that finishes sooner never arms anything, so an ordinary
+   * reply is not cut in half by this.
    */
   const scheduleWorkingRemark = (): void => {
     if (!incrementalActive || workingRemarkReleased || remarkTimer !== undefined) return;
@@ -247,9 +318,11 @@ export function attachNativeCompanionContent(
           return;
         }
         workingRemarkReleased = true;
-        await sinks.onIncrementalText!(present(first));
+        const piece = present(first);
+        await emitReaction();
+        for (const part of splitForBudget(piece)) await sinks.onIncrementalText!(part);
       });
-    }, WORKING_REMARK_SILENCE_MS);
+    }, workingRemarkDelayMs(pendingSentences[0]!));
   };
 
   const clearRemarkTimer = (): void => {
@@ -386,7 +459,10 @@ export function attachNativeCompanionContent(
         const piece = present(remark);
         if (piece.length === 0) return;
         workingRemarkReleased = true;
-        dispatch(async () => await sinks.onIncrementalText!(piece));
+        dispatch(async () => {
+          await emitReaction();
+          for (const part of splitForBudget(piece)) await sinks.onIncrementalText!(part);
+        });
         return;
       }
       finalizing = true;
@@ -407,7 +483,14 @@ export function attachNativeCompanionContent(
         // raw units before dehydrating keeps the space between two English
         // sentences, which per-unit dehydration would trim off.
         const paragraph = present([...messageSentences, messageAccumulator.flush()].join(""));
-        if (!presentIsEmpty(paragraph)) dispatch(async () => await sinks.onFinalText(paragraph, stopReason));
+        if (!presentIsEmpty(paragraph)) {
+          const pieces = splitForBudget(paragraph);
+          dispatch(async () => {
+            await emitReaction();
+            for (const piece of pieces.slice(0, -1)) await sinks.onIncrementalText!(piece);
+            await sinks.onFinalText(pieces[pieces.length - 1]!, stopReason);
+          });
+        }
         return;
       }
       const text = readSafeAssistantText(finalMessage, stripStageDirection, dropScaffolding);

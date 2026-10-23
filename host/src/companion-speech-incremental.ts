@@ -3,8 +3,8 @@
  * complete sentences, so a presenter can commit each finished sentence the
  * moment its final boundary arrives instead of waiting for the whole turn.
  *
- * Boundary rules: sentence units close on `。` `!` `？` `?` (full/half width) or
- * a newline, but only while quote/brace family counts are balanced, so `"好的。"`
+ * Boundary rules: sentence units close on `。` `！` `!` `？` `?` (full/half width)
+ * or a newline, but only while quote/brace family counts are balanced, so `"好的。"`
  * stays one unit and `他说:"好的,我去。"继续。"` is not cut mid-quote. A unit is
  * never forced open for budget reasons. Additionally, boundaries inside an
  * open model-scaffolding block (`<thinking>`/`<thought>` without its closer)
@@ -152,5 +152,7 @@ const LEFT_QUOTES = new Set(["“", "‘", '"', "'"]);
 const RIGHT_QUOTES = new Set(["”", "’", '"', "'"]);
 
 function isSentenceBoundary(char: string): boolean {
-  return char === "。" || char === "!" || char === "？" || char === "?" || char === "\n" || char === "\r";
+  return (
+    char === "。" || char === "！" || char === "!" || char === "？" || char === "?" || char === "\n" || char === "\r"
+  );
 }

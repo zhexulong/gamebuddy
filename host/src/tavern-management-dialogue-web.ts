@@ -58,6 +58,8 @@ import {
   type TavernConnectionCreateCommandV1,
   type TavernConnectionModelCommandV1,
   type TavernConnectionRevisionCommandV1,
+  type TavernDeliveryPreferenceCommandV1,
+  type TavernDeliveryPreferenceV1,
   type TavernLanguagePreferenceCommandV1,
   type TavernLanguagePreferenceV1,
   type TavernModelProfilesV1,
@@ -135,6 +137,13 @@ const MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY = [
  * exact legacy surface. A profile advertising them without the Host store
  * fails closed at composition. */
 const MANAGEMENT_LANGUAGE_ROUTES = ["settings.language.read", "settings.language.update"] as const;
+/**
+ * Optional delivery-preference extension: only a profile that declares these
+ * routes mounts the read/write of the player's paced-reply choice. It is its
+ * own group directly after the language group, so a profile that advertises it
+ * without the one Host-owned preference record fails closed at composition.
+ */
+const MANAGEMENT_DELIVERY_ROUTES = ["settings.delivery.read", "settings.delivery.update"] as const;
 const MANAGEMENT_OPERATION_IDS_WITH_MEMORY = [
   "draft.save",
   "draft.discard",
@@ -308,6 +317,9 @@ const voicePreferenceConsentValidator = Compile(
 );
 const languagePreferenceUpdateValidator = Compile(
   TavernBrowserContractV1.schemas.TavernLanguagePreferenceCommandV1Schema,
+);
+const deliveryPreferenceUpdateValidator = Compile(
+  TavernBrowserContractV1.schemas.TavernDeliveryPreferenceCommandV1Schema,
 );
 const createCompanionValidator = Compile(TavernBrowserContractV1.schemas.CreateCompanionCommandV1Schema);
 const personaUpdateValidator = Compile(TavernBrowserContractV1.schemas.PersonaUpdateCommandV1Schema);
@@ -729,7 +741,9 @@ export function createTavernManagementDialogueWebRequestHandler(
     (profile.routeIds.includes("settings.voice.read") ||
       profile.routeIds.includes("settings.voice.consent") ||
       profile.routeIds.includes("settings.language.read") ||
-      profile.routeIds.includes("settings.language.update")) &&
+      profile.routeIds.includes("settings.language.update") ||
+      profile.routeIds.includes("settings.delivery.read") ||
+      profile.routeIds.includes("settings.delivery.update")) &&
     playerPreferenceStore === undefined
   )
     throw new Error("tavern_management_composition_unavailable");
@@ -1037,6 +1051,42 @@ export function createTavernManagementDialogueWebRequestHandler(
           }),
         );
         if (!TavernBrowserValidatorsV1.TavernLanguagePreferenceV1Schema.Check(preference))
+          throw new Error("player_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/delivery") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (
+          !profile.routeIds.includes("settings.delivery.read") ||
+          !profile.operationIds.includes("settings.delivery.read") ||
+          playerPreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const preference: TavernDeliveryPreferenceV1 = deliveryPreference(await playerPreferenceStore.read());
+        if (!TavernBrowserValidatorsV1.TavernDeliveryPreferenceV1Schema.Check(preference))
+          throw new Error("player_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/delivery") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("settings.delivery.update") ||
+          !profile.operationIds.includes("settings.delivery.update") ||
+          playerPreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!deliveryPreferenceUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as TavernDeliveryPreferenceCommandV1;
+        const preference = deliveryPreference(
+          await playerPreferenceStore.update(command.expectedRevision, { action: "setPaced", paced: command.paced }),
+        );
+        if (!TavernBrowserValidatorsV1.TavernDeliveryPreferenceV1Schema.Check(preference))
           throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
@@ -2323,6 +2373,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     coreRoutes,
     MANAGEMENT_VOICE_DEVICES,
     MANAGEMENT_LANGUAGE_ROUTES,
+    MANAGEMENT_DELIVERY_ROUTES,
     MANAGEMENT_CONNECTION_ROUTES,
     MANAGEMENT_MODEL_PROFILE_ROUTES,
     MANAGEMENT_P9_ROUTES,
@@ -2342,6 +2393,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     coreOperations,
     MANAGEMENT_VOICE_DEVICES,
     MANAGEMENT_LANGUAGE_ROUTES,
+    MANAGEMENT_DELIVERY_ROUTES,
     MANAGEMENT_CONNECTION_ROUTES,
     MANAGEMENT_MODEL_PROFILE_ROUTES,
     MANAGEMENT_P9_ROUTES,
@@ -2536,6 +2588,11 @@ function voicePreference(preference: PlayerPreference): TavernVoicePreferenceV1 
 /** The language field group of the one player preference record. */
 function languagePreference(preference: PlayerPreference): TavernLanguagePreferenceV1 {
   return { revision: preference.revision, locale: preference.locale };
+}
+
+/** The delivery field group of the one player preference record. */
+function deliveryPreference(preference: PlayerPreference): TavernDeliveryPreferenceV1 {
+  return { revision: preference.revision, paced: preference.paced };
 }
 
 /**

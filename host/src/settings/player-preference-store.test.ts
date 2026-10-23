@@ -13,6 +13,7 @@ import {
   playerPreferencePath,
   readStoredCompanionLocale,
   resolveCompanionLocale,
+  resolvePacedDelivery,
   VOICE_CLOUD_TTS_DISCLOSURE_VERSION,
 } from "./player-preference-store.js";
 
@@ -46,6 +47,7 @@ test("player preference defaults to unconfigured and projects one record with ex
       decidedAtMs: null,
       outputDevice: null,
       persona: null,
+      paced: false,
     } satisfies PlayerPreference);
 
     const updated = await store.update(0, { action: "setLocale", locale: "zh-CN" });
@@ -57,6 +59,7 @@ test("player preference defaults to unconfigured and projects one record with ex
       "disclosureVersion",
       "locale",
       "outputDevice",
+      "paced",
       "persona",
       "revision",
     ]);
@@ -284,6 +287,7 @@ test("the persisted record requires the exact schema and rejects malformed files
       decidedAtMs: null,
       outputDevice: null,
       persona: null,
+      paced: false,
     };
 
     // An unknown key, a malformed locale, a missing persona and an unapproved
@@ -377,8 +381,75 @@ test("the companion language is the player's own bounded tag, not a closed pair"
       decidedAtMs: null,
       outputDevice: null,
       persona: null,
+      paced: false,
     }),
   );
   await assert.rejects(readStoredCompanionLocale(root), /invalid_player_preference_store/u);
   await rm(root, { recursive: true, force: true });
+});
+
+test("the paced-delivery choice round-trips under the SAME revision and defaults to off", async () => {
+  await withStore(async (path, store) => {
+    // Never chosen: the delivery path reads "not paced", without a second store.
+    assert.equal((await store.read()).paced, false);
+
+    const paced = await store.update(0, { action: "setPaced", paced: true });
+    assert.equal(paced.paced, true);
+    assert.equal(paced.revision, 1);
+    // Choosing pacing is not a consent decision and touches no other group.
+    assert.equal(paced.consent, "undecided");
+    assert.equal(paced.locale, null);
+
+    const reopened = await new PlayerPreferenceStore(path).read();
+    assert.equal(reopened.paced, true);
+
+    // Turning it off is the same revision-checked write.
+    const cleared = await store.update(reopened.revision, { action: "setPaced", paced: false });
+    assert.equal(cleared.paced, false);
+    assert.equal(cleared.revision, 2);
+  });
+});
+
+test("a paced write cannot clobber the other groups and refuses a non-boolean", async () => {
+  await withStore(async (_path, store) => {
+    const language = await store.update(0, { action: "setLocale", locale: "en-US" });
+    // A stale revision from before the language write is refused, so pacing is
+    // one more mutation of the one record rather than a second counter.
+    await assert.rejects(store.update(0, { action: "setPaced", paced: true }), PlayerPreferenceRevisionConflict);
+
+    const paced = await store.update(language.revision, { action: "setPaced", paced: true });
+    assert.equal(paced.locale, "en-US");
+
+    for (const update of [
+      { action: "setPaced" },
+      { action: "setPaced", paced: "true" },
+      { action: "setPaced", paced: 1 },
+      { action: "setPaced", paced: true, extra: true },
+    ]) {
+      await assert.rejects(
+        store.update(paced.revision, update as never),
+        /invalid_player_preference_update/u,
+        `expected ${JSON.stringify(update)} to be refused`,
+      );
+    }
+  });
+});
+
+test("the delivery path reads the player's paced choice from the one root path", async () => {
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "player-preference-paced-"));
+  await mkdir(root, { recursive: true });
+  try {
+    // The runtime-side reader answers the chosen value, not a preference of its own.
+    assert.equal(await resolvePacedDelivery(root), false);
+    const store = new PlayerPreferenceStore(playerPreferencePath(root));
+    await store.update(0, { action: "setPaced", paced: true });
+    assert.equal(await resolvePacedDelivery(root), true);
+
+    // A corrupt record is not "unpaced": the delivery path must refuse rather
+    // than present replies in a shape the player did not choose.
+    await writeFile(playerPreferencePath(root), '{"schemaVersion":1,"revision":0,"paced":"yes"}');
+    await assert.rejects(resolvePacedDelivery(root), /invalid_player_preference_store/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
