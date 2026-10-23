@@ -1,4 +1,5 @@
 import { MessagesSquare } from "lucide-react";
+import type { ChatModelRoute } from "../chat-model-route";
 import type { Messages } from "../i18n";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { Composer, type ComposerDraftActions, type ComposerSettingsAction, type VoiceSurfaceStateV1 } from "./Composer";
@@ -13,7 +14,7 @@ import { Timeline } from "./Timeline";
  * transcript projection plus the authoring facts its one composer renders -
  * never the shell's view object. The shell keeps the session wiring (the send,
  * stop, swipe, regenerate, opening and draft commands and the state they move),
- * including the connection read whose result is `connectionMissing` below;
+ * including the model route whose answer is `modelRoute` below;
  * this module names only what the region shows and what it calls to change it.
  */
 export function ChatSurface({
@@ -47,7 +48,7 @@ export function ChatSurface({
   isGenerating,
   canStop,
   disabled,
-  connectionMissing,
+  modelRoute,
   onOpenSettings,
   voice,
   settingsAction,
@@ -111,12 +112,15 @@ export function ChatSurface({
   canStop: boolean;
   disabled: boolean;
   /**
-   * True only when the Host's durable connection record says nothing is active, so a reply
-   * could not reach a model. The surface says that here, before the player writes a message that
-   * cannot succeed, and offers the one surface where it is fixed - never by disabling the
-   * composer, because writing and fixing the connection are not the same act.
+   * The route a message written here would reach a model through, as `readChatModelRoute`
+   * derives it from the Host's own settings projections.
+   *
+   * The surface owns no rule of its own about this: `connection` and `builtin` both mean a send
+   * works (the second through the shipped profile on this machine's gateway), so the surface says
+   * nothing; `none` is the one state where a reply has no model, and it says so with the way to
+   * Settings; `unknown` says nothing, because a read that did not answer is not evidence.
    */
-  connectionMissing: boolean;
+  modelRoute: ChatModelRoute;
   /** Opens the Settings surface (the connection section is its first block). */
   onOpenSettings: () => void;
   voice?: VoiceSurfaceStateV1 | null;
@@ -149,14 +153,15 @@ export function ChatSurface({
         pendingPlayerMessage={pendingPlayerMessage}
         replyTruncated={replyTruncated}
       />
-      {connectionMissing && (
-        // The standing fact, above the one line that reports the last outcome: no active
-        // connection means the reply cannot reach a model, and the honest sentence about it
-        // belongs on the surface the player is looking at rather than after a failed send.
-        <div className="warning-banner" data-chat-connection-missing="" role="status">
-          <span>{labels.chatNoConnectionTitle}</span>
+      {modelRoute.kind === "none" && (
+        // The standing fact, above the one line that reports the last outcome: the Host could not
+        // serve the model its own send path resolves, so this reply has nowhere to go. The honest
+        // sentence belongs on the surface the player is looking at rather than after a failed send,
+        // and it names the one screen where a model is chosen.
+        <div className="warning-banner" data-chat-no-model="" role="status">
+          <span>{labels.chatNoModelTitle}</span>
           <button type="button" className="small-button" onClick={onOpenSettings}>
-            {labels.chatNoConnectionAction}
+            {labels.chatNoModelAction}
           </button>
         </div>
       )}

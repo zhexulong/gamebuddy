@@ -25,6 +25,7 @@ import {
   type ComposedReferenceGameBrowserRootV1,
 } from "../composed-reference-game-browser-api";
 import { composedProblemView as problemView } from "../composed-problem-view";
+import { type ChatModelRoute, readChatModelRoute } from "../chat-model-route";
 import { newIdempotencyKey, type ReadyView, type ViewState } from "./composed-reference-game-view";
 import { AppBar } from "./AppBar";
 import { ChatSurface } from "./ChatSurface";
@@ -1244,27 +1245,24 @@ export function ComposedReferenceGameApp() {
   const managementPanelsAvailable = view.kind === "ready" && view.session.snapshot.chat !== null;
 
   /**
-   * Whether the durable connection record has anything active to send a reply through.
+   * The route a message the player sends from here would actually reach a model through.
    *
-   * `null` is "not known": the read is an extension-published route, and a mount that does
-   * not serve it says nothing rather than claiming there is no connection. The read is
-   * repeated whenever the conversation is shown again, so activating a connection in
-   * Settings clears the surface's own sentence without a reload - the record, not this
-   * state, remains the authority for every other reader.
+   * It is derived, never guessed: `readChatModelRoute` is the one function that reads the two
+   * settings projections and applies the Host's own precedence (an active connection, else the
+   * shipped Chat profile on this machine's operator gateway), and the conversation words itself
+   * from that answer alone. A mount that publishes neither read, or answers with something this
+   * client cannot read, keeps `unknown`: saying nothing is the only honest sentence then. The read
+   * is repeated whenever the conversation is shown again, so activating a connection in Settings
+   * clears the surface's own sentence without a reload.
    */
-  const [chatConnectionActive, setChatConnectionActive] = useState<boolean | null>(null);
+  const [chatModelRoute, setChatModelRoute] = useState<ChatModelRoute>({ kind: "unknown" });
   const conversationShown = view.kind === "ready" && view.session.snapshot.chat !== null;
   useEffect(() => {
     if (!conversationShown || shownSurface !== CHAT_PANEL) return;
     let active = true;
-    void (async () => {
-      try {
-        const state = await managementPipelineApiRef.current.readConnection();
-        if (active) setChatConnectionActive(state.active !== null);
-      } catch {
-        if (active) setChatConnectionActive(null);
-      }
-    })();
+    void readChatModelRoute(managementPipelineApiRef.current).then((route) => {
+      if (active) setChatModelRoute(route);
+    });
     return () => {
       active = false;
     };
@@ -1397,7 +1395,7 @@ export function ComposedReferenceGameApp() {
                 isGenerating={turnInFlight}
                 canStop={stopAvailable}
                 disabled={!submitAvailable}
-                connectionMissing={chatConnectionActive === false}
+                modelRoute={chatModelRoute}
                 onOpenSettings={openSettings}
                 voice={view.session.snapshot.voice}
                 settingsAction={{
