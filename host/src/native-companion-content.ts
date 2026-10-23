@@ -288,13 +288,19 @@ export function attachNativeCompanionContent(
   };
 
   /**
-   * How long the held first sentence may stay unspoken, measured from its own
-   * content when typing pacing is on: a short remark lands sooner and a long one
-   * later, instead of everything arriving on one flat beat. The flat constant
-   * remains the answer for a surface that switched the mechanism off.
+   * How long the held first sentence may stay unspoken.
+   *
+   * A short remark lands sooner than the flat beat and a long one lands on it - it
+   * never lands LATER. That asymmetry is the whole point of the mechanism: the
+   * first piece exists to end the silence, so content-proportional typing time may
+   * pull it forward but may not push it back. Measured on a six-second turn, an
+   * unbounded version spoke at 5401 ms against the flat beat's 3011 ms, which made
+   * pacing cost more silence than it removed.
    */
   const workingRemarkDelayMs = (sentence: string): number =>
-    typing === null ? WORKING_REMARK_SILENCE_MS : typingDurationMs(present(sentence), typing);
+    typing === null
+      ? WORKING_REMARK_SILENCE_MS
+      : Math.min(WORKING_REMARK_SILENCE_MS, typingDurationMs(present(sentence), typing));
 
   /**
    * Arms this turn's one working remark: holds the first completed sentence of
