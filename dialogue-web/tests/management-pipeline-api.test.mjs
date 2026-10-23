@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import {
+  problemCodeFor,
   problemTextWithCode,
   TavernProblemError,
   TavernProtocolError,
@@ -22,6 +23,7 @@ import {
   validateVoicePreference,
 } from "../src/management-pipeline-api.ts";
 import { createManagementPipelineSession } from "../src/management-pipeline-session.ts";
+import { messages } from "../src/i18n.ts";
 
 const HANDLE = "A".repeat(43);
 const BAD_HANDLE = "B".repeat(43);
@@ -628,10 +630,10 @@ test("management model-profile validators and client round-trip a player-typed m
  * `connection_not_ready` and a genuine outage all read as the same sentence and
  * the player could not tell what to do next.
  *
- * Two halves, deliberately: the shared helper is asserted to make a bounded code
- * distinguishable from a generic failure, and every management surface is
- * scanned for the catch shape that flattens one. The scan is proven against the
- * shape it forbids, so it cannot pass by finding nothing.
+ * Two halves, deliberately: the shared helper is asserted to render a bounded code as the
+ * player's own sentence - and to keep the code out of it - while every management surface is
+ * scanned for the catch shape that flattens one. The scan is proven against the shape it
+ * forbids, so it cannot pass by finding nothing.
  */
 const WEB = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
@@ -670,7 +672,8 @@ test("the Host's typed 413 payload_too_large surfaces as a problem, not as proto
   // `payload_too_large` (`host/src/tavern-management-dialogue-web.test.ts:1410-1440`), and
   // that code is sent outside the Host's schema check, so the mirror is the only thing that
   // can read it: before the fix `PROBLEM_CODES` did not name it and the refusal arrived as
-  // `TavernProtocolError`, which carries no code for `problemTextWithCode` to surface.
+  // `TavernProtocolError`, which carries no code for `problemCodeFor` to name.
+  const labels = messages("en");
   const problem = {
     type: "about:blank",
     title: "Payload too large",
@@ -691,15 +694,22 @@ test("the Host's typed 413 payload_too_large surfaces as a problem, not as proto
     ),
     (error) => {
       assert.ok(error instanceof TavernProblemError, `expected the typed problem, got ${error?.name}`);
-      assert.equal(error.code, "payload_too_large");
-      assert.equal(problemTextWithCode("Operation failed.", error), "Operation failed. (payload_too_large)");
+      // The developer half names the code; the player's half never does.
+      assert.equal(problemCodeFor(error), "payload_too_large");
+      assert.equal(
+        problemTextWithCode("Operation failed.", error, labels),
+        labels.problemRequestRejectedDetail,
+        "a typed 413 is the catalogue's \"that cannot be taken as sent\" sentence",
+      );
+      assert.equal(problemTextWithCode("Operation failed.", error, labels).includes("payload_too_large"), false);
       return true;
     },
   );
   assert.equal(calls, 1);
 });
 
-test("problem-code-surface.1: a bounded problem code is distinguishable from a generic failure", () => {
+test("problem-code-surface.1: a bounded problem code is worded for the player and named for the developer", () => {
+  const labels = messages("en");
   const bounded = new TavernProblemError({
     type: "urn:gamebuddy:tavern:draft_conflict",
     title: "draft conflict",
@@ -708,13 +718,22 @@ test("problem-code-surface.1: a bounded problem code is distinguishable from a g
     requestId: HANDLE,
     retryable: false,
   });
-  const message = problemTextWithCode("Operation failed.", bounded);
-  assert.notEqual(message, "Operation failed.", "a bounded code must not collapse into the generic sentence");
-  assert.ok(message.includes("draft_conflict"), `the bounded code must appear: ${message}`);
+  const message = problemTextWithCode("Operation failed.", bounded, labels);
+  // The sentence is the one the Chat view words this refusal with - not a second vocabulary of
+  // the management surface's own.
+  assert.equal(message, labels.problemRevisionConflictDetail, "a stale draft reads as the stale-draft sentence");
+  assert.notEqual(message, "Operation failed.", "a bounded refusal must not collapse into the generic sentence");
+  // The strong half: the code is not in the text the player reads.
+  assert.equal(message.includes("draft_conflict"), false, `the raw code must not reach the player: ${message}`);
+  // ... and it is not lost, it is in the developer half.
+  assert.equal(problemCodeFor(bounded), "draft_conflict", "a log line or a data-* attribute still names the code");
 
-  // An opaque protocol failure carries no code, so the sentence is the summary.
-  assert.equal(problemTextWithCode("Operation failed.", new TavernProtocolError()), "Operation failed.");
-  assert.equal(problemTextWithCode("Operation failed.", new Error("boom")), "Operation failed.");
+  // An opaque protocol failure names no code, so the sentence is the caller's own and the
+  // developer half reports nothing.
+  assert.equal(problemTextWithCode("Operation failed.", new TavernProtocolError(), labels), "Operation failed.");
+  assert.equal(problemCodeFor(new TavernProtocolError()), null);
+  assert.equal(problemTextWithCode("Operation failed.", new Error("boom"), labels), "Operation failed.");
+  assert.equal(problemCodeFor(new Error("boom")), null);
 });
 
 test("problem-code-surface.2: the flattening scan detects the shape it forbids", () => {
