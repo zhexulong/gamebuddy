@@ -119,9 +119,9 @@ test("desktop bootstrap helper names a failed Mod step and still serves the play
 
 test("desktop bootstrap helper fails closed on an invalid composed surface or marker nonce without any guardian contact", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
-  for (const [scenario, options] of [
-    ["invalid-surface", { surface: "bogus" }],
-    ["invalid-nonce", { nonceSha256: "not-hex" }],
+  for (const [scenario, options, reason] of [
+    ["invalid-surface", { surface: "bogus" }, "surface_env_invalid"],
+    ["invalid-nonce", { nonceSha256: "not-hex" }, "narrative_gate_nonce_env_invalid"],
   ] as const) {
     const result = await runWireFixture(scenario, options);
     assert.equal(result.acknowledgement, undefined);
@@ -130,8 +130,9 @@ test("desktop bootstrap helper fails closed on an invalid composed surface or ma
     // bootstrap refusal, so a CI log names the root-admission facts instead of only 'unavailable'.
     // The bare message stays the LAST line, which is what the assertion below and
     // verify-self-contained-generation's stderr.trim() both depend on.
-    assert.match(result.stderr, /(?:^|\n)wire_admission_probe:localappdata=[a-z_]+;localappdata_is_fixture=(?:true|false);program=[a-z_+]+;data=[a-z_+]+;operational=[a-z_+]+;presentation=[a-z_+]+\nwire_admission_deep:[a-z0-9_,]+\n(?:(?:^|\n)[^\n]+\n)*desktop_runtime_bootstrap_unavailable\n$/);
-    assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable\n$/);
+    const lastLine = `desktop_runtime_bootstrap_unavailable:${reason}`;
+    assert.match(result.stderr, new RegExp(`(?:^|\\n)wire_admission_probe:localappdata=[a-z_]+;localappdata_is_fixture=(?:true|false);program=[a-z_+]+;data=[a-z_+]+;operational=[a-z_+]+;presentation=[a-z_]+\\nwire_admission_deep:[a-z0-9_,]+\\n(?:(?:^|\\n)[^\\n]+\\n)*${lastLine}\\n$`));
+    assert.match(result.stderr, new RegExp(`(?:^|\\n)${lastLine}\\n$`));
   }
 });
 
@@ -189,7 +190,9 @@ test("desktop bootstrap helper rejects arm when guardian withholds ACK", async (
   const result = await runWireFixture("withheld-arm-ack");
   assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
   assert.deepEqual(result.requests.map((request) => request.operation), ["hello", "arm_attempt"]);
-  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable\n$/);
+  // The operation budget expired with the acknowledgement never written, so the
+  // session closed and named the closure rather than the waiting operation.
+  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable:guardian_session_closed\n$/);
   assert.doesNotMatch(result.stderr, /unexpected_arm_success|success|armed|launch_role|contain_role/);
 });
 
@@ -198,7 +201,7 @@ test("desktop bootstrap helper rejects contain when guardian withholds ACK", asy
   const result = await runWireFixture("withheld-contain-ack");
   assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
   assert.deepEqual(result.requests.map((request) => request.operation), ["hello", "arm_attempt", "contain_role"]);
-  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable\n$/);
+  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable:guardian_session_closed\n$/);
 });
 
 test("desktop bootstrap helper rejects launch beyond the local deadline horizon", async (t) => {
@@ -206,7 +209,8 @@ test("desktop bootstrap helper rejects launch beyond the local deadline horizon"
   const result = await runWireFixture("overhorizon-launch");
   assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
   assert.deepEqual(result.requests.map((request) => request.operation), ["hello", "arm_attempt"]);
-  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable\n$/);
+  // Refused locally by the launch deadline horizon, before any launch frame is written.
+  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable:guardian_command_input_invalid\n$/);
   assert.doesNotMatch(result.stderr, /launch_role|unexpected_launch_success/);
 });
 
@@ -219,7 +223,7 @@ test("desktop bootstrap helper times out a delayed arm ACK and rejects a late AC
   assert.equal(typeof result.workerClosedAt, "number");
   assert.ok(result.workerClosedAt! - result.armReceiptAt! >= 40, "rejection must wait for the operation budget after peer receipt");
   assert.ok(result.workerClosedAt! - result.armReceiptAt! < 2_000, "timed rejection must be bounded");
-  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable\n$/);
+  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable:guardian_session_closed\n$/);
   assert.doesNotMatch(result.stderr, /unexpected_arm_success|success|armed|launch_role|contain_role/);
 });
 
@@ -228,7 +232,7 @@ test("desktop bootstrap helper does not send expired launch", async (t) => {
   const result = await runWireFixture("expired-launch");
   assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
   assert.deepEqual(result.requests.map((request) => request.operation), ["hello", "arm_attempt"]);
-  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable\n$/);
+  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable:guardian_command_input_invalid\n$/);
 });
 
 test("desktop bootstrap helper rejects when guardian peer disconnects", async (t) => {
@@ -236,7 +240,7 @@ test("desktop bootstrap helper rejects when guardian peer disconnects", async (t
   const result = await runWireFixture("peer-disconnect");
   assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
   assert.deepEqual(result.requests.map((request) => request.operation), ["hello", "arm_attempt"]);
-  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable\n$/);
+  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable:guardian_session_closed\n$/);
 });
 
 test("desktop bootstrap helper rejects malformed arm input before writing arm_attempt", async (t) => {
@@ -244,7 +248,7 @@ test("desktop bootstrap helper rejects malformed arm input before writing arm_at
   const result = await runWireFixture("malformed-arm");
   assert.equal(JSON.parse(result.acknowledgement!).status, "accepted");
   assert.deepEqual(result.requests.map((request) => request.operation), ["hello"]);
-  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable\n$/);
+  assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable:guardian_command_input_invalid\n$/);
   assert.doesNotMatch(result.stderr, /unexpected_arm_success|success|armed|arm_attempt/);
 });
 
@@ -1503,23 +1507,23 @@ test("recovery reads the shared `unavailable` status by position, never by its t
 test("recovery rejects an acknowledgement the broker would never write at that position", async () => {
   const withoutActor = recoveryAcknowledgement("recovery_accepted");
   delete withoutActor.recoveryInstanceId;
-  const cases: ReadonlyArray<readonly [string, ReadonlyArray<Readonly<Record<string, unknown>>>]> = [
-    ["gate acknowledgement carrying a containment role", [recoveryAcknowledgement("recovery_accepted", { role: "player_host" })]],
-    ["gate acknowledgement without the recovery actor", [withoutActor]],
-    ["gate acknowledgement for another recovery actor", [recoveryAcknowledgement("recovery_accepted", { recoveryInstanceId: "55555555-5555-4555-8555-555555555555" })]],
-    ["gate acknowledgement for another attempt", [recoveryAcknowledgement("recovery_accepted", { attemptId: "66666666-6666-4666-8666-666666666666" })]],
-    ["gate acknowledgement for another guardian epoch", [recoveryAcknowledgement("recovery_accepted", { guardianEpoch: 2 })]],
-    ["gate acknowledgement from the role CAS operation", [recoveryAcknowledgement("recovery_accepted", { operation: "recovery_role_cas_ack" })]],
-    ["gate position answered with a role containment status", [recoveryAcknowledgement("player_contained")]],
-    ["role position answered with a gate status", [recoveryAcknowledgement("recovery_accepted"), recoveryAcknowledgement("recovery_accepted")]],
-    ["terminal position answered with a role status", [recoveryAcknowledgement("recovery_accepted"), recoveryAcknowledgement("player_contained"), recoveryAcknowledgement("ai_contained"), recoveryAcknowledgement("ai_contained")]],
-    ["terminal position answered with the gate-held status", [recoveryAcknowledgement("recovery_accepted"), recoveryAcknowledgement("player_contained"), recoveryAcknowledgement("ai_contained"), recoveryAcknowledgement("unavailable")]],
+  const cases: ReadonlyArray<readonly [string, ReadonlyArray<Readonly<Record<string, unknown>>>, string]> = [
+    ["gate acknowledgement carrying a containment role", [recoveryAcknowledgement("recovery_accepted", { role: "player_host" })], "guardian_recovery_gate_acknowledgement_invalid"],
+    ["gate acknowledgement without the recovery actor", [withoutActor], "guardian_recovery_gate_acknowledgement_invalid"],
+    ["gate acknowledgement for another recovery actor", [recoveryAcknowledgement("recovery_accepted", { recoveryInstanceId: "55555555-5555-4555-8555-555555555555" })], "guardian_recovery_gate_acknowledgement_invalid"],
+    ["gate acknowledgement for another attempt", [recoveryAcknowledgement("recovery_accepted", { attemptId: "66666666-6666-4666-8666-666666666666" })], "guardian_recovery_gate_acknowledgement_invalid"],
+    ["gate acknowledgement for another guardian epoch", [recoveryAcknowledgement("recovery_accepted", { guardianEpoch: 2 })], "guardian_recovery_gate_acknowledgement_invalid"],
+    ["gate acknowledgement from the role CAS operation", [recoveryAcknowledgement("recovery_accepted", { operation: "recovery_role_cas_ack" })], "guardian_recovery_gate_acknowledgement_invalid"],
+    ["gate position answered with a role containment status", [recoveryAcknowledgement("player_contained")], "guardian_recovery_gate_acknowledgement_invalid"],
+    ["role position answered with a gate status", [recoveryAcknowledgement("recovery_accepted"), recoveryAcknowledgement("recovery_accepted")], "guardian_recovery_player_acknowledgement_invalid"],
+    ["terminal position answered with a role status", [recoveryAcknowledgement("recovery_accepted"), recoveryAcknowledgement("player_contained"), recoveryAcknowledgement("ai_contained"), recoveryAcknowledgement("ai_contained")], "guardian_recovery_settled_acknowledgement_invalid"],
+    ["terminal position answered with the gate-held status", [recoveryAcknowledgement("recovery_accepted"), recoveryAcknowledgement("player_contained"), recoveryAcknowledgement("ai_contained"), recoveryAcknowledgement("unavailable")], "guardian_recovery_settled_acknowledgement_invalid"],
   ];
-  for (const [label, acknowledgements] of cases) {
+  for (const [label, acknowledgements, reason] of cases) {
     const harness = recoveryHarness(acknowledgements);
     await assert.rejects(
       () => driveGuardianRecoveryConversation(harness.transport, recoveryBinding, recoveryInput(harness.events)),
-      /desktop_runtime_bootstrap_unavailable/,
+      new RegExp(`desktop_runtime_bootstrap_unavailable:${reason}$`),
       label,
     );
   }
@@ -1530,9 +1534,9 @@ test("recovery refuses malformed input and a missing post-CAS binding without in
   const input = recoveryInput(harness.events);
   // A recovery actor the native ingress cannot parse, an empty gate body, and a
   // zero wait budget are all refused before any frame reaches the wire.
-  await assert.rejects(() => driveGuardianRecoveryConversation(harness.transport, recoveryBinding, { ...input, recoveryInstanceId: "gamebuddy-stardew-token" }), /desktop_runtime_bootstrap_unavailable/);
-  await assert.rejects(() => driveGuardianRecoveryConversation(harness.transport, recoveryBinding, { ...input, preCasFrame: new Uint8Array(0) }), /desktop_runtime_bootstrap_unavailable/);
-  await assert.rejects(() => driveGuardianRecoveryConversation(harness.transport, recoveryBinding, { ...input, operationWaitBudgetMs: 0 }), /desktop_runtime_bootstrap_unavailable/);
+  await assert.rejects(() => driveGuardianRecoveryConversation(harness.transport, recoveryBinding, { ...input, recoveryInstanceId: "gamebuddy-stardew-token" }), /desktop_runtime_bootstrap_unavailable:guardian_recovery_input_invalid$/);
+  await assert.rejects(() => driveGuardianRecoveryConversation(harness.transport, recoveryBinding, { ...input, preCasFrame: new Uint8Array(0) }), /desktop_runtime_bootstrap_unavailable:guardian_recovery_input_invalid$/);
+  await assert.rejects(() => driveGuardianRecoveryConversation(harness.transport, recoveryBinding, { ...input, operationWaitBudgetMs: 0 }), /desktop_runtime_bootstrap_unavailable:guardian_recovery_input_invalid$/);
   assert.deepEqual(harness.frames, []);
   assert.deepEqual(harness.events, []);
 
@@ -1542,7 +1546,7 @@ test("recovery refuses malformed input and a missing post-CAS binding without in
   const shortCas = recoveryHarness([recoveryAcknowledgement("recovery_accepted")]);
   await assert.rejects(
     () => driveGuardianRecoveryConversation(shortCas.transport, recoveryBinding, { ...recoveryInput(shortCas.events), beginRecovery: async () => new Uint8Array(0) }),
-    /desktop_runtime_bootstrap_unavailable/,
+    /desktop_runtime_bootstrap_unavailable:guardian_recovery_post_cas_frame_invalid$/,
   );
   assert.deepEqual(shortCas.frames.map((frame) => frame.operation), ["recover_attempt"]);
 });

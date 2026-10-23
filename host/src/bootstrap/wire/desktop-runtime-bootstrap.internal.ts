@@ -131,7 +131,7 @@ const desktopGuardianSessionBindings = new WeakMap<object, DesktopGuardianSessio
 
 /** One-shot private bootstrap sequence invoked only by the fixed host entry. */
 export async function runDesktopHostBootstrap(artifactRoot: string): Promise<void> {
-  if (process.platform !== "win32") throw unavailable();
+  if (process.platform !== "win32") throw unavailable("platform_not_windows");
 
   // Every status frame below precedes the acknowledgement and describes the step the
   // child is entering, so the launcher's silence watch can be re-armed by real facts
@@ -250,7 +250,7 @@ async function readBootstrapFrame(): Promise<Buffer> {
   for await (const chunk of process.stdin) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += bytes.length;
-    if (length > MAX_WIRE_BYTES) throw unavailable();
+    if (length > MAX_WIRE_BYTES) throw unavailable("wire_too_long");
     chunks.push(bytes);
   }
   return Buffer.concat(chunks);
@@ -270,7 +270,7 @@ function parseBootstrapFrame(bytes: Buffer): DesktopHostBootstrapFrame {
       "rootLayout",
     ])
   )
-    throw unavailable();
+    throw unavailable("bootstrap_frame_shape_invalid");
   if (
     value.schema !== bootstrapSchema ||
     value.protocolVersion !== 1 ||
@@ -279,7 +279,7 @@ function parseBootstrapFrame(bytes: Buffer): DesktopHostBootstrapFrame {
     !validHex(value.inventoryDigest) ||
     !validHex(value.runtimeAdmissionSha256)
   )
-    throw unavailable();
+    throw unavailable("bootstrap_frame_binding_invalid");
   const rootLayout = parseRootLayout(value.rootLayout);
   return Object.freeze({
     bootstrapId: value.bootstrapId,
@@ -291,15 +291,18 @@ function parseBootstrapFrame(bytes: Buffer): DesktopHostBootstrapFrame {
 }
 
 function parseOneWireDocument(bytes: Buffer): unknown {
-  if (bytes.length === 0 || bytes.length > MAX_WIRE_BYTES || bytes.includes(0) || bytes.includes(13))
-    throw unavailable();
-  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) throw unavailable();
-  if (bytes.at(-1) !== 10 || bytes.subarray(0, -1).includes(10)) throw unavailable();
+  if (bytes.length === 0) throw unavailable("wire_empty");
+  if (bytes.length > MAX_WIRE_BYTES) throw unavailable("wire_too_long");
+  if (bytes.includes(0)) throw unavailable("wire_nul_byte");
+  if (bytes.includes(13)) throw unavailable("wire_carriage_return");
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) throw unavailable("wire_bom");
+  if (bytes.at(-1) !== 10) throw unavailable("wire_not_newline_terminated");
+  if (bytes.subarray(0, -1).includes(10)) throw unavailable("wire_multiple_documents");
   let source: string;
   try {
     source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, -1));
   } catch {
-    throw unavailable();
+    throw unavailable("wire_not_utf8");
   }
   if (
     source.length === 0 ||
@@ -308,11 +311,11 @@ function parseOneWireDocument(bytes: Buffer): unknown {
     source.includes("\n") ||
     source.includes("\u0000")
   )
-    throw unavailable();
+    throw unavailable("wire_text_invalid");
   try {
     return parseStrictJson(source);
   } catch {
-    throw unavailable();
+    throw unavailable("wire_not_json");
   }
 }
 
@@ -321,7 +324,7 @@ function parseRootLayout(value: unknown): DesktopRootLayout {
     !isRecord(value) ||
     !exactKeys(value, ["schema", "programRoot", "dataRoot", "operationalRoot", "presentationRoot"])
   )
-    throw unavailable();
+    throw unavailable("root_layout_shape_invalid");
   if (
     value.schema !== rootLayoutSchema ||
     !validPath(value.programRoot) ||
@@ -329,7 +332,7 @@ function parseRootLayout(value: unknown): DesktopRootLayout {
     !validPath(value.operationalRoot) ||
     !validPath(value.presentationRoot)
   )
-    throw unavailable();
+    throw unavailable("root_layout_path_invalid");
   return Object.freeze({
     programRoot: value.programRoot,
     dataRoot: value.dataRoot,
@@ -340,7 +343,7 @@ function parseRootLayout(value: unknown): DesktopRootLayout {
 
 async function validateRootLayout(layout: DesktopRootLayout, artifactRoot: string): Promise<DesktopRootLayout> {
   const localAppData = process.env.LOCALAPPDATA;
-  if (!validPath(localAppData)) throw unavailable();
+  if (!validPath(localAppData)) throw unavailable("localappdata_invalid");
   const expected = Object.freeze({
     programRoot: win32.join(localAppData, "Programs", "GameBuddy"),
     dataRoot: win32.join(localAppData, "GameBuddy", "data"),
@@ -353,9 +356,9 @@ async function validateRootLayout(layout: DesktopRootLayout, artifactRoot: strin
     layout.operationalRoot !== expected.operationalRoot ||
     layout.presentationRoot !== expected.presentationRoot
   )
-    throw unavailable();
+    throw unavailable("root_layout_not_launcher_shaped");
 
-  if (!strictlyContains(layout.programRoot, artifactRoot)) throw unavailable();
+  if (!strictlyContains(layout.programRoot, artifactRoot)) throw unavailable("program_root_missing");
   const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
   const roots = [layout.programRoot, layout.dataRoot, layout.operationalRoot, layout.presentationRoot] as const;
   const [chains, securities] = await Promise.all([
@@ -371,13 +374,14 @@ async function validateRootLayout(layout: DesktopRootLayout, artifactRoot: strin
     ) ||
     securities.some((security, index) => !validRootSecurity(security, chains[index]!.at(-1), volume))
   )
-    throw unavailable();
+    throw unavailable("root_identity_chain_invalid");
   for (const mutableRoot of [layout.dataRoot, layout.operationalRoot, layout.presentationRoot]) {
-    if (strictlyContains(artifactRoot, mutableRoot) || mutableRoot === artifactRoot) throw unavailable();
+    if (strictlyContains(artifactRoot, mutableRoot) || mutableRoot === artifactRoot)
+      throw unavailable("artifact_overlaps_mutable");
   }
   for (let index = 0; index < roots.length; index += 1) {
     for (let other = index + 1; other < roots.length; other += 1) {
-      if (overlaps(roots[index]!, roots[other]!)) throw unavailable();
+      if (overlaps(roots[index]!, roots[other]!)) throw unavailable("root_layout_overlap");
     }
   }
   if (
@@ -385,7 +389,7 @@ async function validateRootLayout(layout: DesktopRootLayout, artifactRoot: strin
     overlaps(layout.programRoot, layout.operationalRoot) ||
     overlaps(layout.programRoot, layout.presentationRoot)
   )
-    throw unavailable();
+    throw unavailable("program_root_overlaps_mutable");
   return layout;
 }
 
@@ -439,8 +443,8 @@ function mintDesktopRootLayoutCapability(layout: DesktopRootLayout): DesktopRoot
 }
 
 function consumeDesktopRootLayoutCapability(capability: DesktopRootLayoutCapability): DesktopRootLayoutCapability {
-  if (!desktopRootLayoutCapabilities.delete(capability)) throw unavailable();
-  if (desktopRootLayouts.get(capability) === undefined) throw unavailable();
+  if (!desktopRootLayoutCapabilities.delete(capability)) throw unavailable("root_layout_capability_unknown");
+  if (desktopRootLayouts.get(capability) === undefined) throw unavailable("root_layout_capability_unbound");
   desktopRootLayouts.delete(capability);
   return capability;
 }
@@ -463,10 +467,10 @@ function mintDesktopGuardianSessionCapability(frame: DesktopHostBootstrapFrame):
 function consumeDesktopGuardianSessionCapability(
   capability: DesktopGuardianSessionCapability,
 ): DesktopGuardianSessionBinding {
-  if (!desktopGuardianSessionCapabilities.delete(capability)) throw unavailable();
+  if (!desktopGuardianSessionCapabilities.delete(capability)) throw unavailable("guardian_session_capability_unknown");
   const binding = desktopGuardianSessionBindings.get(capability);
   desktopGuardianSessionBindings.delete(capability);
-  if (binding === undefined) throw unavailable();
+  if (binding === undefined) throw unavailable("guardian_session_capability_unbound");
   return binding;
 }
 
@@ -515,22 +519,22 @@ async function loadDesktopHostAssemblyInput(
   const gameSessionMode = process.env.GAMEBUDDY_HOST_GAME_SESSION_MODE;
   const surface = process.env.GAMEBUDDY_HOST_SURFACE;
   const tavernNarrativeGateNonceSha256 = process.env.GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256;
+  if (manifestPath === undefined || manifestPath.length === 0) throw unavailable("deployment_manifest_env_missing");
+  if (gameSessionMode !== "fresh" && gameSessionMode !== "known") throw unavailable("game_session_mode_env_invalid");
   if (
-    manifestPath === undefined ||
-    manifestPath.length === 0 ||
-    (gameSessionMode !== "fresh" && gameSessionMode !== "known") ||
-    (surface !== undefined &&
-      surface !== "composed-reference-game" &&
-      surface !== "chat-only" &&
-      surface !== "management") ||
-    (tavernNarrativeGateNonceSha256 !== undefined && !/^[a-f0-9]{64}$/.test(tavernNarrativeGateNonceSha256))
+    surface !== undefined &&
+    surface !== "composed-reference-game" &&
+    surface !== "chat-only" &&
+    surface !== "management"
   )
-    throw unavailable();
+    throw unavailable("surface_env_invalid");
+  if (tavernNarrativeGateNonceSha256 !== undefined && !/^[a-f0-9]{64}$/.test(tavernNarrativeGateNonceSha256))
+    throw unavailable("narrative_gate_nonce_env_invalid");
   let manifest;
   try {
     manifest = await loadHostDeploymentManifest(manifestPath);
   } catch {
-    throw unavailable();
+    throw unavailable("deployment_manifest_unreadable");
   }
   return Object.freeze({
     manifest,
@@ -722,7 +726,7 @@ class GuardianSessionClient implements DesktopGuardianSession {
   async recover(input: DesktopGuardianRecovery): Promise<GuardianRecoveryAck> {
     return await this.serialize(async () => {
       try {
-        if (this.#closed) throw unavailable();
+        if (this.#closed) throw unavailable("guardian_session_closed");
         return await driveGuardianRecoveryConversation(
           {
             write: (frame) => {
@@ -750,18 +754,21 @@ class GuardianSessionClient implements DesktopGuardianSession {
       operation: "hello",
       ...this.binding,
     });
-    if (!validHelloAcknowledgement(acknowledgement, this.binding)) throw unavailable();
+    if (!validHelloAcknowledgement(acknowledgement, this.binding))
+      throw unavailable("guardian_hello_acknowledgement_invalid");
   }
 
   private async command(operation: GuardianCommandOperation, input: GuardianInput): Promise<GuardianAck> {
     return await this.serialize(async () => {
       try {
-        if (this.#closed || !validGuardianInput(operation, input)) throw unavailable();
+        if (this.#closed) throw unavailable("guardian_session_closed");
+        if (!validGuardianInput(operation, input)) throw unavailable("guardian_command_input_invalid");
         const acknowledgement = await this.request(
           guardianCommandFrame(operation, this.binding, input),
           operation === "launch_role" ? input.deadlineUnixMs! - Date.now() : input.operationWaitBudgetMs!,
         );
-        if (!validCommandAcknowledgement(acknowledgement, operation, input, this.binding)) throw unavailable();
+        if (!validCommandAcknowledgement(acknowledgement, operation, input, this.binding))
+          throw unavailable("guardian_command_acknowledgement_invalid");
         return acknowledgement;
       } catch (error) {
         this.fail();
@@ -781,10 +788,12 @@ class GuardianSessionClient implements DesktopGuardianSession {
   }
 
   private request(message: Record<string, unknown>, waitBudgetMs?: number): Promise<Record<string, unknown>> {
-    if (this.#closed || this.#waiter !== undefined || (waitBudgetMs !== undefined && !validWaitBudget(waitBudgetMs)))
-      return Promise.reject(unavailable());
+    if (this.#closed) return Promise.reject(unavailable("guardian_session_closed"));
+    if (this.#waiter !== undefined) return Promise.reject(unavailable("guardian_request_already_pending"));
+    if (waitBudgetMs !== undefined && !validWaitBudget(waitBudgetMs))
+      return Promise.reject(unavailable("guardian_wait_budget_invalid"));
     const bytes = Buffer.from(`${JSON.stringify(message)}\n`, "utf8");
-    if (bytes.length > MAX_GUARDIAN_WIRE_BYTES) return Promise.reject(unavailable());
+    if (bytes.length > MAX_GUARDIAN_WIRE_BYTES) return Promise.reject(unavailable("guardian_wire_too_long"));
     return this.awaitWaiter(bytes, waitBudgetMs);
   }
 
@@ -795,8 +804,9 @@ class GuardianSessionClient implements DesktopGuardianSession {
    * recovery conversation answers two written frames with one acknowledgement.
    */
   private awaitAcknowledgement(waitBudgetMs: number): Promise<Record<string, unknown>> {
-    if (this.#closed || this.#waiter !== undefined || !validWaitBudget(waitBudgetMs))
-      return Promise.reject(unavailable());
+    if (this.#closed) return Promise.reject(unavailable("guardian_session_closed"));
+    if (this.#waiter !== undefined) return Promise.reject(unavailable("guardian_request_already_pending"));
+    if (!validWaitBudget(waitBudgetMs)) return Promise.reject(unavailable("guardian_wait_budget_invalid"));
     return this.awaitWaiter(undefined, waitBudgetMs);
   }
 
@@ -860,7 +870,7 @@ class GuardianSessionClient implements DesktopGuardianSession {
     if (waiter?.timer !== undefined) clearTimeout(waiter.timer);
     const lost = this.#lost;
     this.#lost = undefined;
-    waiter?.reject(unavailable());
+    waiter?.reject(unavailable("guardian_session_closed"));
     // After the waiter settles, so an operation this loss interrupted reports its
     // own refusal before the process begins to leave.
     lost?.();
@@ -872,7 +882,7 @@ function connectGuardianPipe(path: string): Promise<Socket> {
     const socket = createConnection(path);
     const rejectConnection = (): void => {
       socket.destroy();
-      reject(unavailable());
+      reject(unavailable("guardian_pipe_unreachable"));
     };
     socket.once("connect", () => {
       socket.off("error", rejectConnection);
@@ -1124,7 +1134,8 @@ function isRecoveryClassification(value: string): value is GuardianRecoveryClass
 }
 
 function roleClassified(role: GuardianRecoveryRole, classification: string | undefined): GuardianRecoveryAck {
-  if (classification === undefined || !isRecoveryClassification(classification)) throw unavailable();
+  if (classification === undefined || !isRecoveryClassification(classification))
+    throw unavailable("guardian_recovery_classification_invalid");
   return Object.freeze({ outcome: "role_classified", role, classification });
 }
 
@@ -1173,7 +1184,7 @@ export async function driveGuardianRecoveryConversation(
   binding: DesktopGuardianSessionBinding,
   input: DesktopGuardianRecovery,
 ): Promise<GuardianRecoveryAck> {
-  if (!validRecoveryInput(input)) throw unavailable();
+  if (!validRecoveryInput(input)) throw unavailable("guardian_recovery_input_invalid");
   // Gate. The broker injects the native recovery token into this one frame, and
   // it opens the gate only while it holds the exact recorded lease binding.
   const gate = transport.receive();
@@ -1182,7 +1193,7 @@ export async function driveGuardianRecoveryConversation(
   // `unavailable` at this position is the gate refusing to open: nothing
   // downstream ran, no durable CAS may run, and the previous lease stays
   // authority.
-  if (gateStatus === undefined) throw unavailable();
+  if (gateStatus === undefined) throw unavailable("guardian_recovery_gate_acknowledgement_invalid");
   if (gateStatus === "unavailable") return Object.freeze({ outcome: "gate_held" as const });
   // The durable recovering CAS may only run while the gate is held, and the
   // post-CAS binding it produces is validated against that exact gate, so it
@@ -1193,7 +1204,7 @@ export async function driveGuardianRecoveryConversation(
     postCasFrame.byteLength === 0 ||
     postCasFrame.byteLength > MAX_PRIVATE_FRAME_BYTES
   )
-    throw unavailable();
+    throw unavailable("guardian_recovery_post_cas_frame_invalid");
   // One acknowledgement answers these two frames: the post-CAS binding and the
   // native recover attempt the broker rebuilds from the correlation alone.
   const player = transport.receive();
@@ -1204,7 +1215,7 @@ export async function driveGuardianRecoveryConversation(
     "unavailable",
     "quarantined",
   ]);
-  if (playerStatus === undefined) throw unavailable();
+  if (playerStatus === undefined) throw unavailable("guardian_recovery_player_acknowledgement_invalid");
   if (playerStatus !== "player_contained") return roleClassified("playerHost", playerStatus);
   await recordRecoveredRole(input, "playerHost");
   const ai = transport.receive();
@@ -1214,7 +1225,7 @@ export async function driveGuardianRecoveryConversation(
     "unavailable",
     "quarantined",
   ]);
-  if (aiStatus === undefined) throw unavailable();
+  if (aiStatus === undefined) throw unavailable("guardian_recovery_ai_acknowledgement_invalid");
   if (aiStatus !== "ai_contained") return roleClassified("aiClient", aiStatus);
   await recordRecoveredRole(input, "aiClient");
   const settled = transport.receive();
@@ -1224,7 +1235,7 @@ export async function driveGuardianRecoveryConversation(
   // the last frame this conversation ever writes.
   transport.write(guardianRecoveryFrame("release", binding, input));
   const settledStatus = recoveryAcknowledgementStatus(await settled, input, binding, ["contained"]);
-  if (settledStatus !== "contained") throw unavailable();
+  if (settledStatus !== "contained") throw unavailable("guardian_recovery_settled_acknowledgement_invalid");
   return Object.freeze({ outcome: "contained" as const });
 }
 
@@ -1243,7 +1254,7 @@ export async function driveGuardianRecoveryConversation(
  */
 async function writeStatus(stage: string, waitingForPlayerInput?: string): Promise<void> {
   if (!statusToken.test(stage) || (waitingForPlayerInput !== undefined && !statusToken.test(waitingForPlayerInput)))
-    throw unavailable();
+    throw unavailable("status_stage_token_invalid");
   const bytes = Buffer.from(
     `${JSON.stringify({
       schema: statusSchema,
@@ -1253,7 +1264,7 @@ async function writeStatus(stage: string, waitingForPlayerInput?: string): Promi
     })}\n`,
     "utf8",
   );
-  if (bytes.length > MAX_WIRE_BYTES) throw unavailable();
+  if (bytes.length > MAX_WIRE_BYTES) throw unavailable("status_frame_too_long");
   await new Promise<void>((resolveWrite) => {
     // Informational only. The write is awaited so the frame cannot be reordered behind
     // the work it announces, and a broken status channel is swallowed here: what must
@@ -1302,7 +1313,7 @@ async function writeAcknowledgement(frame: DesktopHostBootstrapFrame): Promise<v
     })}\n`,
     "utf8",
   );
-  if (acknowledgement.length > MAX_WIRE_BYTES) throw unavailable();
+  if (acknowledgement.length > MAX_WIRE_BYTES) throw unavailable("acknowledgement_too_long");
   await new Promise<void>((resolveWrite, rejectWrite) => {
     process.stdout.once("error", rejectWrite);
     process.stdout.end(acknowledgement, () => {
@@ -1421,6 +1432,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function unavailable(): Error {
-  return new Error("desktop_runtime_bootstrap_unavailable");
+/**
+ * The one refusal this wire throws, named by the check that refused.
+ *
+ * Every call site passes its own bounded token, so the launcher's
+ * `dialogue_exited_before_ready:<code>:<stderr>` and an operator reading the
+ * child's stderr learn WHICH admission refused instead of the single
+ * `desktop_runtime_bootstrap_unavailable` twenty different causes all produced.
+ * The prefix is written here and nowhere else.
+ */
+function unavailable(reason: string): Error {
+  return new Error(`desktop_runtime_bootstrap_unavailable:${reason}`);
 }

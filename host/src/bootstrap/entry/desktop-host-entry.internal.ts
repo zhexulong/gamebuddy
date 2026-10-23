@@ -4,12 +4,13 @@ import { fileURLToPath } from "node:url";
 import { runDesktopHostBootstrap } from "../wire/desktop-runtime-bootstrap.internal.js";
 
 /**
- * The bootstrap wire reports a single bounded failure code for every rejected
- * frame, and its callers (the Desktop launcher, the gate runners) classify a
- * pre-ready child exit by reading one bare code token from stderr. Swallowing
- * the error here therefore turned every startup failure into an unattributable
- * `exited_before_ready` with no stderr at all. Emit only the bounded code: the
- * error message may carry a path, and the stack never belongs on this channel.
+ * The bootstrap wire reports one bounded failure code, suffixed with the name of
+ * the check that refused, and its callers (the Desktop launcher, the gate
+ * runners) classify a pre-ready child exit by reading that one token from
+ * stderr. Swallowing the error here therefore turned every startup failure into
+ * an unattributable `exited_before_ready` with no stderr at all. Emit only the
+ * bounded code: the error message may carry a path, and the stack never belongs
+ * on this channel.
  */
 function boundedFailureCode(error: unknown): string {
   const message = error instanceof Error ? error.message : "";

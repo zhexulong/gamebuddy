@@ -104,8 +104,10 @@ test("a rejected bootstrap frame reports one bounded failure code on stderr", as
     // it is runtime noise rather than a bootstrap diagnostic.
     .filter((line) => !line.includes("ExperimentalWarning") && !line.includes("--trace-warnings"));
   assert.equal(lines.length, 1, `expected exactly one diagnostic line, got ${JSON.stringify(lines)}`);
-  assert.match(lines[0]!, /^[a-z][a-z0-9_.:-]{2,159}$/i);
-  // The diagnostic must never carry a path, message prose, or a stack frame.
+  // The prefix is the product code every caller already matches on; the reason
+  // after it names the check that refused, so a pre-ready exit is no longer one
+  // opaque token shared by every admission in the wire.
+  assert.match(lines[0]!, /^desktop_runtime_bootstrap_unavailable:[a-z][a-z0-9_]{2,159}$/);
   assert.doesNotMatch(lines[0]!, /[\\/]|\.js:|\s/);
 });
 
