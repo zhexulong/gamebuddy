@@ -492,8 +492,24 @@ export function ConnectionSettingsPanel({
             </dd>
           </div>
         </dl>
+        {/*
+         * The ordinary first hour, and it is not a fault: a player who has just
+         * installed the product has no connection because they have not made one
+         * yet. It is stated as the panel's own hint prose - the same 12 px
+         * `--text-secondary` treatment `.management-settings-hint` gives every
+         * other "this is the state, here is what to do" sentence in these
+         * sections - not as a `.warning-banner` plate of `--warning` gold over a
+         * wash of the same gold. Measured before this: the plate was 640x100 px
+         * at 1440x900 and 100 px tall at 400x800 for a 76-character sentence, and
+         * it was the only saturated colour in the viewport, on the one screen a
+         * new player has to trust. The fault styles stay for the states that are
+         * genuinely wrong: `connectionView.notice` below still renders
+         * `.warning-banner` for a busy turn and for a connection that changed
+         * elsewhere, and a saved record that fails its probe carries its own
+         * `--danger` and `--warning` read-back in `ConnectionRow`.
+         */}
         {connectionView.state.active === null && (
-          <p className="warning-banner" data-connection-no-selection>
+          <p className="management-settings-hint" data-connection-no-selection>
             {labels.connectionNoSelectionNotice}
           </p>
         )}

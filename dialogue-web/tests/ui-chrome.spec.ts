@@ -472,22 +472,64 @@ test("the voice status yields without bursting the composer rail", async ({ page
  * The failure it catches: the warning text next to a connection or model
  * conflict was a bare `<p>` with no rule, so it read as ordinary prose - the
  * same class of accident as the transparent stop button. `.warning-banner` is
- * asserted on the shipped Settings surface (the "no connection is active" line
- * renders by default), and it must be a different tone from the error banner
- * rather than a second name for it.
+ * asserted on the shipped Settings surface, driven by a genuinely wrong state:
+ * a saved connection that was changed elsewhere, so the activation is refused
+ * with `connection_conflict` and the panel re-reads the authority before it says
+ * so. It must be a different tone from the error banner rather than a second
+ * name for it.
+ *
+ * This used to mount the surface with no connection at all and read the "no
+ * connection is selected" line's banner. That line is the ordinary first hour,
+ * not a fault, and it now renders as the panel's own neutral hint prose - which
+ * is exactly why this test may not lean on it: the warning tone has to be proven
+ * on a state that is actually wrong.
  */
 test("the warning banner carries the warning tone, not the bare-prose one", async ({ page }) => {
+  const connectionId = "E".repeat(42) + "A";
+  const readyRow = {
+    connectionId,
+    label: "OpenAI-compatible endpoint",
+    providerId: "openai-compatible",
+    providerLabel: "OpenAI-compatible endpoint",
+    configured: true,
+    readiness: "ready",
+    active: false,
+    modelId: "qwen2.5-coder:7b",
+    modelLabel: "qwen2.5-coder:7b",
+    thinkingLevel: "high",
+    allowedThinkingLevels: ["low", "high"],
+    modelIds: null,
+    baseUrl: "http://127.0.0.1:11434/v1",
+    failure: null,
+    lastCheckedAtMs: null,
+  };
   // The read route is singular and the create route plural (the frozen contract),
   // so both are anchored: the plural is a prefix of the singularity.
   const connectionState = {
     apiVersion: 1,
     revision: 1,
     active: null,
-    connections: [],
+    connections: [readyRow],
     providers: [],
   };
   await page.route(/\/api\/tavern\/v1\/settings\/connection$/, (route) => route.fulfill(jsonOk(connectionState)));
   await page.route(/\/api\/tavern\/v1\/settings\/connections$/, (route) => route.fulfill(jsonOk(connectionState)));
+  // A same-cookie stale tab: the record moved on since this surface read it, so
+  // the activation is refused with the closed `connection_conflict` code.
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/activate$/, (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/problem+json",
+      body: JSON.stringify({
+        type: "urn:gamebuddy:tavern:connection_conflict",
+        title: "connection conflict",
+        status: 409,
+        code: "connection_conflict",
+        requestId: "F".repeat(42) + "A",
+        retryable: false,
+      }),
+    }),
+  );
   await page.route("**/api/tavern/v1/settings/language", (route) =>
     route.fulfill(jsonOk({ revision: 1, locale: "en-US" })),
   );
@@ -505,9 +547,12 @@ test("the warning banner carries the warning tone, not the bare-prose one", asyn
   const surface = page.getByTestId("settings-surface");
   await expect(surface).toBeVisible();
 
+  await surface.getByRole("button", { name: "Save and activate", exact: true }).click();
+
   const banner = surface.locator(".warning-banner").first();
   await expect(banner).toBeVisible();
   await expect(banner).not.toBeEmpty();
+  await expect(banner).toHaveAttribute("data-connection-conflict");
 
   const drawn = await banner.evaluate((node) => {
     const token = (name: string) => {
