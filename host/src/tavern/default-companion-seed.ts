@@ -2,26 +2,27 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  type IdentityProfile,
   identityProfileHash,
   identityProfileMetadata,
-  type IdentityProfile,
   validateIdentityProfile,
   writeIdentityProfile,
 } from "../identity-profile.js";
-import { identityKey, type CompanionIdentity, resolveRuntimePaths } from "../runtime-identity.js";
-import { type WorldBook, validateWorldBook, writeWorldBook } from "../worldbook.js";
+import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../runtime-identity.js";
+import { validateWorldBook, type WorldBook, writeWorldBook } from "../worldbook.js";
 import { TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import {
-  MAX_COMPANION_AVATAR_BYTES,
   companionAvatarPath,
   isCompletePngFile,
+  MAX_COMPANION_AVATAR_BYTES,
   writeAvatarFile,
 } from "./companion-avatar/index.js";
 import { DEFAULT_COMPANION_PRESET, type DefaultCompanionPreset } from "./default-companion-preset.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
-import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { createTavernLibraryService } from "./library-service.js";
+import { writeCompanionPostHistoryInstructions } from "./post-history-instructions.js";
+import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 
 /**
@@ -104,6 +105,17 @@ export async function seedDefaultCompanionIntoFreshRuntimeRoot(
   const scenarios = createScenarioManagementService(artifacts, tavernPaths.companionRoot);
   if ((await scenarios.read()) === null && preset.scenario !== undefined && preset.scenario.trim() !== "")
     await scenarios.create({ name: "Default Scenario", description: preset.scenario });
+  // The reviewed card's closing direction, as her own record beside the scenario
+  // and the openings - written through `writeCompanionPostHistoryInstructions`, the
+  // one writer the card-import confirm step calls, so a seeded companion and an
+  // imported one cannot end up with two different records or two different file
+  // names. This is what `readCompanionPostHistoryInstructions` finds when the Chat
+  // materialization builds her catalogue, and therefore the only reason the fork
+  // appends anything after the transcript. A preset whose card wrote nothing writes
+  // no record at all: absence stays absence, never an empty string. The text is
+  // stored verbatim - the reader renders its macros.
+  if (preset.postHistoryInstructions !== undefined)
+    await writeCompanionPostHistoryInstructions(artifacts, tavernPaths.companionRoot, preset.postHistoryInstructions);
   // The reviewed preset's own picture, written where the avatar face reads it - the
   // same authority and the same single file name the card-import confirm step uses
   // (`new-companion-service.ts`), so a seeded companion and an imported one cannot

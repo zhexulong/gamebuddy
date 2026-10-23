@@ -19,8 +19,15 @@
  * exactly one card→profile converter in the codebase.
  *
  * Usage (from the repository root):
- *   npx tsc -p host/tsconfig.focus-persona-compile.json
- *   node host/scripts/compile-default-companion-preset.mjs
+ *   node host/scripts/compile-default-companion-preset.mjs --committed
+ *
+ * The converter is compiled by this script itself, through the repo's own
+ * `typescript` install (`host/node_modules/typescript`), into
+ * `host/.tmp-persona-compile` - a bare `npx tsc` resolves no compiler here, and a
+ * stale conversion would compile the card against code older than the edit. The
+ * emitted module is then formatted with the repo's own Biome config, so what the
+ * generator writes is what the format ratchet expects: regenerating an unchanged
+ * card leaves the file byte-identical.
  *
  * `--committed` reads the COMMITTED card + world book (`git show HEAD:...`)
  * instead of the working tree, and asks git (not this checkout) whether the preset
@@ -32,21 +39,27 @@
  * and fails if the committed module is stale, so an edited preset cannot ship
  * uncompiled.
  */
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const presetDirectory = join(repositoryRoot, "assets", "tavern", "presets", "default-companion");
 const compiledRoot = join(repositoryRoot, "host", ".tmp-persona-compile");
+const compiledPresetPath = join(repositoryRoot, "host", "src", "tavern", "default-companion-preset.ts");
 const fromCommitted = process.argv.includes("--committed");
 
-if (!existsSync(join(compiledRoot, "st-card-import.js"))) {
-  console.log("compiling the product converter (tsc -p host/tsconfig.focus-persona-compile.json)…");
-  execSync("npx tsc -p host/tsconfig.focus-persona-compile.json", { cwd: repositoryRoot, stdio: "inherit" });
-}
+// The conversion is recompiled on EVERY run, never reused from the last one: a stale
+// `st-card-import.js` would compile the reviewed card against decoder code older than
+// the edit being compiled. The compiler is the repo's own installed `typescript`
+// rather than `npx tsc`, which resolves nothing in this checkout.
+console.log("compiling the product converter (tsc -p host/tsconfig.focus-persona-compile.json)…");
+execFileSync(
+  process.execPath,
+  [join(repositoryRoot, "host", "node_modules", "typescript", "bin", "tsc"), "-p", "host/tsconfig.focus-persona-compile.json"],
+  { cwd: repositoryRoot, stdio: "inherit" },
+);
 
 const buildUrl = (module) => pathToFileURL(join(compiledRoot, module)).href;
 const { previewStCard, candidateToIdentityProfile } = await import(buildUrl("st-card-import.js"));
@@ -121,6 +134,14 @@ const candidate = preview.profileCandidate;
 // instead of a fresh player meeting "还没有保存场景" for a card that has one.
 const scenario =
   typeof preview.scenario === "string" && preview.scenario.trim() !== "" ? preview.scenario : undefined;
+// The card's closing direction is the same kind of authored fact her scenario is:
+// not profile text (the decoder keeps it candidate-only) but a durable record under
+// her own root, and the missing piece in a fresh root's companion ending a reply the
+// way her card asked. The decoder is the one place its bound lives
+// (`ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes`: a longer field is
+// refused by name and never truncated), so carry exactly what the decoder kept and
+// nothing else - a card that wrote none leaves the field off this preset entirely.
+const postHistoryInstructions = preview.postHistoryInstructions;
 const greetings = [];
 if (typeof candidate.firstGreeting === "string" && candidate.firstGreeting.trim() !== "")
   greetings.push({ label: "Default", text: candidate.firstGreeting });
@@ -186,6 +207,17 @@ export type DefaultCompanionPreset = Readonly<{
    */
   scenario?: string;
   /**
+   * The reviewed card's own \`post_history_instructions\`, verbatim as the decoder
+   * read it (macros and all: the reader renders, this layer does not).
+   *
+   * It is the card's closing direction, which the ST spec injects AFTER the
+   * history, so like the scenario it is not profile text. \`default-companion-seed.ts\`
+   * writes it through \`writeCompanionPostHistoryInstructions\` - the same writer the
+   * card-import confirm step uses - and the Chat materialization publishes it as
+   * the catalogue's \`postHistoryInstructions\`. Absent when the card wrote none.
+   */
+  postHistoryInstructions?: string;
+  /**
    * The reviewed preset's own picture (\`avatar.png\`), base64-encoded because a
    * generated module cannot carry binary. Absent when the preset directory has
    * none, which is an ordinary state.
@@ -203,10 +235,26 @@ export const DEFAULT_COMPANION_PRESET: DefaultCompanionPreset = Object.freeze({
   schemaVersion: 1,
   profile: ${json(profile)} as IdentityProfile,
   worldBook: ${json(book)} as WorldBook,
-${scenario === undefined ? "" : `  scenario: ${json(scenario)},\n`}${avatarBase64 === undefined ? "" : `  avatarBase64: "${avatarBase64}",\n`}  greetings: ${json(greetings)} as readonly Readonly<{ label: string; text: string }>[],
+${scenario === undefined ? "" : `  scenario: ${json(scenario)},\n`}${
+  postHistoryInstructions === undefined ? "" : `  postHistoryInstructions: ${json(postHistoryInstructions)},\n`
+}${avatarBase64 === undefined ? "" : `  avatarBase64: "${avatarBase64}",\n`}  greetings: ${json(greetings)} as readonly Readonly<{ label: string; text: string }>[],
 });
 `;
-await writeFile(join(repositoryRoot, "host", "src", "tavern", "default-companion-preset.ts"), source, "utf8");
+await writeFile(compiledPresetPath, source, "utf8");
+// The emitted source is raw JSON embedded in template literals; the repo's format
+// ratchet expects Biome's indentation and line wrapping. Formatting here - with the
+// repo's own config - is what makes "regenerate, then commit" a no-op on an
+// unchanged card instead of a 300-line reformat that hides the real change.
+execFileSync(
+  process.execPath,
+  [
+    join(repositoryRoot, "node_modules", "@biomejs", "biome", "bin", "biome"),
+    "format",
+    "--write",
+    relative(repositoryRoot, compiledPresetPath),
+  ],
+  { cwd: repositoryRoot, stdio: "inherit" },
+);
 console.log(
-  `wrote default-companion-preset.ts from ${sourceDescription}: name=${profile.identity.name} profileId=${profile.profileId} greetings=${greetings.length} worldbookEntries=${book.entries.length} worldBookScanDepth=${worldBookScanDepth === undefined ? "none" : worldBookScanDepth} characterVoice=${profile.characterVoice === undefined ? "none" : "present"} scenario=${scenario === undefined ? "none" : `present(${scenario.length})`} avatar=${avatar === undefined ? "none" : `present(${avatar.length})`}`,
+  `wrote default-companion-preset.ts from ${sourceDescription}: name=${profile.identity.name} profileId=${profile.profileId} greetings=${greetings.length} worldbookEntries=${book.entries.length} worldBookScanDepth=${worldBookScanDepth === undefined ? "none" : worldBookScanDepth} characterVoice=${profile.characterVoice === undefined ? "none" : "present"} scenario=${scenario === undefined ? "none" : `present(${scenario.length})`} postHistoryInstructions=${postHistoryInstructions === undefined ? "none" : `present(${Buffer.byteLength(postHistoryInstructions, "utf8")}B)`} avatar=${avatar === undefined ? "none" : `present(${avatar.length})`}`,
 );

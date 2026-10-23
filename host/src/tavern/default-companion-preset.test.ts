@@ -7,8 +7,9 @@ import test from "node:test";
 import { validateIdentityProfile } from "../identity-profile.js";
 import { candidateToIdentityProfile, previewStCard } from "../st-card-import.js";
 import { validateWorldBook } from "../worldbook.js";
-import { DEFAULT_COMPANION_PRESET } from "./default-companion-preset.js";
 import { boundedVisibleTail, DEFAULT_WORLDBOOK_SCAN_DEPTH } from "./chat-thread-store.js";
+import { ST_CARD_DECODER_LIMITS_V1 } from "./compatibility-manifest.v1.js";
+import { DEFAULT_COMPANION_PRESET } from "./default-companion-preset.js";
 
 /**
  * The reviewed preset card is a dev seed OUTSIDE every generation, and the raw
@@ -111,7 +112,7 @@ function convertedPreset(card: unknown, rawBook: unknown) {
     if (typeof text === "string" && text.trim() !== "")
       greetings.push(Object.freeze({ label: `Alternate ${index + 1}`, text }));
   });
-  return { profile, worldBook, scenario, greetings };
+  return { profile, worldBook, scenario, postHistoryInstructions: preview.postHistoryInstructions, greetings };
 }
 
 /**
@@ -127,6 +128,11 @@ function assertPresetMatches(expected: ReturnType<typeof convertedPreset>, avata
   // so it has its own field on the preset — and it must be the card's own text,
   // because `default-companion-seed.ts` installs the durable scenario record from it.
   assert.deepEqual(DEFAULT_COMPANION_PRESET.scenario, expected.scenario);
+  // The card's closing direction travels with the preset for the same reason the
+  // scenario does: it is a durable record under her own root, and without it on the
+  // preset the seed has nothing to write - so a shipped companion would never end a
+  // reply the way her card asked, while every imported card would.
+  assert.deepEqual(DEFAULT_COMPANION_PRESET.postHistoryInstructions, expected.postHistoryInstructions);
   assert.deepEqual(DEFAULT_COMPANION_PRESET.greetings, expected.greetings);
   // Her picture travels the same way and carries the same anti-drift rule: the
   // base64 the generated module holds must be the file's own bytes, or a fresh
@@ -143,6 +149,47 @@ test("the shipped compiled preset equals the product converter's output for the 
   // value the fresh-root seed turns into the companion's durable scenario record.
   assert.equal(DEFAULT_COMPANION_PRESET.scenario, card.data.scenario);
   assert.ok((DEFAULT_COMPANION_PRESET.scenario ?? "").includes("星露谷"));
+});
+
+/** The one bound the decoder applies to this field; the preset must never exceed it. */
+const POST_HISTORY_INSTRUCTIONS_MAX_BYTES = ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes;
+
+test("the committed card's post_history_instructions rides the compiled preset verbatim", () => {
+  const card = committedAsset("card.json") as { data: { post_history_instructions?: string } };
+  const declared = card.data.post_history_instructions;
+  assert.ok(declared !== undefined, "the reviewed card must declare the field this test is about");
+  // Verbatim, byte for byte: the preset carries the author's own text, and the
+  // rendering happens in the reader (`catalog-service.ts`) rather than here.
+  assert.equal(DEFAULT_COMPANION_PRESET.postHistoryInstructions, declared);
+  assert.equal(
+    Buffer.byteLength(DEFAULT_COMPANION_PRESET.postHistoryInstructions ?? "", "utf8"),
+    Buffer.byteLength(declared, "utf8"),
+  );
+  assert.ok(
+    Buffer.byteLength(declared, "utf8") <= POST_HISTORY_INSTRUCTIONS_MAX_BYTES,
+    "the card's field must fit the decoder's own bound, or the decoder would have refused it",
+  );
+});
+
+test("a card that declares no post_history_instructions leaves the preset member absent", () => {
+  // Absent stays absent: the seed writes no record at all for such a card, which is
+  // the distinct fact `readCompanionPostHistoryInstructions` reports as `null`.
+  const withoutField = convertedPreset(
+    { spec: "chara_card_v2", data: { name: "Rin", description: "A quiet companion." } },
+    committedAsset("worldbook.json"),
+  );
+  assert.equal(withoutField.postHistoryInstructions, undefined);
+  // The decoder is the only place this field's bound lives, so an over-long field is
+  // dropped by name there and never truncated into a shorter closing direction than
+  // the author wrote - the preset then has nothing to carry either.
+  const tooLong = convertedPreset(
+    {
+      spec: "chara_card_v2",
+      data: { name: "Rin", post_history_instructions: "x".repeat(POST_HISTORY_INSTRUCTIONS_MAX_BYTES + 1) },
+    },
+    committedAsset("worldbook.json"),
+  );
+  assert.equal(tooLong.postHistoryInstructions, undefined);
 });
 
 test("the committed card's system_prompt is carried into the shipped profile as characterVoice", () => {

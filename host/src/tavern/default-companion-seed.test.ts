@@ -4,30 +4,31 @@ import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import {
-  identityProfileMetadata,
   buildChatCompanionSystemPrompt,
   type IdentityProfile,
+  identityProfileMetadata,
   readIdentityProfile,
   writeIdentityProfile,
 } from "../identity-profile.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
-import { identityKey, resolveRuntimePaths, type CompanionIdentity } from "../runtime-identity.js";
+import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../runtime-identity.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import {
   COMPANION_AVATAR_FILE_NAME,
-  MAX_COMPANION_AVATAR_BYTES,
   companionAvatarPath,
   createCompanionAvatarService,
   isCompletePngFile,
+  MAX_COMPANION_AVATAR_BYTES,
 } from "./companion-avatar/index.js";
 import { DEFAULT_COMPANION_PRESET } from "./default-companion-preset.js";
 import { seedDefaultCompanionIntoFreshRuntimeRoot } from "./default-companion-seed.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
-import { macroTable } from "./macro-engine.js";
 import { createTavernLibraryService, resolveCompanionOwnScenario } from "./library-service.js";
+import { macroTable } from "./macro-engine.js";
+import { readCompanionPostHistoryInstructions } from "./post-history-instructions.js";
 import {
   createScenarioManagementService,
   withScenarioSurfaceMacros,
@@ -121,6 +122,53 @@ test("a restart after a fresh seed never overwrites the player's edits", async (
     assert.equal(again.seeded, false);
     assert.equal(again.reason, "already_present");
     assert.equal((await readIdentityProfile(paths.identityProfilePath)).identity.name, "我的搭档");
+  } finally {
+    await release(root);
+  }
+});
+
+// The card's closing direction is the last authored fact the shipped preset
+// dropped: the decoder kept it, but nothing between the preset and her own root
+// carried it, so a seeded companion ended every reply without it while an imported
+// card's companion ended with it. The reader below is the exact call
+// `catalog-service.ts` makes when it builds her catalogue, so a record this test
+// can read is a record the fork's tail can append.
+test("a fresh seed writes the card's post_history_instructions as her own record, verbatim", async () => {
+  const root = await canonicalTestRoot("default-companion-post-history-");
+  try {
+    assert.ok(DEFAULT_COMPANION_PRESET.postHistoryInstructions !== undefined);
+    await seedDefaultCompanionIntoFreshRuntimeRoot(identity, root);
+    const paths = resolveRuntimePaths(identity, root);
+    const tavernPaths = resolveTavernPaths(paths, identity);
+    const recorded = await readCompanionPostHistoryInstructions(
+      new TavernArtifactStore(paths.root),
+      tavernPaths.companionRoot,
+    );
+    // Verbatim, down to the byte and including the author's own line breaks: the
+    // reader renders macros, so nothing between here and there may rewrite it.
+    assert.equal(recorded, DEFAULT_COMPANION_PRESET.postHistoryInstructions);
+    assert.ok(recorded !== null);
+    assert.equal(Buffer.byteLength(recorded, "utf8"), 458);
+    assert.equal(recorded.split("\n")[0], "言行保持青梅竹马的熟稔、松弛与生活烟火气；");
+  } finally {
+    await release(root);
+  }
+});
+
+// Absence is a state of its own: no file at all, not an empty one - the same
+// distinction the reader makes between `null` and a zero-length record.
+test("a preset whose card declares no post_history_instructions writes no record at all", async () => {
+  const root = await canonicalTestRoot("default-companion-post-history-absent-");
+  try {
+    const { postHistoryInstructions: _closing, ...withoutField } = DEFAULT_COMPANION_PRESET;
+    await seedDefaultCompanionIntoFreshRuntimeRoot(identity, root, withoutField);
+    const paths = resolveRuntimePaths(identity, root);
+    const tavernPaths = resolveTavernPaths(paths, identity);
+    assert.equal(existsSync(join(tavernPaths.companionRoot, "post-history-instructions.json")), false);
+    assert.equal(
+      await readCompanionPostHistoryInstructions(new TavernArtifactStore(paths.root), tavernPaths.companionRoot),
+      null,
+    );
   } finally {
     await release(root);
   }
