@@ -86,6 +86,17 @@
  * sentence; what was wrong was which code a failure chose. So this rule pins the pairing in both
  * catalogues: the request-shaped refusals read as the import form being refused, and the Host's
  * own failures read as the service sentence - and the two can never be the same words.
+ *
+ * `problem-code.12` closes the blind spot `.8`-`.11` all share. Every rule above drives
+ * `composedProblemView` - the composed CHAT pane's view - and none of them ever looked at the
+ * management surface, whose panels word a refused save with `problemTextWithCode` instead. That
+ * mapper appended the server's code in parentheses, so a player who saved a World Info entry over
+ * a stale revision read "Save failed. (world_info_revision_conflict)" while this gate reported
+ * zero violations: it was certifying a mapper the management surface never calls. `.12` drives
+ * every declared code through the real management mapper in both catalogues and fails any
+ * parenthesised code-shaped token in the string the player is handed - the shape the old
+ * concatenation produced - with the developer half (`problemCodeFor`) asserted beside it so the
+ * code is not simply lost.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -96,6 +107,7 @@ import ts from "typescript";
 import { ComposedReferenceGameProblemError } from "../src/composed-reference-game-browser-api.ts";
 import { composedProblemView } from "../src/composed-problem-view.ts";
 import { messages } from "../src/i18n.ts";
+import { problemCodeFor, problemTextWithCode } from "../src/management-pipeline-api.ts";
 import { TavernProblemError } from "../src/reference-pipeline-api.ts";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -119,6 +131,13 @@ const CLIENT_MIRRORS = [join(WEB, "reference-pipeline-api.ts"), join(WEB, "manag
 
 /** The composed game client mirrors the game contract's own problem union. */
 const GAME_CLIENT = join(WEB, "composed-reference-game-browser-api.ts");
+
+/**
+ * The management surface's own mapper module. `problem-code.12` reads it two ways: it drives
+ * `problemTextWithCode` for every declared code, and it scans the module's own string builders for
+ * one that reads a `.code`.
+ */
+const MANAGEMENT_MODULE = join(WEB, "management-pipeline-api.ts");
 
 /** A bounded token: the shape every problem code has. */
 const BOUNDED_CODE = /^[a-z][a-z0-9_]{0,63}$/u;
@@ -582,6 +601,113 @@ test("problem-code.8: every declared code reaches the player as its own sentence
     "a declared code is a refusal the player can act on; showing it as an internal error is the dishonesty this rule exists for",
   );
   assert.deepEqual(failures, [], "every declared code must reach the player as its own sentence");
+});
+
+/**
+ * A code-shaped token in prose: `world_info_revision_conflict`, `draft_conflict`, `payload_too_large`.
+ * Every declared code matches it, and none of the catalogue's sentences should.
+ */
+const CODE_SHAPED_TOKEN = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/gu;
+
+/**
+ * Every string this source BUILDS (a `+` with a string operand, or a template literal) that reads a
+ * `.code` on the way. This is the shape the defect had, kept as its own detector so the rule can
+ * fail on the module's own text and not only on the values it happens to produce for the codes we
+ * remembered to drive.
+ */
+export function codeInStringBuildersIn(text, fileName) {
+  const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const found = [];
+  const builds = (node) =>
+    (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) || ts.isTemplateExpression(node);
+  walk(sourceFile, (node) => {
+    if (!builds(node)) return;
+    const own = [];
+    walk(node, (inner) => {
+      if (ts.isPropertyAccessExpression(inner) && inner.name.text === "code") own.push(inner);
+    });
+    if (own.length > 0)
+      found.push(
+        `${lineAt(own[0], sourceFile, fileName)} builds a string from \`.code\`: ${node.getText(sourceFile).slice(0, 120)}`,
+      );
+  });
+  return found;
+}
+
+function codeInStringBuilders(file) {
+  return codeInStringBuildersIn(readFileSync(file, "utf8"), file);
+}
+
+test("problem-code.12: the management mapper words a code as a sentence too, and never prints it", (t) => {
+  // The blind spot this closes: `.8` drives `composedProblemView`, which is the CHAT pane's view.
+  // The management surface's panels call `problemTextWithCode` instead - and that mapper appended
+  // the server's code in parentheses. Every rule above passed while a player reading a refused
+  // World Info save saw "Save failed. (world_info_revision_conflict)", because the gate certified
+  // a mapper no management panel called.
+  const labels_ = messages;
+  const { tavern, transport } = authorities();
+  const declared = [...new Set([...tavern, ...transport])].sort();
+  const failures = [];
+  const fallback = "That change was not saved.";
+  let sentenced = 0;
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = labels_(locale);
+    for (const code of declared) {
+      const error = problemFor(code);
+      const player = problemTextWithCode(fallback, error, labels);
+      sentenced += 1;
+      // The developer half still names it: moving the code out of the sentence must not lose it.
+      if (problemCodeFor(error) !== code) failures.push(`problemCodeFor(${code}) lost the code`);
+      if (player.length === 0) failures.push(`${locale} ${code} has no sentence`);
+      // The strong half, in the shape the defect actually took: the code in parentheses.
+      if (player.includes(`(${code})`)) failures.push(`${locale} ${code} is printed as a parenthesised code`);
+      // ... and in the general shape, so a future mapper that formats it differently still fails.
+      const leaked = [...(player.match(CODE_SHAPED_TOKEN) ?? [])].filter(
+        (token) => token === code || declared.includes(token),
+      );
+      if (leaked.length > 0) failures.push(`${locale} ${code} prints the contract token ${leaked.join(", ")}`);
+      // A declared code is a refusal the player can act on: the sentence is the catalogue's, not
+      // the caller's generic fallback. `draft_conflict` and every family member must differ.
+      if (player === fallback) failures.push(`${locale} ${code} collapsed into the caller's fallback`);
+    }
+  }
+
+  // The other direction: the module's own text. A mapper that builds a string out of `.code` is
+  // the defect regardless of which codes the loops above happened to drive.
+  const builders = codeInStringBuilders(MANAGEMENT_MODULE);
+  failures.push(...builders);
+
+  t.diagnostic(
+    `problem-code.12: ${sentenced} management sentence(s) from ${declared.length} declared code(s) in 2 catalogues, ${builders.length} string builder(s) reading .code in management-pipeline-api.ts, ${failures.length} violation(s)`,
+  );
+  for (const failure of failures.slice(0, 8)) t.diagnostic(`problem-code.12 violation: ${failure}`);
+  assert.deepEqual(
+    failures,
+    [],
+    "a code is contract vocabulary: the management mapper must word it, and must never print it back at the player",
+  );
+
+  // A failure the catalogue has no words for keeps the caller's honest sentence - the fallback is
+  // still a real path (an unmirrored code, an opaque protocol error), not dead code.
+  const labels = labels_("en");
+  assert.equal(problemTextWithCode(fallback, problemFor("gate_invented_code"), labels), fallback);
+  assert.equal(problemTextWithCode(fallback, new Error("boom"), labels), fallback);
+
+  // The detector itself, on the exact line the defect lived on: a mapper that appends the code. If
+  // this stops reporting, the rule above has stopped seeing the shape it exists for.
+  const injected = [
+    "export function problemTextWithCode(base: string, error: unknown): string {",
+    "  return error instanceof TavernProblemError ? `${base} (${error.code})` : base;",
+    "}",
+  ].join("\n");
+  const probe = join(WEB, "gate-mutation.ts");
+  const report = codeInStringBuildersIn(injected, probe);
+  assert.deepEqual(
+    report.map((entry) => entry.split(" builds a string")[0]),
+    ["gate-mutation.ts:2"],
+    "the detector must report the concatenation it forbids",
+  );
+  t.diagnostic(`problem-code.12 mutation: ${report.join(" | ")}`);
 });
 
 /**
