@@ -119,6 +119,7 @@ function absentProfile(name: string): Projection {
   return {
     apiVersion: 1,
     name,
+    revision: 1,
     persona: { present: false, core: null, interactionStyle: null, expressionStyle: null },
     scenario: { present: false, name: null, description: null },
     greetings: { present: false, label: null, variants: [] },
@@ -150,6 +151,7 @@ test("a companion who carries her authored facts shows all of them, each one fol
   const profile: Projection = {
     apiVersion: 1,
     name: "Mira",
+    revision: 1,
     persona: {
       present: true,
       core: "She reads the weather before she decides anything.",

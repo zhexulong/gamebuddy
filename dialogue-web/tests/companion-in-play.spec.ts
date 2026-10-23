@@ -118,6 +118,7 @@ async function stubCharacters(
       jsonOk({
         apiVersion: 1,
         name: "Mira",
+        revision: 1,
         persona: { present: false, core: null, interactionStyle: null, expressionStyle: null },
         scenario: { present: false, name: null, description: null },
         greetings: { present: false, label: null, variants: [] },

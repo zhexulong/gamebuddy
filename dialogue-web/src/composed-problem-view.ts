@@ -182,6 +182,14 @@ const avatarRejected: ProblemSentence = (labels) =>
 const recordUnreadable: ProblemSentence = (labels) =>
   sentence(labels.problemRecordUnreadableTitle, labels.problemRecordUnreadableDetail);
 
+/**
+ * The companion in play cannot be deleted: her Chats are the mounted conversation, so removing
+ * her would take the conversation the player is having. It is a state of the deployment, not a
+ * fault, and the surface's own control is absent for her for the same reason.
+ */
+const companionInPlay: ProblemSentence = (labels) =>
+  sentence(labels.problemCompanionInPlayTitle, labels.problemCompanionInPlayDetail);
+
 // --- The opening a Chat started on --------------------------------------------------------------
 
 /** The opening is sealed: the conversation has messages, so its greeting can no longer change. */
@@ -285,6 +293,7 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   companion_card_image_absent: cardImageAbsent,
   companion_avatar_too_large: avatarRejected,
   companion_avatar_malformed: avatarRejected,
+  companion_delete_in_play: companionInPlay,
   companion_record_unreadable: recordUnreadable,
 
   chat_opening_locked: openingLocked,

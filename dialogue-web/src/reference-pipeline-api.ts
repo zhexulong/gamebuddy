@@ -424,6 +424,9 @@ export const PROBLEM_CODES = [
   // a runtime outage - retrying the same file cannot fix either.
   "companion_avatar_too_large",
   "companion_avatar_malformed",
+  // `companion.delete` refuses the companion in play by name: her Chats are the mounted
+  // conversation, so removing her would take the conversation the player is having.
+  "companion_delete_in_play",
   // Transport: the over-ceiling request body the router refuses before any route runs.
   "payload_too_large",
 ] as const;

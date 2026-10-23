@@ -418,9 +418,10 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // partition rather than only the mounted one moved it 61 to 62 (`chat_not_found`, the handle that
   // names no Chat), and the greeting the Chat opened on becoming editable in place moved it 62 to
   // 61 (no `chat_edit_opening_retained`), and retiring `chat_edit_not_player_message` - the edit guard's
-  // unreachable row shape, not a refusal a player can meet - moved it 61 to 60. It still fails the moment
-  // the reader stops seeing a member.
-  assert.equal(tavern.size, 60, `the tavern problem union should have 60 members, read ${tavern.size}`);
+  // unreachable row shape, not a refusal a player can meet - moved it 61 to 60, and the companion
+  // removal's own refusal (companion_delete_in_play, the companion whose Chats are the mounted
+  // conversation) moved it 60 to 61. It still fails the moment the reader stops seeing a member.
+  assert.equal(tavern.size, 61, `the tavern problem union should have 61 members, read ${tavern.size}`);
   assert.equal(game.size, 23, `the game problem union should have 23 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");

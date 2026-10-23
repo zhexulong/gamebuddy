@@ -108,6 +108,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "companion.profile.read"
     | "companion.card.export"
     | "companion.avatar.update"
+    | "companion.delete"
     | "companion.create"
     | "character.import.stage"
     | "character.import.read"
@@ -164,6 +165,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.companion.profile.read"
     | "tavern.operation.companion.card.export"
     | "tavern.operation.companion.avatar.update"
+    | "tavern.operation.companion.delete"
     | "tavern.operation.companion.create"
     | "tavern.operation.character.import.stage"
     | "tavern.operation.character.import.read"
@@ -386,6 +388,12 @@ export type CompanionProfileGreetingsV1 = Readonly<{
 export type CompanionProfileV1 = Readonly<{
   apiVersion: 1;
   name: string;
+  /**
+   * The revision of her own `companion.json` record: the value `companion.delete` CASes on.
+   * Null when the record is absent - the one case the roster splices the mounted companion in
+   * from the identity profile alone.
+   */
+  revision: number | null;
   persona: CompanionProfilePersonaV1;
   scenario: CompanionProfileScenarioV1;
   greetings: CompanionProfileGreetingsV1;
@@ -402,6 +410,11 @@ export type CompanionProfileV1 = Readonly<{
  * revalidates the URL it already has, and the changed digest is served as new bytes.
  */
 export type CompanionAvatarV1 = Readonly<{ apiVersion: 1; handle: string; digest: string }>;
+/**
+ * What a completed `companion.delete` answers: the handle that no longer resolves, so the
+ * surface can say which row went and drop exactly it.
+ */
+export type CompanionDeletionV1 = Readonly<{ apiVersion: 1; handle: string }>;
 /**
  * One companion's own records exported as a standard Tavern V3 card, in the form
  * the caller asked for.
@@ -1078,6 +1091,7 @@ const OPERATION_IDS = [
   // standard Tavern V3 card she can save and re-import.
   "companion.card.export",
   "companion.avatar.update",
+  "companion.delete",
   "companion.create",
   // design/28 §2 companion directive: the mounted companion's own performance
   // directive (the reviewed card's `system_prompt`), read/edit/clear.
@@ -1138,6 +1152,7 @@ const MANAGEMENT_LABEL_KEYS = [
   "tavern.operation.companion.profile.read",
   "tavern.operation.companion.card.export",
   "tavern.operation.companion.avatar.update",
+  "tavern.operation.companion.delete",
   "tavern.operation.companion.create",
   "tavern.operation.character.import.stage",
   "tavern.operation.character.import.read",
@@ -1252,6 +1267,10 @@ const PROBLEM_CODES = [
   // bounded, non-retryable facts about the file the player picked.
   "companion_avatar_too_large",
   "companion_avatar_malformed",
+  // `companion.delete` refuses to remove the companion who is in play: her Chats are the
+  // mounted conversation, so removing her would take the conversation the player is
+  // having. It is the one refusal the control itself is absent for.
+  "companion_delete_in_play",
   // Transport: the over-ceiling request body the management dispatcher refuses before any route
   // runs (`tavern-management-dialogue-web.ts:538`), sent outside its own schema check. It must be
   // named here or the typed 413 arrives as an opaque `TavernProtocolError` with no code to show;
@@ -1905,7 +1924,15 @@ function isUpdateCompanionWorldBookCommand(value: unknown): value is UpdateCompa
   );
 }
 
-const COMPANION_PROFILE_KEYS = ["apiVersion", "name", "persona", "scenario", "greetings", "worldBook"] as const;
+const COMPANION_PROFILE_KEYS = [
+  "apiVersion",
+  "name",
+  "revision",
+  "persona",
+  "scenario",
+  "greetings",
+  "worldBook",
+] as const;
 const COMPANION_PROFILE_PERSONA_KEYS = ["present", "core", "interactionStyle", "expressionStyle"] as const;
 const COMPANION_PROFILE_SCENARIO_KEYS = ["present", "name", "description"] as const;
 const COMPANION_PROFILE_GREETINGS_KEYS = ["present", "label", "variants"] as const;
@@ -1922,6 +1949,7 @@ function isCompanionProfile(value: unknown): value is CompanionProfileV1 {
     hasExactKeys(value, COMPANION_PROFILE_KEYS) &&
     value.apiVersion === TAVERN_BROWSER_API_VERSION &&
     isLengthBoundedString(value.name, 1, 128) &&
+    (value.revision === null || (Number.isSafeInteger(value.revision) && (value.revision as number) >= 0)) &&
     isCompanionProfilePersona(value.persona) &&
     isCompanionProfileScenario(value.scenario) &&
     isCompanionProfileGreetings(value.greetings) &&
@@ -2991,6 +3019,22 @@ export function validateCompanionAvatar(value: unknown): CompanionAvatarV1 {
   return value;
 }
 
+const COMPANION_DELETION_KEYS = ["apiVersion", "handle"] as const;
+/** What a completed removal answers: the handle that no longer resolves. */
+function isCompanionDeletion(value: unknown): value is CompanionDeletionV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_DELETION_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isOpaqueHandle(value.handle)
+  );
+}
+
+export function validateCompanionDeletion(value: unknown): CompanionDeletionV1 {
+  if (!isCompanionDeletion(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validatePersona(value: unknown): PersonaV1 {
   if (!isPersona(value)) throw new TavernProtocolError();
   return value;
@@ -3293,6 +3337,11 @@ export type ManagementPipelineApi = Readonly<{
    * card import uses for a card file, because it is the same thing arriving the same way.
    */
   uploadCompanionAvatar(handle: string, avatarBase64: string, csrfToken: string): Promise<CompanionAvatarV1>;
+  /**
+   * DELETE /api/tavern/v1/companions/:handle: removes that roster companion for good, CASed
+   * on the revision `readCompanionProfile` projected. Her conversations are not part of it.
+   */
+  deleteCompanion(handle: string, expectedRevision: number, csrfToken: string): Promise<CompanionDeletionV1>;
   /**
    * GET /api/tavern/v1/companions/:handle/card: one roster companion's own records as
    * a standard Tavern V3 card, which the browser saves to disk. Read-only.
@@ -3827,6 +3876,26 @@ export function createManagementPipelineApi(
         { apiVersion: TAVERN_BROWSER_API_VERSION, avatarBase64 },
       );
       observe("companion.avatar.update", "passed", result.digest.slice(0, 16));
+      return result;
+    },
+    async deleteCompanion(handle: string, expectedRevision: number, csrfToken: string): Promise<CompanionDeletionV1> {
+      if (
+        !isOpaqueHandle(handle) ||
+        !isOpaqueHandle(csrfToken) ||
+        !Number.isSafeInteger(expectedRevision) ||
+        expectedRevision < 0
+      )
+        throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "DELETE",
+        `/api/tavern/v1/companions/${handle}`,
+        200,
+        validateCompanionDeletion,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        { apiVersion: TAVERN_BROWSER_API_VERSION, expectedRevision },
+      );
+      observe("companion.delete", "passed", result.handle.slice(0, 8));
       return result;
     },
     async exportCompanionCard(handle: string, format: "json" | "png"): Promise<CompanionCardExportV1> {

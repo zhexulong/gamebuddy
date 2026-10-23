@@ -295,6 +295,29 @@ export type CharacterLabels = Readonly<{
   avatarNotFound: string;
   avatarUnreadable: string;
   avatarFailed: string;
+
+  /**
+   * Removing a companion for good - the one irreversible control on this surface.
+   *
+   * The sentences name exactly what goes (her records and her picture) and exactly what
+   * does not (the conversations you had with her, which stay on disk but stop being listed
+   * once she is gone, because the Chat list is the mounted companion's own partition).
+   * Neither catalogue may claim her conversations are destroyed, and neither may promise
+   * a restore that does not exist.
+   */
+  companionDeleteTitle: string;
+  companionDeleteHint: string;
+  companionDelete: string;
+  companionDeleteConfirm: string;
+  companionDeleteConfirmYes: string;
+  companionDeleteCancel: string;
+  /** Why the control is absent for the companion in play, said in words rather than hidden. */
+  companionDeleteInPlay: string;
+  companionDeleted: string;
+  companionDeleteConflict: string;
+  companionDeleteNotFound: string;
+  companionDeleteUnreadable: string;
+  companionDeleteFailed: string;
 }>;
 
 const en: CharacterLabels = Object.freeze({
@@ -530,6 +553,23 @@ const en: CharacterLabels = Object.freeze({
   avatarNotFound: "That companion is no longer in your library, so nothing was saved.",
   avatarUnreadable: "Her picture could not be read, so nothing was saved.",
   avatarFailed: "Her picture could not be saved.",
+
+  companionDeleteTitle: "Remove this companion",
+  companionDeleteHint:
+    "This removes her for good: her record, her picture, her scenario, her openings and her own world book are deleted. It cannot be undone. The conversations you had with her are not deleted - they stay on your machine, but this Chat list only shows the companion in play, so they stop being listed here.",
+  companionDelete: "Delete her for good",
+  companionDeleteConfirm: "Delete {{name}} for good? Her record and her picture are gone permanently.",
+  companionDeleteConfirmYes: "Delete her for good",
+  companionDeleteCancel: "Keep her",
+  companionDeleteInPlay:
+    "She is the companion in play, so she cannot be deleted: the conversation you are having is hers.",
+  companionDeleted: "{{name}} was removed.",
+  companionDeleteConflict:
+    "Her record changed after you opened this, so nothing was deleted. Close this, open her again, and delete her from there.",
+  companionDeleteNotFound: "That companion is no longer in your library, so nothing was deleted.",
+  companionDeleteUnreadable:
+    "Her saved record could not be read, so nothing was deleted. Reopening her may tell you more.",
+  companionDeleteFailed: "She could not be deleted.",
 });
 
 const zh: CharacterLabels = Object.freeze({
@@ -757,6 +797,20 @@ const zh: CharacterLabels = Object.freeze({
   avatarNotFound: "这位伙伴已不在你的伙伴库中，因此没有保存。",
   avatarUnreadable: "无法读取她的画像，这次没有保存。",
   avatarFailed: "无法保存她的画像。",
+
+  companionDeleteTitle: "移除这位伙伴",
+  companionDeleteHint:
+    "这会把她永久移除：她的记录、她的画像、她的场景、她的开场白和她自己的世界书都会被删除。此操作无法撤销。你和她有过的对话不会被删除——它们仍留在你的电脑上，但这里的对话列表只显示在玩的伙伴，所以它们不再列在这里。",
+  companionDelete: "永久删除她",
+  companionDeleteConfirm: "要永久删除{{name}}吗？她的记录和画像将永久消失。",
+  companionDeleteConfirmYes: "永久删除",
+  companionDeleteCancel: "留下她",
+  companionDeleteInPlay: "她正是在玩的伙伴，所以不能被删除：你正在进行的对话就是她的。",
+  companionDeleted: "已移除{{name}}。",
+  companionDeleteConflict: "在你打开这里之后她的记录已被改动，因此没有删除任何内容。请关闭这里，重新打开她，再删除。",
+  companionDeleteNotFound: "这位伙伴已不在你的伙伴库中，因此没有删除任何内容。",
+  companionDeleteUnreadable: "无法读取她保存的记录，因此没有删除任何内容。重新打开她可能会得到更多信息。",
+  companionDeleteFailed: "无法删除她。",
 });
 
 export function characterLabels(locale: Locale): CharacterLabels {

@@ -105,6 +105,10 @@ export function CharactersPanel({
   const [createName, setCreateName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createNotice, setCreateNotice] = useState<SaveNotice>(null);
+  // The roster-level announcement a completed removal leaves: her name, and nothing else on
+  // the row that held it. It is its own state because a removal is not a save, and folding
+  // the two into one notice type would make every other editor's message a union member.
+  const [removedName, setRemovedName] = useState<string | null>(null);
 
   const [persona, setPersona] = useState<PersonaV1 | "loading" | "unavailable">("loading");
   const [personaName, setPersonaName] = useState("");
@@ -461,6 +465,11 @@ export function CharactersPanel({
                 {creating ? labels.saving : labels.newCompanionCreate}
               </button>
             </div>
+            {removedName !== null && (
+              <p role="status" className="success-banner" data-companion-removed>
+                {labels.companionDeleted.replace("{{name}}", removedName)}
+              </p>
+            )}
             {createNotice !== null && (
               <p role="status" className={createNotice === "saved" ? "success-banner" : "error-banner"}>
                 {createNotice === "saved" ? labels.saved : createNotice.failure}
@@ -794,6 +803,21 @@ export function CharactersPanel({
               // keep a local copy either way: a panel mounted on its own still draws its own roster.
               setOwnDigests((current) => ({ ...current, [handle]: digest }));
               onAvatarUpdated?.(handle, digest);
+            }}
+            onDeleted={(deletedHandle, name) => {
+              // The row goes, the drawer closes, and the notice names her: a companion that was
+              // deleted must not stay on screen as a row whose inspector answers 404.
+              setCompanionList((current) =>
+                typeof current === "string"
+                  ? current
+                  : Object.freeze({
+                      ...current,
+                      companions: current.companions.filter((entry) => entry.handle !== deletedHandle),
+                    }),
+              );
+              setInspectorOpen(false);
+              setCreateNotice(null);
+              setRemovedName(name);
             }}
             restoreFocusTo={inspectorOpener}
           />

@@ -521,6 +521,9 @@ const en = {
   problemRecordUnreadableTitle: "Her saved record could not be read",
   problemRecordUnreadableDetail:
     "What GameBuddy has stored for this companion is incomplete or damaged. Nothing you change here can be saved until it is repaired.",
+  problemCompanionInPlayTitle: "She is the companion in play",
+  problemCompanionInPlayDetail:
+    "The conversation you have open is hers, so she cannot be removed. GameBuddy starts with her; a different companion can only be the one in play from a start-up that names her.",
   problemOpeningLockedTitle: "The opening is already set",
   problemOpeningLockedDetail:
     "This conversation has already started, so the greeting it opened on can no longer change. Start a new chat to open on a different one.",
@@ -1291,6 +1294,9 @@ const zh: Messages = {
   problemRecordUnreadableTitle: "读不出她保存的资料",
   problemRecordUnreadableDetail:
     "GameBuddy 为这个伙伴保存的资料不完整或已损坏。在修好之前，这里做的任何改动都无法保存。",
+  problemCompanionInPlayTitle: "她就是在玩的伙伴",
+  problemCompanionInPlayDetail:
+    "你打开的对话就是她的，所以她不能被移除。GameBuddy 以她启动；要让另一位伙伴成为在玩的伙伴，只能由启动配置指定她。",
   problemOpeningLockedTitle: "开场已经定下了",
   problemOpeningLockedDetail: "这个对话已经开始，所以开场的那句问候不能再改。想换开场，请新建一个对话。",
   problemOpeningNotReviewableTitle: "这个对话没有可选的开场",

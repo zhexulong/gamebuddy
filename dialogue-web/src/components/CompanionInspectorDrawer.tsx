@@ -3,6 +3,7 @@ import { type ReactElement, type RefObject, useEffect, useRef, useState } from "
 import { type Locale, type Messages, messages } from "../i18n";
 import type { CompanionProfileV1, ManagementPipelineApi } from "../management-pipeline-api";
 import { MAX_AVATAR_FILE_BYTES, problemTextWithCode, TavernProblemError } from "../management-pipeline-api";
+import { useArmedConfirmation } from "./armed-confirmation";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { ContextDrawer } from "./ContextDrawer";
 import { characterLabels, type CharacterLabels } from "./character-domain-labels";
@@ -54,10 +55,11 @@ export function CompanionInspectorDrawer({
   locale,
   onClose,
   onAvatarUpdated,
+  onDeleted,
   restoreFocusTo,
 }: {
   api: ManagementPipelineApi;
-  /** The broker's own CSRF fact; the picture upload is the one write here. */
+  /** The broker's own CSRF fact; the two writes here are the picture and the removal. */
   csrfToken: string;
   /** The roster row that opened the drawer, or null when it is closed. */
   companion: InspectedCompanion | null;
@@ -70,6 +72,12 @@ export function CompanionInspectorDrawer({
    * carries no digest. The upload's own reply is the one fact the row has a new picture.
    */
   onAvatarUpdated: (handle: string, digest: string) => void;
+  /**
+   * Her removal succeeded. The surface drops exactly this row and closes the drawer: the
+   * companion the drawer was describing no longer exists, so re-reading her would answer 404
+   * and re-rendering the drawer would show a page about nobody.
+   */
+  onDeleted: (handle: string, name: string) => void;
   /** The row's own control; focus returns here on close. */
   restoreFocusTo: RefObject<HTMLElement | null>;
 }): ReactElement | null {
@@ -127,6 +135,15 @@ export function CompanionInspectorDrawer({
       ) : (
         <CompanionProfileBody profile={view.profile} labels={labels} />
       )}
+      <CompanionRemovalSection
+        api={api}
+        csrfToken={csrfToken}
+        companion={companion}
+        revision={view.kind === "ready" ? view.profile.revision : null}
+        labels={labels}
+        problemLabels={messages(locale)}
+        onDeleted={onDeleted}
+      />
     </ContextDrawer>
   );
 }
@@ -278,6 +295,161 @@ function companionAvatarRefusal(labels: CharacterLabels, error: unknown, problem
       return labels.avatarUnreadable;
     default:
       return problemTextWithCode(labels.avatarFailed, error, problemLabels);
+  }
+}
+
+/**
+ * Removing her - the one irreversible control on this surface.
+ *
+ * Nothing is offered for the companion in play, and the reason is stated in words a sighted
+ * and a screen-reader player both read: her Chats ARE the mounted conversation, so the Host
+ * refuses her by name (`companion_delete_in_play`) and a control that could only fail would
+ * be a trap. For everyone else the pattern is the product's own armed pair
+ * (`armed-confirmation.ts`): the trigger is replaced by the confirmation, focus moves into
+ * its safe answer, Escape and `Keep her` both cancel and return focus to the trigger, and
+ * the confirmation restates "for good" rather than asking whether the player is sure.
+ *
+ * The revision this CASes on is the one the inspector read, so a record that moved on since
+ * is refused rather than deleting a companion from a stale screen. The deletion's scope is
+ * the Host's own: her record, her picture and her authored files. Her conversations stay
+ * where they are, and the hint says so rather than implying they go with her.
+ */
+function CompanionRemovalSection({
+  api,
+  csrfToken,
+  companion,
+  revision,
+  labels,
+  problemLabels,
+  onDeleted,
+}: {
+  api: ManagementPipelineApi;
+  csrfToken: string;
+  companion: InspectedCompanion;
+  /** Her `companion.json` revision as the inspector read it; null when the read carried none. */
+  revision: number | null;
+  labels: CharacterLabels;
+  /** The product catalogue, which is where a refusal's own sentence is worded. */
+  problemLabels: Messages;
+  onDeleted: (handle: string, name: string) => void;
+}): ReactElement | null {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Readonly<{ ok: boolean; text: string }> | null>(null);
+  const pair = useArmedConfirmation(armed, () => setArmed(false));
+
+  if (companion.isCurrent) {
+    return (
+      <section data-companion-removal>
+        <h3>{labels.companionDeleteTitle}</h3>
+        <p className="management-settings-hint" data-companion-removal-in-play>
+          {labels.companionDeleteInPlay}
+        </p>
+      </section>
+    );
+  }
+  // No revision to CAS on means her own record could not be read, so there is nothing to
+  // remove on the player's behalf; the section says nothing rather than offering it.
+  if (revision === null) return null;
+
+  const confirm = (): void => {
+    if (busy) return;
+    setBusy(true);
+    setNotice(null);
+    void (async () => {
+      let next: Readonly<{ ok: boolean; text: string }>;
+      try {
+        await api.deleteCompanion(companion.handle, revision, csrfToken);
+        onDeleted(companion.handle, companion.name);
+        return;
+      } catch (error) {
+        next = { ok: false, text: companionRemovalRefusal(labels, error, problemLabels) };
+      }
+      setBusy(false);
+      setArmed(false);
+      setNotice(next);
+    })();
+  };
+
+  return (
+    <section data-companion-removal>
+      <h3>{labels.companionDeleteTitle}</h3>
+      <p className="management-settings-hint">{labels.companionDeleteHint}</p>
+      {armed ? (
+        <div data-companion-removal-confirm onKeyDown={pair.onConfirmKeyDown}>
+          <p role="status">{labels.companionDeleteConfirm.replace("{{name}}", companion.name)}</p>
+          <div className="composer-actions">
+            <button
+              type="button"
+              className="small-button danger"
+              data-companion-removal-confirm-yes
+              disabled={busy}
+              onClick={confirm}
+            >
+              {busy ? labels.saving : labels.companionDeleteConfirmYes}
+            </button>
+            {/* The safe answer is the one focus lands on when the pair opens, so a stray
+                Enter cancels instead of deleting her. */}
+            <button
+              ref={pair.cancelRef}
+              type="button"
+              className="small-button"
+              data-companion-removal-confirm-no
+              disabled={busy}
+              onClick={pair.cancel}
+            >
+              {labels.companionDeleteCancel}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="composer-actions">
+          <button
+            ref={pair.triggerRef}
+            type="button"
+            className="small-button danger"
+            data-companion-removal-arm
+            disabled={busy}
+            onClick={() => {
+              setNotice(null);
+              setArmed(true);
+            }}
+          >
+            {labels.companionDelete}
+          </button>
+        </div>
+      )}
+      {notice !== null && (
+        <p role="status" data-companion-removal-notice className={notice.ok ? "success-banner" : "error-banner"}>
+          {notice.text}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The player's sentence for one refused removal.
+ *
+ * Every way the Host refuses is a different fact - her record moved on, she is gone, her
+ * record could not be read, she is the companion in play - and one "could not delete"
+ * would point at the wrong fault. A code this table does not know keeps the base sentence,
+ * so an unexpected refusal is still named rather than swallowed.
+ */
+function companionRemovalRefusal(labels: CharacterLabels, error: unknown, problemLabels: Messages): string {
+  const code = error instanceof TavernProblemError ? error.code : null;
+  switch (code) {
+    case "companion_conflict":
+      return labels.companionDeleteConflict;
+    case "companion_delete_in_play":
+      return labels.companionDeleteInPlay;
+    case "companion_not_found":
+      return labels.companionDeleteNotFound;
+    case "companion_record_unreadable":
+    case "storage_unavailable":
+      return labels.companionDeleteUnreadable;
+    default:
+      return problemTextWithCode(labels.companionDeleteFailed, error, problemLabels);
   }
 }
 
