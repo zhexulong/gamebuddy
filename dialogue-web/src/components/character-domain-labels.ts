@@ -299,11 +299,17 @@ export type CharacterLabels = Readonly<{
   /**
    * Removing a companion for good - the one irreversible control on this surface.
    *
-   * The sentences name exactly what goes (her records and her picture) and exactly what
-   * does not (the conversations you had with her, which stay on disk but stop being listed
-   * once she is gone, because the Chat list is the mounted companion's own partition).
-   * Neither catalogue may claim her conversations are destroyed, and neither may promise
-   * a restore that does not exist.
+   * The sentences name exactly what goes and exactly what does not. What goes is every
+   * record the player edits on this panel: her persona and how she speaks (the three
+   * persona dimensions plus her performance directive), her picture, her scenario, her
+   * opening lines, her own world book, her examples and the card additions kept beside
+   * them. The hint and the confirmation carry the whole list, because the confirmation is
+   * the moment of the act and may not say less than the sentence it replaces.
+   *
+   * What does not go is the conversations the player had with her, which stay on disk but
+   * stop being listed once she is gone, because the Chat list is the mounted companion's
+   * own partition. Neither catalogue may claim her conversations are destroyed, and
+   * neither may promise a restore that does not exist.
    */
   companionDeleteTitle: string;
   companionDeleteHint: string;
@@ -556,9 +562,10 @@ const en: CharacterLabels = Object.freeze({
 
   companionDeleteTitle: "Remove this companion",
   companionDeleteHint:
-    "This removes her for good: her record, her picture, her scenario, her openings and her own world book are deleted. It cannot be undone. The conversations you had with her are not deleted - that text stays on this machine - but this Chat list only ever shows the companion in play, so her Chats are not opened or cleaned up from here, either before or after her removal.",
+    "This removes her for good: her persona and how she speaks, her picture, her scenario, her opening lines, her own world book, and her examples and card additions are all deleted. It cannot be undone. The conversations you had with her are not deleted - that text stays on this machine - but this Chat list only ever shows the companion in play, so her Chats are not opened or cleaned up from here, either before or after her removal.",
   companionDelete: "Delete her for good",
-  companionDeleteConfirm: "Delete {{name}} for good? Her record and her picture are gone permanently.",
+  companionDeleteConfirm:
+    "Delete {{name}} for good? Her persona and how she speaks, her picture, her scenario, her opening lines, her own world book, and her examples and card additions are gone permanently. The conversations you had with her are not deleted - that text stays on this machine.",
   companionDeleteConfirmYes: "Delete her for good",
   companionDeleteCancel: "Keep her",
   companionDeleteInPlay:
@@ -800,9 +807,10 @@ const zh: CharacterLabels = Object.freeze({
 
   companionDeleteTitle: "移除这位伙伴",
   companionDeleteHint:
-    "这会把她永久移除：她的记录、她的画像、她的场景、她的开场白和她自己的世界书都会被删除。此操作无法撤销。你和她有过的对话不会被删除——那些文字仍在这台电脑上——但这里的对话列表只显示在玩的伙伴，因此无论她是否已被移除，她的对话都不从这里打开或清理。",
+    "这会把她永久移除：她的设定与说话方式、她的画像、她的场景、她的开场白、她自己的世界书，以及她的对话示例和随卡片带来的附加内容，都会被删除。此操作无法撤销。你和她有过的对话不会被删除——那些文字仍在这台电脑上——但这里的对话列表只显示在玩的伙伴，因此无论她是否已被移除，她的对话都不从这里打开或清理。",
   companionDelete: "永久删除她",
-  companionDeleteConfirm: "要永久删除{{name}}吗？她的记录和画像将永久消失。",
+  companionDeleteConfirm:
+    "要永久删除{{name}}吗？她的设定与说话方式、她的画像、她的场景、她的开场白、她自己的世界书，以及她的对话示例和随卡片带来的附加内容都会永久消失。你和她有过的对话不会被删除——那些文字仍在这台电脑上。",
   companionDeleteConfirmYes: "永久删除",
   companionDeleteCancel: "留下她",
   companionDeleteInPlay: "她正是在玩的伙伴，所以不能被删除：你正在进行的对话就是她的。",
