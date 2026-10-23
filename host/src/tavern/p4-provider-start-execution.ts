@@ -55,11 +55,21 @@ export type NativeChatSpeechSink = Readonly<{
  */
 export type NativeChatDeliveryPacing = import("../companion-delivery-pacing.js").CompanionDeliveryPacing;
 
+/**
+ * What a paced Chat turn needs beyond the policy itself: the turn's own identity
+ * and the player's language, from which the opening sound is chosen. Passed with
+ * the policy so a caller cannot supply one and forget the other.
+ */
+export type NativeChatPacingChoice = Readonly<{
+  policy: NativeChatDeliveryPacing;
+  locale: import("../settings/player-preference-store.js").CompanionLocale;
+}>;
+
 export async function runMountedProviderStartLedger(
   scope: ProviderInvocationScope,
   previewPublisher?: NativeChatPreviewPublisher,
   speechSink?: NativeChatSpeechSink,
-  pacing?: NativeChatDeliveryPacing,
+  pacing?: NativeChatPacingChoice,
 ): Promise<ProviderStartLedger> {
   return (await runMountedProviderStart(scope, previewPublisher, speechSink, pacing)).ledger;
 }
@@ -211,7 +221,7 @@ export async function runMountedProviderStart(
   scope: ProviderInvocationScope,
   previewPublisher?: NativeChatPreviewPublisher,
   speechSink?: NativeChatSpeechSink,
-  pacing?: NativeChatDeliveryPacing,
+  pacing?: NativeChatPacingChoice,
 ): Promise<ProviderStartResult> {
   // Pre-arm linearization: an expired or revoked admission rejects with zero
   // store mutation and no Host prompt invocation.
@@ -461,7 +471,13 @@ export async function runMountedProviderStart(
         // Absent pacing is the Chat default: every mechanism off, delivery
         // byte-identical to what it was before pacing existed. The caller
         // passes a policy only when the player turned the switch on.
-        ...(pacing === undefined ? {} : { pacing }),
+        ...(pacing === undefined ? {} : { pacing: pacing.policy }),
+        // The sound is chosen from the turn's own id and the player's language.
+        // Without them `emitReaction` returns before picking anything, so a
+        // paced turn would deliver exactly like an unpaced one - a live run did
+        // that, with the preference reading `paced: true` and the deployed module
+        // containing the wiring, because this object had no identity in it.
+        ...(pacing === undefined ? {} : { turn: { id: scope.facts.turnId, locale: pacing.locale } }),
       },
     );
     nativeObserver.open();

@@ -63,9 +63,14 @@ import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import { createPlayerTurnAcceptor } from "./player-turn-acceptance.js";
 import { createProviderAttemptClaimer } from "./provider-attempt-claim.js";
 import { startMountedChatProvider } from "./chat-provider-start.js";
-import type { NativeChatDeliveryPacing } from "./p4-provider-start-execution.js";
+import type { NativeChatPacingChoice } from "./p4-provider-start-execution.js";
 import { deliveryPacingFor } from "../companion-delivery-pacing.js";
-import { resolvePacedDelivery } from "../settings/player-preference-store.js";
+import {
+  DEFAULT_COMPANION_LOCALE,
+  resolveCompanionLocale,
+  resolvePacedDelivery,
+  type CompanionLocale,
+} from "../settings/player-preference-store.js";
 import { formatSwipeLabel } from "./message-tree.js";
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{22}$/u;
@@ -235,14 +240,26 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
    * turn: an unreadable preference falls back to the surface default, because a
    * settings problem must never cost the player a reply.
    */
-  const resolveDeliveryPacing = async (): Promise<NativeChatDeliveryPacing> => {
+  const resolveDeliveryPacing = async (): Promise<NativeChatPacingChoice | undefined> => {
     let paced = false;
     try {
       paced = await resolvePacedDelivery(manifest.runtimeRoot);
     } catch {
       paced = false;
     }
-    return deliveryPacingFor("chat", paced);
+    const policy = deliveryPacingFor("chat", paced);
+    // Absent policy = the unpaced default, and then nothing else is needed.
+    if (policy.typing === null && policy.reaction === null) return undefined;
+    // The sound needs the player's language. An unreadable language is not a
+    // reason to refuse the turn, but it IS a reason not to guess a vocabulary, so
+    // the default language is used and the reply still arrives.
+    let locale: CompanionLocale;
+    try {
+      locale = await resolveCompanionLocale(manifest.runtimeRoot);
+    } catch {
+      locale = DEFAULT_COMPANION_LOCALE;
+    }
+    return Object.freeze({ policy, locale });
   };
   const start: ChatPipelineStartDependency =
     options.deps?.start ??

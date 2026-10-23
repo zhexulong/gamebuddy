@@ -7,7 +7,7 @@ import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { AttemptStartingTurn, CancelledTurn, CompletedTurn, FailedTurn } from "./chat-thread-store.js";
 import {
   runMountedProviderStartLedger,
-  type NativeChatDeliveryPacing,
+  type NativeChatPacingChoice,
   type NativeChatPreviewPublisher,
   type NativeChatSpeechSink,
 } from "./p4-provider-start-execution.js";
@@ -23,7 +23,7 @@ export async function startMountedChatProvider(
   lease: MountedChatRuntimeLease,
   previewPublisher?: NativeChatPreviewPublisher,
   speechSink?: NativeChatSpeechSink,
-  pacing?: NativeChatDeliveryPacing,
+  pacing?: NativeChatPacingChoice,
 ): Promise<AttemptStartingTurn | CompletedTurn | CancelledTurn | FailedTurn> {
   return await startMountedAttempt(manifest, lease, (invocation) =>
     consumeMountedAttemptInvocationAdmission(invocation, (scope) =>
