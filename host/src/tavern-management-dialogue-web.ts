@@ -25,6 +25,8 @@ import {
   type UpdateCompanionWorldBookCommandV1,
   type ComposedTavernProfile,
   type CreateCompanionCommandV1,
+  type DeleteCompanionCommandV1,
+  type CompanionDeletionV1,
   type CreateChatCommandV1,
   type SelectChatCommandV1,
   type ChatSelectResultV1,
@@ -79,6 +81,7 @@ import {
 import type { CompanionCardFormat } from "./tavern/companion-card-export.js";
 import type { CompanionCardExportResult } from "./tavern/companion-card-export-service.js";
 import type { CompanionAvatarService } from "./tavern/companion-avatar/index.js";
+import type { CompanionDeletionService } from "./tavern/companion-deletion-service.js";
 import { TavernConnectionRevisionConflict } from "./tavern/connection-store.js";
 import { TAVERN_PROVIDER_CATALOG } from "./tavern/provider-catalog.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
@@ -278,6 +281,14 @@ const MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES = ["companion.card.export"] as con
  */
 const MANAGEMENT_COMPANION_AVATAR_ROUTES = ["companion.avatar.update"] as const;
 /**
+ * Optional companion-removal extension: only a profile that declares this route mounts
+ * `DELETE /api/tavern/v1/companions/:companionHandle`, the one irreversible companion
+ * operation. It appends after the avatar group in the same frozen canonical order, and
+ * like every other option a profile that advertises it without the bound service fails
+ * closed at composition rather than showing a control the Host cannot serve.
+ */
+const MANAGEMENT_COMPANION_DELETE_ROUTES = ["companion.delete"] as const;
+/**
  * Optional lorebook-import extension: only a profile that declares this route mounts
  * `POST /api/tavern/v1/world-info/import`, the one route that serves the managed library's existing
  * SillyTavern/Chub lorebook importer to the player. It appends after the avatar group in the same
@@ -335,6 +346,7 @@ const updateCompanionWorldBookValidator = Compile(
   TavernBrowserContractV1.schemas.UpdateCompanionWorldBookCommandV1Schema,
 );
 const companionAvatarUploadValidator = Compile(TavernBrowserContractV1.schemas.CompanionAvatarUploadCommandV1Schema);
+const companionDeleteValidator = Compile(TavernBrowserContractV1.schemas.DeleteCompanionCommandV1Schema);
 
 /**
  * The one Host-owned Chat/Game model profile store this dispatcher accepts. It
@@ -471,6 +483,13 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    * route; the route stays unavailable otherwise.
    */
   companionAvatarService?: CompanionAvatarService;
+  /**
+   * Removing a roster companion for good. Her record, her artifact root and her authored
+   * files are the deletion unit; her conversations and Memory stay where they are, so a
+   * Chat she owned is no longer listed but is not destroyed. Present only when the mounted
+   * profile declares the route; the route stays unavailable otherwise.
+   */
+  companionDeletionService?: CompanionDeletionService;
   /**
    * Host-owned new-companion provisioner. The browser sends a display name
    * only; the Host mints every durable identity and returns the safe name.
@@ -692,6 +711,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const companionProfileService = options.companionProfileService;
   const companionCardExportService = options.companionCardExportService;
   const companionAvatarService = options.companionAvatarService;
+  const companionDeletionService = options.companionDeletionService;
   const newCompanionProvisioner = options.newCompanionProvisioner;
   const newChatProvisioner = options.newChatProvisioner;
   const chatSelectProvisioner = options.chatSelectProvisioner;
@@ -836,6 +856,15 @@ export function createTavernManagementDialogueWebRequestHandler(
   for (const routeId of MANAGEMENT_COMPANION_AVATAR_ROUTES) {
     if (profile.routeIds.includes(routeId)) {
       if (companionAvatarService === undefined) throw new Error("tavern_management_composition_unavailable");
+      if (!profile.operationIds.includes(routeId)) throw new Error("tavern_management_composition_unavailable");
+    }
+  }
+  // And the removal is the same shape one step further: a profile that advertises it must
+  // bind the exact service and declare the route as an operation, or the surface would offer
+  // a button that deletes nothing.
+  for (const routeId of MANAGEMENT_COMPANION_DELETE_ROUTES) {
+    if (profile.routeIds.includes(routeId)) {
+      if (companionDeletionService === undefined) throw new Error("tavern_management_composition_unavailable");
       if (!profile.operationIds.includes(routeId)) throw new Error("tavern_management_composition_unavailable");
     }
   }
@@ -1684,6 +1713,41 @@ export function createTavernManagementDialogueWebRequestHandler(
         }
       }
       {
+        const deleteHandle = matchCompanionDeleteRoute(request.method, url.pathname);
+        if (deleteHandle !== null) {
+          // companion.delete: one roster companion removed for good. The exact opaque handle
+          // the roster projected resolves to THAT companion, and the command's
+          // `expectedRevision` is the revision her own record had when the inspector read her
+          // - so a stale screen is refused instead of deleting whoever is there now. The
+          // companion in play is refused by name: her Chats ARE the mounted conversation.
+          // Her conversations and Memory are deliberately not part of the deletion unit; see
+          // `companion-deletion-service.ts` for what goes and what stays.
+          if (url.search !== "") return sendProblem(response, 400, "invalid_request");
+          if (!isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+          const session = admitRequest(request, origin);
+          if (session === null) return sendProblem(response, 401, "unauthorized");
+          if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+            return sendProblem(response, 403, "csrf_failed");
+          if (
+            !profile.routeIds.includes("companion.delete") ||
+            !profile.operationIds.includes("companion.delete") ||
+            companionDeletionService === undefined
+          )
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          const body = await readJsonBody(request, MAX_BODY_BYTES);
+          if (!companionDeleteValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+          const deleted = await companionDeletionService.delete(deleteHandle, body as DeleteCompanionCommandV1);
+          if (deleted === null) return sendProblem(response, 404, "companion_not_found");
+          const result: CompanionDeletionV1 = Object.freeze({
+            apiVersion: TAVERN_BROWSER_API_VERSION,
+            handle: deleted.handle,
+          });
+          if (!TavernBrowserValidatorsV1.CompanionDeletionV1Schema.Check(result))
+            throw new Error("companion_deletion_service_unavailable");
+          return sendJson(response, 200, result);
+        }
+      }
+      {
         const voiceHandle = matchCompanionVoiceRoute(request.method, url.pathname);
         if (voiceHandle !== null) {
           // The mounted companion's own performance directive. The exact opaque
@@ -2386,6 +2450,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_COMPANION_PROFILE_ROUTES,
     MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES,
     MANAGEMENT_COMPANION_AVATAR_ROUTES,
+    MANAGEMENT_COMPANION_DELETE_ROUTES,
     MANAGEMENT_WORLD_INFO_IMPORT_ROUTES,
     MANAGEMENT_CHAT_EXPORT_ROUTES,
   ] as const;
@@ -2406,6 +2471,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_COMPANION_PROFILE_ROUTES,
     MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES,
     MANAGEMENT_COMPANION_AVATAR_ROUTES,
+    MANAGEMENT_COMPANION_DELETE_ROUTES,
   ] as const;
   if (!isCanonicalGroupSelection(profile.routeIds, routeGroups, coreRoutes)) return false;
   if (!isCanonicalGroupSelection(profile.operationIds, operationGroups, coreOperations)) return false;
@@ -2530,6 +2596,13 @@ function matchCompanionCardExportRoute(method: string | undefined, pathname: str
 function matchCompanionAvatarRoute(method: string | undefined, pathname: string): string | null {
   if (method !== "PUT") return null;
   const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})\/avatar$/.exec(pathname);
+  return match === null ? null : match[1]!;
+}
+
+/** companion.delete: one roster companion removed for good, by her own recorded handle. */
+function matchCompanionDeleteRoute(method: string | undefined, pathname: string): string | null {
+  if (method !== "DELETE") return null;
+  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})$/.exec(pathname);
   return match === null ? null : match[1]!;
 }
 
@@ -2665,6 +2738,12 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "companion_avatar_unreadable") return { status: 503, code: "companion_record_unreadable" };
   if (message === "companion_world_book_binding_partial")
     return { status: 503, code: "companion_world_book_binding_partial" };
+  // Removing a companion is refused by name in the one state that would take a
+  // conversation out from under the player: she is the companion in play, so the
+  // mounted Chat is hers. A record that moved on since the screen read it is the same
+  // bounded compare-and-set refusal every other companion write reports.
+  if (message === "companion_delete_in_play") return { status: 409, code: "companion_delete_in_play" };
+  if (message === "companion_conflict") return { status: 409, code: "companion_conflict" };
   if (message === "companion_world_book_binding_unavailable") return { status: 503, code: "storage_unavailable" };
   // The new-chat opening choice: a sealed opening, a Chat whose opening is not a greeting, and a
   // variant that no longer resolves are each a distinct, bounded, player-actionable refusal.

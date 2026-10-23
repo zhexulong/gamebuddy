@@ -8,6 +8,7 @@ import { createCompanionProfileService } from "../tavern/companion-profile-servi
 import { createCompanionCardExportService } from "../tavern/companion-card-export-service.js";
 import { createCompanionAvatarService, type CompanionAvatarService } from "../tavern/companion-avatar/index.js";
 import { createCompanionAvatarRequestHandler } from "../tavern/companion-avatar/face.js";
+import { createCompanionDeletionService } from "../tavern/companion-deletion-service.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
 import { identityKey } from "../runtime.js";
 
@@ -461,6 +462,22 @@ function createTavernManagementDomains(
     playerId: manifest.principal.playerId,
     resolveCompanion: companionForHandle,
   });
+  /**
+   * Removing a roster companion for good.
+   *
+   * The in-play fact is the SAME `manifest.principal.companionId` the roster's `isCurrent` is
+   * derived from, injected rather than recomputed, so the service and the roster can never
+   * disagree about whose Chats are the mounted ones. Her own record, artifact root and
+   * authored files are the deletion unit; her conversations and Memory are deliberately left
+   * where they are (see `companion-deletion-service.ts`).
+   */
+  const companionDeletionService = createCompanionDeletionService({
+    store: artifactStore,
+    runtimeRoot: manifest.runtimeRoot,
+    playerId: manifest.principal.playerId,
+    currentCompanionId: manifest.principal.companionId,
+    resolveCompanion: companionForHandle,
+  });
   const newCompanionProvisioner = Object.freeze({
     async create(name: string) {
       // The provisioner mints a new Host-owned identity namespace; the browser
@@ -608,6 +625,7 @@ function createTavernManagementDomains(
       companionProfileService,
       companionCardExportService,
       companionAvatarService,
+      companionDeletionService,
       newCompanionProvisioner,
       newChatProvisioner,
       ...(chatSelectProvisioner === undefined ? {} : { chatSelectProvisioner }),
@@ -950,6 +968,7 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
   companionProfileService: ["read"],
   companionCardExportService: ["read"],
   companionAvatarService: ["update"],
+  companionDeletionService: ["delete"],
   newCompanionProvisioner: ["create"],
   newChatProvisioner: ["create"],
   chatSelectProvisioner: ["select"],
@@ -1072,8 +1091,11 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       // same canonical order: the one write in this group, and the one that takes a
       // hand-made companion off the monogram.
       "companion.avatar.update",
-      // Lorebook import follows the avatar group in that same canonical order: the route that
-      // serves the managed library's existing importer to the player.
+      // Removing a roster companion for good follows the avatar group in that same
+      // canonical order: the one irreversible operation this surface can offer.
+      "companion.delete",
+      // Lorebook import follows the companion group in that same canonical order: the route
+      // that serves the managed library's existing importer to the player.
       "world-info.import",
       // The Chat transcript export is last in that same order: one Chat's own transcript as a
       // SillyTavern chat file.
@@ -1130,6 +1152,7 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "companion.profile.read",
       "companion.card.export",
       "companion.avatar.update",
+      "companion.delete",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds. The
