@@ -3030,7 +3030,17 @@ async function createFreshChatRuntimeAuthority(
       // The live-gate-only reporter is emitted after the exact runtime has
       // been committed active but before the browser server can accept input.
       // Normal consumers still receive only the safe lease projection.
-      runtimeSession.reportTavernNarrativeGateRuntime?.();
+      //
+      // The optional call is where two different worlds look identical: a runtime
+      // built without a gate nonce has no reporter, and a runtime that has one but
+      // cannot send says so on stderr. A reader looking only at the absent marker
+      // cannot tell them apart, and "no marker" then reads as "the product never
+      // reached the provider". This line separates them.
+      if (runtimeSession.reportTavernNarrativeGateRuntime === undefined) {
+        process.stderr.write("[tavern-gate] runtime marker unavailable: no_reporter\n");
+      } else {
+        runtimeSession.reportTavernNarrativeGateRuntime();
+      }
       const browserProjection = createMountedChatBrowserProjection(
         readback.chatThreadId,
         readback.chatSurfaceSessionId,
