@@ -46,12 +46,22 @@ export type NativeChatSpeechSink = Readonly<{
   cancel(): void | Promise<void>;
 }>;
 
+/**
+ * The Chat turn's pacing, chosen before the prompt is sent.
+ *
+ * Resolved by the caller rather than read here, so this module never opens the
+ * player-preference record on a path that also owns durable turn transitions: a
+ * settings read failing must not be able to strand a claimed attempt.
+ */
+export type NativeChatDeliveryPacing = import("../companion-delivery-pacing.js").CompanionDeliveryPacing;
+
 export async function runMountedProviderStartLedger(
   scope: ProviderInvocationScope,
   previewPublisher?: NativeChatPreviewPublisher,
   speechSink?: NativeChatSpeechSink,
+  pacing?: NativeChatDeliveryPacing,
 ): Promise<ProviderStartLedger> {
-  return (await runMountedProviderStart(scope, previewPublisher, speechSink)).ledger;
+  return (await runMountedProviderStart(scope, previewPublisher, speechSink, pacing)).ledger;
 }
 
 function isDeadlineExpired(error: unknown): boolean {
@@ -201,6 +211,7 @@ export async function runMountedProviderStart(
   scope: ProviderInvocationScope,
   previewPublisher?: NativeChatPreviewPublisher,
   speechSink?: NativeChatSpeechSink,
+  pacing?: NativeChatDeliveryPacing,
 ): Promise<ProviderStartResult> {
   // Pre-arm linearization: an expired or revoked admission rejects with zero
   // store mutation and no Host prompt invocation.
@@ -420,7 +431,14 @@ export async function runMountedProviderStart(
           if (reason !== "error") finalPresentationFailure = new Error(`native_content_${reason}`);
         },
       },
-      { stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION, scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING },
+      {
+        stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,
+        scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING,
+        // Absent pacing is the Chat default: every mechanism off, delivery
+        // byte-identical to what it was before pacing existed. The caller
+        // passes a policy only when the player turned the switch on.
+        ...(pacing === undefined ? {} : { pacing }),
+      },
     );
     nativeObserver.open();
     // Open one exact speech job for this turn when a voice sink is attached.

@@ -63,6 +63,9 @@ import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import { createPlayerTurnAcceptor } from "./player-turn-acceptance.js";
 import { createProviderAttemptClaimer } from "./provider-attempt-claim.js";
 import { startMountedChatProvider } from "./chat-provider-start.js";
+import type { NativeChatDeliveryPacing } from "./p4-provider-start-execution.js";
+import { deliveryPacingFor } from "../companion-delivery-pacing.js";
+import { resolvePacedDelivery } from "../settings/player-preference-store.js";
 import { formatSwipeLabel } from "./message-tree.js";
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{22}$/u;
@@ -226,6 +229,21 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
 
   const eventStream = options.eventStream;
   const speechSink = options.speechSink;
+  /**
+   * The player's choice about reply delivery, read once per turn before the
+   * prompt is sent. A record that cannot be read is not a reason to refuse the
+   * turn: an unreadable preference falls back to the surface default, because a
+   * settings problem must never cost the player a reply.
+   */
+  const resolveDeliveryPacing = async (): Promise<NativeChatDeliveryPacing> => {
+    let paced = false;
+    try {
+      paced = await resolvePacedDelivery(manifest.runtimeRoot);
+    } catch {
+      paced = false;
+    }
+    return deliveryPacingFor("chat", paced);
+  };
   const start: ChatPipelineStartDependency =
     options.deps?.start ??
     Object.freeze({
@@ -254,6 +272,7 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
                 },
               }),
           speechSink === undefined ? undefined : speechSink,
+          await resolveDeliveryPacing(),
         ),
     });
   const accept = createPlayerTurnAcceptor(manifest, lease);

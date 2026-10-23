@@ -68,18 +68,59 @@ export const GAME_DELIVERY_PACING: CompanionDeliveryPacing = Object.freeze({
 });
 
 /**
+ * The Chat surface's pacing when the player turns the switch ON.
+ *
+ * Same three mechanisms as the game bubble, with two differences that follow
+ * from what a transcript is. The reaction vocabulary is the same closed set: a
+ * sound before the reply is still a sound, not a claim. The length budget is
+ * wider, because a Chat row has room for a sentence that a glanceable bubble
+ * does not, and splitting a transcript into eighty-character pieces would make
+ * it harder to read back, not easier.
+ */
+export const CHAT_PACED_DELIVERY: CompanionDeliveryPacing = Object.freeze({
+  typing: Object.freeze({
+    chineseMsPerChar: 300,
+    latinMsPerChar: 150,
+    singleCharacterFactor: 3,
+    enterKeyMs: 300,
+    speed: 1,
+  }),
+  reaction: GAME_DELIVERY_PACING.reaction,
+  lengthBudget: Object.freeze({ maxChars: 240 }),
+});
+
+/**
  * The Chat surface's pacing: all three mechanisms off, read as the observer's
  * default for any surface that does not opt in (`native-companion-content.ts`,
  * which is where the Chat transcript's observer is configured). The Chat row is
  * a durable transcript the player scrolls back through, not a bubble that
  * appears while the game runs, so splitting it into pieces or preceding it with
- * a sound would edit the record instead of the delivery.
+ * a sound would edit the record instead of the delivery - unless the player asks
+ * for it, which is what `CHAT_PACED_DELIVERY` above is for.
  */
 export const CHAT_DELIVERY_PACING: CompanionDeliveryPacing = Object.freeze({
   typing: null,
   reaction: null,
   lengthBudget: null,
 });
+
+/**
+ * The pacing one surface delivers with, given what the player chose.
+ *
+ * The stored preference is ONE record and answers only "did the player turn it
+ * on". Which surfaces honour it, and what an unset record falls to, is this
+ * function's decision and nobody else's - that is why the store takes no surface
+ * argument.
+ *
+ * Game is paced unless the player turned it off: the bubble is glanceable and
+ * transitory, and a wall of text there reads as output rather than company.
+ * Chat is paced only if the player turned it on: the transcript is durable and
+ * read back, so changing its delivery is the player's call, not our default.
+ */
+export function deliveryPacingFor(surface: "game" | "chat", pacedChosenByPlayer: boolean): CompanionDeliveryPacing {
+  if (surface === "game") return pacedChosenByPlayer ? GAME_DELIVERY_PACING : CHAT_DELIVERY_PACING;
+  return pacedChosenByPlayer ? CHAT_PACED_DELIVERY : CHAT_DELIVERY_PACING;
+}
 
 const HAN = /[\u4e00-\u9fff]/u;
 
