@@ -201,13 +201,15 @@ export type CompanionWorldBookBindingRefresh = (
  * one state a retry cannot fix is never the state nobody was told about.
  *
  * The entry bodies that arrive are the RENDERED ones, because that is what the read
- * projected and what the player edited. A row that still matches an entry the book
- * already carried keeps that entry's authored body - macros and all - plus the metadata
- * the projection never showed (scope, provenance, token budget, any integration/save/
- * world binding): the player did not touch it, so a save must not rewrite the author's
- * text with one run's rendering of it. A row the player wrote or rewrote is hers - her
- * words verbatim, rendered on the next read - and carries the companion's own setting
- * scope, `authored` provenance and the smallest budget.
+ * projected and what the player edited. A row keeps the entry it came from by that entry's
+ * own identity (`authoredEntries`), and that entry brings back the metadata the projection
+ * never showed - scope, provenance, token budget, the card's selection gate, any
+ * integration/save/world binding. A row whose body still renders to exactly what that entry
+ * renders keeps the AUTHORED body too, macros and all: a save must not rewrite the author's
+ * text with one run's rendering of it. A row the player rewrote says her words verbatim,
+ * rendered on the next read, while it remains the same entry to select on. A row nobody
+ * claimed is one the player wrote: hers, with the companion's own setting scope, `authored`
+ * provenance and the smallest budget.
  *
  * Editing is invisible to a Chat that is already mounted: the runtime publishes its
  * authored catalog once, at mount, so a running conversation keeps the background it
@@ -271,22 +273,34 @@ export async function updateCompanionWorldBook(
   );
 }
 
-/** One entry the browser sent back: the projection's own fields, its body already rendered. */
-type ProjectedEntry = Readonly<{
-  title: string;
-  keys: readonly string[];
-  constant: boolean;
-  content: string;
-}>;
+/** One row the browser sent back: the projection's own fields, its body already rendered. */
+type EditorRow = UpdateCompanionWorldBookCommandV1["entries"][number];
 
 /**
  * The durable entry list one edit produces.
  *
- * A row is the SAME entry it came from when every field the projection carried still
- * matches, which is why the comparison is a whole-entry match and not the position in
- * the list: removing a row shifts every row after it, and a positional match would hand
- * one entry's authored text to its neighbour. The first unclaimed match wins, so two
- * entries equal in every projected field resolve to their own rows.
+ * A row keeps the entry it came from by that entry's own identity, never by its position:
+ * removing a row shifts every row after it, so a positional match would hand one entry's
+ * authored text and its card's selection gate to its neighbour.
+ *
+ * Identity is claimed in three passes over ONE claimed set, strongest evidence first: a row
+ * whose title AND rendered body both still name one entry; then, for the rows no smaller
+ * pass claimed, by title alone - the entry's public name and the identity the managed
+ * library's own editor matches by (`entriesCarryingSelection` in `world-info-management.ts`);
+ * then by rendered body alone, which is how a row the player RENAMED stays attached to the
+ * entry it renamed instead of reading as a new one. The passes are ordered rather than tried
+ * per row, so a title never resolves an entry that a row still carrying BOTH its title and
+ * its text would otherwise have owned: a player who renames one row to another's name does
+ * not move that entry's gate onto her row. The set is shared by all three passes, so an
+ * entry one row claimed is never available to another under a weaker match.
+ *
+ * Every pass is first-unclaimed, so two rows that look alike resolve to their own entries in
+ * order, and a row no pass claimed is one the player added. Fields the command can state
+ * (`title`, `keys`, `constant`, its own body) are always the row's - the carry never
+ * overrides them - and everything the projection never showed rides with the entry: scope,
+ * provenance, token budget and the card's selection gate. That gate describes WHEN an entry
+ * fires, not what it says, so a body rewrite keeps it: the player has no field for it, and
+ * dropping it would rewrite the author's "only in this mood" rule into "any of these words".
  *
  * The entry id is positional and re-minted on every rewrite, exactly as the greeting set
  * mints its variant ids on every rewrite: the browser is never handed an id, no durable
@@ -295,29 +309,41 @@ type ProjectedEntry = Readonly<{
  */
 function authoredEntries(
   current: WorldBook,
-  incoming: UpdateCompanionWorldBookCommandV1["entries"],
+  incoming: readonly EditorRow[],
   macros: MacroTable,
 ): readonly WorldBookEntry[] {
-  const candidates: readonly ProjectedEntry[] = current.entries.map((entry) =>
-    Object.freeze({
-      title: entry.title,
-      keys: entry.keys ?? [],
-      constant: entry.constant === true,
-      content: renderMacros(entry.content, macros),
-    }),
-  );
+  const rendered: readonly string[] = current.entries.map((entry) => renderMacros(entry.content, macros));
   const claimed = new Set<number>();
+  // The entry each row claims, -1 while no pass has claimed one for it.
+  const matched: number[] = incoming.map(() => -1);
+  const named = (row: EditorRow, entry: number): boolean => current.entries[entry]!.title === row.title;
+  const saysSame = (row: EditorRow, entry: number): boolean => rendered[entry] === row.content;
+  // One pass: every row still unclaimed takes the first unclaimed entry the evidence names. An
+  // entry once claimed is gone for the passes after it, so the three passes share one identity
+  // space rather than each resolving the row order on its own.
+  const claimPass = (evidence: (row: EditorRow, entry: number) => boolean): void => {
+    for (const [row, entry] of incoming.entries()) {
+      if (matched[row] !== -1) continue;
+      const found = current.entries.findIndex((_, candidate) => !claimed.has(candidate) && evidence(entry, candidate));
+      if (found === -1) continue;
+      claimed.add(found);
+      matched[row] = found;
+    }
+  };
+  claimPass((row, entry) => named(row, entry) && saysSame(row, entry));
+  claimPass(named);
+  claimPass(saysSame);
   return incoming.map((entry, index) => {
     const keys = Object.freeze([...entry.keys]);
-    const matched = candidates.findIndex(
-      (candidate, candidateIndex) => !claimed.has(candidateIndex) && sameProjectedEntry(candidate, { ...entry, keys }),
-    );
-    if (matched !== -1) claimed.add(matched);
-    const carried = matched === -1 ? undefined : current.entries[matched];
+    const source = matched[index]!;
+    const carried = source === -1 ? undefined : current.entries[source];
     return Object.freeze({
       entryId: `wb-entry-${index + 1}`,
       title: entry.title,
-      content: carried === undefined ? entry.content : carried.content,
+      // The row's own text, unless it still says exactly what that entry renders to: then it
+      // is the AUTHORED body the projection could not carry, and storing the rendered text
+      // instead would bake one run's rendering of the author's macros into her book.
+      content: carried !== undefined && rendered[source] === entry.content ? carried.content : entry.content,
       scope: carried?.scope ?? ("setting" as const),
       provenance: carried?.provenance ?? ("authored" as const),
       tokenBudget: carried?.tokenBudget ?? ("small" as const),
@@ -325,9 +351,9 @@ function authoredEntries(
       // The worldbook validator refuses an empty key list, so "no trigger words" is an
       // absent field - the same shape the card import writes for a keyless entry.
       ...(keys.length === 0 ? {} : { keys }),
-      // The card's selection gate is metadata the projection never showed, so a row the
-      // player did not touch keeps it: an edit that dropped it would rewrite the author's
-      // rule into "any of these words".
+      // The card's selection gate is metadata the projection never showed, so the entry it
+      // belongs to keeps it: an edit that dropped it would rewrite the author's rule into
+      // "any of these words".
       ...(carried?.secondaryKeys === undefined ? {} : { secondaryKeys: carried.secondaryKeys }),
       ...(carried?.selectiveLogic === undefined ? {} : { selectiveLogic: carried.selectiveLogic }),
       ...(carried?.integrationId === undefined ? {} : { integrationId: carried.integrationId }),
@@ -335,13 +361,4 @@ function authoredEntries(
       ...(carried?.worldId === undefined ? {} : { worldId: carried.worldId }),
     });
   });
-}
-
-function sameProjectedEntry(candidate: ProjectedEntry, incoming: ProjectedEntry): boolean {
-  return (
-    candidate.title === incoming.title &&
-    candidate.constant === incoming.constant &&
-    candidate.content === incoming.content &&
-    candidate.keys.join("\u0000") === incoming.keys.join("\u0000")
-  );
 }

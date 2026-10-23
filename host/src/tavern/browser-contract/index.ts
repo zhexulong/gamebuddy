@@ -1121,9 +1121,10 @@ export const COMPANION_WORLD_BOOK_CONTENT_MAX_LENGTH = 4_096;
  * player - and the durable file keeps the author's own text. **Editing** an entry
  * is served by `companion.worldbook.update`, which carries this shape back with
  * the book's durable revision as the CAS. The rendered body is what the player
- * read and what she edits, so the write path re-attaches each row's durable
- * authored text to any row that still renders to exactly what came back; a row
- * the player rewrote is hers, stored verbatim and rendered on the next read.
+ * read and what she edits, so the write path keeps each row's durable authored
+ * text whenever that row still renders to exactly what came back, and keeps the
+ * row bound to the entry it came from - by title, or failing that by its own
+ * body - so an edit to what it SAYS never resets when it fires.
  */
 export const CompanionWorldBookEntryV1Schema = strictObject({
   title: Type.String({ minLength: 1, maxLength: 256 }),

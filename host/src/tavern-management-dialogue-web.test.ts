@@ -2633,8 +2633,13 @@ test("companion.worldbook.update rewrites the real durable book through the rout
       durable.entries.map((entry) => entry.content),
       ["{{user}}说这扇玻璃是她挑的。", "洒水器接在井边。", "{{char}}喜欢雨天。"],
     );
-    assert.equal(durable.entries[0]!.provenance, "authored");
+    // A row whose body the player rewrote is still the entry she rewrote - rewriting what an
+    // entry SAYS is not renaming it, so the card's own provenance stays with it. This used to
+    // read `authored`, which meant a body edit relocated the entry to "came from nowhere".
+    assert.equal(durable.entries[0]!.provenance, "st-card-import");
     assert.equal(durable.entries[1]!.provenance, "st-card-import");
+    // …and the row the player ADDED is hers, from nowhere, because no entry claimed it.
+    assert.equal(durable.entries[2]!.provenance, "authored");
     assert.equal(durable.alwaysOnPremise, "{{user}}和她一起打理农场。");
 
     // Removing the row the player added, and reading the book back.

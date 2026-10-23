@@ -122,7 +122,7 @@ type RefreshCall = Readonly<{
   next: { revision: number; canonicalHash: string };
 }>;
 
-test("an edit stores the player's own words verbatim and leaves an untouched row's authored text alone", async () => {
+test("a rewritten body is the player's text while the entry it belongs to keeps its provenance and budget", async () => {
   const root = await bookRoot(cardBook());
   try {
     const path = join(root, "worldbook.json");
@@ -173,9 +173,13 @@ test("an edit stores the player's own words verbatim and leaves an untouched row
     assert.equal(durable.entries[1]!.tokenBudget, "medium");
     assert.equal(durable.entries[1]!.constant, true);
     assert.equal(durable.entries[1]!.scope, "setting");
-    // A row the player rewrote is hers: authored, the companion's own setting scope, smallest budget.
-    assert.equal(durable.entries[0]!.provenance, "authored");
-    assert.equal(durable.entries[0]!.tokenBudget, "small");
+    // A row the player rewrote keeps the entry it came from: rewriting what an entry SAYS is
+    // not renaming it, so its provenance, scope and budget still describe where it came from
+    // and how much of it the companion may carry. This used to read "authored"/"small" -
+    // the fresh-entry defaults - which meant a body edit silently discarded the card's
+    // origin and its budget along with the selection gate below.
+    assert.equal(durable.entries[0]!.provenance, "st-card-import");
+    assert.equal(durable.entries[0]!.tokenBudget, "medium");
     assert.equal(durable.entries[0]!.scope, "setting");
     // The members the projection does not carry are not dropped by an edit about entries.
     assert.equal(durable.alwaysOnPremise, "{{user}}和她一起打理农场。");
