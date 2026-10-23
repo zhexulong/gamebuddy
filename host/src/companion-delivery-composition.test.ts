@@ -38,18 +38,15 @@ test("turning it on gives each surface its own policy, and both are paced", () =
   assert.notEqual(chat.typing, null);
 });
 
-test("the chat-on policy keeps every mechanism, and the same reaction vocabulary", () => {
+test("the chat-on policy keeps pacing and the sound, and shares the bubble vocabulary", () => {
   assert.notEqual(CHAT_PACED_DELIVERY.typing, null);
   assert.notEqual(CHAT_PACED_DELIVERY.reaction, null);
-  assert.notEqual(CHAT_PACED_DELIVERY.lengthBudget, null);
   assert.equal(CHAT_PACED_DELIVERY.reaction, GAME_DELIVERY_PACING.reaction);
 });
 
-test("the chat budget is wider than the bubble's, because a transcript has room", () => {
-  assert.ok(
-    CHAT_PACED_DELIVERY.lengthBudget!.maxChars > GAME_DELIVERY_PACING.lengthBudget!.maxChars,
-    "a durable transcript should not be cut into bubble-sized pieces",
-  );
+test("the chat policy has no length budget, because a transcript row is one message", () => {
+  assert.equal(CHAT_PACED_DELIVERY.lengthBudget, null);
+  assert.notEqual(GAME_DELIVERY_PACING.lengthBudget, null, "a bubble still gets one");
 });
 
 test("an unset record delivers exactly what the surface delivered before pacing existed", () => {

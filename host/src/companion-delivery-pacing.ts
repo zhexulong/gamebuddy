@@ -70,12 +70,12 @@ export const GAME_DELIVERY_PACING: CompanionDeliveryPacing = Object.freeze({
 /**
  * The Chat surface's pacing when the player turns the switch ON.
  *
- * Same three mechanisms as the game bubble, with two differences that follow
- * from what a transcript is. The reaction vocabulary is the same closed set: a
- * sound before the reply is still a sound, not a claim. The length budget is
- * wider, because a Chat row has room for a sentence that a glanceable bubble
- * does not, and splitting a transcript into eighty-character pieces would make
- * it harder to read back, not easier.
+ * Same three mechanisms as the game bubble, except the length budget. A bubble
+ * is a separate item each time, so splitting a long remark into two bubbles is
+ * coherent; a transcript row is ONE message, and its final text is the durable
+ * record, so a budget there cannot shorten a message without losing the text
+ * before the last piece. Typing pace and the opening sound stay, because those
+ * two are what make the reply read as speech rather than as output.
  */
 export const CHAT_PACED_DELIVERY: CompanionDeliveryPacing = Object.freeze({
   typing: Object.freeze({
@@ -86,7 +86,7 @@ export const CHAT_PACED_DELIVERY: CompanionDeliveryPacing = Object.freeze({
     speed: 1,
   }),
   reaction: GAME_DELIVERY_PACING.reaction,
-  lengthBudget: Object.freeze({ maxChars: 240 }),
+  lengthBudget: null,
 });
 
 /**
