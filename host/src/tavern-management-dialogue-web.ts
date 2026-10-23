@@ -2708,6 +2708,10 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   // The companion directive is CASed on the exact profile revision the browser read;
   // a stale edit is a bounded, player-actionable refusal rather than a lost write.
   if (message === "character_voice_conflict") return { status: 409, code: "character_voice_conflict" };
+  // The save carries the profile revision to the Chats that pin it, and a Chat of this companion is
+  // answering right now. The accepted turn's plan pins the same triple and is write-once, so the
+  // refusal says to save again once the reply finishes rather than rewriting the turn's evidence.
+  if (message === "chat_profile_binding_turn_active") return { status: 409, code: "character_voice_turn_active" };
   // The profile was put back and the save refused, so nothing was stranded - but the durable thread
   // store could not follow the change at all, which is a storage fact rather than the player's.
   if (message === "character_voice_binding_unavailable") return { status: 503, code: "storage_unavailable" };

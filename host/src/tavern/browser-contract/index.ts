@@ -162,6 +162,12 @@ const ProblemCode = Type.Union([
   // The companion's performance directive is a durable profile field edited against an exact
   // profile revision; a stale edit is its own bounded, non-retryable-by-repeating fact.
   Type.Literal("character_voice_conflict"),
+  // ...and a save that would carry the profile to the Chats that pin it is refused while one of
+  // them is answering: the accepted turn's authored-context plan pins the same profile triple and
+  // is write-once, so moving it under the turn would make that record describe a state the turn
+  // was never in. Its own code, because "save again once the reply finishes" is what the player
+  // must do and a revision conflict would tell them to reload instead.
+  Type.Literal("character_voice_turn_active"),
   // The companion's own world book (`companion.worldbook.update`) is one durable file
   // replaced whole, so an edit is CASed on the revision the browser read. Each way it can
   // be refused names itself rather than collapsing into "failed": the book moved on since
@@ -2125,6 +2131,7 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_not_found",
   "companion_record_unreadable",
   "character_voice_conflict",
+  "character_voice_turn_active",
   "companion_world_book_conflict",
   "companion_world_book_absent",
   "companion_world_book_binding_partial",

@@ -462,6 +462,9 @@ const en = {
   // being written from the very text the edit would replace.
   problemChatEditTurnActiveTitle: "A reply is still being written",
   problemChatEditTurnActiveDetail: "Wait for the reply to finish, then edit the message.",
+  problemCharacterVoiceTurnActiveTitle: "Leave her wording for after this reply",
+  problemCharacterVoiceTurnActiveDetail:
+    "Her reply is still being written, and saving her character changes now would leave this conversation describing a state it was never written in. Save again once the reply finishes.",
   // The delete's own three refusals. The last one is not about the player's choice at all: a message
   // the Host never recorded a session entry for cannot be removed on its own, and saying so is
   // better than removing a different part of what the model reads.
@@ -1249,6 +1252,9 @@ const zh: Messages = {
   problemChatRewindTurnActiveDetail: "请先停止正在生成的回复，再回退。",
   problemChatEditTurnActiveTitle: "还有一条回复正在生成",
   problemChatEditTurnActiveDetail: "请等这条回复生成完成后，再编辑这条消息。",
+  problemCharacterVoiceTurnActiveTitle: "这条回复结束后再改她的设定",
+  problemCharacterVoiceTurnActiveDetail:
+    "她还在写这条回复，现在保存角色设定会让这段对话的记录和它实际的设定对不上。请等这条回复生成完成后，再保存一次。",
   problemChatDeleteOpeningRetainedTitle: "这是开场问候",
   problemChatDeleteOpeningRetainedDetail: "对话开始时的那句问候不能删除。",
   problemChatDeleteTurnActiveTitle: "还有一条回复正在生成",

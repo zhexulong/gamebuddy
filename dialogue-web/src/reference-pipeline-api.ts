@@ -410,6 +410,9 @@ export const PROBLEM_CODES = [
   // The companion's performance directive is CASed on the exact profile revision the browser
   // read; a stale edit is its own bounded refusal.
   "character_voice_conflict",
+  // ...and a save that would carry the profile to the Chats pinning it, while one of them is
+  // answering. Its own code: the next step is "save again once the reply finishes".
+  "character_voice_turn_active",
   // The managed World Info library's own refusals (`world-info.create`/`update`/`delete`/`detail`).
   "world_info_not_found",
   "world_info_already_exists",

@@ -856,7 +856,10 @@ export type ChatThreadStore = Readonly<{
    * Two facts bound what this may touch. The match is the whole triple - `profileId`, `revision` AND
    * `canonicalHash` - so a thread already on the new revision, or one pinned to any other profile,
    * is left exactly as it was; a sweep that rewrote whatever it found would move a Chat onto a
-   * profile it was never created with, which is the one thing this pin must never do.
+   * profile it was never created with, which is the one thing this pin must never do. And it refuses
+   * (`chat_profile_binding_turn_active`) when any thread it would move has a live turn: an accepted
+   * turn's authored-context plan pins the same profile triple and is write-once, so re-pinning a
+   * thread out from under a frozen plan would make that plan describe a state its turn was never in.
    *
    * Validation happens before any SQLite mutation, and the whole pass is one transaction. Returns
    * how many threads were re-pinned.
@@ -2047,6 +2050,22 @@ export function createChatThreadStore(
             previous.canonicalHash,
           ) as any[];
         if (rows.length === 0) return 0;
+        // An accepted turn's authored-context plan pins this same profile triple and is
+        // write-once, so a row that is re-pinned under a frozen plan would make that plan
+        // describe a state its turn was never in. Refusing is the honest answer: the save
+        // did not happen, and the player saves again once the reply finishes.
+        for (const row of rows) {
+          const liveTurn = db
+            .prepare("SELECT status FROM tavern_turns WHERE thread_id = ? AND is_current = 1")
+            .get(row.thread_id) as any;
+          if (
+            liveTurn !== undefined &&
+            liveTurn.status !== "completed" &&
+            liveTurn.status !== "cancelled" &&
+            liveTurn.status !== "failed"
+          )
+            throw new Error("chat_profile_binding_turn_active");
+        }
         const repin = db.prepare(
           "UPDATE tavern_threads SET profile_revision = ?, profile_canonical_hash = ?, updated_at_ms = ? WHERE thread_id = ?",
         );

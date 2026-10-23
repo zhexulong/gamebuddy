@@ -18,7 +18,11 @@ import { createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
 import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
-import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
+import {
+  acceptMountedPlayerMessage,
+  createChatThreadStore,
+  createProfileAwareChatThreadCreationCapability,
+} from "./chat-thread-store.js";
 
 const FIRST_PROFILE = Object.freeze({ profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) });
 const SECOND_PROFILE = Object.freeze({ profileId: "profile_01", revision: 2, canonicalHash: "b".repeat(64) });
@@ -172,6 +176,55 @@ test("a stale save re-pins nothing: a thread already carried past the revision i
       /invalid_chat_thread_profile/,
     );
     assert.deepEqual(await pinnedProfile(store, A), SECOND_PROFILE);
+  } finally {
+    fixtureValue.store.close?.();
+    await rm(fixtureValue.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("a Chat that is answering holds the pin: the save is refused and every row keeps its revision", async () => {
+  const fixtureValue = await fixture();
+  try {
+    const { store } = fixtureValue;
+    await createChat(store, FIRST_PROFILE, A);
+    await createChat(store, FIRST_PROFILE, B);
+    // A live turn on ONE of the two threads is enough. Its accepted plan pins the same profile
+    // triple and is write-once, so moving the thread under it would leave the plan describing a
+    // state its turn was never in.
+    await acceptMountedPlayerMessage(
+      {
+        runtimeRoot: fixtureValue.root,
+        playerId: "player_01",
+        companionId: COMPANION.companionId,
+        continuityId: COMPANION.continuityId,
+        chatThreadId: B.chatThreadId,
+        chatSurfaceSessionId: B.chatSurfaceSessionId,
+        selectionGeneration: 1,
+      },
+      {
+        text: "She is answering this one right now.",
+        locale: "en-US",
+        idempotencyKey: "abcdefghijklmnopqrstuv",
+        expectedDraftRevision: 0,
+        authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0, volatileTokenCount: 0 },
+      },
+    );
+    const refresh = store.refreshCompanionProfileBinding;
+    assert.ok(refresh !== undefined);
+    await assert.rejects(
+      refresh({
+        companionId: COMPANION.companionId,
+        continuityId: COMPANION.continuityId,
+        previous: FIRST_PROFILE,
+        binding: SECOND_PROFILE,
+      }),
+      /chat_profile_binding_turn_active/,
+      "the refusal names the reason the player can act on",
+    );
+    // Nothing was half-moved: the whole pass is one transaction, and the live turn's own thread was
+    // not the only one it would have touched.
+    assert.deepEqual(await pinnedProfile(store, A), FIRST_PROFILE, "her other Chat was not moved either");
+    assert.deepEqual(await pinnedProfile(store, B), FIRST_PROFILE, "the answering Chat keeps its revision");
   } finally {
     fixtureValue.store.close?.();
     await rm(fixtureValue.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

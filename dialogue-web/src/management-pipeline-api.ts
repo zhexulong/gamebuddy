@@ -1213,6 +1213,7 @@ const PROBLEM_CODES = [
   // The mounted companion's directive is CASed on the exact profile revision
   // the browser read; a stale edit is its own bounded refusal.
   "character_voice_conflict",
+  "character_voice_turn_active",
   // design/28 §2 import/export row: the staged-card pipeline has its own closed
   // problem codes (rejected card, unknown import, unreviewed confirm).
   "st_card_import_rejected",

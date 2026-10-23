@@ -123,9 +123,19 @@ const revisionConflict: ProblemSentence = (labels) =>
 
 // --- Four one-at-a-time refusals ----------------------------------------------------------------
 
-/** A turn, a selection change, a dialogue activation or the same request is already in progress. */
+/**
+ * A turn, a selection change, a dialogue activation or the same request is already in progress.
+ */
 const stillRunning: ProblemSentence = (labels) =>
   sentence(labels.problemStillRunningTitle, labels.problemStillRunningDetail);
+
+/**
+ * Saving her directive would carry the profile to the Chats that pin it, and one of them is answering.
+ * Its own sentence rather than `stillRunning`'s: the next step is not "wait for GameBuddy", it is
+ * "save again once the reply finishes", and it is the save that is held, not the reply.
+ */
+const characterVoiceTurnActive: ProblemSentence = (labels) =>
+  sentence(labels.problemCharacterVoiceTurnActiveTitle, labels.problemCharacterVoiceTurnActiveDetail);
 
 /** A repeat that the Host could not recognise as the same request, so it did not run it twice. */
 const repeatNotMatched: ProblemSentence = (labels) =>
@@ -257,6 +267,7 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   scenario_conflict: revisionConflict,
   greeting_conflict: revisionConflict,
   character_voice_conflict: revisionConflict,
+  character_voice_turn_active: characterVoiceTurnActive,
   companion_world_book_conflict: revisionConflict,
   world_info_revision_conflict: revisionConflict,
 

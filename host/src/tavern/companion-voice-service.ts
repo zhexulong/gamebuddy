@@ -53,7 +53,10 @@ export function projectCompanionVoice(profile: IdentityProfile): CompanionVoiceP
  * Two authorities - one file and SQLite rows - cannot be one atomic act, so the
  * order is the one that fails safe, exactly as `updateCompanionWorldBook` does it:
  * the file is put back byte for byte and the save is refused when the re-pin
- * cannot happen.
+ * cannot happen. `chat_profile_binding_turn_active` means a Chat of this companion
+ * is answering right now, and an accepted turn's plan pins the same triple and is
+ * write-once, so the player is told to save again once the reply finishes rather
+ * than having the turn's own evidence rewritten underneath it.
  *
  * A revision other than the one the browser read is refused - the browser never
  * silently overwrites an edit it did not see.
@@ -89,8 +92,12 @@ export async function updateMountedCompanionVoice(
       await atomicWriteFile(input.identityProfilePath, nextBytes, input.containmentRoot);
       try {
         await input.refreshThreadBindings(previous, identityProfileMetadata(next));
-      } catch {
+      } catch (error) {
         await atomicWriteFile(input.identityProfilePath, currentBytes, input.containmentRoot);
+        // A Chat of this companion is answering: the refusal is the player's, and it names the one
+        // thing they can do (save again once the reply finishes). Every other failure is the durable
+        // thread store not following the change at all - a storage fact, not the player's.
+        if (error instanceof Error && error.message === "chat_profile_binding_turn_active") throw error;
         throw new Error("character_voice_binding_unavailable");
       }
       await refreshProfileBindings(input.runtimeCwd, input.identityKey, next, input.containmentRoot);

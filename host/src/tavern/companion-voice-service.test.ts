@@ -17,7 +17,11 @@ import { identityKey, resolveRuntimePaths, type CompanionIdentity } from "../run
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { candidateToIdentityProfile, previewStCard } from "../st-card-import.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
-import { createChatThreadStore } from "./chat-thread-store.js";
+import {
+  createChatThreadStore,
+  acceptMountedPlayerMessage,
+  createProfileAwareChatThreadCreationCapability,
+} from "./chat-thread-store.js";
 import {
   type CompanionProfileBindingRefresh,
   projectCompanionVoice,
@@ -247,3 +251,206 @@ test("a re-import of the same card provisions a new companion and never repopula
     await release(root);
   }
 });
+
+/**
+ * The save is refused while she is answering, and the refusal leaves the profile byte-identical.
+ *
+ * Three separate facts, and all three are the contract:
+ *  1. a Chat of THIS companion with a live turn blocks the save - and the refusal names the one
+ *     thing the player can do about it;
+ *  2. the profile on disk was put back exactly as it was, so nothing is stranded half-saved;
+ *  3. a settled Chat saves normally, and another companion's live turn does not block this one -
+ *     the blast radius is the threads of the companion being saved, nothing wider.
+ */
+test("a save is refused while one of her Chats is answering, and nothing is written", async () => {
+  const root = await canonicalTestRoot("companion-voice-turn-active-");
+  try {
+    const paths = resolveRuntimePaths(identity, root, "surface_voice_turn_active");
+    const profilePath = await writeProfile(root, cardProfile(), "surface_voice_turn_active");
+    const original = await readIdentityProfile(profilePath);
+    const bytesBefore = await readFile(profilePath, "utf8");
+    await createOwnChat(root, {
+      chatThreadId: "thread_turn_active",
+      chatSurfaceSessionId: "surface_turn_active",
+      profileRevision: original.revision,
+      profileCanonicalHash: identityProfileHash(original),
+    });
+    await acceptTurn(root, {
+      chatThreadId: "thread_turn_active",
+      chatSurfaceSessionId: "surface_turn_active",
+      idempotencyKey: "abcdefghijklmnopqrstuv",
+    });
+
+    await assert.rejects(
+      updateMountedCompanionVoice({
+        identityProfilePath: profilePath,
+        runtimeCwd: paths.runtimeCwd,
+        containmentRoot: paths.root,
+        identityKey: identityKey(identity),
+        expectedProfileRevision: original.revision,
+        voice: { text: "Speak in short, warm sentences." },
+        refreshThreadBindings: threadBindingRefresh(root),
+      }),
+      /chat_profile_binding_turn_active/u,
+      "the refusal says the save was stopped because she is answering, not that something failed",
+    );
+    // The stronger claim: the file was not merely left alone by an unsuccessful request, it was put
+    // back after the profile had already been rewritten - so a failed save leaves no half state.
+    assert.equal(await readFile(profilePath, "utf8"), bytesBefore, "the profile is byte-identical");
+    assert.equal((await readIdentityProfile(profilePath)).revision, original.revision);
+    assert.deepEqual(projectCompanionVoice(await readIdentityProfile(profilePath)), projectCompanionVoice(original));
+  } finally {
+    await release(root);
+  }
+});
+
+test("a settled Chat saves normally, and another companion's live turn does not block this one", async () => {
+  const root = await canonicalTestRoot("companion-voice-turn-settled-");
+  try {
+    const paths = resolveRuntimePaths(identity, root, "surface_voice_turn_settled");
+    const profilePath = await writeProfile(root, cardProfile(), "surface_voice_turn_settled");
+    const original = await readIdentityProfile(profilePath);
+    // Her own Chat exists and has no live turn: nothing of hers is answering, so her pin is free.
+    await createOwnChat(root, {
+      chatThreadId: "thread_turn_settled",
+      chatSurfaceSessionId: "surface_turn_settled",
+      profileRevision: original.revision,
+      profileCanonicalHash: identityProfileHash(original),
+    });
+    // Another companion, answering right now, in its own continuity.
+    const otherIdentity = Object.freeze({
+      continuityId: "continuity_voice_other",
+      companionId: "companion_voice_other",
+      playerId: identity.playerId,
+    });
+    const otherPaths = resolveRuntimePaths(otherIdentity, root, "surface_voice_other");
+    const otherProfile = cardProfile();
+    await writeIdentityProfile(otherPaths.identityProfilePath, otherProfile, { containmentRoot: otherPaths.root });
+    const otherThreads = createChatThreadStore(root, identityKey(otherIdentity));
+    try {
+      await createProfileAwareChatThreadCreationCapability(otherThreads, {
+        async readExact() {
+          return {
+            profileId: otherProfile.profileId,
+            revision: otherProfile.revision,
+            canonicalHash: identityProfileHash(otherProfile),
+          };
+        },
+      }).createExplicit({
+        chatThreadId: "thread_other_active",
+        chatSurfaceSessionId: "surface_other_active",
+        companionId: otherIdentity.companionId,
+        continuityId: otherIdentity.continuityId,
+        opening: "blank",
+      });
+      await acceptTurn(root, {
+        chatThreadId: "thread_other_active",
+        chatSurfaceSessionId: "surface_other_active",
+        idempotencyKey: "bcdefghijklmnopqrstuvw",
+        playerId: otherIdentity.playerId,
+        companionId: otherIdentity.companionId,
+        continuityId: otherIdentity.continuityId,
+      });
+      const otherState = await otherThreads.resumeThread("thread_other_active", "surface_other_active");
+      assert.equal(otherState.turnLedger?.status, "accepted_queued", "the other companion really is answering");
+    } finally {
+      otherThreads.close?.();
+    }
+
+    // Her own threads have no live turn, so the save goes through - and the other companion's live
+    // turn is outside the rows this save would move, so it cannot refuse it. The blast radius is the
+    // threads of the companion being saved, nothing wider.
+    const saved = await updateMountedCompanionVoice({
+      identityProfilePath: profilePath,
+      runtimeCwd: paths.runtimeCwd,
+      containmentRoot: paths.root,
+      identityKey: identityKey(identity),
+      expectedProfileRevision: original.revision,
+      voice: { text: "Speak in short, warm sentences." },
+      refreshThreadBindings: threadBindingRefresh(root),
+    });
+    assert.equal(saved.profileRevision, original.revision + 1);
+    assert.deepEqual(saved.characterVoice, { text: "Speak in short, warm sentences.", source: "player" });
+
+    // The other companion's profile is untouched - she was never in this save's scope.
+    assert.equal((await readIdentityProfile(otherPaths.identityProfilePath)).revision, otherProfile.revision);
+  } finally {
+    await release(root);
+  }
+});
+
+/** One Chat of the mounted companion, created against the profile it will pin. */
+async function createOwnChat(
+  root: string,
+  input: Readonly<{
+    chatThreadId: string;
+    chatSurfaceSessionId: string;
+    profileRevision: number;
+    profileCanonicalHash: string;
+  }>,
+): Promise<void> {
+  const profilePath = resolveRuntimePaths(identity, root, input.chatSurfaceSessionId).identityProfilePath;
+  const profileId = (await readIdentityProfile(profilePath)).profileId;
+  const threads = createChatThreadStore(root, identityKey(identity));
+  try {
+    await createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return {
+          profileId,
+          revision: input.profileRevision,
+          canonicalHash: input.profileCanonicalHash,
+        };
+      },
+    }).createExplicit({
+      chatThreadId: input.chatThreadId,
+      chatSurfaceSessionId: input.chatSurfaceSessionId,
+      companionId: identity.companionId,
+      continuityId: identity.continuityId!,
+      opening: "blank",
+    });
+  } finally {
+    threads.close?.();
+  }
+}
+
+/** Accepts one player turn, which is what makes a thread's pin live. */
+async function acceptTurn(
+  root: string,
+  input: Readonly<{
+    chatThreadId: string;
+    chatSurfaceSessionId: string;
+    idempotencyKey: string;
+    playerId?: string;
+    companionId?: string;
+    continuityId?: string;
+  }>,
+): Promise<void> {
+  const routeIdentity = Object.freeze({
+    playerId: input.playerId ?? identity.playerId,
+    companionId: input.companionId ?? identity.companionId,
+    continuityId: input.continuityId ?? identity.continuityId!,
+  });
+  // The acceptance route is registered by a LIVE store for this continuity, so one has to be open
+  // for the length of the call - exactly as the mounted runtime holds one.
+  const mounted = createChatThreadStore(root, identityKey(routeIdentity));
+  try {
+    await acceptMountedPlayerMessage(
+      {
+        runtimeRoot: root,
+        ...routeIdentity,
+        chatThreadId: input.chatThreadId,
+        chatSurfaceSessionId: input.chatSurfaceSessionId,
+        selectionGeneration: 1,
+      },
+      {
+        text: "Are you there?",
+        locale: "en-US",
+        idempotencyKey: input.idempotencyKey,
+        expectedDraftRevision: 0,
+        authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0, volatileTokenCount: 0 },
+      },
+    );
+  } finally {
+    mounted.close?.();
+  }
+}
