@@ -616,6 +616,13 @@ export async function runMountedProviderStart(
     // Every session entry that exists at this instant is, by append-only construction, NOT one this
     // prompt produced: the difference after it settles names exactly the entries it did.
     entriesBefore = sessionEntryIds(runtimeSession.sessionManager);
+    // How long the player waits before the provider answers at all. Every other
+    // span in this runtime measures work we can see; this one measures the part
+    // that belongs to the provider, and without it "the turn took six seconds"
+    // cannot be split into "we were slow" and "they were slow". It rides the
+    // existing diagnostic line rather than a new channel: one bounded integer, no
+    // prompt or reply text.
+    const promptStartedAtMs = Date.now();
     const promptSettled = settlePrompt();
     promptPromise = promptSettled.then(() => undefined);
     const first = await Promise.race([
@@ -624,6 +631,10 @@ export async function runMountedProviderStart(
       promptSettled.then((settlement) => ({ phase: "prompt" as const, settlement })),
     ]);
     if (first.phase === "observation" || first.phase === "native_assistant") {
+      // Bounded, text-free: how long THIS turn waited for the provider to answer
+      // at all. Measured from just before the prompt was issued, so it is the part
+      // of the wait that belongs to the provider rather than to the Host.
+      process.stderr.write(`[provider-start] first_response_ms=${Date.now() - promptStartedAtMs}\n`);
       // Pi may emit its native assistant lifecycle ahead of Magic Context's
       // provider observer. Both are source-owned proof that this exact prompt
       // has crossed Pi's provider boundary; the callback marker remains the

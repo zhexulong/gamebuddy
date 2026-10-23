@@ -105,6 +105,10 @@ export const CHAT_RUN_AUDIT_META_KEYS = Object.freeze([
   // "the transport was not connected" from "the product never called the provider",
   // and those are the only two answers this key may carry.
   "gateMarker",
+  // The provider-boundary wait in milliseconds, when the host measured it. An
+  // integer, never text: it exists so a turn duration can be attributed to the
+  // provider instead of to the product by assumption.
+  "firstResponseMs",
   // The probe keys (owner-approved 2026-09 as proposal 2). `probeId` names the
   // opaque probe the result belongs to, `manifestDigest` pins the fixture
   // sidecar that holds the probe material, and `distance` / `dimension` place

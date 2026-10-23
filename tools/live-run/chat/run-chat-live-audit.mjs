@@ -201,6 +201,7 @@ export const AUDIT_META_KEYS = Object.freeze([
   "generation",
   "providerObservability",
   "gateMarker",
+  "firstResponseMs",
   "probeId",
   "distance",
   "dimension",
@@ -1162,6 +1163,20 @@ const PRESENTATION_MARKER =
  * "the transport was not connected" instead of "no marker", which reads as a
  * product that never called the provider.
  */
+const FIRST_RESPONSE_MS = /\[provider-start\] first_response_ms=(\d+)/;
+
+/** The provider-boundary wait this turn actually paid, when the host measured it. */
+export function providerFirstResponseMs(stderr) {
+  if (typeof stderr !== "string" || stderr.length === 0) return null;
+  // The LAST match is the turn being reported: one line is written per turn.
+  let value = null;
+  for (const match of stderr.matchAll(FIRST_RESPONSE_MS)) {
+    const parsed = Number(match[1]);
+    if (Number.isSafeInteger(parsed) && parsed >= 0) value = parsed;
+  }
+  return value;
+}
+
 const GATE_MARKER_FAILURE = /\[tavern-gate\] runtime marker (unavailable|rejected): ([^\n]*)/g;
 
 /**
@@ -2107,10 +2122,13 @@ function finishRun({ recorder, environment }) {
     // connected" and "the product never reached the provider" - different worlds
     // reported identically. The host names its own reason on stderr; carry it.
     const gateFailures = classifyGateMarkerFailures(environment.childStderr ?? "");
+    const firstResponseMs = providerFirstResponseMs(environment.childStderr ?? "");
     recorder.record("provider", "harness", "observability_gap", {
       status: "unobserved",
       reason: "no_pre_send_marker",
       ...(gateFailures.length === 0 ? {} : { gateMarker: gateFailures[0].phase }),
+      // The wait the provider itself imposed, split out from everything we control.
+      ...(firstResponseMs === null ? {} : { firstResponseMs }),
     });
   }
   if (environment.presentationMarkers === 0)
