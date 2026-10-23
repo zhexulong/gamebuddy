@@ -524,7 +524,19 @@ export async function runMountedProviderStart(
     // re-invoked by Host. Preserve its settlement class so provider rejection
     // becomes the ordinary durable failure outcome rather than an uncertain
     // queued turn; a synchronous throw is equivalent to rejection.
+    //
+    // The rejection itself is kept and reported before it is collapsed into the
+    // settlement class. Without that, every cause of a refused prompt - a
+    // provider that refused the request, an extension aborting the turn in a
+    // protected hook, a transport that never reached the network - becomes the
+    // same durable `runtime_unavailable`, and a reader cannot tell a broken
+    // product from a broken environment without re-running the case by hand.
     const settlePrompt = (): Promise<"fulfilled" | "rejected"> => {
+      const reportRejection = (error: unknown): void => {
+        const message = error instanceof Error ? error.message : String(error);
+        // Bounded: a provider body can be large, and this is a diagnostic line.
+        process.stderr.write(`[provider-start] prompt rejected: ${message.slice(0, 512)}\n`);
+      };
       try {
         return promptFn
           .call(runtimeSession.session, text, {
@@ -533,9 +545,13 @@ export async function runMountedProviderStart(
           })
           .then(
             () => "fulfilled" as const,
-            () => "rejected" as const,
+            (error: unknown) => {
+              reportRejection(error);
+              return "rejected" as const;
+            },
           );
-      } catch {
+      } catch (error) {
+        reportRejection(error);
         return Promise.resolve("rejected");
       }
     };
