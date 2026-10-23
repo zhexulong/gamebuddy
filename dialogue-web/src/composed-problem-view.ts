@@ -499,7 +499,13 @@ function internalProblem(error: unknown, labels: Messages): ProblemViewState {
   };
 }
 
-export function composedProblemView(error: unknown, labels: Messages): ProblemViewState {
+/**
+ * The sentence a refusal the contract named earns, or `null` when the failure names no code this
+ * module has words for. This is the one place both surfaces read the catalogue: the composed chat
+ * view renders the whole `ProblemViewState`, and the management mapper (`problemTextWithCode`) takes
+ * the `detail`, so a code cannot mean one thing on a chat pane and another in a settings panel.
+ */
+function namedProblemView(error: unknown, labels: Messages): ProblemViewState | null {
   const code = problemCode(error);
 
   // A code is read against the union its route belongs to: the same string can mean different
@@ -514,6 +520,21 @@ export function composedProblemView(error: unknown, labels: Messages): ProblemVi
     const view = gameProblemView(code);
     if (view !== null) return view.sentence(labels, null);
   }
+  return null;
+}
+
+/**
+ * The sentence a named refusal earns, as the single line a panel prints - `null` when the failure
+ * names nothing the catalogue has words for. The line is the `detail`: a one-line failure notice has
+ * no room for the title above it, exactly as `gameOperationFailure` reads it.
+ */
+export function declaredProblemSentence(error: unknown, labels: Messages): string | null {
+  return namedProblemView(error, labels)?.detail ?? null;
+}
+
+export function composedProblemView(error: unknown, labels: Messages): ProblemViewState {
+  const named = namedProblemView(error, labels);
+  if (named !== null) return named;
   if (isRetryableProblem(error)) {
     return {
       kind: "problem",

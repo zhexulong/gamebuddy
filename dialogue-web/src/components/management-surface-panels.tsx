@@ -428,7 +428,7 @@ export function ChatsSurfacePanel({
         // Every rejection re-reads the durable list so the panel never shows a
         // stale revision; the problem is then player-visible.
         await reread();
-        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
       }
     })();
   };
@@ -506,7 +506,7 @@ export function ChatsSurfacePanel({
       // A rejection may still hide a committed creation, so the authoritative
       // list is re-read BEFORE the failure is reported.
       await reread();
-      report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
+      report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
       return false;
     } finally {
       setCreating(false);
@@ -567,7 +567,7 @@ export function ChatsSurfacePanel({
         report({ kind: "success", text: labels.chatSelectSwitchedNotice });
       } catch (error) {
         await reread();
-        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
       } finally {
         setSelecting(null);
       }
@@ -636,7 +636,7 @@ export function ChatsSurfacePanel({
         report({ kind: "success", text: labels.success });
       } catch (error) {
         await reread();
-        report({ kind: "failure", text: problemTextWithCode(labels.chatRetentionFailed, error) });
+        report({ kind: "failure", text: problemTextWithCode(labels.chatRetentionFailed, error, labels) });
       }
     })();
   };
@@ -674,7 +674,7 @@ export function ChatsSurfacePanel({
             text: `${notice.text} ${labels.chatExportDropped.replace("{{count}}", String(dropped))}`,
           };
       } catch (error) {
-        notice = { kind: "failure", text: problemTextWithCode(labels.chatExportFailed, error) };
+        notice = { kind: "failure", text: problemTextWithCode(labels.chatExportFailed, error, labels) };
       } finally {
         setExporting(null);
       }
@@ -1154,7 +1154,7 @@ export function MemorySurfacePanel({
         } catch {
           setView({ kind: "error" });
         }
-        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
       }
     })();
   };
@@ -1352,7 +1352,7 @@ export function SettingsSurfacePanel({
         } catch {
           setLanguageView({ kind: "error" });
         }
-        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
       }
     })();
   };
@@ -1408,7 +1408,7 @@ export function SettingsSurfacePanel({
         } catch {
           setVoiceView({ kind: "error" });
         }
-        report({ kind: "failure", text: problemTextWithCode(labels.failure, error) });
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
       }
     })();
   };

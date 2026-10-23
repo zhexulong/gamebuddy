@@ -1,6 +1,6 @@
 import { ChevronDown } from "lucide-react";
 import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
-import type { Locale } from "../i18n";
+import { type Locale, type Messages, messages } from "../i18n";
 import {
   type CompanionWorldBookV1,
   MAX_LOREBOOK_FILE_BYTES,
@@ -201,7 +201,7 @@ function CompanionCardExportSection({
         else download(card.fileName, new Blob([card.card], { type: "application/json" }));
         next = { ok: true, text: labels.exportSaved.replace("{{file}}", card.fileName) };
       } catch (error) {
-        next = { ok: false, text: exportRefusal(labels, error) };
+        next = { ok: false, text: exportRefusal(labels, error, messages(locale)) };
       }
       setBusy(false);
       setNotice(next);
@@ -270,7 +270,7 @@ function base64Bytes(value: string): Uint8Array<ArrayBuffer> {
  * export" would send her looking for the wrong fault. A code this table does not
  * know keeps the base sentence with the code appended.
  */
-function exportRefusal(labels: CharacterLabels, error: unknown): string {
+function exportRefusal(labels: CharacterLabels, error: unknown, problemLabels: Messages): string {
   const code = error instanceof TavernProblemError ? error.code : null;
   switch (code) {
     case "companion_not_found":
@@ -282,7 +282,7 @@ function exportRefusal(labels: CharacterLabels, error: unknown): string {
     case "companion_card_image_absent":
       return labels.exportImageAbsent;
     default:
-      return problemTextWithCode(labels.exportFailed, error);
+      return problemTextWithCode(labels.exportFailed, error, problemLabels);
   }
 }
 
@@ -378,7 +378,7 @@ function companionWorldBookDraftIsComplete(draft: CompanionWorldBookDraft): bool
  * looking for the wrong fault. A code this table does not know keeps the base sentence
  * with the code appended, so an unexpected refusal is still named rather than swallowed.
  */
-function companionWorldBookRefusal(labels: CharacterLabels, error: unknown): string {
+function companionWorldBookRefusal(labels: CharacterLabels, error: unknown, problemLabels: Messages): string {
   const code = error instanceof TavernProblemError ? error.code : null;
   switch (code) {
     case "companion_world_book_conflict":
@@ -395,7 +395,7 @@ function companionWorldBookRefusal(labels: CharacterLabels, error: unknown): str
     case "storage_unavailable":
       return labels.companionWorldBookNotSaved;
     default:
-      return problemTextWithCode(labels.worldBookSaveFailed, error);
+      return problemTextWithCode(labels.worldBookSaveFailed, error, problemLabels);
   }
 }
 
@@ -483,7 +483,7 @@ function CompanionWorldBookSection({
         setView({ kind: "ready", handle: target.handle, worldBook: updated });
         setDraft(null);
       } catch (error) {
-        failure = companionWorldBookRefusal(labels, error);
+        failure = companionWorldBookRefusal(labels, error, messages(locale));
         setView(await readOnce());
       } finally {
         setSaving(false);
@@ -900,6 +900,9 @@ function CharacterWorldBookPanel({
   read: () => Promise<WorldInfoSurfaceSource>;
 }): ReactElement | null {
   const labels = characterLabels(locale);
+  // The sentence for a refusal is the product catalogue's, the same vocabulary the Chat view
+  // words a refusal with; `labels` above is this panel's own field and control vocabulary.
+  const problemLabels = messages(locale);
   const [view, setView] = useState<WorldBookView>({ kind: "loading" });
   const [generation, setGeneration] = useState(0);
   const [notice, setNotice] = useState<WorldBookNotice>(null);
@@ -957,7 +960,7 @@ function CharacterWorldBookPanel({
           csrfToken,
         );
       } catch (error) {
-        failure = problemTextWithCode(labels.worldBookFailed, error);
+        failure = problemTextWithCode(labels.worldBookFailed, error, problemLabels);
       }
       const next = await readOnce();
       setView(next);
@@ -981,7 +984,7 @@ function CharacterWorldBookPanel({
       });
     } catch (error) {
       setOpened(null);
-      setNotice({ kind: "failure", text: problemTextWithCode(labels.worldBookDetailFailed, error) });
+      setNotice({ kind: "failure", text: problemTextWithCode(labels.worldBookDetailFailed, error, problemLabels) });
       return null;
     }
   };
@@ -1082,6 +1085,7 @@ function CharacterWorldBookPanel({
         failure = problemTextWithCode(
           target === null ? labels.worldBookCreateFailed : labels.worldBookSaveFailed,
           error,
+          problemLabels,
         );
         setView(await readOnce());
       } finally {
@@ -1109,7 +1113,7 @@ function CharacterWorldBookPanel({
         if (opened !== null && opened.handle === itemHandle) setOpened(null);
         if (draft !== null && draft.handle === itemHandle) setDraft(null);
       } catch (error) {
-        failure = problemTextWithCode(labels.worldBookDeleteFailed, error);
+        failure = problemTextWithCode(labels.worldBookDeleteFailed, error, problemLabels);
         setView(await readOnce());
       }
       setNotice(
@@ -1163,7 +1167,7 @@ function CharacterWorldBookPanel({
         setView({ kind: "ready", worldInfo: result });
         setPickedLorebook(null);
       } catch (error) {
-        failure = problemTextWithCode(labels.worldBookImportFailed, error);
+        failure = problemTextWithCode(labels.worldBookImportFailed, error, problemLabels);
         setView(await readOnce());
       } finally {
         setImporting(false);

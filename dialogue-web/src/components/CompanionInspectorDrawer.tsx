@@ -1,6 +1,6 @@
 import { ChevronDown, UserRound } from "lucide-react";
 import { type ReactElement, type RefObject, useEffect, useRef, useState } from "react";
-import type { Locale } from "../i18n";
+import { type Locale, type Messages, messages } from "../i18n";
 import type { CompanionProfileV1, ManagementPipelineApi } from "../management-pipeline-api";
 import { MAX_AVATAR_FILE_BYTES, problemTextWithCode, TavernProblemError } from "../management-pipeline-api";
 import { CompanionAvatar } from "./CompanionAvatar";
@@ -117,6 +117,7 @@ export function CompanionInspectorDrawer({
         csrfToken={csrfToken}
         companion={companion}
         labels={labels}
+        problemLabels={messages(locale)}
         onAvatarUpdated={onAvatarUpdated}
       />
       {view.kind === "loading" ? (
@@ -157,12 +158,15 @@ function CompanionAvatarSection({
   csrfToken,
   companion,
   labels,
+  problemLabels,
   onAvatarUpdated,
 }: {
   api: ManagementPipelineApi;
   csrfToken: string;
   companion: InspectedCompanion;
   labels: CharacterLabels;
+  /** The product catalogue, which is where a refusal's own sentence is worded. */
+  problemLabels: Messages;
   onAvatarUpdated: (handle: string, digest: string) => void;
 }): ReactElement {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -195,7 +199,7 @@ function CompanionAvatarSection({
       onAvatarUpdated(companion.handle, saved.digest);
       setNotice({ ok: true, text: labels.avatarSaved });
     } catch (error) {
-      setNotice({ ok: false, text: companionAvatarRefusal(labels, error) });
+      setNotice({ ok: false, text: companionAvatarRefusal(labels, error, problemLabels) });
     } finally {
       setBusy(false);
     }
@@ -260,7 +264,7 @@ function CompanionAvatarSection({
  * sentence with the code appended, so an unexpected refusal is still named rather than
  * swallowed.
  */
-function companionAvatarRefusal(labels: CharacterLabels, error: unknown): string {
+function companionAvatarRefusal(labels: CharacterLabels, error: unknown, problemLabels: Messages): string {
   const code = error instanceof TavernProblemError ? error.code : null;
   switch (code) {
     case "companion_avatar_too_large":
@@ -273,7 +277,7 @@ function companionAvatarRefusal(labels: CharacterLabels, error: unknown): string
     case "storage_unavailable":
       return labels.avatarUnreadable;
     default:
-      return problemTextWithCode(labels.avatarFailed, error);
+      return problemTextWithCode(labels.avatarFailed, error, problemLabels);
   }
 }
 

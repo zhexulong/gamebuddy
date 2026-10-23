@@ -1,5 +1,5 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
-import type { Locale, Messages } from "../i18n";
+import { type Locale, type Messages, messages } from "../i18n";
 import type {
   CompanionListV1,
   CompanionVoiceV1,
@@ -31,8 +31,8 @@ type VoiceView =
   | Readonly<{ kind: "unavailable" }>
   | Readonly<{ kind: "ready"; value: CompanionVoiceV1 }>;
 
-function saveFailure(error: unknown, saveFailed: string): Readonly<{ failure: string }> {
-  return { failure: problemTextWithCode(saveFailed, error) };
+function saveFailure(error: unknown, saveFailed: string, labels: Messages): Readonly<{ failure: string }> {
+  return { failure: problemTextWithCode(saveFailed, error, labels) };
 }
 
 /**
@@ -85,6 +85,9 @@ export function CharactersPanel({
   onInspect: (companion: InspectedCompanion) => void;
 }): ReactElement {
   const labels = characterLabels(locale);
+  // The sentence for a refusal comes from the product catalogue the Chat view words refusals
+  // with, so a stale save reads the same in this panel as in the transcript.
+  const problemLabels = messages(locale);
   const [companionList, setCompanionList] = useState<CompanionListV1 | "loading" | "unavailable">("loading");
   // Whether the inspector is on screen. The selection above outlives it: the drawer is
   // modal, so the player reads a companion here and acts on her once it is closed.
@@ -233,7 +236,7 @@ export function CharactersPanel({
         setVoiceNotice("saved");
       }
     } catch (error) {
-      if (activeRef.current) setVoiceNotice(saveFailure(error, labels.voiceSaveFailed));
+      if (activeRef.current) setVoiceNotice(saveFailure(error, labels.voiceSaveFailed, problemLabels));
     } finally {
       if (activeRef.current) setVoiceSaving(false);
     }
@@ -258,7 +261,7 @@ export function CharactersPanel({
         setVoiceNotice("cleared");
       }
     } catch (error) {
-      if (activeRef.current) setVoiceNotice(saveFailure(error, labels.voiceSaveFailed));
+      if (activeRef.current) setVoiceNotice(saveFailure(error, labels.voiceSaveFailed, problemLabels));
     } finally {
       if (activeRef.current) setVoiceClearing(false);
     }
@@ -278,7 +281,7 @@ export function CharactersPanel({
         setCreateNotice("saved");
       }
     } catch (error) {
-      if (activeRef.current) setCreateNotice(saveFailure(error, labels.saveFailed));
+      if (activeRef.current) setCreateNotice(saveFailure(error, labels.saveFailed, problemLabels));
     } finally {
       if (activeRef.current) setCreating(false);
     }
@@ -303,7 +306,7 @@ export function CharactersPanel({
         setPersonaNotice("saved");
       }
     } catch (error) {
-      if (activeRef.current) setPersonaNotice(saveFailure(error, labels.saveFailed));
+      if (activeRef.current) setPersonaNotice(saveFailure(error, labels.saveFailed, problemLabels));
     } finally {
       if (activeRef.current) setPersonaSaving(false);
     }
@@ -328,7 +331,7 @@ export function CharactersPanel({
         setScenarioNotice("saved");
       }
     } catch (error) {
-      if (activeRef.current) setScenarioNotice(saveFailure(error, labels.saveFailed));
+      if (activeRef.current) setScenarioNotice(saveFailure(error, labels.saveFailed, problemLabels));
     } finally {
       if (activeRef.current) setScenarioSaving(false);
     }
@@ -359,7 +362,7 @@ export function CharactersPanel({
         setOpeningNotice("saved");
       }
     } catch (error) {
-      if (activeRef.current) setOpeningNotice(saveFailure(error, labels.saveFailed));
+      if (activeRef.current) setOpeningNotice(saveFailure(error, labels.saveFailed, problemLabels));
     } finally {
       if (activeRef.current) setOpeningSaving(false);
     }

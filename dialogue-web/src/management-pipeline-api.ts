@@ -6,9 +6,10 @@
  *
  * This module is deliberately dependency-free and closed:
  *
- * - it imports no Host package, no typebox and no runtime code: the only import is the
- *   problem identity `./reference-pipeline-api` already declares (that module imports
- *   nothing either);
+ * - it imports no Host package and no typebox: the only runtime imports are the problem
+ *   identity `./reference-pipeline-api` declares and the player-sentence catalogue
+ *   `./composed-problem-view` reads, so a refusal is worded here by the same vocabulary the
+ *   Chat view words it with (`problemTextWithCode`);
  * - every DTO validator is strict and local: extra fields are rejected,
  *   handles are canonical opaque unpadded base64url strings, and every union
  *   accepts only its exact frozen variants;
@@ -23,6 +24,8 @@
  * mock anywhere in this module.
  */
 
+import { declaredProblemSentence } from "./composed-problem-view";
+import type { Messages } from "./i18n";
 import { TavernProblemError, TavernProtocolError } from "./reference-pipeline-api";
 
 const TAVERN_BROWSER_API_VERSION = 1 as const;
@@ -610,6 +613,25 @@ export type TavernLanguagePreferenceCommandV1 = Readonly<{
   locale: string;
 }>;
 
+/**
+ * Mirrors the Host's TavernDeliveryPreferenceV1: whether the player chose short
+ * paced replies instead of one whole message.
+ *
+ * The record reads what the player chose and nothing else. Which surfaces honour
+ * it, and what an un-chosen record falls to for each of them, is the delivery
+ * path's decision, so this client never invents a default of its own.
+ */
+export type TavernDeliveryPreferenceV1 = Readonly<{
+  revision: number;
+  paced: boolean;
+}>;
+
+/** Mirrors the Host's TavernDeliveryPreferenceCommandV1. */
+export type TavernDeliveryPreferenceCommandV1 = Readonly<{
+  expectedRevision: number;
+  paced: boolean;
+}>;
+
 export type TavernStateSnapshotV1 = Readonly<{
   apiVersion: 1;
   build: Readonly<{
@@ -962,14 +984,32 @@ export type TavernModelProfileUpdateCommandV1 = Readonly<{
 export { TavernProblemError, TavernProtocolError };
 
 /**
- * The player-facing sentence for a failed management call, with the server's
- * bounded problem code appended when it sent one, so a refusal that named its
- * reason never collapses into the one generic sentence. The code is already the
- * validated `TavernProblemV1.code` (a closed bounded token); an opaque protocol
- * failure carries none and leaves the sentence alone.
+ * What a panel tells the player after a refused management call.
+ *
+ * The sentence for a refusal the contract named comes from the catalogue
+ * (`composed-problem-view.ts`), which is the same one the Chat view words a refusal with:
+ * a stale save reads the same way whether the player met it in a world book or in the
+ * transcript, and there is one place to fix its words. `base` is the fallback - the
+ * caller's own honest sentence for that class of failure - and it is what the player reads
+ * when the failure named nothing the catalogue has words for (an unknown code, or an opaque
+ * `TavernProtocolError`).
+ *
+ * The code itself is contract vocabulary and never part of the sentence: `(world_info_
+ * revision_conflict)` is not something a player can act on. A developer who needs it has
+ * `problemCodeFor` - for a log line or a `data-*` attribute, never concatenated into text.
  */
-export function problemTextWithCode(base: string, error: unknown): string {
-  return error instanceof TavernProblemError ? `${base} (${error.code})` : base;
+export function problemTextWithCode(base: string, error: unknown, labels: Messages): string {
+  return declaredProblemSentence(error, labels) ?? base;
+}
+
+/**
+ * The bounded problem code behind a failure, or `null` when it carries none.
+ *
+ * The developer half of the pair above: a log line or a `data-*` attribute has to name the
+ * code, and only a sentence read by the player may not.
+ */
+export function problemCodeFor(error: unknown): string | null {
+  return error instanceof TavernProblemError ? error.code : null;
 }
 
 // --- Local strict validation primitives (mirroring the frozen contract). ---
@@ -1010,6 +1050,8 @@ const OPERATION_IDS = [
   "settings.voice.devices",
   "settings.language.read",
   "settings.language.update",
+  "settings.delivery.read",
+  "settings.delivery.update",
   "settings.connection.read",
   "settings.connection.create",
   "settings.connection.test",
@@ -1075,6 +1117,8 @@ const MANAGEMENT_LABEL_KEYS = [
   "tavern.operation.settings.voice.devices",
   "tavern.operation.settings.language.read",
   "tavern.operation.settings.language.update",
+  "tavern.operation.settings.delivery.read",
+  "tavern.operation.settings.delivery.update",
   "tavern.operation.settings.connection.read",
   "tavern.operation.settings.connection.create",
   "tavern.operation.settings.connection.test",
@@ -1312,6 +1356,8 @@ const OPENING_DIRECTIONS = ["prev", "next"] as const;
 const PROBLEM_KEYS = ["type", "title", "status", "code", "requestId", "retryable"] as const;
 const LANGUAGE_PREFERENCE_KEYS = ["revision", "locale"] as const;
 const LANGUAGE_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "locale"] as const;
+const DELIVERY_PREFERENCE_KEYS = ["revision", "paced"] as const;
+const DELIVERY_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "paced"] as const;
 const VOICE_PREFERENCE_KEYS = [
   "revision",
   "disclosureVersion",
@@ -2573,6 +2619,29 @@ function isLanguagePreferenceCommand(value: unknown): value is TavernLanguagePre
   );
 }
 
+export function validateDeliveryPreference(value: unknown): TavernDeliveryPreferenceV1 {
+  if (!isDeliveryPreference(value)) throw new TavernProtocolError();
+  return value;
+}
+
+function isDeliveryPreference(value: unknown): value is TavernDeliveryPreferenceV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, DELIVERY_PREFERENCE_KEYS) &&
+    isNonNegativeSafeInteger(value.revision) &&
+    typeof value.paced === "boolean"
+  );
+}
+
+function isDeliveryPreferenceCommand(value: unknown): value is TavernDeliveryPreferenceCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, DELIVERY_PREFERENCE_COMMAND_KEYS) &&
+    isNonNegativeSafeInteger(value.expectedRevision) &&
+    typeof value.paced === "boolean"
+  );
+}
+
 // The companion language is the player's own BCP-47 tag: the shape is bounded and the
 // set is open. Mirrors the Host's COMPANION_LOCALE_PATTERN (settings/player-preference-store.ts),
 // spelled as a literal because this module is deliberately dependency-free; a test in
@@ -2590,6 +2659,11 @@ export function validateVoicePreference(value: unknown): TavernVoicePreferenceV1
 
 export function validateVoicePreferenceConsentCommand(value: unknown): TavernVoicePreferenceConsentCommandV1 {
   if (!isVoicePreferenceConsentCommand(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateDeliveryPreferenceCommand(value: unknown): TavernDeliveryPreferenceCommandV1 {
+  if (!isDeliveryPreferenceCommand(value)) throw new TavernProtocolError();
   return value;
 }
 
@@ -3126,6 +3200,21 @@ export type ManagementPipelineApi = Readonly<{
     command: TavernLanguagePreferenceCommandV1,
     csrfToken: string,
   ): Promise<TavernLanguagePreferenceV1>;
+  /**
+   * GET /api/tavern/v1/settings/delivery (browser session; no CSRF header).
+   * `paced` is the player's own choice; the Host owns what an un-chosen record
+   * means per surface, so this client never substitutes a default.
+   */
+  readDeliveryPreference(): Promise<TavernDeliveryPreferenceV1>;
+  /**
+   * PUT /api/tavern/v1/settings/delivery with browser-session CSRF protection. The
+   * reply is the Host's validated read-back, which is the only value the surface
+   * then shows.
+   */
+  updateDeliveryPreference(
+    command: TavernDeliveryPreferenceCommandV1,
+    csrfToken: string,
+  ): Promise<TavernDeliveryPreferenceV1>;
   /** GET /api/tavern/v1/settings/voice-preference (browser session; no CSRF header). */
   readVoicePreference(): Promise<TavernVoicePreferenceV1>;
   /** GET /api/tavern/v1/settings/voice-devices (browser-session read). */
@@ -3530,6 +3619,26 @@ export function createManagementPipelineApi(
         command,
       );
       observe("settings.language.update", "passed", String(result.revision));
+      return result;
+    },
+    async readDeliveryPreference(): Promise<TavernDeliveryPreferenceV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/delivery", 200, validateDeliveryPreference);
+    },
+    async updateDeliveryPreference(
+      command: TavernDeliveryPreferenceCommandV1,
+      csrfToken: string,
+    ): Promise<TavernDeliveryPreferenceV1> {
+      if (!isDeliveryPreferenceCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/settings/delivery",
+        200,
+        validateDeliveryPreference,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      observe("settings.delivery.update", "passed", String(result.revision));
       return result;
     },
     async updateVoicePreference(
