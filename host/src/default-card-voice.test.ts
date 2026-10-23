@@ -171,6 +171,43 @@ test("the card's own directive states a register, and states it as speech", () =
   );
 });
 
+/**
+ * The two clauses of the card's directive whose ORDER is the invariant.
+ *
+ * Live run `c24ae01fa0afc93c555a47c1` produced the report `早上巡视了一圈，东边那畦防风草都冒芽了，
+ * 绿点点一片。` for `今天农场怎么样？` - a correct inventory of the farm, addressed to
+ * nobody. The card's directive caused it: item 2 was 动率先于言 (produce action
+ * material) and item 3 was 说话冲着人说 (answer the person), and a model reads a
+ * numbered list in order, so the earlier instruction won.
+ *
+ * MaiBot's `AttentionDriftConfig.reaction_style` (`ref/MaiBot/src/config/official_configs.py`)
+ * names the order that works: 「偶尔先用短句、吐槽或语气词接住话题，再继续回复」 - react
+ * to the person first, then continue. So the guard is that the clause telling her
+ * to land on the player's line comes BEFORE the clause telling her how to carry
+ * her body. Each marker is one short distinctive phrase of one clause, named here
+ * once; a failure names which one drifted so the next edit knows what to fix.
+ */
+const PERSON_FIRST_CLAUSE = /落到他的句子上|接住人|先接住玩家/u;
+const BODY_CHANNEL_CLAUSE = /交给游戏里那个身体|动作交给自己身体/u;
+
+test("the card's directive tells her to answer the person before it tells her how to carry her body", () => {
+  const directive = DEFAULT_COMPANION_PRESET.profile.characterVoice?.text ?? "";
+  const personAt = directive.search(PERSON_FIRST_CLAUSE);
+  const bodyAt = directive.search(BODY_CHANNEL_CLAUSE);
+  assert.ok(
+    personAt >= 0,
+    `the directive no longer names answering the player as its own rule; the guard looks for ` +
+      `${PERSON_FIRST_CLAUSE}. The measured failure it protects against is a status question answered ` +
+      "with a farm report, and the phrasing moved out from under it.",
+  );
+  assert.ok(bodyAt >= 0, `the directive no longer names the body channel; the guard looks for ${BODY_CHANNEL_CLAUSE}.`);
+  assert.ok(
+    personAt < bodyAt,
+    `the body clause now precedes the person clause, which is the order that produced the report: ` +
+      `answering the player begins at ${personAt}, carrying her body at ${bodyAt}.`,
+  );
+});
+
 test("the preset's examples reach the system prompt under a labelled dialogue block", () => {
   const rendered = renderIdentityProfile(DEFAULT_COMPANION_PRESET.profile, "zh-CN");
   assert.match(rendered, /\[Dialogue Examples\]/);
