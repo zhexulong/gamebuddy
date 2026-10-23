@@ -515,10 +515,22 @@ export function ConnectionSettingsPanel({
          * for a busy turn and for a connection that changed elsewhere, and a
          * saved record that fails its probe carries its own `--danger` and
          * `--warning` read-back in `ConnectionRow`.
+         *
+         * The sentence says what THIS section configures and where the rest of the
+         * work happens. It says nothing about whether a reply can reach a model:
+         * that answer is `readChatModelRoute`'s, and its one surface is the Chat.
+         * Measured on the build this replaced (`80a69c86`, capture `shots-final43`):
+         * this section opened with "a reply cannot reach a model, and a normal
+         * install has none to fall back on" while in the same run a turn settled
+         * through the Chat model profile this build ships, and the Chat said
+         * nothing at all. The connection records are `active === null` in both
+         * that state and the one where no reply has a model, so a sentence read
+         * off them cannot be the send path's answer - it can only be a second,
+         * unreadable copy of it.
          */}
         {connectionView.state.active === null && (
           <p className="management-settings-hint" data-connection-no-selection>
-            {labels.connectionNoSelectionNotice}
+            {labels.connectionSetupNotice}
           </p>
         )}
         {connectionView.notice === "activation" && (

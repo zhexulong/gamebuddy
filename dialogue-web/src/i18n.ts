@@ -276,8 +276,14 @@ const en = {
 
   connectionSettings: "Connection and model",
   connectionActiveLabel: "Active connection",
-  connectionNoSelectionNotice:
-    "No connection is selected, so a reply cannot reach a model, and a normal install has none to fall back on — configure a connection here: choose a provider and the model it serves, then save and enable it.",
+  // What this section configures, and where the rest of the work happens. It deliberately says
+  // nothing about whether a reply can reach a model: that answer is derived in `chat-model-route.ts`
+  // from the settings projections the Host's own send path resolves, and its one surface is the
+  // Chat. Measured on the build this replaced (80a69c86, capture shots-final43): this sentence
+  // promised that no reply could reach a model while in the same run a turn settled through the
+  // shipped Chat profile, and the Chat — which had read the answer — said nothing.
+  connectionSetupNotice:
+    "A saved connection is a provider, the model it serves, and that provider's credential. Choose a provider and the model it serves, then save the connection here. Its row appears below: test it there, and enable it once the test passes.",
   connectionActivationNotice:
     "Connection activated. It applies from your next conversation; one already in progress is not switched.",
   connectionProvider: "Provider",
@@ -1095,8 +1101,8 @@ const zh: Messages = {
 
   connectionSettings: "连接与模型",
   connectionActiveLabel: "当前连接",
-  connectionNoSelectionNotice:
-    "尚未选择连接，回复无法送达模型，普通安装没有它可回退——请在这里配置一条连接：选择渠道和它提供的模型，然后保存并启用。",
+  connectionSetupNotice:
+    "一条保存的连接由渠道、它提供的模型和该渠道的凭据组成。选择渠道和它提供的模型，然后在这里保存连接。保存后的记录会出现在下方：在那里测试，测试通过即可启用。",
   connectionActivationNotice: "连接已启用。从下次开始对话时生效；正在进行的会话不会被切换。",
   connectionProvider: "渠道",
   connectionRecommended: "推荐",

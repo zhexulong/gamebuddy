@@ -143,14 +143,16 @@ test("every destructive confirmation answers with [verb] / 取消 in both catalo
  * The first hour's two lies about a connection (OOBE review 1.2 and 2.1).
  *
  * 1.2: the settings banner told a player with no connection that "the assistant keeps using the
- * built-in default connection" - *keep going, something already works*. Nothing works: the
+ * built-in default connection" - *keep going, something already works*. Nothing works there: the
  * catalogue's default is the operator environment entry, whose credential is the ambient
  * `CPA_OAI_API_KEY` and whose endpoint is a loopback port nothing in a shipped install listens on
  * (`host/src/tavern/provider-catalog.ts`), so the sentence promised a first message that could only
- * fail. The premise changed; the force did not: the banner still says which state the player is in
- * and what to do about it, and it now says it about the state that is actually true - there is no
- * default a normal install can use, and configuring one is the way forward. The provider itself is
- * untouched: this repository's own runs reach it through the model profile.
+ * fail. The premise changed twice since. First the banner stopped promising that default; then, once
+ * the Chat began deriving its own answer in `chat-model-route.ts`, it stopped making any claim about
+ * delivery at all. The reason is in that module and measured on capture `shots-final43`: a root with
+ * no saved connection still answers, through the Chat model profile the build ships, so "no
+ * connection" is not "no model". The section now says what it configures and where the rest of the
+ * work happens, and the delivery verdict lives on the one surface that reads it.
  *
  * 2.1: a wrong, revoked or unserved credential reached the chat surface as
  * "回复运行时暂不可用，请稍后再试。" - the product blaming itself and inviting a retry that fails
@@ -158,21 +160,24 @@ test("every destructive confirmation answers with [verb] / 取消 in both catalo
  * drifted back to the generic line. The force pinned here is what a player needs from a credential
  * refusal: name the credential and the model, point at Settings, and say a retry changes nothing.
  */
-test("the no-connection banner sends the player to configure a connection, in both catalogues", () => {
-  const en = messages("en").connectionNoSelectionNotice;
-  const zh = messages("zh-CN").connectionNoSelectionNotice;
+test("the connection section asks for what the form can do, in both catalogues", () => {
+  const en = messages("en").connectionSetupNotice;
+  const zh = messages("zh-CN").connectionSetupNotice;
 
-  // What is true, and what the old sentence denied: a normal install has no default to fall back on.
-  assert.match(en, /a normal install has none/u);
-  assert.match(zh, /普通安装没有它/u);
-  // What to do, and where - in the form's own words (渠道 in Chinese, Provider in English).
-  assert.match(en, /configure a connection here/u);
-  assert.match(zh, /请在这里配置一条连接/u);
-  assert.match(en, /save and enable/u);
-  assert.match(zh, /保存并启用/u);
-  // The promise the product cannot keep, in either catalogue's own phrasing of it.
+  // The control the form actually has. Its only submit is "Save connection"; activating is a
+  // separate Host operation that refuses a record whose probe has not passed.
+  assert.match(en, /save the connection here/u);
+  assert.match(zh, /在这里保存连接/u);
+  assert.match(en, /test it there/u);
+  assert.match(zh, /在那里测试/u);
+  // No claim about delivery: not the one this section got wrong, and not its Chinese phrasing.
   for (const [locale, notice] of [["en", en], ["zh-CN", zh]]) {
+    assert.doesNotMatch(notice, /cannot reach a model|no model|none to fall back on/u, `${locale} claims a reply has no model`);
+    assert.doesNotMatch(notice, /无法送达|没有模型|没有它可回退/u, `${locale} claims a reply has no model`);
     assert.doesNotMatch(notice, /keeps? using|继续使用/u, `${locale} still promises the default will answer`);
+    // And not a control that is not on the screen: `保存并启用`/"save and enable" exists only inside
+    // a saved row, which renders after `connections.length > 0` and is disabled until the probe passes.
+    assert.doesNotMatch(notice, /save and enable|保存并启用/u, `${locale} asks for a control this state lacks`);
   }
 });
 
