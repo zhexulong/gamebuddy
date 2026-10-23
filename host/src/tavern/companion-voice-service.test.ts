@@ -18,7 +18,11 @@ import { canonicalTestRoot } from "../test-support/canonical-test-root.test-supp
 import { candidateToIdentityProfile, previewStCard } from "../st-card-import.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
-import { projectCompanionVoice, updateMountedCompanionVoice } from "./companion-voice-service.js";
+import {
+  type CompanionProfileBindingRefresh,
+  projectCompanionVoice,
+  updateMountedCompanionVoice,
+} from "./companion-voice-service.js";
 import { provisionNewCompanion, type NewCompanionReview } from "./new-companion-service.js";
 import type { CharacterCandidate } from "./types.js";
 
@@ -62,6 +66,37 @@ async function writeProfile(root: string, profile: IdentityProfile, surfaceSessi
   return paths.identityProfilePath;
 }
 
+/**
+ * The refresh this service performs, as the composition hands it in: the real store method over a
+ * real continuity root. A suite that is not about the re-pin still goes through it, and its own
+ * count is asserted by the tests that are.
+ */
+function threadBindingRefresh(root: string): CompanionProfileBindingRefresh {
+  return async (previous, next) => {
+    const threads = createChatThreadStore(root, identityKey(identity));
+    try {
+      const refresh = threads.refreshCompanionProfileBinding;
+      if (refresh === undefined) throw new Error("tavern_management_composition_unavailable");
+      return await refresh({
+        companionId: identity.companionId,
+        continuityId: identity.continuityId!,
+        previous: Object.freeze({
+          profileId: previous.profileId,
+          revision: previous.revision,
+          canonicalHash: previous.canonicalHash,
+        }),
+        binding: Object.freeze({
+          profileId: next.profileId,
+          revision: next.revision,
+          canonicalHash: next.canonicalHash,
+        }),
+      });
+    } finally {
+      threads.close?.();
+    }
+  };
+}
+
 test("clearing the directive removes the field and the mount prompt stays byte-identical to no directive", async () => {
   const root = await canonicalTestRoot("companion-voice-clear-");
   try {
@@ -82,6 +117,7 @@ test("clearing the directive removes the field and the mount prompt stays byte-i
       identityKey: identityKey(identity),
       expectedProfileRevision: withVoice.revision,
       voice: null,
+      refreshThreadBindings: threadBindingRefresh(root),
     });
     assert.equal(cleared.characterVoice, null);
 
@@ -94,10 +130,7 @@ test("clearing the directive removes the field and the mount prompt stays byte-i
     // carried a directive renders: the section is absent, not empty.
     const never = await readIdentityProfile(profilePath);
     const noDirective = validateIdentityProfile({ ...readBack, characterVoice: undefined });
-    assert.equal(
-      buildChatCompanionSystemPrompt(readBack),
-      buildChatCompanionSystemPrompt(noDirective),
-    );
+    assert.equal(buildChatCompanionSystemPrompt(readBack), buildChatCompanionSystemPrompt(noDirective));
     assert.equal(buildChatCompanionSystemPrompt(readBack).includes("CARD DIRECTIVES"), false);
     assert.deepEqual(projectCompanionVoice(never), null);
   } finally {
@@ -119,6 +152,7 @@ test("editing the directive re-authors it as the player's and refreshes the prof
       identityKey: identityKey(identity),
       expectedProfileRevision: original.revision,
       voice: { text: "Speak in short, warm sentences." },
+      refreshThreadBindings: threadBindingRefresh(root),
     });
     assert.deepEqual(edited.characterVoice, { text: "Speak in short, warm sentences.", source: "player" });
     assert.equal(edited.profileRevision, original.revision + 1);
@@ -139,6 +173,7 @@ test("editing the directive re-authors it as the player's and refreshes the prof
         identityKey: identityKey(identity),
         expectedProfileRevision: original.revision,
         voice: { text: "stale write" },
+        refreshThreadBindings: threadBindingRefresh(root),
       }),
       /character_voice_conflict/,
     );
@@ -160,6 +195,7 @@ test("a re-import of the same card provisions a new companion and never repopula
       identityKey: identityKey(identity),
       expectedProfileRevision: original.revision,
       voice: null,
+      refreshThreadBindings: threadBindingRefresh(root),
     });
     const clearedBytes = await readFile(profilePath, "utf8");
 

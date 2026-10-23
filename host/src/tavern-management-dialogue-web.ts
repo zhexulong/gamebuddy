@@ -2708,6 +2708,9 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   // The companion directive is CASed on the exact profile revision the browser read;
   // a stale edit is a bounded, player-actionable refusal rather than a lost write.
   if (message === "character_voice_conflict") return { status: 409, code: "character_voice_conflict" };
+  // The profile was put back and the save refused, so nothing was stranded - but the durable thread
+  // store could not follow the change at all, which is a storage fact rather than the player's.
+  if (message === "character_voice_binding_unavailable") return { status: 503, code: "storage_unavailable" };
   // Her own world book is one durable file replaced whole, so an edit CASes on the
   // revision the browser read. Each way the save can be refused says what happened
   // instead of collapsing into "failed": the book moved on, she has no book to edit,

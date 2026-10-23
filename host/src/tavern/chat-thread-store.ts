@@ -842,6 +842,33 @@ export type ChatThreadStore = Readonly<{
       binding: TavernStableWorldBookBinding;
     }>,
   ): Promise<number>;
+  /**
+   * Carries the companion's identity-profile revision to every thread of one
+   * companion/continuity that is pinned to exactly the revision it replaced.
+   *
+   * The identity profile is ONE mutable file (the directive, the persona, the identity lines) whose
+   * revision and content-derived hash change with every save, while each thread pins the exact
+   * profile it was created against and the runtime construction refuses a profile that does not
+   * match its thread's pin. So a save has to carry the pins with it, exactly as an edit of her own
+   * world book does (`refreshCompanionWorldBookBinding`), or every existing Chat of that companion
+   * stops mounting.
+   *
+   * Two facts bound what this may touch. The match is the whole triple - `profileId`, `revision` AND
+   * `canonicalHash` - so a thread already on the new revision, or one pinned to any other profile,
+   * is left exactly as it was; a sweep that rewrote whatever it found would move a Chat onto a
+   * profile it was never created with, which is the one thing this pin must never do.
+   *
+   * Validation happens before any SQLite mutation, and the whole pass is one transaction. Returns
+   * how many threads were re-pinned.
+   */
+  refreshCompanionProfileBinding?(
+    input: Readonly<{
+      companionId: string;
+      continuityId: string;
+      previous: Readonly<{ profileId: string; revision: number; canonicalHash: string }>;
+      binding: Readonly<{ profileId: string; revision: number; canonicalHash: string }>;
+    }>,
+  ): Promise<number>;
   /** Metadata-only player title mutation using the lifecycle management CAS. */
   renameThreadTitle?(
     input: Readonly<{
@@ -1996,6 +2023,36 @@ export function createChatThreadStore(
           repointed += 1;
         }
         return repointed;
+      });
+    },
+
+    async refreshCompanionProfileBinding(input): Promise<number> {
+      assertId("companionId", input.companionId);
+      assertId("continuityId", input.continuityId);
+      const previous = validateProfileBindingTriple(input.previous);
+      const binding = validateProfileBindingTriple(input.binding);
+      if (previous.profileId !== binding.profileId || previous.revision === binding.revision)
+        throw new Error("invalid_chat_thread_profile");
+      return withDb((db) => {
+        const rows = db
+          .prepare(
+            `SELECT thread_id FROM tavern_threads
+             WHERE companion_id = ? AND continuity_id = ? AND profile_id = ? AND profile_revision = ? AND profile_canonical_hash = ?`,
+          )
+          .all(
+            input.companionId,
+            input.continuityId,
+            previous.profileId,
+            previous.revision,
+            previous.canonicalHash,
+          ) as any[];
+        if (rows.length === 0) return 0;
+        const repin = db.prepare(
+          "UPDATE tavern_threads SET profile_revision = ?, profile_canonical_hash = ?, updated_at_ms = ? WHERE thread_id = ?",
+        );
+        const repinnedAtMs = now();
+        for (const row of rows) repin.run(binding.revision, binding.canonicalHash, repinnedAtMs, row.thread_id);
+        return rows.length;
       });
     },
 
@@ -3862,6 +3919,20 @@ function validateProfileMetadata(value: unknown): Readonly<{
     profileId: validateProfileId(profile.profileId),
     profileRevision: validatePositiveInteger(profile.revision, "profile_revision"),
     profileCanonicalHash: validateCanonicalHash(profile.canonicalHash),
+  });
+}
+
+function validateProfileBindingTriple(value: unknown): Readonly<{
+  profileId: string;
+  revision: number;
+  canonicalHash: string;
+}> {
+  if (!value || typeof value !== "object") throw new Error("invalid_chat_thread_profile");
+  const profile = value as Record<string, unknown>;
+  return Object.freeze({
+    profileId: validateProfileId(profile.profileId),
+    revision: validatePositiveInteger(profile.revision, "profile_revision"),
+    canonicalHash: validateCanonicalHash(profile.canonicalHash),
   });
 }
 

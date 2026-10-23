@@ -358,7 +358,15 @@ function createTavernManagementDomains(
    * `system_prompt`). `read` projects the durable identity profile; `update`
    * re-authors the text as the player's or clears it, CASed on the exact profile
    * revision the browser read. Only the mounted companion's handle resolves.
+   *
+   * The save carries the profile revision to every Chat thread of this companion
+   * pinned to the revision it replaced - the same shape the world-book edit uses -
+   * because the runtime refuses a thread whose pin does not match the profile it
+   * read, so a save that left the pins behind would stop every existing Chat from
+   * mounting at all.
    */
+  const refreshCompanionProfileBinding = libraryThreads.refreshCompanionProfileBinding;
+  if (refreshCompanionProfileBinding === undefined) throw new Error("tavern_management_composition_unavailable");
   const companionVoiceService = Object.freeze({
     async read(handle: string) {
       if (handle !== companionHandleFor(currentCompanionId)) return null;
@@ -377,6 +385,21 @@ function createTavernManagementDomains(
         identityKey: identityKey(manifest.principal),
         expectedProfileRevision: command.expectedProfileRevision,
         voice: command.clear === true || command.text === undefined ? null : { text: command.text },
+        refreshThreadBindings: async (previous, next) =>
+          await refreshCompanionProfileBinding({
+            companionId: manifest.principal.companionId,
+            continuityId: manifest.principal.continuityId,
+            previous: Object.freeze({
+              profileId: previous.profileId,
+              revision: previous.revision,
+              canonicalHash: previous.canonicalHash,
+            }),
+            binding: Object.freeze({
+              profileId: next.profileId,
+              revision: next.revision,
+              canonicalHash: next.canonicalHash,
+            }),
+          }),
       });
     },
   });

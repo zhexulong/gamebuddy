@@ -1,8 +1,10 @@
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   createIdentityProfileBinding,
+  type IdentityProfileMetadata,
   identityProfileHash,
+  identityProfileMetadata,
   type IdentityProfile,
   readIdentityProfile,
   readIdentityProfileBinding,
@@ -10,6 +12,12 @@ import {
   writeIdentityProfileBinding,
 } from "../identity-profile.js";
 import { atomicWriteFile, withPathLock } from "../path-lock.js";
+
+/** Carries one profile revision to the Chat threads of this companion pinned to the one it replaced. */
+export type CompanionProfileBindingRefresh = (
+  previous: IdentityProfileMetadata,
+  next: IdentityProfileMetadata,
+) => Promise<number>;
 
 /** The effective directive the durable profile holds, or null when it holds none. */
 export type CompanionVoiceProjection = Readonly<{ text: string; source: "card" | "player" }>;
@@ -26,11 +34,27 @@ export function projectCompanionVoice(profile: IdentityProfile): CompanionVoiceP
  * directive reads as absent everywhere it is consumed. A non-null voice
  * re-authors the text as the player's (`source: "player"`).
  *
- * The identity profile is one durable record read at every runtime mount, and
- * each surface session's binding pins that record's revision and canonical
- * hash. An edit therefore rewrites the profile AND refreshes every existing
- * binding for the same continuity, so a later mount of any Chat still passes
- * `assertProfileMatchesBinding` instead of failing `identity_profile_mismatch`.
+ * The identity profile is one durable record read at every runtime mount. Two
+ * distinct pins name it, and both are carried here:
+ *
+ *  - each surface session's `identity-profile-binding.json` pins that record's
+ *    revision and canonical hash (`assertProfileMatchesBinding` at mount);
+ *  - each Chat thread pins the same triple on its own row, and the runtime
+ *    construction refuses a thread whose pin does not match the profile it read.
+ *    That pin is the guard that keeps a Chat's authored context honest: a Chat
+ *    mounts only against the profile it was created with.
+ *
+ * Refreshing the first and not the second used to leave every existing Chat of
+ * the companion unable to mount at all. So the edit rewrites the profile and then
+ * re-pins every thread of the same continuity that still pins the exact triple it
+ * replaced (`refreshCompanionProfileBinding`), which keeps the guard's purpose
+ * while making the save carry its threads with it.
+ *
+ * Two authorities - one file and SQLite rows - cannot be one atomic act, so the
+ * order is the one that fails safe, exactly as `updateCompanionWorldBook` does it:
+ * the file is put back byte for byte and the save is refused when the re-pin
+ * cannot happen.
+ *
  * A revision other than the one the browser read is refused - the browser never
  * silently overwrites an edit it did not see.
  */
@@ -42,13 +66,16 @@ export async function updateMountedCompanionVoice(
     identityKey: string;
     expectedProfileRevision: number;
     voice: Readonly<{ text: string }> | null;
+    refreshThreadBindings: CompanionProfileBindingRefresh;
   }>,
 ): Promise<Readonly<{ profileRevision: number; characterVoice: CompanionVoiceProjection | null }>> {
   return await withPathLock(
     input.identityProfilePath,
     async () => {
+      const currentBytes = await readFile(input.identityProfilePath, "utf8");
       const current = await readIdentityProfile(input.identityProfilePath);
       if (current.revision !== input.expectedProfileRevision) throw new Error("character_voice_conflict");
+      const previous = identityProfileMetadata(current);
       // Clearing must REMOVE the member rather than store empty text, so the
       // existing value is stripped before the next profile is validated.
       const withoutVoice: Record<string, unknown> = { ...current };
@@ -58,11 +85,14 @@ export async function updateMountedCompanionVoice(
         revision: current.revision + 1,
         ...(input.voice === null ? {} : { characterVoice: { text: input.voice.text, source: "player" } }),
       });
-      await atomicWriteFile(
-        input.identityProfilePath,
-        JSON.stringify({ ...next, canonicalHash: identityProfileHash(next) }, null, 2),
-        input.containmentRoot,
-      );
+      const nextBytes = JSON.stringify({ ...next, canonicalHash: identityProfileHash(next) }, null, 2);
+      await atomicWriteFile(input.identityProfilePath, nextBytes, input.containmentRoot);
+      try {
+        await input.refreshThreadBindings(previous, identityProfileMetadata(next));
+      } catch {
+        await atomicWriteFile(input.identityProfilePath, currentBytes, input.containmentRoot);
+        throw new Error("character_voice_binding_unavailable");
+      }
       await refreshProfileBindings(input.runtimeCwd, input.identityKey, next, input.containmentRoot);
       return Object.freeze({ profileRevision: next.revision, characterVoice: projectCompanionVoice(next) });
     },
