@@ -6,8 +6,10 @@
  * shell with its management routes mocked (the same fixture style as
  * `management-surface-panels.spec.ts`):
  *
- *  - A: no model connection is a sentence on the conversation, with the way to
- *    the surface that fixes it - and the composer stays.
+ *  - A: the conversation's claim about a model is the send path's own answer, in
+ *    three states - no saved connection but the shipped profile (silent, and the
+ *    message still gets a reply), no saved connection and no servable profile (the
+ *    sentence and the way to Settings), and a saved connection (silent).
  *  - B: the connection section is the first section of Settings, above language
  *    and voice, in DOM order.
  *  - C: the voice consent is not in the first settings viewport, and it is still
@@ -156,10 +158,31 @@ function connectionState(active: boolean) {
   };
 }
 
+/** A refusal in the frozen problem shape: what the Host answers when it cannot serve a route. */
+function problem(status: number, code: string, retryable: boolean) {
+  return {
+    status,
+    contentType: "application/json",
+    body: JSON.stringify({
+      type: "about:blank",
+      title: "Refused",
+      status,
+      code,
+      requestId: `${'R'.repeat(42)}A`,
+      retryable,
+    }),
+  };
+}
+
 /** Every route the composed shell and the four settings panels read. */
 async function stubProductRoutes(
   page: Page,
-  options: Readonly<{ activeConnection: boolean; chatVoice?: "unavailable" | "ready" }>,
+  options: Readonly<{
+    activeConnection: boolean;
+    chatVoice?: "unavailable" | "ready";
+    /** What the Chat model profile route answers: the shipped profile, or the store refusing. */
+    chatProfile?: "served" | "store_unavailable";
+  }>,
 ) {
   const chat = options.chatVoice === undefined ? composedChat : { ...composedChat, voice: { state: options.chatVoice } };
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
@@ -188,34 +211,114 @@ async function stubProductRoutes(
     route.fulfill(json200({ devices: [{ id: "waveout:1", name: "Speakers" }], defaultSelectable: true })),
   );
   await page.route("**/api/tavern/v1/settings/profiles", (route) =>
-    route.fulfill(
-      json200({
-        apiVersion: 1,
-        recommendedModels: [],
-        chat: { revision: 0, modelId: "deepseek-v4-pro", thinkingLevel: "high" },
-        game: { revision: 0, modelId: "deepseek-v4-pro", thinkingLevel: "high" },
-      }),
-    ),
+    options.chatProfile === "store_unavailable"
+      ? // The Host's own mapping for a profile store it cannot read
+        // (`invalid_model_profile_store` -> 503 `storage_unavailable`).
+        route.fulfill(problem(503, "storage_unavailable", false))
+      : route.fulfill(
+          json200({
+            apiVersion: 1,
+            recommendedModels: [],
+            chat: { revision: 0, modelId: "deepseek-v4-pro", thinkingLevel: "high" },
+            game: { revision: 0, modelId: "deepseek-v4-pro", thinkingLevel: "high" },
+          }),
+        ),
   );
 }
 
-test.describe("A: the conversation speaks before the player sends", () => {
-  test("with no active connection it says so, and its button opens Settings without taking the composer", async ({
+test.describe("A: the conversation's claim about a model is the send path's own answer", () => {
+  /**
+   * (a) No saved connection, and the shipped Chat profile is there: the conversation is silent and
+   * a message really does get a reply.
+   *
+   * What the old code did here, measured on the pinned build: `readConnection().active === null`
+   * painted `data-chat-connection-missing` reading "No model connection is set up yet" on a Chat
+   * whose very next send was answered by the shipped profile through the operator gateway. The
+   * assertion below fails on that build twice: the banner exists, and the reply never lands
+   * because the banner's claim was never true in the first place.
+   */
+  test("with no saved connection but the shipped profile present it says nothing, and a send gets a reply", async ({
     page,
   }) => {
+    const playerText = "Are you there?";
+    const replyText = "I am. The kettle is on.";
+    const playerHandle = `${'P'.repeat(42)}A`;
+    const replyHandle = `${'Q'.repeat(42)}A`;
+    const turnHandle = `${'T'.repeat(42)}A`;
+    let submitted = false;
+    const projection = () => ({
+      ...composedRoot,
+      chat: {
+        ...composedChat,
+        chat: {
+          ...composedChat.chat,
+          transcript: submitted
+            ? [
+                { handle: playerHandle, role: "player", text: playerText, locale: "und", order: 0, revision: 1 },
+                { handle: replyHandle, role: "companion", text: replyText, locale: "und", order: 1, revision: 1 },
+              ]
+            : [],
+          turn: submitted ? { handle: turnHandle, state: "completed", projectionRevision: 1, canCancel: false } : null,
+        },
+      },
+    });
+
     await stubProductRoutes(page, { activeConnection: false });
+    // The composed root is re-read by the fallback poll, so it is stubbed with the same projection.
+    await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(projection())));
+    await page.route("**/api/tavern/v1/messages", async (route) => {
+      submitted = true;
+      await route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({
+          apiVersion: 1,
+          disposition: "accepted",
+          message: { handle: playerHandle, role: "player", text: playerText, locale: "und", order: 0, revision: 1 },
+          turn: { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true },
+        }),
+      });
+    });
+    await page.route("**/api/tavern/v1/message-submission-status", (route) =>
+      route.fulfill(json200({ apiVersion: 1, disposition: "terminal" })),
+    );
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+
+    const chat = page.getByTestId("chat-surface");
+    await expect(chat).toBeVisible();
+    // The claim the surface makes is the route a send takes: the shipped profile, so no sentence.
+    await expect(chat.locator("[data-chat-no-model]")).toHaveCount(0);
+    await expect(chat).not.toContainText("No model can answer right now");
+
+    // …and the send path agrees, which is the invariant the banner is derived from.
+    await chat.locator("textarea").fill(playerText);
+    await chat.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(chat.locator(".message-list")).toContainText(replyText);
+  });
+
+  /**
+   * (b) No saved connection and no profile the Host can serve: a reply has no model, so the
+   * conversation says so and offers the one surface where a model is chosen - without taking the
+   * composer.
+   *
+   * This is the state the sentence is FOR, and it must not be weakened into silence: the read that
+   * fails here is the same store the Host's own send path resolves from.
+   */
+  test("with no saved connection and no servable profile the sentence names the problem and its button opens Settings", async ({
+    page,
+  }) => {
+    await stubProductRoutes(page, { activeConnection: false, chatProfile: "store_unavailable" });
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
 
     const chat = page.getByTestId("chat-surface");
     await expect(chat).toBeVisible();
 
-    // The standing sentence, in the player's own words, naming what is missing.
-    const banner = chat.locator("[data-chat-connection-missing]");
+    const banner = chat.locator("[data-chat-no-model]");
     await expect(banner).toBeVisible();
-    await expect(banner).toContainText("No model connection is set up yet");
+    await expect(banner).toContainText("No model can answer right now");
 
-    // The composer is still there and still takes text: the sentence is not a
-    // replacement for writing, it is the reason a send cannot succeed.
+    // The composer is still there and still takes text: the sentence is not a replacement for
+    // writing, it is the reason this send cannot succeed.
     const composer = chat.locator("textarea");
     await expect(composer).toBeVisible();
     await composer.fill("Are you there?");
@@ -233,7 +336,7 @@ test.describe("A: the conversation speaks before the player sends", () => {
 
     const chat = page.getByTestId("chat-surface");
     await expect(chat).toBeVisible();
-    await expect(chat.locator("[data-chat-connection-missing]")).toHaveCount(0);
+    await expect(chat.locator("[data-chat-no-model]")).toHaveCount(0);
     const composer = chat.locator("textarea");
     await expect(composer).toBeVisible();
     await composer.fill("Are you there?");
