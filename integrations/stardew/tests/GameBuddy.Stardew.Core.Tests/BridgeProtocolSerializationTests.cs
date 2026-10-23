@@ -604,16 +604,17 @@ public sealed class BridgeProtocolSerializationTests
     [Fact]
     public void ToolSlot_RoundTripsAndPinsItsExactWireKeys()
     {
-        // The tool-family actions name ONE slot, so the published fact is the slot, the tool's identity and its
-        // upgrade level - the handlers require the BASIC tool, so an identity alone cannot explain
-        // `basic_axe_not_equipped_in_requested_slot`. Exactly these three keys: the Host validator rejects an
-        // unknown key, which makes the wire shape a contract rather than a convention.
-        var slot = new BridgeToolSlot(2, "(T)Hoe", 0);
+        // The tool-family actions name ONE slot, so the published fact is the slot, the tool's identity, its upgrade
+        // level and its category - the handlers require the BASIC tool, so an identity alone cannot explain
+        // `basic_axe_not_equipped_in_requested_slot`, and the label alone cannot say which tool the slot holds at all
+        // (`(W)47` is the scythe). Exactly these four keys: the Host validator rejects an unknown key, which makes the
+        // wire shape a contract rather than a convention.
+        var slot = new BridgeToolSlot(2, "(T)Hoe", 0, "hoe");
 
         string json = JsonSerializer.Serialize(slot, BridgeProtocol.JsonOptions);
         using (JsonDocument document = JsonDocument.Parse(json))
             document.RootElement.EnumerateObject().Select(property => property.Name)
-                .Should().BeEquivalentTo("slot", "label", "upgradeLevel");
+                .Should().BeEquivalentTo("slot", "label", "upgradeLevel", "category");
 
         JsonSerializer.Deserialize<BridgeToolSlot>(json, BridgeProtocol.JsonOptions).Should().Be(slot);
     }

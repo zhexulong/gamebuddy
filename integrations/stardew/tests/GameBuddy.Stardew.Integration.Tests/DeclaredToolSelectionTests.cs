@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using System.Text.RegularExpressions;
 using FluentAssertions;
+using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using Netcode;
 using StardewValley;
@@ -214,19 +215,26 @@ public sealed class DeclaredToolSelectionTests
     {
         // The Host reads `tool_selected`/`tool_before`/`tool_restored` as one word from the vocabulary an action's own
         // claim uses, so the namer has to agree with the matcher that decides ownership - including that a scythe is a
-        // MeleeWeapon and must not be reported as `weapon`.
+        // MeleeWeapon and must not be reported as `weapon`. One representative per published word, so a word added to
+        // the vocabulary without a mapping (or a mapping word the vocabulary does not publish) fails here.
         foreach ((string category, Tool tool) in new (string, Tool)[]
         {
             ("axe", Axe(upgradeLevel: 0)),
             ("pickaxe", Pickaxe(upgradeLevel: 0)),
             ("hoe", Hoe()),
             ("watering_can", WateringCan()),
+            ("fishing_rod", FishingRod()),
             ("scythe", Scythe()),
             ("weapon", Sword()),
+            ("shears", Shears()),
+            ("milk_pail", MilkPail()),
+            ("pan", Pan()),
         })
         {
             FarmhandActionCatalog.ToolEnum.Should().Contain(category);
             ToolCategory(tool).Should().Be(category);
+            // The snapshot's category and the claim matcher read the SAME mapping: one word per tool, both sides.
+            ToolCategoryOfSlot(tool).Should().Be(category);
         }
 
         ToolCategory(null).Should().Be("none", "nothing held is the one literal the Host accepts for absent");
@@ -311,6 +319,14 @@ public sealed class DeclaredToolSelectionTests
 
     private static Hoe Hoe() => SeedTool<Hoe>("(T)Hoe", 0);
 
+    private static FishingRod FishingRod() => SeedTool<FishingRod>("(T)FishingRod", 0);
+
+    private static Shears Shears() => SeedTool<Shears>("(T)Shears", 0);
+
+    private static MilkPail MilkPail() => SeedTool<MilkPail>("(T)MilkPail", 0);
+
+    private static Pan Pan() => SeedTool<Pan>("(T)Pan", 0);
+
     /// <summary>A scythe is a MeleeWeapon whose own id says so (`MeleeWeapon.isScythe`), never the type alone.</summary>
     private static MeleeWeapon Scythe() => SeedTool<MeleeWeapon>("(W)47", 0);
 
@@ -321,6 +337,12 @@ public sealed class DeclaredToolSelectionTests
         (string)typeof(ExecutionManager)
             .GetMethod("DescribeToolCategory", BindingFlags.NonPublic | BindingFlags.Static)!
             .Invoke(null, new object?[] { tool })!;
+
+    /// <summary>The category a snapshot tool slot publishes for one tool, through the Mod's own slot projection.</summary>
+    private static string ToolCategoryOfSlot(Tool tool) =>
+        ((IReadOnlyList<BridgeToolSlot>)typeof(ExecutionManager)
+            .GetMethod("DiscoverToolSlots", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, new object?[] { new List<Item?> { tool } })!)[0].Category;
 
     private static string MethodBody(string source, string signature)
     {

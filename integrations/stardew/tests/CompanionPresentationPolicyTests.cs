@@ -3,6 +3,7 @@ using GameBuddy.Stardew;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Protocol;
+using GameBuddy.Stardew.Core.Routing;
 using StardewModdingAPI;
 
 internal static class CompanionPresentationPolicyTests
@@ -17,6 +18,7 @@ internal static class CompanionPresentationPolicyTests
         FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
         BridgeSession session = new(
             new ExecutionManager(new SilentMonitor(), () => publication),
+            new FarmhandActionRouter(),
             scope,
             "a".PadRight(32, 'a'),
             () => publication,
@@ -112,7 +114,7 @@ internal static class CompanionPresentationPolicyTests
             "invalid native locale must reject snapshot without a serializable response.");
 
         int sends = 0;
-        BridgeEnvelope<BridgeCompanionPresentationRequest> valid = PresentationEnvelope(scope, "message_01", "expression_01", "source_01", "Hello.", "en-US", 0, 0);
+        BridgeEnvelope<BridgeCompanionPresentationRequest> valid = PresentationEnvelope(scope, "message_01", "expression_01", "source_01", "Hello.", "en-US", 0);
         Assert(session.TryPresentCompanionText(generation, valid, _ => { sends++; return true; }, out _, out string acceptedReason)
             && acceptedReason == "accepted" && sends == 1, "authenticated exact presentation must send once.");
         Assert(session.TryPresentCompanionText(generation, valid with { CorrelationId = "message_02", MessageId = "message_02" }, _ => { sends++; return true; }, out _, out string replayReason)
@@ -123,20 +125,44 @@ internal static class CompanionPresentationPolicyTests
             && generationReason == "unauthenticated", "wrong bridge generation must fail closed.");
         Assert(!session.TryPresentCompanionText(generation, valid with { Scope = scope with { PlayerId = "other_player" }, Payload = valid.Payload with { ExpressionId = "expression_03" } }, _ => true, out _, out string scopeReason)
             && scopeReason == "invalid_envelope", "wrong scope must fail closed.");
-        Assert(!session.TryPresentCompanionText(generation, valid with { Payload = valid.Payload with { ExpressionId = "expression_04", ExpectedRevision = 1 } }, _ => true, out _, out string revisionReason)
-            && revisionReason == "invalid_or_stale_companion_presentation", "stale revision must fail closed.");
-        session.AdvancePresentationEpoch();
-        Assert(!session.TryPresentCompanionText(generation, valid with { Payload = valid.Payload with { ExpressionId = "expression_05" } }, _ => true, out _, out string epochReason)
-            && epochReason == "invalid_or_stale_companion_presentation", "stale presentation epoch must fail closed.");
 
-        BridgeEnvelope<BridgeCompanionPresentationRequest> throwing = PresentationEnvelope(scope, "message_06", "expression_06", "source_06", "throws", "en-US", 0, 1);
+        // One named code per cause: the folded `invalid_or_stale_companion_presentation` could not say
+        // which of six conditions refused a live run's closing line.
+        Assert(!session.TryPresentCompanionText(generation, valid with { Payload = valid.Payload with { ExpressionId = "expression bad" } },
+                _ => true, out _, out string expressionIdReason)
+            && expressionIdReason == "companion_presentation_expression_id_invalid", "a non-opaque expression id must name itself.");
+        Assert(!session.TryPresentCompanionText(generation, valid with { Payload = valid.Payload with { ExpressionId = "expression_04", SourceEventId = "source bad" } },
+                _ => true, out _, out string sourceEventReason)
+            && sourceEventReason == "companion_presentation_source_event_invalid", "a non-opaque source event id must name itself.");
+        Assert(!session.TryPresentCompanionText(generation, valid with { Payload = valid.Payload with { ExpressionId = "expression_05", Text = "  " } },
+                _ => true, out _, out string emptyTextReason)
+            && emptyTextReason == "companion_presentation_text_empty", "blank companion text must name itself.");
+        Assert(!session.TryPresentCompanionText(generation, valid with { Payload = valid.Payload with { ExpressionId = "expression_06", Text = new string('x', 4_001) } },
+                _ => true, out _, out string longTextReason)
+            && longTextReason == "companion_presentation_text_too_long:4001:4000", "over-long companion text must name its length and the bound.");
+        Assert(!session.TryPresentCompanionText(generation, valid with { Payload = valid.Payload with { ExpressionId = "expression_07", Locale = "zh-CN" } },
+                _ => true, out _, out string localeMismatchReason)
+            && localeMismatchReason == "companion_presentation_locale_mismatch:zh-cn:en-us", "a locale mismatch must name both locales.");
+        session.AdvancePresentationEpoch();
+        Assert(!session.TryPresentCompanionText(generation, valid with { Payload = valid.Payload with { ExpressionId = "expression_08" } }, _ => true, out _, out string epochReason)
+            && epochReason == "companion_presentation_stale_epoch:0:1", "a stale presentation epoch must name both epochs.");
+        bool presentationLocaleAvailable = true;
+        BridgeSession unavailableLocale = CreateSession(scope, () =>
+            presentationLocaleAvailable ? "en-US" : throw new InvalidOperationException("native_locale_unavailable"));
+        Authenticate(unavailableLocale, generation, scope);
+        presentationLocaleAvailable = false;
+        Assert(!unavailableLocale.TryPresentCompanionText(generation, PresentationEnvelope(scope, "message_09", "expression_09", "source_09", "Hello.", "en-US", 0),
+                _ => true, out _, out string localeUnavailableReason)
+            && localeUnavailableReason == "companion_presentation_locale_unavailable", "an unresolvable native locale must name itself.");
+
+        BridgeEnvelope<BridgeCompanionPresentationRequest> throwing = PresentationEnvelope(scope, "message_06", "expression_06", "source_06", "throws", "en-US", 1);
         int throwingSends = 0;
         Assert(!session.TryPresentCompanionText(generation, throwing, _ => { throwingSends++; throw new InvalidOperationException("after_send"); }, out _, out string throwReason)
             && throwReason == "companion_presentation_send_failed" && throwingSends == 1, "throwing native sender must fail closed after one attempted send.");
         Assert(!session.TryPresentCompanionText(generation, throwing with { CorrelationId = "message_07", MessageId = "message_07" }, _ => { throwingSends++; return true; }, out _, out string throwReplayReason)
             && throwReplayReason == "companion_presentation_send_failed" && throwingSends == 1, "throwing sender replay must preserve failure without a second native send.");
 
-        BridgeEnvelope<BridgeCompanionPresentationRequest> unavailable = PresentationEnvelope(scope, "message_08", "expression_08", "source_08", "unavailable", "en-US", 0, 1);
+        BridgeEnvelope<BridgeCompanionPresentationRequest> unavailable = PresentationEnvelope(scope, "message_08", "expression_08", "source_08", "unavailable", "en-US", 1);
         int unavailableSends = 0;
         Assert(!session.TryPresentCompanionText(generation, unavailable, _ => { unavailableSends++; return false; }, out _, out string unavailableReason)
             && unavailableReason == "companion_presentation_target_unavailable" && unavailableSends == 1, "unavailable native target must fail closed.");
@@ -190,12 +216,13 @@ internal static class CompanionPresentationPolicyTests
         FarmhandCapabilityPublication persistentPublication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
         BridgeSession persistent = new(
             new ExecutionManager(new SilentMonitor(), () => persistentPublication),
+            new FarmhandActionRouter(),
             scope,
             "b".PadRight(32, 'b'),
             () => persistentPublication,
             () => "en-US");
         Authenticate(persistent, 1, scope, "b".PadRight(32, 'b'));
-        BridgeEnvelope<BridgeCompanionPresentationRequest> persistentRequest = PresentationEnvelope(scope, "persistent_message_01", "persistent_expression_01", "persistent_source_01", "persistent", "en-US", 0, 0);
+        BridgeEnvelope<BridgeCompanionPresentationRequest> persistentRequest = PresentationEnvelope(scope, "persistent_message_01", "persistent_expression_01", "persistent_source_01", "persistent", "en-US", 0);
         Assert(persistent.TryPresentCompanionText(1, persistentRequest, _ => true, out _, out string persistentReason)
             && persistentReason == "accepted", "a ready authenticated bridge must remain authorized without a fixed wall-clock lease.");
         Assert(persistent.TryPresentCompanionText(1, persistentRequest with { Payload = persistentRequest.Payload with { ExpressionId = "persistent_expression_02" } }, _ => true, out _, out string subsequentReason)
@@ -207,6 +234,7 @@ internal static class CompanionPresentationPolicyTests
         FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
         return new(
             new ExecutionManager(new SilentMonitor(), () => publication),
+            new FarmhandActionRouter(),
             scope,
             "a".PadRight(32, 'a'),
             () => publication,
@@ -223,9 +251,9 @@ internal static class CompanionPresentationPolicyTests
     private static BridgeEnvelope<BridgeHello> Hello(BridgeScope scope, string helloId, string token) =>
         new(BridgeProtocol.Version, helloId, helloId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope, "hello", new BridgeHello(token));
 
-    private static BridgeEnvelope<BridgeCompanionPresentationRequest> PresentationEnvelope(BridgeScope scope, string messageId, string expressionId, string sourceEventId, string text, string locale, long revision, long epoch) =>
+    private static BridgeEnvelope<BridgeCompanionPresentationRequest> PresentationEnvelope(BridgeScope scope, string messageId, string expressionId, string sourceEventId, string text, string locale, long epoch) =>
         new(BridgeProtocol.Version, messageId, messageId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope, "companion_presentation_request",
-            new BridgeCompanionPresentationRequest(expressionId, sourceEventId, text, locale, revision, epoch));
+            new BridgeCompanionPresentationRequest(expressionId, sourceEventId, text, locale, epoch));
 
     private static BridgeEnvelope<BridgeSystemNoticeRequest> SystemNoticeEnvelope(
         BridgeScope scope, string messageId, string noticeId, string key, string text, string locale) =>

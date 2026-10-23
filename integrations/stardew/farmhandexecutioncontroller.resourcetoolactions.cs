@@ -493,20 +493,33 @@ internal sealed partial class ExecutionManager
         return bestSlot < 0 ? null : bestSlot;
     }
 
-    private static bool MatchesToolCategory(Tool item, string tool) => tool switch
+    /// <summary>
+    /// The ONE mapping between a native tool and the category word an action's own `tool:&lt;category&gt;` claim uses
+    /// (<see cref="FarmhandActionCatalog.ToolEnum"/>), or null when this Mod has no word for the tool. Every reading of
+    /// "which category is this tool" goes through it - <see cref="MatchesToolCategory"/> (does this tool satisfy that
+    /// claim?), <see cref="DescribeToolCategory"/> (what did the handler take and put back?) and the slot list's
+    /// published category - so a claim, a receipt and the snapshot can never name the same tool two different ways.
+    /// A scythe is a MeleeWeapon, so it is tested before `weapon`; the words partition the vocabulary, which is what
+    /// makes `weapon` mean "a weapon that is not a scythe".
+    /// </summary>
+    internal static string? ToolCategory(Tool? tool) => tool switch
     {
-        "axe" => item is Axe,
-        "pickaxe" => item is Pickaxe,
-        "hoe" => item is Hoe,
-        "watering_can" => item is WateringCan,
-        "fishing_rod" => item is FishingRod,
-        "weapon" => item is MeleeWeapon or Slingshot,
-        "scythe" => item is MeleeWeapon weapon && weapon.isScythe(),
-        "shears" => item is Shears,
-        "milk_pail" => item is MilkPail,
-        "pan" => item is Pan,
-        _ => false,
+        Axe => "axe",
+        Pickaxe => "pickaxe",
+        Hoe => "hoe",
+        WateringCan => "watering_can",
+        FishingRod => "fishing_rod",
+        Shears => "shears",
+        MilkPail => "milk_pail",
+        Pan => "pan",
+        MeleeWeapon weapon when weapon.isScythe() => "scythe",
+        MeleeWeapon or Slingshot => "weapon",
+        _ => null,
     };
+
+    /// <summary>Whether a tool satisfies a `tool:&lt;category&gt;` claim, asked of the one category mapping.</summary>
+    private static bool MatchesToolCategory(Tool item, string tool) =>
+        string.Equals(ToolCategory(item), tool, StringComparison.Ordinal);
 
     /// <summary>
     /// The tool one action's own registration declares: the category from `tool:&lt;category&gt;` and the upgrade tier
@@ -616,26 +629,11 @@ internal sealed partial class ExecutionManager
         farmer.CurrentToolIndex = selection.PreviousSlot;
 
     /// <summary>
-    /// The category of whatever the actor is holding, in the vocabulary <see cref="FarmhandActionCatalog.ToolEnum"/> and
-    /// <see cref="MatchesToolCategory"/> share, or `none` when the held item is not one of them. The inverse of
-    /// <see cref="MatchesToolCategory"/>, so a receipt names the tool with the same word the claim that needs it does - a
-    /// scythe is a MeleeWeapon, so it is tested before `weapon`.
+    /// The category of whatever the actor is holding, in the vocabulary a `tool:&lt;category&gt;` claim speaks, or
+    /// `none` when nothing is held or the held thing is not a tool this Mod can name - the one literal the Host
+    /// accepts for the absent equipped tool.
     /// </summary>
-    internal static string DescribeToolCategory(Tool? tool) => tool switch
-    {
-        null => "none",
-        Axe => "axe",
-        Pickaxe => "pickaxe",
-        Hoe => "hoe",
-        WateringCan => "watering_can",
-        FishingRod => "fishing_rod",
-        Shears => "shears",
-        MilkPail => "milk_pail",
-        Pan => "pan",
-        MeleeWeapon weapon when weapon.isScythe() => "scythe",
-        MeleeWeapon or Slingshot => "weapon",
-        _ => "none",
-    };
+    internal static string DescribeToolCategory(Tool? tool) => ToolCategory(tool) ?? "none";
 
     /// <summary>
     /// Chop exactly one TerrainFeature Tree stump (stump.Value == true) with an

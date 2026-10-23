@@ -3440,7 +3440,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         for (int slot = 0; slot < items.Count; slot++)
         {
             if (items[slot] is not Tool tool) continue;
-            slots.Add(new BridgeToolSlot(slot, DescribeTool(tool) ?? "tool", tool.UpgradeLevel));
+            slots.Add(new BridgeToolSlot(slot, DescribeTool(tool) ?? "tool", tool.UpgradeLevel, ToolCategory(tool) ?? "unknown"));
         }
 
         return slots;

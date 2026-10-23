@@ -209,8 +209,16 @@ public sealed record BridgeSoilTile(int X, int Y);
 /// tool's own item identity, and its upgrade level. The level is a fact, not advice: those handlers require the
 /// BASIC tool (`basic_axe_not_equipped_in_requested_slot`, `basic_pickaxe_not_equipped_in_requested_slot`), so
 /// an identity alone would leave an upgraded tool looking equipped and explain nothing.
+///
+/// <para>
+/// <see cref="Label"/> is the native identity an internal item id happens to be (`(W)47` for the scythe), which
+/// says which ITEM this is but never which TOOL it is; <see cref="Category"/> says the latter, in the vocabulary
+/// an action's own `tool:&lt;category&gt;` resource claim uses, so a caller satisfying a claim reads the word the
+/// claim names instead of guessing it from an id. A tool the Mod's one mapping has no word for reports
+/// `unknown` rather than the nearest-looking guess.
+/// </para>
 /// </summary>
-public sealed record BridgeToolSlot(int Slot, string Label, int UpgradeLevel = 0);
+public sealed record BridgeToolSlot(int Slot, string Label, int UpgradeLevel, string Category);
 
 public sealed record BridgeWateringCanFact(int Slot, string QualifiedItemId, string Label, int Water, int Max);
 
