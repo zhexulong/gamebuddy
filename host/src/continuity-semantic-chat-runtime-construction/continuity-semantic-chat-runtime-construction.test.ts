@@ -15,10 +15,13 @@ import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import {
   buildChatCompanionSystemPrompt,
   DEFAULT_IDENTITY_PROFILE,
+  identityProfileHash,
   identityProfileMetadata,
+  readIdentityProfile,
   writeIdentityProfile,
 } from "../identity-profile.js";
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "../tavern/chat-thread-store.js";
+import { updateMountedCompanionVoice } from "../tavern/companion-voice-service.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
@@ -290,6 +293,56 @@ test("Chat construction regenerates the canonical hash for each actual Pi sessio
     assert.notEqual(first.canonicalHash, second.canonicalHash);
     assert.equal(first.scope.sessionId, "pi_session_one");
     assert.equal(second.scope.sessionId, "pi_session_two");
+  } finally {
+    await value.binding.close();
+    await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
+test("a character-directive save does not strand the Chats that already exist", async () => {
+  const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    const paths = resolveRuntimePaths(principal, value.runtimeRoot, "chat_session_01");
+    const refreshThreadBindings = value.threads.refreshCompanionProfileBinding;
+    assert.ok(refreshThreadBindings !== undefined);
+    const saved = await updateMountedCompanionVoice({
+      identityProfilePath: paths.identityProfilePath,
+      runtimeCwd: paths.runtimeCwd,
+      containmentRoot: paths.root,
+      identityKey: identityKey(principal),
+      expectedProfileRevision: 1,
+      voice: { text: "Speak in short, warm sentences." },
+      refreshThreadBindings: async (previous, next) =>
+        await refreshThreadBindings({
+          companionId: principal.companionId,
+          continuityId: principal.continuityId,
+          previous: Object.freeze({
+            profileId: previous.profileId,
+            revision: previous.revision,
+            canonicalHash: previous.canonicalHash,
+          }),
+          binding: Object.freeze({ profileId: next.profileId, revision: next.revision, canonicalHash: next.canonicalHash }),
+        }),
+    });
+    assert.equal(saved.profileRevision, 2);
+    const savedProfileHash = identityProfileHash(await readIdentityProfile(paths.identityProfilePath));
+    prepared = await value.binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    const catalog = await prepared.materializeStableContextForPiSession("pi_session_after_directive_save");
+    assert.equal(catalog.scope.threadId, "thread_01");
+    // …and it mounts against the profile the save wrote, not merely against a matching revision:
+    // the catalog's own scope carries the new triple, and the directive is what the prompt renders.
+    assert.equal(catalog.scope.profile.revision, 2);
+    assert.equal(catalog.scope.profile.canonicalHash, savedProfileHash);
+    const prompt = buildChatCompanionSystemPrompt(
+      await readIdentityProfile(paths.identityProfilePath),
+      prepared.presentation.profile.locale,
+    );
+    assert.match(prompt, /Speak in short, warm sentences\./u, "the mounted prompt carries the new directive");
   } finally {
     await value.binding.close();
     await releaseConstructionAndFixture(prepared, value);
