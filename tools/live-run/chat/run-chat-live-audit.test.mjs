@@ -8,7 +8,7 @@ import test from "node:test";
 import {
   CHAT_RUN_AUDIT_CODES_BY_KIND,
   CHAT_RUN_AUDIT_KINDS,
-  CHAT_RUN_AUDIT_META_KEYS,
+  CHAT_RUN_AUDIT_META_KEYS as KERNEL_META_KEYS,
   CHAT_RUN_AUDIT_PROBE_DIMENSIONS,
   CHAT_RUN_AUDIT_PROBE_DISTANCES,
   validateChatRunAudit,
@@ -98,7 +98,9 @@ test("the harness vocabulary and the kernel vocabulary are equivalent in BOTH di
   // The frozen kind list, the meta allow-list and the probe domains are part of
   // the same contract and must also agree.
   assert.deepEqual([...CHAT_RUN_AUDIT_KINDS].sort(), [...AUDIT_KINDS].sort());
-  assert.deepEqual([...CHAT_RUN_AUDIT_META_KEYS].sort(), [...AUDIT_META_KEYS].sort());
+  // Harness-declared vs kernel-declared. Both are real tables now, so an
+  // addition on one side alone is a failure instead of a stale literal.
+  assert.deepEqual([...AUDIT_META_KEYS].sort(), [...KERNEL_META_KEYS].sort());
   assert.deepEqual([...CHAT_RUN_AUDIT_PROBE_DISTANCES], [...AUDIT_PROBE_DISTANCES]);
   assert.deepEqual([...CHAT_RUN_AUDIT_PROBE_DIMENSIONS], [...AUDIT_PROBE_DIMENSIONS]);
 });

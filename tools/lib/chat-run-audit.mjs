@@ -100,6 +100,11 @@ export const CHAT_RUN_AUDIT_META_KEYS = Object.freeze([
   "cursor",
   "generation",
   "providerObservability",
+  // Which condition stopped the gate marker, when the host said so. A bounded
+  // token (`unavailable` / `rejected`), never free text: the point is to tell
+  // "the transport was not connected" from "the product never called the provider",
+  // and those are the only two answers this key may carry.
+  "gateMarker",
   // The probe keys (owner-approved 2026-09 as proposal 2). `probeId` names the
   // opaque probe the result belongs to, `manifestDigest` pins the fixture
   // sidecar that holds the probe material, and `distance` / `dimension` place

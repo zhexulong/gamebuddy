@@ -200,6 +200,7 @@ export const AUDIT_META_KEYS = Object.freeze([
   "cursor",
   "generation",
   "providerObservability",
+  "gateMarker",
   "probeId",
   "distance",
   "dimension",
@@ -1155,6 +1156,15 @@ const PRESENTATION_MARKER =
   /\[DEBUG-chat-live-p4c\] (admission_ok|commit_rejected|commit_error|native_rejected_[a-z_]+)/g;
 
 /**
+ * The gate marker's own failure line, produced by the Host when it cannot
+ * announce the runtime. Matching the whole line (not a presence flag) is
+ * deliberate: the point is to carry WHICH condition failed, so the run can say
+ * "the transport was not connected" instead of "no marker", which reads as a
+ * product that never called the provider.
+ */
+const GATE_MARKER_FAILURE = /\[tavern-gate\] runtime marker (unavailable|rejected): ([^\n]*)/g;
+
+/**
  * Class B probe materialization markers emitted by Magic Context on vendor
  * stderr after a durable fold COMMIT (D-1 approved: vendor stderr). They are
  * consumed internally by the probe driver for P-fold positioning and m[0]
@@ -1202,6 +1212,25 @@ export function classifyPresentationMarkers(stderr) {
     );
   }
   return Object.freeze(markers);
+}
+
+/**
+ * Why the runtime never announced itself, when it could not.
+ *
+ * The runtime marker is the ONLY producer of the Pi session identity the pre-send
+ * marker is cross-checked against, so without it no `provider.request.sent` can
+ * exist and the run reports `no_pre_send_marker`. That reason is indistinguishable
+ * from "the product never reached the provider" - the exact collapse that made
+ * provider timing unmeasurable. The host names the cause on one bounded stderr
+ * line; this reads it, so the run's evidence can say which world it was in.
+ */
+export function classifyGateMarkerFailures(stderr) {
+  if (typeof stderr !== "string" || stderr.length === 0) return Object.freeze([]);
+  const failures = [];
+  for (const match of stderr.matchAll(GATE_MARKER_FAILURE)) {
+    failures.push(Object.freeze({ phase: match[1], detail: match[2].trim().slice(0, 200) }));
+  }
+  return Object.freeze(failures);
 }
 
 /**
@@ -1730,6 +1759,9 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   // the child and owns its teardown, so a launch that dies before ready still
   // yields the child's bounded startup diagnostic and its process is stopped.
   let stderr = "";
+  // finishRun reads this: the gate marker names its own failure on stderr, and that
+  // line is the difference between "no marker" and "transport not connected".
+  environment.childStderr = stderr;
   const launch = await launchDesktopCompositionGateChild({
     outputRoot: AUDIT_OUTPUT_ROOT,
     root,
@@ -2070,8 +2102,17 @@ function finishRun({ recorder, environment }) {
   // The run's own observability limits are reported explicitly so a missing
   // marker reads as a gap instead of as cleanliness. A gap is informational: it
   // is neither an integrity failure nor evidence about the provider.
-  if (environment.providerObservability !== "observed")
-    recorder.record("provider", "harness", "observability_gap", { status: "unobserved", reason: "no_pre_send_marker" });
+  if (environment.providerObservability !== "observed") {
+    // `no_pre_send_marker` alone is satisfied by both "the transport was not
+    // connected" and "the product never reached the provider" - different worlds
+    // reported identically. The host names its own reason on stderr; carry it.
+    const gateFailures = classifyGateMarkerFailures(environment.childStderr ?? "");
+    recorder.record("provider", "harness", "observability_gap", {
+      status: "unobserved",
+      reason: "no_pre_send_marker",
+      ...(gateFailures.length === 0 ? {} : { gateMarker: gateFailures[0].phase }),
+    });
+  }
   if (environment.presentationMarkers === 0)
     recorder.record("presentation", "harness", "observability_gap", {
       status: "unobserved",
