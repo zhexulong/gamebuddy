@@ -556,7 +556,7 @@ const en: CharacterLabels = Object.freeze({
 
   companionDeleteTitle: "Remove this companion",
   companionDeleteHint:
-    "This removes her for good: her record, her picture, her scenario, her openings and her own world book are deleted. It cannot be undone. The conversations you had with her are not deleted - they stay on your machine, but this Chat list only shows the companion in play, so they stop being listed here.",
+    "This removes her for good: her record, her picture, her scenario, her openings and her own world book are deleted. It cannot be undone. The conversations you had with her are not deleted - that text stays on this machine - but this Chat list only ever shows the companion in play, so her Chats are not opened or cleaned up from here, either before or after her removal.",
   companionDelete: "Delete her for good",
   companionDeleteConfirm: "Delete {{name}} for good? Her record and her picture are gone permanently.",
   companionDeleteConfirmYes: "Delete her for good",
@@ -800,7 +800,7 @@ const zh: CharacterLabels = Object.freeze({
 
   companionDeleteTitle: "移除这位伙伴",
   companionDeleteHint:
-    "这会把她永久移除：她的记录、她的画像、她的场景、她的开场白和她自己的世界书都会被删除。此操作无法撤销。你和她有过的对话不会被删除——它们仍留在你的电脑上，但这里的对话列表只显示在玩的伙伴，所以它们不再列在这里。",
+    "这会把她永久移除：她的记录、她的画像、她的场景、她的开场白和她自己的世界书都会被删除。此操作无法撤销。你和她有过的对话不会被删除——那些文字仍在这台电脑上——但这里的对话列表只显示在玩的伙伴，因此无论她是否已被移除，她的对话都不从这里打开或清理。",
   companionDelete: "永久删除她",
   companionDeleteConfirm: "要永久删除{{name}}吗？她的记录和画像将永久消失。",
   companionDeleteConfirmYes: "永久删除",

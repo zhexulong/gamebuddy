@@ -162,6 +162,7 @@ test("the confirmation says what goes and what stays, and only a second answer d
   const hint = await drawer.locator("[data-companion-removal]").innerText();
   expect(hint).toContain("her picture");
   // What must NOT be claimed: her conversations are not deleted.
+  expect(hint).toContain("conversations you had with her are not deleted");
   expect(hint).not.toContain("conversations you had with her are deleted");
 
   // Arming is not deleting: no request yet.
