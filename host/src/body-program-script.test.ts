@@ -665,26 +665,59 @@ for (const animal of snapshot.animalProductTargets ?? []) {
 });
 
 /**
- * The requirement a tool-family action carries lives inside the Mod's handler (`cut_weeds` needs the scythe,
- * `break_rock_source` the basic pickaxe); the surface names none of it. Guessing is what produced the failed hits, so
- * the helper refuses by name and hands back what the surface DOES declare.
+ * `cut_weeds` declares `tool:scythe` on the surface, so the helper must honour that claim. When the pack publishes the
+ * category the slot is resolved and no equip step is written (the tool is in hand); when the pack publishes no
+ * categories the refusal names the CATEGORY it could not resolve - never "requirement undeclared", which would be a
+ * false statement about a claim the surface makes.
  */
-test("equipFor refuses an action whose tool only the Mod's handler knows, naming what the surface declares", () => {
-  const refusal = compile("builder.equipFor('cut_weeds');", { currentToolSlot: 0, toolSlots: TOOL_PACK });
-  assert.equal(refusalOf(refusal), "plan_script_tool_requirement_undeclared:cut_weeds");
-  assert.deepEqual(requirementOf(refusal), {
-    actionId: "cut_weeds",
-    requiredArguments: surfaceArguments("cut_weeds"),
-    resourceClaims: surfaceClaims("cut_weeds"),
+test("equipFor resolves the declared category from the pack, and names the category when no slot publishes it", () => {
+  // The scythe is already the held tool, so the call writes the action it was asked about and no equip step.
+  const declared = compile(
+    "const slot = builder.equipFor('cut_weeds'); builder.cut_weeds({ x: 5, y: 6, slot, expectedTargetId: 'weed_01' });",
+    {
+      currentToolSlot: 3,
+      toolSlots: [
+        { slot: 0, label: "(T)Axe", upgradeLevel: 0, category: "axe" },
+        { slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" },
+      ],
+    },
+  );
+  assert.deepEqual(
+    nodesOf(declared).map((node) => node.actionId),
+    ["cut_weeds"],
+  );
+
+  // The axe is held instead, so the same call writes one equip step naming the category, then the action.
+  const notHeld = compile(
+    "const slot = builder.equipFor('cut_weeds'); builder.cut_weeds({ x: 5, y: 6, slot, expectedTargetId: 'weed_01' });",
+    {
+      currentToolSlot: 0,
+      toolSlots: [
+        { slot: 0, label: "(T)Axe", upgradeLevel: 0, category: "axe" },
+        { slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" },
+      ],
+    },
+  );
+  assert.deepEqual(
+    nodesOf(notHeld).map((node) => node.actionId),
+    ["equip_tool", "cut_weeds"],
+  );
+
+  // The pack is older than the claim: no slot says `scythe`, so the refusal names that, not the requirement.
+  const packWithoutCategories = compile("builder.equipFor('cut_weeds');", {
+    currentToolSlot: 0,
+    toolSlots: TOOL_PACK,
   });
-  // A weed target declares no tool either, so passing one does not turn a guess into a requirement.
+  assert.equal(refusalOf(packWithoutCategories), "plan_script_tool_slot_unresolved:cut_weeds:scythe");
+
+  // A weed target declares no tool, so passing one cannot stand in for the claim either.
   assert.equal(
     refusalOf(
       compile("builder.equipFor('cut_weeds', snapshot.weedTargets[0]);", {
         weedTargets: [{ targetId: "weed_01", location: "Farm", x: 5, y: 6, health: 1 }],
       }),
     ),
-    "plan_script_tool_requirement_undeclared:cut_weeds",
+    "plan_script_tool_slot_unresolved:cut_weeds:scythe",
   );
   // An id the vocabulary does not have answers with that name, and the host adds the ids it DOES have.
   assert.equal(refusalOf(compile("builder.equipFor('brew_potion');")), "plan_script_unknown_action:brew_potion");

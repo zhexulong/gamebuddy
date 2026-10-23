@@ -83,6 +83,7 @@ import {
   isWoodFenceResultTargetFact,
   isWoodFenceTargetFact,
   isWorldObjectTargetFact,
+  TOOL_CATEGORY_VALUES,
 } from "./protocol-target-facts.js";
 
 const PROTOCOL_VERSION = 1;
@@ -320,8 +321,11 @@ export type Snapshot = Readonly<{
   }>[];
   /** Current live tiles that the target-version Hoe can potentially till. */
   soilTiles?: readonly Readonly<{ x: number; y: number }>[];
-  /** Current Farmhand inventory Tool slots: the slot, its bounded label and the tool's upgrade level. */
-  toolSlots?: readonly Readonly<{ slot: number; label: string; upgradeLevel?: number }>[];
+  /**
+   * Current Farmhand inventory Tool slots: the slot, its bounded label, the tool's upgrade level and the category word
+   * a `tool:<category>` claim uses. `category` is absent on a Mod older than that projection.
+   */
+  toolSlots?: readonly Readonly<{ slot: number; label: string; upgradeLevel?: number; category?: string }>[];
   /** Nearby native forage objects available through GameLocation.checkAction. */
   forageTargets?: readonly Readonly<{
     targetId: string;
@@ -4482,18 +4486,9 @@ function isValidRuntimeAttestation(role: unknown, generation: unknown): boolean 
     ? isOpaqueId(generation)
     : (role === "native_local_fixture" || role === "unattested") && generation === null;
 }
-export const TOOL_SELECTOR_VALUES = new Set([
-  "axe",
-  "pickaxe",
-  "hoe",
-  "watering_can",
-  "fishing_rod",
-  "weapon",
-  "scythe",
-  "shears",
-  "milk_pail",
-  "pan",
-]);
+/** The `equip_tool` selector vocabulary: the same words a tool slot's published `category` and a `tool:<category>`
+ * claim use, so a claim, a selector and a slot can never name one tool three ways. */
+export const TOOL_SELECTOR_VALUES: ReadonlySet<string> = TOOL_CATEGORY_VALUES;
 
 /** equip_tool/v2 semantic category selector; slot stays Mod-private. */
 function isToolSelector(value: unknown): value is string {

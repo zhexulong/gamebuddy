@@ -10,10 +10,30 @@ export function isBoundedNonEmptyString(value: unknown, maxLength: number): valu
   return typeof value === "string" && value.length >= 1 && value.length <= maxLength;
 }
 
+/**
+ * The Mod's canonical tool categories (`FarmhandActionCatalog.ToolEnum`): the words a `tool:<category>` claim and an
+ * `equip_tool` selector share. Kept here because the tool slot's published `category` is that same vocabulary.
+ */
+export const TOOL_CATEGORY_VALUES: ReadonlySet<string> = new Set([
+  "axe",
+  "pickaxe",
+  "hoe",
+  "watering_can",
+  "fishing_rod",
+  "weapon",
+  "scythe",
+  "shears",
+  "milk_pail",
+  "pan",
+]);
+
+/** The category a tool the Mod has no word for reports, instead of the nearest-looking guess. */
+export const UNKNOWN_TOOL_CATEGORY = "unknown";
+
 export function isToolSlotFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["slot", "label", "upgradeLevel"]) &&
+    hasOnlyKeys(value, ["slot", "label", "upgradeLevel", "category"]) &&
     isToolSlot(value.slot) &&
     typeof value.label === "string" &&
     value.label.length > 0 &&
@@ -21,8 +41,16 @@ export function isToolSlotFact(value: unknown): boolean {
     // Optional because the Mod reports it only for tools that have an upgrade level; an absent value is
     // "this tool does not upgrade", never "unknown".
     (value.upgradeLevel === undefined ||
-      (typeof value.upgradeLevel === "number" && Number.isInteger(value.upgradeLevel) && value.upgradeLevel >= 0))
+      (typeof value.upgradeLevel === "number" && Number.isInteger(value.upgradeLevel) && value.upgradeLevel >= 0)) &&
+    // Optional at the wire level: a Mod older than the category projection publishes none. When it is present it must
+    // be one of the Mod's own words or `unknown`, never free text, because a planner reads it to satisfy a claim.
+    (value.category === undefined || isToolSlotCategory(value.category))
   );
+}
+
+/** The category word one tool slot publishes: a canonical tool category, or `unknown`. */
+function isToolSlotCategory(value: unknown): value is string {
+  return typeof value === "string" && (value === UNKNOWN_TOOL_CATEGORY || TOOL_CATEGORY_VALUES.has(value));
 }
 
 export function isForageTargetFact(value: unknown): boolean {

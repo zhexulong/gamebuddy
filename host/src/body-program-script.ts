@@ -469,14 +469,18 @@ function createPlanBuilder(
 }
 
 /**
- * Writes the equip step an action's own target declares, immediately before that action, and answers the tool slot the
- * action must name.
+ * Writes the equip step the action's own declared tool needs, immediately before that action, and answers the tool slot
+ * the action must name.
  *
- * The tool an action needs is published at two grains: an action-wide `tool:<category>` claim (read into
- * `toolRequirement`, and selected by the Mod at dispatch), and - on the families where the target itself decides - a
- * target entry's own `toolKind` and `slot` (`debrisTargets`, `animalProductTargets`), which is what this helper reads.
- * An action whose tool lives only in the Mod's handler is refused BY NAME, together with the arguments and claims the
- * surface does declare for it, because a guessed tool is a guaranteed failed hit.
+ * The tool an action needs is published at two grains. The action-wide `tool:<category>` claim (read into
+ * `toolRequirement`, and selected by the Mod at dispatch) names the CATEGORY; the pack's own tool slots publish that same
+ * category word, which is what resolves a slot. A target entry's `toolKind` and `slot` (`debrisTargets`,
+ * `animalProductTargets`) is the second input, and on those families it is the only one - the surface publishes no
+ * claim for them, so reading the claim alone would report `tool_requirement_undeclared` for an action whose tool is
+ * declared, and reading the target alone refuses the tool families whose target carries no tool fields.
+ *
+ * An action whose surface truly declares nothing is refused BY NAME, together with the arguments and claims the surface
+ * does declare for it, because a guessed tool is a guaranteed failed hit.
  */
 function equipForAction(
   actions: readonly PublishedPlanAction[],
@@ -489,18 +493,76 @@ function equipForAction(
     refusePlan("plan_script_equip_for_selector_invalid", state);
   const action = actions.find((candidate) => candidate.actionId === actionId);
   if (action === undefined) refusePlan(`plan_script_unknown_action:${actionId}`, state);
-  const declared = declaredToolOf(target);
-  if (declared === undefined)
+  const fromTarget = declaredToolOf(target);
+  const requirement = action.toolRequirement;
+  const category = requirement.declared ? requirement.category : fromTarget?.toolKind;
+  if (category === undefined)
     refusePlan(`plan_script_tool_requirement_undeclared:${action.actionId}`, state, requirementOf(action));
-  // The target's own slot IS the tool the action must name, so nothing is emitted when that tool is already in hand.
-  if (publishedToolSlot(snapshot) === declared.slot) return declared.slot;
+  const slot =
+    publishedSlotOfCategory(snapshot, category, requirement) ??
+    (fromTarget !== undefined && fromTarget.toolKind === category ? fromTarget.slot : null);
+  if (slot === null)
+    refusePlan(
+      `plan_script_${toolRefusalReason(snapshot)}:${action.actionId}:${category}`,
+      state,
+      requirementOf(action),
+    );
+  // The tool the action must name is already in hand, so the plan is the action alone.
+  if (publishedToolSlot(snapshot) === slot) return slot;
   const equip = actions.find((candidate) => candidate.actionId === EQUIP_TOOL_ACTION_ID);
   if (equip === undefined)
     refusePlan(`plan_script_equip_unavailable:${EQUIP_TOOL_ACTION_ID}`, state, requirementOf(action));
   // Written through the same emitter as every other node, so the equip step is validated against `equip_tool`'s own
   // declared argument (a semantic tool category, never a slot) exactly as a hand-written call would be.
-  emitPlanNode(equip, { tool: declared.toolKind }, state);
-  return declared.slot;
+  emitPlanNode(equip, { tool: category }, state);
+  return slot;
+}
+
+/**
+ * Why no slot carries the category the action names, in the two terms that have two different remedies.
+ *
+ * `tool_slot_unresolved` is an evidence problem: not one slot in the pack publishes a category, which is what an older
+ * Mod looks like, so no slot can be resolved and updating the Mod is the remedy. `tool_not_owned` is a world problem:
+ * the pack publishes categories and this one is not among them, so obtaining the tool is the remedy. A slot whose
+ * category is `unknown` says the Mod has no word for that tool and never counts as evidence about a named category.
+ */
+function toolRefusalReason(snapshot: Snapshot): "tool_slot_unresolved" | "tool_not_owned" {
+  return (snapshot.toolSlots ?? []).some((entry) => entry.category !== undefined)
+    ? "tool_not_owned"
+    : "tool_slot_unresolved";
+}
+
+/**
+ * The slot whose published category is the one the action needs, ranked the way the Mod ranks it for `equip_tool`: the
+ * highest upgrade level wins and ties go to the smallest slot. Slots inside the claim's own upgrade range are preferred,
+ * because a `BasicOnly` claim is refused by name when an upgraded tool is held.
+ */
+function publishedSlotOfCategory(
+  snapshot: Snapshot,
+  category: string,
+  requirement: PublishedPlanToolRequirement,
+): number | null {
+  const matches = (snapshot.toolSlots ?? []).filter((entry) => entry.category === category);
+  if (matches.length === 0) return null;
+  const withinRequirement = matches.filter((entry) =>
+    satisfiesUpgradeRequirement(entry.upgradeLevel ?? 0, requirement),
+  );
+  const ranked = withinRequirement.length > 0 ? withinRequirement : matches;
+  let best: Readonly<{ slot: number; upgradeLevel: number }> | undefined;
+  for (const entry of ranked) {
+    const level = entry.upgradeLevel ?? 0;
+    if (best === undefined || level > best.upgradeLevel || (level === best.upgradeLevel && entry.slot < best.slot))
+      best = { slot: entry.slot, upgradeLevel: level };
+  }
+  return best === undefined ? null : best.slot;
+}
+
+/** Whether one owned tool's upgrade level satisfies the range the action's claim publishes. */
+function satisfiesUpgradeRequirement(level: number, requirement: PublishedPlanToolRequirement): boolean {
+  if (!requirement.declared) return true;
+  const minimum = requirement.minimumUpgradeLevel;
+  const maximum = requirement.maximumUpgradeLevel;
+  return (minimum === null || level >= minimum) && (maximum === null || level <= maximum);
 }
 
 /** The tool a target entry declares it needs, or `undefined` when this part of the surface says nothing about a tool. */

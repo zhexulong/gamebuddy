@@ -1431,6 +1431,21 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128
+        },
+        "category": {
+          "enum": [
+            "axe",
+            "pickaxe",
+            "hoe",
+            "watering_can",
+            "fishing_rod",
+            "weapon",
+            "scythe",
+            "shears",
+            "milk_pail",
+            "pan",
+            "unknown"
+          ]
         }
       }
     },
