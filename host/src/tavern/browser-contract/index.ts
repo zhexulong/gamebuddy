@@ -199,6 +199,11 @@ const ProblemCode = Type.Union([
   // neither is collapsed into storage/runtime unavailable.
   Type.Literal("companion_avatar_too_large"),
   Type.Literal("companion_avatar_malformed"),
+  // `companion.delete` refuses to remove the companion who is in play: her Chats
+  // are the mounted conversation, so deleting her would take the conversation the
+  // player is having. It is the one refusal the surface must never hide behind a
+  // generic failure, and the one the control itself is absent for.
+  Type.Literal("companion_delete_in_play"),
 ]);
 
 /**
@@ -815,6 +820,10 @@ const OperationId = Type.Union([
   // inspector show every companion and a hand-made one should stop being a monogram
   // by the player's own choice.
   Type.Literal("companion.avatar.update"),
+  // Remove one roster companion for good: her record and her artifact root, by the
+  // roster's own handle and the revision she was read at. The companion in play is
+  // refused by name - her conversations are the mounted ones.
+  Type.Literal("companion.delete"),
   Type.Literal("companion.create"),
   Type.Literal("character.import.stage"),
   Type.Literal("character.import.read"),
@@ -872,6 +881,7 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.companion.profile.read"),
   Type.Literal("tavern.operation.companion.card.export"),
   Type.Literal("tavern.operation.companion.avatar.update"),
+  Type.Literal("tavern.operation.companion.delete"),
   Type.Literal("tavern.operation.companion.create"),
   Type.Literal("tavern.operation.character.import.stage"),
   Type.Literal("tavern.operation.character.import.read"),
@@ -1283,6 +1293,17 @@ const CompanionProfileGreetingsV1Schema = strictObject({
 export const CompanionProfileV1Schema = strictObject({
   apiVersion: ApiVersion,
   name: Type.String({ minLength: 1, maxLength: COMPANION_PROFILE_NAME_MAX_LENGTH }),
+  /**
+   * The revision of her own `companion.json` record - the one `companion.delete` CASes on.
+   *
+   * It lives here rather than on the roster because this is the screen that owns the
+   * delete control: the player reads her, then removes her, so the revision she was read
+   * at is the one the removal must match. It is null in exactly one case - the mounted
+   * companion spliced into the roster from the identity profile while her library record
+   * could not be read - and she can never be deleted in any case, because she is the one
+   * in play.
+   */
+  revision: Type.Union([Revision, Type.Null()]),
   persona: CompanionProfilePersonaV1Schema,
   scenario: CompanionProfileScenarioV1Schema,
   greetings: CompanionProfileGreetingsV1Schema,
@@ -1364,6 +1385,34 @@ export const CompanionAvatarV1Schema = strictObject({
   apiVersion: ApiVersion,
   handle: OpaqueHandle,
   digest: Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]{64}$" }),
+});
+/**
+ * `companion.delete`: remove one roster companion for good.
+ *
+ * Two things are named and nothing else: the opaque handle the roster projected
+ * (`companion.list`), and the revision of her own `companion.json` record that the
+ * roster read carried. The revision is a compare-and-set, not a version to bump: a
+ * delete armed against a record that has moved on is refused, so the player never
+ * destroys a companion from a screen that was showing a stale copy of her.
+ *
+ * The handle is the ONLY companion identity the request can name - a `companionId`, a
+ * continuity, a path or a title is not expressible, exactly like the inspector, the card
+ * export and the avatar upload.
+ */
+export const DeleteCompanionCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  expectedRevision: Revision,
+});
+/**
+ * What a completed `companion.delete` answers: the handle that no longer resolves, so the
+ * surface can say which row went and drop exactly it.
+ *
+ * There is no revision to answer with and none to keep: the record is gone, and a
+ * tombstone would be a second authority claiming she existed.
+ */
+export const CompanionDeletionV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  handle: OpaqueHandle,
 });
 /**
  * The mounted companion's own performance directive, as the durable identity
@@ -2087,6 +2136,7 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "companion_card_image_absent",
   "companion_avatar_too_large",
   "companion_avatar_malformed",
+  "companion_delete_in_play",
 ] as const);
 
 const unionProblemCodes: readonly string[] = ProblemCode.anyOf.map((literal) => literal.const);
@@ -2850,6 +2900,21 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CompanionAvatarV1Schema },
   }),
   route({
+    routeId: "companion.delete",
+    method: "DELETE",
+    path: "/api/tavern/v1/companions/:companionHandle",
+    operationId: "companion.delete",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    request: DeleteCompanionCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: CompanionDeletionV1Schema },
+  }),
+  route({
     routeId: "companion.create",
     method: "POST",
     path: "/api/tavern/v1/companions",
@@ -3194,6 +3259,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     CompanionCardExportV1Schema,
     CompanionAvatarUploadCommandV1Schema,
     CompanionAvatarV1Schema,
+    DeleteCompanionCommandV1Schema,
+    CompanionDeletionV1Schema,
     CompanionVoiceV1Schema,
     CompanionCharacterVoiceV1Schema,
     UpdateCompanionVoiceCommandV1Schema,
@@ -3331,6 +3398,8 @@ export type ChatExportV1 = Readonly<{
 }>;
 export type CompanionListEntryV1 = Static<typeof CompanionListEntryV1Schema>;
 export type CompanionListV1 = Static<typeof CompanionListV1Schema>;
+export type DeleteCompanionCommandV1 = Static<typeof DeleteCompanionCommandV1Schema>;
+export type CompanionDeletionV1 = Static<typeof CompanionDeletionV1Schema>;
 export type CompanionDetailV1 = Static<typeof CompanionDetailV1Schema>;
 /**
  * The world book's own wire types are HAND-WRITTEN rather than `Static` of their schemas,
@@ -3388,6 +3457,8 @@ export type MemoryReadV1 = Readonly<{
 export type CompanionProfileV1 = Readonly<{
   apiVersion: typeof TAVERN_BROWSER_API_VERSION;
   name: string;
+  /** Her own `companion.json` revision, the value `companion.delete` CASes on. */
+  revision: number | null;
   persona: Readonly<{
     present: boolean;
     core: string | null;

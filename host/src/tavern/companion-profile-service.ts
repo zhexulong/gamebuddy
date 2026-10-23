@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { readIdentityProfile } from "../identity-profile.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
 import type { TavernArtifactStore } from "./artifact-store.js";
@@ -13,6 +14,7 @@ import { createGreetingManagementService } from "./greeting-management/greeting-
 import { type MacroTable, macroTable, renderMacros } from "./macro-engine.js";
 import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
+import { type TavernArtifact, validateTavernArtifact } from "./types.js";
 
 /**
  * The read-only character inspector's projection: one roster companion's own
@@ -87,6 +89,15 @@ export function createCompanionProfileService(
       // The roster only projects a handle for a companion it can name, so a handle
       // that resolves to no name at all is not a roster handle.
       if (name === null) return null;
+      // Her own record's revision - the value `companion.delete` CASes on. It is null in
+      // exactly the one case the record is absent: the roster splices the mounted companion in
+      // from the identity profile even when her library record cannot be read, and the surface
+      // offers no removal for a companion whose record it cannot name a revision for.
+      const record = await options.store.readIfPresent(join(tavernPaths.companionRoot, "companion.json"), (value) => {
+        const artifact = validateTavernArtifact(value);
+        if (!("companionId" in artifact) || !("profileId" in artifact)) throw new Error("invalid_tavern_companion");
+        return artifact as TavernArtifact;
+      });
       const macros = await macroTable({ char: name, locale: await options.locale() });
       const scenario = await createScenarioManagementService(options.store, tavernPaths.companionRoot).read();
       const greetings = await createGreetingManagementService(options.store, tavernPaths.companionRoot).read();
@@ -94,6 +105,7 @@ export function createCompanionProfileService(
       return Object.freeze({
         apiVersion: TAVERN_BROWSER_API_VERSION,
         name: renderProfileLabel(name, macros),
+        revision: record?.revision ?? null,
         persona: Object.freeze({
           present: persona !== undefined,
           core: renderProfileTextOrNull(persona?.core, macros),
