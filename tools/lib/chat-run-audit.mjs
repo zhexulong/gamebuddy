@@ -65,7 +65,7 @@ export const CHAT_RUN_AUDIT_CODES_BY_KIND = Object.freeze({
   http: Object.freeze(["state.read", "state.conflict"]),
   sse: Object.freeze(["frame.received", "frame.invalid", "stream.resync"]),
   provider: Object.freeze(["request.sent", "settled", "error", "observability_gap", "boundary_unsettled"]),
-  presentation: Object.freeze(["admitted", "committed", "rejected", "observability_gap"]),
+  presentation: Object.freeze(["admitted", "piece", "committed", "rejected", "observability_gap"]),
   memory: Object.freeze(["read", "mutated", "conflict"]),
   recovery: Object.freeze(["reload.started", "reload.settled", "reload.mismatch"]),
   // Memory-probe results (owner-approved 2026-09 as proposal 1 of the probe

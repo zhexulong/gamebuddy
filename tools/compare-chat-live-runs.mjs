@@ -31,7 +31,12 @@
  * the longest SSE frame gap, and the per-turn durations.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { CHAT_RUN_AUDIT_CODES_BY_KIND, CHAT_RUN_AUDIT_META_KEYS, CHAT_RUN_AUDIT_PROBE_DIMENSIONS, CHAT_RUN_AUDIT_PROBE_DISTANCES } from "./lib/chat-run-audit.mjs";
+import {
+  CHAT_RUN_AUDIT_CODES_BY_KIND,
+  CHAT_RUN_AUDIT_META_KEYS,
+  CHAT_RUN_AUDIT_PROBE_DIMENSIONS,
+  CHAT_RUN_AUDIT_PROBE_DISTANCES,
+} from "./lib/chat-run-audit.mjs";
 
 const USAGE = "usage: node tools/compare-chat-live-runs.mjs <baseline.json> <after.json>";
 const TRACE_SCHEMA = "chat_run_audit/v1";
@@ -72,6 +77,9 @@ const EVENT_GRADING = Object.freeze({
   "provider.observability_gap": vocabulary("provider", "neutral"),
   "provider.boundary_unsettled": vocabulary("provider", "down", true),
   "presentation.admitted": vocabulary("presentation", "neutral"),
+  // One piece of a paced reply reached the surface before the turn finished.
+  // Neutral, not "up": more pieces is not better, only sooner.
+  "presentation.piece": vocabulary("presentation", "neutral"),
   "presentation.committed": vocabulary("presentation", "up"),
   "presentation.rejected": vocabulary("presentation", "down"),
   "presentation.observability_gap": vocabulary("presentation", "neutral"),
