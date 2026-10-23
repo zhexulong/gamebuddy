@@ -1365,7 +1365,18 @@ export async function createRuntimeWithFixedToolsCore(
     }
     if (tavernNarrativeGateNonceSha256 !== undefined) {
       reportTavernNarrativeGateRuntime = () => {
-        if (typeof process.send !== "function" || process.connected !== true) return;
+        // Both ways this can fail leave the gate evidence absent, and an absent
+        // marker is indistinguishable from a product that simply never reached
+        // the provider. A run then reports `no_pre_send_marker` and the reader
+        // cannot tell whether the cause is the transport or the product - which
+        // is exactly the state that made the provider timing unmeasurable. So
+        // say which one it is, on a line the harness already captures.
+        if (typeof process.send !== "function" || process.connected !== true) {
+          process.stderr.write(
+            `[tavern-gate] runtime marker unavailable: send=${typeof process.send} connected=${process.connected === true}\n`,
+          );
+          return;
+        }
         try {
           process.send(
             Object.freeze({
@@ -1373,7 +1384,9 @@ export async function createRuntimeWithFixedToolsCore(
               piSessionId,
             }),
           );
-        } catch {
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          process.stderr.write(`[tavern-gate] runtime marker rejected: ${message.slice(0, 200)}\n`);
           // Gate evidence failure does not change the actual provider path.
         }
       };
