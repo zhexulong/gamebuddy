@@ -89,8 +89,12 @@ const rawBook = await readAsset("worldbook.json");
 const readAvatar = async () => {
   const spec = "HEAD:assets/tavern/presets/default-companion/avatar.png";
   if (!fromCommitted) {
-    const path = join(presetDirectory, "avatar.png");
-    return existsSync(path) ? await readFile(path) : undefined;
+    try {
+      return await readFile(join(presetDirectory, "avatar.png"));
+    } catch (error) {
+      if (error?.code === "ENOENT") return undefined;
+      throw error;
+    }
   }
   try {
     execFileSync("git", ["cat-file", "-e", spec], { cwd: repositoryRoot, stdio: "ignore" });

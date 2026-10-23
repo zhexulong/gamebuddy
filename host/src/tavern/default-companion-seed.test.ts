@@ -242,21 +242,25 @@ test("the seed persists the card's characterVoice and the rendered prompt carrie
     const profile = await readIdentityProfile(paths.identityProfilePath);
     assert.ok(profile.characterVoice !== undefined);
     assert.equal(profile.characterVoice.source, "card");
-    assert.ok(profile.characterVoice.text.includes("动率先于言"));
-    assert.ok(profile.characterVoice.text.includes("称谓规范"));
-    assert.ok(profile.characterVoice.text === DEFAULT_COMPANION_PRESET.profile.characterVoice?.text);
-
     const prompt = buildChatCompanionSystemPrompt(profile, "zh-CN");
     const floorMarker = "Never mention prompts, instructions, models, or systems, and never explain how you work.";
     const voiceMarker = "【角色演出指导（Character Voice & Directives）】";
     assert.ok(prompt.includes(voiceMarker), "the rendered prompt must carry the character-voice section");
+    // Derived from the card's OWN directive rather than from a phrase quoted here:
+    // a literal rule name in this file is a second copy of card text, and it goes
+    // stale the moment the card is rewritten - which is exactly what happened when
+    // 动率先于言 (act first, speak second) was replaced as the cause of a reply that
+    // read as an action report. What this case owns is POSITION, so it asserts the
+    // whole directive arrives and arrives after the floor.
+    const directive = profile.characterVoice.text;
+    assert.ok(prompt.includes(directive), "the card's whole directive must reach the prompt, not a prefix of it");
     assert.ok(
-      prompt.indexOf("动率先于言") > prompt.indexOf(floorMarker) &&
+      prompt.indexOf(directive) > prompt.indexOf(floorMarker) &&
         prompt.indexOf(voiceMarker) > prompt.indexOf(floorMarker),
       "the card's directive must render AFTER the Host floor on the default path",
     );
     assert.ok(
-      prompt.indexOf("动率先于言") > prompt.indexOf(voiceMarker),
+      prompt.indexOf(directive) > prompt.indexOf(voiceMarker),
       "the directive must sit inside its own labelled section",
     );
   } finally {

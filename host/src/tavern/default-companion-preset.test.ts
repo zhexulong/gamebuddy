@@ -192,24 +192,18 @@ test("a card that declares no post_history_instructions leaves the preset member
   assert.equal(tooLong.postHistoryInstructions, undefined);
 });
 
-test("the committed card's system_prompt is carried into the shipped profile as characterVoice", () => {
-  const profile = convertedPreset(committedAsset("card.json"), committedAsset("worldbook.json")).profile;
-  // The card's own performance directive — including "动率先于言" and the rule
-  // that the companion never calls the player 搭档 — must reach the model on
-  // the DEFAULT path too, exactly the way an imported card's directive does.
-  assert.deepEqual(profile.characterVoice, {
-    text: DEFAULT_COMPANION_PRESET.profile.characterVoice?.text,
-    source: "card",
-  });
+test("the card's own system_prompt is carried into the shipped profile as characterVoice", () => {
+  const card = committedAsset("card.json") as { data: { system_prompt?: string } };
+  const profile = convertedPreset(card, committedAsset("worldbook.json")).profile;
+  // The card's performance directive must reach the model on the DEFAULT path
+  // exactly the way an imported card's directive does. It is compared against the
+  // card's OWN field rather than against a phrase quoted here: a literal rule name
+  // in this file is a second copy of card text, and it silently stops testing
+  // anything the moment the card is rewritten (this case quoted 动率先于言 until
+  // that rule was removed as the cause of replies reading as action reports).
   assert.ok(profile.characterVoice !== undefined);
-  assert.ok(
-    profile.characterVoice.text.includes("动率先于言"),
-    "the card's own 动率先于言 rule reaches the default path",
-  );
-  assert.ok(
-    profile.characterVoice.text.includes("称谓规范"),
-    "the card's own 称谓规范 directive reaches the default path",
-  );
+  assert.deepEqual(profile.characterVoice, { text: card.data.system_prompt, source: "card" });
+  assert.equal(profile.characterVoice.text, DEFAULT_COMPANION_PRESET.profile.characterVoice?.text);
   // profileId attribution: `.default` belongs to the SHIPPED preset (this
   // parity test's identity); `.imported` belongs to the ST-card IMPORT path,
   // which carries a different profileId by construction. Both flows share the
