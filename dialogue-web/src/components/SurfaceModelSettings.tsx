@@ -178,9 +178,103 @@ export function SurfaceModelSettings({
           </span>
         )}
       </div>
+
+      {/* Chat only: a game bubble is always paced, and a switch there would be a
+          control that changes nothing. */}
+      {surface === "chat" && <DeliveryPacingToggle api={api} csrfToken={csrfToken} labels={labels} />}
     </section>
   );
 }
+
+/**
+ * Whether replies arrive in short pieces or as one message.
+ *
+ * The Host answers the preference; this control writes it through the same
+ * broker session and CSRF token as the rest of the panel, so there is no second
+ * store and no browser-local copy that could disagree with the runtime. While the
+ * route is absent the control is disabled AND says so, because a dead switch with
+ * no explanation is worse than no switch. The explanation is conditional on the
+ * route really being missing, so it disappears the moment Host ships.
+ */
+function DeliveryPacingToggle({
+  api,
+  csrfToken,
+  labels,
+}: Readonly<{ api: ManagementPipelineApi; csrfToken: string; labels: Messages }>): ReactElement {
+  const [state, setState] = useState<DeliveryPreferenceState>("loading");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const read = await api.readDeliveryPreference();
+        if (!cancelled) setState({ paced: read.paced, revision: read.revision });
+      } catch {
+        // Absent or unavailable route: the control is shown disabled with a named
+        // reason rather than silently doing nothing when pressed.
+        if (!cancelled) setState("unavailable");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  const toggle = async (): Promise<void> => {
+    if (state === "loading" || state === "unavailable" || saving) return;
+    const next = !state.paced;
+    setSaving(true);
+    try {
+      const updated = await api.updateDeliveryPreference({ expectedRevision: state.revision, paced: next }, csrfToken);
+      setState({ paced: updated.paced, revision: updated.revision });
+    } catch {
+      // A conflict or a refusal leaves the switch where the Host says it is: the
+      // next read is the authority, never the click.
+      try {
+        const read = await api.readDeliveryPreference();
+        setState({ paced: read.paced, revision: read.revision });
+      } catch {
+        setState("unavailable");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const unavailable = state === "loading" || state === "unavailable";
+  const paced = state !== "loading" && state !== "unavailable" ? state.paced : false;
+  return (
+    <div
+      className="surface-delivery-pacing"
+      data-delivery-pacing={state === "unavailable" ? "unavailable" : paced ? "on" : "off"}
+    >
+      <label className="surface-model-field surface-delivery-pacing-trigger">
+        <span>{labels.chatDeliveryPacedTitle}</span>
+        {/* Visually retired, exactly like the card-import trigger: the browser's own
+            checkbox face is not themed, and the row the player presses is this
+            label. The input stays in the a11y tree as a real checkbox. */}
+        <input
+          type="checkbox"
+          className="surface-delivery-pacing-input"
+          checked={paced}
+          disabled={unavailable || saving}
+          aria-label={labels.chatDeliveryPacedTitle}
+          onChange={() => void toggle()}
+        />
+      </label>
+      <p className="surface-model-settings-hint">
+        {state === "unavailable"
+          ? labels.chatDeliveryPacedUnavailable
+          : paced
+            ? labels.chatDeliveryPacedHint
+            : labels.chatDeliveryPacedOff}
+      </p>
+    </div>
+  );
+}
+
+type DeliveryPreferenceState = "loading" | "unavailable" | Readonly<{ paced: boolean; revision: number }>;
 
 function recommendedFor(profiles: TavernModelProfilesV1, surface: "chat" | "game") {
   void surface;
