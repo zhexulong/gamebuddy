@@ -269,9 +269,8 @@ const en = {
 
   connectionSettings: "Connection and model",
   connectionActiveLabel: "Active connection",
-  connectionNoneActive: "No connection selected",
   connectionNoSelectionNotice:
-    "No connection is selected, so a reply cannot reach a model, and a normal install has none to fall back on — configure a connection here: choose a provider and the model it serves, then save and enable it. A third-party provider also needs your own API key for it; the operator's own gateway runs on this machine and needs none.",
+    "No connection is selected, so a reply cannot reach a model, and a normal install has none to fall back on — configure a connection here: choose a provider and the model it serves, then save and enable it.",
   connectionActivationNotice:
     "Connection activated. It applies from your next conversation; one already in progress is not switched.",
   connectionProvider: "Provider",
@@ -356,6 +355,13 @@ const en = {
   modelProfilesUnavailable: "Model profiles are unavailable.",
   modelProfilesModelRequired: "Enter a model ID.",
   chatModelSettings: "Chat model settings",
+  // The player's switch for how a reply arrives. It says what the player sees
+  // (short pieces, like typing) and never names the mechanism: no "pacing",
+  // "segments" or "delivery" anywhere a player reads it.
+  chatDeliveryPacedTitle: "Replies arrive in short pieces",
+  chatDeliveryPacedHint: "Like typing — each piece comes as it is ready, instead of one whole message.",
+  chatDeliveryPacedOff: "Off, so each reply arrives as one whole message.",
+  chatDeliveryPacedUnavailable: "Not available yet on this connection.",
   // The companion's message affordances (design/26 §6.3: one declared icon family,
   // never an emoji standing in for a structural control).
   swipeNavigation: "Message variants",
@@ -1085,9 +1091,8 @@ const zh: Messages = {
 
   connectionSettings: "连接与模型",
   connectionActiveLabel: "当前连接",
-  connectionNoneActive: "未选择连接",
   connectionNoSelectionNotice:
-    "尚未选择连接，回复无法送达模型，普通安装没有它可回退——请在这里配置一条连接：选择渠道和它提供的模型，然后保存并启用。第三方渠道还需要你自备该服务商的 API Key；运营方自己的网关运行在本机上，不需要密钥。",
+    "尚未选择连接，回复无法送达模型，普通安装没有它可回退——请在这里配置一条连接：选择渠道和它提供的模型，然后保存并启用。",
   connectionActivationNotice: "连接已启用。从下次开始对话时生效；正在进行的会话不会被切换。",
   connectionProvider: "渠道",
   connectionRecommended: "推荐",
@@ -1163,6 +1168,12 @@ const zh: Messages = {
   modelProfilesUnavailable: "模型配置不可用。",
   modelProfilesModelRequired: "请填写模型 ID。",
   chatModelSettings: "聊天模型配置",
+  // 玩家控制的「回复怎么到手」。只说看到什么(一小段一小段,像在打字), 不说机制:
+  // 不出现「节奏」「分段」「送达」这类词。
+  chatDeliveryPacedTitle: "回复一小段一小段来",
+  chatDeliveryPacedHint: "像在打字——每一小段准备好就发过来，而不是一整条消息。",
+  chatDeliveryPacedOff: "关闭时，每条回复都是一整条消息。",
+  chatDeliveryPacedUnavailable: "当前连接暂时还用不了这项。",
   // 伴侣消息上的控件(design/26 §6.3:只用一套已声明的图标族,不用 emoji 冒充结构控件)。
   swipeNavigation: "消息变体",
   swipePrevious: "上一个变体",

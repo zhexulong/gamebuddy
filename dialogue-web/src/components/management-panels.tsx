@@ -484,29 +484,37 @@ export function ConnectionSettingsPanel({
     <section className="management-settings-section" aria-label={labels.connectionSettings} data-connection-settings>
       <h2>{labels.connectionSettings}</h2>
       <>
-        <dl className="management-settings-details" data-connection-active>
-          <div>
-            <dt>{labels.connectionActiveLabel}</dt>
-            <dd data-connection-active-value>
-              {connectionView.state.active === null ? labels.connectionNoneActive : connectionView.state.active.label}
-            </dd>
-          </div>
-        </dl>
+        {/*
+         * Only a connection there IS is read back here. With none, this row said
+         * "Active connection: No connection selected" one line above the sentence
+         * that says the same thing at length - the same fact twice, and the row
+         * was 21 px plus a 12 px gap of the space between a new player and the
+         * save control. The sentence below is the one that also says what to do
+         * about it, so it is the one that stays.
+         */}
+        {connectionView.state.active !== null && (
+          <dl className="management-settings-details" data-connection-active>
+            <div>
+              <dt>{labels.connectionActiveLabel}</dt>
+              <dd data-connection-active-value>{connectionView.state.active.label}</dd>
+            </div>
+          </dl>
+        )}
         {/*
          * The ordinary first hour, and it is not a fault: a player who has just
          * installed the product has no connection because they have not made one
-         * yet. It is stated as the panel's own hint prose - the same 12 px
-         * `--text-secondary` treatment `.management-settings-hint` gives every
-         * other "this is the state, here is what to do" sentence in these
-         * sections - not as a `.warning-banner` plate of `--warning` gold over a
-         * wash of the same gold. Measured before this: the plate was 640x100 px
-         * at 1440x900 and 100 px tall at 400x800 for a 76-character sentence, and
-         * it was the only saturated colour in the viewport, on the one screen a
-         * new player has to trust. The fault styles stay for the states that are
-         * genuinely wrong: `connectionView.notice` below still renders
-         * `.warning-banner` for a busy turn and for a connection that changed
-         * elsewhere, and a saved record that fails its probe carries its own
-         * `--danger` and `--warning` read-back in `ConnectionRow`.
+         * yet. It is stated as the panel's own hint prose - secondary ink on the
+         * section's own canvas, the same treatment `.management-settings-hint`
+         * gives every other "this is the state, here is what to do" sentence in
+         * these sections - not as a `.warning-banner` plate of `--warning` gold
+         * over a wash of the same gold. Measured before this: the plate was
+         * 640x100 px at 1440x900 for a 327-character sentence, and it was the
+         * only saturated colour in the viewport, on the one screen a new player
+         * has to trust. The fault styles stay for the states that are genuinely
+         * wrong: `connectionView.notice` below still renders `.warning-banner`
+         * for a busy turn and for a connection that changed elsewhere, and a
+         * saved record that fails its probe carries its own `--danger` and
+         * `--warning` read-back in `ConnectionRow`.
          */}
         {connectionView.state.active === null && (
           <p className="management-settings-hint" data-connection-no-selection>
