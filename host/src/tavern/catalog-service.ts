@@ -95,16 +95,6 @@ export type TavernWorldInfoLayers = Readonly<{
 }>;
 
 /**
- * Where ONE authored source's always-on content stops being published in full and
- * degrades to its own compact overview (`boundedWorldInfoOverview`). It is a
- * per-source degradation, never a sum over the assembled prefix: the model's own
- * context window is the budget for the prefix as a whole (the reference carries no
- * cross-source token cap), and each authored field is already bounded by the
- * artifact contract at authoring time.
- */
-const AUTHORED_SOURCE_OVERVIEW_TOKENS = 2_048;
-
-/**
  * Derives the only Host-publishable Tavern stable snapshot from exact selected
  * artifact revisions. Missing selected revisions and thread/binding mismatches reject
  * before any model turn; absent selections produce an explicit empty tombstone rather
@@ -114,10 +104,12 @@ const AUTHORED_SOURCE_OVERVIEW_TOKENS = 2_048;
  * Both World Info layers materialize here when their source is supplied. Layer 1
  * (the companion's own book) is emitted first, so its position and total order key
  * never depend on whether the player attached anything; layer 2 (the attached
- * managed item) follows. There is no cross-source budget over the assembled prefix:
- * a persona, a scenario and a world book of any combined size publish together, as
- * they do in the reference. Keyword-gated entries of either layer become volatile
- * candidates and keep the per-turn key matching in
+ * managed item) follows. There is no cross-source budget over the assembled prefix, and no
+ * per-source cap either: a persona, a scenario and a world book of any combined size
+ * publish together, in full, as they do in the reference - the model's own context window
+ * is the budget for the prefix as a whole, and each authored field is already bounded by
+ * the artifact contract at authoring time. Keyword-gated entries of either layer become
+ * volatile candidates and keep the per-turn key matching in
  * `selectAuthoredContextVolatileSourceRefs` (chat-thread-store.ts).
  *
  * Her card's closing direction is read here too, as her own record rather than as an
@@ -387,39 +379,31 @@ function deriveStableWorldInfoContent(sourceValue: TavernWorldInfoSource): strin
   } catch {
     // Native WorldBook: a raw text premise, PLUS the reviewed constant entries
     // the import folded in. Both are Tier 2 always-on: stable across the whole
-    // session, 100% prefix-cache eligible. Budget-bound so an extreme book
-    // degrades to the premise overview instead of blowing the stable ceiling.
+    // session, 100% prefix-cache eligible - and published whole, at whatever size
+    // the player authored.
     if (
       "constantEntries" in sourceValue &&
       sourceValue.constantEntries !== undefined &&
       sourceValue.constantEntries.length > 0
-    ) {
-      const prose = authoredProse([
+    )
+      return authoredProse([
         sourceValue.alwaysOnPremise,
         ...sourceValue.constantEntries.flatMap((entry) => [authoredHeading(entry.title), entry.content]),
       ]);
-      return Math.ceil(prose.length / 4) <= AUTHORED_SOURCE_OVERVIEW_TOKENS
-        ? prose
-        : boundedWorldInfoOverview(sourceValue.alwaysOnPremise);
-    }
-    return boundedWorldInfoOverview(rawContent);
+    return rawContent;
   }
-  if (!isRecord(parsed) || !Array.isArray(parsed.entries)) return boundedWorldInfoOverview(rawContent);
+  if (!isRecord(parsed) || !Array.isArray(parsed.entries)) return rawContent;
   const publicTitle = typeof parsed.publicTitle === "string" ? parsed.publicTitle : undefined;
   const summary = typeof parsed.summary === "string" ? parsed.summary : undefined;
-  const overview = authoredProse([authoredHeading(publicTitle), summary]);
   const constantEntries = parsed.entries.filter((entry) => isRecord(entry) && entry.constant === true);
-  if (constantEntries.length === 0) return boundedWorldInfoOverview(overview);
-  const constants = authoredProse([
+  if (constantEntries.length === 0) return authoredProse([authoredHeading(publicTitle), summary]);
+  return authoredProse([
     authoredHeading(publicTitle),
     ...constantEntries.flatMap((entry) => [
       authoredHeading(typeof entry.publicTitle === "string" ? entry.publicTitle : undefined),
       typeof entry.summary === "string" ? entry.summary : undefined,
     ]),
   ]);
-  return Math.ceil(constants.length / 4) <= AUTHORED_SOURCE_OVERVIEW_TOKENS
-    ? constants
-    : boundedWorldInfoOverview(overview);
 }
 /**
  * The player's own side of the scene, as authored: her name and the answer to
@@ -462,11 +446,6 @@ function authoredHeading(title: string | undefined): string | undefined {
 function authoredProse(parts: readonly (string | undefined)[]): string {
   return parts.filter((part): part is string => part !== undefined && part.trim().length > 0).join("\n\n");
 }
-function boundedWorldInfoOverview(content: string): string {
-  const maxCharacters = AUTHORED_SOURCE_OVERVIEW_TOKENS * 4;
-  return content.length <= maxCharacters ? content : content.slice(0, maxCharacters).trim();
-}
-
 function isRecord(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }

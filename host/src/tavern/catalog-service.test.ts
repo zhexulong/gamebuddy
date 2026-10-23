@@ -32,6 +32,18 @@ test.before(async () => {
 // never the third-person noun 玩家).
 const TEST_MACROS = macroTable({ char: "琥珀", locale: "zh-CN" });
 
+/** One reviewed always-on entry of a managed World Info layer, as its author wrote it. */
+type ManagedConstant = Readonly<{ publicTitle: string; summary: string }>;
+/**
+ * The prose a managed World Info layer publishes when it carries any always-on entry: the
+ * layer's own title, then each constant under its own heading - what the player authored.
+ */
+function renderedWorldInfo(publicTitle: string, constants: readonly ManagedConstant[]): string {
+  return [`## ${publicTitle}`, ...constants.flatMap((entry) => [`## ${entry.publicTitle}`, entry.summary])].join(
+    "\n\n",
+  );
+}
+
 test.after(() => {
   bindWindowsStaleLockReclaimer(undefined);
 });
@@ -120,6 +132,9 @@ test("compiles exact managed World Info revision as a reference-safe lorebook_co
     assert.match(catalog.stableSources[0]?.provenance ?? "", /managed-world-info\/Pelican Town\/revision\/1/);
     assert.match(catalog.stableSources[0]?.content ?? "", /Town square/);
     assert.match(catalog.stableSources[0]?.content ?? "", /The center of town/);
+    // A short source publishes exactly the authored prose, byte for byte - the reading is
+    // unchanged by the removal of the per-source cap.
+    assert.equal(catalog.stableSources[0]?.content, "## Pelican Town\n\n## Town square\n\nThe center of town.");
     assert.doesNotMatch(catalog.stableSources[0]?.content ?? "", /volatile/);
     assert.notEqual(catalog.stableSources[0]?.content, exact.content);
     assert.deepEqual(catalog.volatileSources, []);
@@ -241,8 +256,11 @@ test("stable World Info excludes constants from volatile sources and matches vol
       TEST_MACROS,
       { managedWorldInfo: exact },
     );
-    assert.ok(catalog.stableSources[0]!.budgetTokens <= 2_048);
-    assert.match(catalog.stableSources[0]!.content, /Always Town/);
+    const stable = catalog.stableSources[0]!;
+    // The per-source budget the reference reports is accounting, not a cap: it counts the
+    // published source's own bytes.
+    assert.equal(stable.budgetTokens, Math.ceil(stable.content.length / 4));
+    assert.match(stable.content, /Always Town/);
     assert.doesNotMatch(catalog.stableSources[0]!.content, /Volatile fact/);
     assert.equal(catalog.volatileSources.length, 150);
     assert.ok(catalog.volatileSources.every((source) => !source.content.includes("Stable town fact")));
@@ -254,21 +272,24 @@ test("stable World Info excludes constants from volatile sources and matches vol
   }
 });
 
-test("stable World Info falls back to Overview when constant content exceeds the stable budget", async () => {
+test("stable World Info publishes every constant in full when the authored content exceeds the old overview threshold", async (t) => {
   const root = await canonicalTestRoot("gamebuddy-catalog-overview-");
   const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
   const paths = resolveTavernPaths({ root } as never, identity);
   const repository = createWorldInfoManagementRepository(root);
   let closeStore: (() => void) | undefined;
   try {
+    // Five 4 000-character constants: the rendered source is well past the 2 048-token
+    // per-source point the catalog used to shorten at.
+    const LONG_ENTRY_CHARS = 4_000;
+    const longEntries: readonly ManagedConstant[] = Array.from({ length: 5 }, (_, index) => ({
+      publicTitle: `Large constant ${index + 1}`,
+      summary: String.fromCharCode(97 + index).repeat(LONG_ENTRY_CHARS),
+    }));
     const created = await repository.create({
       publicTitle: "Large Lore",
       summary: "Compact overview.",
-      entries: [
-        { scope: "setting", publicTitle: "Large constant 1", summary: "x".repeat(4_000), constant: true },
-        { scope: "setting", publicTitle: "Large constant 2", summary: "y".repeat(4_000), constant: true },
-        { scope: "setting", publicTitle: "Large constant 3", summary: "z".repeat(4_000), constant: true },
-      ],
+      entries: longEntries.map((entry) => ({ scope: "setting" as const, ...entry, constant: true })),
     });
     const resolver = createManagedWorldInfoBindingResolver(repository);
     const exact = await resolver.resolve(await resolver.bindExact(created.publicTitle, 1));
@@ -301,13 +322,106 @@ test("stable World Info falls back to Overview when constant content exceeds the
       TEST_MACROS,
       { managedWorldInfo: exact },
     );
-    assert.ok(catalog.stableSources[0]!.budgetTokens <= 2_048);
-    assert.match(catalog.stableSources[0]!.content, /Large Lore/);
-    assert.doesNotMatch(catalog.stableSources[0]!.content, /Large constant 1/);
+    const stable = catalog.stableSources[0]!;
+    // The rendered input is the overview heading and every constant under its own heading -
+    // what the player authored, joined as prose.
+    const renderedInput = renderedWorldInfo("Large Lore", longEntries);
+    assert.ok(
+      renderedInput.length > 2_048 * 4,
+      `fixture must exceed the old per-source point: ${renderedInput.length}`,
+    );
+    t.diagnostic(`rendered input ${renderedInput.length} chars; published ${stable.content.length} chars`);
+    // Published IN FULL: the body is exactly the rendered input, byte for byte, and its own
+    // budget accounting equals it.
+    assert.equal(stable.content, renderedInput);
+    assert.equal(stable.content.length, renderedInput.length);
+    assert.equal(stable.budgetTokens, Math.ceil(renderedInput.length / 4));
+    // The tail of the player's text is what the old truncation dropped; it is present now.
+    assert.equal(stable.content.endsWith(longEntries[4]!.summary), true);
+    assert.match(stable.content, /^## Large Lore/m);
+    assert.match(stable.content, /^## Large constant 1$/m);
+    assert.match(stable.content, /^## Large constant 5$/m);
+    for (const entry of longEntries) assert.equal(stable.content.includes(entry.summary), true);
   } finally {
     closeStore?.();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("a larger authored source publishes a larger body and a different stable hash", async (t) => {
+  const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
+  const publish = async (prefix: string, entries: readonly ManagedConstant[]) => {
+    const root = await canonicalTestRoot(prefix);
+    const paths = resolveTavernPaths({ root } as never, identity);
+    const repository = createWorldInfoManagementRepository(root);
+    const threads = createChatThreadStore(root, "continuity-key");
+    try {
+      const created = await repository.create({
+        publicTitle: "Field Notes",
+        summary: "Notes from the valley.",
+        entries: entries.map((entry) => ({ scope: "setting" as const, ...entry, constant: true })),
+      });
+      const resolver = createManagedWorldInfoBindingResolver(repository);
+      const exact = await resolver.resolve(await resolver.bindExact(created.publicTitle, 1));
+      const thread = await createProfileAwareChatThreadCreationCapability(threads, {
+        async readExact() {
+          return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+        },
+      }).createExplicit({
+        chatThreadId: "thread",
+        chatSurfaceSessionId: "surface",
+        companionId: "companion",
+        continuityId: "continuity",
+        managedWorldInfoBinding: exact.binding,
+        opening: "blank",
+      });
+      return await materializeTavernAuthoredStableCatalog(
+        paths,
+        new TavernArtifactStore(root),
+        thread.thread,
+        {
+          continuityId: "continuity",
+          sessionId: "pi-session",
+          surface: "tavern",
+          threadId: "thread",
+          profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+        },
+        TEST_MACROS,
+        { managedWorldInfo: exact },
+      );
+    } finally {
+      threads.close?.();
+      await rm(root, { recursive: true, force: true });
+    }
+  };
+
+  const shortEntries: readonly ManagedConstant[] = [
+    { publicTitle: "Season", summary: "Spring arrives late this year." },
+  ];
+  // One entry per 4 000 authored characters: the authored field bound, not a publish-time cap.
+  const longEntries: readonly ManagedConstant[] = [
+    ...shortEntries,
+    ...Array.from({ length: 6 }, (_, index) => ({ publicTitle: `Field ${index + 1}`, summary: "雨".repeat(4_000) })),
+  ];
+  const short = await publish("gamebuddy-catalog-size-short-", shortEntries);
+  const long = await publish("gamebuddy-catalog-size-long-", longEntries);
+  const shortSource = short.stableSources[0]!;
+  const longSource = long.stableSources[0]!;
+  t.diagnostic(
+    `short body ${shortSource.content.length} chars / ${shortSource.budgetTokens} tokens; long body ${longSource.content.length} chars / ${longSource.budgetTokens} tokens`,
+  );
+  // Nothing is trimmed to a common ceiling: each body IS the rendered authored input, so the
+  // larger source is the larger body by the characters and the entry headings its author added.
+  assert.equal(shortSource.content, renderedWorldInfo("Field Notes", shortEntries));
+  assert.equal(longSource.content, renderedWorldInfo("Field Notes", longEntries));
+  assert.ok(longSource.content.length - shortSource.content.length > 24_000);
+  assert.ok(longSource.content.length > 20_000);
+  assert.ok(longSource.budgetTokens > shortSource.budgetTokens);
+  assert.equal(longSource.content.endsWith("雨".repeat(4_000)), true);
+  // The stable hash covers the published bytes, so a different source is a different hash -
+  // at the source and at the catalog.
+  assert.notEqual(longSource.canonicalHash, shortSource.canonicalHash);
+  assert.notEqual(long.canonicalHash, short.canonicalHash);
 });
 
 test("compiles exact v2 Chat catalog with reference-free scope and deterministic sources", async () => {
@@ -452,8 +566,9 @@ test("buildGameSurfaceAuthoredCatalog mounts the reviewed always-on WorldBook as
     binding,
   );
   assert.equal(again.canonicalHash, catalog.canonicalHash);
-  // Budget is bounded by the 2K stable-context ceiling.
-  assert.ok(source.budgetTokens > 0);
+  // Budget accounting reports the published bytes; it is not a ceiling the source is held
+  // under.
+  assert.equal(source?.budgetTokens, Math.ceil((source?.content.length ?? 0) / 4));
 });
 
 test("buildGameSurfaceAuthoredCatalog refuses a non-game binding", async () => {

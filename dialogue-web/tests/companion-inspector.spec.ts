@@ -272,7 +272,7 @@ test("a companion provisioned without them says so, and an empty book is not an 
   );
 });
 
-test("the inspector shows four groups with no editor, and its one write is her picture", async ({ page }) => {
+test("the inspector shows four groups with no editor, and its writes are her picture and her removal", async ({ page }) => {
   await stubCharacters(
     page,
     [{ handle: otherHandle, name: "Mira", isCurrent: false }],
@@ -287,10 +287,13 @@ test("the inspector shows four groups with no editor, and its one write is her p
   const drawer = await openInspector(page, "Mira");
 
   // Nothing that writes a RECORD: no text field, no textarea, no select, no control
-  // whose words claim an edit or an activation. The premise moved when her picture
-  // became settable here (Add-5) - so the file picker is expected, and it is excluded
-  // by `type` rather than by name: what this counts is every control that could carry
-  // authored text, and a file input carries a file.
+  // whose words claim an edit or an activation. The premise moved twice - her picture
+  // became settable here (Add-5), and the armed removal control landed after that - so
+  // the two writes are stated as the exceptions they are instead of dropping the words
+  // that name them. The file picker is excluded by `type`: what this counts is every
+  // control that could carry authored text, and a file input carries a file. The removal
+  // section is excluded by its own structural marker and then counted exactly, so
+  // removing it from this population cannot hide a second, unreviewed control in it.
   const controls = await drawer.evaluate((node) => ({
     editableFields: node.querySelectorAll(
       'input:not([type="file"]), textarea, select, [contenteditable="true"]',
@@ -299,9 +302,13 @@ test("the inspector shows four groups with no editor, and its one write is her p
       accept: input.getAttribute("accept"),
       label: (input.getAttribute("aria-label") ?? "").trim(),
     })),
-    buttons: [...node.querySelectorAll("button")].map((button) =>
-      (button.getAttribute("aria-label") ?? button.textContent ?? "").trim(),
-    ),
+    removalSections: node.querySelectorAll("[data-companion-removal]").length,
+    removalControls: node.querySelectorAll(
+      "[data-companion-removal] button, [data-companion-removal] a, [data-companion-removal] select",
+    ).length,
+    buttons: [...node.querySelectorAll("button")]
+      .filter((button) => button.closest("[data-companion-removal]") === null)
+      .map((button) => (button.getAttribute("aria-label") ?? button.textContent ?? "").trim()),
     summaries: [...node.querySelectorAll("summary")].map((summary) => (summary.textContent ?? "").trim()),
     placeholderLeaks: (node.textContent ?? "").includes("{{"),
   }));
@@ -311,6 +318,13 @@ test("the inspector shows four groups with no editor, and its one write is her p
   expect(controls.buttons.filter((label) => /edit|save|delete|clear|remove|create|switch|activat|select|set as|enable/i.test(label))).toEqual([]);
   for (const label of controls.buttons) expect(label, "every control carries a readable name").toMatch(/\S/u);
   for (const summary of controls.summaries) expect(summary, "every disclosure is labelled").toMatch(/\S/u);
+
+  // The two writes, counted exactly. Her removal is the destructive one and it has its own
+  // journey (`companion-delete.spec.ts`): one section, one control, the trigger replaced by
+  // the armed pair rather than beside it.
+  expect(controls.removalSections, "the drawer carries exactly one removal section").toBe(1);
+  expect(controls.removalControls, "the unarmed removal section offers exactly one control").toBe(1);
+  await expect(drawer.locator("[data-companion-removal-arm]")).toHaveText("Delete her for good");
 
   // The one exception, stated exactly: one hidden picker that takes the pictures a
   // player has, named for the player, driven by the themed control beside it. The
