@@ -430,6 +430,30 @@ export async function runMountedProviderStart(
           if (reason === "error") finalPresentationFailure = new Error("native_content_provider_error");
           if (reason !== "error") finalPresentationFailure = new Error(`native_content_${reason}`);
         },
+        // Paced delivery needs a sink that can receive a piece BEFORE the turn's
+        // final message. Without this key the observer's `incrementalActive` is
+        // false and every pacing mechanism is skipped - the switch would write a
+        // preference that nothing reads. It is declared only when the caller
+        // chose a paced policy, so the unpaced path keeps its exact old shape.
+        ...(pacing === undefined
+          ? {}
+          : {
+              onIncrementalText: async (piece: string) => {
+                if (!(await runningBarrier)) return;
+                // A piece reaches the reader through the same non-durable preview
+                // channel an in-flight delta uses. It is volatile only in ORDER,
+                // never in content or authority: the durable commit still happens
+                // once, at message_end, from the whole reply, so a piece can never
+                // become the record.
+                if (previewPublisher === undefined) return;
+                if (Buffer.byteLength(piece, "utf8") > 16_384) return;
+                try {
+                  await previewPublisher.publish(Object.freeze({ turnId: scope.facts.turnId, delta: piece }));
+                } catch {
+                  // Preview publication is explicitly non-durable.
+                }
+              },
+            }),
       },
       {
         stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,
