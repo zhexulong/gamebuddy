@@ -20,7 +20,11 @@ import {
 
 function probeFrom(installed: readonly string[], withSmapi: readonly string[] = [installed[0] ?? ""]) {
   return async (installRoot: string): Promise<StardewGameRootProbe> =>
-    Object.freeze({ gameExecutable: installed.includes(installRoot), smapi: withSmapi.includes(installRoot) });
+    Object.freeze({
+      readable: true,
+      gameExecutable: installed.includes(installRoot),
+      smapi: withSmapi.includes(installRoot),
+    });
 }
 
 function resolverInput(
@@ -95,7 +99,7 @@ test("duplicate roots from two sources are probed once and deduplicated case-ins
       gogInstallRoots: ["c:\\games\\stardew valley"],
       probe: async (installRoot) => {
         probed.push(installRoot);
-        return Object.freeze({ gameExecutable: true, smapi: true });
+        return Object.freeze({ readable: true, gameExecutable: true, smapi: true });
       },
     }),
   );
@@ -150,7 +154,7 @@ test("the discovery entry resolves a real Windows installation", { skip: process
     await mkdir(join(root, "Mods"));
     await writeFile(join(root, STARDEW_GAME_EXECUTABLE_FILE), "game");
     await writeFile(join(root, STARDEW_SMAPI_EXECUTABLE_FILE), "smapi");
-    assert.deepEqual(await probeStardewGameRoot(root), { gameExecutable: true, smapi: true });
+    assert.deepEqual(await probeStardewGameRoot(root), { readable: true, gameExecutable: true, smapi: true });
     const resolution = await discoverStardewGameInstallation({ chosenInstallRoot: root });
     assert.equal(resolution.kind, "resolved");
     if (resolution.kind !== "resolved") return;
@@ -162,7 +166,10 @@ test("the discovery entry resolves a real Windows installation", { skip: process
 });
 
 test("probing a missing installation reports no executables", { skip: process.platform !== "win32" }, async () => {
+  // The parent directory exists, so the probe CAN answer: this is a real "not here",
+  // not a failure to look. Both facts are now separate fields for exactly this reason.
   assert.deepEqual(await probeStardewGameRoot("C:\\Definitely Not Installed\\Stardew Valley"), {
+    readable: true,
     gameExecutable: false,
     smapi: false,
   });
@@ -183,7 +190,7 @@ test(
     const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-stardew-no-loader-"));
     try {
       await writeFile(join(root, STARDEW_GAME_EXECUTABLE_FILE), "game");
-      assert.deepEqual(await probeStardewGameRoot(root), { gameExecutable: true, smapi: false });
+      assert.deepEqual(await probeStardewGameRoot(root), { readable: true, gameExecutable: true, smapi: false });
       await assert.rejects(requireStardewModLoaderInstalled(root), { message: STARDEW_MOD_LOADER_MISSING });
 
       await writeFile(join(root, STARDEW_SMAPI_EXECUTABLE_FILE), "smapi");

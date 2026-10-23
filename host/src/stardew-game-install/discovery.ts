@@ -24,7 +24,15 @@ export const STARDEW_NOT_A_STARDEW_INSTALL = "stardew_not_a_stardew_install";
 
 type StardewGameInstallSource = "steam" | "gog" | "chosen";
 
-export type StardewGameRootProbe = Readonly<{ gameExecutable: boolean; smapi: boolean }>;
+export type StardewGameRootProbe = Readonly<{
+  /**
+   * Whether the root could be inspected at all. `false` means the check could not
+   * run, which is a different fact from "the root holds no game".
+   */
+  readable: boolean;
+  gameExecutable: boolean;
+  smapi: boolean;
+}>;
 
 type StardewGameInstallation = Readonly<{
   source: StardewGameInstallSource;
@@ -64,24 +72,40 @@ export type StardewGameInstallationResolverInput = Readonly<{
   chosenInstallRoot?: string;
 }>;
 
+/**
+ * Whether the path is a regular file. A path that does not exist answers `false`,
+ * which is an answer; a path that cannot be inspected rejects, so the caller can
+ * tell "not there" from "could not look". Collapsing both into `false` is what let
+ * a permission or IO failure read as an absent installation.
+ */
 function isRegularFile(path: string): Promise<boolean> {
   return lstat(path).then(
     (state) => state.isFile(),
-    () => false,
+    (error: unknown) => {
+      const code = (error as { code?: string } | null)?.code;
+      // ENOENT / ENOTDIR: the path genuinely is not there.
+      if (code === "ENOENT" || code === "ENOTDIR") return false;
+      throw error;
+    },
   );
 }
 
 /** Reports only whether the two executables are present; it never reveals or admits the path. */
 export async function probeStardewGameRoot(installRoot: string): Promise<StardewGameRootProbe> {
+  let gameExecutable: boolean;
+  let smapi: boolean;
   try {
-    const [gameExecutable, smapi] = await Promise.all([
+    [gameExecutable, smapi] = await Promise.all([
       isRegularFile(win32.join(installRoot, STARDEW_GAME_EXECUTABLE_FILE)),
       isRegularFile(win32.join(installRoot, STARDEW_SMAPI_EXECUTABLE_FILE)),
     ]);
-    return Object.freeze({ gameExecutable, smapi });
   } catch {
-    return Object.freeze({ gameExecutable: false, smapi: false });
+    // The check itself failed. Reporting `false, false` here would silently turn a
+    // permission or IO problem into "this folder is not a Stardew install", and the
+    // launcher would then tell the player their game is missing.
+    return Object.freeze({ readable: false, gameExecutable: false, smapi: false });
   }
+  return Object.freeze({ readable: true, gameExecutable, smapi });
 }
 
 /**
