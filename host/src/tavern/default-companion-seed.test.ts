@@ -146,10 +146,17 @@ test("a fresh seed writes the card's post_history_instructions as her own record
     );
     // Verbatim, down to the byte and including the author's own line breaks: the
     // reader renders macros, so nothing between here and there may rewrite it.
+    // The byte count is taken from the compiled preset rather than hardcoded: the
+    // number that matters is "the bytes written equal the bytes shipped", and a
+    // literal here would have to be edited every time the card's wording changed -
+    // at which point the case stops being a check and becomes a registration step.
     assert.equal(recorded, DEFAULT_COMPANION_PRESET.postHistoryInstructions);
     assert.ok(recorded !== null);
-    assert.equal(Buffer.byteLength(recorded, "utf8"), 458);
-    assert.equal(recorded.split("\n")[0], "言行保持青梅竹马的熟稔、松弛与生活烟火气；");
+    assert.equal(
+      Buffer.byteLength(recorded, "utf8"),
+      Buffer.byteLength(DEFAULT_COMPANION_PRESET.postHistoryInstructions!, "utf8"),
+    );
+    assert.equal(recorded.split("\n")[0], DEFAULT_COMPANION_PRESET.postHistoryInstructions!.split("\n")[0]);
   } finally {
     await release(root);
   }
