@@ -408,3 +408,45 @@ test.describe("C: the voice consent leaves the first settings screen", () => {
     await expect(chat).toContainText("Voice ready — press to talk");
   });
 });
+
+test.describe("D: the credential sentence tells the truth about who provides it", () => {
+  test("the operator's gateway says the operator provides it, a third-party provider says bring your own", async ({
+    page,
+  }) => {
+    await page.setViewportSize(VIEWPORT);
+    await stubProductRoutes(page, { activeConnection: false });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+
+    const form = page.getByTestId("settings-surface").locator("[data-connection-form]");
+    const picker = form.locator("#connection-provider");
+    await expect(picker).toBeVisible();
+
+    // The operator's own local gateway: `cpa-oai`. Its credential is this machine's
+    // environment variables, and the form must not invite a key it cannot accept.
+    await picker.selectOption("cpa-oai");
+    const operatorHelp = form.locator("[data-connection-credential-help='operator']");
+    await expect(operatorHelp).toHaveText(
+      "This connection is provided by the operator of this machine through environment variables. There is no key to enter here.",
+    );
+    await expect(operatorHelp).toContainText("provided by the operator");
+    await expect(operatorHelp).not.toContainText("Bring your own key");
+    const operatorText = await operatorHelp.textContent();
+    // Nothing to type: the entry declares no API-key field at all.
+    await expect(form.locator("#connection-api-key")).toHaveCount(0);
+
+    // A third-party provider: the key is the player's own, from their own account.
+    await picker.selectOption("deepseek");
+    const playerHelp = form.locator("[data-connection-credential-help='player']");
+    await expect(playerHelp).toHaveText(
+      "Bring your own key: it comes from your own account with this provider, and GameBuddy does not supply one.",
+    );
+    await expect(playerHelp).not.toContainText("provided by the operator");
+    await expect(form.locator("#connection-api-key")).toBeVisible();
+
+    // The two sentences are different text, not one merged sentence shown twice.
+    expect(operatorText).not.toBe(await playerHelp.textContent());
+    expect(operatorText).toContain("operator");
+    expect(await playerHelp.textContent()).toContain("Bring your own key");
+  });
+});

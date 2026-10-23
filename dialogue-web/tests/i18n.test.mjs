@@ -206,3 +206,51 @@ test("the failed-turn refusal names the credential, the model and Settings, in b
   ].map((code) => turnFailureText(code, labels));
   assert.equal(new Set(sentences).size, 4, "the four declared codes render four different sentences");
 });
+
+/**
+ * Who provides a credential is two facts, not one (owner decision D).
+ *
+ * `cpa-oai` is this product's own local gateway: an operator runs it on this
+ * machine and its key is that operator's environment variable. An arbitrary
+ * player cannot self-serve one, so the sentence beside that entry must say the
+ * operator provides it rather than invite a key that no form here can accept.
+ * Every third-party entry is the opposite fact - the player's own account with
+ * that provider - and keeps bring-your-own-key wording.
+ *
+ * Both halves are pinned, and pinned as *different sentences*: a single merged
+ * sentence that mentioned both would let the operator's entry read as a place to
+ * paste a key, which is exactly the lie this removes.
+ */
+test("the credential sentence names the operator for our gateway and the player for a third party", () => {
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    const operator = labels.connectionCredentialOperatorProvided;
+    const player = labels.connectionCredentialBringYourOwn;
+    assert.notEqual(operator, player, `${locale} must not merge the two facts into one sentence`);
+    assert.ok(operator.trim().length > 0 && player.trim().length > 0, `${locale} must state both`);
+  }
+
+  const en = messages("en");
+  // The operator's entry: this machine's environment, and no key to type.
+  assert.match(en.connectionCredentialOperatorProvided, /provided by the operator/iu);
+  assert.match(en.connectionCredentialOperatorProvided, /environment variables/iu);
+  assert.match(en.connectionCredentialOperatorProvided, /no key to enter/iu);
+  assert.doesNotMatch(en.connectionCredentialOperatorProvided, /bring your own key/iu);
+  // The third-party entry: the player's own account, and the product supplies none.
+  assert.match(en.connectionCredentialBringYourOwn, /bring your own key/iu);
+  assert.match(en.connectionCredentialBringYourOwn, /your own account/iu);
+  assert.doesNotMatch(en.connectionCredentialBringYourOwn, /provided by the operator/iu);
+
+  const zh = messages("zh-CN");
+  assert.match(zh.connectionCredentialOperatorProvided, /运营方/u);
+  assert.match(zh.connectionCredentialOperatorProvided, /环境变量/u);
+  assert.doesNotMatch(zh.connectionCredentialOperatorProvided, /自备密钥/u);
+  assert.match(zh.connectionCredentialBringYourOwn, /自备密钥/u);
+  assert.match(zh.connectionCredentialBringYourOwn, /自己的账号/u);
+  assert.doesNotMatch(zh.connectionCredentialBringYourOwn, /运营方/u);
+
+  // The provider picker's own suffix says the same thing in one phrase, so the two
+  // places a player reads it cannot drift apart.
+  assert.match(en.connectionEnvironmentManaged, /provided by the operator/iu);
+  assert.match(zh.connectionEnvironmentManaged, /运营方/u);
+});

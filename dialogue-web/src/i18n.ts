@@ -271,14 +271,21 @@ const en = {
   connectionActiveLabel: "Active connection",
   connectionNoneActive: "No connection selected",
   connectionNoSelectionNotice:
-    "No connection is selected. The built-in default exists only in an operator environment, so a normal install has none — configure a connection here: choose a provider, enter its API Key and the model it serves, then save and enable it.",
+    "No connection is selected, so a reply cannot reach a model, and a normal install has none to fall back on — configure a connection here: choose a provider and the model it serves, then save and enable it. A third-party provider also needs your own API key for it; the operator's own gateway runs on this machine and needs none.",
   connectionActivationNotice:
     "Connection activated. It applies from your next conversation; one already in progress is not switched.",
   connectionProvider: "Provider",
   connectionRecommended: "recommended",
   connectionEscapeHatch: "OpenAI-compatible endpoint",
   connectionEscapeHatchHint: "Runs against a compatible server you supply, such as Ollama, LM Studio or vLLM.",
-  connectionEnvironmentManaged: "Managed by the operator environment; it has no editable credential here.",
+  // Who provides a credential is not one fact. The operator's gateway is this machine's own
+  // environment - no key the player can type - and every third-party entry is the player's own
+  // account. The two are stated as two sentences so neither can be read as the other.
+  connectionEnvironmentManaged: "Provided by the operator",
+  connectionCredentialOperatorProvided:
+    "This connection is provided by the operator of this machine through environment variables. There is no key to enter here.",
+  connectionCredentialBringYourOwn:
+    "Bring your own key: it comes from your own account with this provider, and GameBuddy does not supply one.",
   connectionBaseUrl: "Base URL",
   connectionBaseUrlHint: "For example http://127.0.0.1:11434/v1",
   connectionApiShape: "API shape",
@@ -1080,13 +1087,15 @@ const zh: Messages = {
   connectionActiveLabel: "当前连接",
   connectionNoneActive: "未选择连接",
   connectionNoSelectionNotice:
-    "尚未选择连接。内置默认连接只存在于运行环境中，普通安装没有它——请在这里配置一条连接：选择渠道、填写它的 API Key 和它提供的模型，然后保存并启用。",
+    "尚未选择连接，回复无法送达模型，普通安装没有它可回退——请在这里配置一条连接：选择渠道和它提供的模型，然后保存并启用。第三方渠道还需要你自备该服务商的 API Key；运营方自己的网关运行在本机上，不需要密钥。",
   connectionActivationNotice: "连接已启用。从下次开始对话时生效；正在进行的会话不会被切换。",
   connectionProvider: "渠道",
   connectionRecommended: "推荐",
   connectionEscapeHatch: "OpenAI 兼容端点",
   connectionEscapeHatchHint: "连接到你自己提供的兼容服务器，例如 Ollama、LM Studio 或 vLLM。",
-  connectionEnvironmentManaged: "由运行环境管理，此处没有可编辑的凭据。",
+  connectionEnvironmentManaged: "由运营方提供",
+  connectionCredentialOperatorProvided: "该连接由本机运营方通过环境变量提供，这里没有需要填写的密钥。",
+  connectionCredentialBringYourOwn: "自备密钥：密钥来自你在该服务商自己的账号，GameBuddy 不提供密钥。",
   connectionBaseUrl: "Base URL",
   connectionBaseUrlHint: "例如 http://127.0.0.1:11434/v1",
   connectionApiShape: "API 协议",

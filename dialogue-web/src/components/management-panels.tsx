@@ -459,6 +459,26 @@ export function ConnectionSettingsPanel({
   // Our own curated ids. Suggestions, never gatekeeping: the field is a text field, and the probe
   // is what decides whether what the player named is really served.
   const suggestedModels = selected?.allowedPlayerModels ?? [];
+  /**
+   * Who supplies the selected entry's credential, as two facts that must never be
+   * merged into one sentence.
+   *
+   * The environment connection is this product's own local gateway: an operator
+   * runs it on this machine and its key lives in the operator's environment. No
+   * amount of typing in this form can conjure one, so the sentence that must stand
+   * here is "the operator provides it", not "enter your key". Every other entry
+   * that needs a credential is the player's own account with that provider, and
+   * `null` is the third honest case: a keyless local server needs none, and the
+   * keyless line below already says so.
+   */
+  const credentialSource: "operator" | "player" | null =
+    selected === undefined
+      ? null
+      : selected.environmentManaged
+        ? "operator"
+        : selected.setupFields.includes("apiKey") && apiKeyRequired
+          ? "player"
+          : null;
 
   return (
     <section className="management-settings-section" aria-label={labels.connectionSettings} data-connection-settings>
@@ -541,6 +561,18 @@ export function ConnectionSettingsPanel({
             ))}
           </select>
           {selected?.escapeHatch === true && <p className="field-hint">{labels.connectionEscapeHatchHint}</p>}
+
+          {credentialSource !== null && (
+            // The credential story of the entry the player has selected, in the place
+            // where they would look for a key to enter. Which of the two it is decides
+            // the subject of the sentence: the operator's environment, or the player's
+            // own account.
+            <p className="field-hint" data-connection-credential-help={credentialSource}>
+              {credentialSource === "operator"
+                ? labels.connectionCredentialOperatorProvided
+                : labels.connectionCredentialBringYourOwn}
+            </p>
+          )}
 
           {selected?.setupFields.includes("baseUrl") === true && (
             <>
