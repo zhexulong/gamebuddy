@@ -16,8 +16,8 @@ import { canonicalBase64Of, pngBytesOfPickedPicture } from "./png-character-card
  * MOUNTED one had a panel: the persona/scenario/opening/directive editors all
  * read the mounted companion (and `persona.read` is the PLAYER's own record), so
  * an archived companion's authored facts were on disk and unreadable. This drawer
- * is the one place they are read, and it is read-only: it renders the projection
- * `companion.profile.read` returns and edits nothing.
+ * is the one place they are read, and it edits none of them: it renders the projection
+ * `companion.profile.read` returns.
  *
  * It opens in the shell's one contextual drawer primitive, so the focus trap,
  * Escape and focus restoration to the row that opened it are the shell's own
@@ -33,12 +33,13 @@ import { canonicalBase64Of, pngBytesOfPickedPicture } from "./png-character-card
  *    operation, so this drawer contains no control that claims to switch, select
  *    or enable anything.
  *
- * Its one exception is her picture (`CompanionAvatarSection`): the drawer is the
- * only per-companion surface that shows every companion, so it is where a player
- * gives an authorless one a face. That control writes to the same file the
- * runtime asset face serves at her own URL - it edits none of the records this
- * drawer reads, and the roster's own read (`companion.list`) is untouched by an
- * upload.
+ * Its writes are two, not the records it reads: her picture
+ * (`CompanionAvatarSection`) and her removal (`CompanionRemovalSection`). The drawer is the
+ * only per-companion surface that shows every companion, so it is where a player gives an
+ * authorless one a face - that control writes to the same file the runtime asset face
+ * serves at her own URL, and edits none of the records this drawer reads, and the roster's
+ * own read (`companion.list`) is untouched by an upload - and it is also the only place a
+ * roster companion can be removed at all.
  */
 export type InspectedCompanion = Readonly<{ handle: string; name: string; isCurrent: boolean }>;
 
@@ -120,6 +121,23 @@ export function CompanionInspectorDrawer({
           ? labels.companionInspectorInPlay
           : labels.companionInspectorNotInPlay.replace("{{name}}", companion.name)}
       </p>
+      {/* The removal entry sits directly under that state line, BEFORE her picture and
+          the authored groups. It used to be the drawer's last child, after a profile
+          body that is several screens tall at 420x900, which meant a player opening an
+          archived companion never saw that removal existed - and a player opening the
+          one in play never saw the sentence explaining why it does not apply. A
+          destructive control the player cannot find is not safer, only undiscoverable;
+          and the explanatory paragraph is exactly what has to be read before the
+          control, not after it. */}
+      <CompanionRemovalSection
+        api={api}
+        csrfToken={csrfToken}
+        companion={companion}
+        revision={view.kind === "ready" ? view.profile.revision : null}
+        labels={labels}
+        problemLabels={messages(locale)}
+        onDeleted={onDeleted}
+      />
       <CompanionAvatarSection
         api={api}
         csrfToken={csrfToken}
@@ -135,26 +153,17 @@ export function CompanionInspectorDrawer({
       ) : (
         <CompanionProfileBody profile={view.profile} labels={labels} />
       )}
-      <CompanionRemovalSection
-        api={api}
-        csrfToken={csrfToken}
-        companion={companion}
-        revision={view.kind === "ready" ? view.profile.revision : null}
-        labels={labels}
-        problemLabels={messages(locale)}
-        onDeleted={onDeleted}
-      />
     </ContextDrawer>
   );
 }
 
 /**
- * Her picture: the one write on this drawer, and the whole reason it is no longer
+ * Her picture: the drawer's other write, and the whole reason it is no longer
  * read-only.
  *
  * The drawer shows every companion the roster listed, so this is where an imported or
  * hand-made one stops being a monogram - the route behind the control resolves ANY
- * listed companion, not only the one in play. Everything else here reads the records
+ * listed companion, not only the one in play. Everywhere else here reads the records
  * `companion.profile.read` projects; a picture is not one of those records (it is a file
  * the runtime asset face serves at her own URL), so this section reads nothing and
  * claims nothing it cannot see - the avatar ITSELF is what tells the player whether she
@@ -311,8 +320,16 @@ function companionAvatarRefusal(labels: CharacterLabels, error: unknown, problem
  *
  * The revision this CASes on is the one the inspector read, so a record that moved on since
  * is refused rather than deleting a companion from a stale screen. The deletion's scope is
- * the Host's own: her record, her picture and her authored files. Her conversations stay
- * where they are, and the hint says so rather than implying they go with her.
+ * the Host's own - her artifact root (record, picture, scenario, openings, examples and the
+ * card additions kept beside them) plus her identity profile (persona and performance
+ * directive) - and both sentences in the catalogue enumerate that whole set. Her
+ * conversations stay where they are, and the hint says so rather than implying they go with
+ * her.
+ *
+ * It renders near the TOP of the drawer, not after the profile body: the drawer is one
+ * scrolling column 420 px wide, and her authored groups run several screens deep, so a
+ * removal entry at the end of it was a control a player had to hunt for - and, for the
+ * companion in play, a paragraph they never read.
  */
 function CompanionRemovalSection({
   api,
