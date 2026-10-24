@@ -4802,6 +4802,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         if (receipt.ActionId is null && this.receiptsByRequestId.TryGetValue(receipt.RequestId, out LocalExecutionReceipt? persistedReceipt))
             receipt = persistedReceipt;
+        // The ledger bound the action at dispatch (`BindAction`, from the router), and a
+        // controller-minted terminal is built without it. Stamping it HERE covers every
+        // mint site at once, which is the difference between one fix and eighty call sites.
+        //
+        // This was the reason a whole night of runs reported `multiday.crossings: 0` with
+        // `night_terminal_missing` while the trace showed the work done: 14 terminal receipts
+        // in one run (13x Succeeded/target_reached, 1x Succeeded/enter_exit_completed) were
+        // refused by BridgeSession.TryCreateReceiptEvent because the action identity could not
+        // be resolved, and the refusal was logged as `closed/backpressured bridge` - which sent
+        // the investigation to the pipe writer instead of to this projection.
+        if (receipt.ActionId is null && this.actionIdsByRequestId.TryGetValue(receipt.RequestId, out string? boundActionId))
+            receipt = receipt with { ActionId = boundActionId };
         string? category = receipt.State switch
         {
             ExecutionState.Accepted => "execution_started",
