@@ -538,8 +538,8 @@ test("the client mirror accepts the endpoint's own listing under the Host contra
 function modelProfiles(overrides = {}) {
   return {
     apiVersion: 1,
-    chat: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
-    game: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
+    chat: { revision: 0, thinkingLevel: "high" },
+    game: { revision: 0, thinkingLevel: "high" },
     recommendedModels: [
       {
         providerId: "deepseek",
@@ -554,14 +554,22 @@ function modelProfiles(overrides = {}) {
   };
 }
 
-test("management model-profile validators and client round-trip a player-typed model id through the exact session and CSRF-bound routes", async () => {
+/**
+ * A model profile names a thinking level and nothing else.
+ *
+ * The premise this replaces: a profile used to carry a `modelId` the player typed, validated as a
+ * general bounded string, and this test round-tripped `qwen2.5-coder:7b` through it. With BYOK the
+ * model belongs to the active connection - the one record that names a provider, a model and an
+ * endpoint together - so a profile that also named one would be a second, unreadable spelling of
+ * that choice. What this now pins is the shape's exactness in BOTH directions: the level round-trips,
+ * and a `modelId` anywhere in the profile or the command is refused as an unknown property.
+ */
+test("management model-profile validators and client round-trip a player-typed thinking level through the exact session and CSRF-bound routes", async () => {
   const profiles = modelProfiles();
   assert.deepEqual(validateModelProfiles(profiles), profiles);
 
-  // A model id outside the recommendation is the player's own value: a general
-  // bounded string, never a closed union and never a catalog membership test.
   const playerValue = modelProfiles({
-    game: { revision: 1, modelId: "qwen2.5-coder:7b", thinkingLevel: "xhigh" },
+    game: { revision: 1, thinkingLevel: "xhigh" },
   });
   assert.deepEqual(validateModelProfiles(playerValue), playerValue);
 
@@ -569,7 +577,6 @@ test("management model-profile validators and client round-trip a player-typed m
     apiVersion: 1,
     surface: "game",
     expectedRevision: 0,
-    modelId: "qwen2.5-coder:7b",
     thinkingLevel: "xhigh",
   };
   assert.deepEqual(validateModelProfileUpdateCommand(command), command);
@@ -580,9 +587,16 @@ test("management model-profile validators and client round-trip a player-typed m
   // Only the bounded shape is refused, and both schemas are strict.
   assert.throws(() => validateModelProfiles({ ...profiles, extra: true }), TavernProtocolError);
   assert.throws(
-    () => validateModelProfiles({ ...profiles, game: { revision: 1, modelId: "has space", thinkingLevel: "high" } }),
+    () => validateModelProfiles({ ...profiles, game: { revision: 1, thinkingLevel: "3 high" } }),
     TavernProtocolError,
   );
+  // A retired `modelId` is not tolerated on the wire, in either direction: the projection and the
+  // command both have to say what they mean, and this field is not one of the facts they carry.
+  assert.throws(
+    () => validateModelProfiles({ ...profiles, game: { revision: 1, thinkingLevel: "high", modelId: "m" } }),
+    TavernProtocolError,
+  );
+  assert.throws(() => validateModelProfileUpdateCommand({ ...command, modelId: "m" }), TavernProtocolError);
   assert.throws(
     () => validateModelProfiles({ ...profiles, recommendedModels: [{ providerId: "deepseek" }] }),
     TavernProtocolError,
@@ -603,7 +617,7 @@ test("management model-profile validators and client round-trip a player-typed m
   });
 
   // A malformed command and a non-canonical CSRF token are refused before any fetch.
-  await assert.rejects(api.updateModelProfile({ ...command, modelId: "has space" }, HANDLE), TavernProtocolError);
+  await assert.rejects(api.updateModelProfile({ ...command, thinkingLevel: "3 high" }, HANDLE), TavernProtocolError);
   await assert.rejects(api.updateModelProfile(command, "not-a-canonical-csrf-token="), TavernProtocolError);
   assert.equal(calls.length, 1);
 
