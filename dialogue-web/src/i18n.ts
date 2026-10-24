@@ -833,7 +833,7 @@ const en = {
   gameStartGuide: "Getting started together",
   gameGuideStepOneTitle: "Start Stardew",
   gameGuideStepOneDetail:
-    "Choose your game folder under Game installation first if it is not set yet, then do the two controls below in this order: enable companion play, then set up Stardew Valley.",
+    "If you have not chosen your game folder yet, choose it under Game installation on this page, then do the two controls below in this order: enable companion play, then set up Stardew Valley.",
   // What each of step 1's two controls is for. They run in one order only - the
   // Host refuses setup before activation - and that order used to reach the
   // player only as a refusal after they had already picked the wrong one.
@@ -1551,7 +1551,7 @@ const zh: Messages = {
   gameStartGuide: "怎么开始",
   gameGuideStepOneTitle: "启动星露谷",
   gameGuideStepOneDetail:
-    "如果还没选过游戏目录，先在下方「游戏安装」里选好；然后按顺序做下面两个操作：先启用伙伴陪玩，再设置《星露谷物语》。",
+    "如果还没选过游戏目录，先在本页的「游戏安装」里选好；然后按顺序做下面两个操作：先启用伙伴陪玩，再设置《星露谷物语》。",
   gameActivationHint: "让伴侣为这次会话做好准备。",
   gameSetupHint: "准备好《星露谷物语》和伴侣模组。",
   gameGuideStepTwoTitle: "载入你的农场",

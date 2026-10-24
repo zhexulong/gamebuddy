@@ -32,10 +32,9 @@ import {
  * The Game panel: one presentation component for every state the composed Game
  * surface models, so the shell owns behaviour and this owns reading order.
  *
- * Reading order is deliberate and identical in every state. The board leads,
- * because the first question a player has is what the companion can actually do
- * with them; then the groups each answer one player question (design/26 §4.2,
- * design/28 §2, design/104 §2):
+ * Reading order is deliberate. Each group answers one player question, in the
+ * order those questions get answered (design/26 §4.2, design/28 §2,
+ * design/104 §2):
  *
  *   Board      - what can my companion do with me?
  *   Next step  - how do we get going (or: resume the actions)?
@@ -43,9 +42,21 @@ import {
  *   Recovery   - the connection could not be restored; what now?
  *   Facts      - the machine facts, compact and last.
  *
+ * The first two swap seats, and the state decides which leads. The board leads
+ * as soon as the game publishes a capability: then "what can my companion do
+ * with me" really is the first question, and it has an answer. While the board
+ * has nothing published it holds only the fact that it has nothing, so leading
+ * with it spends the whole first viewport answering a question the session
+ * cannot answer yet and pushes the one control a fresh session offers below the
+ * fold (measured at 400x800 before: 398 px of empty board, and the enable
+ * control 417 px below the board's first sentence). In that state the guide
+ * leads, because the first thing the surface owes the player is the step they
+ * can take.
+ *
  * The board is derived from the capability surface the composed game
- * projection publishes - it is never a hand-written ability list, and it says
- * what it is waiting for when the session has published none.
+ * projection publishes - it is never a hand-written ability list, and while the
+ * session has published none it says that in one sentence instead of one card
+ * per absent fact.
  *
  * Each step of the guide carries its controls first and the feedback those
  * controls produce directly below them, so a player reads "what is true, what
@@ -221,6 +232,15 @@ export function GameStatePanel({
   // lifecycle controls, presented inside the three-step guide's affordances
   // (never a second set of them).
   const companionInFarm = game !== null && game.game.attachment.status === "attached";
+  // The board's own named state, derived by `deriveCapabilityBoard`:
+  // `waiting` is present exactly while the session has published no capability
+  // at all. That one fact decides both the board's shape and its place in the
+  // reading order, so the two can never disagree.
+  const board = game === null ? null : deriveCapabilityBoard(labels, game.game);
+  const capabilitiesUnpublished = board !== null && board.waiting !== null;
+  // One mount site per state, never two: the board leads while it has a published
+  // fact to state, and sits below the next step while it has none.
+  const capabilityBoard = board === null ? null : <CapabilityBoardView board={board} />;
   // One mount site per state, never two: the cabin handoff is the third step's
   // affordance while the companion is on its way in, and stays the sibling
   // block below the groups once it is in the farm.
@@ -257,8 +277,11 @@ export function GameStatePanel({
           {/* What the companion can do with the player, derived from the
               capability surface the composed game projection publishes: the
               published summary, the embodied role and the action authority.
-              Nothing here is a hand-written ability list. */}
-          <CapabilityBoardView board={deriveCapabilityBoard(labels, game.game)} />
+              Nothing here is a hand-written ability list. It comes first whenever
+              it has a fact to state; while it has none it follows the next step,
+              so a fresh session opens on the step the player can take rather than
+              on a board that only has three ways of saying nothing. */}
+          {capabilitiesUnpublished ? null : capabilityBoard}
 
           {/* Getting going. The three steps are the reading order of the first
               run (start Stardew, load the farm, the companion moves in), and
@@ -421,6 +444,11 @@ export function GameStatePanel({
               </p>
             )}
           </PanelGroup>
+
+          {/* The board when it has nothing to publish: it follows the step the
+              player can take, and states the whole absence in one sentence rather
+              than three cards that each state one third of it. */}
+          {capabilitiesUnpublished ? capabilityBoard : null}
 
           {/* What is running now, and the controls that settle it. Offering zero
               of these on a projection that admits none leaves the group as its
@@ -784,36 +812,51 @@ function capabilityCardIcon(icon: CapabilityBoardCard["icon"]) {
  * The companion capability board: what the companion can do with the player,
  * derived from the capability surface the composed game projection publishes.
  *
- * It renders exactly the cards `deriveCapabilityBoard` produced from that
- * projection, and nothing else. While the session has published no capability,
- * the board carries the sentence naming what it is waiting for instead of a
- * static list it cannot attest (design/26 §1: absent beats a disabled lookalike,
- * and an invented list is worse than either).
+ * With a published summary it renders exactly the cards `deriveCapabilityBoard`
+ * produced from that projection, and nothing else.
+ *
+ * With none, it renders one sentence instead of one card per absent fact. The
+ * three cards are the same absence told three times - "no companion", "nothing
+ * published", "no acting authority" - and each one costs the fold a card's worth
+ * of height to say that the session has nothing to say. `board.waiting !== null`
+ * is the state that names this (the same `data-capability-state="unpublished"`
+ * the region already carried), and the sentence is still the board's own: the
+ * abilities come from the game, and they appear once it reports them for the farm
+ * being played (design/26 §1: absent beats a disabled lookalike, and an invented
+ * list is worse than either).
  */
 function CapabilityBoardView({ board }: { board: CapabilityBoard }) {
+  const unpublished = board.waiting !== null;
   return (
     <section
       className="game-capability-board"
       aria-labelledby="game-capability-board-heading"
       data-testid="game-capability-board"
-      data-capability-state={board.waiting === null ? "published" : "unpublished"}
+      data-capability-state={unpublished ? "unpublished" : "published"}
     >
       <h3 className="game-group-title" id="game-capability-board-heading">
         {board.title}
       </h3>
-      <p className="game-capability-lead">{board.lead}</p>
-      <ul className="game-capability-cards">
-        {board.cards.map((card) => (
-          <li className="game-capability-card" data-capability-card={card.key} key={card.key}>
-            <span className="game-capability-card-icon" aria-hidden="true">
-              {capabilityCardIcon(card.icon)}
-            </span>
-            <h4 className="game-capability-card-title">{card.title}</h4>
-            <p className="game-capability-card-detail">{card.detail}</p>
-          </li>
-        ))}
-      </ul>
-      {board.waiting !== null && <p className="game-capability-waiting">{board.waiting}</p>}
+      {unpublished ? (
+        <p className="game-capability-waiting">
+          {board.lead} {board.waiting}
+        </p>
+      ) : (
+        <>
+          <p className="game-capability-lead">{board.lead}</p>
+          <ul className="game-capability-cards">
+            {board.cards.map((card) => (
+              <li className="game-capability-card" data-capability-card={card.key} key={card.key}>
+                <span className="game-capability-card-icon" aria-hidden="true">
+                  {capabilityCardIcon(card.icon)}
+                </span>
+                <h4 className="game-capability-card-title">{card.title}</h4>
+                <p className="game-capability-card-detail">{card.detail}</p>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </section>
   );
 }

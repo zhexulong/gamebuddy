@@ -4615,9 +4615,14 @@
 
   .game-capability-waiting {
     margin: 0;
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.6;
-    color: var(--text-disabled);
+    /* This line is the whole board while nothing is published, so it is live
+     prose a player reads rather than a dimmed footnote: `--text-disabled` names
+     text the player cannot use, and this is the one sentence the empty board
+     gives them (the same correction `.installation-state` and the author line
+     carry). */
+    color: var(--text-secondary);
     overflow-wrap: anywhere;
   }
 
