@@ -228,18 +228,20 @@ async function stubProductRoutes(
 
 test.describe("A: the conversation's claim about a model is the send path's own answer", () => {
   /**
-   * (a) No saved connection, and the shipped Chat profile is there: the conversation is silent and
-   * a message really does get a reply.
+   * (a) A BYOK connection the player activated: the conversation is silent and a message really
+   * does get a reply.
    *
    * What the old code did here, measured on the pinned build: `readConnection().active === null`
    * painted `data-chat-connection-missing` reading "No model connection is set up yet" on a Chat
    * whose very next send was answered by the shipped profile through the operator gateway. The
    * assertion below fails on that build twice: the banner exists, and the reply never lands
    * because the banner's claim was never true in the first place.
+   *
+   * The premise moved once more with the BYOK ruling: there is no shipped profile any more, so
+   * "a send works" now means "the player activated a connection" - and that is the state this
+   * journey mounts. The silence is the same invariant; only what produces it changed.
    */
-  test("with no saved connection but the shipped profile present it says nothing, and a send gets a reply", async ({
-    page,
-  }) => {
+  test("with an activated connection it says nothing, and a send gets a reply", async ({ page }) => {
     const playerText = "Are you there?";
     const replyText = "I am. The kettle is on.";
     const playerHandle = `${'P'.repeat(42)}A`;
@@ -263,7 +265,7 @@ test.describe("A: the conversation's claim about a model is the send path's own 
       },
     });
 
-    await stubProductRoutes(page, { activeConnection: false });
+    await stubProductRoutes(page, { activeConnection: true });
     // The composed root is re-read by the fallback poll, so it is stubbed with the same projection.
     await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(projection())));
     await page.route("**/api/tavern/v1/messages", async (route) => {
@@ -286,7 +288,7 @@ test.describe("A: the conversation's claim about a model is the send path's own 
 
     const chat = page.getByTestId("chat-surface");
     await expect(chat).toBeVisible();
-    // The claim the surface makes is the route a send takes: the shipped profile, so no sentence.
+    // The claim the surface makes is the route a send takes: an activated connection, so no sentence.
     await expect(chat.locator("[data-chat-no-model]")).toHaveCount(0);
     await expect(chat).not.toContainText("No model can answer right now");
 
