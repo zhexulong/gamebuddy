@@ -30,7 +30,7 @@ export type ExactChatRuntimeConstruction = Readonly<{
   identity: CompanionIdentity;
   runtimeRoot: string;
   surfaceSessionId: string;
-  modelConfig: CompanionModelConfig;
+  modelConfig: CompanionModelConfig | null;
   /** Durable revision of the model selection this construction used. */
   modelProfileRevision: number;
   /**
@@ -65,9 +65,19 @@ export type ChatRuntimeConstructionOptions = Readonly<{
   tavernNarrativeGateNonceSha256?: string;
 }>;
 
-/** The provider/model/thinking level a Chat runtime runs with, and the profile revision it read. */
+/**
+ * The provider/model/thinking level a Chat runtime runs with, and the profile revision it read.
+ *
+ * `modelConfig: null` means the player has activated no connection, so this Chat has no model -
+ * and it is a positive answer, not a missing one: the read happened and found nothing. That is why
+ * the selection is a nullable value rather than a member that can be absent, and why a mount no
+ * longer refuses: a product with no model must still open, so the player can read the conversation
+ * while Settings is where a model is brought. `runtime-core` skips Pi's model configuration for a
+ * null selection and the mounted session therefore keeps Pi's own `unknown` placeholder until the
+ * player activates a connection; the same session then adopts it in place.
+ */
 export type ExactChatRuntimeModelSelection = Readonly<{
-  modelConfig: CompanionModelConfig;
+  modelConfig: CompanionModelConfig | null;
   modelProfileRevision: number;
 }>;
 
@@ -86,12 +96,13 @@ export async function prepareExactChatRuntimeConstruction(
   const identity = Object.freeze({ ...execution.principal });
   const paths = resolveRuntimePaths(identity, execution.runtimeRoot, permit.chatSurfaceSessionId);
   const threads = createChatThreadStore(execution.runtimeRoot, identityKey(identity));
-  // Everything past this line can refuse -- an absent thread, identity drift, a
-  // missing model configuration -- and every refusal abandons this store. The
-  // store now owns a live SQLite connection, so an abandoned one holds the
-  // runtime root against removal on Windows for the life of the process, and the
-  // caller never receives the object to release it. The release therefore belongs
-  // on the throwing path.
+  // Everything past this line can refuse -- an absent thread, identity drift -- and
+  // every refusal abandons this store. The store now owns a live SQLite
+  // connection, so an abandoned one holds the runtime root against removal on
+  // Windows for the life of the process, and the caller never receives the object
+  // to release it. The release therefore belongs on the throwing path. A root with
+  // no model is deliberately not one of these refusals: a product with no model
+  // still opens, and the surface is what says the model is missing.
   try {
     return await buildExactChatRuntimeConstruction(threads, execution, permit, identity, paths, options);
   } catch (error) {
@@ -258,18 +269,17 @@ async function buildExactChatRuntimeConstruction(
  * runs with: the player's active connection, and nothing else.
  *
  * This product ships no model endpoint, so there is no fallback to resolve: a
- * root with no active connection has no model, and the refusal below is the
- * honest answer rather than a shipped gateway that does not exist on the
- * player's machine. A mount freezes this answer into its Pi session; activating
- * a connection asks the same function again for the mounted runtime, so a reload
- * can never drift from what a fresh mount would use.
+ * root with no active connection has no model, and `null` is the honest answer
+ * rather than a shipped gateway that does not exist on the player's machine. A
+ * mount freezes this answer into its Pi session; activating a connection asks
+ * the same function again for the mounted runtime, so a reload can never drift
+ * from what a fresh mount would use.
  */
 async function resolveExactChatRuntimeModelSelection(
   paths: Pick<ReturnType<typeof resolveRuntimePaths>, "agentDir" | "root">,
 ): Promise<ExactChatRuntimeModelSelection> {
   const modelProfile = await new ModelProfileStore(join(paths.root, "settings", "model-profiles.json")).read("chat");
   const modelConfig = await readActiveConnectionModelConfig(paths.agentDir);
-  if (modelConfig === null) throw new Error("chat_runtime_model_configuration_unavailable");
   return Object.freeze({ modelConfig, modelProfileRevision: modelProfile.revision });
 }
 

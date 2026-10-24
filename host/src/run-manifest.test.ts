@@ -71,6 +71,31 @@ test("run manifest preserves configuration mismatch semantics", async () => {
   });
 });
 
+/**
+ * The model is recorded, not verified: it names the player's activated connection, which a player
+ * changes after the fact - and a fresh install changes it exactly once, on the way from "no model,
+ * it opened anyway" to "connection added". Verifying it would refuse to reopen the very root the
+ * product had just told the player how to fix.
+ */
+test("run manifest accepts a root whose player activated a connection after the first mount", async () => {
+  const runtimePaths = await paths();
+  await writeOrVerifyRunManifest(runtimePaths, manifest);
+  const withConnection: CompanionRunManifest = {
+    ...manifest,
+    model: { provider: "deepseek", modelId: "deepseek-v4-pro", thinkingLevel: "high" },
+  };
+  await writeOrVerifyRunManifest(runtimePaths, withConnection);
+  // …and the record names the model the run now uses, rather than the one it first opened with.
+  assert.deepEqual(JSON.parse(await readFile(runtimePaths.runManifestPath, "utf8")), withConnection);
+  // Every other field is still immutable: the same change to one of those still refuses.
+  await assert.rejects(
+    () => writeOrVerifyRunManifest(runtimePaths, { ...withConnection, actionRegistryRevision: "other" }),
+    {
+      message: "run_manifest_mismatch",
+    },
+  );
+});
+
 test("run manifest serializes concurrent identical initialization without corrupting its immutable binding", async () => {
   const runtimePaths = await paths();
   await Promise.all(Array.from({ length: 8 }, () => writeOrVerifyRunManifest(runtimePaths, manifest)));

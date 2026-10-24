@@ -57,7 +57,7 @@ import {
   rewindPiTranscriptTail,
   type PiTranscriptMessage,
 } from "../pi-session-variant-branch.internal.js";
-import { identityKey, type RuntimeSession } from "../runtime.js";
+import { identityKey, type CompanionModelConfig, type RuntimeSession } from "../runtime.js";
 import {
   acknowledgeMountedWorldInfoBinding,
   claimMountedAttempt as claimStoreMountedAttempt,
@@ -152,8 +152,13 @@ export type MountedModelSelection = Readonly<{
 }>;
 export type MountedModelSelectionReload = Readonly<{
   status: "applied" | "turn_in_flight";
-  /** Read back from the live Pi session, never from the selection that was asked for. */
-  modelSelection: MountedModelSelection;
+  /**
+   * Read back from the live Pi session, never from the selection that was asked for, and `null`
+   * when the player has no selection at all: a mount that opened before any connection was
+   * activated holds no model, and saying so is the answer rather than naming Pi's own `unknown`
+   * placeholder as if it were one.
+   */
+  modelSelection: MountedModelSelection | null;
 }>;
 export type MountedChatRuntimeLease = Readonly<{
   /**
@@ -238,6 +243,8 @@ type MountedChatRuntimeLeaseRecord = {
   readonly providerRuntimeSession?: RuntimeSession;
   /** Construction-private model reload for this exact mount; never public. */
   readonly reloadModelSelection?: NonNullable<MaterializedChatRuntime["reloadModelSelection"]>;
+  /** The selection this mount configured Pi with; never public. */
+  readonly appliedModelConfig?: NonNullable<MaterializedChatRuntime["appliedModelConfig"]>;
   /** Exact mounted authored catalog capability; never public or retained by callers. */
   authoredContextCapability?: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability;
   refreshAuthoredContext?: (
@@ -291,21 +298,34 @@ const mountedChatRuntimeLeases = new WeakMap<object, MountedChatRuntimeLeaseReco
  * conversation moves - the transcript, the ledger and the session's own entries
  * stay exactly as they are; only the provider/model the next prompt runs with
  * changes.
+ *
+ * `null` means the player has activated nothing, so there is nothing to adopt.
+ * That is not a refusal: a Chat that opened before any connection existed is
+ * the ordinary first-run state, and the prompt it then attempts is what fails
+ * by name, at the point of use, with Settings named where the model is brought.
  */
-async function applyMountedModelSelection(record: MountedChatRuntimeLeaseRecord): Promise<void> {
+async function applyMountedModelSelection(record: MountedChatRuntimeLeaseRecord): Promise<CompanionModelConfig | null> {
   const reload = record.reloadModelSelection;
   if (reload === undefined)
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_model_selection_unavailable");
-  await reload();
+  return await reload();
 }
 
-/** The selection the live Pi session holds, read from the session rather than remembered. */
-function readMountedModelSelection(record: MountedChatRuntimeLeaseRecord): MountedModelSelection {
+/**
+ * The selection the live Pi session holds, read from the session rather than remembered.
+ *
+ * `null` is the mounted runtime's own answer while the player has activated no connection. That is
+ * a state, not a failure: the session is running on Pi's `unknown` placeholder, and reporting the
+ * placeholder as the player's model would name a model nobody selected. A mount that HAS a
+ * selection but cannot read the session's thinking level back is the only refusal left here.
+ */
+function readMountedModelSelection(record: MountedChatRuntimeLeaseRecord): MountedModelSelection | null {
+  const applied = record.appliedModelConfig?.();
+  if (applied === null) return null;
   const state = record.providerRuntimeSession?.session.agent.state;
-  const model = state?.model;
-  if (state === undefined || model === undefined)
+  if (applied === undefined || state === undefined)
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_model_selection_unavailable");
-  return Object.freeze({ provider: model.provider, modelId: model.id, thinkingLevel: state.thinkingLevel });
+  return Object.freeze({ provider: applied.provider, modelId: applied.modelId, thinkingLevel: state.thinkingLevel });
 }
 
 /**
@@ -3129,6 +3149,9 @@ async function createFreshChatRuntimeAuthority(
         ...(record.runtime.reloadModelSelection === undefined
           ? {}
           : { reloadModelSelection: record.runtime.reloadModelSelection }),
+        ...(record.runtime.appliedModelConfig === undefined
+          ? {}
+          : { appliedModelConfig: record.runtime.appliedModelConfig }),
         ...(record.runtime.authoredContextCapability === undefined
           ? {}
           : { authoredContextCapability: record.runtime.authoredContextCapability }),

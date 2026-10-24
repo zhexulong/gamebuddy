@@ -23,7 +23,6 @@ export type ChatRuntimeDisposal = Readonly<{
   closeChatThreadStore?: () => void;
 }>;
 
-
 export type MaterializedChatRuntime = Readonly<{
   receipt: ProductionChatRuntimeReceipt;
   /**
@@ -32,13 +31,21 @@ export type MaterializedChatRuntime = Readonly<{
    */
   runtimeSession?: RuntimeSession;
   authoredContextCapability?: TavernAuthoredContextRuntimeCapability;
-  refreshAuthoredContext?: (currentCapability: TavernAuthoredContextRuntimeCapability) => Promise<TavernAuthoredContextRuntimeCapability>;
+  refreshAuthoredContext?: (
+    currentCapability: TavernAuthoredContextRuntimeCapability,
+  ) => Promise<TavernAuthoredContextRuntimeCapability>;
   /**
    * Construction-private: applies the player's current connection selection to
    * this live session in place, resolving it through the same construction
-   * function a mount uses. Never public, never durable.
+   * function a mount uses. Never public, never durable. `null` is the answer
+   * while the player has activated nothing.
    */
-  reloadModelSelection?: () => Promise<CompanionModelConfig>;
+  reloadModelSelection?: () => Promise<CompanionModelConfig | null>;
+  /**
+   * The selection this mount configured Pi with, read on demand; `null` while the player has
+   * activated no connection, which is a state and not a failure.
+   */
+  appliedModelConfig?: () => CompanionModelConfig | null;
   /** Runtime resources only. The later coordinator owns durable terminalization and binding close. */
   close(): Promise<void>;
 }>;
@@ -51,7 +58,9 @@ export type ChatRuntimeMaterialization = ChatRuntimeDisposal &
       currentCapability: TavernAuthoredContextRuntimeCapability,
     ) => Promise<TavernAuthoredContextRuntimeCapability>;
     /** Construction-private model reload for the mounted session; never public. */
-    reloadModelSelection?: () => Promise<CompanionModelConfig>;
+    reloadModelSelection?: () => Promise<CompanionModelConfig | null>;
+    /** The selection this mount configured Pi with; see `MaterializedChatRuntime`. */
+    appliedModelConfig?: () => CompanionModelConfig | null;
   }>;
 export type ChatRuntimeMaterializer = Readonly<{
   /** Construction-zone-only: consumes one callback-admitted Chat binding reservation. */
@@ -115,9 +124,12 @@ function finalizeMaterializedChatRuntime(
   return Object.freeze({
     receipt,
     ...(runtime.runtimeSession === undefined ? {} : { runtimeSession: runtime.runtimeSession }),
-    ...(runtime.authoredContextCapability === undefined ? {} : { authoredContextCapability: runtime.authoredContextCapability }),
+    ...(runtime.authoredContextCapability === undefined
+      ? {}
+      : { authoredContextCapability: runtime.authoredContextCapability }),
     ...(runtime.refreshAuthoredContext === undefined ? {} : { refreshAuthoredContext: runtime.refreshAuthoredContext }),
     ...(runtime.reloadModelSelection === undefined ? {} : { reloadModelSelection: runtime.reloadModelSelection }),
+    ...(runtime.appliedModelConfig === undefined ? {} : { appliedModelConfig: runtime.appliedModelConfig }),
     close: () => {
       if (closePromise !== undefined) return closePromise;
       let shared!: Promise<void>;
@@ -159,7 +171,9 @@ export async function closeMaterializedChatRuntime(runtime: ChatRuntimeDisposal)
   try {
     if (runtime.clearAuthoredContext !== undefined) await runtime.clearAuthoredContext();
     else await runtime.authoredContextCapability?.clear();
-  } catch (error) { errors.push(error); }
+  } catch (error) {
+    errors.push(error);
+  }
   try {
     runtime.clearTavernNarrativeGateMarker?.();
   } catch (error) {

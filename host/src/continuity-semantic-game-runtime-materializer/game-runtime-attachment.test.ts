@@ -141,7 +141,11 @@ async function chatModelConfig(
           prepareExactChatRuntimeConstruction(execution, permit(execution)),
         ),
       );
-      return prepared.modelConfig;
+      const modelConfig = prepared.modelConfig;
+      // This helper's contract is "the model the player activated", so a root without one is a
+      // fixture error rather than a value the parity assertions below should try to compare.
+      assert.ok(modelConfig !== null, "the fixture activated a connection, so a model must resolve");
+      return modelConfig;
     } finally {
       prepared?.closeChatThreadStore?.();
     }

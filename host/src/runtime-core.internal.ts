@@ -570,6 +570,16 @@ export type GameHostBindingFactory = (
 /** Construction-owned attachment for a bounded Game runtime surface. */
 export type ChatRuntimeConstructionProduct = Readonly<{
   runtime: RuntimeSession;
+  /**
+   * The selection this mount configured Pi with, or `null` when the player has activated no
+   * connection. It is the one fact the mounted lease cannot read back off the session itself: Pi
+   * answers a model-less session with its own `unknown` placeholder, and reporting that as the
+   * player's model would be the same lie in the opposite direction.
+   *
+   * It is read once per answer rather than captured, because activating a connection replaces it
+   * on this same mount.
+   */
+  appliedModelConfig: () => CompanionModelConfig | null;
   authoredContextCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability;
   refreshAuthoredContext: (
     currentCapability: import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability,
@@ -580,9 +590,10 @@ export type ChatRuntimeConstructionProduct = Readonly<{
    * Applies the player's current connection selection to this live session in
    * place, resolved through the same construction function a mount uses. It
    * leaves the conversation untouched: only the provider/model the next prompt
-   * runs with changes.
+   * runs with changes. `null` means the player has no selection yet, so there is
+   * nothing to apply; the session keeps whatever it mounted with.
    */
-  reloadModelSelection: () => Promise<CompanionModelConfig>;
+  reloadModelSelection: () => Promise<CompanionModelConfig | null>;
   clearTavernNarrativeGateMarker?: () => void;
 }>;
 
@@ -593,11 +604,15 @@ export async function createChatRuntimeConstructionInternal(
   options: Readonly<{ tavernNarrativeGateNonceSha256?: string }> = {},
 ): Promise<ChatRuntimeConstructionProduct> {
   const construction = await prepareExactChatRuntimeConstruction(execution, permit, options);
+  // A Chat with no activated connection mounts with no model configured in Pi: passing nothing skips
+  // the provider entry and the model selection instead of asking the runtime to build one for a model
+  // that does not exist. The Pi session itself is still constructed, which is what keeps acquiring a
+  // model later a reload of this mount rather than a remount of it.
   const runtime = await createCompanionRuntime(
     construction.identity,
     construction.runtimeRoot,
     undefined,
-    construction.modelConfig,
+    construction.modelConfig ?? undefined,
     undefined,
     construction.presentation,
     false,
@@ -614,10 +629,16 @@ export async function createChatRuntimeConstructionInternal(
    * now, not the one the mount froze, and applies it to the live session; a
    * selection identical to the applied one is left alone so an idle Chat reads
    * two small files per turn instead of rewriting Pi's provider entry.
+   *
+   * A mount that opened with no model reaches this with a selection for the first
+   * time when the player activates a connection, and it takes the same path a
+   * changed selection always took: the same live Pi session adopts the new
+   * provider/model, so the conversation the player is reading is the one that
+   * starts answering.
    */
-  const reloadModelSelection = async (): Promise<CompanionModelConfig> => {
+  const reloadModelSelection = async (): Promise<CompanionModelConfig | null> => {
     const { modelConfig } = await construction.resolveModelSelection();
-    if (sameModelConfig(appliedModelConfig, modelConfig)) return modelConfig;
+    if (modelConfig === null || sameModelConfig(appliedModelConfig, modelConfig)) return modelConfig;
     await applyCompanionModelSelection(runtime.session, construction, modelConfig);
     appliedModelConfig = modelConfig;
     return modelConfig;
@@ -663,6 +684,7 @@ export async function createChatRuntimeConstructionInternal(
     }
     return Object.freeze({
       runtime,
+      appliedModelConfig: () => appliedModelConfig,
       authoredContextCapability,
       refreshAuthoredContext,
       closeChatThreadStore: construction.closeChatThreadStore,
@@ -1652,7 +1674,10 @@ async function createCompanionModelRuntime(
   });
 }
 
-function sameModelConfig(left: CompanionModelConfig, right: CompanionModelConfig): boolean {
+function sameModelConfig(left: CompanionModelConfig | null, right: CompanionModelConfig | null): boolean {
+  // A mount that opened with no model has nothing in common with any selection, so acquiring one is
+  // always a change to apply rather than a no-op that leaves the session on Pi's placeholder model.
+  if (left === null || right === null) return false;
   return (
     left.provider === right.provider && left.modelId === right.modelId && left.thinkingLevel === right.thinkingLevel
   );

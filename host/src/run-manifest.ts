@@ -48,7 +48,13 @@ export async function writeOrVerifyRunManifest(paths: RuntimePaths, manifest: Co
     const serialized = JSON.stringify(manifest, null, 2);
     try {
       const previous = parseManifest(await readStrictJsonFile(path));
-      if (fingerprint(previous) !== fingerprint(manifest)) throw new Error("run_manifest_mismatch");
+      if (immutableFingerprint(previous) !== immutableFingerprint(manifest)) throw new Error("run_manifest_mismatch");
+      // The model is the one field a player changes after the fact: it names their activated
+      // connection, and a root that had none when it first opened gains one later. So it is
+      // refreshed rather than verified - verifying it would refuse to reopen exactly the fresh
+      // install that just followed the product's own guidance, and ignoring it would leave this
+      // record naming a model the run no longer uses.
+      if (JSON.stringify(previous) !== serialized) await atomicWriteFile(path, serialized);
     } catch (error) {
       if (isNodeError(error) && error.code === "ENOENT") {
         await atomicWriteFile(path, serialized);
@@ -65,8 +71,20 @@ export function actionRegistryRevision(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-function fingerprint(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+/**
+ * The immutable half of a manifest, which is what `run_manifest_mismatch` compares.
+ *
+ * It excludes exactly the fields the player owns at runtime. Today that is `model` alone: the
+ * selected provider/model is the player's activated connection, so a root that gained one between
+ * two mounts must still open, while every genuinely fixed fact - identity, tool set, adapter
+ * policy, knowledge bundle, presentation - stays verified.
+ */
+function immutableFingerprint(value: unknown): string {
+  const immutable =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== "model"))
+      : value;
+  return createHash("sha256").update(JSON.stringify(immutable)).digest("hex");
 }
 
 function parseManifest(value: unknown): unknown {

@@ -222,12 +222,12 @@ async function releaseConstructionAndFixture(
   value.threads.close?.();
   await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
-test("a root whose player has activated no connection has no Chat model, and the refusal names it", async () => {
+test("a root whose player has activated no connection constructs with no Chat model instead of refusing", async () => {
   // The premise this states, and the one `fixture()` above deliberately satisfies: this product
-  // ships no model endpoint, so the model a Chat runs with is what the player activated. With
-  // nothing configured, construction refuses by name rather than falling back to a gateway that
-  // exists on exactly one machine. (Making that mount succeed with no model is the separate change
-  // that lets the surface SAY so instead of failing to open; until it lands, this is the answer.)
+  // ships no model endpoint, so the model a Chat runs with is what the player activated. A root
+  // with nothing configured therefore has no model - and it still constructs. A product with no
+  // model must open: the player reads the conversation while Settings is where a model is brought,
+  // and the surface (not this construction) says the model is missing.
   const root = await canonicalTestRoot("chat-runtime-construction-no-model-");
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
@@ -244,6 +244,7 @@ test("a root whose player has activated no connection has no Chat model, and the
   });
   const threads = createChatThreadStore(runtimeRoot, identityKey(principal));
   const profilePaths = resolveRuntimePaths(principal, runtimeRoot, "chat_session_01");
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
   try {
     await mkdir(dirname(profilePaths.identityProfilePath), { recursive: true });
     const profile = Object.freeze({
@@ -263,17 +264,26 @@ test("a root whose player has activated no connection has no Chat model, and the
       continuityId: principal.continuityId,
       opening: "blank",
     });
-    await assert.rejects(
-      () =>
-        binding.executeWithBinding((token) =>
-          withConsumedChatRuntimeBinding(token, (execution) =>
-            prepareExactChatRuntimeConstruction(execution, permit(execution)),
-          ),
-        ),
-      /chat_runtime_model_configuration_unavailable/,
+    prepared = await binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
     );
+    // `null` is the positive answer: the read happened and found no selection, which is not the same
+    // fact as a read that failed. The profile revision is still read, because the thinking level lives
+    // there and a player may set it before owning a connection.
+    assert.equal(prepared.modelConfig, null);
+    assert.equal(prepared.modelProfileRevision, 0);
+    // And the same root still selects a model the moment one exists, through the SAME function a
+    // mount uses - which is what makes acquiring one a reload rather than a remount.
+    assert.equal((await prepared.resolveModelSelection()).modelConfig, null);
+    await activateConnection(resolveRuntimePaths(principal, runtimeRoot).agentDir);
+    const acquired = await prepared.resolveModelSelection();
+    assert.equal(acquired.modelConfig?.provider, "deepseek");
+    assert.equal(acquired.modelConfig?.modelId, "deepseek-v4-pro");
   } finally {
     await binding.close();
+    prepared?.closeChatThreadStore?.();
     threads.close?.();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
@@ -340,9 +350,9 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.equal(prepared.surfaceSessionId, "chat_session_01");
     // The provider and the model are the connection the player activated, read through the same
     // identity-scoped directory the runtime resolves its provider entry from.
-    assert.equal(prepared.modelConfig.provider, "deepseek");
-    assert.equal(prepared.modelConfig.modelId, "deepseek-v4-pro");
-    assert.equal(prepared.modelConfig.thinkingLevel, "high");
+    assert.equal(prepared.modelConfig?.provider, "deepseek");
+    assert.equal(prepared.modelConfig?.modelId, "deepseek-v4-pro");
+    assert.equal(prepared.modelConfig?.thinkingLevel, "high");
     assert.equal(prepared.modelProfileRevision, 0);
     // Chat mounts no speaking pseudo-tool or presentation callback. Native
     // assistant content is observed privately by the bound provider invocation.
