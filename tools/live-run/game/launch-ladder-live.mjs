@@ -166,6 +166,28 @@ function currentOwnerId() {
 }
 
 await waitForFreeFixture();
+
+// A previous run that died before restoring leaves its working save behind, and prepare then refuses
+// with `native_local_fixture_working_save_exists`. That refusal is right, but it makes one failed run
+// block every later one until someone deletes a directory by hand. Finish the leftover transaction
+// first; the restore has its own ownership check and refuses harmlessly when the leftover is not ours.
+try {
+  run([
+    "tools/restore-stardew-native-local-player-fixture.mjs",
+    "--root",
+    fixtureRoot,
+    "--mods-path",
+    modsPath,
+    "--release-dir",
+    releaseDir,
+    "--backup-name",
+    backupName,
+  ]);
+  console.log("[recover] leftover fixture transaction restored before preparing");
+} catch (error) {
+  // No leftover, or one this lane does not own: preparing will refuse with its own named reason.
+  console.log("[recover] no leftover transaction to restore:", String(error?.message ?? error).slice(0, 120));
+}
 const orphan = path.join(fixtureRoot, backupName);
 if (fs.existsSync(orphan)) {
   const aside = `${orphan}.orphaned-${Date.now()}`;
@@ -275,7 +297,13 @@ const takeoverWatch = setInterval(() => {
 await new Promise((resolve) => {
   const child = spawn(node, ["tools/_ladder-live-orchestrator.mjs"], {
     cwd: repo,
-    stdio: ["ignore", "pipe", "pipe"],
+    // The orchestrator's only job is to launch SMAPI, and SMAPI's entry point needs an
+    // inherited console (`Console.Title` throws without one). Giving the orchestrator
+    // new pipes would hand SMAPI a pipe where it expects a console, so stdout and
+    // stderr are inherited too and the orchestrator's own diagnostics go to the
+    // terminal. That is deliberate: this is an interactive launcher, and its
+    // recoverable detail is also written to the runner log file.
+    stdio: ["ignore", "inherit", "inherit"],
     env: {
       ...process.env,
       GAMEBUDDY_STARDEW_GAME_DIR: gameDir,
@@ -296,13 +324,11 @@ await new Promise((resolve) => {
       GAMEBUDDY_WINDOW_MODE: windowMode,
     },
   });
-  let stdout = "";
-  child.stdout.on("data", (chunk) => {
-    stdout += chunk;
-  });
-  child.stderr.on("data", (chunk) => {
-    process.stderr.write(chunk);
-  });
+  // stdio is inherited now (the orchestrator and SMAPI need a real console), so there
+  // are no pipes to collect. The orchestrator writes its own diagnostics to the
+  // terminal and to its runner log; nothing here fabricates a stdout artefact from a
+  // stream it does not own.
+  const stdout = "";
   child.on("close", (code) => {
     exitCode = code;
     clearInterval(takeoverWatch);

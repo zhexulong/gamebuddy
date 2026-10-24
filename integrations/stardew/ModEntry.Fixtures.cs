@@ -4079,7 +4079,10 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                     && StardewBodyController.IsWalkableTile(farm, Game1.player, standing)
                     && IsReachableFromStart(farm, start, standing))
                 .ToArray();
-            if (validStanding.Length == 1)
+            // Any one usable neighbour will do. Requiring EXACTLY one refused every tile of an open
+            // field (measured: 1881 free tiles, 1881 refused), because a cleared field almost never has a
+            // single approach. The first entry wins so the choice stays deterministic across runs.
+            if (validStanding.Length > 0)
                 return (target, validStanding[0]);
         }
         return null;
