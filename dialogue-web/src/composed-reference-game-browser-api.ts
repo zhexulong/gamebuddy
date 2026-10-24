@@ -102,6 +102,7 @@ export const GAME_PROBLEM_CODES = [
   "not_found",
   "state_unavailable",
   "game_endgame_settlement_unavailable",
+  "stardew_settings_revision_conflict",
 ] as const;
 export type GameProblemCode = (typeof GAME_PROBLEM_CODES)[number];
 
@@ -215,6 +216,37 @@ export type StardewCabinChoiceV1 = Readonly<{
   availability: "available";
   choiceHandle: string;
   expiresAtMs: number;
+}>;
+
+/**
+ * One action family the player may withhold, and whether they have. Checked means
+ * the companion may use it; the surface unticks to withhold.
+ */
+export type StardewActionFamilyV1 = Readonly<{ familyId: string; denied: boolean }>;
+
+/** The player's own Stardew settings: one revision, one family list, one night floor. */
+export type StardewPlayerSettingsV1 = Readonly<{
+  apiVersion: 1;
+  revision: number;
+  families: readonly StardewActionFamilyV1[];
+  advanceDayMinimumOnlineFarmers: number;
+  /**
+   * Where each answer really takes effect. It is on the wire rather than in the
+   * component so the sentence the player reads cannot drift from the Mod's own
+   * behaviour: the action policy is re-read on a 120-tick throttle, the night floor
+   * only when a world loads.
+   */
+  appliesToRunningGame: Readonly<{
+    actionPolicy: "within_seconds";
+    advanceDayMinimumOnlineFarmers: "next_world_load";
+  }>;
+}>;
+
+export type StardewPlayerSettingsRequestV1 = Readonly<{
+  apiVersion: 1;
+  expectedRevision: number;
+  deniedActionFamilies: readonly string[];
+  advanceDayMinimumOnlineFarmers: number;
 }>;
 
 export type StardewInstallationCandidateV1 = Readonly<{
@@ -349,6 +381,9 @@ export type ComposedReferenceGameBrowserApi = Readonly<{
   cancelResume(request: GameResumeCancelRequestV1): Promise<GameResumeCancelResultV1>;
   endgameGame(request: GameEndgameRequestV1): Promise<GameEndgameResultV1>;
   readStardewCabins(): Promise<StardewCabinChoicesV1>;
+  /** The player's own Stardew settings: the one settings route group the Game surface owns. */
+  readStardewPlayerSettings(): Promise<StardewPlayerSettingsV1>;
+  saveStardewPlayerSettings(request: StardewPlayerSettingsRequestV1): Promise<StardewPlayerSettingsV1>;
   readStardewInstallationDiscovery(): Promise<StardewInstallationDiscoveryV1>;
   confirmStardewInstallation(candidateId: string): Promise<StardewInstallationMutationV1>;
   retryStardewInstallationDiscovery(): Promise<StardewInstallationDiscoveryV1>;
@@ -451,6 +486,65 @@ function validateStardewCabinChoices(value: unknown): StardewCabinChoicesV1 {
     );
   }
   return Object.freeze({ apiVersion: 1, choices: Object.freeze(choices) });
+}
+
+const SETTINGS_KEYS = [
+  "apiVersion",
+  "revision",
+  "families",
+  "advanceDayMinimumOnlineFarmers",
+  "appliesToRunningGame",
+] as const;
+const SETTINGS_FAMILY_KEYS = ["familyId", "denied"] as const;
+const SETTINGS_APPLIES_KEYS = ["actionPolicy", "advanceDayMinimumOnlineFarmers"] as const;
+const SETTINGS_MAX_FAMILIES = 64;
+const SETTINGS_SAVE_KEYS = [
+  "apiVersion",
+  "expectedRevision",
+  "deniedActionFamilies",
+  "advanceDayMinimumOnlineFarmers",
+] as const;
+
+function validateStardewPlayerSettings(value: unknown): StardewPlayerSettingsV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, SETTINGS_KEYS) ||
+    value.apiVersion !== 1 ||
+    !isSafeInteger(value.revision, 0) ||
+    !Array.isArray(value.families) ||
+    value.families.length > SETTINGS_MAX_FAMILIES ||
+    !isSafeInteger(value.advanceDayMinimumOnlineFarmers, 1) ||
+    value.advanceDayMinimumOnlineFarmers > 4 ||
+    !isRecord(value.appliesToRunningGame) ||
+    !hasExactKeys(value.appliesToRunningGame, SETTINGS_APPLIES_KEYS) ||
+    value.appliesToRunningGame.actionPolicy !== "within_seconds" ||
+    value.appliesToRunningGame.advanceDayMinimumOnlineFarmers !== "next_world_load"
+  )
+    throw new ComposedReferenceGameProtocolError("invalid_stardew_player_settings");
+  const families: StardewActionFamilyV1[] = [];
+  const seen = new Set<string>();
+  for (const family of value.families) {
+    if (
+      !isRecord(family) ||
+      !hasExactKeys(family, SETTINGS_FAMILY_KEYS) ||
+      !isSafeId(family.familyId) ||
+      seen.has(family.familyId) ||
+      typeof family.denied !== "boolean"
+    )
+      throw new ComposedReferenceGameProtocolError("invalid_stardew_player_settings_family");
+    seen.add(family.familyId);
+    families.push(Object.freeze({ familyId: family.familyId, denied: family.denied }));
+  }
+  return Object.freeze({
+    apiVersion: 1,
+    revision: value.revision,
+    families: Object.freeze(families),
+    advanceDayMinimumOnlineFarmers: value.advanceDayMinimumOnlineFarmers,
+    appliesToRunningGame: Object.freeze({
+      actionPolicy: "within_seconds" as const,
+      advanceDayMinimumOnlineFarmers: "next_world_load" as const,
+    }),
+  });
 }
 
 function validateStardewInstallationDiscovery(value: unknown): StardewInstallationDiscoveryV1 {
@@ -1019,6 +1113,37 @@ export function createComposedReferenceGameBrowserApi(
           body: JSON.stringify(request),
         },
         validateGameEndgameResult,
+      );
+    },
+    async readStardewPlayerSettings(): Promise<StardewPlayerSettingsV1> {
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/stardew/settings",
+        { method: "GET" },
+        validateStardewPlayerSettings,
+      );
+    },
+    async saveStardewPlayerSettings(request: StardewPlayerSettingsRequestV1): Promise<StardewPlayerSettingsV1> {
+      if (
+        request.apiVersion !== 1 ||
+        !isSafeInteger(request.expectedRevision, 0) ||
+        !Array.isArray(request.deniedActionFamilies) ||
+        !request.deniedActionFamilies.every((familyId) => isSafeId(familyId)) ||
+        !isSafeInteger(request.advanceDayMinimumOnlineFarmers, 1) ||
+        request.advanceDayMinimumOnlineFarmers > 4 ||
+        !hasExactKeys(request as Record<string, unknown>, SETTINGS_SAVE_KEYS)
+      )
+        throw new ComposedReferenceGameProtocolError("invalid_stardew_player_settings_request");
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/stardew/settings",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify(request),
+        },
+        validateStardewPlayerSettings,
       );
     },
     async readStardewCabins(): Promise<StardewCabinChoicesV1> {

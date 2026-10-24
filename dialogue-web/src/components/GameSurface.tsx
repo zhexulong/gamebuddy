@@ -14,6 +14,7 @@ import {
 import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-controls";
 import { gameOperationFailure, type GameOperationFailure } from "../composed-problem-view";
 import { GameDiagnosticsDisclosure } from "./GameDiagnosticsDisclosure";
+import { GamePlayerSettings } from "./GamePlayerSettings";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
 import { StardewInstallationDiscovery } from "./StardewInstallationDiscovery";
 import { SurfaceModelSettings } from "./SurfaceModelSettings";
@@ -1104,6 +1105,11 @@ export function GameSurface({
           architecture/product-surfaces.md); the Host stores this half of
           settings/profiles separately from Chat's. */}
       <SurfaceModelSettings surface="game" api={managementApi} csrfToken={csrfToken} labels={labels} />
+      {/* The player's own mod settings: what the companion may do, and the co-op
+          night floor. This is the only place a player learns these exist, so it is a
+          section of the Game surface itself rather than something behind a
+          disclosure. */}
+      <GamePlayerSettings api={composedApi} labels={labels} />
       {/* Read-only Host data at the bottom of the Game surface: the
           instance and session projection the composed state route
           publishes, and the honest fact that this Host mounts no

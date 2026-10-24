@@ -440,6 +440,11 @@ const GAME_PROBLEM_VIEWS: Readonly<Record<GameProblemCode, GameProblemView>> = {
   not_found: refused(gameRouteUnavailable),
   state_unavailable: unsettled(gameStateUnavailable),
   game_endgame_settlement_unavailable: unsettled(gameEndgameSettlement),
+  // A settings save that lost the race on the record's revision. The Host states it
+  // wrote nothing, so the player's next step is the ordinary stale-edit one: look at
+  // what it says now and save again. Same fact and same step as every other settings
+  // CAS in the product, which is why it reads the shared sentence.
+  stardew_settings_revision_conflict: refused(revisionConflict),
 };
 
 /** The codes the game contract declares, for the untyped boundary below the map. */

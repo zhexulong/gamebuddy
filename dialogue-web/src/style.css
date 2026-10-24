@@ -3327,6 +3327,41 @@
     clip-path: inset(50%);
   }
 
+  /* The player's own mod settings, on the Game surface. The family rows are the
+     label-is-the-control recipe the delivery-pacing row uses: the row is the whole
+     tap target (44 px, the product's own minimum), and the real checkbox stays in
+     the a11y tree so a screen reader and a keyboard both reach it. */
+  .game-player-settings-group {
+    margin: var(--space-3) 0 var(--space-1);
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .game-player-settings-families {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2px;
+    margin: var(--space-1) 0 var(--space-3);
+    padding: 0;
+    list-style: none;
+  }
+
+  .game-player-settings-family {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-height: var(--touch-target-min);
+    padding: 0 4px;
+    cursor: pointer;
+  }
+
+  /* The withheld state reads as withheld without relying on colour alone: the row
+     dims and its text becomes secondary. */
+  .game-player-settings-family:has(> .surface-delivery-pacing-input:not(:checked)) > span {
+    color: var(--text-secondary);
+  }
+
   .surface-model-field {
     display: grid;
     grid-template-columns: 110px 1fr;

@@ -917,6 +917,50 @@ const en = {
   // The same negative as every other destructive pair in the product: `取消`. The verbs above
   // stay specific to what each press does; the way out is one word.
   chatRetentionConfirmNo: "Cancel",
+
+  // --- The player's own Stardew settings ---------------------------------------
+  // Each field carries one sentence saying what it changes and when it takes effect.
+  // The two "when" facts are different and the sentences say so rather than rounding
+  // them into one promise: the action policy is re-read from config.json on a
+  // 120-tick throttle (about two seconds at 60 Hz), so it reaches a RUNNING game; the
+  // co-op night floor is read once, at embodiment initialisation, so it waits for the
+  // next world load. A field that cannot be changed at all is not offered.
+  gameSettingsTitle: "Companion settings",
+  gameSettingsIntro:
+    "What the companion may do on your farm. These are your own settings; they are kept outside the mod's config file.",
+  gameSettingsActionPolicyTitle: "What the companion may do",
+  gameSettingsActionPolicyHint:
+    "Switch off anything you would rather it never touched. A change takes effect within a few seconds while the game is running.",
+  gameSettingsCoopTitle: "Farmers needed before night falls",
+  gameSettingsCoopHint:
+    "How many players must be online before the companion may end the day. A change takes effect the next time the world loads.",
+  gameSettingsSave: "Save settings",
+  gameSettingsSaved: "Saved.",
+  gameSettingsConflict:
+    "Someone else changed these settings first, so yours were not saved. The list below has been refreshed - check it and try again.",
+  gameSettingsUnavailable: "These settings could not be read right now.",
+  gameSettingsSaveFailed: "These settings could not be saved.",
+  gameFamilyFarmingCrops: "Farming: tilling, watering, planting, harvest",
+  gameFamilyResourceGathering: "Gathering: forage, wood, stone, artifacts",
+  gameFamilyAnimalsPets: "Animals and pets",
+  gameFamilyMachinesProcessing: "Machines and processing",
+  gameFamilyCraftingCooking: "Crafting and cooking",
+  gameFamilyBuildingsFarmManagement: "Buildings and farm layout",
+  gameFamilyInventoryItems: "Backpack and items",
+  gameFamilyBodyTools: "Tools",
+  gameFamilyMovementNavigation: "Walking on this farm",
+  gameFamilyWorldNavigation: "Travel between areas",
+  gameFamilyWorldPerception: "Looking around and reading the world map",
+  gameFamilyTransportWarps: "Minecarts, buses and warp travel",
+  gameFamilyWaterTravel: "Rafts and water travel",
+  gameFamilyAnimalTransport: "Riding your horse",
+  gameFamilyNpcSocial: "Talking to villagers and giving gifts",
+  gameFamilyShopsEconomy: "Shops, buying and selling",
+  gameFamilyQuestsJournal: "Quests and the journal",
+  gameFamilyWorldLifecycle: "Ending the day and starting the next one",
+  gameFamilyFacilityStorageLighting: "Chests, storage and lights",
+  gameFamilyModalHandling: "Answering in-game questions and menus",
+  gameFamilyExpression: "Emotes and expressions",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -1637,6 +1681,44 @@ const zh: Messages = {
   chatRetentionTrashConfirm: "将此会话移入回收站？它将离开活动列表，此操作不可撤销。",
   chatRetentionTrashConfirmYes: "移入回收站",
   chatRetentionConfirmNo: "取消",
+
+  // --- 玩家自己的星露谷设置 -----------------------------------------------
+  // 每个字段配一句说明，讲清它改变什么、什么时候生效。两个"什么时候"不同，句子照实
+  // 写明，而不是合并成一句承诺：动作权限每 120 tick（60Hz 下约两秒）从 config.json
+  // 重新读取，所以对运行中的游戏生效；联机夜晚人数只在角色初始化时读取一次，因此要等下
+  // 一次世界载入。根本改不了的字段不提供。
+  gameSettingsTitle: "伙伴设置",
+  gameSettingsIntro: "伙伴在你的农场上能做什么。这些是你自己的设置，保存在模组配置文件之外。",
+  gameSettingsActionPolicyTitle: "伙伴可以做什么",
+  gameSettingsActionPolicyHint: "关掉你不希望它碰的任何事项。游戏运行中保存后几秒内生效。",
+  gameSettingsCoopTitle: "入夜前需要到场的玩家人数",
+  gameSettingsCoopHint: "伙伴结束一天之前，需要有几位玩家在线。更改在下次载入世界时生效。",
+  gameSettingsSave: "保存设置",
+  gameSettingsSaved: "已保存。",
+  gameSettingsConflict: "这些设置已被别人先行修改，你的更改没有保存。下方列表已刷新，请确认后重试。",
+  gameSettingsUnavailable: "暂时无法读取这些设置。",
+  gameSettingsSaveFailed: "无法保存这些设置。",
+  gameFamilyFarmingCrops: "耕作：翻土、浇水、播种、收获",
+  gameFamilyResourceGathering: "采集：觅食、木材、石头、文物",
+  gameFamilyAnimalsPets: "动物与宠物",
+  gameFamilyMachinesProcessing: "机器与加工",
+  gameFamilyCraftingCooking: "制作与烹饪",
+  gameFamilyBuildingsFarmManagement: "建筑与农场布局",
+  gameFamilyInventoryItems: "背包与物品",
+  gameFamilyBodyTools: "工具",
+  gameFamilyMovementNavigation: "在农场上走动",
+  gameFamilyWorldNavigation: "在区域之间移动",
+  gameFamilyWorldPerception: "观察周围与读取世界地图",
+  gameFamilyTransportWarps: "矿车、巴士与传送",
+  gameFamilyWaterTravel: "木筏与水上通行",
+  gameFamilyAnimalTransport: "骑马",
+  gameFamilyNpcSocial: "与村民交谈、赠送礼物",
+  gameFamilyShopsEconomy: "商店、买卖",
+  gameFamilyQuestsJournal: "任务与日志",
+  gameFamilyWorldLifecycle: "结束当天并进入下一天",
+  gameFamilyFacilityStorageLighting: "箱子、储物与照明",
+  gameFamilyModalHandling: "回应游戏内提问与菜单",
+  gameFamilyExpression: "表情与动作",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {
