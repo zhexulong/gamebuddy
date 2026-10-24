@@ -1215,6 +1215,137 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
   expect(wide.strip.width, "and the strip keeps the width its contents give it").toBe(479);
 });
 
+// --- the strip's narrow form is keyed on its own column, not on the window (defect 7) ---
+
+/**
+ * The strip's lines, as lines of named controls. `orphan` is the defect: a last line holding exactly
+ * one control that is NOT the pager - the pager alone on its own line is the ruled two-row shape.
+ */
+async function readStripLines(page: Page) {
+  return await page.evaluate(() => {
+    const round = (value: number) => Math.round(value);
+    const list = document.querySelector<HTMLElement>("ol.message-list")!;
+    return {
+      listWidth: round(list.getBoundingClientRect().width),
+      rows: [...list.querySelectorAll<HTMLElement>(":scope > li")].map((row) => {
+        const strip = row.querySelector<HTMLElement>(".message-actions");
+        if (strip === null) return null;
+        const items = [...strip.children].filter((child) => child.getBoundingClientRect().width > 0);
+        const grouped: { names: string[]; top: number }[] = [];
+        for (const item of items) {
+          const top = round(item.getBoundingClientRect().top);
+          const name = (item.getAttribute("class") ?? "").split(" ")[0]!.replace("-btn", "");
+          const line = grouped.find((candidate) => Math.abs(candidate.top - top) <= 2);
+          if (line === undefined) grouped.push({ names: [name], top });
+          else line.names.push(name);
+        }
+        const last = grouped[grouped.length - 1]!;
+        return {
+          lines: grouped.map((line) => line.names.join("+")),
+          height: round(strip.getBoundingClientRect().height),
+          words: items.some((child) => {
+            const word = child.querySelector(".action-word");
+            return word !== null && getComputedStyle(word).display !== "none";
+          }),
+          orphan: grouped.length > 1 && last.names.length === 1 && last.names[0] !== "swipe-controls",
+        };
+      }),
+    };
+  });
+}
+
+const STRIP_FIXTURE = {
+  transcript: [
+    { role: "companion" as const, text: "门廊上的那盏灯还亮着。", opening: true },
+    { role: "player" as const, text: "我们到哪儿了？" },
+    { role: "companion" as const, text: "在码头上。*她靠在栏杆上。*", swipes: { index: 1, total: 3 } },
+    { role: "player" as const, text: "现在呢？" },
+    { role: "companion" as const, text: "还在码头上。" },
+  ],
+};
+
+/**
+ * Defect 7: between the narrow rule and the natural flow, the strip left one control alone.
+ *
+ * The narrow block was a `@media (max-width: 480px)` hard stop. Between about 481 and 560 px a
+ * paged reply therefore wrapped naturally - four controls did not fit the column, so the LAST one
+ * dropped to its own line - and the result was neither the narrow rule's two rows (four actions,
+ * then the pager beneath them) nor one row: it was three lines with a single worded control
+ * orphaned on the bottom one. Measured against the shipped sheet, sweeping every width from 340 to
+ * 820 in both catalogues: 168 readings of `orphan: true`, the first at 481x900 on the player's own
+ * row (`action+action+action|action`, 94 px tall).
+ *
+ * The fix is in the owning layer: the rule keys on the strip's own column (a container query on
+ * `ol.message-list`, the box the strip's width is derived from) instead of on the window, so the
+ * break is where the strip stops fitting rather than where the viewport crosses a round number. The
+ * four named widths below are the task's, and the sweep is the assertion that keeps meaning after
+ * today's numbers: a threshold that leaves any window between 340 and 820 with an orphaned control
+ * fails it.
+ */
+test("defect 7: no width between 340 and 820 leaves a single control stranded on its own line", async ({ page }) => {
+  await mountShell(page, { root: composedRoot(STRIP_FIXTURE) });
+
+  const named: Record<string, Awaited<ReturnType<typeof readStripLines>>["rows"]> = {};
+  for (const width of [400, 481, 520, 560]) {
+    await page.setViewportSize({ width, height: 900 });
+    const reading = await readStripLines(page);
+    console.log(`[defect-7 @${width}] list ${reading.listWidth}: ${JSON.stringify(reading.rows)}`);
+    named[String(width)] = reading.rows;
+
+    const orphans = reading.rows.filter((row) => row !== null && row.orphan);
+    expect(
+      orphans.map((row) => row!.lines.join(" | ")),
+      `at ${width}x900 the strip leaves one control alone on its last line`,
+    ).toEqual([]);
+    // The ruled shape, restated: the pager is its own line beneath the actions, or the whole strip
+    // is one line. Either way no line holds a lone action.
+    for (const row of reading.rows) {
+      if (row === null) continue;
+      for (const line of row.lines.slice(0, -1)) {
+        expect(line.split("+").length, `at ${width}x900 an interior line holds one control (${line})`).toBeGreaterThan(1);
+      }
+    }
+  }
+
+  // The two rows that carry a pager in this fixture: her opening (copy, pager, edit) and her paged
+  // reply (copy, pager, rewind, edit, delete). At the narrow widths the pager is beneath the
+  // actions on BOTH, which is the rule and not a per-row accident.
+  for (const width of [400, 481, 520, 560]) {
+    for (const index of [0, 2]) {
+      const row = named[String(width)]![index]!;
+      const last = row.lines[row.lines.length - 1]!;
+      expect(row.lines.length, `${width}x900 row ${index} is the ruled two-row strip`).toBe(2);
+      expect(last, `${width}x900 row ${index} puts the pager on its own line`).toBe("swipe-controls");
+    }
+  }
+
+  // And the wide window is untouched: one row, every control wearing its word.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const wide = await readStripLines(page);
+  console.log(`[defect-7 wide] list ${wide.listWidth}: ${JSON.stringify(wide.rows)}`);
+  for (const [index, row] of wide.rows.entries()) {
+    if (row === null) continue;
+    expect(row.lines.length, `1440x900 row ${index} is one line`).toBe(1);
+    expect(row.words, `1440x900 row ${index} still wears its words`).toBe(true);
+  }
+
+  // The sweep, at every integer width: this is the assertion that survives today's thresholds.
+  const offenders: string[] = [];
+  for (let width = 340; width <= 820; width += 1) {
+    await page.setViewportSize({ width, height: 900 });
+    const reading = await readStripLines(page);
+    for (const [index, row] of reading.rows.entries()) {
+      if (row !== null && row.orphan) {
+        offenders.push(`vp=${width} list=${reading.listWidth} row=${index} ${row.lines.join(" | ")}`);
+      }
+    }
+  }
+  console.log(`[defect-7 sweep] ${offenders.length} stranded reading(s): ${JSON.stringify(offenders.slice(0, 12))}`);
+  expect(offenders.slice(0, 12), "a strip between 340 and 820 leaves a control alone on its last line").toEqual(
+    [],
+  );
+});
+
 // --- the prosody tag's badge --------------------------------------------------
 
 /**

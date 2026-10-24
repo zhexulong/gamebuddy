@@ -5839,7 +5839,56 @@
     width: fit-content;
   }
 
-  @media (max-width: 480px) {
+  /* ==========================================================================
+   The strip's narrow form keys on the strip's own column, not on the window
+   (defect 7)
+
+   The block below used to be `@media (max-width: 480px)`, so its premises were
+   read off the viewport. A strip's width is not the viewport's: the row is
+   `max-width: 85%`, the reply inside it is shrink-to-fit, and the transcript is
+   capped by `--timeline-reading-measure`. Between about 481 and 663 px the window
+   was past the media query while the strip was still too narrow for its own
+   contents, so the natural wrap did the layout instead: the last action dropped
+   onto a line of its own and the pager stayed above it. Measured against the
+   shipped sheet, sweeping every width from 340 to 820 in both catalogues: 168
+   readings with a stranded control, the first at 481x900 on the player's row
+   (`action+action+action|action`, 94 px tall) and the worst at 520x900 on her
+   paged reply (`action+swipe-controls+action+action | action`, 96 px).
+
+   `ol.message-list` is the container because it is the box the strip's width is
+   derived from - the row is a percentage of it and the strip is its content - so
+   a query on it asks the question the rule actually depends on. `container-type:
+   inline-size` cannot go on `.message-body` or on `.message` itself: containment
+   removes the box from the parent's intrinsic sizing, so the row's shrink-to-fit
+   collapses first (measured: body 0 px, every strip 242 px tall) - the list is the
+   one ancestor whose width comes from the transcript rather than from its
+   contents.
+
+   The two thresholds are the strip's own arithmetic, not round numbers: 464 px is
+   the narrowest column at which a four-action row still fits wearing its words
+   (76 + 138 + 68 + 84 + three 6 px gaps = 384 for the player's row, and the widest
+   row that can overflow is her worded set), and 664 px is where her paged strip's
+   max-content - copy 76 + pager 136 + rewind 138 + edit 68 + delete 84 + four
+   6 px gaps = 526 - plus the 85% row and its avatar actually fits one line. Above
+   them the words come back and the strip is one line; below them the words are
+   retired and the pager takes the line beneath the actions. Both readings are
+   measured, above and below: at 560x900 her paged row is `action+action+
+   action+action | swipe-controls` (102 px), and at 1440x900 every row is one line
+   with its words.
+
+   The rules are IDENTICAL to the ones the media query held - this block changes
+   only what the condition asks - so the 400 px result it was written for is
+   exactly what it was: her paged reply `action+action+action+action |
+   swipe-controls`, 98 px, the pager still 136 px wide, every target 44 px.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+  .message-list {
+    container-type: inline-size;
+  }
+
+  @container (max-width: 463px) {
     .message-actions .action-word {
       display: none;
     }
@@ -5854,22 +5903,13 @@
        edit, delete and copy has 188 px of body: at 6 px its four 44 px targets and three gaps come
        to 194 px and wrap, at 4 px they come to exactly 188 px and sit on one line. The 6 px was
        never what the 2026-10-19 ruling protected - "one row, every target at 44 px, nothing pushed
-       out" was - so this is the cheapest thing to trade for it.
-
-       The stepper then takes its own row, on EVERY row that has one (next rule). That is a rule,
-       not a fallback for the one layout that overflows: her multi-variant reply's body is 301 px,
-       and its pager (136) plus copy, rewind, edit and delete (4 x 44) is 312 px before a single
-       gap, so it cannot fit at any gap value. Letting only that row wrap would make the strip
-       "sometimes one row, sometimes two, depending on how many controls this message happens to
-       offer", which is the accidental geometry the one-row ruling exists to end. Said as a rule it
-       is a layout a player can learn, and it has its own logic: the stepper is NAVIGATION - which
-       of several drafts of this reply you are reading - while the other four are actions on the
-       message in front of you. Navigation gets its own line beneath them, at the narrowest width
-       only; at 1440 the same reply keeps one row of all five controls, measured at 479 px. */
+       out" was - so this is the cheapest thing to trade for it. */
     .message-actions {
       gap: var(--space-1);
     }
+  }
 
+  @container (max-width: 663px) {
     /* A zero-height break, so the stepper starts a new line without being STRETCHED across it:
        `flex-basis: 100%` on the stepper itself also forces the line but sizes its box to the whole
        column (measured 301 px instead of its own 136), and the stepper's box is a number the
