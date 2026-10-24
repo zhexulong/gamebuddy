@@ -422,6 +422,20 @@ const en = {
   // second name for the state the row is already in; the affirmative is the one that says what
   // the press does.
   deleteConfirmNo: "Cancel",
+  // The copy control, on her rows and the player's. It puts the message's OWN words on the clipboard -
+  // the text as it was authored, which is what SillyTavern's `mes` holds and copies: no author prefix,
+  // no timestamp, and the Markdown exactly as written. The name says what the press does to the
+  // conversation: nothing, which is why this is the one control on the strip with no arm and no confirm.
+  copyMessage: "Copy",
+  copyMessageName: "Copy this message: its own words only, without the name or the time",
+  // The confirmation, for the moment after the press. Two words rather than a sentence about success,
+  // because it is read while the player is already looking somewhere else; it is a `role="status"`
+  // line that removes itself, never a state the row settles into.
+  copyNotice: "Copied to clipboard.",
+  // The other outcome, said out loud rather than swallowed: the clipboard API is absent (a page served
+  // over plain http has no `navigator.clipboard`) AND the selection fallback was refused, so the words
+  // are still on screen and the player is told how to take them.
+  copyNoticeFailed: "Could not copy. Select the message text and copy it by hand.",
   // The Host's own name for the greeting variant a new chat opened on: it labels
   // the greeting set's entries `Default` / `Alternate N` (the card's own 1-based
   // order). The catalogue carries that vocabulary so a zh-CN UI never prints the
@@ -1224,6 +1238,17 @@ const zh: Messages = {
   deleteConfirmPrompt: "删除这条消息？此操作无法撤销。",
   deleteConfirmYes: "删除",
   deleteConfirmNo: "取消",
+  // 复制控件：她的行和玩家自己的行都有。它把这条消息**自己的文字**放到剪贴板——与 SillyTavern 复制 `mes`
+  // 一致：不带说话人前缀、不带时间戳，Markdown 照原样复制。名称里说清按下之后对话会发生什么：什么都不变，
+  // 所以它是这一行里唯一不需要先确认、也没有第二次点击的控件。
+  copyMessage: "复制",
+  copyMessageName: "复制这条消息：只有它自己的文字，不带名字也不带时间",
+  // 按下之后的那一下确认。用两个词而不是一句话，因为玩家这时眼睛已经移开了；它是一个会自己消失的
+  // `role="status"` 行，不是这一行停留的状态。
+  copyNotice: "已复制。",
+  // 另一种结果也要说出来：剪贴板 API 不可用（普通 http 打开的页面没有 `navigator.clipboard`），而选区降级
+  // 也被拒绝。文字还在屏幕上，所以告诉玩家怎么自己拿走。
+  copyNoticeFailed: "未能复制。请选中消息文字手动复制。",
   openingVariantDefault: "默认",
   openingVariantAlternate: "备用 {{index}}",
 

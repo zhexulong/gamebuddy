@@ -99,6 +99,14 @@ export function Timeline({
     deleteConfirmPrompt: string;
     deleteConfirmYes: string;
     deleteConfirmNo: string;
+    /**
+     * The copy control and the one line it leaves behind. It mutates nothing, so its name says what it
+     * does rather than what it costs, and its confirmation is the transient receipt.
+     */
+    copyMessage: string;
+    copyMessageName: string;
+    copyNotice: string;
+    copyNoticeFailed: string;
   };
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate?: (messageHandle: string) => void;

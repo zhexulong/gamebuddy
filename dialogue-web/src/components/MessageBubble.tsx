@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, LoaderCircle, Pencil, RefreshCw, Scissors, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, LoaderCircle, Pencil, RefreshCw, Scissors, Trash2 } from "lucide-react";
 import { memo, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
@@ -23,6 +23,54 @@ const CARET_MARKUP = '<span class="message-caret" aria-hidden="true"></span>';
  * scrolls internally rather than pushing the conversation it belongs to off the screen.
  */
 const EDIT_FIELD_MAX_HEIGHT = 300;
+
+/**
+ * How long the copy confirmation stays up, in milliseconds. Long enough to be read after the
+ * player's eye has come back from the click, short enough that it never becomes a state of the
+ * row: every press restarts the window and the line then removes itself.
+ */
+const COPY_NOTICE_MS = 1600;
+
+/**
+ * Puts one message's words on the player's clipboard, and says whether it worked.
+ *
+ * The clipboard API needs a secure context: a browser that served this page over plain http, or one
+ * that withholds the API, has no `navigator.clipboard` at all. A control that then did nothing would
+ * look identical to one that copied, so the fallback is the legacy selection path - a temporary
+ * off-screen field holding the same text, selected and copied through `document.execCommand` - and
+ * only if BOTH fail does the row say so out loud (`labels.copyNoticeFailed`). Silence is never an
+ * outcome here.
+ */
+async function writeToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard !== undefined) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // A refused permission is not a verdict: the selection path below may still work.
+    }
+  }
+  return copyThroughSelection(text);
+}
+
+/** The non-secure-context fallback: the same text, selected in a temporary field and copied. */
+function copyThroughSelection(text: string): boolean {
+  const field = document.createElement("textarea");
+  field.value = text;
+  field.setAttribute("readonly", "");
+  field.style.position = "fixed";
+  field.style.inset = "0 auto auto 0";
+  field.style.opacity = "0";
+  document.body.append(field);
+  field.select();
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    field.remove();
+  }
+}
 
 /*
  * The opening switcher's words are the shared greeting-variant vocabulary
@@ -360,6 +408,15 @@ export const MessageBubble = memo(function MessageBubble({
       deleteConfirmPrompt: string;
       deleteConfirmYes: string;
       deleteConfirmNo: string;
+      /**
+       * The copy control and the one line it leaves behind. It is the only control on the strip that
+       * mutates nothing, so its name states that rather than a consequence, and its confirmation is
+       * two words that remove themselves.
+       */
+      copyMessage: string;
+      copyMessageName: string;
+      copyNotice: string;
+      copyNoticeFailed: string;
     }>;
 }) {
   const isPlayer = message.role === "player";
@@ -467,10 +524,78 @@ export const MessageBubble = memo(function MessageBubble({
    */
   const rewindPair = useArmedConfirmation(rewindArmed, () => onRewindCancel?.());
   const deletePair = useArmedConfirmation(deleteArmed, () => onDeleteCancel?.());
+  /**
+   * The copy confirmation, and the row's only transient state.
+   *
+   * It is deliberately NOT an arm-and-confirm pair. Copying mutates nothing - not the transcript, not
+   * the Host, not the model's next turn - so there is nothing to warn about and nothing to undo; what
+   * the player needs is a receipt, and a receipt that stays is a state the row has to grow out of
+   * again. So it is one short line that removes itself after `COPY_NOTICE_MS`, and a second press
+   * simply restarts the window.
+   */
+  const [copyNotice, setCopyNotice] = useState<"copied" | "failed" | null>(null);
+  useEffect(() => {
+    if (copyNotice === null) return;
+    const timer = setTimeout(() => setCopyNotice(null), COPY_NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [copyNotice]);
+  /**
+   * The press, and the one thing it puts on the clipboard: this message's own text, exactly as it was
+   * authored.
+   *
+   * `message.text` and not the bubble's `textContent`, because the two are different strings and only
+   * one of them is what the message SAYS. The rendered bubble has already been through Markdown - a
+   * `*beat*` is italic, a leading prosody tag is a badge plate, block structure is markup - so its
+   * `textContent` is a flattened reading of the prose, with whitespace no longer where the author put
+   * it. SillyTavern's per-message copy does the same thing this does: it copies the message's own
+   * `mes` field, not the DOM node it happens to be drawn in, and not the author prefix or the
+   * timestamp beside it. A player who pastes her line somewhere gets her line and nothing else.
+   */
+  const copyMessage = (): void => {
+    void writeToClipboard(message.text).then((copied) => setCopyNotice(copied ? "copied" : "failed"));
+  };
+  /**
+   * Which rows offer the copy control: exactly the ones whose words are the transcript's.
+   *
+   * The streaming preview and the optimistic player echo are the two rows whose text is not yet
+   * authoritative - one is a partial answer the Host is still writing, the other is the player's own
+   * line on its way to the Host - so on those two the control would be claiming to hand over words
+   * that are about to change or are not yet durable. Every settled message offers it, on both sides
+   * of the exchange.
+   */
+  const copyPoint = !streaming && waitingNote === null;
+  /**
+   * The copy control, hoisted out of either side's strip so both sides are one presentation.
+   *
+   * It is the first control in the strip on both rows. That is not decoration: it is the only control
+   * here that changes NOTHING - not the transcript, not the Host, not the model's next turn - so the
+   * controls that do change things follow it, and the two destructive ones end the row. It also has to
+   * sit ahead of the pager rather than between the pager and Regenerate, because those two are one
+   * measurement ("regenerate and pick another variant without crossing the bubble",
+   * ui-layout-tail.spec.ts item 5) and a control between them would be that defect again.
+   */
+  const copyControl =
+    copyPoint && !rewindArmed ? (
+      <button
+        type="button"
+        className="action-btn copy-btn"
+        data-testid="message-copy"
+        onClick={copyMessage}
+        title={labels.copyMessageName}
+        aria-label={labels.copyMessageName}
+      >
+        <Copy size={14} aria-hidden="true" />
+        <span className="action-word">{labels.copyMessage}</span>
+      </button>
+    ) : null;
   // Whether this message's strip has a pager at all: the strip exists for its own
   // controls, so a message with neither keeps no empty row under the bubble.
   const hasControls =
-    openingChoice !== undefined || swipeSet !== undefined || deletePoint !== undefined || editReplyPoint !== undefined;
+    openingChoice !== undefined ||
+    swipeSet !== undefined ||
+    deletePoint !== undefined ||
+    editReplyPoint !== undefined ||
+    copyPoint;
   /**
    * The rewind's own two-step pair, hoisted out of either side's strip. Both sides of the exchange
    * carry it now - a player rewinds to their own line to be answered again, and her reply keeps the
@@ -634,6 +759,7 @@ export const MessageBubble = memo(function MessageBubble({
                 {/* An armed rewind is this message's only control: the pager and regenerate step aside
                 for the confirmation the same way a Chats row's own strip does. */}
                 {rewindConfirmation}
+                {copyControl}
                 {!rewindArmed && openingChoice && (
                   <div className="swipe-controls" aria-label={labels.swipeNavigation}>
                     {/* The glyph is the visible control and the number between the two
@@ -758,9 +884,14 @@ export const MessageBubble = memo(function MessageBubble({
             first in the strip - and an armed rewind leaves this strip with nothing but itself. */}
         {isPlayer &&
           !deleteArmed &&
-          (rewindPoint !== undefined || rewindArmed || onEdit !== undefined || deletePoint !== undefined) && (
+          (rewindPoint !== undefined ||
+            rewindArmed ||
+            onEdit !== undefined ||
+            deletePoint !== undefined ||
+            copyPoint) && (
             <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
               {rewindConfirmation}
+              {editor === null && copyControl}
               {/* While the field is open the strip is the editor: the destructive rewind sits out, exactly as
                 the destructive Delete does, because a control that cuts the conversation away beside Save
                 and Cancel is a mis-click waiting to happen. */}
@@ -875,6 +1006,25 @@ export const MessageBubble = memo(function MessageBubble({
         {!isPlayer && truncatedNote !== null && (
           <p className="message-truncated" data-testid="message-truncated">
             {truncatedNote}
+          </p>
+        )}
+        {/* The copy's receipt, for the second and a half after the press.
+            Below the strip for the same reason the length-ceiling line is: the strip keeps exactly
+            the geometry it had, and a confirmation appears and disappears under a control layout
+            that does not move by a pixel when it does. `role="status"` is the product's own polite
+            region, so a screen reader is told once, and the line removes itself on a timer - the row
+            never settles into a copied state. Both sides of the exchange carry it: a player copies
+            their own line as often as hers. */}
+        {copyNotice !== null && (
+          <p
+            className={
+              copyNotice === "copied" ? "message-copy-notice success-banner" : "message-copy-notice error-banner"
+            }
+            data-testid="message-copy-notice"
+            data-copy-notice={copyNotice}
+            role="status"
+          >
+            {copyNotice === "copied" ? labels.copyNotice : labels.copyNoticeFailed}
           </p>
         )}
       </div>

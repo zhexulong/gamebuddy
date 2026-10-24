@@ -672,13 +672,31 @@ test("gate 4: Tab reaches every AppBar entry, Enter opens a surface, Escape retu
   }
 
   // The composer is reachable and usable with no pointer at all.
+  //
+  // The bound is DERIVED from the conversation the fixture mounted rather than pinned to a count: the
+  // tab path to the composer is the fixed chrome above the transcript (the skip link, the six AppBar
+  // entries, the scroll region itself) plus one stop per focusable control in the message rows.
+  // Copying a message added one control to every row (measured: the composer moved from stop 18 to 22
+  // on this four-message transcript, which is exactly four copy buttons), and a pinned `16` would have
+  // been a number that only ever meant "the rows had four fewer controls than they do".
   await resetFocusToTop(page);
+  const bound = await page.evaluate(() => {
+    const chrome = 1 /* skip link */ + document.querySelectorAll(".nav-button").length + 1 /* the transcript region */;
+    const inRows = document.querySelectorAll(
+      "ol.message-list button, ol.message-list [tabindex]:not([tabindex='-1'])",
+    ).length;
+    return chrome + inRows + 1;
+  });
   let onComposer = false;
-  for (let press = 0; press < 16 && !onComposer; press += 1) {
+  let presses = 0;
+  for (; presses < bound && !onComposer; presses += 1) {
     await page.keyboard.press("Tab");
     onComposer = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.classList.contains("composer-textarea") ?? false);
   }
-  expect(onComposer, "the composer is reachable with Tab alone").toBe(true);
+  expect(
+    onComposer,
+    `the composer is reachable with Tab alone, within ${bound} stops (reached at ${presses})`,
+  ).toBe(true);
   await page.keyboard.type("typed without a pointer");
   await expect(page.locator(".composer-textarea")).toHaveValue("typed without a pointer");
 

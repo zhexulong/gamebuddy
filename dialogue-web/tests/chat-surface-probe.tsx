@@ -339,6 +339,82 @@ const chatProbe = {
     };
   },
   /**
+   * The copy control as the player meets it: what it is called, the target it actually paints, where
+   * it sits in the strip, and every box a placement claim depends on (the strip's own row count, and
+   * the four controls that were already there with their sizes).
+   *
+   * The strip is the same row the reply uses, so `stripRows` is what says the fifth control did not
+   * push the other four onto a second row - measured from each child's vertical centre, because a
+   * control whose glyph is shorter than its neighbour's still shares its row.
+   */
+  copyControl(handle: string): {
+    ariaLabel: string | null;
+    title: string | null;
+    label: string | null;
+    width: number;
+    height: number;
+    stripHeight: number;
+    stripRows: number;
+    stripWidth: number;
+    stripIndex: number;
+    siblings: readonly { name: string; width: number; height: number }[];
+  } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const button = li?.querySelector('[data-testid="message-copy"]') as HTMLButtonElement | null;
+    if (button === null || button === undefined) return null;
+    const rect = button.getBoundingClientRect();
+    const strip = li?.querySelector(".message-actions") as HTMLElement | null;
+    const children = [...(strip?.children ?? [])];
+    const centres = children.map((child) => {
+      const box = child.getBoundingClientRect();
+      return Math.round(box.top + box.height / 2);
+    });
+    return {
+      ariaLabel: button.getAttribute("aria-label"),
+      title: button.getAttribute("title"),
+      label: button.textContent,
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      stripHeight: strip === null ? 0 : Math.round(strip.getBoundingClientRect().height),
+      stripRows: new Set(centres).size,
+      stripWidth: strip === null ? 0 : Math.round(strip.getBoundingClientRect().width),
+      stripIndex: children.indexOf(button),
+      siblings: children
+        .filter((child) => child !== button)
+        .map((child) => {
+          const box = child.getBoundingClientRect();
+          return {
+            name: (child.getAttribute("class") ?? child.tagName).toString(),
+            width: Math.round(box.width),
+            height: Math.round(box.height),
+          };
+        }),
+    };
+  },
+  /**
+   * The receipt the copy press left behind, if any: its words, which banner tone it took, and the
+   * box it painted. `null` is the settled state, which is the point - the confirmation is a moment,
+   * not a state the row keeps.
+   */
+  copyNotice(handle: string): { text: string; tone: string; role: string | null; width: number; height: number } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const notice = li?.querySelector('[data-testid="message-copy-notice"]');
+    if (notice === null || notice === undefined) return null;
+    const rect = notice.getBoundingClientRect();
+    return {
+      text: (notice.textContent ?? "").trim(),
+      tone: notice.getAttribute("data-copy-notice") ?? "",
+      role: notice.getAttribute("role"),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  },
+  /** The words of the two copy sentences, so a journey can pin both catalogues. */
+  copySentences(locale: "en" | "zh-CN"): { notice: string; failed: string; control: string } {
+    const catalogue = messages(locale);
+    return { notice: catalogue.copyNotice, failed: catalogue.copyNoticeFailed, control: catalogue.copyMessage };
+  },
+  /**
    * The open editor on `handle`: the words in the field, and its two answers. `null` when the row is
    * not being edited, which is what says the field is not offered as a second resident control.
    */

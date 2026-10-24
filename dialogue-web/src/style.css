@@ -1004,7 +1004,8 @@
      touch minimum the rest of the strip uses (`--touch-target-min`), so the strip stays a single row
      at 400 px. */
   .edit-btn,
-  .delete-btn {
+  .delete-btn,
+  .copy-btn {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
@@ -1023,16 +1024,37 @@
   }
 
   .edit-btn:hover:not(:disabled),
-  .delete-btn:hover:not(:disabled) {
+  .delete-btn:hover:not(:disabled),
+  .copy-btn:hover:not(:disabled) {
     color: var(--text-primary);
     background-color: var(--surface-hover);
     border-color: var(--border-strong);
   }
 
   .edit-btn:disabled,
-  .delete-btn:disabled {
+  .delete-btn:disabled,
+  .copy-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* The copy's receipt. It is the product's own banner - the `success-banner` /`error-banner` pair
+     every other one-line outcome already wears - made compact for the only place it is ever drawn:
+     under one message's control strip. Same tones, same wording rule, a panel's padding rather than
+     a page banner's.
+
+     `contain: inline-size` is what keeps it from moving anything: the row is shrink-to-fit, so a
+     line whose max-content is longer than the message would widen the row, re-wrap the bubble and
+     stretch the strip under it. With its inline size excluded from the parent's intrinsic width it
+     takes the width the message already had and wraps inside it - the bubble, the strip and the
+     button that was pressed keep the exact boxes they had. The length-ceiling line below uses the
+     same mechanism for the same reason. */
+  .message-copy-notice {
+    contain: inline-size;
+    margin: var(--space-1) 0 0;
+    padding: var(--space-1) var(--space-2);
+    font-size: 12px;
+    line-height: 1.4;
   }
 
   /* The player's row is mirrored (`.message.player` is `row-reverse`), so its strip follows the
@@ -5778,6 +5800,47 @@
 
     .message-actions .regenerate-btn {
       min-width: var(--touch-target-min);
+    }
+
+    /* The strip's gap, 6 px -> 4 px, and the one reason it may move: the fourth action.
+
+       Measured at 400x800 in the shipped composed shell, the player's own row that carries rewind,
+       edit, delete and copy has 188 px of body: at 6 px its four 44 px targets and three gaps come
+       to 194 px and wrap, at 4 px they come to exactly 188 px and sit on one line. The 6 px was
+       never what the 2026-10-19 ruling protected - "one row, every target at 44 px, nothing pushed
+       out" was - so this is the cheapest thing to trade for it.
+
+       The stepper then takes its own row, on EVERY row that has one (next rule). That is a rule,
+       not a fallback for the one layout that overflows: her multi-variant reply's body is 301 px,
+       and its pager (136) plus copy, rewind, edit and delete (4 x 44) is 312 px before a single
+       gap, so it cannot fit at any gap value. Letting only that row wrap would make the strip
+       "sometimes one row, sometimes two, depending on how many controls this message happens to
+       offer", which is the accidental geometry the one-row ruling exists to end. Said as a rule it
+       is a layout a player can learn, and it has its own logic: the stepper is NAVIGATION - which
+       of several drafts of this reply you are reading - while the other four are actions on the
+       message in front of you. Navigation gets its own line beneath them, at the narrowest width
+       only; at 1440 the same reply keeps one row of all five controls, measured at 479 px. */
+    .message-actions {
+      gap: var(--space-1);
+    }
+
+    /* A zero-height break, so the stepper starts a new line without being STRETCHED across it:
+       `flex-basis: 100%` on the stepper itself also forces the line but sizes its box to the whole
+       column (measured 301 px instead of its own 136), and the stepper's box is a number the
+       defect-6 journey pins. The break costs the same row-gap a natural wrap would. */
+    .message-actions:has(> .swipe-controls)::after {
+      content: "";
+      order: 1;
+      flex-basis: 100%;
+      height: 0;
+    }
+
+    .message-actions > :not(.swipe-controls) {
+      order: 1;
+    }
+
+    .message-actions > .swipe-controls {
+      order: 2;
     }
   }
 

@@ -1076,11 +1076,23 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
   });
   console.log(`[defect-6 narrow] ${JSON.stringify(measured)}`);
 
-  // One row, and its controls are the whole of it: the strip is as tall as one
-  // 44 px target (the pager's own box is 46), not two stacked ones.
-  expect(measured.strip.rows, `the strip is one row (${JSON.stringify(measured.strip.controls)})`).toBe(1);
-  expect(measured.strip.box.height, "so the strip is one target tall, not two").toBeLessThanOrEqual(50);
-  expect(measured.strip.controls.length, "and it still holds every control it had").toBe(4);
+  // THE SHAPE CHANGED ON PURPOSE (owner ruling, 2026-10-25): the strip now carries a fifth control
+  // (copy), and five 44 px targets plus the pager cannot fit a 301 px column - measured 312 px at
+  // ZERO gap - so the stepper takes its own row at the narrow width. What this asserts is the ruling
+  // the one-row block was written for, restated for the new layout:
+  //   (a) the strip is TWO rows - four actions on one line, the pager on its own line beneath;
+  //   (b) every one of the five is still a 44 px target with its own name;
+  //   (c) none was pushed out: all five are present;
+  //   (d) the pager keeps its own 136 px box rather than being stretched across the line.
+  // The old numbers, for the record: one row, strip box 286x46, four controls, pager 136. The new:
+  // two rows, strip box 301x98, five controls, pager still 136x46.
+  expect(
+    measured.strip.rows,
+    `the strip is two rows: the actions, then the pager (${JSON.stringify(measured.strip.controls)})`,
+  ).toBe(2);
+  // One row of actions (44 px) plus one row of pager (46 px) plus the 6 px gap between them.
+  expect(measured.strip.box.height, "so the strip is one 44 px row plus one 46 px row").toBeLessThanOrEqual(100);
+  expect(measured.strip.controls.length, "and it holds every control it has, none pushed out").toBe(5);
   for (const control of measured.strip.controls) {
     // The name is the meaning, and it is a real sentence rather than the glyph the
     // narrow form leaves visible.
@@ -1089,16 +1101,32 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
     expect(control.height, `${control.className} clears the 44 px floor`).toBeGreaterThanOrEqual(44);
     expect(control.width, `${control.className} is a target, not a squeezed glyph`).toBeGreaterThanOrEqual(44);
   }
+  // The four ACTIONS share one line, and the pager alone is on the other: that is the rule, not an
+  // accident of how many controls happened to fit.
+  const actions = measured.strip.controls.filter((control) => !String(control.className).includes("swipe-controls"));
+  const pagers = measured.strip.controls.filter((control) => String(control.className).includes("swipe-controls"));
+  expect(actions.length, "the four actions on this row").toBe(4);
+  expect(pagers.length, "and the one pager").toBe(1);
+  expect(
+    new Set(actions.map((control) => control.centre)).size,
+    "the four actions share one line",
+  ).toBe(1);
+  expect(
+    actions[0]!.centre,
+    "and the pager is on the line BELOW them, not among them",
+  ).toBeLessThan(pagers[0]!.centre);
+
   expect(measured.strip.box.width, "the strip is inside the reply's own column").toBeLessThanOrEqual(
     measured.listWidth,
   );
-  // The strip's recorded box (`shots-final31`, 400x800) and the arithmetic the narrow block rests on
-  // (`style.css`: the pager at 136 plus three 44 px targets plus three 6 px gaps). The disabled arrow's
-  // new container may not buy itself a single pixel out of either number.
+  // The box the four actions now give the strip (measured 400x800): copy, rewind, edit and delete at
+  // 44 px each plus three 4 px gaps is 188 px, and the pager's own row is 136 px wide, so the strip
+  // takes the wider of the two - 301, its whole column - and 98 tall. The old one-row box was
+  // 286x46 with four controls and no copy.
   expect(
     { width: measured.strip.box.width, height: measured.strip.box.height },
-    "the strip keeps the box shots-final31 recorded",
-  ).toEqual({ width: 286, height: 46 });
+    "the strip takes its column and is two rows tall",
+  ).toEqual({ width: 301, height: 98 });
   expect({ width: measured.pager.width, height: measured.pager.height }, "and the pager keeps its 136 px").toEqual({
     width: 136,
     height: 46,
@@ -1177,10 +1205,14 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
   console.log(`[defect-6 wide] ${JSON.stringify(wide)}`);
   expect(wide.pager, "the pager is the same 136 px at 1440x900").toEqual({ width: 136, height: 46 });
   expect(wide.strip.height, "and the strip is still one target tall").toBe(46);
-  // 403 is what this strip's contents give it on the wide window (the same pager plus the three
-  // controls wearing their words); the arrows are 44x44 on both sides of this change, so it is the
-  // same number it was before the disabled arrow grew a container.
-  expect(wide.strip.width, "and the strip keeps the width its contents give it").toBe(403);
+  // The wide window is where the narrow rule does NOT apply: one row, all five controls.
+  //
+  // 403 was what this strip's contents gave it before copy joined (the pager plus the three controls
+  // wearing their words). 479 is what they give it now - the same pager, the same three, and Copy at
+  // 70 px (its 44 px floor plus its word) on the end, with the strip's 6 px gaps. Nothing was made
+  // smaller to reach it: this is the width its contents ask for, and at 1440 the reply has 479 px of
+  // column to give.
+  expect(wide.strip.width, "and the strip keeps the width its contents give it").toBe(479);
 });
 
 // --- the prosody tag's badge --------------------------------------------------

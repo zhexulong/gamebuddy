@@ -708,13 +708,25 @@ test("item 4: the variant switcher is a compact stepper with a named arrow and a
 });
 
 /**
- * The compact form exists for the narrow viewport, so the narrow viewport is
- * where it has to be proved: at 400 px the strip is one row and stays inside the
- * bubble's measure. The words that used to sit in the buttons are the reason it
- * wrapped, so this asserts the property the change was made for rather than the
- * mechanism that replaced it.
+ * The compact form exists for the narrow viewport, so the narrow viewport is where it has to be proved.
+ *
+ * The property is still the one the change was made for, restated for the layout the copy control
+ * forced (owner ruling, 2026-10-25): the stepper is ONE compact row of two arrows and a position, it
+ * is the only thing on its line, and the actions sit on the line above it. The words that used to sit
+ * in the buttons are still gone, the position still survives, and the pager's own box is still one 44
+ * px target tall rather than two stacked ones.
+ *
+ * This row is the SUPERVISOR'S OWN PROOF THAT THE RULE IS A RULE: it carries copy, the pager and
+ * edit - three controls, far from the five-control worst case - and the pager takes its own line
+ * here too. If the break had been written as a fallback for the overflowing layout instead, this row
+ * would still be one line and the layout would be "sometimes one row, sometimes two, depending on how
+ * many controls this message happens to offer".
+ *
+ * Measured at 400x800: the pager is 165 px wide (its two 44 px arrows plus the variant label and the
+ * position, which is wider than the 136 px a plain `1/2` gives), the strip is 261x98, and one line is
+ * 46 px of pager plus 44 px of actions plus the 6 px gap.
  */
-test("item 4: the switcher fits the 400 px bubble on one row", async ({ page }) => {
+test("item 4: the switcher keeps its own compact row at 400 px, with the actions above it", async ({ page }) => {
   await stubShell(page, { transcript: openingTranscript(3, "Default") });
   await page.setViewportSize({ width: 400, height: 800 });
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
@@ -723,16 +735,19 @@ test("item 4: the switcher fits the 400 px bubble on one row", async ({ page }) 
   const measured = await measureSwitcher(page);
   console.log(`[item-4 switcher @400] ${JSON.stringify(measured)}`);
 
-  expect(measured.groupRows, "the strip is one row at 400 px").toBe(1);
-  expect(
-    measured.stripRows,
-    `the story's own control strip is one row too (${measured.stripHeight} px tall)`,
-  ).toBe(1);
+  // The stepper itself: one row, two arrows, the position, one 44 px target tall.
+  expect(measured.groupRows, "the stepper is one row at 400 px").toBe(1);
   expect(
     measured.groupHeight,
     "so it is one 44 px target tall, not two stacked ones",
   ).toBeLessThan(64);
   expect(measured.groupText, "the position survives the narrow form").toContain("1/3");
+  // And the strip is the two rows the rule states - never one, on any row that has a pager.
+  expect(
+    measured.stripRows,
+    `the strip is the actions' row plus the pager's own (${measured.stripHeight} px tall)`,
+  ).toBe(2);
+  expect(measured.stripHeight, "which is a 44 px row and a 46 px row").toBeLessThanOrEqual(100);
 });
 
 test("item 4: one variant has no switcher at all", async ({ page }) => {
