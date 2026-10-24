@@ -105,7 +105,10 @@ const hotReloadScript = `
   };
 
   const connectionA = await addReadyConnection("model-a", 9);
-  await activate(connectionA.connectionId);
+  // The no-model scenario mounts BEFORE any connection exists - that is the fresh install - so what
+  // it proves is that acquiring the FIRST connection is a reload of the mounted session rather than
+  // a remount of it.
+  if (scenario !== "no-model") await activate(connectionA.connectionId);
 
   const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
   const lease = await authority.startMountedChatRuntime();
@@ -169,6 +172,48 @@ const hotReloadScript = `
   // The mount's own selection, read back from the live session rather than assumed.
   out.mountedOnA = await lease.reloadModelSelection();
 
+  if (scenario === "no-model") {
+    // A FRESH INSTALL: mounted with nothing activated. The mount is LIVE (a Pi session file exists)
+    // and answers null - the player's selection, not Pi's placeholder.
+    out.sessionFilesAtMount = sessionSnapshot().files;
+    // Sending anyway is refused at the point of use by Pi's own model guard: the turn settles failed,
+    // which is the durable half of the sentence the surface words.
+    await createPlayerTurnAcceptor(manifest, lease).accept({
+      text: "Synthetic player request with no model",
+      locale: "en-US",
+      idempotencyKey: "abcdefghijklmnopqrstuv",
+      expectedDraftRevision: 0,
+    });
+    await createProviderAttemptClaimer(manifest, lease).claim();
+    const refused = await internal.startMountedAttempt(manifest, lease, (invocation) =>
+      internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
+        try {
+          await scope.runtimeSession.session.prompt("Synthetic player request with no model", {
+            expandPromptTemplates: false,
+            source: "rpc",
+          });
+        } catch (error) {
+          out.promptRefusal = error instanceof Error ? error.message : String(error);
+        }
+        await scope.transitionStore({ operation: "arm", observedAtMs: await nextTime() });
+        await scope.transitionStore({ operation: 'running', statusClass: "success", observedAtMs: await nextTime() });
+        return await scope.transitionPresentation({
+          operation: "fail",
+          reasonCode: "runtime_unavailable",
+          failedAtMs: await nextTime(),
+        });
+      }),
+    );
+    out.refusedTurn = { status: refused.status, reason: refused.reasonCode ?? null };
+    // The player then brings a connection. This reaches the runtime that is ALREADY mounted: the same
+    // lease, the same Pi session file, and now a real selection.
+    const connectionB = await addReadyConnection("model-b", 8);
+    out.activatedB = await activate(connectionB.connectionId);
+    out.reloaded = await lease.reloadModelSelection();
+    out.sessionFilesAfterReload = sessionSnapshot().files;
+    out.leaseAfterReload = { chatThreadId: lease.chatThreadId, chatSurfaceSessionId: lease.chatSurfaceSessionId };
+  }
+
   if (scenario === "in-flight") {
     // A durable turn that has not reached a terminal ledger state: the reload must
     // leave it exactly where it is and answer by name.
@@ -185,9 +230,11 @@ const hotReloadScript = `
   out.before = before;
   out.ledgerBefore = before.transcript.ledger;
 
-  const connectionB = await addReadyConnection("model-b", 8);
-  out.activatedB = await activate(connectionB.connectionId);
-  out.reloaded = await lease.reloadModelSelection();
+  if (scenario !== "no-model") {
+    const connectionB = await addReadyConnection("model-b", 8);
+    out.activatedB = await activate(connectionB.connectionId);
+    out.reloaded = await lease.reloadModelSelection();
+  }
 
   const after = { session: sessionSnapshot(), transcript: await transcriptSnapshot() };
   out.unchanged = {
@@ -231,7 +278,7 @@ const hotReloadScript = `
 
 async function runHotReloadScenario(
   root: string,
-  scenario: "opening-only" | "with-turns" | "in-flight",
+  scenario: "opening-only" | "with-turns" | "in-flight" | "no-model",
 ): Promise<Record<string, any>> {
   const manifestPath = join(root, "manifest.json");
   await writeFile(
@@ -385,3 +432,63 @@ test("a Chat with a turn in flight keeps it, and the next prompt adopts the sele
     cleanup(root);
   }
 });
+
+/**
+ * The fresh install's whole journey, in the production authority and one real Pi session.
+ *
+ * This is the unit the owner's ruling needed proof for: a product with no model OPENS, and
+ * bringing the first connection later does not remount it. The scenario mounts before any
+ * connection exists, so every fact below is about that state rather than about a configured root
+ * degenerating into one.
+ */
+test(
+  "a mount that opened with no model opens, refuses the send, and adopts the first connection in place",
+  realWindowsMount,
+  async (t) => {
+    const root = canonicalTestRootSync("semantic-connection-hot-reload-no-model-");
+    try {
+      const observed = await runHotReloadScenario(root, "no-model");
+      t.diagnostic(
+        JSON.stringify({
+          mounted: observed.mountedOnA,
+          refusal: observed.promptRefusal,
+          refusedTurn: observed.refusedTurn,
+          reloaded: observed.reloaded,
+          filesAtMount: observed.sessionFilesAtMount,
+          filesAfterReload: observed.sessionFilesAfterReload,
+        }),
+      );
+      // (a) It mounted. Not "it refused honestly" - the mount succeeded with nothing configured, and
+      // it answers `null` because the player has selected nothing. Naming Pi's `unknown` placeholder
+      // here would be a model the player never chose.
+      assert.deepEqual(observed.mountedOnA, { status: "applied", modelSelection: null });
+      // The mount is a real Pi session, not a placeholder shell: its file exists before anything is
+      // sent, which is what later makes acquiring a model a reload instead of a remount.
+      assert.equal(observed.sessionFilesAtMount.length, 1);
+
+      // (b) The send is refused at the point of use, and the turn settles durably failed. Pi's own
+      // prompt guard is what refuses: the session runs on its placeholder model, which has no
+      // configured auth, so nothing leaves the machine and no provider is contacted. The player-facing
+      // sentence is the surface's, worded from that durable `runtime_unavailable` - which is why the
+      // refusal does not have to be a message the player reads directly.
+      assert.match(String(observed.promptRefusal), /No API key found for the selected model/u);
+      assert.equal(observed.refusedTurn.status, "failed");
+      assert.equal(observed.refusedTurn.reason, "runtime_unavailable");
+
+      // (c) The player brings a connection. The ALREADY MOUNTED runtime adopts it...
+      assert.deepEqual(observed.activatedB, { provider: "OpenAI-compatible endpoint", modelId: "model-b" });
+      assert.equal(observed.reloaded.status, "applied");
+      assert.equal(observed.reloaded.modelSelection.provider, "gamebuddy-openai-compatible");
+      assert.equal(observed.reloaded.modelSelection.modelId, "model-b");
+      // ...without a remount: the same lease object (same thread/surface pair), the same single Pi
+      // session file, and the conversation's own record untouched by acquiring a model.
+      assert.deepEqual(observed.leaseAfterReload, {
+        chatThreadId: observed.chatThreadId,
+        chatSurfaceSessionId: observed.chatSurfaceSessionId,
+      });
+      assert.deepEqual(observed.sessionFilesAfterReload, observed.sessionFilesAtMount);
+    } finally {
+      cleanup(root);
+    }
+  },
+);
