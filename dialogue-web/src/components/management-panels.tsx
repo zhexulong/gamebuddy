@@ -440,11 +440,23 @@ export function ConnectionSettingsPanel({
   const [modelId, setModelId] = useState("");
 
   const providers = connectionView.state.providers;
-  // The escape hatch is a catalog entry like any other; it is preselected only
-  // because a player reaching this panel usually has no connection at all.
+  // A player who has configured nothing meets this form before they have anything to
+  // put in it, so the entry it opens on is the one that asks nothing of them: the
+  // operator's own gateway, whose `setupFields` is empty because its endpoint and
+  // credential both live in this machine's environment. That is the behaviour
+  // SillyTavern's API panel has - its shipped first-run settings select the channel
+  // that answers with a shared anonymous key (`"main_api": "koboldhorde"` in
+  // `default/content/settings.json`, `ANONYMOUS_KEY` in `src/endpoints/horde.js`),
+  // never 'Custom (OpenAI-compatible)', which asks for a URL and a key and is one
+  // choice away in the same picker.
+  //
+  // The candidacy is read off the Host's own declaration, never off a provider name
+  // or a list position: an entry that declares no setup field needs nothing typed.
+  // Only when no published entry is like that does the Host's first entry stand in,
+  // so the form is never left with a picker and no fields under it.
   const selected =
     providers.find((entry) => entry.providerId === providerId) ??
-    providers.find((entry) => entry.escapeHatch) ??
+    providers.find((entry) => entry.setupFields.length === 0) ??
     providers[0];
   // What one provider's endpoints told us they serve, at their last probe: the only authority on
   // which models exist there, and the reason a player is not limited to our own catalogue.

@@ -88,11 +88,16 @@ function json200(body: unknown) {
  * The Host's own escape hatch, verbatim from `host/src/tavern/provider-catalog.ts:213`.
  *
  * It is the widest form the panel can render - five setup fields, each one a
- * label, a control and its hint stacked above the save control - and it is the
- * entry the panel preselects whenever it is in the catalogue, because a player
- * reaching this panel usually has no connection at all. Measuring the narrow
- * operator entry instead would prove nothing: two of the six field rows are what
- * a future provider is free to add again.
+ * label, a control and its hint stacked above the save control - so it is the form
+ * this surface's layout is measured against. Measuring the narrow operator entry
+ * instead would prove nothing: two of the six field rows are what a future provider
+ * is free to add again.
+ *
+ * A fresh open no longer lands on it (the panel opens on the entry that declares no
+ * setup field at all, which is the entry a newcomer can actually use), so it is
+ * chosen here through the picker - the way a player who has an endpoint of their own
+ * reaches it. The premise the assertion needs is "the widest form", not "whatever
+ * happens to be selected".
  */
 const ESCAPE_HATCH = {
   providerId: "openai-compatible",
@@ -169,6 +174,12 @@ async function mountSettings(page: Page, viewport: Readonly<{ width: number; hei
   const surface = page.getByTestId("settings-surface");
   // The connection group renders only once its read resolves.
   await expect(surface.locator("#connection-provider")).toBeVisible();
+  // The widest form the Host can publish, chosen rather than assumed: the landing
+  // selection is the entry with no field at all, so the fields under test only exist
+  // once the escape hatch is picked.
+  const form = surface.locator("[data-connection-form]");
+  await form.locator("#connection-provider").selectOption(ESCAPE_HATCH.providerId);
+  await expect(form.locator("#connection-api-key-required")).toBeVisible();
   // The first viewport is the landing view, so the region's own scroll is reset
   // to its top rather than trusting whatever the browser restored.
   await surface.locator(".surface-content").evaluate((content) => {
