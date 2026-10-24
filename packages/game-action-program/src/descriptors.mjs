@@ -13,7 +13,7 @@ const VALUE_TYPES = new Set(["string", "integer", "boolean", "object", "destinat
 const LIFECYCLES = new Set(["published", "live_verified", "experimental"]);
 const KINDS = new Set(["execution", "read_only"]);
 const EFFECTS = new Set(["read", "write"]);
-const RESOURCE_TEMPLATE_VALUES = new Set(["ScopePlayer"]);
+const RESOURCE_TEMPLATE_VALUES = new Set(["ScopePlayer", "AnyUpgrade", "BasicOnly"]);
 const MAX_ACTIONS = 128;
 const MAX_ARGUMENTS = 32;
 const MAX_FACTS = 32;
@@ -22,6 +22,11 @@ const MAX_IDENTITY_VERSION = 2_147_483_647;
 const MAX_STRING_LENGTH = 128;
 const MAX_VOCABULARY_VALUES = 128;
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
+// A tool requirement's claim key is `tool:<category>`: the category is the KEY half of the claim and the
+// upgrade-level requirement is its VALUE (see the Mod's `FarmhandActionDefinitions` / `BodyProgramModels`
+// `IsResourceClaimKey`). It is admitted as one fixed prefix plus an identifier rather than as a general
+// `a:b` chain, so a producer cannot smuggle a free-form subject through the claim map.
+const TOOL_CLAIM_KEY = /^tool:[a-z][a-z0-9_]{1,127}$/;
 // Argument names are producer-owned and may use the published camelCase spelling.
 const ARGUMENT_IDENTIFIER = /^[a-z][A-Za-z0-9_]{0,127}$/;
 const INVALID = Symbol("invalid_descriptor_value");
@@ -177,7 +182,8 @@ function resourceClaimsAreValid(claims) {
     if (!validResourceClaimShape(claim)) return false;
     const key = ownValue(claim, "key");
     const value = ownValue(claim, "value");
-    if (!IDENTIFIER.test(key) || !RESOURCE_TEMPLATE_VALUES.has(value)) return false;
+    if (!IDENTIFIER.test(key) && !TOOL_CLAIM_KEY.test(key)) return false;
+    if (!RESOURCE_TEMPLATE_VALUES.has(value)) return false;
   }
   return true;
 }

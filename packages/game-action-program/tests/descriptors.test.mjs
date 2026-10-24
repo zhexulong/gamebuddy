@@ -101,6 +101,44 @@ test("empty descriptor maps reject prototype mutator bypass without publishing f
   assert.deepEqual([...map], []);
 });
 
+test("a tool requirement is a `tool:<category>` claim key with an enumerated upgrade level", () => {
+  // The Mod publishes a tool requirement as a `tool:<category>` claim: the category is the KEY half and
+  // the upgrade-level requirement is the VALUE (FarmhandActionDefinitions -> FarmhandBodyProgramCatalogProjection
+  // TryMapResourceClaim). These are the four real claims on the committed action surface; refusing them put
+  // every tool-family action outside the catalog.
+  for (const [key, value] of [
+    ["tool:scythe", "AnyUpgrade"],
+    ["tool:watering_can", "AnyUpgrade"],
+    ["tool:pickaxe", "BasicOnly"],
+    ["embodied_actor", "ScopePlayer"],
+  ]) {
+    assert.equal(
+      validateDescriptorProjection(validProjection({ resourceTemplate: { claims: [{ key, value }] } })),
+      true,
+      `${key}/${value} is a claim the Mod emits`,
+    );
+  }
+});
+
+test("a forged tool claim still fails: an empty category, an unlisted value, and a free-form subject", () => {
+  for (const [key, value] of [
+    ["tool:", "AnyUpgrade"],
+    ["tool:", "ScopePlayer"],
+    ["tool:scythe", "TotallyMadeUp"],
+    ["tool:scythe", ""],
+    ["not_a_tool:scythe", "AnyUpgrade"],
+    ["tool:Scythe", "AnyUpgrade"],
+    ["tool:scythe:x", "AnyUpgrade"],
+    ["tool:", "BasicOnly"],
+  ]) {
+    assert.equal(
+      validateDescriptorProjection(validProjection({ resourceTemplate: { claims: [{ key, value }] } })),
+      false,
+      `${key}/${value} must not be admitted`,
+    );
+  }
+});
+
 test("non-enumerable resource claim key and value fields fail closed before detached cloning", () => {
   for (const field of ["key", "value"]) {
     const claim = { key: "embodied_actor", value: "ScopePlayer" };
