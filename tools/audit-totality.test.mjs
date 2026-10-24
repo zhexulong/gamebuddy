@@ -526,7 +526,19 @@ test("the audit reports its own shape and --only narrows the run", () => {
     const all = runAudit({ root });
     assert.deepEqual(
       all.map((entry) => entry.id),
-      ["read-path", "bounds", "refusal", "codes", "routes", "fields", "catalogue", "prompt", "promises", "hygiene"],
+      [
+        "read-path",
+        "bounds",
+        "refusal",
+        "codes",
+        "routes",
+        "fields",
+        "catalogue",
+        "prompt",
+        "promises",
+        "hygiene",
+        "duplication",
+      ],
       "the class list is the audit's own contract",
     );
     assert.deepEqual(
@@ -534,11 +546,11 @@ test("the audit reports its own shape and --only narrows the run", () => {
       ["bounds"],
     );
     const summary = totals(all);
-    assert.equal(summary.classes, 10);
+    assert.equal(summary.classes, 11);
     assert.ok(summary.declared > 0, "the audit must walk something");
     assert.deepEqual(
       [...ADVISORY].sort(),
-      ["hygiene"],
+      ["duplication", "hygiene"],
       "a class leaves ADVISORY when its findings stop being a ruling the owner has not taken",
     );
   } finally {
@@ -548,7 +560,18 @@ test("the audit reports its own shape and --only narrows the run", () => {
 
 test("the real tree is audited without throwing, and its findings are reported", (t) => {
   const results = runAudit({
-    only: ["read-path", "bounds", "refusal", "codes", "routes", "fields", "prompt", "promises", "hygiene"],
+    only: [
+      "read-path",
+      "bounds",
+      "refusal",
+      "codes",
+      "routes",
+      "fields",
+      "prompt",
+      "promises",
+      "hygiene",
+      "duplication",
+    ],
   });
   const summary = totals(results);
   t.diagnostic(
@@ -556,6 +579,8 @@ test("the real tree is audited without throwing, and its findings are reported",
   );
   for (const result of results)
     t.diagnostic(`${result.id}: ${result.declared} declared, ${result.violations.length} violation(s)`);
-  assert.equal(results.length, 9);
+  assert.equal(results.length, 10);
   assert.ok(summary.declared > 100, "the real tree declares far more than a hundred audited items");
+  const duplication = results.find((result) => result.id === "duplication");
+  assert.ok(duplication.declared > 10, "the duplication class walks the tree's own decision-verb functions");
 });

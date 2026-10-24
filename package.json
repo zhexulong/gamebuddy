@@ -261,7 +261,7 @@
     "check:live-run-preflight": "node tools/preflight-live-run.mjs",
     "check:live-run-silence": "node tools/check-live-run-silence.mjs",
     "audit:totality": "node tools/audit-totality.mjs",
-    "test:audit-totality": "node --test tools/audit-totality.test.mjs",
+    "test:audit-totality": "node --test tools/audit-totality.test.mjs tools/audit-totality-duplication.test.mjs",
     "run:post-history-live": "node tools/live-run/chat/run-post-history-live.mjs",
     "test:silent-failure": "node --test tools/lib/silent-failure.test.mjs",
     "check:stardew-mod-folder-name": "node tools/check-stardew-mod-folder-name.mjs",

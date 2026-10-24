@@ -46,12 +46,14 @@
  *    approximation and says so: it reports its own unmatched count, and it
  *    cannot see a field the Host writes under a different name.
  *
- *  - `catalogue`, `prompt`, `promises` and `hygiene` reuse the existing gates
+ *  - `catalogue`, `prompt`, `promises`, `hygiene` and `duplication` reuse the existing gates
  *    where one exists rather than keeping a second copy of the same reading
  *    (`i18n-parity-gate`, `enum-leak-gate`, `problem-code-gate`,
  *    `memory-notebook-promise-gate`) and add the direction nothing covered: the
- *    catalogue text itself may not carry an engineering artefact, and a promise
- *    must name something a player can reach.
+ *    catalogue text itself may not carry an engineering artefact, a promise
+ *    must name something a player can reach, and a rule with more than one
+ *    consumer must be one function those consumers consult rather than several
+ *    places that each decide it again.
  *
  * Reporting shape: one summary line, then violations grouped by class and
  * ranked by "a player reaches it and it fails badly". Every violation carries
@@ -1910,6 +1912,300 @@ function runHygiene(sources) {
 }
 
 // ---------------------------------------------------------------------------
+// Class: duplication
+// ---------------------------------------------------------------------------
+
+/**
+ * The verbs that name a *decision* in this tree: a function whose name begins with one of these
+ * answers a question the product asks in more than one place.
+ */
+const DECISION_VERB = /^(?:resolve|select|pick|decide|derive|should)[A-Z0-9_]/u;
+
+/**
+ * The surfaces this class counts separately, derived from the layout rather than typed.
+ *
+ * A surface is a workspace's `src` plus the first directory under it, so `host/src/tavern` and
+ * `dialogue-web/src/components` are different surfaces while `host/src` itself is the workspace's
+ * root modules. Deriving it means a new workspace, or a new top-level directory in one, becomes a
+ * counted surface the moment it exists; no constant here has to be kept in step with the tree.
+ */
+function surfaceOf(root, file) {
+  const parts = relativeTo(root, file).split("/");
+  const src = parts.indexOf("src");
+  if (src === -1) return parts.slice(0, -1).join("/");
+  return parts.length > src + 2 ? parts.slice(0, src + 2).join("/") : parts.slice(0, src + 1).join("/");
+}
+
+/** Every directory this class reads: a workspace `src`, found from the repository layout. */
+function workspaceSourceRoots(sources) {
+  const roots = [];
+  for (const entry of readdirSync(sources.root)) {
+    if (entry.startsWith(".") || entry === "node_modules") continue;
+    const source = join(sources.root, entry, "src");
+    if (existsSync(source) && statSync(source).isDirectory()) roots.push(source);
+  }
+  // The workspace globs also cover `packages/*`, whose `src` is one level deeper than a workspace's own.
+  const packages = join(sources.root, "packages");
+  if (existsSync(packages)) {
+    for (const entry of readdirSync(packages)) {
+      const source = join(packages, entry, "src");
+      if (existsSync(source) && statSync(source).isDirectory()) roots.push(source);
+    }
+  }
+  return roots.sort();
+}
+
+/**
+ * How many distinct outcomes a declared answer admits, read from the declaration rather than from the
+ * function's body: `boolean` is two, a union of N members is N, and a single structural answer (a paths
+ * object, one record) is one.
+ *
+ * This is what separates a *constructor* from a *decision*. `resolveRuntimePaths` answers exactly one
+ * shape, so a second caller cannot receive an answer the first did not - it is a pure name for one
+ * object, not a rule two places could state differently. `resolveSurfaceModelSelection` answers
+ * `selected | no_model | unreadable`, which is three outcomes a caller has to act on, and that is the
+ * kind of function a second call site can disagree about.
+ */
+function answerOutcomes(typeNode, sourceFile, seen = new Set()) {
+  if (typeNode === undefined || typeNode === null) return null;
+  if (typeNode.kind === ts.SyntaxKind.BooleanKeyword) return 2;
+  if (ts.isParenthesizedTypeNode(typeNode)) return answerOutcomes(typeNode.type, sourceFile, seen);
+  // Every member of a union is an outcome the caller has to tell apart, whatever shape it carries: a
+  // union of three discriminated object literals is three, not one. A union of one member that is not
+  // written as a union is a single answer, which is why the floor is 2 here and 1 below.
+  if (ts.isUnionTypeNode(typeNode)) return Math.max(2, typeNode.types.length);
+  if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
+    const name = typeNode.typeName.text;
+    if (
+      (name === "Promise" || name === "Readonly" || name === "PromiseLike") &&
+      typeNode.typeArguments?.[0] !== undefined
+    )
+      return answerOutcomes(typeNode.typeArguments[0], sourceFile, seen);
+    if (seen.has(name)) return 1;
+    const alias = sourceFile.statements.find(
+      (statement) => ts.isTypeAliasDeclaration(statement) && statement.name.text === name,
+    );
+    return alias === undefined ? 1 : answerOutcomes(alias.type, sourceFile, new Set([...seen, name]));
+  }
+  return 1;
+}
+
+/**
+ * The exported decision-verb functions of one module, with the outcomes their declaration admits.
+ * A `const`-bound arrow is read too, because this tree declares some deciders that way.
+ */
+function declaredDeciders(sources, file) {
+  const sourceFile = sources.source(file);
+  const found = [];
+  for (const statement of sourceFile.statements) {
+    const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
+    if (!(modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false)) continue;
+    if (
+      ts.isFunctionDeclaration(statement) &&
+      statement.name !== undefined &&
+      DECISION_VERB.test(statement.name.text)
+    ) {
+      found.push({
+        name: statement.name.text,
+        outcomes: answerOutcomes(statement.type, sourceFile),
+        where: at(sources.root, statement, sourceFile, file),
+      });
+      continue;
+    }
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || !DECISION_VERB.test(declaration.name.text)) continue;
+      const initializer = declaration.initializer;
+      if (initializer === undefined) continue;
+      if (!ts.isArrowFunction(initializer) && !ts.isFunctionExpression(initializer)) continue;
+      found.push({
+        name: declaration.name.text,
+        outcomes: answerOutcomes(initializer.type, sourceFile),
+        where: at(sources.root, declaration, sourceFile, file),
+      });
+    }
+  }
+  return found;
+}
+
+/** A relative specifier resolved to the module this class parsed, or null. */
+function parsedSpecifier(parsed, from, specifier) {
+  if (!specifier.startsWith(".")) return null;
+  const base = resolve(dirname(from), specifier);
+  for (const candidate of [
+    base.replace(/\.js$/u, ".ts"),
+    base.replace(/\.js$/u, ".tsx"),
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, "index.ts"),
+  ])
+    if (parsed.has(candidate)) return candidate;
+  return null;
+}
+
+/**
+ * The module that *declares* a decider a file exposes as `name`, following a re-export to its origin.
+ * A barrel is transparent: a consumer of the barrel is a consumer of the module that declares the rule,
+ * which is the only reading under which a re-export cannot launder a second decider.
+ */
+function decidingModule(parsed, deciders, file, name, seen = new Set()) {
+  const key = `${file}#${name}`;
+  if (seen.has(key)) return null;
+  seen.add(key);
+  if (deciders.has(file) && deciders.get(file).some((decider) => decider.name === name)) return file;
+  const sourceFile = parsed.get(file);
+  if (sourceFile === undefined) return null;
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExportDeclaration(statement)) continue;
+    if (statement.moduleSpecifier === undefined || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const target = parsedSpecifier(parsed, file, statement.moduleSpecifier.text);
+    if (target === null) continue;
+    if (statement.exportClause !== undefined && ts.isNamedExports(statement.exportClause)) {
+      for (const element of statement.exportClause.elements) {
+        if ((element.propertyName ?? element.name).text !== name) continue;
+        const found = decidingModule(parsed, deciders, target, element.name.text, seen);
+        if (found !== null) return found;
+      }
+      continue;
+    }
+    const found = decidingModule(parsed, deciders, target, name, seen);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * Every call site of every exported decision-verb function, keyed by the module that declares the rule.
+ *
+ * A call is a `CallExpression` whose callee is an identifier bound to the decider, either imported from
+ * the declaring module (directly or through a barrel) or declared in the same file. That binding is what
+ * makes the reading a name resolution rather than a text scan: a method named `resolveX` on an unrelated
+ * object, and a local variable that happens to share the name, are both excluded by construction.
+ */
+function deciderCallSites(sources, parsed, deciders) {
+  const sites = new Map();
+  for (const [file, sourceFile] of parsed) {
+    const binding = new Map();
+    for (const statement of sourceFile.statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+      if (statement.importClause === undefined) continue;
+      const target = parsedSpecifier(parsed, file, statement.moduleSpecifier.text);
+      if (target === null) continue;
+      const named = statement.importClause.namedBindings;
+      if (named === undefined || !ts.isNamedImports(named)) continue;
+      for (const element of named.elements) {
+        const imported = (element.propertyName ?? element.name).text;
+        const declarer = decidingModule(parsed, deciders, target, imported);
+        if (declarer !== null) binding.set(element.name.text, { declarer, name: imported });
+      }
+    }
+    if (binding.size === 0) continue;
+    walk(sourceFile, (node) => {
+      if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return;
+      const bound = binding.get(node.expression.text);
+      if (bound === undefined) return;
+      if (bound.declarer === file) return;
+      const key = `${bound.declarer}#${bound.name}`;
+      if (!sites.has(key)) sites.set(key, []);
+      sites.get(key).push({ file, where: at(sources.root, node, sourceFile, file) });
+    });
+  }
+  return sites;
+}
+
+/**
+ * The deciders that are called from more than one module inside one surface, with those call sites.
+ *
+ * A rule consulted by several modules of one surface is a rule those modules each had to reach for;
+ * that is the shape a second implementation grows in. One caller per surface - the shape
+ * `resolveSurfaceModelSelection` has, one per Chat, Game and Preview - is exactly the pattern this looks
+ * for and does not report.
+ */
+function crowdedDeciders(sources, parsed, deciders) {
+  const sites = deciderCallSites(sources, parsed, deciders);
+  const crowded = [];
+  let consulted = 0;
+  for (const [key, calls] of sites) {
+    consulted += 1;
+    const [declarer, name] = key.split("#");
+    const perSurface = new Map();
+    for (const call of calls) {
+      const surface = surfaceOf(sources.root, call.file);
+      if (!perSurface.has(surface)) perSurface.set(surface, new Set());
+      perSurface.get(surface).add(call.file);
+    }
+    const over = [...perSurface].filter(([, callers]) => callers.size > 1);
+    if (over.length === 0) continue;
+    const decider = deciders.get(declarer).find((entry) => entry.name === name);
+    crowded.push({ declarer, name, decider, surfaces: over, calls });
+  }
+  return { crowded, consulted };
+}
+
+/**
+ * Whether a crowded decider's answer can carry two or more distinct outcomes, i.e. whether two call
+ * sites could disagree about it.
+ *
+ * This is the class's promotion criterion as a reading of the declaration: a decider answering one shape
+ * is a constructor, and a constructor cannot diverge - it names one object, so no caller receives an
+ * answer another did not. A decider answering `boolean`, or a union, is a rule a caller has to act on,
+ * and that is the shape a second call site can state differently.
+ */
+function canDiverge(decider) {
+  return decider.outcomes !== null && decider.outcomes >= 2;
+}
+
+function runDuplication(sources) {
+  const roots = workspaceSourceRoots(sources);
+  const files = roots.flatMap((root) => sources.files(root));
+  const parsed = new Map(files.map((file) => [file, sources.source(file)]));
+  const deciders = new Map();
+  for (const file of files) {
+    const declared = declaredDeciders(sources, file);
+    if (declared.length > 0) deciders.set(file, declared);
+  }
+  const { crowded, consulted } = crowdedDeciders(sources, parsed, deciders);
+  const declaredCount = [...deciders.values()].reduce((total, entries) => total + entries.length, 0);
+
+  const violations = [];
+  const constructors = [];
+  let diverging = 0;
+  for (const entry of crowded) {
+    const surfaces = entry.surfaces
+      .map(
+        ([surface, callers]) => `${surface} (${[...callers].map((file) => relativeTo(sources.root, file)).join(", ")})`,
+      )
+      .join("; ");
+    if (!canDiverge(entry.decider)) {
+      constructors.push(`${entry.name} (one outcome) -> ${surfaces}`);
+      continue;
+    }
+    diverging += 1;
+    violations.push({
+      rank: 3,
+      where: entry.calls[0].where,
+      message: `${entry.name} (${entry.declarer.slice(sources.root.length + 1).replaceAll("\\", "/")}) admits ${entry.decider.outcomes} outcomes and is called from more than one module inside a surface: ${surfaces}; ${entry.calls.map((call) => call.where).join(", ")}`,
+    });
+  }
+
+  const notes = [];
+  notes.push(
+    `duplication: ${declaredCount} exported decision-verb function(s) declared across ${files.length} source file(s), ${consulted} called from another module, ${crowded.length} called from more than one module inside one surface (${crowded.length - diverging} of them constructors)`,
+  );
+  if (constructors.length > 0)
+    notes.push(
+      `duplication: crowded by construction, cannot diverge - each answers exactly one outcome, so no two call sites can receive answers that disagree: ${constructors.join("; ")}`,
+    );
+  notes.push(
+    `duplication: promotion condition - this class is blocking for a crowded decider whose declared answer admits two or more outcomes (a boolean, or a union of two or more members). It reports ${diverging} such decider(s) today, which is why it is advisory: promoting it now would veto a plurality this tree already holds, and resolving that plurality is a product edit`,
+  );
+  notes.push(
+    "duplication: what it cannot see - two implementations with different names (nothing here reads intent), a decision inlined into a caller with no decider function at all, and a decider whose second consumer reaches it through an `export *` barrel with no `index.ts`, which the specifier resolver does not follow",
+  );
+  return { declared: declaredCount, violations, notes };
+}
+
+// ---------------------------------------------------------------------------
 // Classes: delegated gates
 // ---------------------------------------------------------------------------
 
@@ -2049,8 +2345,17 @@ function runDelegated(sources, gate) {
  * of the word `routeId`. What remains uncertain - a cap no constant names, a field no source spells while the
  * schema around it is used - prints as a note and is never reported as a violation, so a green run means the
  * class found nothing it can prove, not that it stopped looking.
+ *
+ * `duplication` joined for a reason that is not a defect: the deciders it reports as crowded are path and
+ * executable constructors (`resolveRuntimePaths`, `resolveTavernPaths`, `resolveWindowsPowerShell`), each of
+ * which answers one shape, so no two call sites can receive answers that disagree. The class prints why in its
+ * own note rather than in a comment here, because that note is what stops the next reader re-litigating them,
+ * and it names the promotion condition it is waiting on: a crowded decider whose declared answer admits two or
+ * more outcomes (a boolean, or a union of two or more members). It reports one such decider today
+ * (`resolveWindowsPowerShell`, `string | undefined`); flipping it to blocking is a product edit, not a reading
+ * this audit may take on its own.
  */
-export const ADVISORY = Object.freeze(new Set(["hygiene"]));
+export const ADVISORY = Object.freeze(new Set(["hygiene", "duplication"]));
 
 export const CLASSES = Object.freeze([
   ...CLASS_IMPLEMENTATIONS,
@@ -2061,6 +2366,12 @@ export const CLASSES = Object.freeze([
   { id: "prompt", rank: 4, title: "no rendered text carries an engineering artefact", run: runPrompt },
   { id: "promises", rank: 4, title: "a promise names something reachable", run: runPromises },
   { id: "hygiene", rank: 4, title: "no test-only production path, suppression or dead comment", run: runHygiene },
+  {
+    id: "duplication",
+    rank: 4,
+    title: "a decision-verb function is consulted by one module per surface",
+    run: runDuplication,
+  },
 ]);
 
 // The gate `package.json` runs, and only that: a test that imports the class list must not run a whole audit
