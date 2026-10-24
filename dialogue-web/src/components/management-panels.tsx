@@ -208,7 +208,7 @@ export const MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS = [
 export function modelProfileProblemText(error: unknown, labels: ReturnType<typeof messages>): string {
   if (error instanceof TavernProblemError) {
     if (error.code === "settings_revision_conflict") return labels.modelProfilesRevisionConflict;
-    if (error.code === "invalid_request") return labels.modelProfilesModelRequired;
+    if (error.code === "invalid_request") return labels.modelProfilesLevelRequired;
   }
   return problemTextWithCode(labels.failure, error, labels);
 }
