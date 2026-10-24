@@ -3,6 +3,7 @@ using System.Globalization;
 using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Navigation;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
@@ -3924,6 +3925,22 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     private static void UseNativeToolOnTile(Tool tool, GameLocation location, int tileX, int tileY, Farmer who, float staminaBefore)
     {
+        // Face the target before swinging, so the picture and the effect describe the same tile.
+        //
+        // The engine derives the swing point from the bounding box plus one tile in `FacingDirection`
+        // (`Character.GetToolLocation`), which is why a swing only lands on a tile the actor is facing
+        // from a cardinal neighbour. This method names the target tile directly instead, so the action
+        // hits whether or not the actor is looking at it - strictly more reliable, and the reason the
+        // animation could show one tile while another changed.
+        //
+        // Setting the facing where the engine can express it is the part that costs nothing: a diagonal
+        // or out-of-reach target has no such facing, and the swing still lands on the target as before.
+        // That asymmetry is deliberate - this change makes the two agree where agreement is possible, it
+        // does not make a previously-landing swing miss.
+        int? facing = SwingFacing.For(((int)who.Tile.X, (int)who.Tile.Y), (tileX, tileY));
+        if (facing is { } direction)
+            who.FacingDirection = direction;
+
         tool.DoFunction(location, tileX * 64 + 32, tileY * 64 + 32, 1, who);
         who.lastClick = Vector2.Zero;
         who.checkForExhaustion(staminaBefore);

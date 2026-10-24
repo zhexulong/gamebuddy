@@ -2,6 +2,7 @@ using Microsoft.Xna.Framework;
 using StardewValley;
 using StardewValley.Characters;
 using StardewValley.Pathfinding;
+using GameBuddy.Stardew.Core;
 
 namespace GameBuddy.Stardew;
 
@@ -141,7 +142,10 @@ internal sealed class StardewBodyController
                 + (unreachable.TargetEnclosed ? $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}" : string.Empty)
                 + $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
                 + $";target_walkable={(IsWalkableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
-                + $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile)}";
+                + $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile)}"
+                // What would open the way, and what it costs. A bare `no_native_path` leaves an agent
+                // aiming at neighbouring tiles; this says whether one rock is the whole obstacle.
+                + DescribeClearToReach(localPlayer, specification);
             return false;
         }
 
@@ -742,6 +746,136 @@ internal sealed class StardewBodyController
         return string.Join(",", parts);
     }
 
+    /// <summary>
+    /// What would open the way to the target, and what it costs - or the empty string.
+    ///
+    /// The engine treats every occupied tile the same: collision, therefore excluded. It cannot say
+    /// whether the thing in the way is a rock that one swing removes, so its refusal leaves an agent
+    /// aiming at neighbouring tiles. This asks the question the engine cannot: with the clearable tiles
+    /// priced, what is the cheapest set whose removal opens a route?
+    ///
+    /// Empty has two meanings, both honest: the target is already reachable (no clears needed), or no
+    /// number of clears opens the way (a wall is not a bill). An agent reading the refusal does not need
+    /// the difference spelled out - the absence of a promise is the answer in both cases.
+    /// </summary>
+    private static string DescribeClearToReach(Farmer localPlayer, LocalMoveSpec specification)
+    {
+        try
+        {
+            StardewValley.GameLocation? location = localPlayer.currentLocation;
+            if (location is null)
+                return string.Empty;
+            var layer = location.map.Layers[0];
+            Point actor = new((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y);
+            Point target = new((int)specification.TargetTile.X, (int)specification.TargetTile.Y);
+
+            // The walkable set is the planner's own predicate, so the search agrees with the engine about
+            // what a step is. It is bounded by the same budget the reachability probe uses.
+            var walkable = new HashSet<Point>();
+            for (int x = 0; x < layer.LayerWidth; x += 1)
+                for (int y = 0; y < layer.LayerHeight; y += 1)
+                {
+                    var tile = new Point(x, y);
+                    if (IsWalkableTile(location, localPlayer, new Vector2(x, y)))
+                        walkable.Add(tile);
+                }
+
+            var clearable = new Dictionary<Point, int>();
+            var kinds = new Dictionary<Point, string>();
+            CollectClearableTiles(location, localPlayer, clearable, kinds);
+            if (clearable.Count == 0)
+                return string.Empty;
+
+            ClearingPlan plan = ClearingPlanner.Plan(
+                (actor.X, actor.Y),
+                (target.X, target.Y),
+                walkable.Select(tile => (tile.X, tile.Y)).ToHashSet(),
+                clearable.ToDictionary(entry => (entry.Key.X, entry.Key.Y), entry => entry.Value));
+            return ClearingEvidence.Describe(
+                    plan,
+                    tile => kinds.TryGetValue(new Point(tile.X, tile.Y), out string? kind) ? kind : null)
+                is { } described
+                ? $";{described}"
+                : string.Empty;
+        }
+        catch
+        {
+            // Derived evidence must never break the refusal it decorates: the native failure and the
+            // facts already gathered above remain authoritative.
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// The tiles an actor could pay to clear, with the price, and the kind behind each price.
+    ///
+    /// One walk over the three occupancy containers the engine uses - resourceClumps, objects,
+    /// terrainFeatures - in that order, because a tile holds at most one of them. Kinds the cost table
+    /// does not price (water, a building, the map edge) are absent by construction.
+    /// </summary>
+    private static void CollectClearableTiles(
+        StardewValley.GameLocation location,
+        Farmer localPlayer,
+        Dictionary<Point, int> clearable,
+        Dictionary<Point, string> kinds)
+    {
+        int toolPower = localPlayer.CurrentTool is { } heldTool ? heldTool.UpgradeLevel + 1 : 1;
+        int mining = localPlayer.MiningLevel;
+        int foraging = localPlayer.ForagingLevel;
+        int farming = localPlayer.FarmingLevel;
+
+        foreach (StardewValley.TerrainFeatures.ResourceClump clump in location.resourceClumps)
+        {
+            if (!ExecutionManager.TryGetDebrisToolRequirement(clump, out string toolKind, out _))
+                continue;
+            string? kind = ClearableKind.Map("resourceClump", toolKind);
+            if (kind is null)
+                continue;
+            int? cost = ClearCostTable.Cost(
+                kind,
+                toolPower,
+                kind == "stump" ? foraging : mining,
+                efficient: false);
+            if (cost is null)
+                continue;
+            var tile = new Point((int)clump.Tile.X, (int)clump.Tile.Y);
+            clearable[tile] = cost.Value;
+            kinds[tile] = kind;
+        }
+
+        foreach (KeyValuePair<Vector2, StardewValley.Object> entry in location.objects.Pairs)
+        {
+            string detail = entry.Value.QualifiedItemId == "(O)2" ? "stone" : entry.Value.IsWeeds() ? "weed" : string.Empty;
+            string? kind = ClearableKind.Map("object", detail);
+            if (kind is null)
+                continue;
+            int? cost = ClearCostTable.Cost(kind, toolPower, mining, efficient: false);
+            if (cost is null)
+                continue;
+            var tile = new Point((int)entry.Key.X, (int)entry.Key.Y);
+            clearable[tile] = cost.Value;
+            kinds[tile] = kind;
+        }
+
+        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> entry in location.terrainFeatures.Pairs)
+        {
+            string detail = entry.Value switch
+            {
+                StardewValley.TerrainFeatures.Grass => "grass",
+                StardewValley.TerrainFeatures.HoeDirt dirt when dirt.crop is not null => "crop",
+                _ => string.Empty,
+            };
+            string? kind = ClearableKind.Map("terrain", detail);
+            if (kind is null)
+                continue;
+            int? cost = ClearCostTable.Cost(kind, toolPower, farming, efficient: false);
+            if (cost is null)
+                continue;
+            var tile = new Point((int)entry.Key.X, (int)entry.Key.Y);
+            clearable[tile] = cost.Value;
+            kinds[tile] = kind;
+        }
+    }
     private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification, bool findClosestReachable = false)
     {
         GameLocation? location = localPlayer.currentLocation;
