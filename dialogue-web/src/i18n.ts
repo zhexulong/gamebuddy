@@ -369,18 +369,19 @@ const en = {
   connectionLevelMax: "Max",
 
   modelProfilesTitle: "Model profiles",
+  // What this panel configures now that a profile names no model: the level a surface reasons at.
+  // The model itself is chosen in the connection form, where the endpoint that serves it is named,
+  // so a hint promising "any model name" here would point at a field this panel no longer has.
   modelProfilesHint:
-    "The model each surface uses. You can type any model name your endpoint serves — the suggestions below are only a starting point.",
+    "How much each surface reasons before it answers. The model itself comes from the connection you activated in Connection and model above.",
   modelProfilesChat: "Chat",
   modelProfilesGame: "Game companion",
-  modelProfilesModelId: "Model ID",
   modelProfilesThinkingLevel: "Thinking level",
-  modelProfilesRecommended: "Suggested models",
   modelProfilesApply: "Save",
   modelProfilesApplied: "Saved. It applies the next time that surface's runtime starts.",
   modelProfilesRevisionConflict: "This profile changed elsewhere. Reopen the panel and try again.",
   modelProfilesUnavailable: "Model profiles are unavailable.",
-  modelProfilesModelRequired: "Enter a model ID.",
+  modelProfilesLevelRequired: "Enter a thinking level.",
   chatModelSettings: "Chat model settings",
   // The companion's message affordances (design/26 §6.3: one declared icon family,
   // never an emoji standing in for a structural control).
@@ -1204,17 +1205,15 @@ const zh: Messages = {
   connectionLevelMax: "最大",
 
   modelProfilesTitle: "模型配置",
-  modelProfilesHint: "每个界面使用的模型。可以直接填写端点提供的任何模型名；下面的建议只是起点。",
+  modelProfilesHint: "每个界面回答前的思考强度。模型本身来自你在上方「连接与模型」中启用的连接。",
   modelProfilesChat: "聊天",
   modelProfilesGame: "游戏陪玩",
-  modelProfilesModelId: "模型 ID",
   modelProfilesThinkingLevel: "思考强度",
-  modelProfilesRecommended: "建议模型",
   modelProfilesApply: "保存",
   modelProfilesApplied: "已保存。将在该界面下次启动运行时生效。",
   modelProfilesRevisionConflict: "该配置已在其它地方被修改，请重新打开面板后再试。",
   modelProfilesUnavailable: "模型配置不可用。",
-  modelProfilesModelRequired: "请填写模型 ID。",
+  modelProfilesLevelRequired: "请填写思考强度。",
   chatModelSettings: "聊天模型配置",
   // 伴侣消息上的控件(design/26 §6.3:只用一套已声明的图标族,不用 emoji 冒充结构控件)。
   swipeNavigation: "消息变体",
