@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { createWriteStream, readFileSync } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { bridgePipeNameFor } from "./lib/stardew-bridge-pipe.mjs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { launchStardewLiveRun, normalizeLiveRunWindowMode } from "./lib/stardew-live-run.mjs";
 import { listStardewProcessIds } from "./lib/windows-process-tree.mjs";
 

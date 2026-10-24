@@ -35,7 +35,10 @@ async function withConfig(document: unknown, run: (configPath: string) => Promis
 
 const COMPOSER_CONFIG = Object.freeze({
   EnableLocalBridge: true,
-  PipeName: "gamebuddy-stardew",
+  // A qualified fixture name, not the production pipe name: this suite is about
+  // which keys survive a merge, so it must not spell the value
+  // `integrations/stardew/config.example.json` owns (duplicated-authority gate).
+  PipeName: "gamebuddy-stardew-policy-projection",
   BridgeToken: "bridge-token-0123456789",
   SaveId: "save-1",
   WorldId: "world-1",
