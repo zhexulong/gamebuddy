@@ -134,7 +134,13 @@ const binding = fs
   .map((name) => path.join(fixtureRoot, name))
   .find((file) => {
     try {
-      return JSON.parse(fs.readFileSync(file, "utf8")).observedSaveSlot === saveName;
+      // `saveName` is the LOGICAL name the fixture and the driver contract use
+      // (`SaveName` must equal `TemplateName`, because a native save embeds its
+      // directory name). The binding records both that and the physical slot it
+      // observed. Comparing against `observedSaveSlot` here made every logical name
+      // look unbound, which is why the launcher could not start a run at all.
+      const recorded = JSON.parse(fs.readFileSync(file, "utf8"));
+      return recorded.logicalSaveName === saveName || recorded.observedSaveSlot === saveName;
     } catch {
       return false;
     }
