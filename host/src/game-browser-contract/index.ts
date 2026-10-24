@@ -70,6 +70,9 @@ export const GAME_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "not_found",
   "state_unavailable",
   "game_endgame_settlement_unavailable",
+  // The player's own Stardew settings: the record they edited moved under them. It is a
+  // refusal, not a fault - nothing was written, and the fresh record is the thing to act on.
+  "stardew_settings_revision_conflict",
 ] as const);
 
 const GameProblemCode = Type.Union([
@@ -98,6 +101,7 @@ const GameProblemCode = Type.Union([
   Type.Literal("not_found"),
   Type.Literal("state_unavailable"),
   Type.Literal("game_endgame_settlement_unavailable"),
+  Type.Literal("stardew_settings_revision_conflict"),
 ]);
 
 // ─── Redacted read projections ──────────────────────────────────────────────
@@ -534,6 +538,72 @@ export const StardewCabinConfirmResultV1Schema = strictObject({
   status: Type.Literal("manifest_admitted"),
 });
 
+// ─── The player's own Stardew settings ─────────────────────────────────────
+
+/**
+ * One action family the player may switch off, with the number of actions it
+ * withholds so the choice is legible before it is made.
+ *
+ * The catalogue is the Mod's own: `DeniedActionFamilies` is validated against
+ * `FarmhandActionCatalog` and the Mod refuses the WHOLE policy when one entry names
+ * a family it does not declare, so this route can only ever offer ids from that
+ * catalogue (`host/src/games/stardew/stardew-action-families.ts` derives it from
+ * the Mod source, and `stardew-action-families.test.ts` holds the two equal).
+ */
+const StardewActionFamilyV1Schema = strictObject({
+  familyId: SAFE_ID,
+  actionCount: Type.Integer({ minimum: 0, maximum: 512 }),
+  denied: Type.Boolean(),
+});
+
+/**
+ * The player-owned Stardew settings projection.
+ *
+ * `revision` is the durable record's compare-and-swap token: every write sends the
+ * revision it read, and a write that arrives after someone else's is refused with
+ * `stardew_settings_revision_conflict` rather than overwriting it.
+ *
+ * `appliesToRunningGame` is the honest per-field answer to "did that just change
+ * anything?", and it is the reason the surface can promise anything at all:
+ *  - the action policy is re-read from `config.json` on a 120-tick throttle
+ *    (`FarmhandPolicyRefreshThrottle`), so a change reaches a RUNNING game in about
+ *    two seconds and this flag is true;
+ *  - the co-op night floor is read once at embodiment initialisation
+ *    (`ConfigureLifecycleMinimumFarmers`), so a change takes effect the next time the
+ *    world loads and its own sentence says so.
+ */
+export const StardewPlayerSettingsV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  revision: NonNegativeGeneration,
+  families: Type.Array(StardewActionFamilyV1Schema, { maxItems: 64 }),
+  advanceDayMinimumOnlineFarmers: Type.Integer({ minimum: 1, maximum: 4 }),
+  /**
+   * Where the answer really takes effect. `next_world_load` is the co-op floor's own
+   * fact, never a hedge: the Mod reads that field once, and a control that said
+   * "saved" without saying that would be promising a live change it cannot make.
+   */
+  appliesToRunningGame: strictObject({
+    actionPolicy: Type.Literal("within_seconds"),
+    advanceDayMinimumOnlineFarmers: Type.Literal("next_world_load"),
+  }),
+});
+
+/**
+ * One settings save. It replaces both player-owned values together, because the
+ * surface edits them together; every field is required, so no write depends on what
+ * a previous write happened to leave behind.
+ */
+export const StardewPlayerSettingsCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  expectedRevision: NonNegativeGeneration,
+  deniedActionFamilies: Type.Array(SAFE_ID, { maxItems: 64 }),
+  advanceDayMinimumOnlineFarmers: Type.Integer({ minimum: 1, maximum: 4 }),
+});
+
+export const StardewPlayerSettingsReadCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+});
+
 // ─── Problem schema ─────────────────────────────────────────────────────────
 
 const GameProblemV1Schema = strictObject({
@@ -581,6 +651,14 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   "game.installation.discovery.manual_picker",
   "game.stardew.cabins.read",
   "game.stardew.cabins.confirm",
+  /**
+   * The player's own mod settings. Declared as the pair it is: one read the settings
+   * surface mounts on, and one revision-checked save. Nothing else about the Mod's
+   * config is reachable - the fixture fields, the bridge credentials and the
+   * operator's provisioning block are not this surface's to show.
+   */
+  "game.stardew.settings.read",
+  "game.stardew.settings.update",
 ] as const);
 
 /**
@@ -763,6 +841,9 @@ export const GameBrowserContractV1 = Object.freeze({
     StardewCabinChoicesV1Schema,
     StardewCabinConfirmCommandV1Schema,
     StardewCabinConfirmResultV1Schema,
+    StardewPlayerSettingsV1Schema,
+    StardewPlayerSettingsReadCommandV1Schema,
+    StardewPlayerSettingsCommandV1Schema,
     GameProblemV1Schema,
   }),
 });
@@ -808,6 +889,9 @@ export type GameEndgameResultV1 = Static<typeof GameEndgameResultV1Schema>;
 export type StardewCabinChoicesV1 = Static<typeof StardewCabinChoicesV1Schema>;
 export type StardewCabinConfirmCommandV1 = Static<typeof StardewCabinConfirmCommandV1Schema>;
 export type StardewCabinConfirmResultV1 = Static<typeof StardewCabinConfirmResultV1Schema>;
+export type StardewPlayerSettingsV1 = Static<typeof StardewPlayerSettingsV1Schema>;
+export type StardewPlayerSettingsReadCommandV1 = Static<typeof StardewPlayerSettingsReadCommandV1Schema>;
+export type StardewPlayerSettingsCommandV1 = Static<typeof StardewPlayerSettingsCommandV1Schema>;
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
