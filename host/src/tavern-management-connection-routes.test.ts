@@ -213,6 +213,7 @@ async function withHandler(
           decidedAtMs: null,
           outputDevice: null,
           persona: null,
+          paced: false,
         };
       },
       async update() {
@@ -224,6 +225,7 @@ async function withHandler(
           decidedAtMs: 1,
           outputDevice: null,
           persona: null,
+          paced: false,
         };
       },
     }),
@@ -359,17 +361,14 @@ test("the connection read projects the catalog, and selectable models are the ca
     assert.equal(body.active, null);
     assert.deepEqual(body.connections, []);
     const byId = new Map(body.providers.map((provider) => [provider.providerId, provider]));
-    // The curated catalog: the environment connection, two Host-owned providers
-    // and exactly one escape hatch.
-    assert.deepEqual(
-      [...byId.keys()].sort(),
-      ["cpa-oai", TAVERN_ESCAPE_HATCH_PROVIDER_ID, "deepseek", "openai"].sort(),
-    );
-    assert.equal(byId.get("cpa-oai")!.environmentManaged, true);
-    assert.deepEqual(byId.get("cpa-oai")!.setupFields, []);
-    assert.deepEqual(
-      byId.get("cpa-oai")!.allowedPlayerModels.map((model) => model.modelId),
-      ["deepseek-v4.1-flash"],
+    // BYOK only: the two Host-owned providers and exactly one escape hatch. The operator's own
+    // gateway is deliberately absent - this product ships no endpoint, so it is not a channel a
+    // player could land on (see `provider-catalog.ts playerOfferedProviders`).
+    assert.deepEqual([...byId.keys()].sort(), [TAVERN_ESCAPE_HATCH_PROVIDER_ID, "deepseek", "openai"].sort());
+    assert.equal(
+      byId.has("cpa-oai"),
+      false,
+      "a player is never offered the operator gateway that only the operator's machine has",
     );
     assert.deepEqual(
       byId.get("deepseek")!.allowedPlayerModels.map((model) => model.modelId),
@@ -394,7 +393,7 @@ test("the connection read projects the catalog, and selectable models are the ca
       "modelId",
     ]);
     // The credential requirement is the player's only on the entry that declares it.
-    for (const providerId of ["cpa-oai", "deepseek", "openai"])
+    for (const providerId of ["deepseek", "openai"])
       assert.deepEqual(
         byId.get(providerId)!.setupFields.includes("apiKeyRequired"),
         false,
@@ -1382,6 +1381,7 @@ test("a profile that advertises connection routes without the Host service fails
               decidedAtMs: null,
               outputDevice: null,
               persona: null,
+              paced: false,
             };
           },
           async update() {
@@ -1393,6 +1393,7 @@ test("a profile that advertises connection routes without the Host service fails
               decidedAtMs: 1,
               outputDevice: null,
               persona: null,
+              paced: false,
             };
           },
         }),

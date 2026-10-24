@@ -83,7 +83,7 @@ import type { CompanionCardExportResult } from "./tavern/companion-card-export-s
 import type { CompanionAvatarService } from "./tavern/companion-avatar/index.js";
 import type { CompanionDeletionService } from "./tavern/companion-deletion-service.js";
 import { TavernConnectionRevisionConflict } from "./tavern/connection-store.js";
-import { TAVERN_PROVIDER_CATALOG } from "./tavern/provider-catalog.js";
+import { playerOfferedProviders } from "./tavern/provider-catalog.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
 import type { MemoryManagementService } from "./tavern/memory-management/memory-management.js";
 import type { TavernConnectionService } from "./tavern/connection-service.js";
@@ -2682,7 +2682,7 @@ function projectModelProfiles(
     apiVersion: TAVERN_BROWSER_API_VERSION,
     chat: { revision: chat.revision, modelId: chat.modelId, thinkingLevel: chat.thinkingLevel },
     game: { revision: game.revision, modelId: game.modelId, thinkingLevel: game.thinkingLevel },
-    recommendedModels: TAVERN_PROVIDER_CATALOG.flatMap((provider) =>
+    recommendedModels: playerOfferedProviders().flatMap((provider) =>
       provider.allowedPlayerModels.map((model) => ({
         providerId: provider.providerId,
         providerLabel: provider.label,

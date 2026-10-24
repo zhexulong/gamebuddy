@@ -40,6 +40,7 @@ import { useArmedConfirmation } from "./armed-confirmation";
 import { ContextDrawer } from "./ContextDrawer";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { openingVariantName } from "./opening-variant-labels";
+import { type ChatModelRoute, readChatModelRoute } from "../chat-model-route";
 import {
   type ChatTitleV1,
   createManagementPipelineApi,
@@ -1231,6 +1232,13 @@ export function SettingsSurfacePanel({
   const [languageView, setLanguageView] = useState<LanguageView>({ kind: "loading" });
   const [voiceView, setVoiceView] = useState<VoiceView>({ kind: "loading" });
   const [connectionView, setConnectionView] = useState<ConnectionView>({ kind: "loading" });
+  /**
+   * The send path's own answer, read here from the two projections this surface already loads so
+   * the connection section can word itself from it (see `ConnectionSettingsPanel.modelRoute`).
+   * `unknown` until the read lands, and `unknown` is the honest first value: a sentence derived
+   * before there is an answer would be a guess.
+   */
+  const [modelRoute, setModelRoute] = useState<ChatModelRoute>({ kind: "unknown" });
   const [modelProfilesView, setModelProfilesView] = useState<ModelProfilesView>({ kind: "loading" });
   // The one Host-owned preference record's revision, shared by both settings
   // field groups (see the header).
@@ -1307,6 +1315,10 @@ export function SettingsSurfacePanel({
       } catch {
         if (active) setConnectionView({ kind: "unavailable" });
       }
+      // The same function the Chat words itself from, over the same two reads: one authority for
+      // "would a send reach a model", never a second reading derived from the records above.
+      const route = await readChatModelRoute(api);
+      if (active) setModelRoute(route);
       try {
         // The read-probe is how the panel learns whether the mounted profile
         // published the model-profile routes: an absent route must not render an
@@ -1536,6 +1548,7 @@ export function SettingsSurfacePanel({
         // could not work.
         <ConnectionSettingsPanel
           connectionView={connectionView}
+          modelRoute={modelRoute}
           labels={labels}
           onCreate={createConnection}
           onTest={(connectionId) =>

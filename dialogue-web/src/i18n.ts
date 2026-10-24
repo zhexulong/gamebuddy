@@ -284,6 +284,16 @@ const en = {
   // shipped Chat profile, and the Chat — which had read the answer — said nothing.
   connectionSetupNotice:
     "A saved connection is a provider, the model it serves, and that provider's credential. Choose a provider and the model it serves, then save the connection here. Its row appears below: test it there, and enable it once the test passes.",
+  // The first-run truth, worded from `readChatModelRoute` rather than from this section's own
+  // records. The product ships no model endpoint: there is nothing to send to until the player
+  // brings a connection, and saying so plainly - with the form right below as the next step - is
+  // the honest sentence. It deliberately does not read as a fault (see the panel: this is hint
+  // prose, not a warning plate): configuring a connection is what a new player is here to do.
+  connectionNeedsYourKey:
+    "No connection yet, so she has no model to answer with. Bring your own: choose a provider and the model it serves below, add that provider's API key, then save and test it. GameBuddy supplies no endpoint of its own.",
+  // The picker's unanswered state. The form opens on nothing chosen because the product has no
+  // channel of its own, and a preselected entry would be a claim that it does.
+  connectionProviderNone: "Choose a provider…",
   connectionActivationNotice:
     "Connection activated. It applies from your next conversation; one already in progress is not switched.",
   connectionProvider: "Provider",
@@ -1123,6 +1133,9 @@ const zh: Messages = {
   connectionActiveLabel: "当前连接",
   connectionSetupNotice:
     "一条保存的连接由渠道、它提供的模型和该渠道的凭据组成。选择渠道和它提供的模型，然后在这里保存连接。保存后的记录会出现在下方：在那里测试，测试通过即可启用。",
+  connectionNeedsYourKey:
+    "还没有连接，所以她暂时没有可用的模型来回答。请自备：在下方选择渠道和它提供的模型，填入你在该渠道的 API Key，保存并测试。GameBuddy 本身不提供任何端点。",
+  connectionProviderNone: "请选择渠道……",
   connectionActivationNotice: "连接已启用。从下次开始对话时生效；正在进行的会话不会被切换。",
   connectionProvider: "渠道",
   connectionRecommended: "推荐",

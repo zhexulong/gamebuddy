@@ -17,6 +17,7 @@ import {
   type TavernVoiceDevicesV1,
   type TavernVoicePreferenceV1,
 } from "../management-pipeline-api";
+import type { ChatModelRoute } from "../chat-model-route";
 
 /**
  * The management panels (design/26 §4.2, design/28 §2), moved out of
@@ -412,6 +413,7 @@ export function connectionFailureText(
 
 export function ConnectionSettingsPanel({
   connectionView,
+  modelRoute,
   labels,
   onCreate,
   onTest,
@@ -420,6 +422,20 @@ export function ConnectionSettingsPanel({
   onRemove,
 }: Readonly<{
   connectionView: Extract<ConnectionView, { kind: "ready" }>;
+  /**
+   * What a message the player sends from the Chat would reach a model through, from
+   * `readChatModelRoute` - the ONE function that answers it, read here from the same two settings
+   * projections this panel already needs. The section words itself from that answer instead of
+   * deriving a second one from its own connection records: two readings of the same question is
+   * how this surface once promised a model while the Chat settled a turn.
+   *
+   * `connection` is a send that works. `builtin` and `none` are both "no provider at all" now that
+   * the product supplies no gateway, and each states the same next step: bring a connection. This
+   * section deliberately does not tell them apart - the difference between "you configured nothing"
+   * and "the Host cannot serve the profile" is not a difference in what the player must do.
+   * `unknown` says nothing, because a read that did not answer is not evidence.
+   */
+  modelRoute: ChatModelRoute;
   labels: ReturnType<typeof messages>;
   onCreate: (form: ConnectionForm) => Promise<boolean>;
   onTest: (connectionId: string) => void;
@@ -440,24 +456,12 @@ export function ConnectionSettingsPanel({
   const [modelId, setModelId] = useState("");
 
   const providers = connectionView.state.providers;
-  // A player who has configured nothing meets this form before they have anything to
-  // put in it, so the entry it opens on is the one that asks nothing of them: the
-  // operator's own gateway, whose `setupFields` is empty because its endpoint and
-  // credential both live in this machine's environment. That is the behaviour
-  // SillyTavern's API panel has - its shipped first-run settings select the channel
-  // that answers with a shared anonymous key (`"main_api": "koboldhorde"` in
-  // `default/content/settings.json`, `ANONYMOUS_KEY` in `src/endpoints/horde.js`),
-  // never 'Custom (OpenAI-compatible)', which asks for a URL and a key and is one
-  // choice away in the same picker.
-  //
-  // The candidacy is read off the Host's own declaration, never off a provider name
-  // or a list position: an entry that declares no setup field needs nothing typed.
-  // Only when no published entry is like that does the Host's first entry stand in,
-  // so the form is never left with a picker and no fields under it.
-  const selected =
-    providers.find((entry) => entry.providerId === providerId) ??
-    providers.find((entry) => entry.setupFields.length === 0) ??
-    providers[0];
+  // Nothing is preselected. This product ships no model endpoint, so a player who has configured
+  // nothing must CHOOSE a provider they can actually fill in rather than be handed one: the form
+  // opens on the empty choice, renders no field, and its save control stays disabled until a
+  // provider is named. A default here is a claim that the product already has a channel, and it
+  // does not.
+  const selected = providers.find((entry) => entry.providerId === providerId);
   // What one provider's endpoints told us they serve, at their last probe: the only authority on
   // which models exist there, and the reason a player is not limited to our own catalogue.
   const servedModelsFor = (providerId: string | undefined): readonly string[] => [
@@ -513,36 +517,30 @@ export function ConnectionSettingsPanel({
           </dl>
         )}
         {/*
-         * The ordinary first hour, and it is not a fault: a player who has just
-         * installed the product has no connection because they have not made one
-         * yet. It is stated as the panel's own hint prose - secondary ink on the
-         * section's own canvas, the same treatment `.management-settings-hint`
-         * gives every other "this is the state, here is what to do" sentence in
-         * these sections - not as a `.warning-banner` plate of `--warning` gold
-         * over a wash of the same gold. Measured before this: the plate was
-         * 640x100 px at 1440x900 for a 327-character sentence, and it was the
-         * only saturated colour in the viewport, on the one screen a new player
-         * has to trust. The fault styles stay for the states that are genuinely
-         * wrong: `connectionView.notice` below still renders `.warning-banner`
-         * for a busy turn and for a connection that changed elsewhere, and a
-         * saved record that fails its probe carries its own `--danger` and
-         * `--warning` read-back in `ConnectionRow`.
+         * The ordinary first hour, and it is not a fault: a player who has just installed the
+         * product has no connection because they have not made one yet. It is stated as the
+         * panel's own hint prose - secondary ink on the section's own canvas, the same treatment
+         * `.management-settings-hint` gives every other "this is the state, here is what to do"
+         * sentence in these sections - not as a `.warning-banner` plate of `--warning` gold over a
+         * wash of the same gold.
          *
-         * The sentence says what THIS section configures and where the rest of the
-         * work happens. It says nothing about whether a reply can reach a model:
-         * that answer is `readChatModelRoute`'s, and its one surface is the Chat.
-         * Measured on the build this replaced (`80a69c86`, capture `shots-final43`):
-         * this section opened with "a reply cannot reach a model, and a normal
-         * install has none to fall back on" while in the same run a turn settled
-         * through the Chat model profile this build ships, and the Chat said
-         * nothing at all. The connection records are `active === null` in both
-         * that state and the one where no reply has a model, so a sentence read
-         * off them cannot be the send path's answer - it can only be a second,
-         * unreadable copy of it.
+         * Which sentence it is comes from `readChatModelRoute`, the one function that answers
+         * "would a send reach a model". This section does not derive a second answer from its own
+         * records: `active === null` is true both when nothing is configured and when the Host
+         * cannot serve the profile, and reading the records is exactly how this surface once
+         * promised a model on a build whose Chat had no opinion at all. With `connection` a send
+         * works and the section says only what it configures; otherwise it states the one fact the
+         * player needs - she cannot answer until they bring a connection - and points at the form
+         * directly below, which is where that happens. `unknown` says nothing, because a read that
+         * did not answer is not evidence.
          */}
-        {connectionView.state.active === null && (
-          <p className="management-settings-hint" data-connection-no-selection>
-            {labels.connectionSetupNotice}
+        {connectionView.state.active === null && modelRoute.kind !== "unknown" && (
+          <p
+            className="management-settings-hint"
+            data-connection-no-selection
+            data-connection-model-route={modelRoute.kind}
+          >
+            {modelRoute.kind === "connection" ? labels.connectionSetupNotice : labels.connectionNeedsYourKey}
           </p>
         )}
         {connectionView.notice === "activation" && (
@@ -601,6 +599,14 @@ export function ConnectionSettingsPanel({
               setModelId(servedModelsFor(nextProviderId)[0] ?? "");
             }}
           >
+            {/*
+             * The empty choice is a real option, not a label: the form has not been answered yet,
+             * and a player who has configured nothing is told which providers they can fill in
+             * instead of being pointed at a channel this product does not supply.
+             */}
+            <option value="" disabled>
+              {labels.connectionProviderNone}
+            </option>
             {providers.map((provider) => (
               <option key={provider.providerId} value={provider.providerId}>
                 {provider.escapeHatch ? labels.connectionEscapeHatch : provider.label}
@@ -747,7 +753,7 @@ export function ConnectionSettingsPanel({
           )}
 
           <div className="composer-actions">
-            <button type="submit" className="small-button" disabled={connectionView.pending}>
+            <button type="submit" className="small-button" disabled={connectionView.pending || selected === undefined}>
               {labels.connectionSave}
             </button>
           </div>

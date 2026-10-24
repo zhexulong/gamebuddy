@@ -66,6 +66,12 @@ export const TAVERN_ESCAPE_HATCH_PROVIDER_ID = "gamebuddy-openai-compatible" as 
 /** Pi provider id of the operator-managed environment connection (design/28 §5.2). */
 export const TAVERN_ENVIRONMENT_PROVIDER_ID = "cpa-oai" as const;
 export const TAVERN_ENVIRONMENT_VARIABLE = "CPA_OAI_API_KEY" as const;
+/**
+ * The one environment switch that offers the operator's own gateway to a browser. It is a developer's
+ * opt-in, never a player's default: this product ships no model endpoint, so a player who has
+ * configured nothing has nothing to send to and must be told to bring their own connection.
+ */
+export const TAVERN_OPERATOR_GATEWAY_ENV = "GAMEBUDDY_OPERATOR_GATEWAY";
 
 /**
  * The complete set of player-fillable setup fields. It is a closed allowlist:
@@ -147,12 +153,13 @@ const defineProvider = (provider: TavernCatalogProvider): TavernCatalogProvider 
   });
 
 export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.freeze([
-  // The environment connection is the zero-configuration default: activating
-  // it writes exactly the provider block this Host wrote before player
-  // connections existed, so its Pi provider id and endpoint are frozen.
+  // The operator's own gateway. It is NOT a player's default and is not offered as a normal choice:
+  // this product ships no model endpoint, so a player who has configured nothing has nowhere to
+  // send. It stays in the catalogue because `catalogProvider()` must keep resolving it for the
+  // records and the frozen runtime provider block the operator's own machine already holds.
   defineProvider({
     providerId: TAVERN_ENVIRONMENT_PROVIDER_ID,
-    label: "GameBuddy Agent (CPA)",
+    label: "Operator gateway (developer only)",
     piProviderId: TAVERN_ENVIRONMENT_PROVIDER_ID,
     piApi: "openai-completions",
     baseUrl: "http://127.0.0.1:8317/v1",
@@ -219,6 +226,29 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
 
 export function catalogProvider(providerId: string): TavernCatalogProvider | null {
   return TAVERN_PROVIDER_CATALOG.find((entry) => entry.providerId === providerId) ?? null;
+}
+
+/**
+ * The entries a BROWSER may offer as a choice: bring-your-own-key only.
+ *
+ * This product ships no model endpoint, so the operator's gateway (whose endpoint and credential
+ * both live on the operator's own machine) is not a channel a player could land on: one who has
+ * configured nothing must be told to bring a connection, not handed one that does not exist on
+ * their disk. The entry stays in `TAVERN_PROVIDER_CATALOG` so that `catalogProvider()` still
+ * resolves the operator's own stored records and the frozen runtime provider block, and so that a
+ * developer can reach it at all - but reaching it is an explicit act (`GAMEBUDDY_OPERATOR_GATEWAY=1`)
+ * and it is labelled as one, never a default.
+ *
+ * Read at projection time, not at module load: a process started without the switch must not be
+ * able to publish it because some earlier importer cached the list.
+ */
+export function playerOfferedProviders(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): readonly TavernCatalogProvider[] {
+  const operatorOptedIn = environment[TAVERN_OPERATOR_GATEWAY_ENV] === "1";
+  return Object.freeze(
+    TAVERN_PROVIDER_CATALOG.filter((entry) => entry.providerId !== TAVERN_ENVIRONMENT_PROVIDER_ID || operatorOptedIn),
+  );
 }
 
 export function catalogModel(provider: TavernCatalogProvider, modelId: string): TavernCatalogModel | null {

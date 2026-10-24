@@ -11,8 +11,8 @@ import { probeTavernConnection, type TavernConnectionProbe } from "./connection-
 import {
   catalogModel,
   catalogProvider,
+  playerOfferedProviders,
   TAVERN_ENVIRONMENT_PROVIDER_ID,
-  TAVERN_PROVIDER_CATALOG,
 } from "./provider-catalog.js";
 import {
   TAVERN_BROWSER_API_VERSION,
@@ -257,7 +257,7 @@ function projectActiveRecord(record: TavernConnectionRecord): NonNullable<Tavern
 }
 
 function projectProviders(): TavernConnectionStateV1["providers"] {
-  return TAVERN_PROVIDER_CATALOG.map((provider) => ({
+  return playerOfferedProviders().map((provider) => ({
     providerId: provider.providerId,
     label: provider.label,
     setupFields: [...provider.setupFields],

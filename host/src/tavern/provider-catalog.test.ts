@@ -5,7 +5,13 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { TAVERN_PI_API_SHAPES, isTavernPiApi } from "./provider-catalog.js";
+import {
+  TAVERN_ENVIRONMENT_PROVIDER_ID,
+  TAVERN_OPERATOR_GATEWAY_ENV,
+  TAVERN_PI_API_SHAPES,
+  isTavernPiApi,
+  playerOfferedProviders,
+} from "./provider-catalog.js";
 
 /**
  * The catalog claims its shape list IS the set of APIs Pi can speak, and a player relies on
@@ -63,10 +69,16 @@ function piAiDirectory(): string {
 function piAiRegisteredApis(): readonly string[] {
   const compat = readFileSync(join(piAiDirectory(), "dist", "compat.js"), "utf8");
   const start = compat.indexOf("const BUILTIN_APIS = [");
-  assert.notEqual(start, -1, "pi-ai no longer declares a BUILTIN_APIS registry; the shape list has no authority to pin against");
+  assert.notEqual(
+    start,
+    -1,
+    "pi-ai no longer declares a BUILTIN_APIS registry; the shape list has no authority to pin against",
+  );
   const end = compat.indexOf("];", start);
   assert.notEqual(end, -1, "pi-ai's BUILTIN_APIS registry is malformed");
-  const ids = [...compat.slice(start, end).matchAll(/\["([a-z0-9-]+)",/gu)].flatMap((match) => (match[1] === undefined ? [] : [match[1]]));
+  const ids = [...compat.slice(start, end).matchAll(/\["([a-z0-9-]+)",/gu)].flatMap((match) =>
+    match[1] === undefined ? [] : [match[1]],
+  );
   assert.ok(ids.length > 0, "pi-ai's BUILTIN_APIS registry parsed to zero ids");
   return ids;
 }
@@ -86,5 +98,56 @@ test("every catalog shape is admitted by the catalog's own guard, and nothing el
   }
   for (const rejected of ["", "openai", "OPENAI-COMPLETIONS", "openai_completions", "not-a-shape"]) {
     assert.equal(isTavernPiApi(rejected), false, `${JSON.stringify(rejected)} must be refused`);
+  }
+});
+
+/**
+ * The product is BYOK: it ships no model endpoint, so a player who has configured nothing must be
+ * told to bring a connection rather than handed one that lives on the developer's own machine.
+ *
+ * The population here is the catalogue itself, not a hand-written list of ids: whatever entry is
+ * operator-owned is the entry that must be withheld, and the assertion names it when it drifts.
+ */
+test("the browser is offered every catalog entry except the operator's own gateway", () => {
+  const offered = playerOfferedProviders({});
+  // Read at projection time, never cached at module load: the same process, two environments, two
+  // answers. A memoised list would publish the operator entry to a process that never opted in.
+  assert.notDeepEqual(
+    offered.map((entry) => entry.providerId),
+    playerOfferedProviders({ [TAVERN_OPERATOR_GATEWAY_ENV]: "1" }).map((entry) => entry.providerId),
+    "the offer follows the environment it is read with, not one cached answer",
+  );
+  assert.equal(
+    offered.some((entry) => entry.providerId === TAVERN_ENVIRONMENT_PROVIDER_ID),
+    false,
+    `${TAVERN_ENVIRONMENT_PROVIDER_ID} is the operator's own gateway and must not be offered by default`,
+  );
+  // Every entry the player CAN land on is one they can actually fill in: a BYOK entry names the
+  // credential field, and a keyless local endpoint is the escape hatch's own declared answer.
+  assert.ok(offered.length >= 2, "the offer is not empty");
+  for (const entry of offered) {
+    assert.ok(
+      entry.setupFields.includes("apiKey") || entry.escapeHatch,
+      `${entry.providerId} must be configurable by the player or be the escape hatch itself`,
+    );
+  }
+});
+
+test("the operator's gateway is reachable only through an explicit, labelled developer switch", () => {
+  const optedIn = playerOfferedProviders({ [TAVERN_OPERATOR_GATEWAY_ENV]: "1" });
+  const operator = optedIn.find((entry) => entry.providerId === TAVERN_ENVIRONMENT_PROVIDER_ID);
+  assert.ok(operator, "the switch offers the operator gateway");
+  // A developer path must never look like an ordinary choice: the label says what it is.
+  assert.match(operator.label, /developer/iu);
+  assert.deepEqual(operator.setupFields, [], "the player has nothing to type for it, which is why it is not a default");
+  // Any other value is not the opt-in.
+  for (const value of ["", "0", "true", "yes", undefined]) {
+    assert.equal(
+      playerOfferedProviders({ [TAVERN_OPERATOR_GATEWAY_ENV]: value }).some(
+        (entry) => entry.providerId === TAVERN_ENVIRONMENT_PROVIDER_ID,
+      ),
+      false,
+      `${JSON.stringify(value)} must not count as the opt-in`,
+    );
   }
 });
