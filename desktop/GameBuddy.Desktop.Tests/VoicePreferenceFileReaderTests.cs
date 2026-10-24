@@ -19,7 +19,7 @@ public sealed class VoicePreferenceFileReaderTests
     public void Read_projects_a_valid_undecided_preference()
     {
         using var root = TemporaryRoot.Create();
-        root.WritePreference("""{"schemaVersion":1,"revision":2,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""");
+        root.WritePreference("""{"schemaVersion":1,"revision":2,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""");
 
         var preference = new VoicePreferenceFileReader(root.PreferencePath).Read();
 
@@ -33,7 +33,7 @@ public sealed class VoicePreferenceFileReaderTests
     public void Read_projects_a_valid_accepted_preference_and_admits_cloud_tts()
     {
         using var root = TemporaryRoot.Create();
-        root.WritePreference("""{"schemaVersion":1,"revision":3,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":null,"persona":null}""");
+        root.WritePreference("""{"schemaVersion":1,"revision":3,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":null,"persona":null,"paced":false}""");
 
         var preference = new VoicePreferenceFileReader(root.PreferencePath).Read();
 
@@ -47,7 +47,7 @@ public sealed class VoicePreferenceFileReaderTests
     public void Read_projects_a_valid_revoked_preference_without_admission()
     {
         using var root = TemporaryRoot.Create();
-        root.WritePreference("""{"schemaVersion":1,"revision":4,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"revoked","decidedAtMs":1700000000000,"outputDevice":null,"persona":null}""");
+        root.WritePreference("""{"schemaVersion":1,"revision":4,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"revoked","decidedAtMs":1700000000000,"outputDevice":null,"persona":null,"paced":false}""");
 
         var preference = new VoicePreferenceFileReader(root.PreferencePath).Read();
 
@@ -63,7 +63,7 @@ public sealed class VoicePreferenceFileReaderTests
         // The record is one file for both settings groups: a chosen companion
         // language must not stop the Voice fields from being projected.
         using var root = TemporaryRoot.Create();
-        root.WritePreference("""{"schemaVersion":1,"revision":5,"locale":"en-US","disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":"waveout:2","persona":null}""");
+        root.WritePreference("""{"schemaVersion":1,"revision":5,"locale":"en-US","disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":"waveout:2","persona":null,"paced":false}""");
 
         var preference = new VoicePreferenceFileReader(root.PreferencePath).Read();
 
@@ -73,18 +73,35 @@ public sealed class VoicePreferenceFileReaderTests
     }
 
     [Fact]
+    public void Read_projects_a_record_that_also_carries_the_paced_delivery_preference()
+    {
+        // The one record also stores whether the player chose short paced Chat
+        // replies. That choice belongs to Chat, not to this launch gate - but the
+        // gate's exact-key rule means it still has to know the key exists: every
+        // Settings write rewrites the whole record, so a gate that does not know
+        // the key refuses the file and Voice silently stops starting.
+        using var root = TemporaryRoot.Create();
+        root.WritePreference("""{"schemaVersion":1,"revision":7,"locale":"en-US","disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":null,"persona":null,"paced":true}""");
+
+        var preference = new VoicePreferenceFileReader(root.PreferencePath).Read();
+
+        Assert.True(preference.CloudTtsAdmitted);
+        Assert.Equal(7, preference.Revision);
+    }
+
+    [Fact]
     public void Read_projects_the_voice_persona_and_defaults_it_to_null()
     {
         // No persona in an accepted record leaves it null - the player's
         // "System default", which the launch plan resolves to the product's own
         // default persona instead of sending no persona at all.
         using var undecided = TemporaryRoot.Create();
-        undecided.WritePreference("""{"schemaVersion":1,"revision":3,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":null,"persona":null}""");
+        undecided.WritePreference("""{"schemaVersion":1,"revision":3,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":null,"persona":null,"paced":false}""");
         Assert.Null(new VoicePreferenceFileReader(undecided.PreferencePath).Read().Persona);
 
         // A stored persona is projected verbatim.
         using var chosen = TemporaryRoot.Create();
-        chosen.WritePreference("""{"schemaVersion":1,"revision":6,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":null,"persona":"soft_maid"}""");
+        chosen.WritePreference("""{"schemaVersion":1,"revision":6,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":1700000000000,"outputDevice":null,"persona":"soft_maid","paced":false}""");
         Assert.Equal("soft_maid", new VoicePreferenceFileReader(chosen.PreferencePath).Read().Persona);
     }
 
@@ -99,7 +116,7 @@ public sealed class VoicePreferenceFileReaderTests
 
     [Theory]
     [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"extra":"x"}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
     [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null}""")]
     [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided"}""")]
     [InlineData("""{"consent":"undecided"}""")]
@@ -116,8 +133,8 @@ public sealed class VoicePreferenceFileReaderTests
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":7,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":true,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":7,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":true,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
     public void Read_rejects_a_language_field_that_is_not_null_or_a_string(string json)
     {
         using var root = TemporaryRoot.Create();
@@ -127,11 +144,11 @@ public sealed class VoicePreferenceFileReaderTests
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":"SoftMaid"}""")]
-    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":"soft-maid"}""")]
-    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":""}""")]
-    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":7}""")]
-    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}""")]
+    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":"SoftMaid","paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":"soft-maid","paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":"","paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":7,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","paced":false}""")]
     public void Read_rejects_a_persona_outside_the_bounded_shape(string json)
     {
         using var root = TemporaryRoot.Create();
@@ -141,9 +158,9 @@ public sealed class VoicePreferenceFileReaderTests
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":2,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":"1","revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1.5,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
+    [InlineData("""{"schemaVersion":2,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":"1","revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1.5,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
     public void Read_rejects_a_schema_version_other_than_exactly_one(string json)
     {
         using var root = TemporaryRoot.Create();
@@ -153,9 +170,9 @@ public sealed class VoicePreferenceFileReaderTests
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":"mimo-cloud-tts-v2","consent":"accepted","decidedAtMs":1,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"accepted","decidedAtMs":1,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":"mimo-cloud-tts-v2","consent":"accepted","decidedAtMs":1,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"accepted","decidedAtMs":1,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"accepted","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
     public void Read_rejects_accepted_without_the_exact_disclosure_contract_and_decision_time(string json)
     {
         using var root = TemporaryRoot.Create();
@@ -165,9 +182,9 @@ public sealed class VoicePreferenceFileReaderTests
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":1,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":0,"outputDevice":null,"persona":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":1,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":"mimo-cloud-tts-v1","consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":0,"outputDevice":null,"persona":null,"paced":false}""")]
     public void Read_rejects_undecided_with_any_decision_data(string json)
     {
         using var root = TemporaryRoot.Create();
@@ -177,9 +194,9 @@ public sealed class VoicePreferenceFileReaderTests
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"maybe","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":3,"decidedAtMs":null,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":null,"decidedAtMs":null,"outputDevice":null,"persona":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":"maybe","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":3,"decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":1,"locale":null,"disclosureVersion":null,"consent":null,"decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
     public void Read_rejects_unknown_consent_values(string json)
     {
         using var root = TemporaryRoot.Create();
@@ -189,12 +206,15 @@ public sealed class VoicePreferenceFileReaderTests
     }
 
     [Theory]
-    [InlineData("""{"schemaVersion":1,"revision":-1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":"0","locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":7,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":"now","outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":-1,"outputDevice":null,"persona":null}""")]
-    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"revoked","decidedAtMs":null,"outputDevice":null,"persona":null}""")]
+    [InlineData("""{"schemaVersion":1,"revision":-1,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":"0","locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":7,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":"now","outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":-1,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"revoked","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":false}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":"true"}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":1}""")]
+    [InlineData("""{"schemaVersion":1,"revision":0,"locale":null,"disclosureVersion":null,"consent":"undecided","decidedAtMs":null,"outputDevice":null,"persona":null,"paced":null}""")]
     public void Read_rejects_wrong_field_types_and_missing_decision_time(string json)
     {
         using var root = TemporaryRoot.Create();

@@ -38,6 +38,11 @@ internal sealed class VoicePreferenceFileReader
 {
     private const int SchemaVersion = 1;
     private const string DisclosureContract = "mimo-cloud-tts-v1";
+
+    // The stored record's complete key set, in the writing Host's own order.
+    internal static readonly string[] StoredKeys =
+        { "schemaVersion", "revision", "locale", "disclosureVersion", "consent", "decidedAtMs", "outputDevice", "persona", "paced" };
+
     private readonly string path;
 
     internal VoicePreferenceFileReader(string path)
@@ -68,9 +73,11 @@ internal sealed class VoicePreferenceFileReader
     {
         // The record's exact key set IS the frozen shape, and it now carries the
         // companion language, so a record written before that field existed is
-        // refused rather than half-read.
-        var properties = new[] { "schemaVersion", "revision", "locale", "disclosureVersion", "consent", "decidedAtMs", "outputDevice", "persona" };
-        if (!InstalledGenerationPaths.ExactProperties(value, properties) ||
+        // refused rather than half-read. One entry per field the writing Host
+        // stores (host/src/settings/player-preference-store.ts); the cross-language
+        // guard test compares this list against the writer's, so a preference added
+        // on one side alone fails there instead of in a player's voice pipeline.
+        if (!InstalledGenerationPaths.ExactProperties(value, StoredKeys) ||
             !value.GetProperty("schemaVersion").TryGetInt32(out var schemaVersion) || schemaVersion != SchemaVersion ||
             !value.GetProperty("revision").TryGetInt64(out var revision) || revision < 0)
             throw new InvalidVoicePreferenceException();
@@ -116,6 +123,13 @@ internal sealed class VoicePreferenceFileReader
         if (consent == VoiceCloudTtsConsent.Accepted && disclosureVersion != DisclosureContract)
             throw new InvalidVoicePreferenceException();
         if (consent != VoiceCloudTtsConsent.Undecided && decidedAtMs is null)
+            throw new InvalidVoicePreferenceException();
+
+        // Whether Chat replies arrive as short paced pieces. Chat's business, not
+        // this launch gate's: only the boolean kind is required, never the value.
+        // Every Settings write rewrites the whole record, so knowing the key is
+        // what keeps a pacing choice from looking like a corrupt record here.
+        if (value.GetProperty("paced").ValueKind is not (JsonValueKind.True or JsonValueKind.False))
             throw new InvalidVoicePreferenceException();
 
         // Output endpoint: null selects the Windows default at each open; a

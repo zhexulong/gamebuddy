@@ -155,16 +155,16 @@ public sealed class VoiceLaunchCoordinatorTests
         {
             schemaVersion = 1,
             revision,
-            // The record's exact key set is the frozen shape (VoicePreferenceFileReader), and it carries the
-            // companion language: a fixture that writes the pre-`locale` shape is refused, so every
-            // accepted-consent case here read null. The launch gate only needs the kind, so null is the
-            // honest value for a fixture that says nothing about language.
+            // The record's exact key set is the frozen shape (VoicePreferenceFileReader): every
+            // Settings write rewrites the whole record, so the fixture writes what the Host writes,
+            // including the Chat pacing choice this launch gate only has to recognise.
             locale = (string?)null,
             disclosureVersion,
             consent,
             decidedAtMs = consent == "undecided" ? (long?)null : 1_700_000_000_000L,
             outputDevice,
             persona,
+            paced = false,
         };
         File.WriteAllText(root.PreferencePath, System.Text.Json.JsonSerializer.Serialize(preference));
     }

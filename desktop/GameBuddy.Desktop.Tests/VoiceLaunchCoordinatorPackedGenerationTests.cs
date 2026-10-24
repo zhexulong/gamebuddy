@@ -98,6 +98,10 @@ public sealed class VoiceLaunchCoordinatorPackedGenerationTests
             decidedAtMs = consent == "undecided" ? (long?)null : 1_700_000_000_000L,
             outputDevice = (string?)null,
             persona = (string?)null,
+            // The record's exact key set is the frozen shape: the fixture writes what
+            // the Host writes, including the Chat pacing choice this gate only has to
+            // recognise rather than act on.
+            paced = false,
         };
         File.WriteAllText(path, JsonSerializer.Serialize(preference));
     }
