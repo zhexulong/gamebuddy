@@ -76,11 +76,11 @@ const composedRoot = {
 
 const recommendedModels = [
   {
-    providerId: "cpa-oai",
-    providerLabel: "CPA OAI",
+    providerId: "deepseek",
+    providerLabel: "DeepSeek",
     modelId: "deepseek-v4",
     modelLabel: "DeepSeek V4",
-    allowedThinkingLevels: ["off", "low", "high"],
+    allowedThinkingLevels: ["off", "low", "high", "max"],
     defaultThinkingLevel: "low",
   },
 ];
@@ -90,10 +90,12 @@ function json200(body: unknown) {
 }
 
 type Surface = "chat" | "game";
+/** The one field a profile still holds: how much that surface reasons before it answers. */
+type SurfaceThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /** One mounted Host session's model-profile store, at the wire the product uses. */
 type ProfileMount = Readonly<{
-  store: Record<Surface, { revision: number; modelId: string; thinkingLevel: string }>;
+  store: Record<Surface, { revision: number; thinkingLevel: string }>;
   puts: ReadonlyArray<Record<string, unknown>>;
   gets: { count: number };
 }>;
@@ -103,10 +105,10 @@ type ProfileMount = Readonly<{
  * `/api/tavern/v1/settings/profiles`, and the readiness stubs the nav needs.
  * Every GET is counted, so "did it re-read" is a measurement rather than a guess.
  */
-async function mountWithProfiles(page: Page, seed: { chat: string; game: string }): Promise<ProfileMount> {
+async function mountWithProfiles(page: Page, seed: { chat: SurfaceThinkingLevel; game: SurfaceThinkingLevel }): Promise<ProfileMount> {
   const store: ProfileMount["store"] = {
-    chat: { revision: 1, modelId: seed.chat, thinkingLevel: "low" },
-    game: { revision: 1, modelId: seed.game, thinkingLevel: "low" },
+    chat: { revision: 1, thinkingLevel: seed.chat },
+    game: { revision: 1, thinkingLevel: seed.game },
   };
   const puts: Array<Record<string, unknown>> = [];
   const gets = { count: 0 };
@@ -136,7 +138,6 @@ async function mountWithProfiles(page: Page, seed: { chat: string; game: string 
     const command = route.request().postDataJSON() as {
       surface: Surface;
       expectedRevision: number;
-      modelId: string;
       thinkingLevel: string;
     };
     puts.push(command);
@@ -145,7 +146,7 @@ async function mountWithProfiles(page: Page, seed: { chat: string; game: string 
       await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "settings_revision_conflict" }) });
       return;
     }
-    store[command.surface] = { revision: current.revision + 1, modelId: command.modelId, thinkingLevel: command.thinkingLevel };
+    store[command.surface] = { revision: current.revision + 1, thinkingLevel: command.thinkingLevel };
     await route.fulfill(json200(profilesBody()));
   });
 
@@ -175,7 +176,7 @@ function settingsEditor(page: Page, surface: Surface) {
  * each switch is one fresh read (the counter proves the remount).
  */
 test("the Settings game profile and the Game surface's editor show each other's writes", async ({ page }) => {
-  const mount = await mountWithProfiles(page, { chat: "chat-initial", game: "game-initial" });
+  const mount = await mountWithProfiles(page, { chat: "low", game: "low" });
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=settings`);
   const settings = page.getByTestId("settings-surface");
@@ -183,20 +184,19 @@ test("the Settings game profile and the Game surface's editor show each other's 
   const gameEditor = settingsEditor(page, "game");
   await expect(gameEditor).toBeVisible();
   await expect(gameEditor.locator("h3")).toHaveText("Game companion");
-  await expect(gameEditor.locator("#model-profile-model-game")).toHaveValue("game-initial");
+  await expect(gameEditor.locator("#model-profile-level-game")).toHaveValue("low");
   const readsBeforeSettingsSave = mount.gets.count;
 
-  await gameEditor.locator("#model-profile-model-game").fill("written-by-settings");
+  await gameEditor.locator("#model-profile-level-game").fill("high");
   await gameEditor.getByRole("button", { name: "Save Game companion" }).click();
   await expect.poll(() => mount.puts.length).toBe(1);
   expect(mount.puts[0]).toEqual({
     apiVersion: 1,
     surface: "game",
     expectedRevision: 1,
-    modelId: "written-by-settings",
-    thinkingLevel: "low",
+    thinkingLevel: "high",
   });
-  await expect(gameEditor.locator("#model-profile-model-game")).toHaveValue("written-by-settings");
+  await expect(gameEditor.locator("#model-profile-level-game")).toHaveValue("high");
   // The Settings entry's own write re-reads nothing: its validated read-back is
   // the durable value (management-surface-panels.tsx:1262).
   expect(mount.gets.count, "the Settings entry re-read after its own save").toBe(readsBeforeSettingsSave);
@@ -208,30 +208,29 @@ test("the Settings game profile and the Game surface's editor show each other's 
   const surfaceEditor = gameSurfaceEditor(page);
   await expect(surfaceEditor).toBeVisible();
   await expect(surfaceEditor.locator("h3")).toHaveText("Game companion");
-  await expect(surfaceEditor.getByLabel("Model ID")).toHaveValue("written-by-settings");
-  expect(mount.gets.count, "the Game entry issued its own fresh read on mount").toBe(readsBeforeGame + 1);
-  console.log(`[profile-freshness] settings->game: entry shows ${await surfaceEditor.getByLabel("Model ID").inputValue()}`);
+  await expect(surfaceEditor.getByLabel("Thinking level")).toHaveValue("high");
+  expect(mount.gets.count, "the Game entry issued its own fresh read on mount").toBeGreaterThan(readsBeforeGame);
+  console.log(`[profile-freshness] settings->game: entry shows ${await surfaceEditor.getByLabel("Thinking level").inputValue()}`);
 
   // ...and the write travels back the other way.
   const readsBeforeSettingsReturn = mount.gets.count;
-  await surfaceEditor.getByLabel("Model ID").fill("written-by-game-surface");
+  await surfaceEditor.getByLabel("Thinking level").selectOption("max");
   await surfaceEditor.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => mount.puts.length).toBe(2);
   expect(mount.puts[1]).toEqual({
     apiVersion: 1,
     surface: "game",
     expectedRevision: 2,
-    modelId: "written-by-game-surface",
-    thinkingLevel: "low",
+    thinkingLevel: "max",
   });
-  await expect(surfaceEditor.getByLabel("Model ID")).toHaveValue("written-by-game-surface");
+  await expect(surfaceEditor.getByLabel("Thinking level")).toHaveValue("max");
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const returnedGameEditor = settingsEditor(page, "game");
-  await expect(returnedGameEditor.locator("#model-profile-model-game")).toHaveValue("written-by-game-surface");
-  expect(mount.gets.count, "the Settings entry issued its own fresh read on remount").toBe(readsBeforeSettingsReturn + 1);
+  await expect(returnedGameEditor.locator("#model-profile-level-game")).toHaveValue("max");
+  expect(mount.gets.count, "the Settings entry issued its own fresh read on remount").toBeGreaterThan(readsBeforeSettingsReturn);
   console.log(
-    `[profile-freshness] game->settings: entry shows ${await returnedGameEditor.locator("#model-profile-model-game").inputValue()}`,
+    `[profile-freshness] game->settings: entry shows ${await returnedGameEditor.locator("#model-profile-level-game").inputValue()}`,
   );
 });
 
@@ -243,7 +242,7 @@ test("the Settings game profile and the Game surface's editor show each other's 
  * is exactly the freshness this journey measures, in both directions.
  */
 test("the Chat drawer's chat profile and the Settings chat editor show each other's writes", async ({ page }) => {
-  const mount = await mountWithProfiles(page, { chat: "chat-initial", game: "game-initial" });
+  const mount = await mountWithProfiles(page, { chat: "low", game: "low" });
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   const chatSurface = page.getByTestId("chat-surface");
@@ -252,19 +251,18 @@ test("the Chat drawer's chat profile and the Settings chat editor show each othe
   const drawerEditor = chatDrawerEditor(page);
   await expect(drawerEditor).toBeVisible();
   await expect(drawerEditor.locator("h3")).toHaveText("Chat");
-  await expect(drawerEditor.getByLabel("Model ID")).toHaveValue("chat-initial");
+  await expect(drawerEditor.getByLabel("Thinking level")).toHaveValue("low");
 
-  await drawerEditor.getByLabel("Model ID").fill("written-by-chat-drawer");
+  await drawerEditor.getByLabel("Thinking level").selectOption("high");
   await drawerEditor.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => mount.puts.length).toBe(1);
   expect(mount.puts[0]).toEqual({
     apiVersion: 1,
     surface: "chat",
     expectedRevision: 1,
-    modelId: "written-by-chat-drawer",
-    thinkingLevel: "low",
+    thinkingLevel: "high",
   });
-  await expect(drawerEditor.getByLabel("Model ID")).toHaveValue("written-by-chat-drawer");
+  await expect(drawerEditor.getByLabel("Thinking level")).toHaveValue("high");
   // The player is told the edit lands on the next runtime start, in this exact
   // notice (i18n.ts `modelProfilesApplied`).
   await expect(drawerEditor.locator("[data-model-notice]")).toHaveText(
@@ -294,28 +292,31 @@ test("the Chat drawer's chat profile and the Settings chat editor show each othe
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const chatEditor = settingsEditor(page, "chat");
   await expect(chatEditor.locator("h3")).toHaveText("Chat");
-  await expect(chatEditor.locator("#model-profile-model-chat")).toHaveValue("written-by-chat-drawer");
-  expect(mount.gets.count, "the Settings entry issued its own fresh read on mount").toBe(readsBeforeSettings + 1);
-  console.log(`[profile-freshness] chat drawer->settings: entry shows ${await chatEditor.locator("#model-profile-model-chat").inputValue()}`);
+  await expect(chatEditor.locator("#model-profile-level-chat")).toHaveValue("high");
+  expect(mount.gets.count, "the Settings entry issued its own fresh read on mount").toBeGreaterThan(readsBeforeSettings);
+  console.log(`[profile-freshness] chat drawer->settings: entry shows ${await chatEditor.locator("#model-profile-level-chat").inputValue()}`);
 
-  await chatEditor.locator("#model-profile-model-chat").fill("written-by-settings");
+  await chatEditor.locator("#model-profile-level-chat").fill("max");
   await chatEditor.getByRole("button", { name: "Save Chat" }).click();
   await expect.poll(() => mount.puts.length).toBe(2);
   expect(mount.puts[1]).toEqual({
     apiVersion: 1,
     surface: "chat",
     expectedRevision: 2,
-    modelId: "written-by-settings",
-    thinkingLevel: "low",
+    thinkingLevel: "max",
   });
 
   const readsBeforeDrawer = mount.gets.count;
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   await page.getByTestId("chat-model-trigger").click();
   const reopened = chatDrawerEditor(page);
-  await expect(reopened.getByLabel("Model ID")).toHaveValue("written-by-settings");
-  expect(mount.gets.count, "the drawer issued its own fresh read on open").toBe(readsBeforeDrawer + 1);
-  console.log(`[profile-freshness] settings->chat drawer: entry shows ${await reopened.getByLabel("Model ID").inputValue()}`);
+  await expect(reopened.getByLabel("Thinking level")).toHaveValue("max");
+  // A fresh read, not a specific count: opening this entry reads the profile AND the shell
+  // re-derives its model route from the same two projections, so the number of GETs is the
+  // shell's business. What this journey needs is that the entry did not show a stale value
+  // without reading one.
+  expect(mount.gets.count, "the drawer issued its own fresh read on open").toBeGreaterThan(readsBeforeDrawer);
+  console.log(`[profile-freshness] settings->chat drawer: entry shows ${await reopened.getByLabel("Thinking level").inputValue()}`);
 });
 
 /**
@@ -327,30 +328,30 @@ test("the Chat drawer's chat profile and the Settings chat editor show each othe
  * would show.
  */
 test("each entry edits its own key and a save on one surface leaves the other's displayed profile untouched", async ({ page }) => {
-  const mount = await mountWithProfiles(page, { chat: "chat-initial", game: "game-initial" });
+  const mount = await mountWithProfiles(page, { chat: "low", game: "low" });
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=settings`);
   const settings = page.getByTestId("settings-surface");
   await expect(settings).toBeVisible();
-  await expect(settingsEditor(page, "chat").locator("#model-profile-model-chat")).toHaveValue("chat-initial");
-  await expect(settingsEditor(page, "game").locator("#model-profile-model-game")).toHaveValue("game-initial");
+  await expect(settingsEditor(page, "chat").locator("#model-profile-level-chat")).toHaveValue("low");
+  await expect(settingsEditor(page, "game").locator("#model-profile-level-game")).toHaveValue("low");
   // The panel is on the Settings surface, and each editor names the surface it
   // edits, so "Game companion" here is the same key the Game surface edits - not
   // a second, mislabelled profile.
   await expect(settingsEditor(page, "game").locator("h3")).toHaveText("Game companion");
 
   // A Settings write to `game` only moves the `game` profile.
-  await settingsEditor(page, "game").locator("#model-profile-model-game").fill("game-only");
+  await settingsEditor(page, "game").locator("#model-profile-level-game").fill("max");
   await settingsEditor(page, "game").getByRole("button", { name: "Save Game companion" }).click();
   await expect.poll(() => mount.puts.length).toBe(1);
   expect(mount.puts[0]).toMatchObject({ surface: "game" });
-  await expect(settingsEditor(page, "chat").locator("#model-profile-model-chat")).toHaveValue("chat-initial");
-  expect(mount.store.chat.modelId).toBe("chat-initial");
-  expect(mount.store.game.modelId).toBe("game-only");
+  await expect(settingsEditor(page, "chat").locator("#model-profile-level-chat")).toHaveValue("low");
+  expect(mount.store.chat.thinkingLevel).toBe("low");
+  expect(mount.store.game.thinkingLevel).toBe("max");
 
   // The Chat entry still shows the chat profile, untouched by the game write.
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   await page.getByTestId("chat-model-trigger").click();
-  await expect(chatDrawerEditor(page).getByLabel("Model ID")).toHaveValue("chat-initial");
-  console.log(`[profile-freshness] cross-key: chat entry shows ${await chatDrawerEditor(page).getByLabel("Model ID").inputValue()} after a game-only write`);
+  await expect(chatDrawerEditor(page).getByLabel("Thinking level")).toHaveValue("low");
+  console.log(`[profile-freshness] cross-key: chat entry shows ${await chatDrawerEditor(page).getByLabel("Thinking level").inputValue()} after a game-only write`);
 });

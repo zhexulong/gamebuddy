@@ -1,35 +1,33 @@
 /**
- * A newcomer's Settings opens on the channel that asks nothing of them.
+ * A newcomer's Settings opens on NO channel, because the product ships none.
  *
- * Measured on the build before this change: the panel resolved its selection as
- * `providers.find(providerId) ?? providers.find(p => p.escapeHatch) ?? providers[0]`
- * (`components/management-panels.tsx`), so a fresh open landed on the escape hatch -
- * `OpenAI-compatible endpoint`, an empty Base URL and a required API key - while the
- * catalogue's own first entry is the zero-configuration `GameBuddy Agent (CPA)`
- * (`host/src/tavern/provider-catalog.ts`, `setupFields: []`). Read in the browser:
- * `#connection-provider` = `openai-compatible`, and the form carried
- * `#connection-base-url` (empty), `#connection-api-shape`, `#connection-api-key`
- * (empty, required) and `#connection-model-id` (required).
+ * The owner's ruling: the operator's own gateway (`cpa-oai`,
+ * `http://127.0.0.1:8317/v1`) is THEIR cliproxyapi instance, not something this
+ * product ships or assumes. The product is BYOK only. So a player who has
+ * configured nothing must be told they need their own connection - never
+ * silently pointed at a gateway that does not exist on their machine.
  *
- * What SillyTavern does, which is the rule this follows rather than a threshold of
- * ours: its API panel opens on the one channel that needs no URL and no key from the
- * player. The shipped first-run settings carry `"main_api": "koboldhorde"`
- * (`default/content/settings.json`) - AI Horde - and the Horde endpoint substitutes a
- * shared anonymous key when the player has none of their own:
+ * What this file pinned before the change, and why each assertion moved:
  *
- *     const ANONYMOUS_KEY = '000000000000';                      // src/endpoints/horde.js
- *     const apiKey = readSecret(...SECRET_KEYS.HORDE) || ANONYMOUS_KEY;
+ *  - `reading.selected` was `"cpa-oai"`: "a fresh open lands on the entry whose
+ *    setupFields is empty", with a long comment about SillyTavern's AI Horde - an
+ *    entry that answers with a shared anonymous key. That was the wrong analogy
+ *    for this product, and the entry it selected does not exist on a player's
+ *    disk. It is `""` now: the form opens on an explicit empty option and no
+ *    provider is chosen until the player chooses one.
+ *  - `reading.options` was `["cpa-oai", "deepseek", "openai-compatible"]`. The
+ *    Host no longer offers `cpa-oai` to a browser at all, so the operator entry is
+ *    absent from the picker unless the operator opted in
+ *    (`GAMEBUDDY_OPERATOR_GATEWAY=1`); the third reading below mounts a catalogue
+ *    that still names it, and asserts the panel does not preselect it either - the
+ *    rule is "nothing is preselected", not "the operator entry is filtered out".
+ *  - `reading.fields` was `[]` because the preselected entry asked for nothing.
+ *    It is still `[]`, and for the opposite reason: with no provider chosen there
+ *    is no field to render at all, so the first screen asks a newcomer for nothing
+ *    while the sentence above it says what to do.
  *
- * SillyTavern's own escape hatch, "Custom (OpenAI-compatible)", is in the same list
- * (`public/index.html`, `#chat_completion_source`) but is never what the panel starts
- * on: it is the entry a player chooses once nothing else fits. The match here is
- * therefore positional in the same sense - the default is the entry that needs
- * nothing typed, and the entry that needs a URL and a key is one choice away, in the
- * same picker.
- *
- * The failure this catches: the first screen of the settings surface asks a player
- * who has configured nothing for a URL and a credential they do not have, and the
- * entry that would have worked for them is one row below the wrong selection.
+ * The failure this catches: the first screen of the settings surface preselects a
+ * channel, which is a claim that the product already has one.
  */
 import { type Page, expect, test } from "@playwright/test";
 
@@ -93,28 +91,10 @@ function json200(body: unknown) {
 }
 
 /**
- * The catalogue's own three shapes, in the order `host/src/tavern/provider-catalog.ts`
- * publishes them: the zero-configuration entry the operator runs, one curated
- * third-party entry, and the escape hatch whose endpoint the player supplies.
- * `setupFields` is the Host's own answer to "what does this entry need from the
- * form", so the panel's default can be read off it rather than out of a name.
+ * The catalogue as the Host publishes it for a player: BYOK entries only. The
+ * operator's gateway is deliberately absent, because a browser is never offered a
+ * channel whose endpoint and credential live on the operator's own machine.
  */
-const OPERATOR = {
-  providerId: "cpa-oai",
-  label: "GameBuddy Agent (CPA)",
-  setupFields: [],
-  allowedPlayerModels: [
-    {
-      modelId: "deepseek-v4.1-flash",
-      modelLabel: "DeepSeek V4.1 Flash",
-      allowedThinkingLevels: ["low", "high", "max"],
-      defaultThinkingLevel: "high",
-    },
-  ],
-  escapeHatch: false,
-  environmentManaged: true,
-};
-
 const DEEPSEEK = {
   providerId: "deepseek",
   label: "DeepSeek",
@@ -131,13 +111,42 @@ const DEEPSEEK = {
   environmentManaged: false,
 };
 
+const OPENAI = {
+  providerId: "openai",
+  label: "OpenAI",
+  setupFields: ["apiKey", "modelId"],
+  allowedPlayerModels: [
+    {
+      modelId: "gpt-5.6-luna",
+      modelLabel: "GPT-5.6 Luna",
+      allowedThinkingLevels: ["low", "medium", "high"],
+      defaultThinkingLevel: "high",
+    },
+  ],
+  escapeHatch: false,
+  environmentManaged: false,
+};
+
 const ESCAPE_HATCH = {
-  providerId: "openai-compatible",
+  providerId: "gamebuddy-openai-compatible",
   label: "OpenAI-compatible endpoint",
   setupFields: ["baseUrl", "apiShape", "apiKey", "modelId", "apiKeyRequired"],
   allowedPlayerModels: [],
   escapeHatch: true,
   environmentManaged: false,
+};
+
+/**
+ * The operator's own gateway, as an operator who opted in still sees it: a
+ * developer path, labelled as one, and still not preselected.
+ */
+const OPERATOR = {
+  providerId: "cpa-oai",
+  label: "Operator gateway (developer only)",
+  setupFields: [],
+  allowedPlayerModels: [],
+  escapeHatch: false,
+  environmentManaged: true,
 };
 
 async function stubRoutes(page: Page, providers: readonly unknown[]): Promise<void> {
@@ -172,8 +181,8 @@ async function stubRoutes(page: Page, providers: readonly unknown[]): Promise<vo
       json200({
         apiVersion: 1,
         recommendedModels: [],
-        chat: { revision: 0, modelId: "deepseek-v4-pro", thinkingLevel: "high" },
-        game: { revision: 0, modelId: "deepseek-v4-pro", thinkingLevel: "high" },
+        chat: { revision: 0, thinkingLevel: "high" },
+        game: { revision: 0, thinkingLevel: "high" },
       }),
     ),
   );
@@ -200,63 +209,78 @@ async function openSettings(page: Page) {
         required: control.hasAttribute("required"),
         value: (control as HTMLInputElement).value ?? "",
       }));
+    const submit = node.querySelector<HTMLButtonElement>("button[type=submit]");
     return {
       selected: picker?.value ?? "(no picker)",
       options: picker === null ? [] : [...picker.options].map((option) => option.value),
       fields,
+      saveDisabled: submit?.disabled ?? null,
+      saveLabel: (submit?.textContent ?? "").trim(),
     };
   });
 }
 
-test.describe("a fresh install opens the connection form on the entry that needs nothing typed", () => {
-  test("the zero-configuration entry is selected and the form asks for no field", async ({ page }) => {
-    await stubRoutes(page, [OPERATOR, DEEPSEEK, ESCAPE_HATCH]);
+test.describe("a fresh install opens the connection form on nothing chosen", () => {
+  test("the browser is offered BYOK entries only, and none of them is preselected", async ({ page }) => {
+    await stubRoutes(page, [DEEPSEEK, OPENAI, ESCAPE_HATCH]);
     const reading = await openSettings(page);
-    console.log(`[settings-default-provider/catalogue-order] ${JSON.stringify(reading)}`);
+    console.log(`[settings-default-provider/byok-only] ${JSON.stringify(reading)}`);
 
-    expect(reading.options, "the picker offers every catalog entry").toEqual(["cpa-oai", "deepseek", "openai-compatible"]);
-    expect(reading.selected, "a fresh open lands on the entry whose setupFields is empty").toBe("cpa-oai");
-    expect(reading.fields, "and that entry renders no field to fill in").toEqual([]);
-    expect(
-      reading.fields.filter((field) => field.required).map((field) => field.id),
-      "nothing on the form is required of a player who has configured nothing",
-    ).toEqual([]);
+    // The operator's gateway is not in the list a player is offered at all: this
+    // product ships no endpoint, so offering one would be a channel that does not
+    // exist on their machine.
+    expect(reading.options, "the picker offers every player-configured entry").toEqual([
+      "",
+      "deepseek",
+      "openai",
+      "gamebuddy-openai-compatible",
+    ]);
+    expect(reading.options, "the operator's own gateway is never offered").not.toContain("cpa-oai");
+    // Nothing chosen: the form has not been answered yet.
+    expect(reading.selected, "a fresh open selects no provider").toBe("");
+    expect(reading.fields, "with nothing chosen, no entry renders a field").toEqual([]);
+    // And the form does not offer to save an answer that does not exist.
+    expect(reading.saveDisabled, "there is nothing to save before a provider is chosen").toBe(true);
   });
 
-  test("the selection follows the entry's own requirements, not its position in the list", async ({ page }) => {
-    // The Host may publish the catalogue in any order; a default read off the first
-    // row would move with it. Here the escape hatch is FIRST and the zero-config
-    // entry LAST - the same two readings have to come back.
+  test("the selection never follows list position, and the operator entry is still not preselected", async ({ page }) => {
+    // The picker's order is the Host's to choose, so a default read off the first
+    // row would move with it. Here the escape hatch is FIRST and the operator entry
+    // is present but LAST - and the landing selection is still nothing.
     await stubRoutes(page, [ESCAPE_HATCH, DEEPSEEK, OPERATOR]);
     const reading = await openSettings(page);
     console.log(`[settings-default-provider/escape-hatch-first] ${JSON.stringify(reading)}`);
 
-    expect(reading.options[0], "this mount really does put the escape hatch first").toBe("openai-compatible");
-    expect(reading.selected, "the default is the entry that needs nothing, wherever it sits").toBe("cpa-oai");
-    expect(
-      reading.fields.filter((field) => field.required).map((field) => field.id),
-      "no field of the landing selection is required",
-    ).toEqual([]);
+    expect(reading.options[1], "this mount really does put the escape hatch first").toBe(
+      "gamebuddy-openai-compatible",
+    );
+    expect(reading.options, "an opted-in operator sees their own gateway").toContain("cpa-oai");
+    expect(reading.selected, "the landing selection is nothing, wherever the entries sit").toBe("");
+    expect(reading.fields, "and the first screen still asks for no field").toEqual([]);
   });
 
   test("the escape hatch is still one choice away, with its own fields", async ({ page }) => {
-    await stubRoutes(page, [OPERATOR, DEEPSEEK, ESCAPE_HATCH]);
+    await stubRoutes(page, [DEEPSEEK, OPENAI, ESCAPE_HATCH]);
     await openSettings(page);
     const form = page.getByTestId("settings-surface").locator("[data-connection-form]");
     await expect(form.locator("#connection-provider")).toBeVisible();
 
-    await form.locator("#connection-provider").selectOption("openai-compatible");
+    await form.locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
     await expect(form.locator("#connection-base-url")).toBeVisible();
     await expect(form.locator("#connection-api-key")).toBeVisible();
     await expect(form.locator("#connection-model-id")).toBeVisible();
     const reading = await form.evaluate((node) => ({
       selected: node.querySelector<HTMLSelectElement>("#connection-provider")?.value ?? "",
       required: [...node.querySelectorAll<HTMLElement>("input[required]")].map((control) => control.id),
+      saveDisabled: node.querySelector<HTMLButtonElement>("button[type=submit]")?.disabled ?? null,
     }));
     console.log(`[settings-default-provider/escape-hatch-chosen] ${JSON.stringify(reading)}`);
-    expect(reading.selected, "the player's own choice still wins").toBe("openai-compatible");
+    expect(reading.selected, "the player's own choice wins").toBe("gamebuddy-openai-compatible");
     expect(reading.required, "the escape hatch is where the endpoint's own requirements are stated").toContain(
       "connection-model-id",
     );
+    // A real player-configured entry is saveable: the disable above is about an
+    // unanswered form, not about the form refusing to work.
+    expect(reading.saveDisabled, "a chosen entry can be saved").toBe(false);
   });
 });

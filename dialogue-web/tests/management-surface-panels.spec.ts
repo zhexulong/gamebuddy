@@ -1337,8 +1337,8 @@ test("the Settings field groups keep a form measure and the app's own select tre
     route.fulfill(
       json200({
         apiVersion: 1,
-        chat: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "high" },
-        game: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "high" },
+        chat: { revision: 1, thinkingLevel: "high" },
+        game: { revision: 1, thinkingLevel: "high" },
         recommendedModels: [],
       }),
     ),
@@ -1351,6 +1351,11 @@ test("the Settings field groups keep a form measure and the app's own select tre
   await expect(surface).toBeVisible();
   // The connection group renders only once its read resolves.
   await expect(surface.locator("#connection-provider")).toBeVisible();
+  // The widest form the Host can publish is CHOSEN, not assumed: nothing is preselected any
+  // more (the product ships no channel), so the escape hatch's five fields only exist once the
+  // player picks that entry.
+  await surface.locator("#connection-provider").selectOption(escapeHatch.providerId);
+  await expect(surface.locator("#connection-api-shape")).toBeVisible();
 
   const measured = await surface.evaluate((root) => {
     const read = (selector: string) => {

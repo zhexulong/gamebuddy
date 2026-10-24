@@ -159,8 +159,8 @@ async function stubSettingsRoutes(page: Page): Promise<void> {
       json200({
         apiVersion: 1,
         recommendedModels: [],
-        chat: { revision: 0, modelId: "deepseek-v4-pro", thinkingLevel: "high" },
-        game: { revision: 0, modelId: "deepseek-v4-pro", thinkingLevel: "high" },
+        chat: { revision: 0, thinkingLevel: "high" },
+        game: { revision: 0, thinkingLevel: "high" },
       }),
     ),
   );

@@ -187,8 +187,8 @@ test("the model drawer's select is themed and the fields keep the 44px floor", a
     route.fulfill(
       jsonOk({
         apiVersion: 1,
-        chat: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "medium" },
-        game: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "medium" },
+        chat: { revision: 1, thinkingLevel: "medium" },
+        game: { revision: 1, thinkingLevel: "medium" },
         recommendedModels: [
           {
             providerId: "cpa-oai",

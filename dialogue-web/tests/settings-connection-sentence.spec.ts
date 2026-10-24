@@ -1,39 +1,34 @@
 /**
- * The connection section words its own section; the send path words delivery.
+ * One authority answers "can she reply", and the connection section words itself from it.
  *
- * Measured on the pinned build (`80a69c86`, capture `shots-final43`): Settings opened with
- * "No connection is selected, so a reply cannot reach a model, and a normal install has none to
- * fall back on …", while in the same run `f-turn-variant.txt` read `turn settled: true`,
- * `surface notice after the turn: null`, and `10-chat-1440x900.png` carried no banner at all. A
- * turn WAS served with no connection configured: the Host resolved the Chat model profile this
- * build ships and sent through this machine's operator gateway. Two surfaces answered one
- * question, and only one of them had read the answer.
+ * The history of this assertion, because it moved twice and each move is a product decision:
  *
- * `chat-model-route.ts` is that answer, and it is the Chat's: `connection` and `builtin` both mean
- * a send works, `none` is the one state where a reply has no model, `unknown` says nothing. A
- * panel whose inputs are the connection records cannot restate it - its own read
- * (`state.active === null`) is true in the `builtin` state, which is exactly how the two surfaces
- * came to disagree. So the section says only what a player can do here, and the delivery verdict
- * stays where it is derived.
+ *  1. On `80a69c86` the section opened with "No connection is selected, so a reply cannot reach a
+ *     model, and a normal install has none to fall back on", while the same run settled a turn
+ *     through the shipped Chat profile on this machine's operator gateway. Two surfaces answered
+ *     one question, and only one had read the answer - so the rule became "the section states what
+ *     it configures and NEVER whether a reply can be delivered".
  *
- * The three readings below are the same mount read three ways:
- *   (i)  with no saved connection but the shipped profile, Settings claims nothing about delivery;
- *   (ii) when the route DOES have a verdict (`none`), only the Chat states it - Settings' own text
- *        is byte-identical in the two states, which is what "one reading" means in one mount;
- *   (iii) the sentence asks for the control the form has: `Save connection` saves, and the test
- *        and activate steps happen on the saved row below, where those controls are.
+ *  2. That rule was correct only while a gateway was shipped. With BYOK there is no shipped
+ *     channel: a root with no connection genuinely cannot answer, "no connection" and "no model"
+ *     are the same fact again, and a section that stayed silent would be hiding the one thing a
+ *     newcomer must learn. So the section states it - but it must still not DERIVE it. It reads
+ *     `readChatModelRoute`, the one function that applies the Host's own precedence, exactly as
+ *     the Chat does. `data-connection-model-route` is that answer, so these tests can prove the
+ *     sentence moves with the authority rather than with the panel's own records.
  *
- * On the pinned build all of them fail. Quoted from the run before the change:
+ * The three readings below:
+ *   (i)   an active connection: the section says what it configures, and makes no delivery claim -
+ *         there is nothing wrong, and a warning would be a lie in the other direction;
+ *   (ii)  no active connection: the section says she has no model and names the next step, and the
+ *         sentence is byte-identical to the third reading, because the next step is the same;
+ *   (iii) a profile store the Host cannot serve: the same sentence again - "you configured nothing"
+ *         and "the Host cannot serve the profile" are different causes with one action.
  *
- *   (i)/(ii)  Error: the section states no delivery verdict (/cannot reach a model/iu)
- *             Received string: "No connection is selected, so a reply cannot reach a model, and a
- *             normal install has none to fall back on — configure a connection here: choose a
- *             provider and the model it serves, then save and enable it."
- *   (iii)     Error: the sentence does not ask for a control that is absent
- *             (the same string says "save and enable it" while the form's only submit is
- *             "Save connection", which saves only).
- *   zh-CN     Error: 中文目录也不对送达下结论 (/无法送达/iu)
- *             Received string: "尚未选择连接，回复无法送达模型，普通安装没有它可回退——请在这里配置一条连接……然后保存并启用。"
+ * KNOWN GAP, deliberately not papered over: in (ii) the route is `builtin`, and `ChatSurface` only
+ * renders its banner for `none`. So the Chat is silent while Settings speaks. `chat-model-route.ts`
+ * is not this change's file; making the Chat say the same sentence means `builtin` must stop meaning
+ * "a send works". That is reported rather than worked around here.
  */
 import { type Page, expect, test } from "@playwright/test";
 
@@ -113,10 +108,10 @@ function problem(status: number, code: string) {
   };
 }
 
-const OPERATOR = {
-  providerId: "cpa-oai",
-  label: "Operator gateway",
-  setupFields: [],
+const DEEPSEEK = {
+  providerId: "deepseek",
+  label: "DeepSeek",
+  setupFields: ["apiKey", "modelId"],
   allowedPlayerModels: [
     {
       modelId: "deepseek-v4.1-flash",
@@ -126,16 +121,18 @@ const OPERATOR = {
     },
   ],
   escapeHatch: false,
-  environmentManaged: true,
+  environmentManaged: false,
 };
+
+const CONNECTION_ID = `${"E".repeat(42)}A`;
 
 /**
  * Every route the composed shell and the Settings panels read.
  *
- * `chatProfile` is the one input that moves the send path's answer: `served` is the ordinary
- * install (the shipped Chat profile, so a send works), and `store_unavailable` is the Host's own
- * mapping for a profile store it cannot read (`invalid_model_profile_store` -> 503
- * `storage_unavailable`), which is the only state in which a reply really has no model.
+ * `connection` is the one input that moves the send path's answer between the two readable states:
+ * `active` is a player who activated a connection, `none` is a fresh root. `profileStore` is the
+ * other axis: the Host's own mapping for a profile store it cannot read is 503 `storage_unavailable`,
+ * which is the `none` route.
  *
  * The returned counter is the number of times the Chat model-profile route was READ, so a test can
  * wait for the send path's answer to have arrived before reading either surface's silence: a
@@ -143,7 +140,11 @@ const OPERATOR = {
  */
 async function stubRoutes(
   page: Page,
-  options: Readonly<{ chatProfile: "served" | "store_unavailable"; locale?: "en" | "zh-CN" }>,
+  options: Readonly<{
+    connection: "active" | "none";
+    profileStore: "served" | "store_unavailable";
+    locale?: "en" | "zh-CN";
+  }>,
 ): Promise<{ profileReads: () => number }> {
   if (options.locale !== undefined)
     await page.addInitScript((value) => localStorage.setItem("gamebuddy.tavern.ui-locale", value), options.locale);
@@ -153,10 +154,51 @@ async function stubRoutes(
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(json200({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),
   );
-  // A fresh install: no connection saved, and nothing active. The escape hatch is the entry the
-  // panel preselects, so the form below is the one a player actually meets.
   await page.route("**/api/tavern/v1/settings/connection", (route) =>
-    route.fulfill(json200({ apiVersion: 1, revision: 3, active: null, connections: [], providers: [OPERATOR] })),
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        revision: 3,
+        active:
+          options.connection === "active"
+            ? {
+                connectionId: CONNECTION_ID,
+                label: "DeepSeek \u00b7 deepseek-v4.1-flash",
+                providerLabel: "DeepSeek",
+                modelId: "deepseek-v4.1-flash",
+                modelLabel: "DeepSeek V4.1 Flash",
+                thinkingLevel: "high",
+                readiness: "ready",
+                baseUrl: null,
+                failure: null,
+                lastCheckedAtMs: null,
+              }
+            : null,
+        connections:
+          options.connection === "active"
+            ? [
+                {
+                  connectionId: CONNECTION_ID,
+                  label: "DeepSeek \u00b7 deepseek-v4.1-flash",
+                  providerId: "deepseek",
+                  providerLabel: "DeepSeek",
+                  configured: true,
+                  readiness: "ready",
+                  active: true,
+                  modelId: "deepseek-v4.1-flash",
+                  modelLabel: "DeepSeek V4.1 Flash",
+                  thinkingLevel: "high",
+                  allowedThinkingLevels: ["low", "high"],
+                  modelIds: ["deepseek-v4.1-flash"],
+                  baseUrl: null,
+                  failure: null,
+                  lastCheckedAtMs: null,
+                },
+              ]
+            : [],
+        providers: [DEEPSEEK],
+      }),
+    ),
   );
   await page.route("**/api/tavern/v1/settings/language", (route) =>
     route.fulfill(json200({ revision: 1, locale: "en-US" })),
@@ -178,14 +220,14 @@ async function stubRoutes(
   );
   await page.route("**/api/tavern/v1/settings/profiles", (route) => {
     profileReads += 1;
-    return options.chatProfile === "store_unavailable"
+    return options.profileStore === "store_unavailable"
       ? route.fulfill(problem(503, "storage_unavailable"))
       : route.fulfill(
           json200({
             apiVersion: 1,
             recommendedModels: [],
-            chat: { revision: 0, modelId: "deepseek-v4-pro", thinkingLevel: "high" },
-            game: { revision: 0, modelId: "deepseek-v4-pro", thinkingLevel: "high" },
+            chat: { revision: 0, thinkingLevel: "high" },
+            game: { revision: 0, thinkingLevel: "high" },
           }),
         );
   });
@@ -209,8 +251,8 @@ async function expectChatVerdict(page: Page, statesTheProblem: boolean): Promise
 const SETTINGS_ENTRY = { en: "Settings", "zh-CN": "设置" } as const;
 
 /**
- * Open Settings and read the sentence the connection section opens with, together with the
- * controls that actually exist beneath it.
+ * Open Settings and read the sentence the connection section opens with, together with the answer
+ * the section derived it from and the controls that actually exist beneath it.
  */
 async function openSettingsAndRead(page: Page, locale: "en" | "zh-CN" = "en") {
   await page.getByRole("button", { name: SETTINGS_ENTRY[locale], exact: true }).click();
@@ -219,110 +261,99 @@ async function openSettingsAndRead(page: Page, locale: "en" | "zh-CN" = "en") {
   return await surface.evaluate((node) => {
     const sentence = node.querySelector<HTMLElement>("[data-connection-no-selection]");
     const submit = node.querySelector<HTMLElement>("[data-connection-form] button[type=submit]");
-    const list = node.querySelector<HTMLElement>("[data-connection-list]");
     const buttons = [...node.querySelectorAll<HTMLElement>("button")].map((button) => (button.textContent ?? "").trim());
     return {
       sentence: (sentence?.textContent ?? "").replace(/\s+/gu, " ").trim(),
       hasSentence: sentence !== null,
+      // The authority the sentence was worded from, asserted rather than assumed.
+      route: sentence?.getAttribute("data-connection-model-route") ?? null,
       submitLabel: (submit?.textContent ?? "").trim(),
-      hasSavedList: list !== null,
       buttonLabels: buttons,
     };
   });
 }
 
-/**
- * The vocabulary that states a delivery verdict. The list is the claim itself, not prose
- * classification: a sentence that says a reply cannot reach, has no, or cannot be answered by a
- * model is answering the send path's question, and the connection section has no basis for it.
- */
-const DELIVERY_CLAIMS = {
-  en: [/cannot reach a model/iu, /no model/iu, /has none to fall back on/iu, /replies? (?:can|could)not/iu],
-  "zh-CN": [/无法送达/iu, /没有模型/iu, /没有它可回退/iu, /回复无法/iu],
+/** The vocabulary that promises a reply is delivered. It has no place in the configured state. */
+const DELIVERY_PROMISES = {
+  en: [/no model/iu, /she has no model/iu, /supplies no endpoint/iu],
+  "zh-CN": [/没有可用的模型/u, /不提供任何端点/u],
 } as const;
 
-test.describe("the connection section states what it configures, never whether a reply can be delivered", () => {
-  test("(i) with no saved connection but the usable shipped profile, Settings makes no delivery claim", async ({
-    page,
-  }) => {
-    const stubs = await stubRoutes(page, { chatProfile: "served" });
+test.describe("the connection section words itself from the one send-path authority", () => {
+  test("(i) with an active connection it says what it configures, and makes no no-model claim", async ({ page }) => {
+    const stubs = await stubRoutes(page, { connection: "active", profileStore: "served" });
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
 
-    // The Chat's own answer, once it has one: the shipped profile answers, so nothing is said
-    // there. Waiting for that read is what makes the silence evidence rather than a race.
     await expect.poll(stubs.profileReads, "the send path's own read has landed").toBeGreaterThan(0);
+    // With a connection active the Chat has nothing to complain about.
     await expectChatVerdict(page, false);
 
     const reading = await openSettingsAndRead(page);
-    console.log(`[settings-connection-sentence/served] ${JSON.stringify(reading)}`);
+    console.log(`[settings-connection-sentence/active] ${JSON.stringify(reading)}`);
 
-    expect(reading.hasSentence, "the fresh-install state opens the section with its own sentence").toBe(true);
-    for (const claim of DELIVERY_CLAIMS.en)
-      expect(reading.sentence, `the section states no delivery verdict (${claim})`).not.toMatch(claim);
+    // The section's sentence here is the row above it: an active connection renders the summary,
+    // not the first-run hint. What matters is that nothing claims a missing model.
+    for (const claim of DELIVERY_PROMISES.en)
+      expect(reading.sentence, `a configured root makes no no-model claim (${claim})`).not.toMatch(claim);
   });
 
-  test("(ii) the same mount in both states: only the Chat's reading changes, Settings' sentence does not", async ({
-    page,
-  }) => {
-    const servedStubs = await stubRoutes(page, { chatProfile: "served" });
+  test("(ii) with no connection it states the truth and names the next step", async ({ page }) => {
+    const stubs = await stubRoutes(page, { connection: "none", profileStore: "served" });
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-    await expect.poll(servedStubs.profileReads, "the send path's read has landed").toBeGreaterThan(0);
-    await expectChatVerdict(page, false);
-    const servedSettings = await openSettingsAndRead(page);
+    await expect.poll(stubs.profileReads, "the send path's read has landed").toBeGreaterThan(0);
 
-    const unservableStubs = await stubRoutes(page, { chatProfile: "store_unavailable" });
+    const reading = await openSettingsAndRead(page);
+    console.log(`[settings-connection-sentence/unconfigured] ${JSON.stringify(reading)}`);
+
+    expect(reading.hasSentence, "the fresh-install state opens the section with its own sentence").toBe(true);
+    // The sentence is the one for THIS derived route, and it says the two things a newcomer needs:
+    // she cannot answer yet, and the form below is where that changes.
+    expect(reading.route, "the sentence is worded from the derived route, not from the records").not.toBe(
+      "connection",
+    );
+    expect(reading.sentence, "it says she has no model").toMatch(/no model/iu);
+    expect(reading.sentence, "it says who supplies one").toMatch(/bring your own/iu);
+    expect(reading.sentence, "it names the control this form has").toMatch(/save/iu);
+    expect(reading.sentence, "it does not promise a product endpoint").toMatch(/supplies no endpoint/iu);
+    expect(reading.submitLabel, "and that control exists").toBe("Save connection");
+  });
+
+  test("(iii) a store the Host cannot serve gets the same sentence: one action, one wording", async ({ page }) => {
+    const unservable = await stubRoutes(page, { connection: "none", profileStore: "store_unavailable" });
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-    await expect.poll(unservableStubs.profileReads, "the send path's read has landed").toBeGreaterThan(0);
-    // The one reading, and it moved: the Host cannot serve the Chat profile its send path
-    // resolves, so the Chat states the verdict.
+    await expect.poll(unservable.profileReads, "the send path's read has landed").toBeGreaterThan(0);
+    // The Host cannot serve the Chat profile its send path resolves, so the Chat states the verdict.
     await expectChatVerdict(page, true);
     const unservableSettings = await openSettingsAndRead(page);
 
-    console.log(`[settings-connection-sentence/both] ${JSON.stringify({ servedSettings, unservableSettings })}`);
-
-    // Settings is not a second reading of the same question: its sentence is the same string in
-    // both states, and neither is a delivery verdict.
-    expect(unservableSettings.sentence, "the section's sentence does not move with the send path").toBe(
-      servedSettings.sentence,
-    );
-    for (const claim of DELIVERY_CLAIMS.en)
-      expect(unservableSettings.sentence, `the section states no delivery verdict (${claim})`).not.toMatch(claim);
-  });
-
-  test("(iii) the sentence asks for the control the form has, and points at where activate really lives", async ({
-    page,
-  }) => {
-    await stubRoutes(page, { chatProfile: "served" });
+    const served = await stubRoutes(page, { connection: "none", profileStore: "served" });
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-    const reading = await openSettingsAndRead(page);
-    console.log(`[settings-connection-sentence/controls] ${JSON.stringify(reading)}`);
+    await expect.poll(served.profileReads, "the send path's read has landed").toBeGreaterThan(0);
+    const servedSettings = await openSettingsAndRead(page);
 
-    // The form's only submit is Save connection, and it saves: activation is a separate Host
-    // operation that refuses a record whose probe has not passed (`connection_not_ready`).
-    expect(reading.submitLabel, "the form's submit is named for what it does").toBe("Save connection");
-    // A fresh install has no saved row, so the activate control does not exist on the surface at
-    // all - a sentence that sends the player to it names a control that is not there.
-    expect(reading.hasSavedList, "a fresh install has no saved-connection list").toBe(false);
-    expect(reading.buttonLabels, "no activate control is rendered before a connection is saved").not.toContain(
-      "Save and activate",
+    console.log(
+      `[settings-connection-sentence/both] ${JSON.stringify({ servedSettings, unservableSettings })}`,
     );
-    expect(reading.sentence, "the sentence asks for a save, which the form can do").toMatch(/save/iu);
-    expect(reading.sentence, "the sentence does not ask for a control that is absent").not.toMatch(
-      /save and enable|保存并启用/iu,
-    );
-    expect(reading.sentence, "the sentence says where test and activate live").toMatch(/test|activate/iu);
+
+    // Two causes, one action: "you configured nothing" and "the Host cannot serve the profile" both
+    // mean the player must bring a connection, so the section says one sentence for both rather
+    // than inventing a difference the player cannot act on.
+    expect(unservableSettings.sentence, "the two unserved causes read the same").toBe(servedSettings.sentence);
+    expect(unservableSettings.route).not.toBe("connection");
+    expect(servedSettings.route).not.toBe("connection");
   });
 
   test("the same two readings hold in zh-CN, from that catalogue's own sentence", async ({ page }) => {
-    await stubRoutes(page, { chatProfile: "served", locale: "zh-CN" });
+    await stubRoutes(page, { connection: "none", profileStore: "served", locale: "zh-CN" });
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
     await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
     const reading = await openSettingsAndRead(page, "zh-CN");
     console.log(`[settings-connection-sentence/zh] ${JSON.stringify(reading)}`);
 
-    for (const claim of DELIVERY_CLAIMS["zh-CN"])
-      expect(reading.sentence, `中文目录也不对送达下结论 (${claim})`).not.toMatch(claim);
-    expect(reading.sentence, "中文句子要求的是表单上真正存在的保存控件").not.toMatch(/保存并启用/u);
-    expect(reading.sentence, "中文句子说明测试与启用发生在已保存的记录上").toMatch(/测试/u);
+    expect(reading.sentence, "中文句子说明她暂时没有可用模型").toMatch(/没有可用的模型/u);
+    expect(reading.sentence, "中文句子说明产品不提供端点").toMatch(/不提供任何端点/u);
+    expect(reading.sentence, "中文句子要求的是表单上真正存在的保存控件").toMatch(/保存/u);
+    for (const claim of DELIVERY_PROMISES["zh-CN"])
+      expect(reading.sentence, `中文句子与路由一致 (${claim})`).toMatch(claim);
   });
 });

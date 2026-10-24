@@ -186,8 +186,8 @@ async function mountShell(
     route.fulfill(
       jsonOk({
         apiVersion: 1,
-        chat: { revision: 1, modelId: "deepseek-v4.1-flash", thinkingLevel: "medium" },
-        game: { revision: 1, modelId: "deepseek-v4.1-flash", thinkingLevel: "medium" },
+        chat: { revision: 1, thinkingLevel: "medium" },
+        game: { revision: 1, thinkingLevel: "medium" },
         recommendedModels: options.recommendedModels ?? [],
       }),
     ),

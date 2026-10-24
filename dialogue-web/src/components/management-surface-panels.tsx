@@ -53,6 +53,7 @@ import {
   type TavernConnectionStateV1,
   type TavernConnectionThinkingLevelV1,
   type TavernConnectionProviderV1,
+  type TavernModelProfilesV1,
   type TavernVoiceDevicesV1,
   type WorldInfoStateV1,
 } from "../management-pipeline-api";
@@ -1307,27 +1308,50 @@ export function SettingsSurfacePanel({
         // publish these routes at all.
         if (active) setLanguageView({ kind: "unavailable" });
       }
+      // Both settings projections, read ONCE each. They are the panel's own reads (the connection
+      // section and the model editors need them), and they are also the two inputs `readChatModelRoute`
+      // turns into "would a send reach a model". Reading them through that function instead of re-reading
+      // them here is what keeps one authority: the same call the Chat makes, over the same values this
+      // panel already holds.
+      let connectionRead: Readonly<{ ok: true; state: TavernConnectionStateV1 }> | Readonly<{ ok: false }> = {
+        ok: false,
+      };
+      let profilesRead:
+        | Readonly<{ ok: true; profiles: TavernModelProfilesV1 }>
+        | Readonly<{ ok: false; error: unknown }> = { ok: false, error: undefined };
       try {
         const state = await api.readConnection();
+        connectionRead = { ok: true, state };
         // The projected readiness IS the durable record's readiness; the panel
         // never derives a ready state from local intent.
         if (active) setConnectionView({ kind: "ready", state, pending: false, notice: null });
       } catch {
         if (active) setConnectionView({ kind: "unavailable" });
       }
-      // The same function the Chat words itself from, over the same two reads: one authority for
-      // "would a send reach a model", never a second reading derived from the records above.
-      const route = await readChatModelRoute(api);
-      if (active) setModelRoute(route);
       try {
         // The read-probe is how the panel learns whether the mounted profile
         // published the model-profile routes: an absent route must not render an
         // editor the Host cannot serve.
         const profiles = await api.readModelProfiles();
+        profilesRead = { ok: true, profiles };
         if (active) setModelProfilesView({ kind: "ready", profiles, pending: null, notice: null });
-      } catch {
+      } catch (error) {
+        profilesRead = { ok: false, error };
         if (active) setModelProfilesView({ kind: "unavailable" });
       }
+      // The route, from the two reads above and no others: replaying their outcomes is what lets the
+      // one authority classify them (including the profile-store refusals that mean "no model").
+      const route = await readChatModelRoute({
+        readConnection: async () => {
+          if (!connectionRead.ok) throw new TavernProtocolError();
+          return connectionRead.state;
+        },
+        readModelProfiles: async () => {
+          if (!profilesRead.ok) throw profilesRead.error;
+          return profilesRead.profiles;
+        },
+      });
+      if (active) setModelRoute(route);
     })();
     return () => {
       active = false;

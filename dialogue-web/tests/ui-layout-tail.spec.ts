@@ -366,8 +366,8 @@ async function stubSettings(page: Page): Promise<void> {
     route.fulfill(
       jsonOk({
         apiVersion: 1,
-        chat: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "high" },
-        game: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "high" },
+        chat: { revision: 1, thinkingLevel: "high" },
+        game: { revision: 1, thinkingLevel: "high" },
         recommendedModels: [],
       }),
     ),
@@ -411,7 +411,9 @@ test("item 2: every settings field quotes the one form measure, wide and narrow"
   // Every group under test is up: the connection form, the three selectors and
   // both model editors.
   await expect(surface.locator("#connection-provider")).toBeVisible();
-  await expect(surface.locator("#model-profile-model-chat")).toBeVisible();
+  // The model editors kept a control after the model-id field went away: the level input is
+  // what the one-form-measure assertion still measures.
+  await expect(surface.locator("#model-profile-level-chat")).toBeVisible();
 
   const wide = await measureSettingsFields(page);
   console.log(`[item-2 settings @1440] ${JSON.stringify(wide)}`);
