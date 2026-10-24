@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import {
   problemCodeFor,
-  problemTextWithCode,
   TavernProblemError,
   TavernProtocolError,
   createManagementPipelineApi,
@@ -23,6 +22,7 @@ import {
   validateVoicePreference,
 } from "../src/management-pipeline-api.ts";
 import { createManagementPipelineSession } from "../src/management-pipeline-session.ts";
+import { problemTextWithCode } from "../src/composed-problem-view.ts";
 import { messages } from "../src/i18n.ts";
 
 const HANDLE = "A".repeat(43);

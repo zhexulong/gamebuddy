@@ -105,9 +105,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { ComposedReferenceGameProblemError } from "../src/composed-reference-game-browser-api.ts";
-import { composedProblemView } from "../src/composed-problem-view.ts";
+import { composedProblemView, problemTextWithCode } from "../src/composed-problem-view.ts";
 import { messages } from "../src/i18n.ts";
-import { problemCodeFor, problemTextWithCode } from "../src/management-pipeline-api.ts";
+import { problemCodeFor } from "../src/management-pipeline-api.ts";
 import { TavernProblemError } from "../src/reference-pipeline-api.ts";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -136,8 +136,13 @@ const GAME_CLIENT = join(WEB, "composed-reference-game-browser-api.ts");
  * The management surface's own mapper module. `problem-code.12` reads it two ways: it drives
  * `problemTextWithCode` for every declared code, and it scans the module's own string builders for
  * one that reads a `.code`.
+ *
+ * The mapper lives in the problem catalogue, not in the wire contract: a contract may not import a UI
+ * module (`.dependency-cruiser.dialogue-web.cjs`, `no-contract-imports-ui`), so moving the wording here
+ * was the fix. Both modules are scanned - the contract still carries `problemCodeFor`, and a second
+ * mapper growing beside it would be the same defect.
  */
-const MANAGEMENT_MODULE = join(WEB, "management-pipeline-api.ts");
+const MANAGEMENT_MODULES = [join(WEB, "composed-problem-view.ts"), join(WEB, "management-pipeline-api.ts")];
 
 /** A bounded token: the shape every problem code has. */
 const BOUNDED_CODE = /^[a-z][a-z0-9_]{0,63}$/u;
@@ -679,11 +684,11 @@ test("problem-code.12: the management mapper words a code as a sentence too, and
 
   // The other direction: the module's own text. A mapper that builds a string out of `.code` is
   // the defect regardless of which codes the loops above happened to drive.
-  const builders = codeInStringBuilders(MANAGEMENT_MODULE);
+  const builders = MANAGEMENT_MODULES.flatMap((file) => codeInStringBuilders(file));
   failures.push(...builders);
 
   t.diagnostic(
-    `problem-code.12: ${sentenced} management sentence(s) from ${declared.length} declared code(s) in 2 catalogues, ${builders.length} string builder(s) reading .code in management-pipeline-api.ts, ${failures.length} violation(s)`,
+    `problem-code.12: ${sentenced} management sentence(s) from ${declared.length} declared code(s) in 2 catalogues, ${builders.length} string builder(s) reading .code across ${MANAGEMENT_MODULES.length} mapper module(s), ${failures.length} violation(s)`,
   );
   for (const failure of failures.slice(0, 8)) t.diagnostic(`problem-code.12 violation: ${failure}`);
   assert.deepEqual(

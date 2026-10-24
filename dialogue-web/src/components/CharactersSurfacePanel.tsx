@@ -8,7 +8,8 @@ import {
   type WorldInfoContentV1,
   type WorldInfoStateV1,
 } from "../management-pipeline-api";
-import { problemTextWithCode, TavernProblemError } from "../management-pipeline-api";
+import { problemTextWithCode } from "../composed-problem-view";
+import { TavernProblemError } from "../management-pipeline-api";
 import { useArmedConfirmation } from "./armed-confirmation";
 import { CharactersPanel } from "./CharactersPanel";
 import { type CharacterLabels, characterLabels } from "./character-domain-labels";

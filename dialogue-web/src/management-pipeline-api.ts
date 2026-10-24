@@ -7,9 +7,9 @@
  * This module is deliberately dependency-free and closed:
  *
  * - it imports no Host package and no typebox: the only runtime imports are the problem
- *   identity `./reference-pipeline-api` declares and the player-sentence catalogue
- *   `./composed-problem-view` reads, so a refusal is worded here by the same vocabulary the
- *   Chat view words it with (`problemTextWithCode`);
+ *   identity `./reference-pipeline-api` declares. The player-facing wording of a refusal lives
+ *   in the catalogue (`./composed-problem-view`), not here: a wire contract must not depend on a
+ *   UI module, so `problemTextWithCode` is that module's export and the panels import it there;
  * - every DTO validator is strict and local: extra fields are rejected,
  *   handles are canonical opaque unpadded base64url strings, and every union
  *   accepts only its exact frozen variants;
@@ -24,7 +24,6 @@
  * mock anywhere in this module.
  */
 
-import { declaredProblemSentence } from "./composed-problem-view";
 import type { Messages } from "./i18n";
 import { TavernProblemError, TavernProtocolError } from "./reference-pipeline-api";
 
@@ -1004,31 +1003,6 @@ export type TavernModelProfileUpdateCommandV1 = Readonly<{
  */
 export { TavernProblemError, TavernProtocolError };
 
-/**
- * What a panel tells the player after a refused management call.
- *
- * The sentence for a refusal the contract named comes from the catalogue
- * (`composed-problem-view.ts`), which is the same one the Chat view words a refusal with:
- * a stale save reads the same way whether the player met it in a world book or in the
- * transcript, and there is one place to fix its words. `base` is the fallback - the
- * caller's own honest sentence for that class of failure - and it is what the player reads
- * when the failure named nothing the catalogue has words for (an unknown code, or an opaque
- * `TavernProtocolError`).
- *
- * The code itself is contract vocabulary and never part of the sentence: `(world_info_
- * revision_conflict)` is not something a player can act on. A developer who needs it has
- * `problemCodeFor` - for a log line or a `data-*` attribute, never concatenated into text.
- */
-export function problemTextWithCode(base: string, error: unknown, labels: Messages): string {
-  return declaredProblemSentence(error, labels) ?? base;
-}
-
-/**
- * The bounded problem code behind a failure, or `null` when it carries none.
- *
- * The developer half of the pair above: a log line or a `data-*` attribute has to name the
- * code, and only a sentence read by the player may not.
- */
 export function problemCodeFor(error: unknown): string | null {
   return error instanceof TavernProblemError ? error.code : null;
 }

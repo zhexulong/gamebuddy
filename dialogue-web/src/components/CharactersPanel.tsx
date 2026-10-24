@@ -8,7 +8,7 @@ import type {
   PersonaV1,
   ScenarioV1,
 } from "../management-pipeline-api";
-import { problemTextWithCode } from "../management-pipeline-api";
+import { problemTextWithCode } from "../composed-problem-view";
 import { CharacterCardImport } from "./CharacterCardImport";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { CompanionInspectorDrawer, type InspectedCompanion } from "./CompanionInspectorDrawer";

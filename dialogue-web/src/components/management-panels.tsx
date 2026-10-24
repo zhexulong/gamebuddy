@@ -1,11 +1,11 @@
 import { type ReactElement, useEffect, useState } from "react";
+import { problemTextWithCode } from "../composed-problem-view";
 import { type Locale, messages } from "../i18n";
 import { memoryNotebookLabels } from "./memory-notebook-labels";
 import {
   CONNECTION_API_SHAPES,
   type MemoryChapterV1,
   type MemoryItemV1,
-  problemTextWithCode,
   TavernProblemError,
   type TavernConnectionApiShapeV1,
   type TavernConnectionStateV1,

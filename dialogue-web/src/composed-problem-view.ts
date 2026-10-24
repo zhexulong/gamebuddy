@@ -557,6 +557,29 @@ export function declaredProblemSentence(error: unknown, labels: Messages): strin
   return namedProblemView(error, labels)?.detail ?? null;
 }
 
+/**
+ * What a panel tells the player after a refused management call.
+ *
+ * The sentence for a refusal comes from this module's own catalogue, which is the same one the
+ * Chat view words a refusal with: a stale save reads the same way whether the player met it in a
+ * world book or in the transcript, and there is one place to fix its words. `base` is the
+ * fallback - the caller's own honest sentence for that class of failure - and it is what the
+ * player reads when the failure named nothing the catalogue has words for (an unknown code, or an
+ * opaque `TavernProtocolError`).
+ *
+ * This lives here rather than in `management-pipeline-api.ts` because the wire contract must stay
+ * dependency-free and React-free (`.dependency-cruiser.dialogue-web.cjs`, `no-contract-imports-ui`):
+ * a contract that imported a UI module would invert the layer the boundary exists to hold.
+ *
+ * The code itself is contract vocabulary and never part of the sentence: `(world_info_
+ * revision_conflict)` is not something a player can act on. A developer who needs it has
+ * `problemCodeFor` in the contract module - for a log line or a `data-*` attribute, never
+ * concatenated into text.
+ */
+export function problemTextWithCode(base: string, error: unknown, labels: Messages): string {
+  return declaredProblemSentence(error, labels) ?? base;
+}
+
 export function composedProblemView(error: unknown, labels: Messages): ProblemViewState {
   const named = namedProblemView(error, labels);
   if (named !== null) return named;

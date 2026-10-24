@@ -36,6 +36,7 @@
 import { Archive, Download, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { type KeyboardEvent as ReactKeyboardEvent, type ReactElement, useEffect, useRef, useState } from "react";
 import type { Locale, Messages } from "../i18n";
+import { problemTextWithCode } from "../composed-problem-view";
 import { useArmedConfirmation } from "./armed-confirmation";
 import { ContextDrawer } from "./ContextDrawer";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -46,7 +47,6 @@ import {
   createManagementPipelineApi,
   type ManagementPipelineApi,
   type MemoryReadV1,
-  problemTextWithCode,
   TavernProblemError,
   TavernProtocolError,
   type ChatExportV1,

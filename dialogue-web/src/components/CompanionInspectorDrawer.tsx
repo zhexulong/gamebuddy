@@ -1,8 +1,9 @@
 import { ChevronDown, UserRound } from "lucide-react";
 import { type ReactElement, type RefObject, useEffect, useRef, useState } from "react";
 import { type Locale, type Messages, messages } from "../i18n";
+import { problemTextWithCode } from "../composed-problem-view";
 import type { CompanionProfileV1, ManagementPipelineApi } from "../management-pipeline-api";
-import { MAX_AVATAR_FILE_BYTES, problemTextWithCode, TavernProblemError } from "../management-pipeline-api";
+import { MAX_AVATAR_FILE_BYTES, TavernProblemError } from "../management-pipeline-api";
 import { useArmedConfirmation } from "./armed-confirmation";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { ContextDrawer } from "./ContextDrawer";
