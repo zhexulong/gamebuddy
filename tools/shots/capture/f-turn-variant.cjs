@@ -281,6 +281,12 @@ async function waitForSettle(page, label, predicate, attempts = 120) {
   if (noModelNotice !== null && /没有送达任何模型|did not reach a model|No model/u.test(noModelNotice)) {
     say("SKIP:no_model_connection - the turn was refused, so there is no reply to regenerate");
     say(`the surface's own sentence: ${noModelNotice}`);
+    // The runner waits for the driver to exit, and the browser is still open at this point: a bare
+    // `return` leaves the process alive with its browser, which reads to the runner as a hang. Every
+    // driver closes its browser before its last line, so a skip has to do the same.
+    flush();
+    await browser.close().catch(() => undefined);
+    say("DONE-F");
     return;
   }
   const regenerateButton = page.locator(".message-list > li.message.companion:not([data-streaming])").last().locator(".regenerate-btn");
