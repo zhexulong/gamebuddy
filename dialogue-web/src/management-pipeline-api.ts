@@ -24,7 +24,6 @@
  * mock anywhere in this module.
  */
 
-import type { Messages } from "./i18n";
 import { TavernProblemError, TavernProtocolError } from "./reference-pipeline-api";
 
 const TAVERN_BROWSER_API_VERSION = 1 as const;
