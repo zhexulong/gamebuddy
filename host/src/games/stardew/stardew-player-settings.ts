@@ -117,7 +117,7 @@ export class StardewPlayerSettingsStore {
    * is what a browser payload must never be able to reintroduce.
    */
   async update(expectedRevision: number, update: StardewPlayerSettingsUpdate): Promise<StardewPlayerSettings> {
-    if (!isRevision(expectedRevision) || !isUpdate(update)) throw new Error("invalid_stardew_player_settings_update");
+    if (!(isRevision(expectedRevision) && isUpdate(update))) throw new Error("invalid_stardew_player_settings_update");
     const path = this.path;
     return await withPathLock(path, async () => {
       const current = await this.load();
