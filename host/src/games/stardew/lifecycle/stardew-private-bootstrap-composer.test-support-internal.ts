@@ -30,7 +30,9 @@ export type {
 
 export type StardewOwnedPlayerHostPhaseATestView = StardewOwnedPlayerHostPhaseACoreTestView;
 
-export type StardewManifestAdmissionForTesting = Awaited<ReturnType<StardewManifestHandoffCoordinator["confirmAndAdmit"]>>;
+export type StardewManifestAdmissionForTesting = Awaited<
+  ReturnType<StardewManifestHandoffCoordinator["confirmAndAdmit"]>
+>;
 
 /**
  * Deterministic package and secret fixtures are intentionally defined only in
@@ -44,7 +46,9 @@ export type StardewPrivateModProfileStagingTestSupportInput = Readonly<{
 
 export type StardewPrivateBootstrapTestingComposition = Readonly<{
   composition: PublicStardewPrivateBootstrapComposition;
-  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostBootstrap): import("../../../stardew-attachment.js").StardewAttachmentFlow;
+  createOwnedPlayerHostAttachmentFlow(
+    owner: StardewOwnedPlayerHostBootstrap,
+  ): import("../../../stardew-attachment.js").StardewAttachmentFlow;
   readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostBootstrap): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
   consumeStagedOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): void;
@@ -65,9 +69,7 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
-  prepareFreshFarmhandAiClientActivation(
-    owner: StardewOwnedPlayerHostBootstrap,
-  ): Promise<{ launchGeneration: string }>;
+  prepareFreshFarmhandAiClientActivation(owner: StardewOwnedPlayerHostBootstrap): Promise<{ launchGeneration: string }>;
   abandonFarmhandAiClientActivation(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   launchStagedPlayerHost(
     owner: StardewOwnedPlayerHostBootstrap,
@@ -89,12 +91,12 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
   ): Promise<StardewOwnedPlayerHostBootstrap>;
   stageOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): void;
-  bindOwnedPlayerHostPhaseAOwner(
+  bindOwnedPlayerHostPhaseAOwner(owner: StardewOwnedPlayerHostBootstrap): StardewOwnedPlayerHostPhaseATestView;
+  quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
+  projectPlayerActionPolicyIntoOwnedAttempt(
     owner: StardewOwnedPlayerHostBootstrap,
-  ): StardewOwnedPlayerHostPhaseATestView;
-  quarantineOwnedPlayerHostOwner(
-    owner: StardewOwnedPlayerHostBootstrap,
-  ): Promise<void>;
+    policy: import("../stardew-mod-action-policy-projection.js").StardewModActionPolicyProjection,
+  ): Promise<{ written: boolean }>;
   /**
    * Test-only access to the production settlement seam, so a test can drive the
    * durable attempt to `contained` and release the registration pointer through
@@ -119,7 +121,9 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
     owner: StardewOwnedPlayerHostBootstrap,
     proof: import("./stardew-private-bootstrap-composer.core.js").StardewBootstrapGuardianSettlementProof,
   ): Promise<void>;
-  createOwnerTransitionsForTesting: ReturnType<typeof createStardewPrivateBootstrapTestCore>["createOwnerTransitionsForTesting"];
+  createOwnerTransitionsForTesting: ReturnType<
+    typeof createStardewPrivateBootstrapTestCore
+  >["createOwnerTransitionsForTesting"];
 }>;
 
 const testOwnerBinders = new WeakMap<
@@ -139,10 +143,7 @@ const testOwnedPlayerHostProfileConsumers = new WeakMap<
 >();
 const testAiClientMaterializers = new WeakMap<
   PublicStardewPrivateBootstrapComposition,
-  (
-    owner: StardewOwnedPlayerHostBootstrap,
-    admission: StardewManifestAdmissionForTesting,
-  ) => Promise<void>
+  (owner: StardewOwnedPlayerHostBootstrap, admission: StardewManifestAdmissionForTesting) => Promise<void>
 >();
 const testMaterializedAiClientLaunchers = new WeakMap<
   PublicStardewPrivateBootstrapComposition,
@@ -191,10 +192,13 @@ function registerTestingComposition(
     ...base,
     async reserveOwnedPlayerHostBootstrap(...args) {
       const owner = await reserveOwnedPlayerHostBootstrap(...args);
-      testOwnerViews.set(owner, Object.freeze({
-        composition,
-        bind: testingComposition.bindOwnedPlayerHostPhaseAOwner,
-      }));
+      testOwnerViews.set(
+        owner,
+        Object.freeze({
+          composition,
+          bind: testingComposition.bindOwnedPlayerHostPhaseAOwner,
+        }),
+      );
       return owner;
     },
   });
@@ -220,23 +224,25 @@ export function createStardewPrivateBootstrapCompositionForTesting(
   dependencies: StardewPrivateBootstrapCoreDependencies,
 ): StardewPrivateBootstrapTestingComposition {
   const core = createStardewPrivateBootstrapTestCore(dependencies);
-  return registerTestingComposition(Object.freeze({
-    ...core,
-    settleOwnedPlayerHostRegistrationForTesting: async (owner, launchedRoles) => {
-      // A test that wants the production settlement must first take the exact
-      // owner binding the composition owns, mirroring the collaborator.
-      consumeStardewBootstrapGuardianOwnerBinding(createStardewBootstrapGuardianOwnerBinding(owner));
-      await settleOwnedPlayerHostContainedRuntimeAttempt(owner, launchedRoles);
-    },
-    settleOwnedPlayerHostToContainedForTesting: async (owner, launchedRoles) => {
-      consumeStardewBootstrapGuardianOwnerBinding(createStardewBootstrapGuardianOwnerBinding(owner));
-      return await advanceOwnedPlayerHostToContainedAndMintProof(owner, launchedRoles);
-    },
-    releaseOwnedPlayerHostRegistrationForTesting: async (owner, proof) => {
-      await settleOwnedPlayerHostRegistrationAttempt(owner, proof);
-    },
-    materializeAiClientProfileAfterManifestAdmission: core.materializeAiClientProfileAfterManifestAdmission,
-  }));
+  return registerTestingComposition(
+    Object.freeze({
+      ...core,
+      settleOwnedPlayerHostRegistrationForTesting: async (owner, launchedRoles) => {
+        // A test that wants the production settlement must first take the exact
+        // owner binding the composition owns, mirroring the collaborator.
+        consumeStardewBootstrapGuardianOwnerBinding(createStardewBootstrapGuardianOwnerBinding(owner));
+        await settleOwnedPlayerHostContainedRuntimeAttempt(owner, launchedRoles);
+      },
+      settleOwnedPlayerHostToContainedForTesting: async (owner, launchedRoles) => {
+        consumeStardewBootstrapGuardianOwnerBinding(createStardewBootstrapGuardianOwnerBinding(owner));
+        return await advanceOwnedPlayerHostToContainedAndMintProof(owner, launchedRoles);
+      },
+      releaseOwnedPlayerHostRegistrationForTesting: async (owner, proof) => {
+        await settleOwnedPlayerHostRegistrationAttempt(owner, proof);
+      },
+      materializeAiClientProfileAfterManifestAdmission: core.materializeAiClientProfileAfterManifestAdmission,
+    }),
+  );
 }
 
 /**
@@ -257,9 +263,11 @@ export function bindStardewPrivateBootstrapOwnerTestSupport(
   composition?: PublicStardewPrivateBootstrapComposition,
 ): StardewOwnedPlayerHostPhaseATestView {
   const registration = testOwnerViews.get(owner);
-  if (registration === undefined ||
-      (composition !== undefined && registration.composition !== composition) ||
-      (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
+  if (
+    registration === undefined ||
+    (composition !== undefined && registration.composition !== composition) ||
+    (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)
+  ) {
     throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
   return registration.bind(owner);
@@ -278,9 +286,11 @@ export function consumeStagedOwnedPlayerHostProfileForTesting(
   composition?: PublicStardewPrivateBootstrapComposition,
 ): void {
   const registration = testOwnerViews.get(owner);
-  if (registration === undefined ||
-      (composition !== undefined && registration.composition !== composition) ||
-      (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
+  if (
+    registration === undefined ||
+    (composition !== undefined && registration.composition !== composition) ||
+    (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)
+  ) {
     throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
   const consume = testOwnedPlayerHostProfileConsumers.get(registration.composition);
@@ -299,9 +309,11 @@ export const materializeAiClientProfileAfterManifestAdmissionForTesting = async 
   composition?: PublicStardewPrivateBootstrapComposition,
 ): Promise<void> => {
   const registration = testOwnerViews.get(owner);
-  if (registration === undefined ||
-      (composition !== undefined && registration.composition !== composition) ||
-      (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
+  if (
+    registration === undefined ||
+    (composition !== undefined && registration.composition !== composition) ||
+    (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)
+  ) {
     throw new Error("stardew_ai_client_profile_materialization_not_admissible");
   }
   const materialize = testAiClientMaterializers.get(registration.composition);
@@ -315,9 +327,11 @@ export async function launchMaterializedAiClientForTesting(
   composition?: PublicStardewPrivateBootstrapComposition,
 ): Promise<StardewOwnedAiClientStageDResult> {
   const registration = testOwnerViews.get(owner);
-  if (registration === undefined ||
-      (composition !== undefined && registration.composition !== composition) ||
-      (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
+  if (
+    registration === undefined ||
+    (composition !== undefined && registration.composition !== composition) ||
+    (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)
+  ) {
     throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
   const launch = testMaterializedAiClientLaunchers.get(registration.composition);
@@ -332,9 +346,11 @@ export async function launchMaterializedAiClientContainedForTesting(
   composition?: PublicStardewPrivateBootstrapComposition,
 ): Promise<StardewOwnedAiClientStageDResult> {
   const registration = testOwnerViews.get(owner);
-  if (registration === undefined ||
-      (composition !== undefined && registration.composition !== composition) ||
-      (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
+  if (
+    registration === undefined ||
+    (composition !== undefined && registration.composition !== composition) ||
+    (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)
+  ) {
     throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
   const launch = testMaterializedAiClientContainedLaunchers.get(registration.composition);
@@ -342,15 +358,19 @@ export async function launchMaterializedAiClientContainedForTesting(
   return launch(owner, installation, launchContained);
 }
 
-export async function consumeOwnedFarmhandBridgeConnectionForTesting<T extends Readonly<{ close(): void | Promise<void> }>>(
+export async function consumeOwnedFarmhandBridgeConnectionForTesting<
+  T extends Readonly<{ close(): void | Promise<void> }>,
+>(
   owner: StardewOwnedPlayerHostBootstrap,
   callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   composition?: PublicStardewPrivateBootstrapComposition,
 ): Promise<T> {
   const registration = testOwnerViews.get(owner);
-  if (registration === undefined ||
-      (composition !== undefined && registration.composition !== composition) ||
-      (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
+  if (
+    registration === undefined ||
+    (composition !== undefined && registration.composition !== composition) ||
+    (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)
+  ) {
     throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
   const consume = testBridgeConnectionConsumers.get(registration.composition);
@@ -365,9 +385,11 @@ export async function replaceStagedInstallationLocatorForTesting(
   composition?: PublicStardewPrivateBootstrapComposition,
 ): Promise<void> {
   const registration = testOwnerViews.get(owner);
-  if (registration === undefined ||
-      (composition !== undefined && registration.composition !== composition) ||
-      (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
+  if (
+    registration === undefined ||
+    (composition !== undefined && registration.composition !== composition) ||
+    (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)
+  ) {
     throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
   const replace = testStagedInstallationLocatorReplacers.get(registration.composition);
@@ -381,9 +403,11 @@ export async function launchStagedPlayerHostForTesting(
   composition?: PublicStardewPrivateBootstrapComposition,
 ): Promise<StardewOwnedPlayerHostStageCResult> {
   const registration = testOwnerViews.get(owner);
-  if (registration === undefined ||
-      (composition !== undefined && registration.composition !== composition) ||
-      (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
+  if (
+    registration === undefined ||
+    (composition !== undefined && registration.composition !== composition) ||
+    (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)
+  ) {
     throw new Error("stardew_owned_player_host_bootstrap_owner_not_registered");
   }
   const launch = testStagedPlayerHostLaunchers.get(registration.composition);

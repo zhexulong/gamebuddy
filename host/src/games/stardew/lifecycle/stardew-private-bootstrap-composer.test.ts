@@ -1,13 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -30,6 +22,8 @@ import * as internalComposer from "./stardew-private-bootstrap-composer.internal
 import * as productionCore from "./stardew-private-bootstrap-composer.core.js";
 import { consumeOwnedPlayerHostBootstrap } from "./stardew-private-bootstrap-composer.internal.js";
 import * as composerTestSupport from "./stardew-private-bootstrap-composer.test-support.js";
+import { StardewPlayerSettingsStore } from "../stardew-player-settings.js";
+import { projectStardewModActionPolicy } from "../stardew-mod-action-policy-projection.js";
 import {
   bindStardewPrivateBootstrapOwnerTestSupport,
   consumeStagedOwnedPlayerHostProfileForTesting,
@@ -92,19 +86,15 @@ import {
   waitForPublishedAttachmentRequest,
   writeRegistrationAttemptFixture,
 } from "./stardew-private-bootstrap-composer.test-fixtures.js";
-import type {
-  CapturedLaunch,
-  SpawnCall,
-} from "./stardew-private-bootstrap-composer.test-fixtures.js";
+import type { CapturedLaunch, SpawnCall } from "./stardew-private-bootstrap-composer.test-fixtures.js";
 // StardewOwnedPlayerHostStageCResult is the return type of
 // launchStagedPlayerHostForTesting, derived from the test-support import.
 type Assert<T extends true> = T;
-type HasExactKeys<T, TKeys extends PropertyKey> =
-  Exclude<keyof T, TKeys> extends never
-    ? Exclude<TKeys, keyof T> extends never
-      ? true
-      : false
-    : false;
+type HasExactKeys<T, TKeys extends PropertyKey> = Exclude<keyof T, TKeys> extends never
+  ? Exclude<TKeys, keyof T> extends never
+    ? true
+    : false
+  : false;
 type ProductionInternalComposition = ReturnType<typeof internalComposer.createStardewPrivateBootstrapComposition>;
 // Exported so `noUnusedLocals` keeps these compile-time contract assertions: an
 // alias that stops holding still fails the build, it is just never reported as
@@ -112,7 +102,25 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 export type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchMaterializedAiClient" | "launchMaterializedAiClientContained" | "consumeOwnedFarmhandBridgeConnection" | "prepareFreshFarmhandAiClientActivation" | "abandonFarmhandAiClientActivation" | "launchStagedPlayerHost" | "launchStagedPlayerHostContained" | "replaceStagedInstallationLocator" | "reserveOwnedPlayerHostBootstrapForActivation" | "stageOwnedPlayerHostProfile" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "settleOwnedPlayerHostContainedRuntimeAttempt"
+    | "composition"
+    | "createOwnedPlayerHostAttachmentFlow"
+    | "readAndCorrelateOwnedPlayerHostSession"
+    | "createOwnedPlayerHostManifestHandoffCoordinator"
+    | "materializeAiClientProfileAfterManifestAdmission"
+    | "launchMaterializedAiClient"
+    | "launchMaterializedAiClientContained"
+    | "consumeOwnedFarmhandBridgeConnection"
+    | "prepareFreshFarmhandAiClientActivation"
+    | "abandonFarmhandAiClientActivation"
+    | "launchStagedPlayerHost"
+    | "launchStagedPlayerHostContained"
+    | "replaceStagedInstallationLocator"
+    | "reserveOwnedPlayerHostBootstrapForActivation"
+    | "stageOwnedPlayerHostProfile"
+    | "terminalizeOwnedPlayerHostOwner"
+    | "quarantineOwnedPlayerHostOwner"
+    | "projectPlayerActionPolicyIntoOwnedAttempt"
+    | "settleOwnedPlayerHostContainedRuntimeAttempt"
   >
 >;
 export type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -138,12 +146,14 @@ test("activation reservation atomically compensates Player Host when AI generati
   const harness = createHarness({ launchGenerations: [""] });
   const internal = createStardewPrivateBootstrapCompositionForTesting(harness.dependencies);
   const browserSessionId = "browser-session-activation-compensation";
-  const claim = internal.composition.broker.confirm({
-    playerId: "player-1",
-    companionId: "companion-1",
-    browserSessionId,
-    expiresAtMs: 10_000,
-  }).consume(browserSessionId);
+  const claim = internal.composition.broker
+    .confirm({
+      playerId: "player-1",
+      companionId: "companion-1",
+      browserSessionId,
+      expiresAtMs: 10_000,
+    })
+    .consume(browserSessionId);
 
   await assert.rejects(
     internal.reserveOwnedPlayerHostBootstrapForActivation(await createRoot(), claim),
@@ -180,12 +190,14 @@ test("normal activation fails closed without adopting or cleaning prepared regis
     const root = await createRoot(`gamebuddy-normal-prepare-${scenario.name.replaceAll(" ", "-")}-`);
     const fixture = await writeRegistrationAttemptFixture(root, scenario);
     const browserSessionId = `browser-${scenario.name.replaceAll(" ", "-")}`;
-    const claim = harness.composition.broker.confirm({
-      playerId: "player-1",
-      companionId: "companion-1",
-      browserSessionId,
-      expiresAtMs: 5_000,
-    }).consume(browserSessionId);
+    const claim = harness.composition.broker
+      .confirm({
+        playerId: "player-1",
+        companionId: "companion-1",
+        browserSessionId,
+        expiresAtMs: 5_000,
+      })
+      .consume(browserSessionId);
 
     await assert.rejects(
       harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim),
@@ -215,7 +227,9 @@ test("v4 owner transition CAS enforces legal lifecycle transitions, immutable fe
     ownerPath: ownerPath(root),
     containmentRoot: root,
     immutableFence: {
-      bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1",
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
       guardian: expectedGuardianBinding(),
     },
   });
@@ -251,19 +265,20 @@ test("the production settlement path advances the owner to contained and release
     locator: "C:\\Games\\Stardew Valley",
     activeAttempt: null,
   });
-  const claim = harness.composition.broker.confirm({
-    playerId: "player-1",
-    companionId: "companion-1",
-    browserSessionId: "browser-1",
-    expiresAtMs: 5_000,
-  }).consume("browser-1");
+  const claim = harness.composition.broker
+    .confirm({
+      playerId: "player-1",
+      companionId: "companion-1",
+      browserSessionId: "browser-1",
+      expiresAtMs: 5_000,
+    })
+    .consume("browser-1");
   // The activation reservation is the production prepare-and-bind seam: it
   // binds the registration active attempt to this exact owner.
   const owner = await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim);
-  assert.deepEqual(
-    (await readStardewInstallationRegistration(root))?.activeAttempt,
-    { bootstrapCorrelation: "bootstrap-1" },
-  );
+  assert.deepEqual((await readStardewInstallationRegistration(root))?.activeAttempt, {
+    bootstrapCorrelation: "bootstrap-1",
+  });
   // The production settlement path drives the durable record to contained and
   // releases the pointer through the matching Guardian settlement proof.
   await harness.testCore.settleOwnedPlayerHostRegistrationForTesting(owner, ["playerHost", "aiClient"]);
@@ -281,10 +296,18 @@ test("settlement rejects a terminal owner replacement unless its exact fence and
   // fence (player, companion, guardian) or to the exact terminal revision means
   // the proof no longer describes this attempt, so the pointer must stay bound.
   for (const mutate of [
-    (record: Record<string, unknown>) => { record.playerId = "replacement-player"; },
-    (record: Record<string, unknown>) => { record.companionId = "replacement-companion"; },
-    (record: Record<string, unknown>) => { (record.guardian as Record<string, unknown>).bindingRevision = "replacement-revision"; },
-    (record: Record<string, unknown>) => { record.ownerRecordRevision = (record.ownerRecordRevision as number) + 1; },
+    (record: Record<string, unknown>) => {
+      record.playerId = "replacement-player";
+    },
+    (record: Record<string, unknown>) => {
+      record.companionId = "replacement-companion";
+    },
+    (record: Record<string, unknown>) => {
+      (record.guardian as Record<string, unknown>).bindingRevision = "replacement-revision";
+    },
+    (record: Record<string, unknown>) => {
+      record.ownerRecordRevision = (record.ownerRecordRevision as number) + 1;
+    },
   ]) {
     const harness = createHarness();
     const root = await createRoot();
@@ -296,9 +319,14 @@ test("settlement rejects a terminal owner replacement unless its exact fence and
       locator: "C:\\Games\\Stardew Valley",
       activeAttempt: null,
     });
-    const claim = harness.composition.broker.confirm({
-      playerId: "player-1", companionId: "companion-1", browserSessionId: "browser-1", expiresAtMs: 5_000,
-    }).consume("browser-1");
+    const claim = harness.composition.broker
+      .confirm({
+        playerId: "player-1",
+        companionId: "companion-1",
+        browserSessionId: "browser-1",
+        expiresAtMs: 5_000,
+      })
+      .consume("browser-1");
     const owner = await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim);
     const proof = await harness.testCore.settleOwnedPlayerHostToContainedForTesting(owner, ["playerHost", "aiClient"]);
     const path = ownerPath(root);
@@ -311,10 +339,9 @@ test("settlement rejects a terminal owner replacement unless its exact fence and
       /stardew_bootstrap_registration_unavailable/,
     );
     // The pointer is still bound: a tampered terminal record cannot free it.
-    assert.deepEqual(
-      (await readStardewInstallationRegistration(root))?.activeAttempt,
-      { bootstrapCorrelation: "bootstrap-1" },
-    );
+    assert.deepEqual((await readStardewInstallationRegistration(root))?.activeAttempt, {
+      bootstrapCorrelation: "bootstrap-1",
+    });
     // Restoring the exact bytes lets the same proof release it.
     await writeFile(path, `${JSON.stringify(terminal)}\n`, "utf8");
     await harness.testCore.releaseOwnedPlayerHostRegistrationForTesting(owner, proof);
@@ -333,9 +360,14 @@ test("a settlement proof is one-shot and cannot be replayed", async () => {
     locator: "C:\\Games\\Stardew Valley",
     activeAttempt: null,
   });
-  const claim = harness.composition.broker.confirm({
-    playerId: "player-1", companionId: "companion-1", browserSessionId: "browser-1", expiresAtMs: 5_000,
-  }).consume("browser-1");
+  const claim = harness.composition.broker
+    .confirm({
+      playerId: "player-1",
+      companionId: "companion-1",
+      browserSessionId: "browser-1",
+      expiresAtMs: 5_000,
+    })
+    .consume("browser-1");
   const owner = await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim);
   const proof = await harness.testCore.settleOwnedPlayerHostToContainedForTesting(owner, ["playerHost", "aiClient"]);
   await harness.testCore.releaseOwnedPlayerHostRegistrationForTesting(owner, proof);
@@ -357,9 +389,14 @@ test("settlement releases an active registration after its owner-authorized loca
     locator: "C:\\Games\\Stardew Valley",
     activeAttempt: null,
   });
-  const claim = harness.composition.broker.confirm({
-    playerId: "player-1", companionId: "companion-1", browserSessionId: "browser-1", expiresAtMs: 5_000,
-  }).consume("browser-1");
+  const claim = harness.composition.broker
+    .confirm({
+      playerId: "player-1",
+      companionId: "companion-1",
+      browserSessionId: "browser-1",
+      expiresAtMs: 5_000,
+    })
+    .consume("browser-1");
   const owner = await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, claim);
   const proof = await harness.testCore.settleOwnedPlayerHostToContainedForTesting(owner, ["playerHost", "aiClient"]);
   // A locator replacement advances the registration revision; the release must
@@ -381,8 +418,14 @@ test("v4 recovery CAS binds the exact recovery actor and only finalizes both con
   const root = await createRoot();
   await reserveFresh(harness, root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: ownerPath(root), containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: ownerPath(root),
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   await transition.beginRecovery(1, "recovery-1");
   const partial = await transition.containRecoveringRole("playerHost", 2, "recovery-1");
@@ -402,8 +445,14 @@ test("v4 recovery quarantine requires its exact actor, preserves contained roles
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   const recovering = await transition.beginRecovery(1, "recovery-1");
   const partial = await transition.containRecoveringRole("playerHost", recovering.ownerRecordRevision, "recovery-1");
@@ -412,11 +461,22 @@ test("v4 recovery quarantine requires its exact actor, preserves contained roles
   assert.equal(await readFile(path, "utf8"), preservedBytes, "generic quarantine must not rewrite recovery bytes");
   await assert.rejects(transition.quarantineRecovery(partial.ownerRecordRevision, "recovery-2"), /transition_mismatch/);
   assert.equal(await readFile(path, "utf8"), preservedBytes, "wrong recovery actor must not rewrite bytes");
-  await assert.rejects(transition.quarantineRecovery(partial.ownerRecordRevision - 1, "recovery-1"), /transition_mismatch/);
+  await assert.rejects(
+    transition.quarantineRecovery(partial.ownerRecordRevision - 1, "recovery-1"),
+    /transition_mismatch/,
+  );
   assert.equal(await readFile(path, "utf8"), preservedBytes, "stale recovery revision must not rewrite bytes");
   const quarantined = await transition.quarantineRecovery(partial.ownerRecordRevision, "recovery-1");
-  assert.deepEqual({ state: quarantined.state, guardian: quarantined.guardianState, player: quarantined.playerHostState, ai: quarantined.aiClientState, recovery: quarantined.recoveryInstanceId },
-    { state: "quarantined", guardian: "quarantined", player: "contained", ai: "quarantined", recovery: null });
+  assert.deepEqual(
+    {
+      state: quarantined.state,
+      guardian: quarantined.guardianState,
+      player: quarantined.playerHostState,
+      ai: quarantined.aiClientState,
+      recovery: quarantined.recoveryInstanceId,
+    },
+    { state: "quarantined", guardian: "quarantined", player: "contained", ai: "quarantined", recovery: null },
+  );
 });
 
 test("v4 CAS rejects stale, v3, altered-fence, illegal in-memory successors, and unreachable bytes without changing prior bytes", async () => {
@@ -425,8 +485,14 @@ test("v4 CAS rejects stale, v3, altered-fence, illegal in-memory successors, and
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   const initialBytes = await readFile(path, "utf8");
   await assert.rejects(transition.activate("playerHost", 1), /transition_invalid/);
@@ -438,14 +504,39 @@ test("v4 CAS rejects stale, v3, altered-fence, illegal in-memory successors, and
   await assert.rejects(transition.arm(1), /invalid_stardew_bootstrap_owner/);
   assert.equal(await readFile(path, "utf8"), v3Bytes, "explicit v3 is never rewritten");
   await writeFile(path, initialBytes, "utf8");
-  await writeFile(path, initialBytes.replace("\"bindingRevision\":\"revision-1\"", "\"bindingRevision\":\"altered-guardian\""), "utf8");
+  await writeFile(
+    path,
+    initialBytes.replace('"bindingRevision":"revision-1"', '"bindingRevision":"altered-guardian"'),
+    "utf8",
+  );
   const alteredBytes = await readFile(path, "utf8");
   await assert.rejects(transition.arm(1), /transition_mismatch/);
   assert.equal(await readFile(path, "utf8"), alteredBytes, "immutable-fence mismatch must not write");
   for (const unreachable of [
-    { ...expectedRecord(), state: "recovering", guardianState: "recovering", recoveryInstanceId: "recovery-1", playerHostState: "reserved", aiClientState: "active" },
-    { ...expectedRecord(), state: "recovering", guardianState: "recovering", recoveryInstanceId: "recovery-1", playerHostState: "armed", aiClientState: "closing" },
-    { ...expectedRecord(), state: "recovering", guardianState: "recovering", recoveryInstanceId: "recovery-1", playerHostState: "closing", aiClientState: "active" },
+    {
+      ...expectedRecord(),
+      state: "recovering",
+      guardianState: "recovering",
+      recoveryInstanceId: "recovery-1",
+      playerHostState: "reserved",
+      aiClientState: "active",
+    },
+    {
+      ...expectedRecord(),
+      state: "recovering",
+      guardianState: "recovering",
+      recoveryInstanceId: "recovery-1",
+      playerHostState: "armed",
+      aiClientState: "closing",
+    },
+    {
+      ...expectedRecord(),
+      state: "recovering",
+      guardianState: "recovering",
+      recoveryInstanceId: "recovery-1",
+      playerHostState: "closing",
+      aiClientState: "active",
+    },
     { ...expectedRecord(), guardianState: "armed", playerHostState: "reserved", aiClientState: "armed" },
   ]) {
     await writeFile(path, `${JSON.stringify(unreachable)}\n`, "utf8");
@@ -460,13 +551,25 @@ test("v4 recovery CAS rejects takeover and requires its exact actor for every re
   const root = await createRoot();
   await reserveFresh(harness, root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: ownerPath(root), containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: ownerPath(root),
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   const recovering = await transition.beginRecovery(1, "recovery-1");
   await assert.rejects(transition.beginRecovery(recovering.ownerRecordRevision, "recovery-2"), /transition_invalid/);
-  await assert.rejects(transition.containRecoveringRole("playerHost", recovering.ownerRecordRevision, "recovery-2"), /transition_mismatch/);
-  await assert.rejects(transition.finalizeRecoveredContained(recovering.ownerRecordRevision, "recovery-2"), /transition_mismatch/);
+  await assert.rejects(
+    transition.containRecoveringRole("playerHost", recovering.ownerRecordRevision, "recovery-2"),
+    /transition_mismatch/,
+  );
+  await assert.rejects(
+    transition.finalizeRecoveredContained(recovering.ownerRecordRevision, "recovery-2"),
+    /transition_mismatch/,
+  );
 });
 
 test("v4 recovery names an already-contained role instead of the generic invalid-transition error", async () => {
@@ -475,8 +578,14 @@ test("v4 recovery names an already-contained role instead of the generic invalid
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   const recovering = await transition.beginRecovery(1, "recovery-1");
   const contained = await transition.containRecoveringRole("playerHost", recovering.ownerRecordRevision, "recovery-1");
@@ -488,7 +597,11 @@ test("v4 recovery names an already-contained role instead of the generic invalid
     transition.containRecoveringRole("playerHost", contained.ownerRecordRevision, "recovery-1"),
     /stardew_bootstrap_owner_recovery_role_already_contained/,
   );
-  assert.equal(await readFile(path, "utf8"), containedBytes, "re-containing a contained role never rewrites the record");
+  assert.equal(
+    await readFile(path, "utf8"),
+    containedBytes,
+    "re-containing a contained role never rewrites the record",
+  );
 });
 
 test("recoverable owner opener adopts a crashed record's exact revision and recorded recovery actor", async () => {
@@ -497,8 +610,14 @@ test("recoverable owner opener adopts a crashed record's exact revision and reco
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   // A crash mid-recovery: the Guardian armed, one role active, and a recovery
   // actor already durably recorded in a non-terminal, non-pristine record.
@@ -539,8 +658,14 @@ test("recoverable owner opener reports a null recovery actor for a crash that ne
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   // Crashed after arming the Guardian but before any recovery actor existed.
   await transition.arm(1);
@@ -564,8 +689,14 @@ test("recoverable owner opener refuses a contained terminal record without rewri
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   await transition.arm(1);
   await transition.activate("playerHost", 2);
@@ -592,8 +723,14 @@ test("recoverable owner opener refuses a quarantined terminal record without rew
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   await transition.quarantine(1);
   const quarantinedBytes = await readFile(path, "utf8");
@@ -614,8 +751,14 @@ test("recoverable owner opener refuses a foreign principal and a CAS-inconsisten
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   await transition.arm(1);
   const crashedBytes = await readFile(path, "utf8");
@@ -636,7 +779,14 @@ test("recoverable owner opener refuses a foreign principal and a CAS-inconsisten
   // reject can never be handed out as a half-usable drive.
   for (const inconsistent of [
     { ...expectedRecord(), guardianState: "armed", playerHostState: "reserved", aiClientState: "armed" },
-    { ...expectedRecord(), state: "recovering", guardianState: "recovering", recoveryInstanceId: "recovery-1", playerHostState: "reserved", aiClientState: "active" },
+    {
+      ...expectedRecord(),
+      state: "recovering",
+      guardianState: "recovering",
+      recoveryInstanceId: "recovery-1",
+      playerHostState: "reserved",
+      aiClientState: "active",
+    },
   ]) {
     await writeFile(path, `${JSON.stringify(inconsistent)}\n`, "utf8");
     const inconsistentBytes = await readFile(path, "utf8");
@@ -667,8 +817,14 @@ test("the recovery binding projection returns the strict record's post-CAS bindi
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   // A crash mid-recovery: the durable `recovering` CAS ran, one role is already
   // classified contained while the other is still active, so the record is
@@ -711,7 +867,13 @@ test("the recovery binding projection returns the strict record's post-CAS bindi
   // and no lease secret: a recovery driver that could see those would be seeing
   // durable material the native frame has no reader for.
   assert.deepEqual(Object.keys(binding).sort(), [
-    "aiClientState", "aiJobName", "bindingRevision", "leaseName", "ownerRecordRevision", "playerHostState", "playerJobName",
+    "aiClientState",
+    "aiJobName",
+    "bindingRevision",
+    "leaseName",
+    "ownerRecordRevision",
+    "playerHostState",
+    "playerJobName",
   ]);
   assert.equal(Object.isFrozen(binding), true);
 });
@@ -727,8 +889,14 @@ test("the recovery binding projection refuses a record that went terminal after 
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   await transition.arm(1);
   const opened = await productionCore.openRecoverableStardewBootstrapOwner({
@@ -757,8 +925,14 @@ test("the recovery binding projection refuses a quarantined record", async () =>
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   await transition.arm(1);
   const opened = await productionCore.openRecoverableStardewBootstrapOwner({
@@ -829,7 +1003,10 @@ test("a refused recovery finalization quarantines the recovery instead of invent
   const root = await createRoot();
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   const { transitions } = productionCore.consumeStardewBootstrapGuardianOwnerBinding(
     productionCore.createStardewBootstrapGuardianOwnerBinding(owner),
@@ -877,7 +1054,10 @@ test("a refused recovery finalization quarantines the recovery instead of invent
   const aiRoot = await createRoot();
   const aiTriple = mintOwnedTriple(aiHarness.composition);
   const aiOwner = await aiHarness.composition.reserveOwnedPlayerHostBootstrap(
-    aiRoot, aiTriple.claim, aiTriple.playerHostReservation, aiTriple.aiClientReservation,
+    aiRoot,
+    aiTriple.claim,
+    aiTriple.playerHostReservation,
+    aiTriple.aiClientReservation,
   );
   const aiTransitions = productionCore.consumeStardewBootstrapGuardianOwnerBinding(
     productionCore.createStardewBootstrapGuardianOwnerBinding(aiOwner),
@@ -937,7 +1117,10 @@ test("finalizing a recovered attempt releases the bound registration pointer and
   await writeRegistrationAttemptFixture(root, { marker: false, activeAttempt: true, owner: false });
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   const { transitions } = productionCore.consumeStardewBootstrapGuardianOwnerBinding(
     productionCore.createStardewBootstrapGuardianOwnerBinding(owner),
@@ -969,7 +1152,11 @@ test("finalizing a recovered attempt releases the bound registration pointer and
     productionCore.finalizeRecoveredPlayerHostContainedRuntimeAttempt(owner, actor),
     /stardew_bootstrap_owner_recovery_finalize_failed/,
   );
-  await assert.rejects(readFile(ownerPath(root), "utf8"), { code: "ENOENT" }, "a repeated finalization rewrites nothing");
+  await assert.rejects(
+    readFile(ownerPath(root), "utf8"),
+    { code: "ENOENT" },
+    "a repeated finalization rewrites nothing",
+  );
   assert.equal((await readStardewInstallationRegistration(root))?.revision, 3);
 });
 
@@ -997,8 +1184,14 @@ test("the AI-side recovery terminal is reachable only from `recovering` and reco
   await reserveFresh(harness, root);
   const path = ownerPath(root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: path, containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: path,
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   const actor = "7f4b2e91-6c05-4a3d-b8e7-1d9a0f3c5b62";
   // Not reachable from a predecessor that is not `recovering`. On such a record
@@ -1137,7 +1330,10 @@ test("finalizing an AI-side recovery terminal releases the pointer, consumes the
   await writeRegistrationAttemptFixture(root, { marker: false, activeAttempt: true, owner: false });
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   const { transitions } = productionCore.consumeStardewBootstrapGuardianOwnerBinding(
     productionCore.createStardewBootstrapGuardianOwnerBinding(owner),
@@ -1146,12 +1342,14 @@ test("finalizing an AI-side recovery terminal releases the pointer, consumes the
   // A bare activation claim: the reservation path this test drives must not be
   // pre-bound to a role launch, because it reserves the roles itself.
   const mintActivationClaim = (composition: StardewPrivateBootstrapComposition, browserSessionId: string) =>
-    composition.broker.confirm({
-      playerId: "player-1",
-      companionId: "companion-1",
-      browserSessionId,
-      expiresAtMs: 5_000,
-    }).consume(browserSessionId);
+    composition.broker
+      .confirm({
+        playerId: "player-1",
+        companionId: "companion-1",
+        browserSessionId,
+        expiresAtMs: 5_000,
+      })
+      .consume(browserSessionId);
   // The broker's player-role early return: the durable `recovering` CAS ran and
   // then the conversation stopped, so no role CAS ever followed.
   await transitions.beginRecovery(actor);
@@ -1222,7 +1420,10 @@ test("the opener's credential drives a recovery through the one owner binding an
   await writeRegistrationAttemptFixture(root, { marker: false, activeAttempt: true, owner: false });
   const triple = mintOwnedTriple(harness.composition);
   await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
 
   const opened = await productionCore.openRecoverableStardewBootstrapOwner({
@@ -1305,10 +1506,7 @@ test("the recovery credential owns no launch authority and no composition accept
   );
   // And no composition owns it, so every composition-bound launch surface (the
   // test view is the same binder the composition seams use) refuses it.
-  assert.throws(
-    () => ownerTestView(opened.owner),
-    /stardew_owned_player_host_bootstrap_owner_not_registered/,
-  );
+  assert.throws(() => ownerTestView(opened.owner), /stardew_owned_player_host_bootstrap_owner_not_registered/);
 });
 
 /**
@@ -1385,10 +1583,14 @@ test("finalization deletes exactly the declared managed paths and refuses to wid
   for (const [path, content] of undeclared) await writeFile(path, content, "utf8");
   // The crash left the staged declaration behind; the four package entries were
   // declared but never written, which the cleanup has to tolerate.
-  await writeFile(ownerPath(root), JSON.stringify({
-    ...expectedOwnedRecord(),
-    managedPaths: [...PHASE_B_MANAGED_PATHS],
-  }), "utf8");
+  await writeFile(
+    ownerPath(root),
+    JSON.stringify({
+      ...expectedOwnedRecord(),
+      managedPaths: [...PHASE_B_MANAGED_PATHS],
+    }),
+    "utf8",
+  );
 
   const opened = await productionCore.openRecoverableStardewBootstrapOwner({
     transactionRoot: root,
@@ -1510,8 +1712,14 @@ test("v4 owner quarantine is monotonic, fence-bound, preserves contained roles, 
   const root = await createRoot();
   await reserveFresh(harness, root);
   const transition = createOwnerTransitions(harness, {
-    ownerPath: ownerPath(root), containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+    ownerPath: ownerPath(root),
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
   });
   const quarantined = await transition.quarantine(1);
   assert.equal(quarantined.ownerRecordRevision, 2);
@@ -1519,8 +1727,14 @@ test("v4 owner quarantine is monotonic, fence-bound, preserves contained roles, 
   assert.equal(quarantined.cleanupDisposition, "retry_required");
   await assert.rejects(transition.quarantine(1), /transition_mismatch/);
   const alteredFence = createOwnerTransitions(harness, {
-    ownerPath: ownerPath(root), containmentRoot: root,
-    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding({ revision: "other" }) },
+    ownerPath: ownerPath(root),
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1",
+      playerId: "player-1",
+      companionId: "companion-1",
+      guardian: expectedGuardianBinding({ revision: "other" }),
+    },
   });
   await assert.rejects(alteredFence.quarantine(2), /transition_mismatch/);
   assert.equal(Object.isFrozen(quarantined), true);
@@ -1528,20 +1742,51 @@ test("v4 owner quarantine is monotonic, fence-bound, preserves contained roles, 
 });
 
 test("public composer declaration excludes guardian native record facts", async () => {
-  const source = await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "src", "games", "stardew", "lifecycle", "stardew-private-bootstrap-composer.ts"), "utf8");
-  for (const forbidden of ["StardewGuardianBinding", "StardewPrivateBootstrapOwnerRecord", "StardewExternalPlayerHostPhaseAOwnerOwnerRecord", "StardewOwnedPlayerHostBootstrapOwnerRecord", "leaseName", "playerJobName", "aiJobName", "ownerRecordRevision", "schema"]) assert.equal(source.includes(forbidden), false, forbidden);
+  const source = await readFile(
+    resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "..",
+      "..",
+      "src",
+      "games",
+      "stardew",
+      "lifecycle",
+      "stardew-private-bootstrap-composer.ts",
+    ),
+    "utf8",
+  );
+  for (const forbidden of [
+    "StardewGuardianBinding",
+    "StardewPrivateBootstrapOwnerRecord",
+    "StardewExternalPlayerHostPhaseAOwnerOwnerRecord",
+    "StardewOwnedPlayerHostBootstrapOwnerRecord",
+    "leaseName",
+    "playerJobName",
+    "aiJobName",
+    "ownerRecordRevision",
+    "schema",
+  ])
+    assert.equal(source.includes(forbidden), false, forbidden);
 });
 
 test("production composer exports no testing or Player Host profile staging staging entry", () => {
   assert.deepEqual(Object.keys(productionComposer), ["createStardewPrivateBootstrapComposition"]);
   for (const forbidden of ["Testing", "testing", "Stage", "stage", "Dependencies", "dependencies"]) {
-    assert.equal(Object.keys(productionComposer).some((key) => key.includes(forbidden)), false);
+    assert.equal(
+      Object.keys(productionComposer).some((key) => key.includes(forbidden)),
+      false,
+    );
   }
 });
 
 test("production core namespace has no injectable owner-transition testing factory", () => {
   assert.equal("createStardewBootstrapOwnerTransitionPrimitivesForTesting" in productionCore, false);
-  assert.equal(Object.keys(productionCore).some((key) => /OwnerTransitionPersistence|TransitionPrimitivesForTesting/.test(key)), false);
+  assert.equal(
+    Object.keys(productionCore).some((key) => /OwnerTransitionPersistence|TransitionPrimitivesForTesting/.test(key)),
+    false,
+  );
 });
 
 test("production internal exports no testing constructor, raw owner view, or binder", () => {
@@ -1553,7 +1798,10 @@ test("production internal exports no testing constructor, raw owner view, or bin
     "terminalizeOwnedPlayerHostBootstrap",
   ]);
   for (const forbidden of ["Testing", "testing", "Test", "test", "View", "view", "Bind", "bind", "Raw", "raw"]) {
-    assert.equal(Object.keys(internalComposer).some((key) => key.includes(forbidden)), false);
+    assert.equal(
+      Object.keys(internalComposer).some((key) => key.includes(forbidden)),
+      false,
+    );
   }
   assert.equal(internalComposer.stageOwnedPlayerHostProfile.length, 1);
   assert.equal("createOwnedPlayerHostAttachmentFlow" in internalComposer, false);
@@ -1584,11 +1832,24 @@ test("production internal exports no testing constructor, raw owner view, or bin
   ]);
   assert.equal("materializeAiClientProfileAfterManifestAdmissionForTesting" in composerTestSupport, false);
   assert.equal("materializeAiClientProfileAfterManifestAdmissionForTesting" in composerTestSupportInternal, true);
-  assert.equal(typeof composerTestSupportInternal.materializeAiClientProfileAfterManifestAdmissionForTesting, "function");
+  assert.equal(
+    typeof composerTestSupportInternal.materializeAiClientProfileAfterManifestAdmissionForTesting,
+    "function",
+  );
 });
 
 test("only the production internal and dedicated test-only adapter import the composer core", async () => {
-  const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "src", "games", "stardew", "lifecycle");
+  const sourceRoot = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "..",
+    "..",
+    "src",
+    "games",
+    "stardew",
+    "lifecycle",
+  );
   const leaves = (await readdir(sourceRoot, { recursive: true }))
     .map((leaf) => leaf.replaceAll("\\", "/"))
     .filter((leaf) => leaf.endsWith(".ts"));
@@ -1610,51 +1871,59 @@ test("only the production internal and dedicated test-only adapter import the co
     "createRoleLifecycleFacade: composition.createRoleLifecycleFacade",
     "reserveExternalPlayerHostPhaseA: composition.reserveExternalPlayerHostPhaseA",
     "reserveOwnedPlayerHostBootstrap: composition.reserveOwnedPlayerHostBootstrap",
-  ]) assert.equal(publicComposerSource.includes(member), true, member);
+  ])
+    assert.equal(publicComposerSource.includes(member), true, member);
   assert.equal(publicComposerSource.includes("...composition"), false);
   assert.equal(publicComposerSource.includes("as StardewPrivateBootstrapComposition"), false);
   assert.equal(publicComposerSource.includes("launchStagedPlayerHost"), false);
 
-    assert.deepEqual(coreImporters.sort(), [
-      "stardew-private-bootstrap-composer.internal.ts",
-      "stardew-private-bootstrap-composer.test-support-internal.ts",
-      "stardew-private-bootstrap-composer.test.ts",
-    ]);
-    assert.deepEqual(testInternalImporters.sort(), [
-      "stardew-private-bootstrap-composer.test-fixtures.ts",
-      "stardew-private-bootstrap-composer.test-support.ts",
-      "stardew-private-bootstrap-composer.test.ts",
-    ]);
-   const productionCoreSource = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.core.ts"), "utf8");
-   const productionInternal = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.internal.ts"), "utf8");
-    assert.doesNotMatch(productionCoreSource, /from\s+["'][^"']*stardew-bootstrap-guardian\.private\.js["']/);
-    assert.doesNotMatch(productionCoreSource, /export\s+(?:type\s+)?(?:function|type)\s+(?:createStardewBootstrapOwnerTransitionPrimitivesForTesting|OwnerTransitionPersistence)/);
-   assert.doesNotMatch(productionInternal, /test-support|ForTesting|TestView|TestingComposition/);
+  assert.deepEqual(coreImporters.sort(), [
+    "stardew-private-bootstrap-composer.internal.ts",
+    "stardew-private-bootstrap-composer.test-support-internal.ts",
+    "stardew-private-bootstrap-composer.test.ts",
+  ]);
+  assert.deepEqual(testInternalImporters.sort(), [
+    "stardew-private-bootstrap-composer.test-fixtures.ts",
+    "stardew-private-bootstrap-composer.test-support.ts",
+    "stardew-private-bootstrap-composer.test.ts",
+  ]);
+  const productionCoreSource = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.core.ts"), "utf8");
+  const productionInternal = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.internal.ts"), "utf8");
+  assert.doesNotMatch(productionCoreSource, /from\s+["'][^"']*stardew-bootstrap-guardian\.private\.js["']/);
+  assert.doesNotMatch(
+    productionCoreSource,
+    /export\s+(?:type\s+)?(?:function|type)\s+(?:createStardewBootstrapOwnerTransitionPrimitivesForTesting|OwnerTransitionPersistence)/,
+  );
+  assert.doesNotMatch(productionInternal, /test-support|ForTesting|TestView|TestingComposition/);
 });
 
 test("production internal composition exposes only the private C1 materializer while public facade remains unchanged", () => {
   if (process.platform !== "win32") return;
   const internal = internalComposer.createStardewPrivateBootstrapComposition();
-  assert.deepEqual(Object.keys(internal).sort(), [
-    "abandonFarmhandAiClientActivation",
-    "composition",
-    "consumeOwnedFarmhandBridgeConnection",
-    "createOwnedPlayerHostAttachmentFlow",
-    "createOwnedPlayerHostManifestHandoffCoordinator",
-    "launchMaterializedAiClient",
-    "launchMaterializedAiClientContained",
-    "launchStagedPlayerHost",
-    "launchStagedPlayerHostContained",
-    "materializeAiClientProfileAfterManifestAdmission",
-    "prepareFreshFarmhandAiClientActivation",
-    "quarantineOwnedPlayerHostOwner",
-    "readAndCorrelateOwnedPlayerHostSession",
-    "replaceStagedInstallationLocator",
-    "reserveOwnedPlayerHostBootstrapForActivation",
-    "settleOwnedPlayerHostContainedRuntimeAttempt",
-    "stageOwnedPlayerHostProfile",
-    "terminalizeOwnedPlayerHostOwner",
-  ].sort());
+  assert.deepEqual(
+    Object.keys(internal).sort(),
+    [
+      "abandonFarmhandAiClientActivation",
+      "composition",
+      "consumeOwnedFarmhandBridgeConnection",
+      "createOwnedPlayerHostAttachmentFlow",
+      "createOwnedPlayerHostManifestHandoffCoordinator",
+      "launchMaterializedAiClient",
+      "launchMaterializedAiClientContained",
+      "launchStagedPlayerHost",
+      "launchStagedPlayerHostContained",
+      "materializeAiClientProfileAfterManifestAdmission",
+      "prepareFreshFarmhandAiClientActivation",
+      "projectPlayerActionPolicyIntoOwnedAttempt",
+      "quarantineOwnedPlayerHostOwner",
+      "readAndCorrelateOwnedPlayerHostSession",
+      "replaceStagedInstallationLocator",
+      "reserveOwnedPlayerHostBootstrapForActivation",
+      "settleOwnedPlayerHostContainedRuntimeAttempt",
+      "stageOwnedPlayerHostProfile",
+      "terminalizeOwnedPlayerHostOwner",
+    ].sort(),
+  );
   assert.equal(typeof internal.materializeAiClientProfileAfterManifestAdmission, "function");
   assert.equal(typeof internal.quarantineOwnedPlayerHostOwner, "function");
   assert.deepEqual(Object.keys(internal.composition).sort(), [
@@ -1680,18 +1949,18 @@ test("closed composition has exact public keys and no registrar, launch, or pers
     "createRoleLifecycleFacade",
     "playerHostProcessOwner",
     "reserveExternalPlayerHostPhaseA",
-     "reserveOwnedPlayerHostBootstrap",
-   ]);
+    "reserveOwnedPlayerHostBootstrap",
+  ]);
   for (const forbidden of ["register", "registrar", "persist", "launch", "rawSpawn", "rawProbe"]) {
     assert.equal(forbidden in composition, false);
   }
   assert.deepEqual(Object.keys(composition.broker).sort(), ["close", "confirm"]);
-   assert.deepEqual(Object.keys(composition.aiClientProcessOwner).sort(), [
-     "readOwnedAiClientGeneration",
-     "readStatus",
-     "reserveAiClientLaunch",
-     "stopOwnedAiClient",
-   ]);
+  assert.deepEqual(Object.keys(composition.aiClientProcessOwner).sort(), [
+    "readOwnedAiClientGeneration",
+    "readStatus",
+    "reserveAiClientLaunch",
+    "stopOwnedAiClient",
+  ]);
   assert.deepEqual(Object.keys(composition.playerHostProcessOwner).sort(), [
     "readStatus",
     "reservePlayerHostLaunch",
@@ -1743,18 +2012,22 @@ test("role lifecycle facade closes over this composition's exact AI owner", asyn
 
 test("test-support accepts only raw OS, identity, and clock dependencies", () => {
   const base = {
-    rawSpawn: (() => { throw new Error("unused"); }) as StardewAiClientProcessSpawn,
+    rawSpawn: (() => {
+      throw new Error("unused");
+    }) as StardewAiClientProcessSpawn,
     rawProbe: (() => null) as StardewAiClientProcessProbe,
-    rawPlayerHostSpawn: (() => { throw new Error("unused"); }) as StardewAiClientProcessSpawn,
+    rawPlayerHostSpawn: (() => {
+      throw new Error("unused");
+    }) as StardewAiClientProcessSpawn,
     rawPlayerHostProbe: (() => null) as StardewAiClientProcessProbe,
-     createBootstrapIdentity: () => "bootstrap-1",
-     createGuardianRevision: () => "revision-1",
-     createGuardianInstanceId: () => "guardian-instance-1",
-     createGuardianEpoch: () => 1,
-     createGuardianLeaseName: () => "Local\\GameBuddy-Test-Lease-1",
-     createGuardianPlayerJobName: () => "Local\\GameBuddy-Test-PlayerJob-1",
-     createGuardianAiJobName: () => "Local\\GameBuddy-Test-AiJob-1",
-     createLaunchGeneration: () => "generation-1",
+    createBootstrapIdentity: () => "bootstrap-1",
+    createGuardianRevision: () => "revision-1",
+    createGuardianInstanceId: () => "guardian-instance-1",
+    createGuardianEpoch: () => 1,
+    createGuardianLeaseName: () => "Local\\GameBuddy-Test-Lease-1",
+    createGuardianPlayerJobName: () => "Local\\GameBuddy-Test-PlayerJob-1",
+    createGuardianAiJobName: () => "Local\\GameBuddy-Test-AiJob-1",
+    createLaunchGeneration: () => "generation-1",
     createPlayerHostLaunchGeneration: () => "player-generation-1",
     nowMs: () => 1_000,
   };
@@ -1768,15 +2041,16 @@ test("test-support accepts only raw OS, identity, and clock dependencies", () =>
     /invalid_stardew_private_bootstrap_testing_dependencies/,
   );
   assert.throws(
-    () => createStardewPrivateBootstrapComposerTestSupport({
-      ...base,
-      staging: {
-        readPackage: async () => ({ root: resolve("/verified-package"), entries: [] }),
-        createSecret: () => "session-secret-012345",
-        createPipeName: () => "legacy-bridge-pipe",
-        nowMs: () => 1_000,
-      },
-    } as never),
+    () =>
+      createStardewPrivateBootstrapComposerTestSupport({
+        ...base,
+        staging: {
+          readPackage: async () => ({ root: resolve("/verified-package"), entries: [] }),
+          createSecret: () => "session-secret-012345",
+          createPipeName: () => "legacy-bridge-pipe",
+          nowMs: () => 1_000,
+        },
+      } as never),
     /invalid_stardew_private_bootstrap_testing_dependencies/,
   );
   const composition = createStardewPrivateBootstrapComposerTestSupport(base);
@@ -1901,14 +2175,8 @@ test("internal owned quarantine is exact-composition, retryable after persistenc
 
   const ownerView = left.bindOwnedPlayerHostPhaseAOwner(owner);
   assert.equal(ownerView.hasPrivateMaterial(), false);
-  assert.throws(
-    () => ownerView.consumePlayerHostLaunch(() => undefined),
-    /stardew_player_host_launch_not_available/,
-  );
-  assert.throws(
-    () => ownerView.consumeAiClientLaunch(() => undefined),
-    /stardew_ai_client_launch_not_available/,
-  );
+  assert.throws(() => ownerView.consumePlayerHostLaunch(() => undefined), /stardew_player_host_launch_not_available/);
+  assert.throws(() => ownerView.consumeAiClientLaunch(() => undefined), /stardew_ai_client_launch_not_available/);
 
   await writeFile(ownerPath(root), `${JSON.stringify(expectedReserved)}\n`, "utf8");
   await left.quarantineOwnedPlayerHostOwner(owner);
@@ -1920,17 +2188,25 @@ test("internal owned quarantine is exact-composition, retryable after persistenc
 });
 
 test("owned public owner is frozen, empty, and has no record, path, quarantine, or raw launch reachability", async () => {
-const harness = createHarness();
+  const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    await createRoot(),
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
 
   assert.equal(Object.isFrozen(owner), true);
   assert.deepEqual(Reflect.ownKeys(owner), []);
   for (const forbidden of [
-    "record", "transactionDirectory", "quarantine", "consumePlayerHostLaunch", "consumeAiClientLaunch",
-  ]) assert.equal(forbidden in owner, false);
+    "record",
+    "transactionDirectory",
+    "quarantine",
+    "consumePlayerHostLaunch",
+    "consumeAiClientLaunch",
+  ])
+    assert.equal(forbidden in owner, false);
   assert.equal(JSON.stringify(owner), "{}");
 });
 
@@ -1939,7 +2215,10 @@ test("bound test support rejects forged and cross-composition owners before raw 
   const right = createHarness();
   const triple = mintOwnedTriple(left.composition);
   const owner = await left.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    await createRoot(),
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
 
   assert.throws(
@@ -1965,37 +2244,55 @@ test("owned Player Host bootstrap reservation rejects structural and cross-compo
 
   await assert.rejects(
     left.composition.reserveOwnedPlayerHostBootstrap(
-      await createRoot(), structuralClaim, leftTriple.playerHostReservation, leftTriple.aiClientReservation,
+      await createRoot(),
+      structuralClaim,
+      leftTriple.playerHostReservation,
+      leftTriple.aiClientReservation,
     ),
     /stardew_bootstrap_claim_not_registered/,
   );
   await assert.rejects(
     left.composition.reserveOwnedPlayerHostBootstrap(
-      await createRoot(), leftTriple.claim, structuralPlayer, leftTriple.aiClientReservation,
+      await createRoot(),
+      leftTriple.claim,
+      structuralPlayer,
+      leftTriple.aiClientReservation,
     ),
     /stardew_player_host_reservation_not_registered/,
   );
   await assert.rejects(
     left.composition.reserveOwnedPlayerHostBootstrap(
-      await createRoot(), leftTriple.claim, leftTriple.playerHostReservation, structuralAi,
+      await createRoot(),
+      leftTriple.claim,
+      leftTriple.playerHostReservation,
+      structuralAi,
     ),
     /stardew_ai_client_reservation_not_registered/,
   );
   await assert.rejects(
     left.composition.reserveOwnedPlayerHostBootstrap(
-      await createRoot(), rightTriple.claim, leftTriple.playerHostReservation, leftTriple.aiClientReservation,
+      await createRoot(),
+      rightTriple.claim,
+      leftTriple.playerHostReservation,
+      leftTriple.aiClientReservation,
     ),
     /stardew_bootstrap_claim_not_registered/,
   );
   await assert.rejects(
     left.composition.reserveOwnedPlayerHostBootstrap(
-      await createRoot(), leftTriple.claim, rightTriple.playerHostReservation, leftTriple.aiClientReservation,
+      await createRoot(),
+      leftTriple.claim,
+      rightTriple.playerHostReservation,
+      leftTriple.aiClientReservation,
     ),
     /stardew_player_host_reservation_not_registered/,
   );
   await assert.rejects(
     left.composition.reserveOwnedPlayerHostBootstrap(
-      await createRoot(), leftTriple.claim, leftTriple.playerHostReservation, rightTriple.aiClientReservation,
+      await createRoot(),
+      leftTriple.claim,
+      leftTriple.playerHostReservation,
+      rightTriple.aiClientReservation,
     ),
     /stardew_ai_client_reservation_not_registered/,
   );
@@ -2006,26 +2303,31 @@ test("owned Player Host bootstrap reservation returns only after durable reread 
   const root = await createRoot();
   const path = ownerPath(root);
   let releaseRead!: () => void;
-  const readGate = new Promise<void>((resolveGate) => { releaseRead = resolveGate; });
+  const readGate = new Promise<void>((resolveGate) => {
+    releaseRead = resolveGate;
+  });
   let rereadObserved = false;
-  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
-    if (request.operation === "release_owned_lock") {
-      await rm(requestPath(request), { force: true });
-      await writeFile(path, "{not-json", "utf8");
-      rereadObserved = true;
-      await readGate;
-      return "released";
-    }
-    return "indeterminate";
-  })));
+  bindWindowsStaleLockReclaimer(
+    createTestWindowsStaleLockReclaimer(() =>
+      helperChild(async (request) => {
+        if (request.operation === "release_owned_lock") {
+          await rm(requestPath(request), { force: true });
+          await writeFile(path, "{not-json", "utf8");
+          rereadObserved = true;
+          await readGate;
+          return "released";
+        }
+        return "indeterminate";
+      }),
+    ),
+  );
   const triple = mintOwnedTriple(harness.composition);
   let settled = false;
-  const pending = harness.composition.reserveOwnedPlayerHostBootstrap(
-    root,
-    triple.claim,
-    triple.playerHostReservation,
-    triple.aiClientReservation,
-  ).finally(() => { settled = true; });
+  const pending = harness.composition
+    .reserveOwnedPlayerHostBootstrap(root, triple.claim, triple.playerHostReservation, triple.aiClientReservation)
+    .finally(() => {
+      settled = true;
+    });
 
   await waitFor(() => rereadObserved);
   assert.equal(settled, false);
@@ -2040,10 +2342,16 @@ test("owned Player Host bootstrap reservation synchronously binds exact triple s
   const triple = mintOwnedTriple(harness.composition);
   const results = await Promise.allSettled([
     harness.composition.reserveOwnedPlayerHostBootstrap(
-      await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+      await createRoot(),
+      triple.claim,
+      triple.playerHostReservation,
+      triple.aiClientReservation,
     ),
     harness.composition.reserveOwnedPlayerHostBootstrap(
-      await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+      await createRoot(),
+      triple.claim,
+      triple.playerHostReservation,
+      triple.aiClientReservation,
     ),
   ]);
 
@@ -2058,18 +2366,22 @@ test("cross-topology race binds one exact AI reservation to only one durable tra
     launchGenerations: ["shared-ai-generation"],
     playerHostLaunchGenerations: ["owned-player-generation"],
   });
-  const ownedClaim = harness.composition.broker.confirm({
-    playerId: "owned-player",
-    companionId: "owned-companion",
-    browserSessionId: "owned-browser",
-    expiresAtMs: 5_000,
-  }).consume("owned-browser");
-  const externalClaim = harness.composition.broker.confirm({
-    playerId: "external-player",
-    companionId: "external-companion",
-    browserSessionId: "external-browser",
-    expiresAtMs: 5_000,
-  }).consume("external-browser");
+  const ownedClaim = harness.composition.broker
+    .confirm({
+      playerId: "owned-player",
+      companionId: "owned-companion",
+      browserSessionId: "owned-browser",
+      expiresAtMs: 5_000,
+    })
+    .consume("owned-browser");
+  const externalClaim = harness.composition.broker
+    .confirm({
+      playerId: "external-player",
+      companionId: "external-companion",
+      browserSessionId: "external-browser",
+      expiresAtMs: 5_000,
+    })
+    .consume("external-browser");
   const playerHostReservation = harness.composition.playerHostProcessOwner.reservePlayerHostLaunch();
   const sharedAiReservation = harness.composition.aiClientProcessOwner.reserveAiClientLaunch();
   const ownedRoot = await createRoot();
@@ -2082,11 +2394,7 @@ test("cross-topology race binds one exact AI reservation to only one durable tra
       playerHostReservation,
       sharedAiReservation,
     ),
-    harness.composition.reserveExternalPlayerHostPhaseA(
-      externalRoot,
-      externalClaim,
-      sharedAiReservation,
-    ),
+    harness.composition.reserveExternalPlayerHostPhaseA(externalRoot, externalClaim, sharedAiReservation),
   ]);
 
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
@@ -2107,16 +2415,9 @@ test("cross-topology race binds one exact AI reservation to only one durable tra
       aiGeneration: "shared-ai-generation",
     }),
   );
+  await assert.rejects(readFile(ownerPath(externalRoot, "external-bootstrap"), "utf8"), { code: "ENOENT" });
   await assert.rejects(
-    readFile(ownerPath(externalRoot, "external-bootstrap"), "utf8"),
-    { code: "ENOENT" },
-  );
-  await assert.rejects(
-    harness.composition.reserveExternalPlayerHostPhaseA(
-      await createRoot(),
-      externalClaim,
-      sharedAiReservation,
-    ),
+    harness.composition.reserveExternalPlayerHostPhaseA(await createRoot(), externalClaim, sharedAiReservation),
     /stardew_ai_client_reservation_not_available/,
   );
 
@@ -2132,13 +2433,20 @@ test("owned launch consumers are independently one-shot and escaped callbacks ca
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    await createRoot(),
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   let escapedPlayer: import("./stardew-private-bootstrap-composer.js").StardewPlayerHostLaunch | undefined;
   let escapedAi: import("./stardew-private-bootstrap-composer.js").StardewAiClientLaunch | undefined;
 
-  ownerTestView(owner).consumePlayerHostLaunch((launch) => { escapedPlayer = launch; });
-  ownerTestView(owner).consumeAiClientLaunch((launch) => { escapedAi = launch; });
+  ownerTestView(owner).consumePlayerHostLaunch((launch) => {
+    escapedPlayer = launch;
+  });
+  ownerTestView(owner).consumeAiClientLaunch((launch) => {
+    escapedAi = launch;
+  });
   assert.throws(
     () => escapedPlayer?.({ executable: EXE, args: ["escaped-player"] }),
     /stardew_player_host_launch_callback_not_active/,
@@ -2164,18 +2472,27 @@ test("owned quarantine synchronously closes both launches, including reentrant c
   const root = await createRoot();
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   let releasePersistence!: () => void;
-  const persistenceGate = new Promise<void>((resolveGate) => { releasePersistence = resolveGate; });
-  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
-    if (request.operation === "release_owned_lock") {
-      await persistenceGate;
-      await rm(requestPath(request), { force: true });
-      return "released";
-    }
-    return "indeterminate";
-  })));
+  const persistenceGate = new Promise<void>((resolveGate) => {
+    releasePersistence = resolveGate;
+  });
+  bindWindowsStaleLockReclaimer(
+    createTestWindowsStaleLockReclaimer(() =>
+      helperChild(async (request) => {
+        if (request.operation === "release_owned_lock") {
+          await persistenceGate;
+          await rm(requestPath(request), { force: true });
+          return "released";
+        }
+        return "indeterminate";
+      }),
+    ),
+  );
 
   let quarantine!: Promise<void>;
   ownerTestView(owner).consumePlayerHostLaunch((launch) => {
@@ -2204,21 +2521,28 @@ test("owned expiry after persistence quarantines record and revokes both roles",
   const root = await createRoot();
   const triple = mintOwnedTriple(harness.composition, { expiresAtMs: 1_500 });
   let ownerWritten = false;
-  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
-    if (request.operation === "release_owned_lock") {
-      await rm(requestPath(request), { force: true });
-      if (!ownerWritten) {
-        ownerWritten = true;
-        harness.setNow(1_500);
-      }
-      return "released";
-    }
-    return "indeterminate";
-  })));
+  bindWindowsStaleLockReclaimer(
+    createTestWindowsStaleLockReclaimer(() =>
+      helperChild(async (request) => {
+        if (request.operation === "release_owned_lock") {
+          await rm(requestPath(request), { force: true });
+          if (!ownerWritten) {
+            ownerWritten = true;
+            harness.setNow(1_500);
+          }
+          return "released";
+        }
+        return "indeterminate";
+      }),
+    ),
+  );
 
   await assert.rejects(
     harness.composition.reserveOwnedPlayerHostBootstrap(
-      root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+      root,
+      triple.claim,
+      triple.playerHostReservation,
+      triple.aiClientReservation,
     ),
     /stardew_bootstrap_claim_expired_after_persistence/,
   );
@@ -2236,14 +2560,14 @@ test("owned expiry before either callback permanently revokes both roles", async
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition, { expiresAtMs: 1_500 });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    await createRoot(),
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   harness.setNow(1_500);
 
-  assert.throws(
-    () => ownerTestView(owner).consumePlayerHostLaunch(() => undefined),
-    /stardew_bootstrap_owner_expired/,
-  );
+  assert.throws(() => ownerTestView(owner).consumePlayerHostLaunch(() => undefined), /stardew_bootstrap_owner_expired/);
   assert.throws(
     () => ownerTestView(owner).consumePlayerHostLaunch(() => undefined),
     /stardew_player_host_launch_not_available/,
@@ -2251,10 +2575,7 @@ test("owned expiry before either callback permanently revokes both roles", async
   // The role-specific expiry closes the consumed Player Host authority; the
   // other exact role remains independently consumable until quarantine or its
   // own expiry check, which then permanently revokes it too.
-  assert.throws(
-    () => ownerTestView(owner).consumeAiClientLaunch(() => undefined),
-    /stardew_bootstrap_owner_expired/,
-  );
+  assert.throws(() => ownerTestView(owner).consumeAiClientLaunch(() => undefined), /stardew_bootstrap_owner_expired/);
   assert.deepEqual(harness.playerHostSpawnCalls, []);
   assert.deepEqual(harness.spawnCalls, []);
   assert.deepEqual(harness.composition.playerHostProcessOwner.readStatus(), { kind: "idle" });
@@ -2265,10 +2586,15 @@ test("owned Player Host bootstrap reservation binding permits only one successfu
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    await createRoot(),
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   let releaseFirst!: () => void;
-  const firstGate = new Promise<void>((resolveGate) => { releaseFirst = resolveGate; });
+  const firstGate = new Promise<void>((resolveGate) => {
+    releaseFirst = resolveGate;
+  });
   const first = consumeOwnedPlayerHostBootstrap(owner, async () => {
     await firstGate;
     return "first";
@@ -2290,12 +2616,19 @@ test("failed owned Player Host bootstrap reservation binding restores its exact 
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    await createRoot(),
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   let rejectFirst!: (error: Error) => void;
-  const failed = consumeOwnedPlayerHostBootstrap(owner, () => new Promise<never>((_resolve, reject) => {
-    rejectFirst = reject;
-  }));
+  const failed = consumeOwnedPlayerHostBootstrap(
+    owner,
+    () =>
+      new Promise<never>((_resolve, reject) => {
+        rejectFirst = reject;
+      }),
+  );
 
   assert.throws(
     () => consumeOwnedPlayerHostBootstrap(owner, () => "while-binding"),
@@ -2303,19 +2636,29 @@ test("failed owned Player Host bootstrap reservation binding restores its exact 
   );
   rejectFirst(new Error("transient binding failure"));
   await assert.rejects(failed, /transient binding failure/);
-  assert.equal(consumeOwnedPlayerHostBootstrap(owner, () => "retry"), "retry");
+  assert.equal(
+    consumeOwnedPlayerHostBootstrap(owner, () => "retry"),
+    "retry",
+  );
 });
 
 test("independently-created private Stage-B fixtures permit one owner binding, reject reentry, and retry only after failure settles", async () => {
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    await createRoot(),
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   let releasePre!: () => void;
-  const preGate = new Promise<void>((resolveGate) => { releasePre = resolveGate; });
+  const preGate = new Promise<void>((resolveGate) => {
+    releasePre = resolveGate;
+  });
   const firstPlanner = createStageBTestHarness({
-    recheck: async (phase) => { if (phase === "pre") await preGate; },
+    recheck: async (phase) => {
+      if (phase === "pre") await preGate;
+    },
     verifyPackage: async () => undefined,
   });
   const secondPlanner = createStageBTestHarness({
@@ -2332,11 +2675,17 @@ test("independently-created private Stage-B fixtures permit one owner binding, r
   const retryHarness = createHarness();
   const retryTriple = mintOwnedTriple(retryHarness.composition, { browserSessionId: "browser-retry" });
   const retryOwner = await retryHarness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), retryTriple.claim, retryTriple.playerHostReservation, retryTriple.aiClientReservation,
+    await createRoot(),
+    retryTriple.claim,
+    retryTriple.playerHostReservation,
+    retryTriple.aiClientReservation,
   );
   let rejectPre!: (error: Error) => void;
   const failedPlanner = createStageBTestHarness({
-    recheck: async () => new Promise<void>((_resolve, reject) => { rejectPre = reject; }),
+    recheck: async () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectPre = reject;
+      }),
     verifyPackage: async () => undefined,
   });
   const failed = failedPlanner.bindOwnedPlayerHostBootstrap(retryOwner);
@@ -2348,10 +2697,15 @@ test("independently-created private Stage-B fixtures permit one owner binding, r
   const postHarness = createHarness();
   const postTriple = mintOwnedTriple(postHarness.composition, { browserSessionId: "browser-post" });
   const postOwner = await postHarness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), postTriple.claim, postTriple.playerHostReservation, postTriple.aiClientReservation,
+    await createRoot(),
+    postTriple.claim,
+    postTriple.playerHostReservation,
+    postTriple.aiClientReservation,
   );
   const rejectedPostPlanner = createStageBTestHarness({
-    recheck: async (phase) => { if (phase === "post") throw new Error("post rejected"); },
+    recheck: async (phase) => {
+      if (phase === "post") throw new Error("post rejected");
+    },
     verifyPackage: async () => undefined,
   });
   await assert.rejects(rejectedPostPlanner.bindOwnedPlayerHostBootstrap(postOwner), /stardew_private_stage_b_failed/);
@@ -2361,15 +2715,15 @@ test("owned Player Host launch fresh-checks exact expiry inside its active callb
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition, { expiresAtMs: 1_500 });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    await createRoot(),
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
 
   ownerTestView(owner).consumePlayerHostLaunch((launch) => {
     harness.setNow(1_500);
-    assert.throws(
-      () => launch({ executable: EXE, args: ["expired-player"] }),
-      /stardew_bootstrap_owner_expired/,
-    );
+    assert.throws(() => launch({ executable: EXE, args: ["expired-player"] }), /stardew_bootstrap_owner_expired/);
   });
 
   assert.deepEqual(harness.playerHostSpawnCalls, []);
@@ -2384,15 +2738,15 @@ test("owned AI launch fresh-checks exact expiry inside its active callback", asy
   const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition, { expiresAtMs: 1_500 });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    await createRoot(),
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
 
   ownerTestView(owner).consumeAiClientLaunch((launch) => {
     harness.setNow(1_500);
-    assert.throws(
-      () => launch({ executable: EXE, args: ["expired-ai"] }),
-      /stardew_bootstrap_owner_expired/,
-    );
+    assert.throws(() => launch({ executable: EXE, args: ["expired-ai"] }), /stardew_bootstrap_owner_expired/);
   });
 
   assert.deepEqual(harness.spawnCalls, []);
@@ -2408,7 +2762,10 @@ test("owned quarantine persistence failure keeps the error primary and revokes b
   const root = await createRoot();
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   await writeFile(ownerPath(root), "{corrupt", "utf8");
 
@@ -2418,11 +2775,15 @@ test("owned quarantine persistence failure keeps the error primary and revokes b
   await assert.rejects(first, /invalid_strict_json_file|Unexpected token|JSON/);
   await assert.rejects(second, /invalid_strict_json_file|Unexpected token|JSON/);
   assert.throws(
-    () => ownerTestView(owner).consumePlayerHostLaunch((launch) => launch({ executable: EXE, args: ["after-failure-player"] })),
+    () =>
+      ownerTestView(owner).consumePlayerHostLaunch((launch) =>
+        launch({ executable: EXE, args: ["after-failure-player"] }),
+      ),
     /stardew_player_host_launch_not_available/,
   );
   assert.throws(
-    () => ownerTestView(owner).consumeAiClientLaunch((launch) => launch({ executable: EXE, args: ["after-failure-ai"] })),
+    () =>
+      ownerTestView(owner).consumeAiClientLaunch((launch) => launch({ executable: EXE, args: ["after-failure-ai"] })),
     /stardew_ai_client_launch_not_available/,
   );
   assert.deepEqual(harness.playerHostSpawnCalls, []);
@@ -2450,7 +2811,10 @@ test("owned Player Host bootstrap reservation rejects a reparse-like transaction
 
   await assert.rejects(
     harness.composition.reserveOwnedPlayerHostBootstrap(
-      root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+      root,
+      triple.claim,
+      triple.playerHostReservation,
+      triple.aiClientReservation,
     ),
     /unsafe_path_boundary/,
   );
@@ -2468,7 +2832,10 @@ test("owned Player Host bootstrap reservation fails closed on occupied owner pat
 
   await assert.rejects(
     harness.composition.reserveOwnedPlayerHostBootstrap(
-      root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+      root,
+      triple.claim,
+      triple.playerHostReservation,
+      triple.aiClientReservation,
     ),
     /stardew_bootstrap_owner_occupied/,
   );
@@ -2522,11 +2889,7 @@ test("consumed claim cannot replay even when paired with a fresh reservation", a
   const freshReservation = harness.composition.aiClientProcessOwner.reserveAiClientLaunch();
 
   await assert.rejects(
-    harness.composition.reserveExternalPlayerHostPhaseA(
-      await createRoot(),
-      pair.claim,
-      freshReservation,
-    ),
+    harness.composition.reserveExternalPlayerHostPhaseA(await createRoot(), pair.claim, freshReservation),
     /stardew_bootstrap_claim_not_available/,
   );
 });
@@ -2540,19 +2903,17 @@ test("consumed reservation cannot replay even when paired with a fresh claim", a
     pair.reservation,
   );
   owner.consumeAiClientLaunch(() => undefined);
-  const freshClaim = harness.composition.broker.confirm({
-    playerId: "player-2",
-    companionId: "companion-2",
-    browserSessionId: "browser-2",
-    expiresAtMs: 5_000,
-  }).consume("browser-2");
+  const freshClaim = harness.composition.broker
+    .confirm({
+      playerId: "player-2",
+      companionId: "companion-2",
+      browserSessionId: "browser-2",
+      expiresAtMs: 5_000,
+    })
+    .consume("browser-2");
 
   await assert.rejects(
-    harness.composition.reserveExternalPlayerHostPhaseA(
-      await createRoot(),
-      freshClaim,
-      pair.reservation,
-    ),
+    harness.composition.reserveExternalPlayerHostPhaseA(await createRoot(), freshClaim, pair.reservation),
     /stardew_ai_client_reservation_not_available/,
   );
 });
@@ -2577,23 +2938,31 @@ test("owner is returned only after durable owner.json reread and malformed persi
   const root = await createRoot();
   const path = ownerPath(root);
   let releaseRead!: () => void;
-  const readGate = new Promise<void>((resolveGate) => { releaseRead = resolveGate; });
+  const readGate = new Promise<void>((resolveGate) => {
+    releaseRead = resolveGate;
+  });
   let rereadObserved = false;
-  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
-      if (request.operation === "release_owned_lock") {
-        await rm(requestPath(request), { force: true });
-        await writeFile(path, "{not-json", "utf8");
-        rereadObserved = true;
-        await readGate;
-        return "released";
-      }
-      return "indeterminate";
-    })));
+  bindWindowsStaleLockReclaimer(
+    createTestWindowsStaleLockReclaimer(() =>
+      helperChild(async (request) => {
+        if (request.operation === "release_owned_lock") {
+          await rm(requestPath(request), { force: true });
+          await writeFile(path, "{not-json", "utf8");
+          rereadObserved = true;
+          await readGate;
+          return "released";
+        }
+        return "indeterminate";
+      }),
+    ),
+  );
   const pair = mintPair(harness.composition);
   let settled = false;
   const pending = harness.composition
     .reserveExternalPlayerHostPhaseA(root, pair.claim, pair.reservation)
-    .finally(() => { settled = true; });
+    .finally(() => {
+      settled = true;
+    });
 
   await waitFor(() => rereadObserved);
   assert.equal(settled, false, "join must not resolve before the durable reread");
@@ -2606,17 +2975,21 @@ test("durable write failure permanently consumes the pair and revokes manager re
   const root = await createRoot();
   const pair = mintPair(harness.composition);
   let sabotaged = false;
-  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
-    if (request.operation === "release_owned_lock" && !sabotaged) {
-      sabotaged = true;
-      const transactionDirectory = dirname(requestPath(request));
-      const movedDirectory = `${transactionDirectory}-moved`;
-      await rename(transactionDirectory, movedDirectory);
-      await writeFile(transactionDirectory, "blocks-safe-directory-recreation", "utf8");
-      return "missing";
-    }
-    return "indeterminate";
-  })));
+  bindWindowsStaleLockReclaimer(
+    createTestWindowsStaleLockReclaimer(() =>
+      helperChild(async (request) => {
+        if (request.operation === "release_owned_lock" && !sabotaged) {
+          sabotaged = true;
+          const transactionDirectory = dirname(requestPath(request));
+          const movedDirectory = `${transactionDirectory}-moved`;
+          await rename(transactionDirectory, movedDirectory);
+          await writeFile(transactionDirectory, "blocks-safe-directory-recreation", "utf8");
+          return "missing";
+        }
+        return "indeterminate";
+      }),
+    ),
+  );
 
   await assert.rejects(
     harness.composition.reserveExternalPlayerHostPhaseA(root, pair.claim, pair.reservation),
@@ -2636,26 +3009,33 @@ test("expiry after durable owner persistence quarantines, never spawns, and perm
   const root = await createRoot();
   const pair = mintPair(harness.composition, { expiresAtMs: 1_500 });
   let ownerWritten = false;
-  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
-    if (request.operation === "release_owned_lock") {
-      await rm(requestPath(request), { force: true });
-      if (!ownerWritten) {
-        ownerWritten = true;
-        harness.setNow(1_500);
-      }
-      return "released";
-    }
-    return "indeterminate";
-  })));
+  bindWindowsStaleLockReclaimer(
+    createTestWindowsStaleLockReclaimer(() =>
+      helperChild(async (request) => {
+        if (request.operation === "release_owned_lock") {
+          await rm(requestPath(request), { force: true });
+          if (!ownerWritten) {
+            ownerWritten = true;
+            harness.setNow(1_500);
+          }
+          return "released";
+        }
+        return "indeterminate";
+      }),
+    ),
+  );
 
   await assert.rejects(
     harness.composition.reserveExternalPlayerHostPhaseA(root, pair.claim, pair.reservation),
     /stardew_bootstrap_claim_expired_after_persistence/,
   );
-  assert.deepEqual(JSON.parse(await readFile(ownerPath(root), "utf8")), expectedRecord({
-    expiresAtMs: 1_500,
-    state: "quarantined",
-  }));
+  assert.deepEqual(
+    JSON.parse(await readFile(ownerPath(root), "utf8")),
+    expectedRecord({
+      expiresAtMs: 1_500,
+      state: "quarantined",
+    }),
+  );
   assert.deepEqual(harness.spawnCalls, []);
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
 });
@@ -2671,7 +3051,10 @@ test("consume launch callback is one-shot and escaped launch authority cannot re
   });
   assert.equal(callbackResult, "callback-result");
   assert.deepEqual(harness.spawnCalls, []);
-  assert.throws(() => escaped?.({ executable: EXE, args: ["escaped"] }), /stardew_ai_client_launch_callback_not_active/);
+  assert.throws(
+    () => escaped?.({ executable: EXE, args: ["escaped"] }),
+    /stardew_ai_client_launch_callback_not_active/,
+  );
   assert.throws(
     () => owner.consumeAiClientLaunch((launch) => launch({ executable: EXE, args: ["replay"] })),
     /stardew_ai_client_launch_not_available/,
@@ -2699,39 +3082,50 @@ test("direct Stardew child launches use the exact seven-key environment and excl
   try {
     const harness = createHarness({
       spawn: (executable, args, options) => {
-        captured.push(Object.freeze({
-          executable,
-          args: [...args],
-          cwd: options.cwd,
-          environment: Object.freeze({ ...options.env }),
-        }));
+        captured.push(
+          Object.freeze({
+            executable,
+            args: [...args],
+            cwd: options.cwd,
+            environment: Object.freeze({ ...options.env }),
+          }),
+        );
         return Object.freeze({ pid: 4321, kill: () => true });
       },
       playerHostSpawn: (executable, args, options) => {
-        captured.push(Object.freeze({
-          executable,
-          args: [...args],
-          cwd: options.cwd,
-          environment: Object.freeze({ ...options.env }),
-        }));
+        captured.push(
+          Object.freeze({
+            executable,
+            args: [...args],
+            cwd: options.cwd,
+            environment: Object.freeze({ ...options.env }),
+          }),
+        );
         return Object.freeze({ pid: 5432, kill: () => true });
       },
     });
     const root = await createRoot();
     const triple = mintOwnedTriple(harness.composition);
     const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-      root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+      root,
+      triple.claim,
+      triple.playerHostReservation,
+      triple.aiClientReservation,
     );
-    ownerTestView(owner).consumePlayerHostLaunch((launch) => launch({
-      executable: EXE,
-      args: ["exact-player-environment"],
-      cwd: "C:\\GameBuddy\\player-host",
-    }));
-    ownerTestView(owner).consumeAiClientLaunch((launch) => launch({
-      executable: EXE,
-      args: ["exact-ai-environment"],
-      cwd: "C:\\GameBuddy\\ai-client",
-    }));
+    ownerTestView(owner).consumePlayerHostLaunch((launch) =>
+      launch({
+        executable: EXE,
+        args: ["exact-player-environment"],
+        cwd: "C:\\GameBuddy\\player-host",
+      }),
+    );
+    ownerTestView(owner).consumeAiClientLaunch((launch) =>
+      launch({
+        executable: EXE,
+        args: ["exact-ai-environment"],
+        cwd: "C:\\GameBuddy\\ai-client",
+      }),
+    );
 
     const expectedBase = {
       PATH: process.env.PATH,
@@ -2781,18 +3175,12 @@ test("external AI launch fresh-checks exact expiry inside its active callback", 
 
   owner.consumeAiClientLaunch((launch) => {
     harness.setNow(1_500);
-    assert.throws(
-      () => launch({ executable: EXE, args: ["expired-external-ai"] }),
-      /stardew_bootstrap_owner_expired/,
-    );
+    assert.throws(() => launch({ executable: EXE, args: ["expired-external-ai"] }), /stardew_bootstrap_owner_expired/);
   });
 
   assert.deepEqual(harness.spawnCalls, []);
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
-  assert.throws(
-    () => owner.consumeAiClientLaunch(() => undefined),
-    /stardew_ai_client_launch_not_available/,
-  );
+  assert.throws(() => owner.consumeAiClientLaunch(() => undefined), /stardew_ai_client_launch_not_available/);
 });
 
 test("quarantine inside an active consume callback synchronously rejects launch without spawning", async () => {
@@ -2800,15 +3188,21 @@ test("quarantine inside an active consume callback synchronously rejects launch 
   const root = await createRoot();
   const owner = await reserveFresh(harness, root);
   let releasePersistence!: () => void;
-  const persistenceGate = new Promise<void>((resolveGate) => { releasePersistence = resolveGate; });
-  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
-    if (request.operation === "release_owned_lock") {
-      await persistenceGate;
-      await rm(requestPath(request), { force: true });
-      return "released";
-    }
-    return "indeterminate";
-  })));
+  const persistenceGate = new Promise<void>((resolveGate) => {
+    releasePersistence = resolveGate;
+  });
+  bindWindowsStaleLockReclaimer(
+    createTestWindowsStaleLockReclaimer(() =>
+      helperChild(async (request) => {
+        if (request.operation === "release_owned_lock") {
+          await persistenceGate;
+          await rm(requestPath(request), { force: true });
+          return "released";
+        }
+        return "indeterminate";
+      }),
+    ),
+  );
 
   let pendingQuarantine!: Promise<void>;
   owner.consumeAiClientLaunch((launch) => {
@@ -2830,10 +3224,7 @@ test("quarantine inside an active consume callback synchronously rejects launch 
   await pendingQuarantine;
   assert.deepEqual(JSON.parse(await readFile(ownerPath(root), "utf8")), expectedRecord({ state: "quarantined" }));
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
-  assert.throws(
-    () => owner.consumeAiClientLaunch(() => undefined),
-    /stardew_ai_client_launch_not_available/,
-  );
+  assert.throws(() => owner.consumeAiClientLaunch(() => undefined), /stardew_ai_client_launch_not_available/);
 });
 
 test("quarantine synchronously closes launch authority before its first await and repeated calls share one promise", async () => {
@@ -2841,17 +3232,23 @@ test("quarantine synchronously closes launch authority before its first await an
   const root = await createRoot();
   const owner = await reserveFresh(harness, root);
   let releasePersistence!: () => void;
-  const persistenceGate = new Promise<void>((resolveGate) => { releasePersistence = resolveGate; });
+  const persistenceGate = new Promise<void>((resolveGate) => {
+    releasePersistence = resolveGate;
+  });
   let quarantineWriteRelease = 0;
-  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
-    if (request.operation === "release_owned_lock") {
-      quarantineWriteRelease += 1;
-      if (quarantineWriteRelease === 1) await persistenceGate;
-      await rm(requestPath(request), { force: true });
-      return "released";
-    }
-    return "indeterminate";
-  })));
+  bindWindowsStaleLockReclaimer(
+    createTestWindowsStaleLockReclaimer(() =>
+      helperChild(async (request) => {
+        if (request.operation === "release_owned_lock") {
+          quarantineWriteRelease += 1;
+          if (quarantineWriteRelease === 1) await persistenceGate;
+          await rm(requestPath(request), { force: true });
+          return "released";
+        }
+        return "indeterminate";
+      }),
+    ),
+  );
 
   const first = owner.quarantine();
   const second = owner.quarantine();
@@ -2887,41 +3284,49 @@ test("quarantine persistence failure preserves primary error and permanently clo
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
 });
 
-test("occupied owner directory and occupied lock both fail closed without replacing bytes", { timeout: 15_000 }, async () => {
-  const occupiedHarness = createHarness();
-  const occupiedRoot = await createRoot();
-  const occupiedPair = mintPair(occupiedHarness.composition);
-  await mkdir(dirname(ownerPath(occupiedRoot)), { recursive: true });
-  await writeFile(ownerPath(occupiedRoot), "foreign-owner", "utf8");
-  await assert.rejects(
-    occupiedHarness.composition.reserveExternalPlayerHostPhaseA(
-      occupiedRoot,
-      occupiedPair.claim,
-      occupiedPair.reservation,
-    ),
-    /stardew_bootstrap_owner_occupied/,
-  );
-  assert.equal(await readFile(ownerPath(occupiedRoot), "utf8"), "foreign-owner");
+test(
+  "occupied owner directory and occupied lock both fail closed without replacing bytes",
+  { timeout: 15_000 },
+  async () => {
+    const occupiedHarness = createHarness();
+    const occupiedRoot = await createRoot();
+    const occupiedPair = mintPair(occupiedHarness.composition);
+    await mkdir(dirname(ownerPath(occupiedRoot)), { recursive: true });
+    await writeFile(ownerPath(occupiedRoot), "foreign-owner", "utf8");
+    await assert.rejects(
+      occupiedHarness.composition.reserveExternalPlayerHostPhaseA(
+        occupiedRoot,
+        occupiedPair.claim,
+        occupiedPair.reservation,
+      ),
+      /stardew_bootstrap_owner_occupied/,
+    );
+    assert.equal(await readFile(ownerPath(occupiedRoot), "utf8"), "foreign-owner");
 
-  const lockHarness = createHarness({ bootstrapIds: ["locked-bootstrap"] });
-  const lockRoot = await createRoot();
-  const lockPair = mintPair(lockHarness.composition);
-  const lockedPath = ownerPath(lockRoot, "locked-bootstrap");
-  await mkdir(dirname(lockedPath), { recursive: true });
-  await writeFile(pathLockPath(lockedPath), "stale-malformed-lock", "utf8");
-  const stale = new Date(Date.now() - 6 * 60_000);
-  const { utimes } = await import("node:fs/promises");
-  await utimes(pathLockPath(lockedPath), stale, stale);
-  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
-    if (request.operation === "reclaim_stale_lock") return "indeterminate";
-    return "indeterminate";
-  })));
-  await assert.rejects(
-    lockHarness.composition.reserveExternalPlayerHostPhaseA(lockRoot, lockPair.claim, lockPair.reservation),
-    /durable_path_lock_timeout/,
-  );
-  assert.equal(await readFile(pathLockPath(lockedPath), "utf8"), "stale-malformed-lock");
-});
+    const lockHarness = createHarness({ bootstrapIds: ["locked-bootstrap"] });
+    const lockRoot = await createRoot();
+    const lockPair = mintPair(lockHarness.composition);
+    const lockedPath = ownerPath(lockRoot, "locked-bootstrap");
+    await mkdir(dirname(lockedPath), { recursive: true });
+    await writeFile(pathLockPath(lockedPath), "stale-malformed-lock", "utf8");
+    const stale = new Date(Date.now() - 6 * 60_000);
+    const { utimes } = await import("node:fs/promises");
+    await utimes(pathLockPath(lockedPath), stale, stale);
+    bindWindowsStaleLockReclaimer(
+      createTestWindowsStaleLockReclaimer(() =>
+        helperChild(async (request) => {
+          if (request.operation === "reclaim_stale_lock") return "indeterminate";
+          return "indeterminate";
+        }),
+      ),
+    );
+    await assert.rejects(
+      lockHarness.composition.reserveExternalPlayerHostPhaseA(lockRoot, lockPair.claim, lockPair.reservation),
+      /durable_path_lock_timeout/,
+    );
+    assert.equal(await readFile(pathLockPath(lockedPath), "utf8"), "stale-malformed-lock");
+  },
+);
 
 test("expiry while waiting under an occupied lock fails closed before owner write", async () => {
   const harness = createHarness();
@@ -2933,15 +3338,19 @@ test("expiry while waiting under an occupied lock fails closed before owner writ
   const stale = new Date(Date.now() - 6 * 60_000);
   const { utimes } = await import("node:fs/promises");
   await utimes(pathLockPath(path), stale, stale);
-  bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
-    if (request.operation === "reclaim_stale_lock") {
-      harness.setNow(1_500);
-      await rm(requestPath(request), { force: true });
-      return "reclaimed";
-    }
-    await rm(requestPath(request), { force: true });
-    return "released";
-  })));
+  bindWindowsStaleLockReclaimer(
+    createTestWindowsStaleLockReclaimer(() =>
+      helperChild(async (request) => {
+        if (request.operation === "reclaim_stale_lock") {
+          harness.setNow(1_500);
+          await rm(requestPath(request), { force: true });
+          return "reclaimed";
+        }
+        await rm(requestPath(request), { force: true });
+        return "released";
+      }),
+    ),
+  );
 
   await assert.rejects(
     harness.composition.reserveExternalPlayerHostPhaseA(root, pair.claim, pair.reservation),
@@ -2956,7 +3365,12 @@ test("Player Host profile staging staging creates only the Player Host bootstrap
   const root = await createRoot();
   const packageRoot = join(root, "verified-package");
   await mkdir(packageRoot);
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -2967,7 +3381,10 @@ test("Player Host profile staging staging creates only the Player Host bootstrap
   });
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   const stageB = createStageBTestHarness({
     recheck: async () => undefined,
@@ -3010,9 +3427,20 @@ test("Player Host profile staging staging creates only the Player Host bootstrap
   }
   const serializedConfig = JSON.stringify(host);
   for (const forbidden of [
-    "BridgeToken", "PipeName", "FarmhandProvisioner", "ManifestPath", "EnableLocalBridge",
-    "SaveId", "WorldId", "PlayerId", "FarmhandId", "endpoint", "Endpoint", "launchGeneration",
-  ]) assert.equal(serializedConfig.includes(forbidden), false);
+    "BridgeToken",
+    "PipeName",
+    "FarmhandProvisioner",
+    "ManifestPath",
+    "EnableLocalBridge",
+    "SaveId",
+    "WorldId",
+    "PlayerId",
+    "FarmhandId",
+    "endpoint",
+    "Endpoint",
+    "launchGeneration",
+  ])
+    assert.equal(serializedConfig.includes(forbidden), false);
   assert.equal("CompanionId" in host.HostFarmhandProvisioning, false);
   assert.deepEqual(ownerTestView(owner).record.managedPaths, [
     OWNER_FILE,
@@ -3043,7 +3471,12 @@ test("partial Player Host package write rolls back without AI artifacts or launc
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-rollback");
   await mkdir(packageRoot);
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
   for (const entry of entries) {
     await writeFile(join(packageRoot, entry), entry === "GameBuddy.Stardew.dll" ? "" : `fixed-${entry}`, "utf8");
   }
@@ -3056,7 +3489,10 @@ test("partial Player Host package write rolls back without AI artifacts or launc
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-rollback" });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   const stageB = createStageBTestHarness({
     recheck: async () => undefined,
@@ -3070,10 +3506,9 @@ test("partial Player Host package write rolls back without AI artifacts or launc
   assert.equal(transactionEntries.includes("ai-client"), false);
   assert.equal(transactionEntries.includes("session"), false);
   for (const stagedFile of ["config.json", "GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json"]) {
-    await assert.rejects(
-      readFile(join(transaction, "player-host", "Mods", "GameBuddy", stagedFile), "utf8"),
-      { code: "ENOENT" },
-    );
+    await assert.rejects(readFile(join(transaction, "player-host", "Mods", "GameBuddy", stagedFile), "utf8"), {
+      code: "ENOENT",
+    });
   }
   assert.deepEqual(ownerTestView(owner).record.playerHost, {
     kind: "launch_reserved",
@@ -3092,16 +3527,25 @@ test("partial Player Host package write rolls back without AI artifacts or launc
 test("second package reread holds the owner lock through rollback before quarantine", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-reread-failure");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
   const stagedFiles = ["config.json", ...entries];
   await mkdir(packageRoot);
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   let packageReads = 0;
   let transaction = "";
   let releaseSecondReread!: () => void;
-  const secondRereadGate = new Promise<void>((resolveGate) => { releaseSecondReread = resolveGate; });
+  const secondRereadGate = new Promise<void>((resolveGate) => {
+    releaseSecondReread = resolveGate;
+  });
   let signalSecondReread!: () => void;
-  const secondRereadObserved = new Promise<void>((resolveObserved) => { signalSecondReread = resolveObserved; });
+  const secondRereadObserved = new Promise<void>((resolveObserved) => {
+    signalSecondReread = resolveObserved;
+  });
   const harness = createHarness({
     staging: {
       readPackage: async () => {
@@ -3124,7 +3568,10 @@ test("second package reread holds the owner lock through rollback before quarant
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-reread-failure" });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   transaction = ownerTestView(owner).transactionDirectory;
   const stageB = createStageBTestHarness({
@@ -3135,9 +3582,13 @@ test("second package reread holds the owner lock through rollback before quarant
   const staging = stageB.bindOwnedPlayerHostBootstrap(owner);
   await secondRereadObserved;
   let competingLockEntered = false;
-  const competingLock = withPathLock(ownerPath(root), async () => {
-    competingLockEntered = true;
-  }, { containmentRoot: root });
+  const competingLock = withPathLock(
+    ownerPath(root),
+    async () => {
+      competingLockEntered = true;
+    },
+    { containmentRoot: root },
+  );
   await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
   assert.equal(competingLockEntered, false);
   releaseSecondReread();
@@ -3174,7 +3625,12 @@ test("final post recheck after actual Player Host profile staging write quaranti
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-final-post");
   await mkdir(packageRoot);
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -3185,7 +3641,10 @@ test("final post recheck after actual Player Host profile staging write quaranti
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-final-post" });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   let postChecks = 0;
   const stageB = createStageBTestHarness({
@@ -3197,9 +3656,8 @@ test("final post recheck after actual Player Host profile staging write quaranti
 
   await assert.rejects(
     stageB.bindOwnedPlayerHostBootstrap(owner),
-    (error: unknown) => error instanceof Error &&
-      error.message === "stardew_private_stage_b_failed" &&
-      !("cause" in error),
+    (error: unknown) =>
+      error instanceof Error && error.message === "stardew_private_stage_b_failed" && !("cause" in error),
   );
   const transaction = ownerTestView(owner).transactionDirectory;
   const config = await readFile(join(transaction, "player-host", "Mods", "GameBuddy", "config.json"), "utf8");
@@ -3219,9 +3677,18 @@ test("final post recheck after actual Player Host profile staging write quaranti
   });
   assert.equal(durable.state, "quarantined");
   assert.equal(durable.cleanupDisposition, "retry_required");
-  assert.throws(() => consumeOwnedPlayerHostBootstrap(owner, () => undefined), /stardew_owned_player_host_bootstrap_owner_not_registered/);
-  assert.throws(() => ownerTestView(owner).consumePlayerHostLaunch(() => undefined), /stardew_player_host_launch_not_available/);
-  assert.throws(() => ownerTestView(owner).consumeAiClientLaunch(() => undefined), /stardew_ai_client_launch_not_available/);
+  assert.throws(
+    () => consumeOwnedPlayerHostBootstrap(owner, () => undefined),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
+  );
+  assert.throws(
+    () => ownerTestView(owner).consumePlayerHostLaunch(() => undefined),
+    /stardew_player_host_launch_not_available/,
+  );
+  assert.throws(
+    () => ownerTestView(owner).consumeAiClientLaunch(() => undefined),
+    /stardew_ai_client_launch_not_available/,
+  );
   assert.deepEqual(harness.playerHostSpawnCalls, []);
   assert.deepEqual(harness.spawnCalls, []);
   assert.deepEqual(harness.composition.playerHostProcessOwner.readStatus(), { kind: "idle" });
@@ -3233,7 +3700,10 @@ test("final post failure terminalizes owner after quarantine persistence failure
   const root = await createRoot();
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-final-post-corrupt" });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   let postChecks = 0;
   const stageB = createStageBTestHarness({
@@ -3261,9 +3731,18 @@ test("final post failure terminalizes owner after quarantine persistence failure
     kind: "launch_reserved",
     launchGeneration: "generation-1",
   });
-  assert.throws(() => consumeOwnedPlayerHostBootstrap(owner, () => undefined), /stardew_owned_player_host_bootstrap_owner_not_registered/);
-  assert.throws(() => ownerTestView(owner).consumePlayerHostLaunch(() => undefined), /stardew_player_host_launch_not_available/);
-  assert.throws(() => ownerTestView(owner).consumeAiClientLaunch(() => undefined), /stardew_ai_client_launch_not_available/);
+  assert.throws(
+    () => consumeOwnedPlayerHostBootstrap(owner, () => undefined),
+    /stardew_owned_player_host_bootstrap_owner_not_registered/,
+  );
+  assert.throws(
+    () => ownerTestView(owner).consumePlayerHostLaunch(() => undefined),
+    /stardew_player_host_launch_not_available/,
+  );
+  assert.throws(
+    () => ownerTestView(owner).consumeAiClientLaunch(() => undefined),
+    /stardew_ai_client_launch_not_available/,
+  );
   assert.deepEqual(harness.playerHostSpawnCalls, []);
   assert.deepEqual(harness.spawnCalls, []);
   assert.deepEqual(harness.composition.playerHostProcessOwner.readStatus(), { kind: "idle" });
@@ -3277,18 +3756,26 @@ test("Player Host profile staging staging occupied and expiry failures quarantin
       staging: {
         readPackage: async () => {
           const packageRoot = join(root, `package-${mode}`);
-          const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+          const entries = [
+            "GameBuddy.Stardew.Core.dll",
+            "GameBuddy.Stardew.deps.json",
+            "GameBuddy.Stardew.dll",
+            "manifest.json",
+          ];
           await mkdir(packageRoot, { recursive: true });
           for (const entry of entries) await writeFile(join(packageRoot, entry), entry);
           return { root: packageRoot, entries };
         },
         createSecret: () => "session-secret-012345",
-        nowMs: () => mode === "expired" ? 5_000 : 1_000,
+        nowMs: () => (mode === "expired" ? 5_000 : 1_000),
       },
     });
     const triple = mintOwnedTriple(harness.composition, { browserSessionId: `browser-${mode}` });
     const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-      root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+      root,
+      triple.claim,
+      triple.playerHostReservation,
+      triple.aiClientReservation,
     );
     if (mode === "occupied") await mkdir(join(ownerTestView(owner).transactionDirectory, "foreign"));
     if (mode === "expired") harness.setNow(5_000);
@@ -3321,7 +3808,10 @@ test("owned attachment factory constructs a signed compatibility reader without 
   const transactionDirectory = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
   const sessionDirectory = join(transactionDirectory, "session");
   await mkdir(sessionDirectory, { recursive: true });
-  await writeFile(join(sessionDirectory, "stardew-session.json"), JSON.stringify(signedAttachmentSession("session-secret-stagec-012345")));
+  await writeFile(
+    join(sessionDirectory, "stardew-session.json"),
+    JSON.stringify(signedAttachmentSession("session-secret-stagec-012345")),
+  );
   const recordBefore = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).record;
   const attachmentFlow = fixture.testCore.createOwnedPlayerHostAttachmentFlow(fixture.owner);
   assert.equal(attachmentFlow instanceof StardewAttachmentFlow, true);
@@ -3375,7 +3865,12 @@ test("staged Player Host profile staging owner is consumed exactly once with no 
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-consume");
   await mkdir(packageRoot);
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -3386,11 +3881,17 @@ test("staged Player Host profile staging owner is consumed exactly once with no 
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-consume" });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
 
   // Timing: before the binder completes, the owner is not yet consumable.
-  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_owner_not_bound/);
+  assert.throws(
+    () => consumeStagedOwnedPlayerHostProfileForTesting(owner),
+    /stardew_owned_player_host_bootstrap_owner_not_bound/,
+  );
 
   await createStageBTestHarness({
     recheck: async () => undefined,
@@ -3401,7 +3902,10 @@ test("staged Player Host profile staging owner is consumed exactly once with no 
   assert.doesNotThrow(() => consumeStagedOwnedPlayerHostProfileForTesting(owner));
 
   // One-shot: the same staged authority cannot be consumed again.
-  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/);
+  assert.throws(
+    () => consumeStagedOwnedPlayerHostProfileForTesting(owner),
+    /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/,
+  );
   assert.deepEqual(ownerTestView(owner).record, recordBefore);
   assert.deepEqual(harness.playerHostSpawnCalls, []);
   assert.deepEqual(harness.spawnCalls, []);
@@ -3413,7 +3917,12 @@ test("staged Player Host profile staging consume is composition-bound: foreign c
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-composition-bound");
   await mkdir(packageRoot);
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const left = createHarness({
     staging: {
@@ -3425,7 +3934,10 @@ test("staged Player Host profile staging consume is composition-bound: foreign c
   const right = createHarness();
   const triple = mintOwnedTriple(left.composition, { browserSessionId: "browser-composition-bound" });
   const owner = await left.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   await createStageBTestHarness({
     recheck: async () => undefined,
@@ -3460,7 +3972,12 @@ test("staged Player Host profile staging consumption rejects a bound owner that 
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-nonstaged");
   await mkdir(packageRoot);
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -3471,17 +3988,28 @@ test("staged Player Host profile staging consumption rejects a bound owner that 
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-nonstaged" });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   await consumeOwnedPlayerHostBootstrap(owner, async () => Object.freeze({}));
-  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/);
+  assert.throws(
+    () => consumeStagedOwnedPlayerHostProfileForTesting(owner),
+    /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/,
+  );
 });
 
 test("staged Player Host profile staging consumption rejects expired owners", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-expired-consume");
   await mkdir(packageRoot);
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -3492,21 +4020,32 @@ test("staged Player Host profile staging consumption rejects expired owners", as
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-expired-consume" });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   await createStageBTestHarness({
     recheck: async () => undefined,
     verifyPackage: async () => undefined,
   }).bindOwnedPlayerHostBootstrap(owner);
   harness.setNow(6_000);
-  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_owner_expired/);
+  assert.throws(
+    () => consumeStagedOwnedPlayerHostProfileForTesting(owner),
+    /stardew_owned_player_host_bootstrap_owner_expired/,
+  );
 });
 
 test("staged Player Host profile staging consumption rejects quarantined owners", async () => {
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-quarantined-consume");
   await mkdir(packageRoot);
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const harness = createHarness({
     staging: {
@@ -3517,14 +4056,20 @@ test("staged Player Host profile staging consumption rejects quarantined owners"
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-quarantined-consume" });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   await createStageBTestHarness({
     recheck: async () => undefined,
     verifyPackage: async () => undefined,
   }).bindOwnedPlayerHostBootstrap(owner);
   await ownerTestView(owner).quarantine();
-  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_owner_quarantined/);
+  assert.throws(
+    () => consumeStagedOwnedPlayerHostProfileForTesting(owner),
+    /stardew_owned_player_host_bootstrap_owner_quarantined/,
+  );
 });
 
 test("staged Player Host profile staging consumption rejects forged and failed-staging owners", async () => {
@@ -3540,7 +4085,12 @@ test("staged Player Host profile staging consumption rejects forged and failed-s
   const root = await createRoot();
   const packageRoot = join(root, "verified-package-consume-failure");
   await mkdir(packageRoot);
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
   for (const entry of entries) {
     await writeFile(join(packageRoot, entry), entry === "GameBuddy.Stardew.dll" ? "" : `fixed-${entry}`, "utf8");
   }
@@ -3553,7 +4103,10 @@ test("staged Player Host profile staging consumption rejects forged and failed-s
   });
   const triple = mintOwnedTriple(harness.composition, { browserSessionId: "browser-consume-failure" });
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   await assert.rejects(
     createStageBTestHarness({
@@ -3563,7 +4116,10 @@ test("staged Player Host profile staging consumption rejects forged and failed-s
     /stardew_private_stage_b_failed/,
   );
   assert.equal(ownerTestView(owner).record.state, "quarantined");
-  assert.throws(() => consumeStagedOwnedPlayerHostProfileForTesting(owner), /stardew_owned_player_host_bootstrap_owner_not_bound/);
+  assert.throws(
+    () => consumeStagedOwnedPlayerHostProfileForTesting(owner),
+    /stardew_owned_player_host_bootstrap_owner_not_bound/,
+  );
   assert.deepEqual(harness.spawnCalls, []);
   assert.deepEqual(harness.playerHostSpawnCalls, []);
 });
@@ -3619,15 +4175,19 @@ test("staged Player Host starts exactly one direct Player Host with the admitted
   // still has its same-composition material while the AI reservation remains.
   assert.equal(ownerTestView(owner).hasPrivateMaterial(), true);
   assert.deepEqual(result, { status: { kind: "awaiting_player_host_attestation" } });
-  assert.deepEqual(harness.playerHostSpawnCalls, [{
-    executable: admissionExecutable,
-    args: ["--mods-path", join(transaction, "player-host", "Mods")],
-    cwd: admissionCandidate,
-    environmentGeneration: "player-generation-1",
-  }]);
+  assert.deepEqual(harness.playerHostSpawnCalls, [
+    {
+      executable: admissionExecutable,
+      args: ["--mods-path", join(transaction, "player-host", "Mods")],
+      cwd: admissionCandidate,
+      environmentGeneration: "player-generation-1",
+    },
+  ]);
   assert.deepEqual(harness.spawnCalls, []);
   assert.equal(harness.playerHostSpawnCalls.length, 1);
-  assert.deepEqual(harness.composition.playerHostProcessOwner.readStatus(), { kind: "awaiting_player_host_attestation" });
+  assert.deepEqual(harness.composition.playerHostProcessOwner.readStatus(), {
+    kind: "awaiting_player_host_attestation",
+  });
   assert.deepEqual(ownerTestView(owner).record, recordBefore);
 
   // The staged marker drains permanently after the launch consumer runs.
@@ -3701,7 +4261,10 @@ test("staged Player Host rejects unbound and never-staged owners before any spaw
   const unboundHarness = createHarness({ staging: stageCStaging(packageSource) });
   const unboundTriple = mintOwnedTriple(unboundHarness.composition);
   const unbound = await unboundHarness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), unboundTriple.claim, unboundTriple.playerHostReservation, unboundTriple.aiClientReservation,
+    await createRoot(),
+    unboundTriple.claim,
+    unboundTriple.playerHostReservation,
+    unboundTriple.aiClientReservation,
   );
   await assert.rejects(
     launchStagedPlayerHostForTesting(unbound, installation),
@@ -3711,7 +4274,10 @@ test("staged Player Host rejects unbound and never-staged owners before any spaw
   const boundHarness = createHarness({ staging: stageCStaging(packageSource) });
   const boundTriple = mintOwnedTriple(boundHarness.composition);
   const bound = await boundHarness.composition.reserveOwnedPlayerHostBootstrap(
-    await createRoot(), boundTriple.claim, boundTriple.playerHostReservation, boundTriple.aiClientReservation,
+    await createRoot(),
+    boundTriple.claim,
+    boundTriple.playerHostReservation,
+    boundTriple.aiClientReservation,
   );
   await consumeOwnedPlayerHostBootstrap(bound, async () => Object.freeze({}));
   await assert.rejects(
@@ -3721,8 +4287,12 @@ test("staged Player Host rejects unbound and never-staged owners before any spaw
 
   assert.deepEqual(unboundHarness.playerHostSpawnCalls, []);
   assert.deepEqual(boundHarness.playerHostSpawnCalls, []);
-  assert.deepEqual(unboundHarness.composition.playerHostProcessOwner.readStatus(), { kind: "player_host_launch_pending" });
-  assert.deepEqual(boundHarness.composition.playerHostProcessOwner.readStatus(), { kind: "player_host_launch_pending" });
+  assert.deepEqual(unboundHarness.composition.playerHostProcessOwner.readStatus(), {
+    kind: "player_host_launch_pending",
+  });
+  assert.deepEqual(boundHarness.composition.playerHostProcessOwner.readStatus(), {
+    kind: "player_host_launch_pending",
+  });
   assert.deepEqual(unboundHarness.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
   assert.deepEqual(boundHarness.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
 });
@@ -3738,7 +4308,9 @@ test("staged Player Host rejects expired and quarantined owners before any spawn
 
     await assert.rejects(
       launchStagedPlayerHostForTesting(owner, installation),
-      mode === "expired" ? /stardew_owned_player_host_bootstrap_owner_expired/ : /stardew_owned_player_host_bootstrap_owner_quarantined/,
+      mode === "expired"
+        ? /stardew_owned_player_host_bootstrap_owner_expired/
+        : /stardew_owned_player_host_bootstrap_owner_quarantined/,
     );
     assert.deepEqual(harness.playerHostSpawnCalls, []);
     assert.deepEqual(harness.spawnCalls, []);
@@ -3779,10 +4351,7 @@ test("staged Player Host changed admission identity means zero spawn and restore
     admissionChain(),
   ]);
 
-  await assert.rejects(
-    launchStagedPlayerHostForTesting(owner, installation),
-    /stardew_installation_admission_failed/,
-  );
+  await assert.rejects(launchStagedPlayerHostForTesting(owner, installation), /stardew_installation_admission_failed/);
   assert.deepEqual(harness.playerHostSpawnCalls, []);
   assert.deepEqual(harness.spawnCalls, []);
   assert.deepEqual(ownerTestView(owner).record.state, "reserved");
@@ -3791,12 +4360,14 @@ test("staged Player Host changed admission identity means zero spawn and restore
   // chain is stable: exactly one direct Player Host spawn with the exact recipe.
   const retried = await launchStagedPlayerHostForTesting(owner, installation);
   assert.deepEqual(retried, { status: { kind: "awaiting_player_host_attestation" } });
-  assert.deepEqual(harness.playerHostSpawnCalls, [{
-    executable: admissionExecutable,
-    args: ["--mods-path", join(transaction, "player-host", "Mods")],
-    cwd: admissionCandidate,
-    environmentGeneration: "player-generation-1",
-  }]);
+  assert.deepEqual(harness.playerHostSpawnCalls, [
+    {
+      executable: admissionExecutable,
+      args: ["--mods-path", join(transaction, "player-host", "Mods")],
+      cwd: admissionCandidate,
+      environmentGeneration: "player-generation-1",
+    },
+  ]);
   assert.deepEqual(harness.spawnCalls, []);
   assert.equal(harness.playerHostSpawnCalls.length, 1);
   await assert.rejects(
@@ -3837,10 +4408,10 @@ test("staged Player Host spawn and probe failures keep one-shot marker drain and
     // The established process-owner semantics are unchanged: no process is
     // owned, nothing is killable, and the one-shot staged marker drains.
     assert.deepEqual(harness.composition.playerHostProcessOwner.readStatus(), { kind: "idle" });
-    assert.deepEqual(
-      harness.composition.playerHostProcessOwner.stopOwnedPlayerHost(),
-      { kind: "no_owned_player_host", killed: false },
-    );
+    assert.deepEqual(harness.composition.playerHostProcessOwner.stopOwnedPlayerHost(), {
+      kind: "no_owned_player_host",
+      killed: false,
+    });
     await assert.rejects(
       launchStagedPlayerHostForTesting(owner, installation),
       /stardew_owned_player_host_bootstrap_player_host_profile_staging_not_staged/,
@@ -3853,7 +4424,6 @@ test("staged Player Host spawn and probe failures keep one-shot marker drain and
 // waitFor, waitForPublishedAttachmentRequest, isRecord and isNodeError moved
 // verbatim to ./stardew-private-bootstrap-composer.test-fixtures.ts.
 
-
 test("manifest handoff composes exact verifier chain and returns only fieldless admission", async () => {
   const fixture = await prepareManifestHandoffFixture();
   const selection = await fixture.coordinator.select(fixture.owner, "cabin-attachment-factory");
@@ -3862,25 +4432,30 @@ test("manifest handoff composes exact verifier chain and returns only fieldless 
   const request = await waitForPublishedAttachmentRequest(fixture.sessionDirectory);
   const requestId = request.requestId as string;
   assert.equal(typeof requestId, "string");
-  const response = signedAttachmentValue({
-    schemaVersion: 1,
-    requestId,
-    state: "ready",
-    reasonCode: "manifest_issued",
-    updatedAtUnixMs: 2_100,
-    manifestPath: "stardew-farmhand-manifest.json",
-    signature: "",
-  }, fixture.token);
+  const response = signedAttachmentValue(
+    {
+      schemaVersion: 1,
+      requestId,
+      state: "ready",
+      reasonCode: "manifest_issued",
+      updatedAtUnixMs: 2_100,
+      manifestPath: "stardew-farmhand-manifest.json",
+      signature: "",
+    },
+    fixture.token,
+  );
   await writeFile(join(fixture.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(response));
   await writeFile(
     join(fixture.sessionDirectory, "stardew-farmhand-manifest.json"),
-    JSON.stringify(manifestForAttachment({
-      token: fixture.token,
-      requestId,
-      saveId: "save-attachment-factory",
-      worldId: "world-attachment-factory",
-      nonce: "nonce-attachment-factory",
-    })),
+    JSON.stringify(
+      manifestForAttachment({
+        token: fixture.token,
+        requestId,
+        saveId: "save-attachment-factory",
+        worldId: "world-attachment-factory",
+        nonce: "nonce-attachment-factory",
+      }),
+    ),
   );
   const admission = await requestPending;
   assertFieldlessFrozen(admission);
@@ -3888,8 +4463,12 @@ test("manifest handoff composes exact verifier chain and returns only fieldless 
   assert.equal("manifest" in admission, false);
   assert.deepEqual(fixture.harness.playerHostSpawnCalls, []);
   assert.deepEqual(fixture.harness.spawnCalls, []);
-   assert.deepEqual(fixture.testCore.composition.playerHostProcessOwner.readStatus(), { kind: "player_host_launch_pending" });
-   assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+  assert.deepEqual(fixture.testCore.composition.playerHostProcessOwner.readStatus(), {
+    kind: "player_host_launch_pending",
+  });
+  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), {
+    kind: "ai_client_launch_pending",
+  });
 });
 
 test("manifest handoff rejects forged and cross-composition selections without request publication", async () => {
@@ -3905,7 +4484,9 @@ test("manifest handoff rejects forged and cross-composition selections without r
     () => left.coordinator.confirmAndAdmit(forged, { confirmed: true }),
     /invalid_stardew_manifest_handoff_selection/,
   );
-  await assert.rejects(readFile(join(left.sessionDirectory, "stardew-attachment-request.json"), "utf8"), { code: "ENOENT" });
+  await assert.rejects(readFile(join(left.sessionDirectory, "stardew-attachment-request.json"), "utf8"), {
+    code: "ENOENT",
+  });
   assert.deepEqual(left.harness.playerHostSpawnCalls, []);
   assert.deepEqual(right.harness.playerHostSpawnCalls, []);
 });
@@ -3926,14 +4507,17 @@ test("manifest handoff binds literal confirmation and rejects replay or concurre
   );
   const request = await waitForPublishedAttachmentRequest(fixture.sessionDirectory);
   const requestId = request.requestId as string;
-  const response = signedAttachmentValue({
-    schemaVersion: 1,
-    requestId,
-    state: "rejected",
-    reasonCode: "binding_readback_mismatch",
-    updatedAtUnixMs: 2_100,
-    signature: "",
-  }, fixture.token);
+  const response = signedAttachmentValue(
+    {
+      schemaVersion: 1,
+      requestId,
+      state: "rejected",
+      reasonCode: "binding_readback_mismatch",
+      updatedAtUnixMs: 2_100,
+      signature: "",
+    },
+    fixture.token,
+  );
   await writeFile(join(fixture.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(response));
   await assert.rejects(first, /stardew_manifest_handoff_publication_uncertain/);
   await assert.rejects(
@@ -3950,16 +4534,20 @@ test("manifest handoff fails closed on owner expiry or quarantine before request
     () => expired.coordinator.confirmAndAdmit(expiredSelection, { confirmed: true }),
     /stardew_manifest_handoff_not_admissible/,
   );
-  await assert.rejects(readFile(join(expired.sessionDirectory, "stardew-attachment-request.json"), "utf8"), { code: "ENOENT" });
+  await assert.rejects(readFile(join(expired.sessionDirectory, "stardew-attachment-request.json"), "utf8"), {
+    code: "ENOENT",
+  });
 
   const quarantined = await prepareManifestHandoffFixture();
   const quarantinedSelection = await quarantined.coordinator.select(quarantined.owner, "cabin-attachment-factory");
-   await quarantined.testCore.bindOwnedPlayerHostPhaseAOwner(quarantined.owner).quarantine();
+  await quarantined.testCore.bindOwnedPlayerHostPhaseAOwner(quarantined.owner).quarantine();
   await assert.rejects(
     () => quarantined.coordinator.confirmAndAdmit(quarantinedSelection, { confirmed: true }),
     /stardew_manifest_handoff_not_admissible/,
   );
-  await assert.rejects(readFile(join(quarantined.sessionDirectory, "stardew-attachment-request.json"), "utf8"), { code: "ENOENT" });
+  await assert.rejects(readFile(join(quarantined.sessionDirectory, "stardew-attachment-request.json"), "utf8"), {
+    code: "ENOENT",
+  });
 });
 
 test("C1 materialization admits genuine manifest and writes exact AI-client profile", async () => {
@@ -3968,22 +4556,35 @@ test("C1 materialization admits genuine manifest and writes exact AI-client prof
   const pending = fixture.coordinator.confirmAndAdmit(selection, { confirmed: true });
   const request = await waitForPublishedAttachmentRequest(fixture.sessionDirectory);
   const requestId = request.requestId as string;
-  await writeFile(join(fixture.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(signedAttachmentValue({
-    schemaVersion: 1,
-    requestId,
-    state: "ready",
-    reasonCode: "manifest_issued",
-    updatedAtUnixMs: 2_100,
-    manifestPath: "stardew-farmhand-manifest.json",
-    signature: "",
-  }, fixture.token)));
-  await writeFile(join(fixture.sessionDirectory, "stardew-farmhand-manifest.json"), JSON.stringify(manifestForAttachment({
-    token: fixture.token,
-    requestId,
-    saveId: "save-attachment-factory",
-    worldId: "world-attachment-factory",
-    nonce: "nonce-attachment-factory",
-  })));
+  await writeFile(
+    join(fixture.sessionDirectory, "stardew-attachment-response.json"),
+    JSON.stringify(
+      signedAttachmentValue(
+        {
+          schemaVersion: 1,
+          requestId,
+          state: "ready",
+          reasonCode: "manifest_issued",
+          updatedAtUnixMs: 2_100,
+          manifestPath: "stardew-farmhand-manifest.json",
+          signature: "",
+        },
+        fixture.token,
+      ),
+    ),
+  );
+  await writeFile(
+    join(fixture.sessionDirectory, "stardew-farmhand-manifest.json"),
+    JSON.stringify(
+      manifestForAttachment({
+        token: fixture.token,
+        requestId,
+        saveId: "save-attachment-factory",
+        worldId: "world-attachment-factory",
+        nonce: "nonce-attachment-factory",
+      }),
+    ),
+  );
   const admission = await pending;
   await fixture.testCore.materializeAiClientProfileAfterManifestAdmission(fixture.owner, admission);
   const transaction = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
@@ -3998,6 +4599,9 @@ test("C1 materialization admits genuine manifest and writes exact AI-client prof
     PlayerId: "12345",
     CompanionId: "companion-1",
     ActionPolicyVersion: 1,
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    AdvanceDayMinimumOnlineFarmers: 1,
     FarmhandProvisioner: {
       Enable: true,
       ManifestPath: join(fixture.sessionDirectory, "stardew-farmhand-manifest.json"),
@@ -4018,9 +4622,12 @@ test("C1 materialization admits genuine manifest and writes exact AI-client prof
     "ai-client/Mods/GameBuddy/GameBuddy.Stardew.dll",
     "ai-client/Mods/GameBuddy/manifest.json",
   ]);
-  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), {
+    kind: "ai_client_launch_pending",
+  });
   await assert.rejects(
-    () => fixture.testCore.materializeAiClientProfileAfterManifestAdmission(fixture.owner, admission),    /stardew_ai_client_profile_materialization_not_admissible/,
+    () => fixture.testCore.materializeAiClientProfileAfterManifestAdmission(fixture.owner, admission),
+    /stardew_ai_client_profile_materialization_not_admissible/,
   );
 });
 
@@ -4031,24 +4638,54 @@ test("C1 materialization rejects forged and cross-composition admissions without
   const pending = left.coordinator.confirmAndAdmit(selection, { confirmed: true });
   const request = await waitForPublishedAttachmentRequest(left.sessionDirectory);
   const requestId = request.requestId as string;
-  await writeFile(join(left.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(signedAttachmentValue({
-    schemaVersion: 1, requestId, state: "ready", reasonCode: "manifest_issued", updatedAtUnixMs: 2_100,
-    manifestPath: "stardew-farmhand-manifest.json", signature: "",
-  }, left.token)));
-  await writeFile(join(left.sessionDirectory, "stardew-farmhand-manifest.json"), JSON.stringify(manifestForAttachment({
-    token: left.token, requestId, saveId: "save-attachment-factory", worldId: "world-attachment-factory", nonce: "nonce-attachment-factory",
-  })));
+  await writeFile(
+    join(left.sessionDirectory, "stardew-attachment-response.json"),
+    JSON.stringify(
+      signedAttachmentValue(
+        {
+          schemaVersion: 1,
+          requestId,
+          state: "ready",
+          reasonCode: "manifest_issued",
+          updatedAtUnixMs: 2_100,
+          manifestPath: "stardew-farmhand-manifest.json",
+          signature: "",
+        },
+        left.token,
+      ),
+    ),
+  );
+  await writeFile(
+    join(left.sessionDirectory, "stardew-farmhand-manifest.json"),
+    JSON.stringify(
+      manifestForAttachment({
+        token: left.token,
+        requestId,
+        saveId: "save-attachment-factory",
+        worldId: "world-attachment-factory",
+        nonce: "nonce-attachment-factory",
+      }),
+    ),
+  );
   const admission = await pending;
   await assert.rejects(
     () => right.testCore.materializeAiClientProfileAfterManifestAdmission(right.owner, admission),
     /stardew_ai_client_profile_materialization_not_admissible/,
   );
   await assert.rejects(
-    () => left.testCore.materializeAiClientProfileAfterManifestAdmission(left.owner, Object.freeze(Object.create(null)) as typeof admission),    /stardew_ai_client_profile_materialization_not_admissible/,
+    () =>
+      left.testCore.materializeAiClientProfileAfterManifestAdmission(
+        left.owner,
+        Object.freeze(Object.create(null)) as typeof admission,
+      ),
+    /stardew_ai_client_profile_materialization_not_admissible/,
   );
   assert.deepEqual(left.harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
   assert.deepEqual(right.harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
-  assert.deepEqual((await readdir(left.testCore.bindOwnedPlayerHostPhaseAOwner(left.owner).transactionDirectory)).sort(), ["owner.json", "player-host", "session"]);
+  assert.deepEqual(
+    (await readdir(left.testCore.bindOwnedPlayerHostPhaseAOwner(left.owner).transactionDirectory)).sort(),
+    ["owner.json", "player-host", "session"],
+  );
 });
 
 test("C1 materialization failure quarantines, rolls back AI artifacts, and permanently consumes admission", async () => {
@@ -4057,13 +4694,35 @@ test("C1 materialization failure quarantines, rolls back AI artifacts, and perma
   const pending = fixture.coordinator.confirmAndAdmit(selection, { confirmed: true });
   const request = await waitForPublishedAttachmentRequest(fixture.sessionDirectory);
   const requestId = request.requestId as string;
-  await writeFile(join(fixture.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(signedAttachmentValue({
-    schemaVersion: 1, requestId, state: "ready", reasonCode: "manifest_issued", updatedAtUnixMs: 2_100,
-    manifestPath: "stardew-farmhand-manifest.json", signature: "",
-  }, fixture.token)));
-  await writeFile(join(fixture.sessionDirectory, "stardew-farmhand-manifest.json"), JSON.stringify(manifestForAttachment({
-    token: fixture.token, requestId, saveId: "save-attachment-factory", worldId: "world-attachment-factory", nonce: "nonce-attachment-factory",
-  })));
+  await writeFile(
+    join(fixture.sessionDirectory, "stardew-attachment-response.json"),
+    JSON.stringify(
+      signedAttachmentValue(
+        {
+          schemaVersion: 1,
+          requestId,
+          state: "ready",
+          reasonCode: "manifest_issued",
+          updatedAtUnixMs: 2_100,
+          manifestPath: "stardew-farmhand-manifest.json",
+          signature: "",
+        },
+        fixture.token,
+      ),
+    ),
+  );
+  await writeFile(
+    join(fixture.sessionDirectory, "stardew-farmhand-manifest.json"),
+    JSON.stringify(
+      manifestForAttachment({
+        token: fixture.token,
+        requestId,
+        saveId: "save-attachment-factory",
+        worldId: "world-attachment-factory",
+        nonce: "nonce-attachment-factory",
+      }),
+    ),
+  );
   const admission = await pending;
   await writeFile(join(fixture.root, "verified-package", "GameBuddy.Stardew.dll"), "", "utf8");
   await assert.rejects(
@@ -4071,9 +4730,13 @@ test("C1 materialization failure quarantines, rolls back AI artifacts, and perma
     /stardew_ai_client_profile_materialization_package_invalid/,
   );
   assert.equal(fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).record.state, "quarantined");
-   assert.deepEqual((await readdir(fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory)).sort(), ["owner.json", "player-host", "session"]);
+  assert.deepEqual(
+    (await readdir(fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory)).sort(),
+    ["owner.json", "player-host", "session"],
+  );
   await assert.rejects(
-    () => materializeAiClientProfileAfterManifestAdmissionForTesting(fixture.owner, admission, fixture.harness.composition),
+    () =>
+      materializeAiClientProfileAfterManifestAdmissionForTesting(fixture.owner, admission, fixture.harness.composition),
     /stardew_ai_client_profile_materialization_not_admissible/,
   );
   assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
@@ -4085,15 +4748,23 @@ test("manifest handoff uses production response and manifest verification for mi
   const mismatchPending = mismatch.coordinator.confirmAndAdmit(mismatchSelection, { confirmed: true });
   const mismatchRequest = await waitForPublishedAttachmentRequest(mismatch.sessionDirectory);
   const mismatchRequestId = mismatchRequest.requestId as string;
-  await writeFile(join(mismatch.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(signedAttachmentValue({
-    schemaVersion: 1,
-    requestId: "different-request",
-    state: "ready",
-    reasonCode: "manifest_issued",
-    updatedAtUnixMs: 2_100,
-    manifestPath: "stardew-farmhand-manifest.json",
-    signature: "",
-  }, mismatch.token)));
+  await writeFile(
+    join(mismatch.sessionDirectory, "stardew-attachment-response.json"),
+    JSON.stringify(
+      signedAttachmentValue(
+        {
+          schemaVersion: 1,
+          requestId: "different-request",
+          state: "ready",
+          reasonCode: "manifest_issued",
+          updatedAtUnixMs: 2_100,
+          manifestPath: "stardew-farmhand-manifest.json",
+          signature: "",
+        },
+        mismatch.token,
+      ),
+    ),
+  );
   await assert.rejects(mismatchPending, /stardew_manifest_handoff_publication_uncertain/);
   assert.equal(mismatchRequestId.length > 0, true);
 
@@ -4102,26 +4773,38 @@ test("manifest handoff uses production response and manifest verification for mi
   const tamperedPending = tampered.coordinator.confirmAndAdmit(tamperedSelection, { confirmed: true });
   const tamperedRequest = await waitForPublishedAttachmentRequest(tampered.sessionDirectory);
   const tamperedRequestId = tamperedRequest.requestId as string;
-  await writeFile(join(tampered.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(signedAttachmentValue({
-    schemaVersion: 1,
-    requestId: tamperedRequestId,
-    state: "ready",
-    reasonCode: "manifest_issued",
-    updatedAtUnixMs: 2_100,
-    manifestPath: "stardew-farmhand-manifest.json",
-    signature: "",
-  }, tampered.token)));
-  await writeFile(join(tampered.sessionDirectory, "stardew-farmhand-manifest.json"), JSON.stringify(manifestForAttachment({
-    token: tampered.token,
-    requestId: tamperedRequestId,
-    saveId: "save-attachment-factory",
-    worldId: "world-attachment-factory",
-    nonce: "nonce-attachment-factory",
-    signatureOverride: "tampered-manifest-signature",
-  })));
+  await writeFile(
+    join(tampered.sessionDirectory, "stardew-attachment-response.json"),
+    JSON.stringify(
+      signedAttachmentValue(
+        {
+          schemaVersion: 1,
+          requestId: tamperedRequestId,
+          state: "ready",
+          reasonCode: "manifest_issued",
+          updatedAtUnixMs: 2_100,
+          manifestPath: "stardew-farmhand-manifest.json",
+          signature: "",
+        },
+        tampered.token,
+      ),
+    ),
+  );
+  await writeFile(
+    join(tampered.sessionDirectory, "stardew-farmhand-manifest.json"),
+    JSON.stringify(
+      manifestForAttachment({
+        token: tampered.token,
+        requestId: tamperedRequestId,
+        saveId: "save-attachment-factory",
+        worldId: "world-attachment-factory",
+        nonce: "nonce-attachment-factory",
+        signatureOverride: "tampered-manifest-signature",
+      }),
+    ),
+  );
   await assert.rejects(tamperedPending, /stardew_manifest_handoff_publication_uncertain/);
 });
-
 
 test("manifest handoff rejects a wrong player-host launch generation and quarantines before selection", async () => {
   const fixture = await createAttachmentFactoryFixture();
@@ -4144,10 +4827,9 @@ test("manifest handoff rejects a wrong player-host launch generation and quarant
   assert.deepEqual(fixture.harness.spawnCalls, []);
   assert.deepEqual(fixture.testCore.composition.playerHostProcessOwner.readStatus(), { kind: "idle" });
   assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
-  await assert.rejects(
-    () => readFile(join(sessionDirectory, "stardew-attachment-request.json"), "utf8"),
-    { code: "ENOENT" },
-  );
+  await assert.rejects(() => readFile(join(sessionDirectory, "stardew-attachment-request.json"), "utf8"), {
+    code: "ENOENT",
+  });
 });
 
 test("manifest handoff concurrent replay and cross-composition failures preserve an unconsumed AI reservation", async () => {
@@ -4167,14 +4849,19 @@ test("manifest handoff concurrent replay and cross-composition failures preserve
   const request = await waitForPublishedAttachmentRequest(left.sessionDirectory);
   await writeFile(
     join(left.sessionDirectory, "stardew-attachment-response.json"),
-    JSON.stringify(signedAttachmentValue({
-      schemaVersion: 1,
-      requestId: request.requestId as string,
-      state: "rejected",
-      reasonCode: "binding_readback_mismatch",
-      updatedAtUnixMs: 2_100,
-      signature: "",
-    }, left.token)),
+    JSON.stringify(
+      signedAttachmentValue(
+        {
+          schemaVersion: 1,
+          requestId: request.requestId as string,
+          state: "rejected",
+          reasonCode: "binding_readback_mismatch",
+          updatedAtUnixMs: 2_100,
+          signature: "",
+        },
+        left.token,
+      ),
+    ),
   );
   await assert.rejects(first, /stardew_manifest_handoff_publication_uncertain/);
   await assert.rejects(
@@ -4183,7 +4870,9 @@ test("manifest handoff concurrent replay and cross-composition failures preserve
   );
   assert.deepEqual(left.harness.playerHostSpawnCalls, []);
   assert.deepEqual(left.harness.spawnCalls, []);
-  assert.deepEqual(left.testCore.composition.playerHostProcessOwner.readStatus(), { kind: "player_host_launch_pending" });
+  assert.deepEqual(left.testCore.composition.playerHostProcessOwner.readStatus(), {
+    kind: "player_host_launch_pending",
+  });
   assert.deepEqual(left.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
   assert.deepEqual(right.harness.playerHostSpawnCalls, []);
   assert.deepEqual(right.harness.spawnCalls, []);
@@ -4209,19 +4898,65 @@ test("materialized AI Client rejects pre-materialization and cross-composition o
   assert.deepEqual(right.harness.spawnCalls, []);
 });
 
+/**
+ * The round trip the settings surface depends on: a player's answer is stored once,
+ * durably, and the composer projects it into the very config the Mod reads. Without
+ * this the surface would be a checkbox whose value the next bootstrap forgets - and
+ * the Mod would publish every family the player thought they had switched off.
+ */
+test("the player's stored action policy reaches the config the Mod reads", async () => {
+  const fixture = await prepareMaterializedAiClientFixture({}, async (runtimeRoot) => {
+    await new StardewPlayerSettingsStore(runtimeRoot).update(0, {
+      deniedActionFamilies: ["npc_social", "farming_crops"],
+      advanceDayMinimumOnlineFarmers: 2,
+    });
+  });
+  const transaction = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
+  const config = JSON.parse(
+    await readFile(join(transaction, "ai-client", "Mods", "GameBuddy", "config.json"), "utf8"),
+  ) as Record<string, unknown>;
+  // The Mod refuses the whole policy when a denial names a family it does not
+  // declare, so what it receives must be exactly what the surface offered.
+  assert.deepEqual(config.DeniedActionFamilies, ["farming_crops", "npc_social"]);
+  assert.equal(config.AdvanceDayMinimumOnlineFarmers, 2);
+  assert.deepEqual(config.DeniedActions, []);
+  // Everything the composer owns beside them is untouched.
+  assert.equal(config.BridgeToken, "test-bridge-token-0123456789");
+  assert.equal(config.EnableLocalBridge, true);
+});
+
+test("a live save reaches the owned attempt's config and leaves its credentials alone", async () => {
+  const fixture = await prepareMaterializedAiClientFixture();
+  const transaction = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
+  const saved = await new StardewPlayerSettingsStore(fixture.root).update(0, {
+    deniedActionFamilies: ["shops_economy"],
+    advanceDayMinimumOnlineFarmers: 3,
+  });
+  const written = await fixture.testCore.projectPlayerActionPolicyIntoOwnedAttempt(
+    fixture.owner,
+    projectStardewModActionPolicy(saved),
+  );
+  assert.deepEqual(written, { written: true });
+  const config = JSON.parse(
+    await readFile(join(transaction, "ai-client", "Mods", "GameBuddy", "config.json"), "utf8"),
+  ) as Record<string, unknown>;
+  assert.deepEqual(config.DeniedActionFamilies, ["shops_economy"]);
+  assert.equal(config.AdvanceDayMinimumOnlineFarmers, 3);
+  assert.equal(config.BridgeToken, "test-bridge-token-0123456789");
+  assert.deepEqual(config.FarmhandProvisioner !== undefined, true);
+});
+
 test("materialized AI Client fresh installation mismatch spawns nothing and a new admission can retry", async () => {
   const fixture = await prepareMaterializedAiClientFixture();
-  const stale = await admitForStageC([
-    admissionChain(),
-    admissionChain(),
-    changedAdmissionAt(2),
-  ]);
+  const stale = await admitForStageC([admissionChain(), admissionChain(), changedAdmissionAt(2)]);
   await assert.rejects(
     () => fixture.testCore.launchMaterializedAiClient(fixture.owner, stale),
     /stardew_installation_admission_failed/,
   );
   assert.deepEqual(fixture.harness.spawnCalls, []);
-  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), {
+    kind: "ai_client_launch_pending",
+  });
 
   const fresh = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
   const result = await fixture.testCore.launchMaterializedAiClient(fixture.owner, fresh);
@@ -4237,8 +4972,7 @@ test("materialized AI Client rejects Bridge config replaced during installation 
   const inspector = admissionInspector(
     [admissionChain(), admissionChain(), admissionChain(), admissionChain()],
     async (readIndex) => {
-      if (readIndex === 3)
-        await writeFile(configPath, JSON.stringify({ EnableLocalBridge: false }));
+      if (readIndex === 3) await writeFile(configPath, JSON.stringify({ EnableLocalBridge: false }));
     },
   );
   const installation = await admitStardewInstallation(inspector, admissionCandidate);
@@ -4280,7 +5014,12 @@ test("materialized AI Client spawn and probe failures consume the exact AI launc
     const attempted: SpawnCall[] = [];
     const fixture = await prepareMaterializedAiClientFixture({
       spawn: (executable, args, options) => {
-        attempted.push({ executable, args: [...args], cwd: options.cwd, environmentGeneration: options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION });
+        attempted.push({
+          executable,
+          args: [...args],
+          cwd: options.cwd,
+          environmentGeneration: options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION,
+        });
         if (mode === "spawn") throw new Error("materialized_ai_client_spawn_failed");
         return Object.freeze({ pid: 4321, kill: () => true });
       },
@@ -4288,8 +5027,11 @@ test("materialized AI Client spawn and probe failures consume the exact AI launc
     });
     const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
     let failure: unknown;
-    try { await fixture.testCore.launchMaterializedAiClient(fixture.owner, installation); }
-    catch (error) { failure = error; }
+    try {
+      await fixture.testCore.launchMaterializedAiClient(fixture.owner, installation);
+    } catch (error) {
+      failure = error;
+    }
     assert.match(String(failure), mode === "spawn" ? /materialized_ai_client_spawn_failed/ : /probe_failed_no_process/);
     assert.equal(attempted.length, 1);
     assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
@@ -4305,7 +5047,9 @@ test("materialized AI Client spawn and probe failures consume the exact AI launc
 test("private Farmhand Bridge connection binds exact scope and generation once", async () => {
   const fixture = await prepareLaunchedAiClientFixture();
   let release!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   let observed: unknown;
   const first = fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, async (connection) => {
     observed = connection;
@@ -4314,10 +5058,10 @@ test("private Farmhand Bridge connection binds exact scope and generation once",
   });
 
   await assert.rejects(
-    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(
-      fixture.owner,
-      () => Object.freeze({ close: () => undefined }),
-    ),
+    () =>
+      fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
+        Object.freeze({ close: () => undefined }),
+      ),
     /stardew_farmhand_bridge_connection_not_available/,
   );
   release();
@@ -4336,10 +5080,10 @@ test("private Farmhand Bridge connection binds exact scope and generation once",
   });
   assert.equal(Object.isFrozen(observed), true);
   await assert.rejects(
-    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(
-      fixture.owner,
-      () => Object.freeze({ close: () => undefined }),
-    ),
+    () =>
+      fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
+        Object.freeze({ close: () => undefined }),
+      ),
     /stardew_farmhand_bridge_connection_not_available/,
   );
 });
@@ -4348,10 +5092,11 @@ test("private Farmhand Bridge connection retries only callback-local transient f
   const fixture = await prepareLaunchedAiClientFixture();
   let attempts = 0;
   await assert.rejects(
-    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () => {
-      attempts += 1;
-      throw new Error("pipe_not_ready");
-    }),
+    () =>
+      fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () => {
+        attempts += 1;
+        throw new Error("pipe_not_ready");
+      }),
     /pipe_not_ready/,
   );
   const connected = await fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () => {
@@ -4382,9 +5127,11 @@ test("private Farmhand Bridge connection awaits async cleanup when AI stops afte
       },
     });
   });
-  void consuming.finally(() => {
-    settled = true;
-  }).catch(() => undefined);
+  void consuming
+    .finally(() => {
+      settled = true;
+    })
+    .catch(() => undefined);
   await Promise.race([
     closeEntered,
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("async_close_not_entered")), 5_000)),
@@ -4403,14 +5150,15 @@ test("private Farmhand Bridge connection rejects wrong owner, tamper, and stoppe
   const right = await prepareLaunchedAiClientFixture();
   let callbacks = 0;
   await assert.rejects(
-    () => consumeOwnedFarmhandBridgeConnectionForTesting(
-      left.owner,
-      () => {
-        callbacks += 1;
-        return Object.freeze({ close: () => undefined });
-      },
-      right.harness.composition,
-    ),
+    () =>
+      consumeOwnedFarmhandBridgeConnectionForTesting(
+        left.owner,
+        () => {
+          callbacks += 1;
+          return Object.freeze({ close: () => undefined });
+        },
+        right.harness.composition,
+      ),
     /stardew_owned_player_host_bootstrap_owner_not_registered/,
   );
 
@@ -4420,20 +5168,22 @@ test("private Farmhand Bridge connection rejects wrong owner, tamper, and stoppe
     JSON.stringify({ EnableLocalBridge: false }),
   );
   await assert.rejects(
-    () => left.testCore.consumeOwnedFarmhandBridgeConnection(left.owner, () => {
-      callbacks += 1;
-      return Object.freeze({ close: () => undefined });
-    }),
+    () =>
+      left.testCore.consumeOwnedFarmhandBridgeConnection(left.owner, () => {
+        callbacks += 1;
+        return Object.freeze({ close: () => undefined });
+      }),
     /stardew_ai_client_bridge_config_changed/,
   );
   assert.equal(callbacks, 0);
 
   right.testCore.composition.aiClientProcessOwner.stopOwnedAiClient();
   await assert.rejects(
-    () => right.testCore.consumeOwnedFarmhandBridgeConnection(right.owner, () => {
-      callbacks += 1;
-      return Object.freeze({ close: () => undefined });
-    }),
+    () =>
+      right.testCore.consumeOwnedFarmhandBridgeConnection(right.owner, () => {
+        callbacks += 1;
+        return Object.freeze({ close: () => undefined });
+      }),
     /stardew_farmhand_bridge_ai_client_not_awaiting_attestation/,
   );
   assert.equal(callbacks, 0);
@@ -4457,8 +5207,10 @@ test("fresh Farmhand activation re-arms the one-shot authority with a fresh dura
 
   // The one-shot connection stays consumed until a fresh activation is armed.
   await assert.rejects(
-    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
-      Object.freeze({ close: () => undefined })),
+    () =>
+      fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
+        Object.freeze({ close: () => undefined }),
+      ),
     /stardew_farmhand_bridge_connection_not_available/,
   );
 
@@ -4468,7 +5220,9 @@ test("fresh Farmhand activation re-arms the one-shot authority with a fresh dura
   assert.deepEqual(prepared, { launchGeneration: "generation-2" });
   assert.deepEqual(ownerView.record.aiClient.launchGeneration, "generation-2");
   assert.equal(JSON.parse(await readFile(ownerPath, "utf8")).aiClient.launchGeneration, "generation-2");
-  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), {
+    kind: "ai_client_launch_pending",
+  });
   assert.deepEqual(fixture.harness.killCalls, [4321]);
 
   // An armed activation cannot be re-armed before its fresh launch/consume ran.
@@ -4510,7 +5264,8 @@ test("fresh Farmhand activation refuses to arm without an ended activation and a
 
   const fixture = await prepareLaunchedAiClientFixture();
   await fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
-    Object.freeze({ close: () => undefined }));
+    Object.freeze({ close: () => undefined }),
+  );
 
   const armed = await fixture.testCore.prepareFreshFarmhandAiClientActivation(fixture.owner);
   assert.deepEqual(armed, { launchGeneration: "generation-2" });
@@ -4521,13 +5276,18 @@ test("fresh Farmhand activation refuses to arm without an ended activation and a
   const record = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).record;
   assert.deepEqual(record.aiClient.launchGeneration, "generation-2");
   await assert.rejects(
-    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
-      Object.freeze({ close: () => undefined })),
+    () =>
+      fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
+        Object.freeze({ close: () => undefined }),
+      ),
     /stardew_farmhand_bridge_connection_not_available/,
   );
   const rearmed = await fixture.testCore.prepareFreshFarmhandAiClientActivation(fixture.owner);
   assert.deepEqual(rearmed, { launchGeneration: "generation-3" });
-  assert.deepEqual(fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).record.aiClient.launchGeneration, "generation-3");
+  assert.deepEqual(
+    fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).record.aiClient.launchGeneration,
+    "generation-3",
+  );
   await fixture.testCore.abandonFarmhandAiClientActivation(fixture.owner);
 });
 
@@ -4610,11 +5370,14 @@ test("both Farmhand Bridge connection refusals carry the platform contract's typ
   // (b) Consuming the bridge connection is refused once the one-shot connection
   // was consumed by the first activation.
   const consumed = await fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
-    Object.freeze({ close: () => undefined }));
+    Object.freeze({ close: () => undefined }),
+  );
   assert.equal(typeof consumed.close, "function");
   await assert.rejects(
-    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
-      Object.freeze({ close: () => undefined })),
+    () =>
+      fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () =>
+        Object.freeze({ close: () => undefined }),
+      ),
     (error: unknown) => error instanceof FarmhandBridgeConnectionNotAvailableError,
   );
 });
@@ -4690,26 +5453,33 @@ test("connected no-live C1 composition privately provisions Bridge scope before 
 
   await writeFile(
     join(sessionDirectory, "stardew-attachment-response.json"),
-    JSON.stringify(signedAttachmentValue({
-      schemaVersion: 1,
-      requestId,
-      state: "ready",
-      reasonCode: "manifest_issued",
-      updatedAtUnixMs: 2_100,
-      manifestPath: "stardew-farmhand-manifest.json",
-      signature: "",
-    }, sessionToken)),
+    JSON.stringify(
+      signedAttachmentValue(
+        {
+          schemaVersion: 1,
+          requestId,
+          state: "ready",
+          reasonCode: "manifest_issued",
+          updatedAtUnixMs: 2_100,
+          manifestPath: "stardew-farmhand-manifest.json",
+          signature: "",
+        },
+        sessionToken,
+      ),
+    ),
   );
   await writeFile(
     join(sessionDirectory, "stardew-farmhand-manifest.json"),
-    JSON.stringify(manifestForAttachment({
-      token: sessionToken,
-      requestId,
-      saveId: "save-attachment-factory",
-      worldId: "world-attachment-factory",
-      nonce: "nonce-attachment-factory",
-      companionId,
-    })),
+    JSON.stringify(
+      manifestForAttachment({
+        token: sessionToken,
+        requestId,
+        saveId: "save-attachment-factory",
+        worldId: "world-attachment-factory",
+        nonce: "nonce-attachment-factory",
+        companionId,
+      }),
+    ),
   );
   const admission = await admissionPending;
   assertFieldlessFrozen(admission);
@@ -4774,6 +5544,9 @@ test("connected no-live C1 composition privately provisions Bridge scope before 
     PlayerId: "12345",
     CompanionId: companionId,
     ActionPolicyVersion: 1,
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    AdvanceDayMinimumOnlineFarmers: 1,
     FarmhandProvisioner: {
       Enable: true,
       ManifestPath: join(sessionDirectory, "stardew-farmhand-manifest.json"),

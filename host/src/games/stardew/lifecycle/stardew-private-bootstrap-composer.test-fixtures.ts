@@ -14,14 +14,7 @@ import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { EventEmitter } from "node:events";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -60,7 +53,12 @@ export function signedAttachmentSession(
   // The cabins the host world advertises. One by default (what a world created
   // with its native co-op cabin layout advertises); an empty list is the live
   // shape of a host world that has no Cabin at all.
-  cabins: readonly Readonly<{ cabinId: string; ownerFarmhandId: string; boundCompanionId: string; isBusy: boolean }>[] = [{ cabinId: "cabin-attachment-factory", ownerFarmhandId: "12345", boundCompanionId: "", isBusy: false }],
+  cabins: readonly Readonly<{
+    cabinId: string;
+    ownerFarmhandId: string;
+    boundCompanionId: string;
+    isBusy: boolean;
+  }>[] = [{ cabinId: "cabin-attachment-factory", ownerFarmhandId: "12345", boundCompanionId: "", isBusy: false }],
 ) {
   const session = {
     schemaVersion: 1,
@@ -77,10 +75,10 @@ export function signedAttachmentSession(
     expiresAtUnixMs: 5_000,
     nonce: "nonce-attachment-factory",
     state: "ready",
-     hostPlayerId: "world-attachment-factory",
-     runtimeRole: "player_host",
-     launchGeneration,
-     cabins,
+    hostPlayerId: "world-attachment-factory",
+    runtimeRole: "player_host",
+    launchGeneration,
+    cabins,
     signature: "",
   };
   const unsigned = { ...session } as Record<string, unknown>;
@@ -104,18 +102,20 @@ export function signedAttachmentValue<T extends { signature: string }>(value: T,
   };
 }
 
-export function manifestForAttachment(input: Readonly<{
-  token: string;
-  requestId: string;
-  saveId: string;
-  worldId: string;
-  nonce: string;
-  cabinId?: string;
-  farmhandId?: string;
-  companionId?: string;
-  endpoint?: string;
-  signatureOverride?: string;
-}>) {
+export function manifestForAttachment(
+  input: Readonly<{
+    token: string;
+    requestId: string;
+    saveId: string;
+    worldId: string;
+    nonce: string;
+    cabinId?: string;
+    farmhandId?: string;
+    companionId?: string;
+    endpoint?: string;
+    signatureOverride?: string;
+  }>,
+) {
   const value = {
     schemaVersion: 1,
     requestId: input.requestId,
@@ -140,10 +140,12 @@ export function manifestForAttachment(input: Readonly<{
   return input.signatureOverride === undefined ? signed : { ...signed, signature: input.signatureOverride };
 }
 
-export async function prepareManifestHandoffFixture(processOverrides: Readonly<{
-  spawn?: StardewAiClientProcessSpawn;
-  probe?: StardewAiClientProcessProbe;
-}> = {}) {
+export async function prepareManifestHandoffFixture(
+  processOverrides: Readonly<{
+    spawn?: StardewAiClientProcessSpawn;
+    probe?: StardewAiClientProcessProbe;
+  }> = {},
+) {
   const fixture = await createAttachmentFactoryFixture(processOverrides);
   const transactionDirectory = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
   const sessionDirectory = join(transactionDirectory, "session");
@@ -154,40 +156,64 @@ export async function prepareManifestHandoffFixture(processOverrides: Readonly<{
   return { ...fixture, sessionDirectory, token, coordinator };
 }
 
-export async function prepareMaterializedAiClientFixture(processOverrides: Readonly<{
-  spawn?: StardewAiClientProcessSpawn;
-  probe?: StardewAiClientProcessProbe;
-}> = {}) {
+export async function prepareMaterializedAiClientFixture(
+  processOverrides: Readonly<{
+    spawn?: StardewAiClientProcessSpawn;
+    probe?: StardewAiClientProcessProbe;
+  }> = {},
+  /**
+   * Runs against the attempt's runtime root before the AI-client profile is
+   * materialized, so a test can seed the durable player record and then prove what
+   * the composer projected from it into the config the Mod reads.
+   */
+  seed?: (runtimeRoot: string) => Promise<void>,
+) {
   const fixture = await prepareManifestHandoffFixture(processOverrides);
+  if (seed !== undefined) await seed(fixture.root);
   const selection = await fixture.coordinator.select(fixture.owner, "cabin-attachment-factory");
   const pending = fixture.coordinator.confirmAndAdmit(selection, { confirmed: true });
   const request = await waitForPublishedAttachmentRequest(fixture.sessionDirectory);
   const requestId = request.requestId as string;
-  await writeFile(join(fixture.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(signedAttachmentValue({
-    schemaVersion: 1,
-    requestId,
-    state: "ready",
-    reasonCode: "manifest_issued",
-    updatedAtUnixMs: 2_100,
-    manifestPath: "stardew-farmhand-manifest.json",
-    signature: "",
-  }, fixture.token)));
-  await writeFile(join(fixture.sessionDirectory, "stardew-farmhand-manifest.json"), JSON.stringify(manifestForAttachment({
-    token: fixture.token,
-    requestId,
-    saveId: "save-attachment-factory",
-    worldId: "world-attachment-factory",
-    nonce: "nonce-attachment-factory",
-  })));
+  await writeFile(
+    join(fixture.sessionDirectory, "stardew-attachment-response.json"),
+    JSON.stringify(
+      signedAttachmentValue(
+        {
+          schemaVersion: 1,
+          requestId,
+          state: "ready",
+          reasonCode: "manifest_issued",
+          updatedAtUnixMs: 2_100,
+          manifestPath: "stardew-farmhand-manifest.json",
+          signature: "",
+        },
+        fixture.token,
+      ),
+    ),
+  );
+  await writeFile(
+    join(fixture.sessionDirectory, "stardew-farmhand-manifest.json"),
+    JSON.stringify(
+      manifestForAttachment({
+        token: fixture.token,
+        requestId,
+        saveId: "save-attachment-factory",
+        worldId: "world-attachment-factory",
+        nonce: "nonce-attachment-factory",
+      }),
+    ),
+  );
   const admission = await pending;
   await fixture.testCore.materializeAiClientProfileAfterManifestAdmission(fixture.owner, admission);
   return fixture;
 }
 
-export async function prepareLaunchedAiClientFixture(processOverrides: Readonly<{
-  spawn?: StardewAiClientProcessSpawn;
-  probe?: StardewAiClientProcessProbe;
-}> = {}) {
+export async function prepareLaunchedAiClientFixture(
+  processOverrides: Readonly<{
+    spawn?: StardewAiClientProcessSpawn;
+    probe?: StardewAiClientProcessProbe;
+  }> = {},
+) {
   const fixture = await prepareMaterializedAiClientFixture(processOverrides);
   const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
   const launch = await fixture.testCore.launchMaterializedAiClient(fixture.owner, installation);
@@ -202,10 +228,12 @@ export function assertFieldlessFrozen(value: object): void {
   assert.equal(JSON.stringify(value), "{}");
 }
 
-export function createStageBTestHarness(input: Readonly<{
-  recheck(phase: "pre" | "post"): Promise<void>;
-  verifyPackage(): Promise<void>;
-}>) {
+export function createStageBTestHarness(
+  input: Readonly<{
+    recheck(phase: "pre" | "post"): Promise<void>;
+    verifyPackage(): Promise<void>;
+  }>,
+) {
   return {
     async bindOwnedPlayerHostBootstrap(owner: Parameters<typeof consumeOwnedPlayerHostBootstrap>[0]): Promise<object> {
       try {
@@ -214,9 +242,14 @@ export function createStageBTestHarness(input: Readonly<{
           await input.verifyPackage();
           await input.recheck("post");
           await stageOwnedPlayerHostProfile(owner);
-          try { await input.recheck("post"); }
-          catch (error) {
-            try { await ownerTestView(owner).quarantine(); } catch { /* preserve reread failure */ }
+          try {
+            await input.recheck("post");
+          } catch (error) {
+            try {
+              await ownerTestView(owner).quarantine();
+            } catch {
+              /* preserve reread failure */
+            }
             terminalizeOwnedPlayerHostBootstrap(owner);
             throw error;
           }
@@ -243,21 +276,23 @@ export type CapturedLaunch = Readonly<{
   environment: Readonly<NodeJS.ProcessEnv>;
 }>;
 
-export function createHarness(input: Readonly<{
-  nowMs?: number;
-  bootstrapIds?: readonly string[];
-  launchGenerations?: readonly string[];
-  playerHostLaunchGenerations?: readonly string[];
-  guardianRevisions?: readonly string[];
-  guardianLeaseNames?: readonly string[];
-  guardianPlayerJobNames?: readonly string[];
-  guardianAiJobNames?: readonly string[];
-  probe?: StardewAiClientProcessProbe;
-  spawn?: StardewAiClientProcessSpawn;
-  playerHostProbe?: StardewAiClientProcessProbe;
-  playerHostSpawn?: StardewAiClientProcessSpawn;
-  staging?: StardewPrivateModProfileStagingTestSupportInput;
-}> = {}) {
+export function createHarness(
+  input: Readonly<{
+    nowMs?: number;
+    bootstrapIds?: readonly string[];
+    launchGenerations?: readonly string[];
+    playerHostLaunchGenerations?: readonly string[];
+    guardianRevisions?: readonly string[];
+    guardianLeaseNames?: readonly string[];
+    guardianPlayerJobNames?: readonly string[];
+    guardianAiJobNames?: readonly string[];
+    probe?: StardewAiClientProcessProbe;
+    spawn?: StardewAiClientProcessSpawn;
+    playerHostProbe?: StardewAiClientProcessProbe;
+    playerHostSpawn?: StardewAiClientProcessSpawn;
+    staging?: StardewPrivateModProfileStagingTestSupportInput;
+  }> = {},
+) {
   let nowMs = input.nowMs ?? 1_000;
   let bootstrapIndex = 0;
   let generationIndex = 0;
@@ -300,22 +335,25 @@ export function createHarness(input: Readonly<{
       },
     });
   };
-   const baseDependencies = {
-     rawSpawn: input.spawn ?? defaultSpawn,
+  const baseDependencies = {
+    rawSpawn: input.spawn ?? defaultSpawn,
     rawProbe: input.probe ?? ((pid: number) => ({ pid, creationDate: CREATION })),
     rawPlayerHostSpawn: input.playerHostSpawn ?? defaultPlayerHostSpawn,
     rawPlayerHostProbe: input.playerHostProbe ?? ((pid: number) => ({ pid, creationDate: CREATION })),
-     createBootstrapIdentity: () => {
-       const index = bootstrapIndex++;
+    createBootstrapIdentity: () => {
+      const index = bootstrapIndex++;
       return input.bootstrapIds?.[index] ?? `bootstrap-${index + 1}`;
     },
-     createGuardianRevision: () => input.guardianRevisions?.[guardianRevisionIndex++] ?? "revision-1",
-     createGuardianInstanceId: () => "guardian-instance-1",
-     createGuardianEpoch: () => 1,
-     createGuardianLeaseName: () => input.guardianLeaseNames?.[guardianLeaseNameIndex++] ?? "Local\\GameBuddy-Test-Lease-1",
-     createGuardianPlayerJobName: () => input.guardianPlayerJobNames?.[guardianPlayerJobNameIndex++] ?? "Local\\GameBuddy-Test-PlayerJob-1",
-     createGuardianAiJobName: () => input.guardianAiJobNames?.[guardianAiJobNameIndex++] ?? "Local\\GameBuddy-Test-AiJob-1",
-     createLaunchGeneration: () => {
+    createGuardianRevision: () => input.guardianRevisions?.[guardianRevisionIndex++] ?? "revision-1",
+    createGuardianInstanceId: () => "guardian-instance-1",
+    createGuardianEpoch: () => 1,
+    createGuardianLeaseName: () =>
+      input.guardianLeaseNames?.[guardianLeaseNameIndex++] ?? "Local\\GameBuddy-Test-Lease-1",
+    createGuardianPlayerJobName: () =>
+      input.guardianPlayerJobNames?.[guardianPlayerJobNameIndex++] ?? "Local\\GameBuddy-Test-PlayerJob-1",
+    createGuardianAiJobName: () =>
+      input.guardianAiJobNames?.[guardianAiJobNameIndex++] ?? "Local\\GameBuddy-Test-AiJob-1",
+    createLaunchGeneration: () => {
       const index = generationIndex++;
       return input.launchGenerations?.[index] ?? `generation-${index + 1}`;
     },
@@ -348,13 +386,20 @@ export function createHarness(input: Readonly<{
   };
 }
 
-export async function createAttachmentFactoryFixture(processOverrides: Readonly<{
-  spawn?: StardewAiClientProcessSpawn;
-  probe?: StardewAiClientProcessProbe;
-}> = {}) {
+export async function createAttachmentFactoryFixture(
+  processOverrides: Readonly<{
+    spawn?: StardewAiClientProcessSpawn;
+    probe?: StardewAiClientProcessProbe;
+  }> = {},
+) {
   const root = await createRoot("gamebuddy-attachment-factory-");
   const packageRoot = join(root, "verified-package");
-  const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "manifest.json"];
+  const entries = [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ];
   await mkdir(packageRoot);
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const sessionToken = "session-secret-stagec-012345";
@@ -369,12 +414,17 @@ export async function createAttachmentFactoryFixture(processOverrides: Readonly<
   const testCore = createStardewPrivateBootstrapCompositionForTesting(harness.dependencies);
   const triple = mintOwnedTriple(testCore.composition);
   const owner = await testCore.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
-  await createStageBTestHarness({ recheck: async () => undefined, verifyPackage: async () => undefined }).bindOwnedPlayerHostBootstrap(owner);
+  await createStageBTestHarness({
+    recheck: async () => undefined,
+    verifyPackage: async () => undefined,
+  }).bindOwnedPlayerHostBootstrap(owner);
   return { root, harness, testCore, owner };
 }
-
 
 export function defaultStagingDependencies(): StardewPrivateModProfileStagingTestSupportInput {
   let secretIndex = 0;
@@ -417,12 +467,14 @@ export function mintOwnedTriple(
   }> = {},
 ) {
   const browserSessionId = input.browserSessionId ?? "browser-1";
-  const claim = composition.broker.confirm({
-    playerId: input.playerId ?? "player-1",
-    companionId: input.companionId ?? "companion-1",
-    browserSessionId,
-    expiresAtMs: input.expiresAtMs ?? 5_000,
-  }).consume(browserSessionId);
+  const claim = composition.broker
+    .confirm({
+      playerId: input.playerId ?? "player-1",
+      companionId: input.companionId ?? "companion-1",
+      browserSessionId,
+      expiresAtMs: input.expiresAtMs ?? 5_000,
+    })
+    .consume(browserSessionId);
   const playerHostReservation = composition.playerHostProcessOwner.reservePlayerHostLaunch();
   const aiClientReservation = composition.aiClientProcessOwner.reserveAiClientLaunch();
   return { claim, playerHostReservation, aiClientReservation };
@@ -438,12 +490,14 @@ export function mintPair(
   }> = {},
 ) {
   const browserSessionId = input.browserSessionId ?? "browser-1";
-  const claim = composition.broker.confirm({
-    playerId: input.playerId ?? "player-1",
-    companionId: input.companionId ?? "companion-1",
-    browserSessionId,
-    expiresAtMs: input.expiresAtMs ?? 5_000,
-  }).consume(browserSessionId);
+  const claim = composition.broker
+    .confirm({
+      playerId: input.playerId ?? "player-1",
+      companionId: input.companionId ?? "companion-1",
+      browserSessionId,
+      expiresAtMs: input.expiresAtMs ?? 5_000,
+    })
+    .consume(browserSessionId);
   const reservation = composition.aiClientProcessOwner.reserveAiClientLaunch();
   return { claim, reservation };
 }
@@ -468,7 +522,16 @@ export function createOwnerTransitions(
   return createOwnerTransitionsForTesting(harness.testCore, input);
 }
 
-export function expectedGuardianBinding(input: Readonly<{ revision?: string; instanceId?: string; epoch?: number; leaseName?: string; playerJobName?: string; aiJobName?: string }> = {}) {
+export function expectedGuardianBinding(
+  input: Readonly<{
+    revision?: string;
+    instanceId?: string;
+    epoch?: number;
+    leaseName?: string;
+    playerJobName?: string;
+    aiJobName?: string;
+  }> = {},
+) {
   return {
     bindingRevision: input.revision ?? "revision-1",
     guardianInstanceId: input.instanceId ?? "guardian-instance-1",
@@ -479,15 +542,17 @@ export function expectedGuardianBinding(input: Readonly<{ revision?: string; ins
   };
 }
 
-export function expectedOwnedRecord(input: Readonly<{
-  bootstrapId?: string;
-  playerId?: string;
-  companionId?: string;
-  playerHostGeneration?: string;
-  aiGeneration?: string;
-  expiresAtMs?: number;
-  state?: "reserved" | "quarantined";
-}> = {}) {
+export function expectedOwnedRecord(
+  input: Readonly<{
+    bootstrapId?: string;
+    playerId?: string;
+    companionId?: string;
+    playerHostGeneration?: string;
+    aiGeneration?: string;
+    expiresAtMs?: number;
+    state?: "reserved" | "quarantined";
+  }> = {},
+) {
   const state = input.state ?? "reserved";
   return {
     schema: OWNER_SCHEMA,
@@ -501,7 +566,7 @@ export function expectedOwnedRecord(input: Readonly<{
     playerHostState: state === "reserved" ? "reserved" : "quarantined",
     aiClientState: state === "reserved" ? "reserved" : "quarantined",
     recoveryInstanceId: null,
-     playerHost: {
+    playerHost: {
       kind: "launch_reserved",
       launchGeneration: input.playerHostGeneration ?? "player-generation-1",
     },
@@ -515,14 +580,16 @@ export function expectedOwnedRecord(input: Readonly<{
   };
 }
 
-export function expectedRecord(input: Readonly<{
-  bootstrapId?: string;
-  playerId?: string;
-  companionId?: string;
-  generation?: string;
-  expiresAtMs?: number;
-  state?: "reserved" | "quarantined";
-}> = {}) {
+export function expectedRecord(
+  input: Readonly<{
+    bootstrapId?: string;
+    playerId?: string;
+    companionId?: string;
+    generation?: string;
+    expiresAtMs?: number;
+    state?: "reserved" | "quarantined";
+  }> = {},
+) {
   const state = input.state ?? "reserved";
   return {
     schema: OWNER_SCHEMA,
@@ -536,7 +603,7 @@ export function expectedRecord(input: Readonly<{
     playerHostState: state === "reserved" ? "reserved" : "quarantined",
     aiClientState: state === "reserved" ? "reserved" : "quarantined",
     recoveryInstanceId: null,
-     playerHost: { kind: "external_unattested" },
+    playerHost: { kind: "external_unattested" },
     aiClient: {
       kind: "launch_reserved",
       launchGeneration: input.generation ?? "generation-1",
@@ -556,37 +623,50 @@ export async function writeRegistrationAttemptFixture(
   const markerPath = join(registrationDirectory, "owner-transaction.json");
   const preparedOwnerPath = ownerPath(root);
   await mkdir(registrationDirectory, { recursive: true });
-  await writeFile(registrationPath, JSON.stringify({
-    schema: "gamebuddy-stardew-installation-registration/v1",
-    binding: { rootLayoutVersion: 1 },
-    revision: input.activeAttempt ? 2 : 1,
-    state: "ready",
-    locator: "C:\\StardewValley",
-    activeAttempt: input.activeAttempt ? { bootstrapCorrelation: "bootstrap-1" } : null,
-  }), "utf8");
-  if (input.marker) await writeFile(markerPath, JSON.stringify({
-    schema: "gamebuddy-stardew-installation-owner-transaction/v1",
-    operation: "prepare_bind",
-    bootstrapCorrelation: "bootstrap-1",
-    registrationRevision: 2,
-    ownerRecordRevision: 1,
-  }), "utf8");
+  await writeFile(
+    registrationPath,
+    JSON.stringify({
+      schema: "gamebuddy-stardew-installation-registration/v1",
+      binding: { rootLayoutVersion: 1 },
+      revision: input.activeAttempt ? 2 : 1,
+      state: "ready",
+      locator: "C:\\StardewValley",
+      activeAttempt: input.activeAttempt ? { bootstrapCorrelation: "bootstrap-1" } : null,
+    }),
+    "utf8",
+  );
+  if (input.marker)
+    await writeFile(
+      markerPath,
+      JSON.stringify({
+        schema: "gamebuddy-stardew-installation-owner-transaction/v1",
+        operation: "prepare_bind",
+        bootstrapCorrelation: "bootstrap-1",
+        registrationRevision: 2,
+        ownerRecordRevision: 1,
+      }),
+      "utf8",
+    );
   if (input.owner) {
     await mkdir(dirname(preparedOwnerPath), { recursive: true });
     await writeFile(preparedOwnerPath, JSON.stringify(expectedOwnedRecord()), "utf8");
   }
   const before = new Map<string, string | null>();
   for (const path of [registrationPath, markerPath, preparedOwnerPath]) {
-    try { before.set(path, await readFile(path, "utf8")); }
-    catch (error) {
-      if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) throw error;
+    try {
+      before.set(path, await readFile(path, "utf8"));
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"))
+        throw error;
       before.set(path, null);
     }
   }
   return Object.freeze({ before });
 }
 
-export async function assertAttemptFixtureUnchanged(fixture: Awaited<ReturnType<typeof writeRegistrationAttemptFixture>>): Promise<void> {
+export async function assertAttemptFixtureUnchanged(
+  fixture: Awaited<ReturnType<typeof writeRegistrationAttemptFixture>>,
+): Promise<void> {
   for (const [path, expected] of fixture.before) {
     if (expected === null) await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" });
     else assert.equal(await readFile(path, "utf8"), expected);
@@ -597,10 +677,7 @@ export const admissionCandidate = "C:\\Games\\Stardew Valley";
 export const admissionExecutable = `${admissionCandidate}\\StardewModdingAPI.exe`;
 export const admissionVolumeIdentity = "0123456789abcdef";
 
-export function admissionIdentity(
-  objectKind: "directory" | "regular_file",
-  fileId: string,
-): WindowsPathObjectIdentity {
+export function admissionIdentity(objectKind: "directory" | "regular_file", fileId: string): WindowsPathObjectIdentity {
   return Object.freeze({
     objectKind,
     isReparsePoint: false,
@@ -619,9 +696,11 @@ export function admissionChain(): readonly WindowsPathObjectIdentity[] {
 }
 
 export function changedAdmissionAt(index: number): readonly WindowsPathObjectIdentity[] {
-  return Object.freeze(admissionChain().map((identity, position) =>
-    position === index ? { ...identity, fileId: "ffffffffffffffffffffffffffffffff" } : identity,
-  ));
+  return Object.freeze(
+    admissionChain().map((identity, position) =>
+      position === index ? { ...identity, fileId: "ffffffffffffffffffffffffffffffff" } : identity,
+    ),
+  );
 }
 
 export function admissionRequest(path: string): object {
@@ -647,14 +726,18 @@ export function admissionInspector(
       stderr: new PassThrough(),
       kill: () => true,
     });
-    child.stdin.on("data", (chunk: Buffer) => void (async () => {
-      const request: unknown = JSON.parse(chunk.toString("utf8"));
-      assert.deepEqual(request, admissionRequest(admissionExecutable));
-      if (beforeResponse !== undefined) await beforeResponse(readIndex);
-      child.stdout.end(admissionResponse(chain));
-      child.stderr.end();
-      queueMicrotask(() => child.emit("close", 0, null));
-    })());
+    child.stdin.on(
+      "data",
+      (chunk: Buffer) =>
+        void (async () => {
+          const request: unknown = JSON.parse(chunk.toString("utf8"));
+          assert.deepEqual(request, admissionRequest(admissionExecutable));
+          if (beforeResponse !== undefined) await beforeResponse(readIndex);
+          child.stdout.end(admissionResponse(chain));
+          child.stderr.end();
+          queueMicrotask(() => child.emit("close", 0, null));
+        })(),
+    );
     return child as unknown as ChildProcess;
   });
 }
@@ -693,7 +776,10 @@ export async function stageCStageB(
 ): Promise<StardewOwnedPlayerHostBootstrap> {
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostBootstrap(
-    root, triple.claim, triple.playerHostReservation, triple.aiClientReservation,
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
   );
   await createStageBTestHarness({
     recheck: async () => undefined,
@@ -739,9 +825,7 @@ export function simulatedLockHelper(): ChildProcess {
   });
 }
 
-export function helperChild(
-  respond: (request: HelperRequest) => Promise<string> | string,
-): ChildProcess {
+export function helperChild(respond: (request: HelperRequest) => Promise<string> | string): ChildProcess {
   const child = Object.assign(new EventEmitter(), {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
