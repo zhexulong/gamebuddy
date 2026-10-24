@@ -17,6 +17,7 @@ import {
 } from "./connection-store.js";
 import { TAVERN_MODEL_LISTING_LIMIT } from "./browser-contract/index.js";
 import { TAVERN_ESCAPE_HATCH_PROVIDER_ID } from "./provider-catalog.js";
+import { COMPANION_THINKING_LEVELS, type CompanionThinkingLevel } from "../runtime-identity.js";
 
 // The store takes a durable path lock, so the tests need the same test-only
 // reclaimer binding every other path-lock consumer's test uses. Without it the
@@ -683,15 +684,148 @@ test("a durable escape-hatch record keeps its query-string endpoint and API shap
   }
 });
 
-function persistedConnection(connectionId: string) {
+test("every level the runtime accepts is durable for a model the player typed, so the write path cannot produce a document the read path refuses", async () => {
+  await withRoot(async (root, store) => {
+    const created = await store.create({
+      providerId: "deepseek",
+      apiKey: "k",
+      baseUrl: null,
+      apiShape: null,
+      modelId: "deepseek-v4.1-flash",
+    });
+    const connectionId = created.connections[0]!.connectionId;
+
+    // The population comes from the authority, never from a list written here: every member of the
+    // runtime's own vocabulary must round-trip through the store that persists it. `off`/`minimal`
+    // are the two the second, shorter list had orphaned.
+    assert.ok(COMPANION_THINKING_LEVELS.includes("off"));
+    assert.ok(COMPANION_THINKING_LEVELS.includes("minimal"));
+    let revision = created.revision;
+    for (const thinkingLevel of COMPANION_THINKING_LEVELS) {
+      const selected = await store.selectModel(connectionId, revision, "deepseek-v4-next", thinkingLevel);
+      revision = selected.revision;
+      assert.equal(selected.connections[0]!.thinkingLevel, thinkingLevel);
+      // A fresh reader of the same root is the reproduction's failing step: before this fix the
+      // write succeeded and every later read threw `invalid_tavern_connection_store`.
+      const reread = await new TavernConnectionStore(root).read();
+      assert.equal(reread.connections[0]!.thinkingLevel, thinkingLevel);
+    }
+
+    // `off` on a typed model is the exact selection this bug wrote, and the record must stay usable:
+    // probeable, activatable, and readable as the active selection.
+    const off = await store.selectModel(connectionId, revision, "deepseek-v4-next", "off");
+    assert.equal(off.connections[0]!.thinkingLevel, "off");
+    const ready = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-next"] });
+    const active = await store.activate(connectionId, ready.revision);
+    assert.equal(active.activeConnectionId, connectionId);
+    assert.equal((await store.active())?.thinkingLevel, "off");
+
+    // A second record at `minimal` can still be deleted: every mutation loads the document first, so
+    // before this fix neither row could be reached at all - not even the one delete that would have
+    // cleaned up the selection.
+    const second = await store.create({
+      providerId: "deepseek",
+      apiKey: "k",
+      baseUrl: null,
+      apiShape: null,
+      modelId: "deepseek-v4.1-flash",
+    });
+    const secondId = second.connections[1]!.connectionId;
+    const minimal = await store.selectModel(secondId, second.revision, "deepseek-v4-next", "minimal");
+    assert.equal(minimal.connections[1]!.thinkingLevel, "minimal");
+    const removed = await store.remove(secondId, minimal.revision);
+    assert.deepEqual(
+      removed.connections.map((entry) => entry.connectionId),
+      [connectionId],
+    );
+
+    // The same single authority still refuses a level the runtime cannot express.
+    const again = await store.create({
+      providerId: "deepseek",
+      apiKey: "k",
+      baseUrl: null,
+      apiShape: null,
+      modelId: "deepseek-v4.1-flash",
+    });
+    const againId = again.connections[1]!.connectionId;
+    for (const level of ["none", "ultra", "", "HIGH"]) {
+      await assert.rejects(
+        store.selectModel(againId, again.revision, "deepseek-v4-next", level as CompanionThinkingLevel),
+        (error: unknown) =>
+          error instanceof TavernConnectionInputError && error.reason === "thinking_level_not_allowed",
+        `expected ${JSON.stringify(level)} to be refused on the write path`,
+      );
+    }
+  });
+});
+
+/**
+ * A document this bug already wrote into a player's root. `off`/`minimal` were accepted on write and
+ * refused on read, so the record is on disk and the store must load it rather than throw: a store
+ * that cannot read its own output turns one selection into a dead Connections panel, including the
+ * delete that would have removed the row.
+ */
+test("a document this store wrote with `off` or `minimal` still loads, and its record stays usable", async () => {
+  const root = await mkdtemp(join(canonicalTemporaryRoot, "gamebuddy-connection-store-"));
+  try {
+    const store = new TavernConnectionStore(root);
+    const activeId = "A".repeat(43);
+    const idleId = "B".repeat(43);
+    await writeFile(
+      connectionDocumentPath(root),
+      JSON.stringify({
+        schemaVersion: 1,
+        revision: 2,
+        activeConnectionId: activeId,
+        connections: [
+          persistedConnection(activeId, "off", "ready"),
+          persistedConnection(idleId, "minimal", "configured"),
+        ],
+      }),
+      "utf8",
+    );
+
+    const document = await store.read();
+    assert.deepEqual(
+      document.connections.map((entry) => entry.thinkingLevel),
+      ["off", "minimal"],
+    );
+    assert.equal((await store.active())?.thinkingLevel, "off");
+
+    // The row can be deleted, which is the operation the throwing reader made unreachable.
+    const removed = await store.remove(idleId, document.revision);
+    assert.deepEqual(
+      removed.connections.map((entry) => entry.connectionId),
+      [activeId],
+    );
+
+    // Reading stays fail-closed for a level the runtime cannot express, so accepting the repaired
+    // pair did not make every string a legal durable level.
+    await writeFile(
+      connectionDocumentPath(root),
+      JSON.stringify({
+        schemaVersion: 1,
+        revision: 3,
+        activeConnectionId: null,
+        connections: [persistedConnection(activeId, "none", "configured")],
+      }),
+      "utf8",
+    );
+    await assert.rejects(store.read(), /invalid_tavern_connection_store/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+function persistedConnection(connectionId: string, thinkingLevel: string = "high", readiness: string = "configured") {
   return {
     connectionId,
     providerId: "deepseek",
     baseUrl: null,
     apiShape: null,
     modelId: "deepseek-v4.1-flash",
-    thinkingLevel: "high",
-    readiness: "configured",
+    thinkingLevel,
+    readiness,
     failure: null,
     modelIds: null,
     apiKeyRequired: true,

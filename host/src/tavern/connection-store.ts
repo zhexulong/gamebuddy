@@ -289,8 +289,7 @@ export class TavernConnectionStore {
       if (model === null) {
         if (!acceptsPlayerModel(provider) || !PLAYER_MODEL_ID_PATTERN.test(modelId))
           throw new TavernConnectionInputError("model_not_allowed");
-        if (!PLAYER_MODEL_THINKING_LEVELS.includes(thinkingLevel))
-          throw new TavernConnectionInputError("thinking_level_not_allowed");
+        if (!isDurableThinkingLevel(thinkingLevel)) throw new TavernConnectionInputError("thinking_level_not_allowed");
         return {
           document: replaceConnection(
             current,
@@ -549,16 +548,6 @@ const EMPTY_DOCUMENT: TavernConnectionDocument = Object.freeze({
   connections: Object.freeze([]),
 });
 
-/**
- * Thinking levels accepted for a player-supplied model id, on any provider. The catalog cannot
- * describe a model the Host never listed, so the vocabulary the embedded runtime itself accepts is
- * offered for it instead of any provider payload.
- *
- * This is the SAME set a catalog model may declare: `off`/`minimal` are pi's own levels too, and a
- * model the player named themselves is exactly where they are wanted.
- */
-const PLAYER_MODEL_THINKING_LEVELS: readonly CompanionThinkingLevel[] = COMPANION_THINKING_LEVELS;
-
 function requireConnection(document: TavernConnectionDocument, connectionId: string): TavernConnectionRecord {
   const record = document.connections.find((entry) => entry.connectionId === connectionId);
   if (record === undefined) throw new TavernConnectionInputError("not_found");
@@ -596,7 +585,6 @@ function serialize(document: TavernConnectionDocument): string {
   });
 }
 
-const THINKING_LEVELS: ReadonlySet<string> = new Set(["low", "medium", "high", "xhigh", "max"]);
 const READINESS: ReadonlySet<string> = new Set(["unconfigured", "configured", "ready", "failed"]);
 const PROBE_FAILURES: ReadonlySet<string> = new Set([
   "invalid_endpoint",
@@ -641,7 +629,7 @@ function validateRecord(value: unknown): TavernConnectionRecord {
     value.modelId.length === 0 ||
     value.modelId.length > 128 ||
     typeof value.thinkingLevel !== "string" ||
-    !THINKING_LEVELS.has(value.thinkingLevel) ||
+    !isDurableThinkingLevel(value.thinkingLevel) ||
     typeof value.readiness !== "string" ||
     !READINESS.has(value.readiness) ||
     (value.failure !== null && (typeof value.failure !== "string" || !PROBE_FAILURES.has(value.failure))) ||
@@ -715,6 +703,22 @@ function isPublishedModelIds(value: unknown): value is TavernConnectionProbeMode
     value.length <= TAVERN_MODEL_LISTING_LIMIT &&
     value.every((id) => typeof id === "string" && PLAYER_MODEL_ID_PATTERN.test(id))
   );
+}
+
+/**
+ * The one authority for a durable thinking level: the vocabulary the embedded runtime itself accepts
+ * (`COMPANION_THINKING_LEVELS`), imported rather than restated. Both the write path and the read path
+ * call this, so no level can be writable and unreadable at once. Restating it as a shorter set here
+ * is exactly what made `off`/`minimal` legal on write and fatal on read: one selection left a
+ * document every later read, mutation and delete threw `invalid_tavern_connection_store` on.
+ *
+ * The gate is the runtime's vocabulary, not the selected model's declared levels. A record's model is
+ * the player's choice and may be retyped at any time, so narrowing the gate to the model would refuse
+ * this store's own output and orphan the record; a level a model does not advertise is still a level
+ * the runtime accepts, and the runtime clamps it there.
+ */
+function isDurableThinkingLevel(value: string): value is CompanionThinkingLevel {
+  return (COMPANION_THINKING_LEVELS as readonly string[]).includes(value);
 }
 
 function isConnectionId(value: unknown): value is string {
