@@ -33,6 +33,20 @@ import { expect, test, type Page } from "@playwright/test";
  *      zero `:active` selectors, so a nav entry, a sheet button and a disclosure
  *      summary all looked identical down and up. Measured while held, at
  *      1440x900: `translate: none` and no movement on all three.
+ *   8. A Game section heading did not outrank the body it introduced.
+ *   9. **The fold showed three empty cards instead of the one action.** On a
+ *      fresh session the Game surface's first column was a "nothing published"
+ *      sentence, three empty-state cards ("your companion" / "nothing published"
+ *      / "no action authority") and a waiting paragraph, while the only
+ *      clickable thing - enable companion play - sat in the second column, and
+ *      at 400x800 below the fold outright. Measured before at 1440x900: board
+ *      y=56, its three cards to y=237, the enable control at y=169 in the other
+ *      column; at 400x800 the board ran 119..516 and the control did not appear
+ *      until y=669, under a guide that starts at y=536.
+ *   10. **Three cards, each titled by its own emptiness.** "你的同伴 /
+ *      还没有公布 / 尚未提供" was one fact told three ways in ~250 px. The board
+ *      now states it in one sentence and carries one named state for it
+ *      (`data-capability-state="unpublished"`).
  */
 
 const token = "A".repeat(43);
@@ -1311,4 +1325,191 @@ test("defect 8: a Game section heading outranks the body it introduces, at 1440 
   await before.evaluate((node) => node.remove());
   expect(reverted, "the Game surface renders with the pre-fix headings injected").not.toBeNull();
   expect(inversions(reverted!), "the pre-fix declarations are what the assertion above catches").not.toEqual([]);
+});
+
+// --- defect 9 ----------------------------------------------------------------
+
+/**
+ * What the drawer shows first on a fresh session, and where the one control it
+ * offers sits. Read from the layout, so the answer is the player's and not the
+ * source's: the drawer's own children in document order, the enable control's
+ * box, the board's box and the installation panel's box.
+ *
+ * `order` is the drawer's children as `data-testid` / `id` / first class - the
+ * reading order the surface really has, which is the property the two defects
+ * are about. `below` is every element of the drawer whose top is past the fold.
+ */
+async function measureGameFold(page: Page) {
+  return await page.evaluate(() => {
+    const round = (value: number) => Math.round(value);
+    const surface = document.querySelector<HTMLElement>('[data-testid="game-surface"]');
+    if (surface === null) return null;
+    const drawer = surface.querySelector<HTMLElement>(".composed-game-drawer");
+    if (drawer === null) return null;
+    const nameOf = (node: Element) =>
+      node.getAttribute("data-testid") ?? node.id ?? node.className.toString().split(/\s+/u)[0] ?? "";
+    const boxOf = (node: Element | null) => {
+      if (node === null) return null;
+      const box = node.getBoundingClientRect();
+      return { top: round(box.top), bottom: round(box.bottom), height: round(box.height), left: round(box.left) };
+    };
+    const fold = window.innerHeight;
+    const action = drawer.querySelector<HTMLElement>('[data-testid="game-activate"]');
+    const board = drawer.querySelector<HTMLElement>('[data-testid="game-capability-board"]');
+    const install = surface.querySelector<HTMLElement>(".game-installation-panel");
+    return {
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      order: [...drawer.children].map(nameOf),
+      action: boxOf(action),
+      actionName: action === null ? null : (action.textContent ?? "").trim(),
+      board: boxOf(board),
+      install: boxOf(install),
+      installVisible: install !== null && install.getBoundingClientRect().top < fold,
+      actionInFold: action !== null && action.getBoundingClientRect().bottom <= fold,
+      // The reading order, as positions rather than as a list: the action's own
+      // top against the board's.
+      actionBeforeBoard:
+        action !== null &&
+        board !== null &&
+        (action.compareDocumentPosition(board) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+      emptyCapabilityRegions: drawer.querySelectorAll('[data-capability-state="unpublished"]').length,
+      boardCards: drawer.querySelectorAll("[data-capability-card]").length,
+      boardParagraphs: board === null ? 0 : board.querySelectorAll("p").length,
+    };
+  });
+}
+
+/**
+ * Defect 9: on a fresh session the first thing in the reading order is the
+ * action the player can take, and it is inside the first viewport at 1440x900.
+ *
+ * The failure this catches: the drawer led with the capability board while the
+ * board had nothing to publish, so the fold spent itself on three cards that
+ * each said "nothing" and pushed 启用伙伴陪玩 into the second column (at
+ * 1440x900) or below the fold (at 400x800). The guide's own sentence then sent
+ * the player "下方「游戏安装」" at a panel that was not on screen.
+ *
+ * The assertion is the order and the geometry, and it is made at both widths
+ * because the narrow one is the worse case: at 400x800 there is no second
+ * column for the control to hide in, so its position *is* the reading order.
+ */
+test("defect 9: a fresh session opens on the action it can take, inside the first viewport", async ({ page }) => {
+  await mountShell(page, { locale: "en" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  await expect(page.getByTestId("game-surface")).toBeVisible();
+  await expect(page.locator(".game-capability-board")).toBeVisible();
+  await expect(page.getByTestId("game-activate")).toBeVisible();
+  await expect(page.locator(".game-installation-panel")).toBeVisible();
+
+  const measured: Record<string, Awaited<ReturnType<typeof measureGameFold>>> = {};
+  for (const viewport of [
+    { width: 1440, height: 900, label: "1440x900" },
+    { width: 400, height: 800, label: "400x800" },
+  ] as const) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await expect(page.getByTestId("game-activate")).toBeVisible();
+    const reading = await measureGameFold(page);
+    console.log(`[defect-9 fold @${viewport.label}] ${JSON.stringify(reading)}`);
+    measured[viewport.label] = reading;
+    expect(reading, `the Game surface renders its first viewport at ${viewport.label}`).not.toBeNull();
+
+    // The action is the first group in the reading order: the drawer's first
+    // child is the group that holds it, not the board that has nothing to say.
+    expect(
+      reading!.order[0],
+      `the first group on the surface is the one carrying the action at ${viewport.label} (order: ${reading!.order.join(" > ")})`,
+    ).toBe("game-group-next-step");
+    expect(
+      reading!.actionBeforeBoard,
+      `the action precedes the empty board in document order at ${viewport.label}`,
+    ).toBe(true);
+    // …and it is really inside the first viewport, not merely earlier in the DOM.
+    expect(
+      reading!.actionInFold,
+      `the action's bottom (${reading!.action?.bottom}) is inside the ${viewport.height} px viewport at ${viewport.label}`,
+    ).toBe(true);
+    expect(reading!.actionName, `the control is the one a fresh session can press at ${viewport.label}`).toBe(
+      "Enable companion play",
+    );
+  }
+
+  // The guide no longer points at a panel that is not on screen: the sentence
+  // sends the player to this page rather than "below", because at 1440x900 the
+  // installation panel starts at y=856 in a 900 px window and at 400x800 it is
+  // not in the viewport at all.
+  await expect(page.locator('[data-guide-step="1"] .game-guide-step-detail')).toContainText(
+    "under Game installation on this page",
+  );
+  await expect(page.locator('[data-guide-step="1"] .game-guide-step-detail')).not.toContainText(
+    "under Game installation first",
+  );
+});
+
+// --- defect 10 ---------------------------------------------------------------
+
+/**
+ * Defect 10: the empty capability state is one element and one sentence.
+ *
+ * The failure this catches: "your companion / nothing published / no action
+ * authority" is one fact - the session has published nothing - told as three
+ * cards, each titled by its own emptiness, in about 250 px of the fold. The
+ * board must say it once, and the state must have a name an assertion can use:
+ * `data-capability-state="unpublished"` on the region, with no card inside it.
+ *
+ * The published side is asserted in the same test so the rule cannot be satisfied
+ * by deleting the cards outright: with a capability summary the board still
+ * renders one card per published fact.
+ */
+test("defect 10: the empty capability state is a single element with a single name", async ({ page }) => {
+  await mountShell(page, { locale: "en" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+
+  const board = page.getByTestId("game-capability-board");
+  await expect(board).toHaveAttribute("data-capability-state", "unpublished");
+  // One element, one sentence: no card, and the region carries no list at all.
+  await expect(board.locator("[data-capability-card]")).toHaveCount(0);
+  await expect(board.locator(".game-capability-cards")).toHaveCount(0);
+  await expect(board.locator("p")).toHaveCount(1);
+  // The whole absence is stated once, in the board's own words, and says what it
+  // is waiting for rather than only that there is nothing.
+  const sentence = ((await board.locator("p").innerText()) ?? "").replace(/\s+/gu, " ").trim();
+  console.log(`[defect-10 empty board] ${JSON.stringify(sentence)}`);
+  expect(sentence, "the empty board states the absence in one sentence").toContain(
+    "has not published what your companion can do with you yet",
+  );
+  expect(sentence, "and it names what it is waiting for").toContain("come from the game itself");
+
+  // No second element on the whole panel says the same thing: the three-card
+  // shape cannot come back through a sibling region.
+  const drawer = page.locator(".composed-game-drawer");
+  await expect(drawer.locator('[data-capability-state="unpublished"]')).toHaveCount(1);
+});
+
+/**
+ * The other half of defect 10, so the rule cannot be satisfied by deleting the
+ * cards outright: with a published capability summary the board still renders one
+ * card per published fact, and the region says so under its own name.
+ */
+test("defect 10: a published capability surface still renders one card per fact", async ({ page }) => {
+  await mountShell(page, { locale: "en" });
+  // Both reads carry the published summary: the shell re-reads `game.state.read`
+  // on a mount, so a bootstrap-only fixture would be overwritten by the empty one.
+  const root = composedRoot();
+  const published = JSON.stringify({
+    ...root,
+    game: { ...root.game, game: { ...root.game.game, capabilitySummary: { available: true, count: 4 } } },
+  });
+  for (const pattern of ["**/api/composed-reference-game/v1/bootstrap", "**/api/composed-reference-game/v1/state"])
+    await page.route(pattern, (route) => route.fulfill({ status: 200, contentType: "application/json", body: published }));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.reload();
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+
+  const board = page.getByTestId("game-capability-board");
+  await expect(board).toHaveAttribute("data-capability-state", "published");
+  await expect(board.locator("[data-capability-card]")).toHaveCount(3);
+  await expect(board).toContainText("4");
 });
