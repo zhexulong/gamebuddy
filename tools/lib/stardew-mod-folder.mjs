@@ -21,6 +21,20 @@
 export const STARDEW_MOD_FOLDER = "GameBuddy";
 
 /**
+ * The bridge pipe a fixture Mod listens on, and the token it requires.
+ *
+ * Both are the fixture's to mint, and neither can be read from a config on a first run - there is no
+ * config yet. The name lives here beside the folder name because both are "the names the launcher and
+ * the Mod must agree on", and the failure mode of disagreement is the same: a 150 second wait that
+ * reports `stardew_pipe_not_listening` instead of the one-line mismatch.
+ *
+ * This is a DEFAULT the fixture seeds into a config it creates. `bridgePipeNameFor` still reads the
+ * config as the authority once it exists, so a config that names a different pipe is honoured and any
+ * disagreement stays visible.
+ */
+export const STARDEW_BRIDGE_PIPE_NAME = "gamebuddy-stardew";
+
+/**
  * Every directory that would make SMAPI load this mod twice: the agreed name and
  * the MSBuild default it used to have. Presence of more than one is the failure
  * the check reports.

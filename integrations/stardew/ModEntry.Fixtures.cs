@@ -4059,6 +4059,12 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             Vector2 target = new(candidate.X, candidate.Y);
             if (!farm.isTileOnMap(target) || farm.objects.ContainsKey(target) || farm.terrainFeatures.ContainsKey(target))
                 continue;
+            // The target must be reachable too, not only the tile the actor stands on to work it. A prop whose
+            // standable neighbour is inside the actor's component can still be walled off from it, and the
+            // fail-closed check after placement then refuses the world for a prop this search should never
+            // have chosen (measured 2026-10-24: prop_unreachable_from_home:58,9).
+            if (!IsReachableFromStart(farm, start, target))
+                continue;
             Vector2[] cardinal =
             {
                 target + new Vector2(-1f, 0f), target + new Vector2(1f, 0f),

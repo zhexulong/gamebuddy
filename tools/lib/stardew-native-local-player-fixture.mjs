@@ -1,8 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
-import { cp, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { cp, lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { readExperimentalStardewActionIds } from "./stardew-published-action-registry.mjs";
-import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
+import { STARDEW_BRIDGE_PIPE_NAME, STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
 
 const BUNDLE_FILES = Object.freeze([
   "GameBuddy.Stardew.dll",
@@ -51,6 +51,13 @@ function redactPublicFailure(error, fallbackCode) {
   // blanket code. Membership is decided by whether the message is SAFE to show, not by whether it is useful -
   // which is why the bundle-path codes stay out of the list.
   const code = error.message.split(":", 1)[0];
+  // The blanket code is the contract, and it is what a caller branches on. It is also unreadable: three runs
+  // tonight ended at `native_local_fixture_preparation_failed` while the actual cause was a missing file, and
+  // the only way to learn it was to reproduce the steps by hand. This keeps the contract and adds a readable
+  // line for an operator who asks for it - never the default, because the messages this hides can carry paths.
+  if (process.env.GAMEBUDDY_FIXTURE_DEBUG === "1") {
+    process.stderr.write(`[fixture] ${fallbackCode} <- ${String(error.message).slice(0, 300)}\n`);
+  }
   return new Error(PUBLIC_ERROR_CODES.has(code) ? error.message : fallbackCode);
 }
 
@@ -92,8 +99,16 @@ async function validateNativeLocalPlayerFixturePreparationInternal(options) {
     const metadata = await lstat(source);
     if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("native_local_fixture_template_invalid");
   }
-  if (await exists(join(options.stardewSaveRoot, options.saveName)))
-    throw new Error("native_local_fixture_working_save_exists");
+  const workingSave = join(options.stardewSaveRoot, options.saveName);
+  if (await exists(workingSave)) {
+    // A previous run left this behind. Its own restore removes the managed files but not the save the
+    // Mod created when it loaded the world, so the next prepare would refuse forever. Moving it aside
+    // is what lets a run follow a run, and keeping it (rather than deleting) is what lets a crashed
+    // run still be explained afterwards.
+    const aside = `${workingSave}.leftover-${Date.now()}`;
+    await rename(workingSave, aside);
+    process.stderr.write(`[fixture] moved a leftover working save aside: ${aside}\n`);
+  }
   return Object.freeze({
     state: "ready",
     saveName: options.saveName,
@@ -127,9 +142,15 @@ async function prepareNativeLocalPlayerFixtureInternal(options) {
   const backup = join(context.root, options.backupName);
   let backupCreated = false;
   try {
-    const original = await readJson(context.configPath);
-    assertBridgeConfig(original);
-    assertSourceTopologyIsolated(original);
+    const original = await readJsonIfPresent(context.configPath);
+    // A null original is a first run: there is no config to validate, and the fixture is what creates
+    // one. Asserting a bridge config that does not exist yet is what made a fresh install impossible -
+    // and because the public entry point only re-throws whitelisted codes, it surfaced as
+    // `native_local_fixture_preparation_failed` while the real cause was these two lines.
+    if (original !== null) {
+      assertBridgeConfig(original);
+      assertSourceTopologyIsolated(original);
+    }
     await mkdir(backup, { recursive: true });
     backupCreated = true;
     await backupManagedFiles(context, backup);
@@ -190,9 +211,11 @@ async function bootstrapNativeLocalPlayerFixtureInternal(options) {
   const backup = join(context.root, options.backupName);
   let backupCreated = false;
   try {
-    const original = await readJson(context.configPath);
-    assertBridgeConfig(original);
-    assertSourceTopologyIsolated(original);
+    const original = await readJsonIfPresent(context.configPath);
+    if (original !== null) {
+      assertBridgeConfig(original);
+      assertSourceTopologyIsolated(original);
+    }
     await mkdir(backup, { recursive: true });
     backupCreated = true;
     await backupManagedFiles(context, backup);
@@ -1013,8 +1036,30 @@ function assertBridgeConfig(config) {
     config.BridgeToken.length < 16 ||
     config.BridgeToken.length > 256 ||
     ![config.SaveId, config.WorldId, config.PlayerId, config.CompanionId].every(opaque)
-  )
+  ) {
+    // The code is the contract; which field broke it is what a reader needs, and it used to take a
+    // hand-reproduced run to learn. Fields are named, values are not: a token must not reach a log.
+    if (process.env.GAMEBUDDY_FIXTURE_DEBUG === "1") {
+      const broken = [
+        ["PipeName", opaque(config?.PipeName)],
+        [
+          "BridgeToken",
+          typeof config?.BridgeToken === "string" &&
+            config.BridgeToken.length >= 16 &&
+            config.BridgeToken.length <= 256,
+        ],
+        ["SaveId", opaque(config?.SaveId)],
+        ["WorldId", opaque(config?.WorldId)],
+        ["PlayerId", opaque(config?.PlayerId)],
+        ["CompanionId", opaque(config?.CompanionId)],
+      ]
+        .filter(([, ok]) => !ok)
+        .map(([name]) => name)
+        .join(",");
+      process.stderr.write(`[fixture] bridge config invalid at: ${broken}\n`);
+    }
     throw new Error("native_local_fixture_bridge_config_invalid");
+  }
 }
 function assertSourceTopologyIsolated(config) {
   if (
@@ -1073,8 +1118,17 @@ function configureNativeLocalPlayer(
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
   assertNativeLocalBinding(binding, observedSaveSlot);
-  const result = structuredClone(config);
+  const result = structuredClone(config ?? {});
+  // A first run passes `null` (there was no config to read). `structuredClone(null)` is `null`, not an
+  // empty object, so the fallback belongs here rather than at every assignment below.
   result.EnableLocalBridge = true;
+  // A first run has no config to inherit a pipe name or a token from, and both are the fixture's to
+  // establish: the pipe name must match what the launcher listens on, and the token is a secret this
+  // run mints. `bridgePipeNameFor` is the single authority for the name, so a launcher reading the
+  // written config and the Mod opening a pipe cannot disagree - which they did once, and it surfaced
+  // 150 s later as `stardew_pipe_not_listening`.
+  result.PipeName ??= STARDEW_BRIDGE_PIPE_NAME;
+  result.BridgeToken ??= randomBytes(24).toString("hex");
   result.SaveId = binding.saveId;
   result.WorldId = binding.worldId;
   result.PlayerId = binding.playerId;
