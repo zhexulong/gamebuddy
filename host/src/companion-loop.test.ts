@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CompanionLoop } from "./companion-loop.js";
+import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-pacing.js";
 import { MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.js";
+
+/**
+ * What the player receives for one Game turn: that turn's reaction sound, then the words.
+ *
+ * The sound is derived from the turn's own identity through the same authority that selects it at
+ * delivery time, so this does not spell a second copy of the vocabulary; what the assertion below
+ * pins is that the sound arrives FIRST and belongs to the same source event as the reply, not which
+ * interjection a particular hash happens to pick.
+ */
+function presentedWithReaction(sourceEventId: string, locale: string, text: string): readonly unknown[] {
+  const sound = selectReactionSound(sourceEventId, locale, GAME_DELIVERY_PACING.reaction!);
+  assert.notEqual(sound, null, `${locale} must have a reaction vocabulary for this case to assert one`);
+  return [
+    { sourceEventId, text: sound },
+    { sourceEventId, text },
+  ];
+}
 
 type SessionEvent = {
   type: string;
@@ -193,7 +211,7 @@ test("CompanionLoop forwards only final native assistant content from an exact c
     timestampMs: 1,
   });
   await loop.flush();
-  assert.deepEqual(presented, [{ sourceEventId: "player_source_1", text: "I am here." }]);
+  assert.deepEqual(presented, presentedWithReaction("player_source_1", "en-US", "I am here."));
   assert.deepEqual(lifecycle, ["begin", "end"]);
 });
 
@@ -296,7 +314,7 @@ test("CompanionLoop streams companion speech deltas to the voice sink and finali
       .map((op) => (op.startsWith("begin") ? "begin" : op)),
     ["begin", "finalize"],
   );
-  assert.deepEqual(presented, [{ sourceEventId: "player_source_voice", text: "早安" }]);
+  assert.deepEqual(presented, presentedWithReaction("player_source_voice", "zh-CN", "早安"));
 });
 
 test("CompanionLoop cancels the voice job when a consumed batch never produces final text", async () => {
@@ -423,7 +441,7 @@ test("CompanionLoop presents incremental sentences without any voice sink", asyn
     timestampMs: 1,
   });
   await loop.flush();
-  assert.deepEqual(presented, [{ sourceEventId: "player_source_incr", text: "早安!今天下雨。" }]);
+  assert.deepEqual(presented, presentedWithReaction("player_source_incr", "zh-CN", "早安!今天下雨。"));
 });
 
 test("CompanionLoop presents only the buffered residual when no sentence ever completed", async () => {
@@ -494,7 +512,7 @@ test("CompanionLoop presents only the buffered residual when no sentence ever co
     timestampMs: 1,
   });
   await loop.flush();
-  assert.deepEqual(presented, [{ sourceEventId: "player_source_residual", text: "我这就去" }]);
+  assert.deepEqual(presented, presentedWithReaction("player_source_residual", "zh-CN", "我这就去"));
 });
 
 test("CompanionLoop presents incremental sentences as they arrive and the message_end residual last", async () => {
@@ -573,9 +591,10 @@ test("CompanionLoop presents incremental sentences as they arrive and the messag
   await loop.flush();
   // One finished reply, one presented piece: the buffered sentences and the
   // unbounded tail are joined instead of arriving as a burst of fragments.
-  assert.deepEqual(presented, [
-    { sourceEventId: "player_source_chunk", text: "我这就去南瓜地浇水。把杂草也一起拔了。然后把种子撒上" },
-  ]);
+  assert.deepEqual(
+    presented,
+    presentedWithReaction("player_source_chunk", "zh-CN", "我这就去南瓜地浇水。把杂草也一起拔了。然后把种子撒上"),
+  );
 });
 
 test("CompanionLoop finalizes the voice job exactly once with identical incremental sentences and one residual", async () => {
@@ -671,7 +690,7 @@ test("CompanionLoop finalizes the voice job exactly once with identical incremen
   });
   await loop.flush();
   // One paragraph piece, even though three identical sentences completed first.
-  assert.deepEqual(presented, [{ sourceEventId: "player_source_dup", text: "好。好。好。好" }]);
+  assert.deepEqual(presented, presentedWithReaction("player_source_dup", "zh-CN", "好。好。好。好"));
   // The voice job must open once and finalize exactly once, never twice.
   assert.equal(voiceOps.filter((op) => op === "finalize").length, 1);
   assert.equal(voiceOps.filter((op) => op.startsWith("begin:")).length, 1);
