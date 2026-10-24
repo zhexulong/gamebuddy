@@ -342,6 +342,30 @@ test("stable World Info publishes every constant in full when the authored conte
     assert.match(stable.content, /^## Large constant 1$/m);
     assert.match(stable.content, /^## Large constant 5$/m);
     for (const entry of longEntries) assert.equal(stable.content.includes(entry.summary), true);
+    // The same bytes survive the vendor's own publisher - the renderer whose block the provider
+    // actually receives - so nothing downstream re-imposes a cap of its own.
+    const scope = {
+      continuityId: "continuity",
+      sessionId: "pi-session",
+      surface: "tavern" as const,
+      threadId: "thread",
+      profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+    };
+    const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/tavern");
+    const capability = publishGameBuddyAuthoredStableCatalog(scope, catalog);
+    try {
+      const rendered = readAuthoredContextRegistry()?.materializations.get(scope.sessionId)?.renderedBlock ?? "";
+      t.diagnostic(`rendered block ${rendered.length} chars around the ${renderedInput.length}-char authored input`);
+      assert.ok(
+        rendered.length > renderedInput.length,
+        `the rendered block carries all the authored bytes: ${rendered.length}`,
+      );
+      assert.equal(rendered.includes(longEntries[0]!.summary), true);
+      assert.equal(rendered.includes(longEntries[4]!.summary), true);
+      assert.equal(rendered.includes(`## ${longEntries[4]!.publicTitle}`), true);
+    } finally {
+      await capability.clear();
+    }
   } finally {
     closeStore?.();
     await rm(root, { recursive: true, force: true });
