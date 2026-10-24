@@ -180,7 +180,7 @@ async function stubProductRoutes(
   options: Readonly<{
     activeConnection: boolean;
     chatVoice?: "unavailable" | "ready";
-    /** What the Chat model profile route answers: the shipped profile, or the store refusing. */
+    /** What the Chat model profile route answers: served, or the store refusing. */
     chatProfile?: "served" | "store_unavailable";
   }>,
 ) {
@@ -299,17 +299,19 @@ test.describe("A: the conversation's claim about a model is the send path's own 
   });
 
   /**
-   * (b) No saved connection and no profile the Host can serve: a reply has no model, so the
-   * conversation says so and offers the one surface where a model is chosen - without taking the
-   * composer.
+   * (b) No saved connection: a reply has no model, so the conversation says so and offers the one
+   * surface where a model is chosen - without taking the composer.
    *
-   * This is the state the sentence is FOR, and it must not be weakened into silence: the read that
-   * fails here is the same store the Host's own send path resolves from.
+   * With BYOK there is no shipped profile to fall back on, so "no connection" IS "no model" and the
+   * route is `none` whether or not the profile store answers. The sentence is the state a fresh
+   * install meets, which is why it must not be weakened into silence: it is the only place the
+   * product tells the player what is missing and where it is fixed, and the transcript stays readable
+   * and the composer writable while it does.
    */
-  test("with no saved connection and no servable profile the sentence names the problem and its button opens Settings", async ({
+  test("with no saved connection the sentence names the problem and its button opens Settings", async ({
     page,
   }) => {
-    await stubProductRoutes(page, { activeConnection: false, chatProfile: "store_unavailable" });
+    await stubProductRoutes(page, { activeConnection: false });
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
 
     const chat = page.getByTestId("chat-surface");
@@ -317,7 +319,8 @@ test.describe("A: the conversation's claim about a model is the send path's own 
 
     const banner = chat.locator("[data-chat-no-model]");
     await expect(banner).toBeVisible();
-    await expect(banner).toContainText("No model can answer right now");
+    await expect(banner).toContainText("No model yet");
+    await expect(banner).toContainText("keep reading meanwhile");
 
     // The composer is still there and still takes text: the sentence is not a replacement for
     // writing, it is the reason this send cannot succeed.
@@ -330,6 +333,15 @@ test.describe("A: the conversation's claim about a model is the send path's own 
     await banner.getByRole("button", { name: "Open settings", exact: true }).click();
     await expect(page.getByTestId("settings-surface")).toBeVisible();
     await expect(page.getByTestId("chat-surface")).toHaveCount(0);
+  });
+
+  test("a profile store the Host cannot serve reads the same way, because the player's next step is the same", async ({
+    page,
+  }) => {
+    await stubProductRoutes(page, { activeConnection: false, chatProfile: "store_unavailable" });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+
+    await expect(page.getByTestId("chat-surface").locator("[data-chat-no-model]")).toBeVisible();
   });
 
   test("with an active connection the sentence is absent and the composer unchanged", async ({ page }) => {

@@ -115,10 +115,10 @@ export function ChatSurface({
    * The route a message written here would reach a model through, as `readChatModelRoute`
    * derives it from the Host's own settings projections.
    *
-   * The surface owns no rule of its own about this: `connection` and `builtin` both mean a send
-   * works (the second through the shipped profile on this machine's gateway), so the surface says
-   * nothing; `none` is the one state where a reply has no model, and it says so with the way to
-   * Settings; `unknown` says nothing, because a read that did not answer is not evidence.
+   * The surface owns no rule of its own about this: `connection` means a send works, so the surface
+   * says nothing; `none` is the one state where a reply has no model, and it says so with the way
+   * to Settings while leaving the transcript readable and the composer writable; `unknown` says
+   * nothing, because a read that did not answer is not evidence.
    */
   modelRoute: ChatModelRoute;
   /** Opens the Settings surface (the connection section is its first block). */

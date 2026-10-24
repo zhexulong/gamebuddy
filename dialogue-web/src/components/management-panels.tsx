@@ -391,10 +391,10 @@ export function ConnectionSettingsPanel({
    * deriving a second one from its own connection records: two readings of the same question is
    * how this surface once promised a model while the Chat settled a turn.
    *
-   * `connection` is a send that works. `builtin` and `none` are both "no provider at all" now that
-   * the product supplies no gateway, and each states the same next step: bring a connection. This
-   * section deliberately does not tell them apart - the difference between "you configured nothing"
-   * and "the Host cannot serve the profile" is not a difference in what the player must do.
+   * `connection` is a send that works. `none` is "no provider at all" now that the product
+   * supplies no gateway, and the section states the next step: bring a connection. It does not
+   * distinguish "you configured nothing" from "the Host cannot serve the profile", because the
+   * difference is not a difference in what the player must do.
    * `unknown` says nothing, because a read that did not answer is not evidence.
    */
   modelRoute: ChatModelRoute;

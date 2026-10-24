@@ -25,10 +25,11 @@
  *   (iii) a profile store the Host cannot serve: the same sentence again - "you configured nothing"
  *         and "the Host cannot serve the profile" are different causes with one action.
  *
- * KNOWN GAP, deliberately not papered over: in (ii) the route is `builtin`, and `ChatSurface` only
- * renders its banner for `none`. So the Chat is silent while Settings speaks. `chat-model-route.ts`
- * is not this change's file; making the Chat say the same sentence means `builtin` must stop meaning
- * "a send works". That is reported rather than worked around here.
+ * KNOWN GAP, now closed: in (ii) the route used to be `builtin`, and `ChatSurface` rendered its banner
+ * only for `none`, so the Chat was silent while Settings spoke. With BYOK there is no shipped profile
+ * to fall back on, so `chat-model-route.ts` dropped `builtin` entirely and a root with no connection
+ * reads as `none`: the Chat and Settings now say the same sentence from the same answer. The three
+ * readings below are unchanged; (ii) additionally asserts that the Chat speaks.
  */
 import { type Page, expect, test } from "@playwright/test";
 

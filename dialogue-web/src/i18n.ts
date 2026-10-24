@@ -205,14 +205,15 @@ const en = {
   chatFailedRuntimeUnavailable:
     "The reply never reached a model: the endpoint GameBuddy sends your messages to refused it — the API key is missing, wrong or revoked, the model you picked is not one that endpoint serves, or the endpoint could not be reached. Check the connection and model in Settings (Connection and model); repeating this message will fail the same way.",
   chatFailedStorageUnavailable: "The reply could not be saved. You can try again.",
-  // The surface's own no-model state. A chat is not judged by whether a connection was saved: with
-  // none saved, the Host sends through the Chat model profile this build ships, on this machine's
-  // own gateway. So the sentence appears only when the Host cannot serve the model its send path
-  // resolves from, and it names that outcome rather than accusing the player of never having set a
-  // connection up (see `chat-model-route.ts`). The button goes to the one surface where a model is
-  // chosen; neither the sentence nor the button touches the composer, because writing and choosing
-  // a model are not the same act.
-  chatNoModelTitle: "No model can answer right now",
+  // The surface's own no-model state, worded from `chat-model-route.ts`'s `none`: nothing is
+  // configured, so this reply has nowhere to go. It follows SillyTavern's restraint - the product
+  // opens, the transcript is readable, and the one missing thing is named where the player is
+  // already looking rather than in a wizard - so it is one sentence plus the existing way to
+  // Settings. It also says the part the player would otherwise have to guess: reading still works.
+  // The button goes to the one surface where a model is chosen; neither the sentence nor the button
+  // touches the composer, because writing and choosing a model are not the same act.
+  chatNoModelTitle:
+    "No model yet, so she cannot reply. Bring your own connection in Settings, and keep reading meanwhile.",
   chatNoModelAction: "Open settings",
 
   // Settings & System
@@ -1076,7 +1077,8 @@ const zh: Messages = {
   chatFailedRuntimeUnavailable:
     "这条回复没有送达任何模型：GameBuddy 转发消息的端点拒绝了它——API Key 缺失、错误或已被吊销，你选的模型不是该端点提供的，或者根本连不上那个端点。请在「设置 → 连接与模型」里检查连接和模型；重复发送同一条消息只会以同样方式失败。",
   chatFailedStorageUnavailable: "回复没能保存下来。你可以重试。",
-  chatNoModelTitle: "目前没有可以回复的模型",
+  // 见英文目录同名字段：按 SillyTavern 的克制方式，一句话说明缺什么、去哪里补，并说明阅读不受影响。
+  chatNoModelTitle: "还没有可用的模型，她暂时无法回复。请在设置里接入你自己的连接，在此之前仍然可以阅读。",
   chatNoModelAction: "前往设置",
 
   // Settings & System
