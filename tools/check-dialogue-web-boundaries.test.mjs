@@ -31,7 +31,7 @@ const ZONES = {
   composedRoot: "^dialogue-web/src/components/ComposedReferenceGameApp\\.tsx$",
   surface: "^dialogue-web/src/components/[^/]*Surface\\.tsx$",
   surfaceSupport:
-    "^dialogue-web/src/((game-(lifecycle-controls|presentation)|composed-problem-view|composed-surface-route|pi-settings-model)\\.ts|components/(CharacterCardImport|CharactersPanel|CharactersSurfacePanel|CompanionInspectorDrawer|GameDiagnosticsDisclosure|GameStatePanel|StardewInstallationDiscovery|SurfaceModelSettings|composed-reference-game-view|management-panels|management-surface-panels|character-domain-labels|memory-notebook-labels|png-character-card|turn-failure-text)\\.tsx?)$",
+    "^dialogue-web/src/((game-(lifecycle-controls|presentation)|composed-problem-view|composed-surface-route|chat-model-route|pi-settings-model)\\.ts|components/(CharacterCardImport|CharactersPanel|CharactersSurfacePanel|CompanionInspectorDrawer|GameDiagnosticsDisclosure|GameStatePanel|StardewInstallationDiscovery|SurfaceModelSettings|composed-reference-game-view|management-panels|management-surface-panels|GamePlayerSettings|character-domain-labels|memory-notebook-labels|png-character-card|turn-failure-text)\\.tsx?)$",
   sharedUi:
     "^dialogue-web/src/components/(MessageBubble|Timeline|CompanionAvatar|ProblemView|SkipLink|Composer|MarkdownMessage|SurfaceView|AppBar|ContextDrawer|armed-confirmation|opening-variant-labels)\\.tsx?$",
   shared: "^dialogue-web/src/i18n\\.ts$",
