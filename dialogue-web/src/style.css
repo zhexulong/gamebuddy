@@ -2461,6 +2461,86 @@
     gap: 20px;
   }
 
+  /* ==========================================================================
+   The waiting board shares the drawer's row instead of holding half of it alone
+   (defect 11)
+
+   With nothing published, the capability board is one sentence, and it still took
+   a whole half-width cell: measured at 1440x900 before this block, the drawer was
+   two 694 px columns, the board painted 56..130, and the next block in ITS column
+   started at 598 - **468 px of blank under a 74 px board**, on the one state a
+   fresh session always opens in. The 3d change that moved the board below the
+   step was right about the reading order and left this behind: the order changed,
+   the grid did not.
+
+   The fix is a placement, not a reflow, and it is keyed on the state rather than
+   on a viewport: while the board is in its waiting shape
+   (`data-capability-state="unpublished"`) the guide spans the drawer's rows and
+   the three short blocks stack in the second column beside it. Measured after, at
+   1440x900: the drawer is 522 px (from 788), the board's column carries the
+   session group at 150 and the connection facts at 251, and the blank under the
+   board is 20 px - the grid's own gap.
+
+   The reading order does not move: the board stays where it was in the DOM (after
+   the step, because with nothing published the step is what a fresh session owes
+   the player), and this rule adds no `order` and no duplicate mount site. Only the
+   grid asks where a block sits.
+
+   The published state is untouched - it is a different `data-capability-state`, so
+   the selector does not reach it - and so is every single-column width: the rule
+   is inside a container query on the drawer itself, so it stops applying exactly
+   when the second track disappears. At 400x800 the drawer is one 368 px column and
+   the primary control sits at 270..314, which is the result the previous change
+   was measured for.
+
+   1140 px is the container width at which two 560 px tracks plus the 20 px gap
+   fit; below it the auto-fit grid is one track and this block is inert.
+
+   The container is the drawer's PARENT, not the drawer: an element cannot be its
+   own container, so `grid-template-rows` declared inside a query the drawer itself
+   satisfies would be ignored - measured, the rows stayed `101.5px 107.9px 273px`
+   and the gap stayed 48 px. `.surface-game > .surface-content` is the box the
+   drawer spans, so its width IS the drawer's width (measured 1408 px at 1440x900
+   and 368 px at 400x800), and one declaration on it answers the query for the
+   whole block.
+   ========================================================================== */
+
+  .surface-game > .surface-content {
+    container-type: inline-size;
+  }
+
+  @container (min-width: 1140px) {
+    .composed-game-drawer:has(> [data-capability-state="unpublished"]) {
+      /* The guide spans the three rows beside the board's column, so the free space
+         a spanning item leaves has to land somewhere: `auto auto 1fr` gives it to
+         the third row (under the last short block) instead of splitting it across
+         all three, which is what `auto auto auto` did - 48 px between the board
+         and the session group, measured. The column's own order is what the rows
+         are: board, session, connection. */
+      grid-template-rows: auto auto 1fr;
+    }
+
+    .composed-game-drawer:has(> [data-capability-state="unpublished"]) > #game-group-next-step {
+      grid-column: 1;
+      grid-row: 1 / span 3;
+    }
+
+    .composed-game-drawer:has(> [data-capability-state="unpublished"]) > .game-capability-board {
+      grid-column: 2;
+      grid-row: 1;
+    }
+
+    .composed-game-drawer:has(> [data-capability-state="unpublished"]) > #game-group-session {
+      grid-column: 2;
+      grid-row: 2;
+    }
+
+    .composed-game-drawer:has(> [data-capability-state="unpublished"]) > #game-group-connection {
+      grid-column: 2;
+      grid-row: 3;
+    }
+  }
+
   .game-group {
     display: flex;
     flex-direction: column;
