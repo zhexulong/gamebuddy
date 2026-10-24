@@ -831,6 +831,10 @@
     flex-wrap: wrap;
     gap: 6px;
     margin-top: 4px;
+    /* The copy receipt is the only thing on a message row that is out of flow, and
+       this is the box it is positioned against: it sits on the strip's own upper
+       edge, so it cannot move the row or reach into the next message. */
+    position: relative;
   }
 
   /* While a row is being rewritten the strip IS the editor, so it takes the bubble's own place in
@@ -1038,24 +1042,11 @@
     cursor: not-allowed;
   }
 
-  /* The copy's receipt. It is the product's own banner - the `success-banner` /`error-banner` pair
-     every other one-line outcome already wears - made compact for the only place it is ever drawn:
-     under one message's control strip. Same tones, same wording rule, a panel's padding rather than
-     a page banner's.
-
-     `contain: inline-size` is what keeps it from moving anything: the row is shrink-to-fit, so a
-     line whose max-content is longer than the message would widen the row, re-wrap the bubble and
-     stretch the strip under it. With its inline size excluded from the parent's intrinsic width it
-     takes the width the message already had and wraps inside it - the bubble, the strip and the
-     button that was pressed keep the exact boxes they had. The length-ceiling line below uses the
-     same mechanism for the same reason. */
-  .message-copy-notice {
-    contain: inline-size;
-    margin: var(--space-1) 0 0;
-    padding: var(--space-1) var(--space-2);
-    font-size: 12px;
-    line-height: 1.4;
-  }
+  /* The copy's receipt has MOVED to `theme.polish` (see "The copy receipt" there).
+     It is out of flow, so the compact `padding`/`font-size` it needs can only be
+     declared in the layer that also wins `.success-banner`'s page-banner box; here
+     in `theme.legacy` those two declarations were silently dropped and the receipt
+     was a page banner's height under one message's strip. */
 
   /* The player's row is mirrored (`.message.player` is `row-reverse`), so its strip follows the
      bubble to the outer edge instead of sitting under the avatar. */
@@ -5744,6 +5735,61 @@
     width: 100%;
     max-width: var(--management-form-measure);
     margin-inline: auto;
+  }
+
+  /* ==========================================================================
+   The copy receipt hangs off the strip instead of standing in the flow
+
+   Pressing 复制 used to grow the row: `.message-copy-notice` was an in-flow block
+   under the strip, 46 px of it (a page banner's `10px 14px` padding at
+   `--space-2` horizontal, 27 px of type), so the row it belongs to went 122 px ->
+   168 px and every row below it was pushed down by the same 46 px and back again
+   1.6 s later. Measured, mounted, at 1440x900 on her reply with the swipe set (the
+   row that is deliberately NOT the transcript's last one, because that is the row
+   whose neighbours the defect moved): the four rows under it went 264/400/536/672
+   -> 310/446/582/718. The commit that added the receipt claimed the geometry does
+   not move; that claim was true only of the strip, which was measured and did stay
+   put, and false of the transcript.
+
+   So the receipt is out of flow entirely: it hangs under the strip, aligned to the
+   strip's own far edge (the edge the pressed control sits on), and the row keeps
+   its height and so does everything below it - before, during and after.
+
+   It draws its own opaque plate because it is no longer standing on the row's
+   background: `--success` at the banner's 14% over `--surface-panel`, with the
+   banner's 40% border and a lift. `pointer-events: none`, because a receipt is
+   something to read, not something to press, and it is only up for a moment.
+
+   The class keeps its two jobs: `.success-banner` / `.error-banner` still carry the
+   tone, and this block only compacts the box and takes it out of the flow. It is a
+   child of the strip it reports on (`.message-actions`, the box it is positioned
+   against), and sits on that strip's own upper edge: it overlays the tail of the
+   message that was copied - the words the player just asked for - and it never
+   touches a control, and never reaches past its own row into the next message.
+   (Hanging it BELOW the strip was measured first and rejected: the transcript's
+   14 px gap is smaller than the receipt's 27 px plate, so at 400x800 it covered
+   97x15 px of the next row's bubble, and at 1440x900 it only escaped that because
+   the next row happened to be a short player line.)
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+  .message-actions > .message-copy-notice {
+    position: absolute;
+    inset-block-end: 100%;
+    inset-inline-end: 0;
+    z-index: 2;
+    margin: 0 0 2px;
+    padding: var(--space-1) var(--space-2);
+    font-size: 12px;
+    line-height: 1.4;
+    pointer-events: none;
+    background-color: color-mix(in srgb, var(--success) 14%, var(--surface-panel));
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  }
+
+  .message-actions > .message-copy-notice.error-banner {
+    background-color: color-mix(in srgb, var(--danger) 14%, var(--surface-panel));
   }
 
   /* ==========================================================================

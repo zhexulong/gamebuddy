@@ -525,7 +525,7 @@ export const MessageBubble = memo(function MessageBubble({
   const rewindPair = useArmedConfirmation(rewindArmed, () => onRewindCancel?.());
   const deletePair = useArmedConfirmation(deleteArmed, () => onDeleteCancel?.());
   /**
-   * The copy confirmation, and the row's only transient state.
+   * The copy's receipt, and the row's only transient state.
    *
    * It is deliberately NOT an arm-and-confirm pair. Copying mutates nothing - not the transcript, not
    * the Host, not the model's next turn - so there is nothing to warn about and nothing to undo; what
@@ -588,6 +588,32 @@ export const MessageBubble = memo(function MessageBubble({
         <span className="action-word">{labels.copyMessage}</span>
       </button>
     ) : null;
+  /**
+   * The receipt, for the second and a half after the press.
+   *
+   * It is a child of the control strip rather than a block under it: the strip is the box it is
+   * positioned against, so the line is out of flow and hangs on the strip's own upper edge, over the
+   * tail of the words that were just copied. A block under the strip was measured - it grew the row
+   * from 122 px to 168 px and pushed the four rows below it down by the same 46 px for the length of
+   * the receipt - and hanging it under the strip instead was measured and rejected: the transcript's
+   * own 14 px gap is smaller than the receipt's 27 px plate, so it covered the next message.
+   *
+   * `role="status"` is the product's own polite region, so a screen reader is told once, and the line
+   * removes itself on a timer - the row never settles into a copied state. Both sides of the exchange
+   * carry it: a player copies their own line as often as hers. Exactly one strip renders on a row at
+   * a time, so exactly one of these mount sites is ever live.
+   */
+  const copyReceipt =
+    copyNotice === null ? null : (
+      <p
+        className={copyNotice === "copied" ? "message-copy-notice success-banner" : "message-copy-notice error-banner"}
+        data-testid="message-copy-notice"
+        data-copy-notice={copyNotice}
+        role="status"
+      >
+        {copyNotice === "copied" ? labels.copyNotice : labels.copyNoticeFailed}
+      </p>
+    );
   // Whether this message's strip has a pager at all: the strip exists for its own
   // controls, so a message with neither keeps no empty row under the bubble.
   const hasControls =
@@ -760,6 +786,7 @@ export const MessageBubble = memo(function MessageBubble({
                 for the confirmation the same way a Chats row's own strip does. */}
                 {rewindConfirmation}
                 {copyControl}
+                {copyReceipt}
                 {!rewindArmed && openingChoice && (
                   <div className="swipe-controls" aria-label={labels.swipeNavigation}>
                     {/* The glyph is the visible control and the number between the two
@@ -892,6 +919,7 @@ export const MessageBubble = memo(function MessageBubble({
             <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
               {rewindConfirmation}
               {editor === null && copyControl}
+              {copyReceipt}
               {/* While the field is open the strip is the editor: the destructive rewind sits out, exactly as
                 the destructive Delete does, because a control that cuts the conversation away beside Save
                 and Cancel is a mis-click waiting to happen. */}
@@ -1006,25 +1034,6 @@ export const MessageBubble = memo(function MessageBubble({
         {!isPlayer && truncatedNote !== null && (
           <p className="message-truncated" data-testid="message-truncated">
             {truncatedNote}
-          </p>
-        )}
-        {/* The copy's receipt, for the second and a half after the press.
-            Below the strip for the same reason the length-ceiling line is: the strip keeps exactly
-            the geometry it had, and a confirmation appears and disappears under a control layout
-            that does not move by a pixel when it does. `role="status"` is the product's own polite
-            region, so a screen reader is told once, and the line removes itself on a timer - the row
-            never settles into a copied state. Both sides of the exchange carry it: a player copies
-            their own line as often as hers. */}
-        {copyNotice !== null && (
-          <p
-            className={
-              copyNotice === "copied" ? "message-copy-notice success-banner" : "message-copy-notice error-banner"
-            }
-            data-testid="message-copy-notice"
-            data-copy-notice={copyNotice}
-            role="status"
-          >
-            {copyNotice === "copied" ? labels.copyNotice : labels.copyNoticeFailed}
           </p>
         )}
       </div>

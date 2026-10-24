@@ -357,7 +357,9 @@ test("the receipt is one short line in the product's own banner, and it removes 
   await expect(notice).toHaveCount(1);
 });
 
-test("the receipt does not move the control that was pressed, or the strip it sits in", async ({ page }) => {
+test("the receipt does not move the control that was pressed, the strip it sits in, or the rows under it", async ({
+  page,
+}) => {
   await openConversation(page);
   for (const viewport of [
     { width: 1440, height: 900 },
@@ -365,36 +367,53 @@ test("the receipt does not move the control that was pressed, or the strip it si
   ]) {
     await page.setViewportSize(viewport);
     const where = `${viewport.width}x${viewport.height}`;
+    // Her reply with the swipe set is the row the receipt is measured on, and it is deliberately NOT
+    // the transcript's last one: a receipt that is in flow pushes every row below it down and back,
+    // which a last-row measurement cannot see. The rows under it are measured with it.
     const measure = () =>
-      page.evaluate(
-        (selector) => {
-          const row = document.querySelector(selector)!;
-          const strip = row.querySelector<HTMLElement>(".message-actions")!;
-          const copy = row.querySelector<HTMLElement>('[data-testid="message-copy"]')!;
-          const box = (node: Element) => {
-            const rect = node.getBoundingClientRect();
-            return { width: Math.round(rect.width), height: Math.round(rect.height) };
-          };
-          return { strip: box(strip), copy: box(copy) };
-        },
-        `[data-handle="${HER_HANDLE}"]`,
-      );
+      page.evaluate(() => {
+        const round = (value: number) => Math.round(value);
+        const box = (node: Element) => {
+          const rect = node.getBoundingClientRect();
+          return { width: round(rect.width), height: round(rect.height), top: round(rect.top) };
+        };
+        const rows = [...document.querySelectorAll<HTMLElement>("li.message")];
+        const owner = rows.find((row) => row.querySelector('[data-testid="message-copy"]') !== null &&
+          row.className.includes("companion") && row.querySelector(".swipe-controls") !== null)!;
+        return {
+          owner: box(owner),
+          strip: box(owner.querySelector<HTMLElement>(".message-actions")!),
+          copy: box(owner.querySelector<HTMLElement>('[data-testid="message-copy"]')!),
+          // Every row after the owner: the block the receipt used to push down.
+          below: rows.slice(rows.indexOf(owner) + 1).map((row) => box(row)),
+        };
+      });
 
     const before = await measure();
-    await page.click(`[data-handle="${HER_HANDLE}"] [data-testid="message-copy"]`);
+    // A non-last row really has rows under it, so `below` is what a flow receipt moves.
+    expect(before.below.length, where).toBeGreaterThan(0);
+
+    await page.click('[data-testid="message-copy"]');
     // The receipt is what could have moved the layout, so the second reading is taken while it is up.
-    await expect(page.locator(`[data-handle="${HER_HANDLE}"] [data-testid="message-copy-notice"]`)).toHaveCount(1);
+    await expect(page.locator('[data-testid="message-copy-notice"]').first()).toHaveCount(1);
     const during = await measure();
     console.log(`MEASURE copy notice geometry ${where}: ${JSON.stringify(before)} -> ${JSON.stringify(during)}`);
 
-    // The receipt is `contain: inline-size`, so it takes the width the message already had instead of
-    // widening the row and re-wrapping the bubble under it.
+    // The receipt is out of flow, so the row it belongs to keeps its height while it is up...
+    expect(
+      during.owner.height,
+      `${where}: the row is ${before.owner.height} px before the receipt and ${during.owner.height} px while it is up`,
+    ).toBe(before.owner.height);
+    // ...and so does everything under it, which is the half an in-flow receipt moved.
+    expect(during.below, `${where}: the rows below the receipt's own row`).toEqual(before.below);
+    // The pressed control and the strip it sits in are exactly where they were.
     expect(during.strip, where).toEqual(before.strip);
     expect(during.copy, where).toEqual(before.copy);
 
-    await page.locator(`[data-handle="${HER_HANDLE}"] [data-testid="message-copy-notice"]`).waitFor({
-      state: "detached",
-    });
+    await page.locator('[data-testid="message-copy-notice"]').first().waitFor({ state: "detached" });
+    const after = await measure();
+    expect(after.owner.height, `${where}: the row after the receipt has gone`).toBe(before.owner.height);
+    expect(after.below, `${where}: the rows below, after the receipt has gone`).toEqual(before.below);
   }
 });
 
