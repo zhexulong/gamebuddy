@@ -32,6 +32,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { killProcessTree, listStardewProcessIds } from "../../lib/windows-process-tree.mjs";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "../../lib/stardew-fixture-roots.mjs";
+import { STARDEW_MOD_FOLDER } from "../../lib/stardew-mod-folder.mjs";
 import { normalizeLiveRunWindowMode } from "../../lib/stardew-live-run.mjs";
 
 const repo = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -279,7 +280,7 @@ await new Promise((resolve) => {
       ...process.env,
       GAMEBUDDY_STARDEW_GAME_DIR: gameDir,
       GAMEBUDDY_STARDEW_MODS_DIR: modsPath,
-      GAMEBUDDY_STARDEW_CONFIG: path.join(modsPath, "GameBuddy.Stardew", "config.json"),
+      GAMEBUDDY_STARDEW_CONFIG: path.join(modsPath, STARDEW_MOD_FOLDER, "config.json"),
       GAMEBUDDY_AGENT_SCENARIO: scenario,
       ...(LEGACY_LADDER === null ? {} : { GAMEBUDDY_AGENT_LADDER: LEGACY_LADDER }),
       GAMEBUDDY_RUNTIME_ROOT: process.env.GAMEBUDDY_RUNTIME_ROOT ?? path.join(process.env.LOCALAPPDATA, "GameBuddy"),

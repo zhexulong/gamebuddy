@@ -263,7 +263,9 @@
     "audit:totality": "node tools/audit-totality.mjs",
     "test:audit-totality": "node --test tools/audit-totality.test.mjs",
     "run:post-history-live": "node tools/live-run/chat/run-post-history-live.mjs",
-    "test:silent-failure": "node --test tools/lib/silent-failure.test.mjs"
+    "test:silent-failure": "node --test tools/lib/silent-failure.test.mjs",
+    "check:stardew-mod-folder-name": "node tools/check-stardew-mod-folder-name.mjs",
+    "test:stardew-mod-folder-name": "node --test tools/check-stardew-mod-folder-name.test.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",

@@ -8,10 +8,11 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
 
 /** The Mod's own config path inside a mods directory. */
 export function bridgeConfigPath(modsPath) {
-  return join(modsPath, "GameBuddy.Stardew", "config.json");
+  return join(modsPath, STARDEW_MOD_FOLDER, "config.json");
 }
 
 /**

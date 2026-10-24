@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { readExperimentalStardewActionIds } from "./stardew-published-action-registry.mjs";
+import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
 
 const BUNDLE_FILES = Object.freeze([
   "GameBuddy.Stardew.dll",
@@ -305,7 +306,7 @@ function resolveContext(options) {
     !isAbsolute(options.releaseDir)
   )
     throw new Error("native_local_fixture_absolute_paths_required");
-  const modRoot = join(options.modsPath, "GameBuddy.Stardew");
+  const modRoot = join(options.modsPath, STARDEW_MOD_FOLDER);
   return Object.freeze({
     root: options.root,
     modsPath: options.modsPath,

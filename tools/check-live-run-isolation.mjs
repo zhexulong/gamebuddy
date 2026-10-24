@@ -36,6 +36,7 @@ import { join } from "node:path";
 
 import { classifyPathEntry, listStardewProcessIds, removeSandboxTree } from "./lib/windows-process-tree.mjs";
 import { appendLaneOutput, laneDiagnosis, liveLaneVerdict } from "./lib/lane-diagnosis.mjs";
+import { STARDEW_MOD_FOLDER } from "./lib/stardew-mod-folder.mjs";
 
 const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/u, "$1");
 const RELEASE_DIR = join(REPO, "integrations", "stardew", "bin", "Release", "net6.0");
@@ -102,13 +103,33 @@ function namedFailure(error) {
   );
 }
 
+/**
+ * The config to start a sandbox from. The source profile on disk was written by an
+ * older install and still sits under its old folder name, so this reads whichever
+ * folder the profile actually contains instead of assuming the current name - the
+ * gate is about lane isolation, not about which name an existing profile uses.
+ */
+function sourceProfileConfig() {
+  // The profile directory itself holds the mod bundle for this fixture (there is no
+  // `Mods/` level here), and it was written under whichever name was current when
+  // it was created. The gate is about lane isolation, not about that name.
+  const candidates = existsSync(SOURCE_PROFILE)
+    ? readdirSync(SOURCE_PROFILE, { withFileTypes: true }).filter((e) => e.isDirectory() && /^GameBuddy/u.test(e.name))
+    : [];
+  for (const candidate of candidates) {
+    const config = join(SOURCE_PROFILE, candidate.name, "config.json");
+    if (existsSync(config)) return JSON.parse(readFileSync(config, "utf8"));
+  }
+  throw new Error(`live_run_isolation_source_profile_config_missing:${SOURCE_PROFILE}`);
+}
+
 /** One lane's sandbox: its own root, its own Mods directory, and a working config to start from. */
 function makeSandbox(name, configOverrides = {}) {
   const root = mkdtempSync(join(tmpdir(), `gb-lane-${name}-`));
   const modsPath = join(root, "mods");
-  const modRoot = join(modsPath, "GameBuddy.Stardew");
+  const modRoot = join(modsPath, STARDEW_MOD_FOLDER);
   mkdirSync(modRoot, { recursive: true });
-  const config = JSON.parse(readFileSync(join(SOURCE_PROFILE, "GameBuddy.Stardew", "config.json"), "utf8"));
+  const config = sourceProfileConfig();
   writeFileSync(
     join(modRoot, "config.json"),
     `${JSON.stringify({ ...config, ...configOverrides }, null, 2)}\n`,
@@ -269,8 +290,8 @@ function cleanupChecks() {
     const sandbox = join(root, "sandbox");
     mkdirSync(join(canary, "inside"), { recursive: true });
     writeFileSync(join(canary, "inside", "sentinel.txt"), "sentinel", "utf8");
-    mkdirSync(join(sandbox, "GameBuddy.Stardew"), { recursive: true });
-    writeFileSync(join(sandbox, "GameBuddy.Stardew", "manifest.json"), "own", "utf8");
+    mkdirSync(join(sandbox, STARDEW_MOD_FOLDER), { recursive: true });
+    writeFileSync(join(sandbox, STARDEW_MOD_FOLDER, "manifest.json"), "own", "utf8");
     execFileSync(
       "powershell",
       [

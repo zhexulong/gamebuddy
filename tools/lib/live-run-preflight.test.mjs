@@ -25,11 +25,8 @@ function goodTree(root) {
   const hostRoot = join(root, "host");
   const fixtureRoot = join(root, "fixtures");
   const modRoot = join(root, "mod");
-  mkdirSync(join(modsPath, "GameBuddy.Stardew"), { recursive: true });
-  writeFileSync(
-    join(modsPath, "GameBuddy.Stardew", "config.json"),
-    JSON.stringify({ PipeName: "gamebuddy-test-pipe" }),
-  );
+  mkdirSync(join(modsPath, "GameBuddy"), { recursive: true });
+  writeFileSync(join(modsPath, "GameBuddy", "config.json"), JSON.stringify({ PipeName: "gamebuddy-test-pipe" }));
   mkdirSync(releaseDir, { recursive: true });
   writeFileSync(join(releaseDir, "GameBuddy.Stardew.dll"), "dll");
   mkdirSync(join(hostRoot, "src"), { recursive: true });
@@ -68,7 +65,9 @@ test("two GameBuddy folders are refused, because SMAPI would load neither", () =
   const root = mkdtempSync(join(tmpdir(), "preflight-dupe-"));
   try {
     const tree = goodTree(root);
-    mkdirSync(join(tree.modsPath, "GameBuddy"), { recursive: true });
+    // The good tree already has the agreed folder; add the OLD name beside it, which
+    // is exactly the pair that made SMAPI skip the mod and the pipe never appear.
+    mkdirSync(join(tree.modsPath, "GameBuddy.Stardew"), { recursive: true });
     const result = preflightLiveRun(tree);
     assert.ok(failureCodes(result).includes("mods_path_exactly_one_gamebuddy"), codesFor(result).join(","));
   } finally {
@@ -133,7 +132,7 @@ test("an unreadable bridge config is a named refusal, not a guess", () => {
   const root = mkdtempSync(join(tmpdir(), "preflight-pipe-"));
   try {
     const tree = goodTree(root);
-    writeFileSync(join(tree.modsPath, "GameBuddy.Stardew", "config.json"), JSON.stringify({ PipeName: "bad name!" }));
+    writeFileSync(join(tree.modsPath, "GameBuddy", "config.json"), JSON.stringify({ PipeName: "bad name!" }));
     const result = preflightLiveRun(tree);
     assert.ok(failureCodes(result).includes("bridge_config_readable"), codesFor(result).join(","));
   } finally {

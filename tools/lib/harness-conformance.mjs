@@ -43,6 +43,7 @@ import {
 } from "../stardew-action-gate-descriptors.mjs";
 import { importsWithoutStarting, preflightLiveRun } from "./live-run-preflight.mjs";
 import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
+import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
 
 const finding = (code, detail) => ({ code, detail });
 
@@ -119,10 +120,7 @@ export function materializePreflightTree(baseDir, variant) {
   write(join(hostRoot, "dist-test", "main.js"), "// artifact\n", T_OUTPUT);
   write(join(modRoot, "ModEntry.cs"), "// c# input\n", T_INPUT);
   write(join(releaseDir, "GameBuddy.Stardew.dll"), "dll", variant === "stale_mod_bundle" ? T_STALE : T_OUTPUT);
-  write(
-    join(modsPath, "GameBuddy.Stardew", "config.json"),
-    JSON.stringify({ PipeName: "GameBuddyHarnessConformance" }),
-  );
+  write(join(modsPath, STARDEW_MOD_FOLDER, "config.json"), JSON.stringify({ PipeName: "GameBuddyHarnessConformance" }));
   if (variant === "two_mod_folders") mkdirSync(join(modsPath, "GameBuddy.NativeLocalPlayer"), { recursive: true });
 
   if (variant !== "missing_fixture_template") {
@@ -421,6 +419,16 @@ export const GATES_WITHOUT_FALSIFIER = Object.freeze([
   { gate: "check-tavern-release-prerequisites.mjs", reason: "reads the live environment; no offline rule set" },
   { gate: "check-test-store-teardown.mjs", reason: "static source gate; falsifier in its test" },
   { gate: "check-text-hygiene.mjs", reason: "scans the tree; falsifier in its test" },
+  // Added 2026-10-23/24. Each one's falsifier lives in the matching test file, which
+  // the suite runs; this entry exists so the conformance gate sees them at all.
+  { gate: "check-silent-failure.mjs", reason: "static source scan; falsifiers in tools/lib/silent-failure.test.mjs" },
+  { gate: "check-perf-budget.mjs", reason: "re-measures budgets; falsifier needs a slower implementation" },
+  { gate: "check-refusal-informativeness.mjs", reason: "static source scan; falsifier in its test" },
+  { gate: "check-stardew-mod-folder-name.mjs", reason: "static three-file scan; falsifier in its test" },
+  {
+    gate: "check-post-history-instructions-live.mjs",
+    reason: "requires a live-run artifact and a mounted card; no offline rule set",
+  },
 ]);
 
 /** Every gate file the suite recognises: `tools/check-*.mjs`, minus tests and mutation scripts. */

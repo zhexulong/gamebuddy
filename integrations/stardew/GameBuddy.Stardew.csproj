@@ -9,6 +9,19 @@
     <EnableHarmony>true</EnableHarmony>
     <EnableModDeploy>false</EnableModDeploy>
     <EnableModZip>false</EnableModZip>
+    <!--
+      One directory name for one mod. `ModFolderName` otherwise defaults to the
+      project name (`GameBuddy.Stardew`), while every fixture path in this repo
+      deploys to and reads from `Mods/GameBuddy`. That split made SMAPI see the
+      mod twice - the fixture wrote `GameBuddy/`, an older `GameBuddy.Stardew/`
+      sat beside it, SMAPI refused the duplicate by UniqueID and started WITHOUT
+      the mod, the bridge pipe never appeared, and the run reported
+      `stardew_pipe_not_listening` after a 150 second wait. Removing a folder by
+      hand did not help: the fixture restores what it deployed.
+
+      `check-stardew-mod-folder-name.mjs` asserts the three places agree.
+    -->
+    <ModFolderName>GameBuddy</ModFolderName>
     <BundleExtraAssemblies>ThirdParty</BundleExtraAssemblies>
   </PropertyGroup>
 

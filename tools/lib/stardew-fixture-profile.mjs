@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "./stardew-fixture-roots.mjs";
+import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
 
 // The same bounded BCP-47 shape the Host stores for the companion language
 // (settings/player-preference-store.ts): the shape is bounded, the language set is the
@@ -37,8 +38,8 @@ const DEFAULT_PROCESS_NAMES = Object.freeze(["StardewModdingAPI.exe", "Stardew V
 const CONFIG_TARGETS = Object.freeze([
   { name: "host-sidecar", profile: "A-host", relativePath: ["GameBuddy", "config.json"] },
   { name: "ai-sidecar", profile: "A-ai-client", relativePath: ["GameBuddy", "config.json"] },
-  { name: "host-mod", profile: "A-host", relativePath: ["Mods", "GameBuddy", "config.json"] },
-  { name: "ai-mod", profile: "A-ai-client", relativePath: ["Mods", "GameBuddy", "config.json"] },
+  { name: "host-mod", profile: "A-host", relativePath: ["Mods", STARDEW_MOD_FOLDER, "config.json"] },
+  { name: "ai-mod", profile: "A-ai-client", relativePath: ["Mods", STARDEW_MOD_FOLDER, "config.json"] },
 ]);
 // SMAPI scans the complete custom --mods-path tree. A profile sidecar may be
 // useful configuration input, but it must never retain a second manifest/DLL
@@ -80,7 +81,7 @@ const MOD_BUNDLE_TARGETS = Object.freeze(
     BUNDLE_FILE_NAMES.map((fileName) => ({
       name: bundleTargetName(profile, "mod", fileName),
       profile,
-      relativePath: ["Mods", "GameBuddy", fileName],
+      relativePath: ["Mods", STARDEW_MOD_FOLDER, fileName],
     })),
   ),
 );
@@ -201,7 +202,9 @@ async function verifyFixtureProfileUnlocked(options) {
   const releaseDll = join(context.releaseDir, "GameBuddy.Stardew.dll");
   const deployedDlls = [
     releaseDll,
-    ...PROFILE_NAMES.map((profile) => join(context.profiles, profile, "Mods", "GameBuddy", "GameBuddy.Stardew.dll")),
+    ...PROFILE_NAMES.map((profile) =>
+      join(context.profiles, profile, "Mods", STARDEW_MOD_FOLDER, "GameBuddy.Stardew.dll"),
+    ),
   ];
   const hashes = await Promise.all(deployedDlls.map(hashFile));
   if (new Set(hashes).size !== 1) throw new Error("deployed_dll_hash_mismatch");
@@ -322,8 +325,8 @@ function resolveContext(options = {}) {
     releaseDir,
     hostSidecar: configPath({ profiles }, "A-host", ["GameBuddy", "config.json"]),
     aiSidecar: configPath({ profiles }, "A-ai-client", ["GameBuddy", "config.json"]),
-    hostMod: configPath({ profiles }, "A-host", ["Mods", "GameBuddy", "config.json"]),
-    aiMod: configPath({ profiles }, "A-ai-client", ["Mods", "GameBuddy", "config.json"]),
+    hostMod: configPath({ profiles }, "A-host", ["Mods", STARDEW_MOD_FOLDER, "config.json"]),
+    aiMod: configPath({ profiles }, "A-ai-client", ["Mods", STARDEW_MOD_FOLDER, "config.json"]),
   });
 }
 
@@ -633,13 +636,13 @@ function assertFixtureBridgeOverride(value) {
   return Object.freeze({ ...value });
 }
 
-  function normalizeFixtureLiveLocaleRequirement(value) {
-    if (value === undefined || value === "") return "";
-    // Bounded BCP-47 tag: the companion language is the player's choice, so a fixture
-    // requirement is any tag the Host's preference store would accept.
-    if (!COMPANION_LOCALE_PATTERN.test(value)) throw new Error("invalid_fixture_live_locale_requirement");
-    return value;
-  }
+function normalizeFixtureLiveLocaleRequirement(value) {
+  if (value === undefined || value === "") return "";
+  // Bounded BCP-47 tag: the companion language is the player's choice, so a fixture
+  // requirement is any tag the Host's preference store would accept.
+  if (!COMPANION_LOCALE_PATTERN.test(value)) throw new Error("invalid_fixture_live_locale_requirement");
+  return value;
+}
 
 function isOpaque(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
@@ -691,7 +694,7 @@ async function deployModBundle(context, host, ai) {
     if (!(await exists(file))) throw new Error(`release_bundle_missing:${file}`);
   for (const profile of PROFILE_NAMES) {
     const sidecarRoot = join(context.profiles, profile, "GameBuddy");
-    const modRoot = join(context.profiles, profile, "Mods", "GameBuddy");
+    const modRoot = join(context.profiles, profile, "Mods", STARDEW_MOD_FOLDER);
     await mkdir(sidecarRoot, { recursive: true });
     await mkdir(modRoot, { recursive: true });
     // The custom SMAPI mods root contains both paths. Remove only the managed
