@@ -71,9 +71,14 @@ async function validateNativeLocalPlayerFixturePreparationInternal(options) {
   if (await exists(join(context.root, options.backupName)))
     throw new Error("native_local_fixture_backup_already_exists");
   if (await exists(lockPath(context))) throw new Error("native_local_fixture_transaction_locked");
-  const original = await readJson(context.configPath);
-  assertBridgeConfig(original);
-  assertSourceTopologyIsolated(original);
+  const original = await readJsonIfPresent(context.configPath);
+  // A first run has no `Mods/GameBuddy/config.json`: the fixture is what writes one, together with the
+  // bridge identity the rest of the run needs. Requiring the file first made a first run impossible -
+  // `readJson` threw ENOENT, and the public whitelist turned that into a blanket code that hid the cause.
+  if (original !== null) {
+    assertBridgeConfig(original);
+    assertSourceTopologyIsolated(original);
+  }
   assertNativeLocalBinding(options.binding, options.saveName);
   const timeoutSeconds = options.timeoutSeconds ?? 90;
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
@@ -95,6 +100,10 @@ async function validateNativeLocalPlayerFixturePreparationInternal(options) {
     actions: Object.freeze([...actions]),
     timeoutSeconds,
     workingSaveAbsent: true,
+    // Whether this run had to invent a config. Reported because "the file was written by us" and "the
+    // file was already the operator's" are different facts, and a caller repairing a first run should be
+    // able to see which one it is looking at.
+    configAbsentAtStart: original === null,
   });
 }
 
@@ -973,6 +982,10 @@ async function readExperimentalActionIds(options) {
  */
 function applyDerivedPolicy(result, actions, experimentalActionIds) {
   const experimentalSet = new Set(experimentalActionIds);
+  // The fixture's action set is the scenarios's own declaration, and the Mod reads it from this field:
+  // without it the config kept whatever an earlier file said (a fresh install has no file at all), so the
+  // world armed for one scenario ran with another scenario's actions - or none.
+  result.EnabledActions = [...actions];
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
   result.ExperimentalActions = actions.filter((action) => experimentalSet.has(action));
@@ -1348,6 +1361,17 @@ async function exists(path) {
 }
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+/// The file's value, or null when it does not exist. Absence is an answer here - a first run has no Config
+/// yet - and it is not the same fact as "the file is there and unreadable", which still throws.
+async function readJsonIfPresent(path) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
 }
 async function writeJson(path, value) {
   await mkdir(dirname(path), { recursive: true });
