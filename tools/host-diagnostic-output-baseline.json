@@ -1,23 +1,26 @@
 {
   "note": "Diagnostic print sites per production host/src file. Update deliberately, in its own commit, when a new bounded operational record is added.",
-  "revision": "48c5831a",
-  "total": 29,
+  "revision": "5a5308ad",
+  "total": 39,
   "counts": {
     "bootstrap/entry/desktop-host-entry.internal.ts": 1,
     "companion-loop.ts": 1,
     "composition/companion-session-reflection.ts": 1,
+    "composition/desktop-presentation-admission-owner.ts": 1,
     "continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.ts": 1,
     "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts": 1,
-    "continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts": 4,
+    "continuity-semantic-game-runtime-materializer/game-runtime-context-assembly.ts": 1,
+    "continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts": 5,
     "gameplay-task-subagent.ts": 2,
     "host-service.ts": 1,
     "main.ts": 1,
-    "runtime-core.internal.ts": 5,
+    "receipt-replay.ts": 1,
+    "runtime-core.internal.ts": 9,
     "stardew-integration-launcher-body-program.internal.ts": 3,
     "tavern/chat-pipeline-service.ts": 1,
     "tavern/companion-avatar/face.ts": 1,
     "tavern/memory-management/memory-management.ts": 2,
-    "tavern/p4-provider-start-execution.ts": 2,
+    "tavern/p4-provider-start-execution.ts": 4,
     "tavern/pi-provider-store.ts": 2
   }
 }
