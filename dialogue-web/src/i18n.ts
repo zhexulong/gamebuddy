@@ -304,6 +304,10 @@ const en = {
   // environment - no key the player can type - and every third-party entry is the player's own
   // account. The two are stated as two sentences so neither can be read as the other.
   connectionEnvironmentManaged: "Provided by the operator",
+  // What stands where the save control would stand, for the entry whose endpoint and credential are
+  // both in this machine's environment. A control that writes must correspond to something the
+  // player configured; here there is no player input to persist, so the state is stated instead.
+  connectionEnvironmentManagedNoSave: "Provided by the operator — nothing to save.",
   connectionCredentialOperatorProvided:
     "This connection is provided by the operator of this machine through environment variables. There is no key to enter here.",
   connectionCredentialBringYourOwn:
@@ -1142,6 +1146,7 @@ const zh: Messages = {
   connectionEscapeHatch: "OpenAI 兼容端点",
   connectionEscapeHatchHint: "连接到你自己提供的兼容服务器，例如 Ollama、LM Studio 或 vLLM。",
   connectionEnvironmentManaged: "由运营方提供",
+  connectionEnvironmentManagedNoSave: "由运营方提供，无需保存。",
   connectionCredentialOperatorProvided: "该连接由本机运营方通过环境变量提供，这里没有需要填写的密钥。",
   connectionCredentialBringYourOwn: "自备密钥：密钥来自你在该服务商自己的账号，GameBuddy 不提供密钥。",
   connectionBaseUrl: "Base URL",

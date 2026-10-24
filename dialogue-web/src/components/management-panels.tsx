@@ -752,11 +752,28 @@ export function ConnectionSettingsPanel({
             </>
           )}
 
-          <div className="composer-actions">
-            <button type="submit" className="small-button" disabled={connectionView.pending || selected === undefined}>
-              {labels.connectionSave}
-            </button>
-          </div>
+          {/*
+           * An entry whose endpoint and credential both live in this machine's environment asks the
+           * player for nothing, so there is nothing for this form to write. The submit is replaced by
+           * the state rather than disabled: a disabled save standing where an action belongs reads as
+           * "saving is unavailable right now", which is a different and untrue fact. Every entry the
+           * player can fill in keeps the submit exactly as it was.
+           */}
+          {selected?.environmentManaged === true ? (
+            <p className="field-hint" data-connection-no-save>
+              {labels.connectionEnvironmentManagedNoSave}
+            </p>
+          ) : (
+            <div className="composer-actions">
+              <button
+                type="submit"
+                className="small-button"
+                disabled={connectionView.pending || selected === undefined}
+              >
+                {labels.connectionSave}
+              </button>
+            </div>
+          )}
         </form>
 
         {connectionView.state.connections.length > 0 && (
