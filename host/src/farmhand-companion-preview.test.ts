@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { createActionExecutionCoordinator } from "./action-execution-coordinator.internal.js";
 import {
   FARMHAND_COMPANION_PREVIEW_READY_MARKER,
   parseFarmhandCompanionPreviewConfig,
+  resolveFarmhandPreviewModelConfig,
 } from "./farmhand-companion-preview.js";
 import {
   type FarmhandCompanionPreviewDependencies,
@@ -13,6 +14,11 @@ import {
   startFarmhandCompanionPreviewForTest,
 } from "./farmhand-companion-preview.test-support.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "./integration-launcher.js";
+import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
+import { resolveRuntimePaths } from "./runtime-identity.js";
+import { TavernConnectionStore, connectionDocumentPath } from "./tavern/connection-store.js";
+import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
+import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 import type { GameConnection } from "./game-connection.js";
 import {
   type ExactReceiptRecoveryPort,
@@ -27,7 +33,13 @@ const config = {
   runtimeRoot: "E:\\GameBuddy\\preview",
   runtimeInstanceId: "runtime_01",
   requiredPresentationLocale: "zh-CN",
-  identity: { playerId: "player_01", companionId: "companion_01", continuityId: "preview_continuity_01", saveId: "save_01", worldId: "world_01" },
+  identity: {
+    playerId: "player_01",
+    companionId: "companion_01",
+    continuityId: "preview_continuity_01",
+    saveId: "save_01",
+    worldId: "world_01",
+  },
   bridge: { pipeName: "gamebuddy_preview", bridgeToken: "a".repeat(32) },
 };
 
@@ -47,7 +59,7 @@ const testModule: GameIntegrationAdapter = {
       capabilityRevision: 1,
       snapshotRevision: snap?.revision ?? null,
       enabledActionIds: caps,
-      registrations: (s.catalogRegistrations as unknown[]) as any,
+      registrations: s.catalogRegistrations as unknown[] as any,
       activeExecution: null,
       latestReceipt: null,
       latestReasonCode: null,
@@ -69,13 +81,15 @@ function handle(presentationLocale = "zh-CN"): IntegrationLaunchHandle {
       connected: true,
       sessionId: "stardew_session",
       capabilities: ["move_to_tile"],
-      catalogRegistrations: [{
-        actionId: "move_to_tile",
-        familyId: "movement_navigation",
-        identityVersion: 1,
-        lifecycle: "published",
-        kind: "execution",
-      }],
+      catalogRegistrations: [
+        {
+          actionId: "move_to_tile",
+          familyId: "movement_navigation",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+        },
+      ],
       latestReceipt: null,
       latestReasonCode: null,
       snapshot: { revision: 3, presentationLocale },
@@ -197,6 +211,64 @@ test("preview config rejects untrusted capability, legacy bridge expiry, and inv
     () => parseFarmhandCompanionPreviewConfig({ ...config, requiredPresentationLocale: "ja-JP" }),
     /invalid_farmhand_companion_preview_config/,
   );
+});
+
+test("preview resolves the player's model through the one owner of that rule, and its three states are distinct", async () => {
+  // Preview is a Game surface with its own root, so it has to answer the same question the Chat and
+  // the Game attachment answer - and it used to answer it with its own copy of the precedence, which
+  // is how a configured connection could reach one surface and not another. It now asks the owner.
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+  try {
+    const previewRoot = async (prefix: string) => {
+      const runtimeRoot = await canonicalTestRoot(prefix);
+      const agentDir = resolveRuntimePaths(config.identity, runtimeRoot).agentDir;
+      await mkdir(join(runtimeRoot, "settings"), { recursive: true });
+      await mkdir(agentDir, { recursive: true });
+      return { runtimeRoot, agentDir };
+    };
+    // 1. an activated connection is the provider and model, at the Game's own thinking level.
+    const active = await previewRoot("farmhand-preview-model-active-");
+    await writeFile(
+      join(active.runtimeRoot, "settings", "model-profiles.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        chat: { revision: 1, thinkingLevel: "low" },
+        game: { revision: 4, thinkingLevel: "medium" },
+      }),
+    );
+    const store = new TavernConnectionStore(active.agentDir);
+    const created = await store.create({
+      providerId: "deepseek",
+      apiKey: "sk-synthetic-connection-key",
+      baseUrl: null,
+      apiShape: null,
+      modelId: "deepseek-v4-pro",
+    });
+    const connectionId = created.connections[0]!.connectionId;
+    const probed = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-pro"] });
+    await store.activate(connectionId, probed.revision);
+    assert.deepEqual(await resolveFarmhandPreviewModelConfig(config.identity, active.runtimeRoot), {
+      provider: "deepseek",
+      modelId: "deepseek-v4-pro",
+      thinkingLevel: "medium",
+    });
+    // 2. no connection is no model, and the preview refuses by its own name rather than inventing one.
+    const bare = await previewRoot("farmhand-preview-model-none-");
+    await assert.rejects(
+      () => resolveFarmhandPreviewModelConfig(config.identity, bare.runtimeRoot),
+      /farmhand_preview_model_configuration_unavailable/,
+    );
+    // 3. a store that cannot be read refuses the same way: this profile has no Settings screen to
+    //    send the player to, so both states end in the launcher's operator being told.
+    const corrupt = await previewRoot("farmhand-preview-model-unreadable-");
+    await writeFile(connectionDocumentPath(corrupt.agentDir), "{ not a connection document", "utf8");
+    await assert.rejects(
+      () => resolveFarmhandPreviewModelConfig(config.identity, corrupt.runtimeRoot),
+      /farmhand_preview_model_configuration_unavailable/,
+    );
+  } finally {
+    bindWindowsStaleLockReclaimer(undefined);
+  }
 });
 
 test("preview launches observed bridge before runtime and binds initial snapshot only after STOP/worker wiring", async () => {
@@ -334,29 +406,31 @@ function gameRuntimeWithCoordinator(events: string[]) {
   } as unknown as GameConnection;
   const deadlineMs = Date.now() + 10_000;
   const journal = new StardewLogicalActionRecoveryJournal({
-    initialRecords: [{
-      logicalActionId: "logical_recovery_01",
-      dispatchOrdinal: 1,
-      ownerId: "preview_owner_01",
-      epoch: 0,
-      requestId: "request_recovery_01",
-      idempotencyKey: "idempotency_recovery_01",
-      actionId: "till_soil",
-      canonicalRequest: {
+    initialRecords: [
+      {
+        logicalActionId: "logical_recovery_01",
+        dispatchOrdinal: 1,
+        ownerId: "preview_owner_01",
+        epoch: 0,
         requestId: "request_recovery_01",
         idempotencyKey: "idempotency_recovery_01",
-        action: "till_soil",
-        args: { x: 1, y: 2 },
+        actionId: "till_soil",
+        canonicalRequest: {
+          requestId: "request_recovery_01",
+          idempotencyKey: "idempotency_recovery_01",
+          action: "till_soil",
+          args: { x: 1, y: 2 },
+          expectedRevision: 1,
+          deadlineMs,
+        },
+        canonicalArgs: { x: 1, y: 2 },
         expectedRevision: 1,
         deadlineMs,
+        scope: RECOVERY_IDENTITY,
+        bindingIdentity: RECOVERY_IDENTITY,
+        state: "recovery_pending",
       },
-      canonicalArgs: { x: 1, y: 2 },
-      expectedRevision: 1,
-      deadlineMs,
-      scope: RECOVERY_IDENTITY,
-      bindingIdentity: RECOVERY_IDENTITY,
-      state: "recovery_pending",
-    }],
+    ],
   });
   const coordinator = createActionExecutionCoordinator(connection, { recoveryJournal: journal });
   const runtime = {
@@ -368,7 +442,6 @@ function gameRuntimeWithCoordinator(events: string[]) {
   } as never;
   return { runtime, uncertain: () => coordinator.uncertainDispatches() };
 }
-
 
 test("relaunch is explicit only: a non-game predecessor never reaches the launcher", async () => {
   const events: string[] = [];

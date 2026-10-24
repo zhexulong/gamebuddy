@@ -21,11 +21,15 @@ import {
   type IntegrationLauncher,
   type IntegrationLaunchHandle,
 } from "./integration-launcher.js";
-import { createGameCompanionRuntime, type GameCompanionIdentity, type RuntimeSession } from "./runtime.js";
+import {
+  createGameCompanionRuntime,
+  type CompanionModelConfig,
+  type GameCompanionIdentity,
+  type RuntimeSession,
+} from "./runtime.js";
 import { resolveRuntimePaths } from "./runtime-identity.js";
-import { ModelProfileStore } from "./settings/model-profile-store.js";
+import { requireSelectedModelConfig, resolveSurfaceModelSelection } from "./settings/model-selection.js";
 import { isExactReceiptRecoveryPort } from "./stardew-execution-recovery-supervisor.js";
-import { TavernConnectionStore } from "./tavern/connection-store.js";
 import {
   getAuthenticatedStardewPresentationPortForPreview,
   parseStardewLauncherConfig,
@@ -403,6 +407,31 @@ async function closePreview(
   if (errors.length > 0) throw new AggregateError(errors, "farmhand_companion_preview_close_failed");
 }
 
+/**
+ * The preview's own reading of the one rule `resolveSurfaceModelSelection` owns.
+ *
+ * Preview is a Game surface, so it asks with `surface: "game"` and keeps that surface's thinking
+ * level. It refuses on every outcome but `selected`, by its own name: unlike a Chat, a Game runtime
+ * with no model cannot answer at all, and this bounded profile has no Settings screen to send the
+ * player to - the launcher's operator does.
+ *
+ * Exported because it is this entry's model composition step, and its own test drives the three
+ * states a root can be in without launching a game to reach them.
+ */
+export async function resolveFarmhandPreviewModelConfig(
+  identity: GameCompanionIdentity,
+  root: string,
+): Promise<CompanionModelConfig> {
+  return requireSelectedModelConfig(
+    await resolveSurfaceModelSelection({
+      runtimeRoot: root,
+      agentDir: resolveRuntimePaths(identity, root).agentDir,
+      surface: "game",
+    }),
+    "farmhand_preview_model_configuration_unavailable",
+  );
+}
+
 function productionDependencies(): FarmhandCompanionPreviewDependencies {
   return Object.freeze({
     launcher: STARDEW_INTEGRATION_LAUNCHER,
@@ -419,12 +448,7 @@ function productionDependencies(): FarmhandCompanionPreviewDependencies {
       // The player's own active connection is the model, exactly as the Chat and the Game
       // attachment resolve it: this preview ships no endpoint, so a root with none configured
       // refuses here by name rather than running on a gateway that does not exist.
-      const agentDir = resolveRuntimePaths(identity, root).agentDir;
-      const active = await new TavernConnectionStore(agentDir).active();
-      if (active === null) throw new Error("farmhand_preview_model_configuration_unavailable");
-      const thinkingLevel = (await new ModelProfileStore(resolve(root, "settings", "model-profiles.json")).read("game"))
-        .thinkingLevel;
-      const modelConfig = Object.freeze({ provider: active.providerId, modelId: active.modelId, thinkingLevel });
+      const modelConfig = await resolveFarmhandPreviewModelConfig(identity, root);
       return await createGameCompanionRuntime(
         identity,
         root,

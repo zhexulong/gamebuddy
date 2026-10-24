@@ -21,7 +21,7 @@ import {
   writeIdentityProfile,
 } from "../identity-profile.js";
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "../tavern/chat-thread-store.js";
-import { TavernConnectionStore } from "../tavern/connection-store.js";
+import { TavernConnectionStore, connectionDocumentPath } from "../tavern/connection-store.js";
 import { updateMountedCompanionVoice } from "../tavern/companion-voice-service.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
@@ -304,6 +304,67 @@ test("Chat construction exposes only the exact catalog materialization handoff",
   } finally {
     await value.binding.close();
     await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
+test("a Chat whose connection store cannot be read still mounts, and takes no model from a store it could not read", async () => {
+  // The third state, and the one the Chat surface must not turn into a refusal: the mount is what
+  // lets the player read the conversation while Settings is where the store is repaired. What it must
+  // NOT do is present the broken store as "nothing configured" inside the selection itself - the one
+  // owner of the rule answers `unreadable`, and this surface's translation is the single place that
+  // decides both outcomes open here.
+  const root = await canonicalTestRoot("chat-runtime-construction-unreadable-");
+  const runtimeRoot = join(root, "runtime");
+  await mkdir(runtimeRoot);
+  const binding = createTestChatRuntimeBinding({
+    manifest: Object.freeze({
+      schemaVersion: 2 as const,
+      topology: "independent_chat_and_game_surfaces" as const,
+      runtimeRoot,
+      principal,
+      bootstrapOperationId: "bootstrap_01",
+      authorityGeneration: 1,
+    }),
+    ownerProof: Object.freeze({ processId: 42, creationTime100ns: "123456" }),
+  });
+  const threads = createChatThreadStore(runtimeRoot, identityKey(principal));
+  const profilePaths = resolveRuntimePaths(principal, runtimeRoot, "chat_session_01");
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    await mkdir(dirname(profilePaths.identityProfilePath), { recursive: true });
+    const profile = Object.freeze({
+      ...DEFAULT_IDENTITY_PROFILE,
+      profileId: "profile_01",
+      identity: Object.freeze({ ...DEFAULT_IDENTITY_PROFILE.identity }),
+    });
+    await writeIdentityProfile(profilePaths.identityProfilePath, profile);
+    await createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return identityProfileMetadata(profile);
+      },
+    }).createExplicit({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "chat_session_01",
+      companionId: principal.companionId,
+      continuityId: principal.continuityId,
+      opening: "blank",
+    });
+    const agentDir = resolveRuntimePaths(principal, runtimeRoot).agentDir;
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(connectionDocumentPath(agentDir), "{ not a connection document", "utf8");
+    prepared = await binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    assert.equal(prepared.modelConfig, null);
+    // The profile was still read, so the level and its revision survive the connection defect.
+    assert.equal(prepared.modelProfileRevision, 0);
+  } finally {
+    await binding.close();
+    prepared?.closeChatThreadStore?.();
+    threads.close?.();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

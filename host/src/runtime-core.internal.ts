@@ -58,6 +58,7 @@ import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/co
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
 import { anchorPiSessionGreeting } from "./pi-session-greeting-anchor.internal.js";
+import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import { modelProviderEntry, mergeModelProviderEntry } from "./tavern/pi-provider-store.js";
 import { protectedToolsForRun } from "./magic-context-protected-tools.js";
 
@@ -403,12 +404,12 @@ export type GameCompanionIdentity = CompanionIdentity &
 
 /**
  * The player-facing Dialogue Director's zero-configuration model: the
- * environment-provided `cpa-oai` connection. It stays the runtime's model
+ * environment-provided connection. It stays the runtime's model
  * whenever no player connection is active, which keeps a root without player
  * connections byte-for-byte on the previous behaviour and provider store shape.
  */
 export const DEFAULT_COMPANION_MODEL_CONFIG: CompanionModelConfig = Object.freeze({
-  provider: "cpa-oai",
+  provider: TAVERN_ENVIRONMENT_PROVIDER_ID,
   modelId: "deepseek-v4.1-flash",
   thinkingLevel: "high",
 });

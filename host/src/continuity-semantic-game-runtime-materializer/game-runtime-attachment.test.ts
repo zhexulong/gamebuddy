@@ -13,7 +13,7 @@ import { DEFAULT_IDENTITY_PROFILE, identityProfileMetadata, writeIdentityProfile
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { identityKey, resolveRuntimePaths } from "../runtime-identity.js";
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "../tavern/chat-thread-store.js";
-import { connectionAuthPath, TavernConnectionStore } from "../tavern/connection-store.js";
+import { connectionAuthPath, connectionDocumentPath, TavernConnectionStore } from "../tavern/connection-store.js";
 import { modelProviderEntry } from "../tavern/pi-provider-store.js";
 import { catalogProvider } from "../tavern/provider-catalog.js";
 import { ModelProfileStore } from "../settings/model-profile-store.js";
@@ -232,11 +232,34 @@ test("a store that cannot yield a Game profile refuses the attachment instead of
   );
 });
 
+test("a connection store that cannot be read refuses the Game attachment by the same named gate", async () => {
+  // The third state a root can be in. The one owner of the selection rule answers `unreadable` for
+  // it - a distinct fact from `no_model` - and this surface still refuses with the code its player
+  // reads, because a Game runtime cannot start without a model whichever of the two it met.
+  const value = await gameRoot("game-runtime-attachment-unreadable-", undefined);
+  await mkdir(dirname(connectionDocumentPath(value.agentDir)), { recursive: true });
+  await writeFile(connectionDocumentPath(value.agentDir), "{ not a connection document", "utf8");
+  await assert.rejects(
+    () =>
+      createGameRuntimeAttachment({
+        runtimeRoot: value.runtimeRoot,
+        agentDir: value.agentDir,
+        gameplayWorkerEnabled: false,
+        hostBindingFactory,
+      }),
+    /game_runtime_model_configuration_unavailable/,
+  );
+});
+
 test("the attachment builder keeps its named refusal for a Game surface it cannot resolve a model for", async () => {
   // Two refusals stand between a root and a silently model-less Game surface, and both are stated
-  // rather than accidental: the store's own `invalid_model_profile_store` for a document it cannot
-  // read (asserted above), and this named gate for a root with no connection - the reachable case
-  // now that no model is shipped. Neither may be replaced by an invented default.
+  // rather than accidental: the profile store's own `invalid_model_profile_store` for a document it
+  // cannot read (asserted above), and this surface's named gate for a root with no model - the
+  // reachable case now that no model is shipped. Neither may be replaced by an invented default.
+  //
+  // The attachment no longer re-derives the precedence: it asks the one owner of that rule and maps
+  // its outcome. This asserts the delegation itself, so a second copy of "which provider and model"
+  // cannot reappear here and drift from the Chat and the Preview the way it did once.
   const source = await readFile(
     resolve(
       dirname(fileURLToPath(import.meta.url)),
@@ -244,11 +267,12 @@ test("the attachment builder keeps its named refusal for a Game surface it canno
     ),
     "utf8",
   );
-  assert.match(
-    source,
-    /if \(modelConfig === null\)\s*throw new Error\("game_runtime_model_configuration_unavailable"\);/,
-  );
-  assert.match(source, /\.read\(\s*"game",?\s*\)/);
+  assert.match(source, /requireSelectedModelConfig\(\s*await resolveSurfaceModelSelection\(/);
+  assert.match(source, /surface: "game"/);
+  assert.match(source, /GAME_MODEL_CONFIGURATION_UNAVAILABLE = "game_runtime_model_configuration_unavailable"/);
+  assert.doesNotMatch(source, /new TavernConnectionStore/, "the attachment reads no connection of its own");
+  assert.doesNotMatch(source, /new ModelProfileStore/, "the attachment reads no surface profile of its own");
+  assert.doesNotMatch(source, /thinkingLevel:/, "the attachment chooses no thinking level of its own");
   assert.doesNotMatch(source, /cpa-oai/, "the Game attachment resolves no operator gateway of its own");
 });
 

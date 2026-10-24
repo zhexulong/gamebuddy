@@ -22,6 +22,7 @@ import type {
   IntegrationExecutionReceipt,
 } from "./game-integration-adapter.js";
 import type { GameConnection } from "./game-connection.js";
+import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import type { CompanionModelConfig, RuntimePaths } from "./runtime.js";
 
 /**
@@ -38,7 +39,7 @@ export const GAMEPLAY_TASK_DELEGATE_BUDGET_EXHAUSTED = "delegate_budget_exhauste
 
 /** Gameplay workers are deliberately pinned independently from the dialogue model. */
 export const GAMEPLAY_SUBAGENT_MODEL_CONFIG = Object.freeze({
-  provider: "cpa-oai",
+  provider: TAVERN_ENVIRONMENT_PROVIDER_ID,
   modelId: "gpt-5.6-luna",
   thinkingLevel: "medium",
 }) satisfies CompanionModelConfig;
@@ -702,7 +703,7 @@ async function createTaskModelRuntime(agentDir: string, config: CompanionModelCo
     JSON.stringify(
       {
         providers: {
-          "cpa-oai": {
+          [TAVERN_ENVIRONMENT_PROVIDER_ID]: {
             name: "CPA OpenAI-compatible Agent",
             baseUrl: "http://127.0.0.1:8317/v1",
             api: "openai-completions",

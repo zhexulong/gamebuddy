@@ -4,9 +4,8 @@ import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/c
 import type { PresentationRuntime } from "../presentation.js";
 import type { CompanionIdentity, CompanionModelConfig } from "../runtime-identity.js";
 import { identityKey, resolveRuntimePaths } from "../runtime-identity.js";
-import { ModelProfileStore } from "../settings/model-profile-store.js";
+import { resolveSurfaceModelSelection } from "../settings/model-selection.js";
 import { resolveCompanionLocale } from "../settings/player-preference-store.js";
-import { TavernConnectionStore } from "../tavern/connection-store.js";
 import { DEFAULT_IDENTITY_PROFILE, identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import {
@@ -75,6 +74,10 @@ export type ChatRuntimeConstructionOptions = Readonly<{
  * while Settings is where a model is brought. `runtime-core` skips Pi's model configuration for a
  * null selection and the mounted session therefore keeps Pi's own `unknown` placeholder until the
  * player activates a connection; the same session then adopts it in place.
+ *
+ * Both "no connection" and "the connection store could not be read" arrive here as `null`: the Chat
+ * mount opens either way (a store defect is reported by the Settings surface that owns it), and this
+ * translation is the Chat surface's own answer rather than a rule the other surfaces share.
  */
 export type ExactChatRuntimeModelSelection = Readonly<{
   modelConfig: CompanionModelConfig | null;
@@ -265,46 +268,24 @@ async function buildExactChatRuntimeConstruction(
 }
 
 /**
- * The one place that decides which provider/model/thinking level a Chat runtime
- * runs with: the player's active connection, and nothing else.
+ * The Chat surface's reading of the one rule `resolveSurfaceModelSelection` owns: a selected model
+ * is frozen into this mount, and both remaining outcomes mean this Chat mounts with no model.
  *
- * This product ships no model endpoint, so there is no fallback to resolve: a
- * root with no active connection has no model, and `null` is the honest answer
- * rather than a shipped gateway that does not exist on the player's machine. A
- * mount freezes this answer into its Pi session; activating a connection asks
- * the same function again for the mounted runtime, so a reload can never drift
- * from what a fresh mount would use.
+ * The Chat is the surface that opens without one: the player reads the conversation while Settings
+ * is where a model is brought, so neither `no_model` nor `unreadable` may refuse the mount.
  */
 async function resolveExactChatRuntimeModelSelection(
   paths: Pick<ReturnType<typeof resolveRuntimePaths>, "agentDir" | "root">,
 ): Promise<ExactChatRuntimeModelSelection> {
-  const modelProfile = await new ModelProfileStore(join(paths.root, "settings", "model-profiles.json")).read("chat");
-  const modelConfig = await readActiveConnectionModelConfig(paths.agentDir);
-  return Object.freeze({ modelConfig, modelProfileRevision: modelProfile.revision });
-}
-
-/**
- * Reads the one active player connection as the exact runtime model
- * configuration, or null while no player connection is selected.
- *
- * The record's own endpoint is not returned here: `runtime-core` merges the
- * selected provider entry into Pi's `models.json` from the same stored record,
- * so the endpoint keeps one owner. A store that cannot be read counts as no
- * connection: a Chat with no model is a state the surface states plainly, and
- * inventing a selection the player never made would be a worse lie than that.
- */
-async function readActiveConnectionModelConfig(agentDir: string): Promise<CompanionModelConfig | null> {
-  try {
-    const active = await new TavernConnectionStore(agentDir).active();
-    if (active === null) return null;
-    return Object.freeze({
-      provider: active.providerId,
-      modelId: active.modelId,
-      thinkingLevel: active.thinkingLevel,
-    });
-  } catch {
-    return null;
-  }
+  const outcome = await resolveSurfaceModelSelection({
+    runtimeRoot: paths.root,
+    agentDir: paths.agentDir,
+    surface: "chat",
+  });
+  return Object.freeze({
+    modelConfig: outcome.status === "selected" ? outcome.modelConfig : null,
+    modelProfileRevision: outcome.modelProfileRevision,
+  });
 }
 
 function sameWorldInfoBinding(
