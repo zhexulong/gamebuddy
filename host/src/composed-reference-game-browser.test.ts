@@ -12,6 +12,7 @@ import {
 } from "./composed-reference-game-browser.js";
 import { composeGameProfile, GameBrowserFixtureV1 } from "./game-browser-contract/index.js";
 import { composeTavernProfile, TavernBrowserFixtureV1 } from "./tavern/browser-contract/index.js";
+import { StardewPlayerSettingsRevisionConflict } from "./games/stardew/stardew-player-settings.js";
 
 const bootstrapToken = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
 const tavernProfile = composeTavernProfile({
@@ -73,6 +74,12 @@ const gameProfileWithLaunch = composeGameProfile({
   profileId: "gamebuddy.game.preview",
   releaseTier: "game_preview",
   operationIds: ["game.state.read", "game.launch"],
+  navigationItemIds: ["game"],
+});
+const gameProfileWithSettings = composeGameProfile({
+  profileId: "gamebuddy.game.preview",
+  releaseTier: "game_preview",
+  operationIds: ["game.state.read", "game.stardew.settings.read", "game.stardew.settings.update"],
   navigationItemIds: ["game"],
 });
 const gameProfileWithCabins = composeGameProfile({
@@ -3420,6 +3427,208 @@ test("the lifecycle activation route refuses an admission issued for another ope
     });
     assert.equal(response.status, 409);
     assert.deepEqual(await response.json(), { code: "unauthorized" });
+  } finally {
+    await server.close();
+  }
+});
+
+/** The exact settings projection the coordinator publishes, for the route tests. */
+function settingsProjection(
+  denied: readonly string[],
+  minimum: number,
+): Readonly<{
+  apiVersion: 1;
+  revision: number;
+  families: { familyId: string; denied: boolean }[];
+  advanceDayMinimumOnlineFarmers: number;
+  appliesToRunningGame: { actionPolicy: "within_seconds"; advanceDayMinimumOnlineFarmers: "next_world_load" };
+}> {
+  return {
+    apiVersion: 1,
+    revision: 1,
+    families: [
+      { familyId: "farming_crops", denied: denied.includes("farming_crops") },
+      { familyId: "npc_social", denied: denied.includes("npc_social") },
+    ],
+    advanceDayMinimumOnlineFarmers: minimum,
+    appliesToRunningGame: {
+      actionPolicy: "within_seconds",
+      advanceDayMinimumOnlineFarmers: "next_world_load",
+    },
+  };
+}
+
+const SETTINGS_PATH = "/api/composed-reference-game/v1/game/stardew/settings";
+
+test("the settings route reads and writes only the player-owned fields, and refuses a stale revision", async () => {
+  let current: ReturnType<typeof settingsProjection> = settingsProjection([], 1);
+  const updates: unknown[] = [];
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithSettings }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+    async readGame(context) {
+      return stateForGame(context);
+    },
+    stardewSettings: {
+      async read(admission) {
+        return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+          handler.lifecycleActivationIssuer,
+          admission,
+          "settings_read",
+          () => current,
+        )!;
+      },
+      async update(admission, command) {
+        return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+          handler.lifecycleActivationIssuer,
+          admission,
+          "settings_update",
+          () => {
+            updates.push(command);
+            // The store's own CAS rule, reproduced at the seam: a save that read an
+            // older revision is refused and nothing is written.
+            if (command.expectedRevision !== current.revision) throw new StardewPlayerSettingsRevisionConflict();
+            current = {
+              ...settingsProjection(command.deniedActionFamilies, command.advanceDayMinimumOnlineFarmers),
+              revision: current.revision + 1,
+            };
+            return current;
+          },
+        )!;
+      },
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+
+    const readResponse = await fetch(`${server.origin}${SETTINGS_PATH}`, {
+      headers: { origin: server.origin, cookie },
+    });
+    assert.equal(readResponse.status, 200);
+    const readBody = (await readResponse.json()) as { revision: number; advanceDayMinimumOnlineFarmers: number };
+    assert.equal(readBody.revision, 1);
+    assert.equal(readBody.advanceDayMinimumOnlineFarmers, 1);
+
+    // A save the surface really sends: one family switched off and the co-op floor raised.
+    const saveResponse = await fetch(`${server.origin}${SETTINGS_PATH}`, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "content-type": "application/json",
+        "x-csrf-token": root.chat.csrfToken,
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        expectedRevision: 1,
+        deniedActionFamilies: ["farming_crops"],
+        advanceDayMinimumOnlineFarmers: 2,
+      }),
+    });
+    assert.equal(saveResponse.status, 200);
+    const saved = (await saveResponse.json()) as {
+      revision: number;
+      families: { familyId: string; denied: boolean }[];
+      advanceDayMinimumOnlineFarmers: number;
+      appliesToRunningGame: Record<string, string>;
+    };
+    assert.equal(saved.revision, 2);
+    assert.deepEqual(
+      saved.families.filter((family) => family.denied).map((family) => family.familyId),
+      ["farming_crops"],
+    );
+    assert.equal(saved.advanceDayMinimumOnlineFarmers, 2);
+    // The per-field promise the surface renders, straight off the wire.
+    assert.deepEqual(saved.appliesToRunningGame, {
+      actionPolicy: "within_seconds",
+      advanceDayMinimumOnlineFarmers: "next_world_load",
+    });
+    assert.deepEqual(updates, [
+      {
+        apiVersion: 1,
+        expectedRevision: 1,
+        deniedActionFamilies: ["farming_crops"],
+        advanceDayMinimumOnlineFarmers: 2,
+      },
+    ]);
+
+    // The same revision again is the stale save: refused by name, nothing written.
+    const staleResponse = await fetch(`${server.origin}${SETTINGS_PATH}`, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "content-type": "application/json",
+        "x-csrf-token": root.chat.csrfToken,
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        expectedRevision: 1,
+        deniedActionFamilies: [],
+        advanceDayMinimumOnlineFarmers: 1,
+      }),
+    });
+    assert.equal(staleResponse.status, 409);
+    assert.deepEqual(await staleResponse.json(), { code: "stardew_settings_revision_conflict" });
+    // The route cannot know a revision, so a stale save really does reach the seam -
+    // and the record's CAS is what refuses it, after which nothing is written.
+    assert.equal(updates.length, 2);
+    assert.equal(current.revision, 2);
+
+    // A body naming anything beside those two fields is not this route's to accept.
+    const foreignResponse = await fetch(`${server.origin}${SETTINGS_PATH}`, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "content-type": "application/json",
+        "x-csrf-token": root.chat.csrfToken,
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        expectedRevision: 2,
+        deniedActionFamilies: [],
+        advanceDayMinimumOnlineFarmers: 1,
+        ExperimentalActions: ["native_express_emote_v1"],
+      }),
+    });
+    assert.equal(foreignResponse.status, 409);
+    assert.deepEqual(await foreignResponse.json(), { code: "malformed_request" });
+    // Unlike a stale revision, a field this route does not own never reaches the
+    // seam at all: the body is refused as malformed before dispatch.
+    assert.equal(updates.length, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("the settings routes are absent when the profile does not declare them", async () => {
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+    async readGame(context) {
+      return stateForGame(context);
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    await initial.json();
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const response = await fetch(`${server.origin}${SETTINGS_PATH}`, {
+      headers: { origin: server.origin, cookie },
+    });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { code: "not_found" });
   } finally {
     await server.close();
   }

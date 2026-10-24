@@ -148,6 +148,8 @@ test("stardew presentation projection declares the game preview surface and bind
       "game.installation.discovery.manual_picker",
       "game.stardew.cabins.read",
       "game.stardew.cabins.confirm",
+      "game.stardew.settings.read",
+      "game.stardew.settings.update",
     ],
   );
   // Consumer: the activation owner crosses the seam as the composed binding

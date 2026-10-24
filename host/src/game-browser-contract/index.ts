@@ -541,18 +541,21 @@ export const StardewCabinConfirmResultV1Schema = strictObject({
 // ─── The player's own Stardew settings ─────────────────────────────────────
 
 /**
- * One action family the player may switch off, with the number of actions it
- * withholds so the choice is legible before it is made.
+ * One action family the player may switch off.
  *
  * The catalogue is the Mod's own: `DeniedActionFamilies` is validated against
  * `FarmhandActionCatalog` and the Mod refuses the WHOLE policy when one entry names
  * a family it does not declare, so this route can only ever offer ids from that
  * catalogue (`host/src/games/stardew/stardew-action-families.ts` derives it from
  * the Mod source, and `stardew-action-families.test.ts` holds the two equal).
+ *
+ * No count of the actions inside a family is published: the only source for one is
+ * the Mod's live catalog, which is absent exactly when the player is most likely to
+ * be editing settings (no world running), and a number that silently read 0 then
+ * would be a lie about the family rather than a fact about the session.
  */
 const StardewActionFamilyV1Schema = strictObject({
   familyId: SAFE_ID,
-  actionCount: Type.Integer({ minimum: 0, maximum: 512 }),
   denied: Type.Boolean(),
 });
 

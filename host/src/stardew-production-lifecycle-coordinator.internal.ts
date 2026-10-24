@@ -36,6 +36,16 @@ import { createStardewPrivateBootstrapComposition } from "./games/stardew/lifecy
 import type { StardewPrivateBootstrapInternalComposition } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import type { StardewOwnedPlayerHostBootstrap } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
 import {
+  StardewPlayerSettingsStore,
+  type StardewPlayerSettings,
+  type StardewPlayerSettingsUpdate,
+} from "./games/stardew/stardew-player-settings.js";
+import {
+  projectStardewModActionPolicy,
+  type StardewModActionPolicyProjection,
+} from "./games/stardew/stardew-mod-action-policy-projection.js";
+import { STARDEW_ACTION_FAMILIES } from "./games/stardew/stardew-action-families.js";
+import {
   createStardewOwnedFarmhandGameSessionMaterializer,
   type StardewOwnedFarmhandGameSessionMaterializer,
 } from "./stardew-owned-farmhand-game-session-materializer.internal.js";
@@ -66,6 +76,8 @@ import type {
   StardewCabinChoicesV1,
   StardewCabinConfirmCommandV1,
   StardewCabinConfirmResultV1,
+  StardewPlayerSettingsCommandV1,
+  StardewPlayerSettingsV1,
 } from "./game-browser-contract/index.js";
 import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
 import {
@@ -434,6 +446,27 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
   openInstallationPicker(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
   ): Promise<StardewInstallationSelectionResult>;
+  /**
+   * The player's own Stardew settings, read and written through the one durable
+   * record (`stardew/player-settings.json`).
+   *
+   * They are not the Mod's config: that document is machine-minted, deleted at
+   * settlement, and carries the bridge credentials and fixture fields beside the two
+   * settings a player owns. The record is durable, and the private-bootstrap composer
+   * projects it into the config.json it writes for the AI client, so the Mod needs no
+   * change: it reads the config it is handed, as it does today.
+   *
+   * `update` is a compare-and-swap on the revision the caller read. A save that
+   * arrives after someone else's is refused with `StardewPlayerSettingsRevisionConflict`
+   * rather than overwriting it, and the fresh record is what the surface then acts on.
+   */
+  readPlayerSettings(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ): Promise<StardewPlayerSettingsV1>;
+  updatePlayerSettings(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: StardewPlayerSettingsCommandV1,
+  ): Promise<StardewPlayerSettingsV1>;
 }>;
 
 /** Internal production lifecycle authority; no launch or browser admission is returned. */
@@ -1330,7 +1363,9 @@ function createCoordinator(
       | "game_reopen"
       | "game_disconnect"
       | "game_endgame"
-      | "game_create",
+      | "game_create"
+      | "settings_read"
+      | "settings_update",
     callback: (browserSessionId: string, expiresAtMs: number) => T,
   ): T => {
     const boundIssuer = issuer;
@@ -2729,6 +2764,70 @@ function createCoordinator(
       }
     });
 
+  const playerSettingsStore = new StardewPlayerSettingsStore(runtimeRoot);
+
+  /**
+   * The player-owned settings as the route publishes them.
+   *
+   * The catalogue comes from the Host's derived family list rather than from the
+   * Mod's live catalog, because the live catalog is absent whenever no world is
+   * running - which is exactly when a player edits settings. The `denied` flag is
+   * therefore the player's stored answer against the catalog the Mod always
+   * declares, and it is the same list the projection writes back out.
+   */
+  const projectPlayerSettings = (settings: StardewPlayerSettings): StardewPlayerSettingsV1 => {
+    const denied = new Set(settings.deniedActionFamilies);
+    return {
+      apiVersion: 1,
+      revision: settings.revision,
+      families: STARDEW_ACTION_FAMILIES.map((familyId) => ({
+        familyId,
+        denied: denied.has(familyId),
+      })),
+      advanceDayMinimumOnlineFarmers: settings.advanceDayMinimumOnlineFarmers,
+      appliesToRunningGame: {
+        actionPolicy: "within_seconds",
+        advanceDayMinimumOnlineFarmers: "next_world_load",
+      },
+    };
+  };
+
+  const readPlayerSettings = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ): Promise<StardewPlayerSettingsV1> =>
+    consumeBrowserAdmission(admission, "settings_read", async () =>
+      projectPlayerSettings(await playerSettingsStore.read()),
+    );
+
+  /**
+   * One settings save: the durable CAS first, then the two projections of the new
+   * answer.
+   *
+   * The CAS is the linearization point. The record is written and read back before
+   * anything else is touched, so a refused revision leaves both projections and the
+   * Mod's config exactly as they were. After it commits, the live attempt's config
+   * is merged on a best-effort basis (`written: false` when no AI-client profile
+   * exists yet, or the attempt was settled) - the next bootstrap projects the record
+   * again, so a skipped live write loses nothing.
+   */
+  const updatePlayerSettings = async (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: StardewPlayerSettingsCommandV1,
+  ): Promise<StardewPlayerSettingsV1> =>
+    await consumeBrowserAdmission(admission, "settings_update", async () => {
+      const update: StardewPlayerSettingsUpdate = {
+        deniedActionFamilies: [...command.deniedActionFamilies],
+        advanceDayMinimumOnlineFarmers: command.advanceDayMinimumOnlineFarmers,
+      };
+      const saved = await playerSettingsStore.update(command.expectedRevision, update);
+      const policy: StardewModActionPolicyProjection = projectStardewModActionPolicy(saved);
+      const owner = exactOwner;
+      if (owner !== undefined) {
+        await internal.projectPlayerActionPolicyIntoOwnedAttempt(owner, policy);
+      }
+      return projectPlayerSettings(saved);
+    });
+
   const activationOwner: StardewProductionLifecycleActivationOwner = Object.freeze({
     bindBrowserAdmissionIssuer,
     activate,
@@ -2749,6 +2848,8 @@ function createCoordinator(
     retryInstallationDiscovery,
     cancelInstallationSelection,
     openInstallationPicker,
+    readPlayerSettings,
+    updatePlayerSettings,
   });
 
   /**

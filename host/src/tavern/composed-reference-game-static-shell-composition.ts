@@ -237,6 +237,25 @@ export async function startComposedReferenceGameStaticShellComposition(
         : (() => {
             throw new Error("composed_reference_game_cabin_operations_mismounted");
           })()),
+    ...(options.lifecycleActivationBindingSink === undefined ||
+    (options.lifecycleActivationBindingSink.readPlayerSettings === undefined &&
+      options.lifecycleActivationBindingSink.updatePlayerSettings === undefined)
+      ? {}
+      : options.lifecycleActivationBindingSink.readPlayerSettings !== undefined &&
+          options.lifecycleActivationBindingSink.updatePlayerSettings !== undefined
+        ? {
+            stardewSettings: Object.freeze({
+              read: options.lifecycleActivationBindingSink.readPlayerSettings.bind(
+                options.lifecycleActivationBindingSink,
+              ),
+              update: options.lifecycleActivationBindingSink.updatePlayerSettings.bind(
+                options.lifecycleActivationBindingSink,
+              ),
+            }),
+          }
+        : (() => {
+            throw new Error("composed_reference_game_settings_operations_mismounted");
+          })()),
   });
   const referenceHandler = createReferencePipelineDialogueWebDelegatedHandler({
     profile: options.profile.tavernProfile,

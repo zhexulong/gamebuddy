@@ -112,6 +112,8 @@ export function createStardewGamePresentationProjection(
       "game.installation.discovery.manual_picker",
       "game.stardew.cabins.read",
       "game.stardew.cabins.confirm",
+      "game.stardew.settings.read",
+      "game.stardew.settings.update",
     ],
     navigationItemIds: ["game"],
   });
