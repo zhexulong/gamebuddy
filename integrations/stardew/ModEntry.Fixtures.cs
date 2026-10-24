@@ -3433,7 +3433,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // (Pickaxe.cs:88), so a handful of rocks is the difference between an actor that can work until it is
         // tired and one that cannot reach -15 no matter what it does - the audit measured the old world at about
         // THREE points of the 270 a morning holds. Still a few rocks by the crossroads, not a quarry.
-        for (int index = 0; index < 10; index += 1)
+        for (int index = 0; index < STONE_COUNT; index += 1)
         {
             (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile);
             if (spot is null)
@@ -3487,16 +3487,37 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             .Cast<KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>?>()
             .FirstOrDefault();
 
-        // Fail closed: a prop the actor cannot walk to from where it really starts is a worse world than the arm log
-        // claims - the same shape the earlier `component_tiles=2` measurement produced.
+        // A prop placed early can be cut off by one placed later: each placement consumes its target and the
+        // tile an actor stands on, and a stone changes the walkable graph. The earlier check refused the WHOLE
+        // world for one such prop, which is a worse outcome than the prop not being there - the session still
+        // gets a day's work, and the arm log still says which tile was dropped and why.
+        //
+        // Removing is bounded and named. A world where more than a quarter of the props end up unreachable is
+        // not the world the scenario describes, so that case still fails closed.
         if (startAtHome)
         {
+            List<Vector2> removed = new();
             foreach (Vector2 tile in provisionedTiles)
             {
-                if (!IsReachableFromStart(farm, startTile, tile))
-                    throw new InvalidOperationException(
-                        $"fixture_native_local_play_session_prop_unreachable_from_home:{tile.X},{tile.Y}");
+                if (IsReachableFromStart(farm, startTile, tile))
+                    continue;
+                farm.objects.Remove(tile);
+                farm.terrainFeatures.Remove(tile);
+                removed.Add(tile);
             }
+            foreach (Vector2 tile in removed)
+            {
+                provisionedTiles.Remove(tile);
+                provisioned.Add($"dropped_unreachable={(int)tile.X},{(int)tile.Y}");
+            }
+            if (removed.Count > 0)
+                this.Monitor.Log(
+                    $"GameBuddy play-session dropped {removed.Count} prop(s) a later placement cut off: "
+                        + string.Join(";", removed.Select(tile => $"{(int)tile.X},{(int)tile.Y}")),
+                    LogLevel.Warn);
+            if (removed.Count * 4 > provisionedTiles.Count)
+                throw new InvalidOperationException(
+                    $"fixture_native_local_play_session_world_too_fragmented:dropped={removed.Count};kept={provisionedTiles.Count}");
         }
 
         // The actor STAYS where the multi-day Given armed it - at home, beside its bed - when the caller asked for a
@@ -4044,6 +4065,13 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     /// starts on the first placement's standing tile, and everything placed after it keeps that tile's cardinal
     /// ring clear.
     /// </summary>
+    /// <summary>
+    /// How many stones the play-session world carries. Six, not ten: the stamina story needs "more than a
+    /// handful" (6 x 4 = 24 of the ~270 a morning holds, against an audited baseline of three), and ten left
+    /// the walkable graph too fragmented to keep every prop's approach open.
+    /// </summary>
+    private const int STONE_COUNT = 6;
+
     private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalPlaySessionSpot(GameLocation farm, Vector2 start)
     {
         int width = farm.map.Layers[0].LayerWidth;
