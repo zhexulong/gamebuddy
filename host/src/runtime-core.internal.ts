@@ -1603,10 +1603,6 @@ async function cleanupRuntimeInitializationFailure(
 ): Promise<never> {
   const cleanupErrors: unknown[] = [];
   try {
-  } catch (error) {
-    cleanupErrors.push(error);
-  }
-  try {
     clearNarrativeGateMarker?.();
   } catch (error) {
     cleanupErrors.push(error);
