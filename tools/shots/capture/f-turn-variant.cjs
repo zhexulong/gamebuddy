@@ -270,6 +270,19 @@ async function waitForSettle(page, label, predicate, attempts = 120) {
   // ---- regenerate ----
   const originalText = reply?.text ?? null;
   const originalHandle = reply?.handle ?? null;
+  // A root with no connection is now a legitimate, openable product state (BYOK: nothing is shipped and
+  // nothing is preselected), and in it a send is refused with a sentence that says exactly why. This
+  // scenario drives a turn that must produce a reply to regenerate, so when the surface has said the turn
+  // did not reach a model there is nothing to regenerate: that is a named skip, not a 232-second timeout.
+  const noModelNotice = await page.evaluate(() => {
+    const notice = document.querySelector(".reference-turn-notice");
+    return notice === null ? null : (notice.textContent ?? "").trim();
+  });
+  if (noModelNotice !== null && /没有送达任何模型|did not reach a model|No model/u.test(noModelNotice)) {
+    say("SKIP:no_model_connection - the turn was refused, so there is no reply to regenerate");
+    say(`the surface's own sentence: ${noModelNotice}`);
+    return;
+  }
   const regenerateButton = page.locator(".message-list > li.message.companion:not([data-streaming])").last().locator(".regenerate-btn");
   say("regenerate control count:", await regenerateButton.count());
   await regenerateButton.first().click();
